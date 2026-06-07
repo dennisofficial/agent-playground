@@ -1,7 +1,8 @@
 import { Spinner, TextInput } from '@inkjs/ui';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useState } from 'react';
-import { getChain } from '../chat.js';
+import { AIMessageChunk } from '@langchain/core/messages';
+import { getGraph } from '../chat.js';
 import { MessageView, type Turn } from './components.js';
 
 export function App() {
@@ -29,10 +30,15 @@ export function App() {
 
     let acc = '';
     try {
-      const stream = await getChain().stream({ input: text });
-      for await (const token of stream) {
-        acc += token;
-        setPartial(acc);
+      const stream = await getGraph().stream(
+        { input: text },
+        { streamMode: 'messages' },
+      );
+      for await (const [chunk] of stream) {
+        if (chunk instanceof AIMessageChunk && typeof chunk.content === 'string') {
+          acc += chunk.content;
+          setPartial(acc);
+        }
       }
       setTurns((prev) => [...prev, { id: Date.now() + 1, role: 'assistant', text: acc }]);
     } catch (err) {

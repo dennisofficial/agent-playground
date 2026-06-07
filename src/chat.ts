@@ -1,6 +1,7 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { Annotation, StateGraph } from '@langchain/langgraph';
 
 // Read injected vars. Treat ''/undefined as unset, but PRESERVE a valid 0 (e.g. CHAT_TEMPERATURE=0).
 const num = (v: string | undefined, d: number) => (v === undefined || v === '' ? d : Number(v));
@@ -10,10 +11,15 @@ const prompt = ChatPromptTemplate.fromMessages([
   ['human', '{input}'],
 ]);
 
+const StateAnnotation = Annotation.Root({
+  input: Annotation<string>(),
+  output: Annotation<string>(),
+});
+
 // Lazy + memoized: ChatAnthropic's constructor throws if ANTHROPIC_API_KEY is missing.
-// Building the chain at module top-level would crash on import before Ink can render an
+// Building the graph at module top-level would crash on import before Ink can render an
 // error row — so construct it on first use, inside the App's submit try/catch.
-let chain: ReturnType<typeof build> | undefined;
+let graph: ReturnType<typeof build> | undefined;
 
 function build() {
   const model = process.env.CHAT_MODEL || 'claude-sonnet-4-6';
@@ -26,7 +32,16 @@ function build() {
     maxTokens, // accepted on all models
     ...(rejectsSampling ? {} : { temperature }),
   });
-  return prompt.pipe(llm).pipe(new StringOutputParser());
+
+  async function agent(state: typeof StateAnnotation.State) {
+    const output = await prompt.pipe(llm).pipe(new StringOutputParser()).invoke({ input: state.input });
+    return { output };
+  }
+
+  return new StateGraph(StateAnnotation)
+    .addNode('agent', agent)
+    .addEdge('__start__', 'agent')
+    .compile();
 }
 
-export const getChain = () => (chain ??= build());
+export const getGraph = () => (graph ??= build());
