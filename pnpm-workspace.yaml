@@ -1,0 +1,8 @@
+# Not a multi-package workspace — there are no `packages:` globs.
+# pnpm 11 uses this file as its settings store for the single root app:
+#   - allowBuilds: which dependency postinstall/build scripts may run
+#   - overrides:   force a single @langchain/core instance across @langchain/* packages
+allowBuilds:
+  esbuild: true
+overrides:
+  '@langchain/core': 1.1.48

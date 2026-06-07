@@ -1,0 +1,37 @@
+{
+  "name": "agent-playground",
+  "version": "0.1.0",
+  "description": "Command-line chat playground for experimenting with LangChain / LangGraph.",
+  "type": "module",
+  "bin": {
+    "agent-playground": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "dotenvx run -f .env.personal --ignore=MISSING_ENV_FILE --strict -- tsx src/index.tsx",
+    "build": "tsup",
+    "start": "dotenvx run -f .env.personal --ignore=MISSING_ENV_FILE --strict -- node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write ."
+  },
+  "packageManager": "pnpm@11.1.2",
+  "dependencies": {
+    "@inkjs/ui": "^2.0.0",
+    "@langchain/anthropic": "^1.4.0",
+    "@langchain/core": "^1.1.48",
+    "ink": "^7.0.5",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
+    "react": "^19.2.7"
+  },
+  "devDependencies": {
+    "@dotenvx/dotenvx": "^1.71.0",
+    "@types/marked-terminal": "^6.1.1",
+    "@types/node": "^25.9.2",
+    "@types/react": "^19.2.17",
+    "prettier": "^3.8.3",
+    "prettier-plugin-organize-imports": "^4.3.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
