@@ -21,5 +21,20 @@ export function mentionedBots(text: string): Bot[] {
   return ROSTER.filter((b) => handles.has(b.name.toLowerCase()) || handles.has(b.id));
 }
 
+/**
+ * Roster bots ADDRESSED in a message — either @mentioned OR named outright ("Alex, can you…").
+ * In a chat, using a teammate's name is addressing them, so it counts as a direct hail.
+ */
+export function addressedBots(text: string): Bot[] {
+  const handles = new Set((text.match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1).toLowerCase()));
+  return ROSTER.filter(
+    (b) =>
+      handles.has(b.name.toLowerCase()) ||
+      handles.has(b.id) ||
+      new RegExp(`\\b${b.name}\\b`, 'i').test(text) ||
+      new RegExp(`\\b${b.id}\\b`, 'i').test(text),
+  );
+}
+
 /** One-line roster summary for prompts ("Alex — backend engineer; James — marketing & analytics"). */
 export const rosterSummary = (): string => ROSTER.map((b) => `${b.name} — ${b.role}`).join('; ');

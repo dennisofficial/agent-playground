@@ -222,6 +222,11 @@ class Conductor {
    */
   private async acknowledge(bot: Bot, m: ChannelMsg, emoji: string): Promise<void> {
     await this.recordSeen(bot, m);
+    this.react(bot, emoji);
+  }
+
+  /** Surface a reaction from a bot (the gate's ack, or the "seen, working" 👀). Slack seam: reactions.add. */
+  private react(bot: Bot, emoji: string): void {
     this.patch({
       history: [
         ...this.state.history,
@@ -255,11 +260,20 @@ class Conductor {
     this.patch({ responder: bot.name });
 
     let spoken = '';
+    let firstAi = true;
     // Append one completed message to the transcript and accumulate its spoken text for the channel log.
     const commit = (msg: BaseMessage) => {
       const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
         .usage_metadata;
       const rows = toRenderItems([msg], bot.name);
+      // "Seen, working" signal: if the bot's FIRST action is a tool call (no text yet), react 👀 — like
+      // a typing indicator that lasts while it grinds through tools (maps to Slack reactions.add).
+      if (firstAi && msg.getType() === 'ai') {
+        firstAi = false;
+        const hasText = rows.some((r) => r.kind === 'assistant' && r.text);
+        const hasTool = rows.some((r) => r.kind === 'tool');
+        if (hasTool && !hasText) this.react(bot, '👀');
+      }
       for (const r of rows) if (r.kind === 'assistant' && r.text) spoken += `${r.text}\n`;
       if (rows.length || usage) {
         this.patch({
