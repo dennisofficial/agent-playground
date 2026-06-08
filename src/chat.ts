@@ -1,20 +1,9 @@
 import { ChatAnthropic } from '@langchain/anthropic';
-import { StringOutputParser } from '@langchain/core/output_parsers';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
-import { Annotation, StateGraph } from '@langchain/langgraph';
+import { SystemMessage } from '@langchain/core/messages';
+import { MessagesAnnotation, MemorySaver, StateGraph } from '@langchain/langgraph';
 
 // Read injected vars. Treat ''/undefined as unset, but PRESERVE a valid 0 (e.g. CHAT_TEMPERATURE=0).
 const num = (v: string | undefined, d: number) => (v === undefined || v === '' ? d : Number(v));
-
-const prompt = ChatPromptTemplate.fromMessages([
-  ['system', 'You are a helpful assistant in a command-line chat.'],
-  ['human', '{input}'],
-]);
-
-const StateAnnotation = Annotation.Root({
-  input: Annotation<string>(),
-  output: Annotation<string>(),
-});
 
 // Lazy + memoized: ChatAnthropic's constructor throws if ANTHROPIC_API_KEY is missing.
 // Building the graph at module top-level would crash on import before Ink can render an
@@ -33,15 +22,18 @@ function build() {
     ...(rejectsSampling ? {} : { temperature }),
   });
 
-  async function agent(state: typeof StateAnnotation.State) {
-    const output = await prompt.pipe(llm).pipe(new StringOutputParser()).invoke({ input: state.input });
-    return { output };
+  async function agent(state: typeof MessagesAnnotation.State) {
+    const response = await llm.invoke([
+      new SystemMessage('You are a helpful assistant in a command-line chat.'),
+      ...state.messages,
+    ]);
+    return { messages: [response] };
   }
 
-  return new StateGraph(StateAnnotation)
+  return new StateGraph(MessagesAnnotation)
     .addNode('agent', agent)
     .addEdge('__start__', 'agent')
-    .compile();
+    .compile({ checkpointer: new MemorySaver() });
 }
 
 export const getGraph = () => (graph ??= build());

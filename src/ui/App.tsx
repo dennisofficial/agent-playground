@@ -1,7 +1,7 @@
 import { Spinner, TextInput } from '@inkjs/ui';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useState } from 'react';
-import { AIMessageChunk } from '@langchain/core/messages';
+import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
 import { getGraph } from '../chat.js';
 import { MessageView, type Turn } from './components.js';
 
@@ -31,8 +31,8 @@ export function App() {
     let acc = '';
     try {
       const stream = await getGraph().stream(
-        { input: text },
-        { streamMode: 'messages' },
+        { messages: [new HumanMessage(text)] },
+        { configurable: { thread_id: '1' }, streamMode: 'messages' },
       );
       for await (const [chunk] of stream) {
         if (chunk instanceof AIMessageChunk && typeof chunk.content === 'string') {
