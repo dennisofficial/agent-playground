@@ -1,38 +1,50 @@
 import { Box, Text } from 'ink';
 import { renderMarkdown } from '../markdown.js';
+import type { RenderItem } from './messages.js';
 
-export type Role = 'user' | 'assistant' | 'error';
+/** One finalized transcript row, rendered by kind. Assistant text is terminal markdown. */
+export function MessageView({ item }: { item: RenderItem }) {
+  switch (item.kind) {
+    case 'user':
+      return (
+        <Box>
+          <Text color="cyan" bold>
+            {'❯ '}
+          </Text>
+          <Text>{item.text}</Text>
+        </Box>
+      );
 
-export interface Turn {
-  id: number;
-  role: Role;
-  text: string;
-}
+    case 'tool':
+      return (
+        <Box>
+          <Text color="yellow" dimColor>
+            {`  ⚙ ${item.toolName}`}
+          </Text>
+        </Box>
+      );
 
-/** One finalized transcript row. Assistant text is rendered as terminal markdown. */
-export function MessageView({ turn }: { turn: Turn }) {
-  if (turn.role === 'user') {
-    return (
-      <Box>
-        <Text color="cyan" bold>
-          {'❯ '}
-        </Text>
-        <Text>{turn.text}</Text>
-      </Box>
-    );
+    case 'notice':
+      return (
+        <Box marginBottom={1}>
+          <Text color="green" dimColor>
+            {item.text}
+          </Text>
+        </Box>
+      );
+
+    case 'error':
+      return (
+        <Box marginBottom={1}>
+          <Text color="red">{`⚠ ${item.text}`}</Text>
+        </Box>
+      );
+
+    case 'assistant':
+      return (
+        <Box marginBottom={1}>
+          <Text>{renderMarkdown(item.text)}</Text>
+        </Box>
+      );
   }
-
-  if (turn.role === 'error') {
-    return (
-      <Box marginBottom={1}>
-        <Text color="red">{`⚠ ${turn.text}`}</Text>
-      </Box>
-    );
-  }
-
-  return (
-    <Box marginBottom={1}>
-      <Text>{renderMarkdown(turn.text)}</Text>
-    </Box>
-  );
 }

@@ -9,9 +9,9 @@
 
 Each AI employee is **one self-contained process** with two layers and a connector:
 
-- **Chat layer** — event-driven conversational identity. One LangGraph thread per context
-  (`dm:{user}`, `channel:{id}`). Decides respond/acknowledge/ignore via the gate.
-  *Dispatches* jobs — does not run them.
+- **Chat layer** — event-driven conversational identity. One LangGraph thread per Slack
+  surface, scoped by `(channel, thread_ts)` — covers channels, DMs, and threads inside
+  either. Decides respond/acknowledge/ignore via the gate. *Dispatches* jobs — does not run them.
 - **Job runner** — always-on background process. Owns the agent's job registry. *Spawns*
   and owns the worker sub-agents. Posts results when they finish. This is what decouples
   chat from work: the chat turn can end while the worker keeps running.
@@ -362,8 +362,33 @@ Four tiers, each serving a different purpose:
 
 ### 1. Working memory — LangGraph Checkpointer
 The active `messages` array for a conversation or job. Already wired up.
-Scoped by thread_id (`alex:dm:{user_id}`, `alex:channel:{id}`, `alex:job:{id}`).
 Swap `MemorySaver` → `SqliteSaver` for persistence across restarts.
+
+**Scoping mirrors Slack's `(channel, thread_ts)` coordinate.** Slack hands us a uniform
+identifier for *every* conversation surface — and that includes **threads inside channels
+AND threads inside DMs** (yes, you can thread under a DM). A DM is not "one conversation";
+it's a container with a root timeline plus any number of threads. So scope by:
+
+```
+thread_id = {agent}:{channel}:{thread_ts ?? 'root'}
+```
+
+- `zero:C0ENG:root`     — #engineering main timeline
+- `zero:C0ENG:1718-99`  — a specific thread in #engineering
+- `zero:D0DENNIS:root`  — the DM's main line
+- `zero:D0DENNIS:1718-42` — a thread *inside* that DM
+
+The channel id prefix already encodes the container type (`C`=channel, `D`=DM,
+`G`/`mpdm`=group DM), so the old hand-rolled `dm:` vs `channel:` split is replaced by this
+one scheme — which also (unlike the old one) gives each thread its own focused checkpoint so
+parallel sub-conversations don't bleed together. Slack threads are exactly one level deep
+(no sub-threads), so the tree is: container → root → threads.
+
+Implications: (a) the response gate threshold **drops inside a thread the agent is already
+in** — follow-ups don't need a re-@mention, like a human already in the conversation;
+(b) a job dispatched from a thread stores `(channel, thread_ts)` as its reply target so the
+result posts **back into that thread**, not the channel root; (c) reply in the surface you
+were addressed in — escalating a thread reply to the whole channel is a deliberate act.
 
 **When the window fills up — anchored window + running summary.**
 Compaction is NOT a second storage step. Every message is already embedded into the
