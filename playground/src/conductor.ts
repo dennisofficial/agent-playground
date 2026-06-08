@@ -1,11 +1,11 @@
-import { AIMessageChunk, type BaseMessage, HumanMessage } from '@langchain/core/messages';
+import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { getGraphFor } from './chat.js';
-import { gate } from './gate.js';
+import { gate, type GateDecision } from './gate.js';
 import { type Job, listJobs, onJobUpdate } from './jobs.js';
 import { extractAndRemember } from './memory/extract.js';
 import { type Identity } from './memory/identity.js';
 import { type Bot, botById, ROSTER } from './roster.js';
-import { type ContextUsage, messageText, type RenderItem, toRenderItems } from './ui/messages.js';
+import { type ContextUsage, type RenderItem, toRenderItems } from './ui/messages.js';
 
 /**
  * The single runtime that drives the #dev channel. ALL bot turns go through here, serialized one at a
@@ -27,27 +27,20 @@ const MAX_BOT_REPLIES = 3;
 
 type ChannelMsg = { author: string; authorId: string; authorBotId?: string; text: string };
 
-type AssistantItem = Extract<RenderItem, { kind: 'assistant' }>;
-type ToolItem = Extract<RenderItem, { kind: 'tool' }>;
-
 export interface ConductorState {
   history: RenderItem[];
-  liveTools: ToolItem[];
-  liveText: AssistantItem[];
   busy: boolean;
   ctx: ContextUsage;
   running: number;
   /** Who the CLI is currently speaking as (lowercased id). */
   speaker: string;
-  /** The bot currently streaming a reply, if any (for the spinner). */
+  /** The bot currently working, if any (for the spinner). */
   responder?: string;
 }
 
 class Conductor {
   private state: ConductorState = {
     history: [],
-    liveTools: [],
-    liveText: [],
     busy: false,
     ctx: {},
     running: 0,
@@ -160,7 +153,7 @@ class Conductor {
       } while (this.relayQueue.length || this.hasUndelivered());
     } finally {
       this.draining = false;
-      this.patch({ busy: false, responder: undefined, liveTools: [], liveText: [] });
+      this.patch({ busy: false, responder: undefined });
       const resolvers = this.idleResolvers;
       this.idleResolvers = [];
       for (const r of resolvers) r();
@@ -189,35 +182,52 @@ class Conductor {
         progressed = true;
         if (m.authorBotId === bot.id) break; // own message: already in this bot's thread; skip
 
-        const decision =
+        const decision: GateDecision =
           replies < MAX_BOT_REPLIES
             ? await gate(bot, m.text, {
                 authorBotId: m.authorBotId,
                 recentContext: this.recentContext(),
               })
-            : 'ignore'; // past the cap: record but don't reply
-        if (decision === 'respond') {
+            : { action: 'ignore' }; // past the cap: record but don't reply
+        if (decision.action === 'respond') {
           await this.runBotTurn(bot, new HumanMessage(`${m.author}: ${m.text}`));
           replies++;
+        } else if (decision.action === 'acknowledge') {
+          await this.acknowledge(bot, m, decision.emoji ?? '👍'); // react, no full reply
         } else {
-          await this.recordIgnored(bot, m);
+          await this.recordSeen(bot, m);
         }
-        this.learnFrom(bot, m); // memory gate: learn from it whether or not we replied
+        this.learnFrom(bot, m); // memory gate: learn from it whether we replied, reacted, or ignored
         break; // re-scan from the top — a reply may have appended new messages
       }
     }
   }
 
-  /** Record a message in a bot's checkpoint without a model call (the silent/ignore path). Best-effort. */
-  private async recordIgnored(bot: Bot, m: ChannelMsg): Promise<void> {
+  /** Record a message in a bot's checkpoint without a model call (the silent/ack path). Best-effort. */
+  private async recordSeen(bot: Bot, m: ChannelMsg): Promise<void> {
     try {
-      await getGraphFor(bot.id).updateState(
+      getGraphFor(bot.id).updateState(
         { configurable: { thread_id: `${bot.id}:dev:root` } },
         { messages: [new HumanMessage(`${m.author}: ${m.text}`)] },
       );
     } catch {
       /* recording is best-effort — a failure must never break the channel */
     }
+  }
+
+  /**
+   * The gate's middle tier: acknowledge a message with a reaction instead of a full reply. The bot
+   * still "sees" it (recorded in its checkpoint) — it just signals receipt without noise. In the TUI
+   * this surfaces a reaction line; a Slack adapter would call `reactions.add` on the message here.
+   */
+  private async acknowledge(bot: Bot, m: ChannelMsg, emoji: string): Promise<void> {
+    await this.recordSeen(bot, m);
+    this.patch({
+      history: [
+        ...this.state.history,
+        { id: `r-${this.seq++}`, kind: 'reaction', emoji, by: bot.name },
+      ],
+    });
   }
 
   /** Relay a finished job through its owner bot (gate-bypassed); its reply enters the channel. */
@@ -234,67 +244,59 @@ class Conductor {
   }
 
   /**
-   * Run one bot's turn: stream its graph (labeled with the bot's name), finalize messages into history,
-   * and append its spoken reply to the channel log so teammates can react to it.
+   * Run one bot's turn. Streams the graph at the MESSAGE level (streamMode 'updates'): each completed
+   * message — a chunk of text, or a step's tool calls — lands in the transcript as soon as that step
+   * finishes, not token-by-token and without waiting for the whole agentic turn. The spoken text is
+   * also appended to the channel log so teammates can react to it.
    */
   private async runBotTurn(bot: Bot, input: HumanMessage, surface?: string): Promise<void> {
     const thread = `${bot.id}:dev:root`;
     const identity = this.identityFor(bot.id, surface ?? thread);
-    this.patch({ responder: bot.name, liveTools: [], liveText: [] });
+    this.patch({ responder: bot.name });
 
     let spoken = '';
-    const commit = (msg: BaseMessage | undefined) => {
-      if (!msg) return;
+    // Append one completed message to the transcript and accumulate its spoken text for the channel log.
+    const commit = (msg: BaseMessage) => {
       const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
         .usage_metadata;
       const rows = toRenderItems([msg], bot.name);
       for (const r of rows) if (r.kind === 'assistant' && r.text) spoken += `${r.text}\n`;
-      this.patch({
-        ...(usage ? { ctx: { input: usage.input_tokens, output: usage.output_tokens } } : {}),
-        ...(rows.length ? { history: [...this.state.history, ...rows] } : {}),
-        liveTools: [],
-        liveText: [],
-      });
+      if (rows.length || usage) {
+        this.patch({
+          ...(usage ? { ctx: { input: usage.input_tokens, output: usage.output_tokens } } : {}),
+          ...(rows.length ? { history: [...this.state.history, ...rows] } : {}),
+        });
+      }
     };
 
-    let curId: string | undefined;
-    let cur: BaseMessage | undefined;
     try {
       const stream = await getGraphFor(bot.id).stream(
         { messages: [input] },
-        { configurable: { thread_id: thread, identity }, streamMode: 'messages', recursionLimit: 50 },
+        { configurable: { thread_id: thread, identity }, streamMode: 'updates', recursionLimit: 50 },
       );
-      for await (const [chunk] of stream) {
-        const id = chunk.id ?? curId ?? '_0';
-        if (cur && id !== curId) {
-          commit(cur);
-          cur = chunk;
-          curId = id;
-        } else if (cur && cur instanceof AIMessageChunk && chunk instanceof AIMessageChunk) {
-          cur = cur.concat(chunk);
-        } else {
-          cur = chunk;
-          curId = id;
+      // Each update is { <nodeName>: { messages: [...] } } — complete messages from that step.
+      for await (const update of stream as AsyncIterable<
+        Record<string, { messages?: BaseMessage[] }>
+      >) {
+        for (const payload of Object.values(update)) {
+          for (const msg of payload?.messages ?? []) commit(msg);
         }
-        const items = toRenderItems([cur], bot.name);
-        this.patch({
-          liveText: items.filter((i): i is AssistantItem => i.kind === 'assistant'),
-          liveTools: items.filter((i): i is ToolItem => i.kind === 'tool'),
-        });
       }
-      commit(cur);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.patch({
         history: [...this.state.history, { id: `e-${this.seq++}`, kind: 'error', text: message }],
       });
-    } finally {
-      this.patch({ liveTools: [], liveText: [] });
     }
 
-    const reply = (spoken || (cur ? messageText(cur.content) : '')).trim();
+    const reply = spoken.trim();
     if (reply)
-      this.channelLog.push({ author: bot.name, authorId: bot.id, authorBotId: bot.id, text: reply });
+      this.channelLog.push({
+        author: bot.name,
+        authorId: bot.id,
+        authorBotId: bot.id,
+        text: reply,
+      });
   }
 }
 

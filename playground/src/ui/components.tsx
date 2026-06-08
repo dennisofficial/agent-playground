@@ -24,6 +24,13 @@ export function MessageView({ item }: { item: RenderItem }) {
         </Box>
       );
 
+    case 'reaction':
+      return (
+        <Box>
+          <Text dimColor>{`   ↳ ${item.by} reacted ${item.emoji}`}</Text>
+        </Box>
+      );
+
     case 'error':
       return (
         <Box marginBottom={1}>

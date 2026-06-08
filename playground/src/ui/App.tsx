@@ -30,8 +30,7 @@ export function App() {
     conductor.submitUser(text);
   }
 
-  const { history, liveTools, liveText, busy, ctx, running, speaker, responder } =
-    conductor.getState();
+  const { history, busy, ctx, running, speaker, responder } = conductor.getState();
   const who = speaker.charAt(0).toUpperCase() + speaker.slice(1);
   const ctxLabel =
     ctx.input !== undefined
@@ -40,22 +39,10 @@ export function App() {
 
   return (
     <Box flexDirection="column">
+      {/* Completed messages stream into history at the MESSAGE level (streamMode 'updates'): each
+          chunk of a bot's turn — text or tool calls — appears whole as soon as that step finishes,
+          not token-by-token. The spinner below shows the bot is still working between chunks. */}
       <Static items={history}>{(item) => <MessageView key={item.id} item={item} />}</Static>
-
-      {/* In-flight message: streaming text first (plain — partial markdown is broken mid-stream
-          and marked-terminal's ANSI destabilizes Ink's line accounting), then its tool rows
-          below. Both finalize to history via commit(), where text gets full markdown. */}
-      {liveText.map((item) => (
-        <Box key={item.id} flexDirection="column" marginBottom={1}>
-          <Text color="green" bold>
-            {item.speaker ?? responder ?? 'bot'}
-          </Text>
-          <Text>{item.text}</Text>
-        </Box>
-      ))}
-      {liveTools.map((item) => (
-        <MessageView key={item.id} item={item} />
-      ))}
 
       {busy ? (
         <Box>
