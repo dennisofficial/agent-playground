@@ -32,7 +32,14 @@ export interface ConductorState {
 }
 
 class Conductor {
-  private state: ConductorState = { history: [], liveTools: [], liveText: [], busy: false, ctx: {}, running: 0 };
+  private state: ConductorState = {
+    history: [],
+    liveTools: [],
+    liveText: [],
+    busy: false,
+    ctx: {},
+    running: 0,
+  };
   private queue: Turn[] = [];
   private processing = false;
   private subs = new Set<() => void>();
@@ -43,7 +50,10 @@ class Conductor {
     // The chat layer — not the UI — is the subscriber to job lifecycle now.
     onJobUpdate((job) => {
       this.patch({ running: listJobs().filter((j) => j.status === 'running').length });
-      if (job.status === 'done' || job.status === 'failed') {
+      // A background task wakes the chat-self once it's reached a terminal/blocking state: 'done'
+      // (relay it), 'failed' (relay the error), or 'awaiting' (it needs human input). 'running' just
+      // refreshes the footer count — it never wakes the chat, so a task runs silently to completion.
+      if (job.status === 'done' || job.status === 'awaiting' || job.status === 'failed') {
         this.enqueue({ kind: 'job', job });
       }
     });
@@ -103,18 +113,33 @@ class Conductor {
       });
     } else {
       const j = turn.job;
+      // Stale guard: by the time this turn is processed the job may have moved on (e.g. resumed).
+      if (j.status !== 'done' && j.status !== 'awaiting' && j.status !== 'failed') return;
       thread = j.notifyThread;
-      const outcome = j.status === 'done' ? `Result: ${j.result ?? '(no summary)'}` : `Error: ${j.error ?? '(unknown)'}`;
-      input = new HumanMessage(
-        `[Background job update] ${j.id} ("${j.task}") ${j.status}. ${outcome}. Let the user know in your own words — briefly. No need to check the job; the outcome is above.`,
-      );
+      input =
+        j.status === 'failed'
+          ? new HumanMessage(
+              `[Background task] ${j.id} ("${j.task}") failed: ${j.error ?? '(unknown)'}. Let the user know in your own words — briefly, first person.`,
+            )
+          : j.status === 'awaiting'
+            ? new HumanMessage(
+                `[Background task] ${j.id} ("${j.task}") needs your input:\n${j.lastReport ?? '(no report)'}\n\n` +
+                  `This is your own background work. Relay what it needs to the user (first person); when they answer, ` +
+                  `continue_work("${j.id}", <their answer>) to resume it to completion.`,
+              )
+            : new HumanMessage(
+                `[Background task] ${j.id} ("${j.task}") finished:\n${j.lastReport ?? '(no report)'}\n\n` +
+                  `This is your own work — relay the outcome to the user in the first person, briefly. The task is ` +
+                  `done; don't check it again.`,
+              );
       this.patch({ busy: true, liveTools: [], liveText: [] });
     }
 
     // Finalize a streamed message into the static history (and refresh the token gauge).
     const commit = (msg: BaseMessage | undefined) => {
       if (!msg) return;
-      const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } }).usage_metadata;
+      const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
+        .usage_metadata;
       const rows = toRenderItems([msg]);
       // Clear the live lists in the same patch that appends to history, so a finished message's
       // rows never appear in both <Static> and the live region during a message-id transition.
@@ -157,7 +182,9 @@ class Conductor {
       commit(cur);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.patch({ history: [...this.state.history, { id: `e-${this.seq++}`, kind: 'error', text: message }] });
+      this.patch({
+        history: [...this.state.history, { id: `e-${this.seq++}`, kind: 'error', text: message }],
+      });
     } finally {
       this.patch({ liveTools: [], liveText: [], busy: false });
     }

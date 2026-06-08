@@ -7,5 +7,5 @@ if (process.stdout.isTTY) {
   process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
 }
 
-console.log('agent-playground — Claude chat  (Ctrl+C or /exit to quit)\n');
+console.log('agent-playground — DennisGPT  (Ctrl+C or /exit to quit)\n');
 render(<App />);

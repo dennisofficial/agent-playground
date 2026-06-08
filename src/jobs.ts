@@ -1,9 +1,11 @@
 import { EventEmitter } from 'node:events';
+import type { WorkerEngineName, WorkerEvent } from './engines/types.js';
 
 /** The single chat surface in v0. Jobs record which chat thread should receive their relay. */
 export const CLI_THREAD_ID = 'zero:cli:main';
 
-export type JobStatus = 'running' | 'done' | 'failed';
+// 'awaiting' = a background turn finished and is waiting for the chat-self to decide what's next.
+export type JobStatus = 'running' | 'awaiting' | 'done' | 'failed';
 
 export interface Job {
   id: string;
@@ -12,6 +14,14 @@ export interface Job {
   threadId: string;
   /** Chat thread that should receive the completion relay (routing seed for multi-surface v1). */
   notifyThread: string;
+  /** Which worker engine runs this job (claude / codex / langgraph). */
+  engine: WorkerEngineName;
+  /** The engine's session/thread id, recorded once the worker reports it (resume across turns). */
+  sessionId?: string;
+  /** How many background turns have run — drives the runaway cap. */
+  turns: number;
+  /** The latest turn's report to the chat-self (its final text, including the STATUS line). */
+  lastReport?: string;
   result?: string;
   error?: string;
 }
@@ -29,15 +39,40 @@ export interface Job {
 const jobs = new Map<string, Job>();
 const emitter = new EventEmitter();
 
+// Per-job progress buffer — the normalized worker events streamed by the active engine. This is the
+// source for `check_job`'s "how's it going" read, decoupled from any single engine's internals.
+const progress = new Map<string, WorkerEvent[]>();
+
 let counter = 0;
 const nextId = () => `job-${(++counter).toString().padStart(3, '0')}`;
 
-export function createJob(task: string, notifyThread: string): Job {
+export function createJob(task: string, notifyThread: string, engine: WorkerEngineName): Job {
   const id = nextId();
-  const job: Job = { id, task, status: 'running', threadId: `job:${id}`, notifyThread };
+  const job: Job = {
+    id,
+    task,
+    status: 'running',
+    threadId: `job:${id}`,
+    notifyThread,
+    engine,
+    turns: 0,
+  };
   jobs.set(id, job);
+  progress.set(id, []);
   emitter.emit('update', job);
   return job;
+}
+
+/** Append a streamed worker event to a job's progress buffer. */
+export function appendJobProgress(id: string, event: WorkerEvent): void {
+  const buf = progress.get(id);
+  if (buf) buf.push(event);
+  else progress.set(id, [event]);
+}
+
+/** Read a job's accumulated progress events (oldest first). */
+export function getJobProgress(id: string): WorkerEvent[] {
+  return progress.get(id) ?? [];
 }
 
 export function getJob(id: string): Job | undefined {

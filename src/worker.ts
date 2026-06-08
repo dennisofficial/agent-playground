@@ -1,83 +1,104 @@
-import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
-import { MemorySaver } from '@langchain/langgraph';
-import { createAgent } from 'langchain';
-import { updateJob } from './jobs.js';
-import { buildModel } from './model.js';
-import { ZERO_WORKER_PROMPT } from './persona.js';
-import { workerTools } from './tools.js';
+import { ROOT } from './engines/guard.js';
+import { getEngine } from './engines/index.js';
+import { appendJobProgress, getJob, getJobProgress, updateJob } from './jobs.js';
+import { workerPromptFor } from './persona.js';
 
-// Uses `createAgent` from `langchain` (the current API; `createReactAgent` from
-// @langchain/langgraph/prebuilt is deprecated). model/tools/systemPrompt/checkpointer.
-let worker: ReturnType<typeof build> | undefined;
+// Zero's background-execution thread. A dispatched task runs to completion on its engine (the engine
+// loops internally until done), streams normalized events into the progress buffer, and reports ONCE
+// — marking the job 'done' (or 'awaiting' only if it explicitly needs human input). That single
+// `updateJob` is the wake signal the conductor relays through Zero. continueWork resumes the rare
+// 'awaiting' case; there is no step-by-step check-in loop.
 
-function build() {
-  return createAgent({
-    model: buildModel(),
-    tools: workerTools,
-    systemPrompt: ZERO_WORKER_PROMPT,
-    checkpointer: new MemorySaver(),
-  });
-}
+/** Hard cap on background turns per job — backstop against an endless continue↔report ping-pong. */
+export const MAX_TURNS = 25;
 
-const getWorker = () => (worker ??= build());
-
-/** Coerce message content (string | content blocks) to a flat string. */
-function asText(content: BaseMessage['content']): string {
-  if (typeof content === 'string') return content;
-  return content
-    .map((c) => (typeof c === 'string' ? c : 'text' in c && typeof c.text === 'string' ? c.text : ''))
-    .join('')
-    .trim();
+export interface ActionResult {
+  ok: boolean;
+  reason?: string;
 }
 
 /**
- * Run a job to completion on its own thread, then mark it done/failed in the registry.
- * Fire-and-forget from the caller's perspective — errors are caught here so there's never an
- * unhandled rejection. This is the background execution that keeps the chat responsive.
+ * A finished run reports as 'done' — a background task runs all the way to completion and reports
+ * ONCE; it does not check in after every step. The only exception: if it explicitly ended needing a
+ * human (STATUS: QUESTION / BLOCKED) it parks in 'awaiting' so the chat-self can get input. Anything
+ * else (DONE / PROGRESS / no status) is treated as complete.
+ *
+ * The worker ends its report with the status line, so only inspect the tail — a report can legitimately
+ * mention "STATUS: …" in its body (e.g. when it summarizes this very codebase), which must not count.
  */
-export async function runJob(jobId: string, task: string): Promise<void> {
-  const threadId = `job:${jobId}`;
+function statusFromReport(report: string): 'done' | 'awaiting' {
+  const tail = report.trimEnd().split('\n').slice(-5).join('\n');
+  const matches = [...tail.matchAll(/^[\s>*_-]*STATUS:\s*(DONE|BLOCKED|QUESTION|PROGRESS)\b/gim)];
+  const tag = matches.at(-1)?.[1]?.toUpperCase();
+  return tag === 'QUESTION' || tag === 'BLOCKED' ? 'awaiting' : 'done';
+}
+
+/**
+ * Run a job's background thread to completion on its engine. `message` is the original task on the
+ * first run, or the chat-self's answer when resuming an 'awaiting' job (resume is automatic once the
+ * job has a sessionId). The engine already loops internally until the whole task is done, so this
+ * reports once. Fire-and-forget — errors are caught here so there's never an unhandled rejection.
+ */
+export async function runWorkerTurn(jobId: string, message: string): Promise<void> {
+  const job = getJob(jobId);
+  if (!job) return;
   try {
-    const final = await getWorker().invoke(
-      { messages: [new HumanMessage(task)] },
-      { configurable: { thread_id: threadId }, recursionLimit: 50 },
-    );
-    const messages = final.messages as BaseMessage[];
-    const last = messages[messages.length - 1];
-    const result = asText(last?.content ?? '') || '(no summary)';
-    updateJob(jobId, { status: 'done', result });
+    const { result, sessionId } = await getEngine(job.engine).run({
+      task: message,
+      cwd: ROOT,
+      systemPrompt: workerPromptFor(job.engine),
+      sessionId: job.sessionId,
+      onEvent: (e) => appendJobProgress(jobId, e),
+    });
+    const report = result || '(no report)';
+    const status = statusFromReport(report);
+    updateJob(jobId, {
+      status,
+      sessionId,
+      lastReport: report,
+      turns: job.turns + 1,
+      ...(status === 'done' ? { result: report } : {}),
+    });
   } catch (err) {
     updateJob(jobId, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
   }
 }
 
 /**
- * Read the worker's live state for a job and render its recent steps as a compact, narratable
- * string. Non-interrupting — pure read of the checkpoint. This is the "how's it going" channel.
+ * Resume a task that came back needing input (an 'awaiting' job), feeding it the human's answer.
+ * This is the ONLY way work continues past one run — there is no step-by-step continue loop. Guarded:
+ * only an 'awaiting' job under the turn cap can be resumed.
+ */
+export function continueWork(jobId: string, note: string): ActionResult {
+  const job = getJob(jobId);
+  if (!job) return { ok: false, reason: `No job "${jobId}".` };
+  if (job.status !== 'awaiting')
+    return {
+      ok: false,
+      reason: `${jobId} is ${job.status}, not awaiting input — nothing to resume.`,
+    };
+  if (job.turns >= MAX_TURNS)
+    return { ok: false, reason: `${jobId} reached its ${MAX_TURNS}-run limit.` };
+  updateJob(jobId, { status: 'running' });
+  void runWorkerTurn(jobId, note);
+  return { ok: true };
+}
+
+/**
+ * Render a job's recent steps as a compact, narratable string for `check_job`. Reads the per-job
+ * progress buffer (engine-independent). Kept async so existing `await getJobState(...)` callers are
+ * unaffected.
  */
 export async function getJobState(jobId: string): Promise<string> {
-  const threadId = `job:${jobId}`;
-  // createAgent's getState return type doesn't expose our state shape statically; read the
-  // messages channel via a narrow cast (the runtime snapshot has values.messages).
-  const snapshot = (await getWorker().getState({ configurable: { thread_id: threadId } })) as unknown as {
-    values?: { messages?: BaseMessage[] };
-  };
-  const messages = snapshot.values?.messages ?? [];
-  if (messages.length === 0) return 'No activity yet — the worker is just starting.';
+  const events = getJobProgress(jobId);
+  if (events.length === 0) return 'No activity yet — just getting started.';
 
-  const recent = messages.slice(-8);
   const lines: string[] = [];
-  for (const m of recent) {
-    const type = m.getType();
-    if (type === 'human') continue;
-    if (type === 'ai') {
-      const text = asText(m.content);
-      const calls = (m as { tool_calls?: { name: string }[] }).tool_calls ?? [];
-      if (text) lines.push(`thinking: ${text.slice(0, 200)}`);
-      for (const c of calls) lines.push(`→ called ${c.name}`);
-    } else if (type === 'tool') {
-      lines.push(`  result: ${asText(m.content).slice(0, 160).replace(/\s+/g, ' ')}`);
-    }
+  for (const e of events.slice(-12)) {
+    if (e.kind === 'text') lines.push(`thinking: ${e.text.slice(0, 200)}`);
+    else if (e.kind === 'tool') lines.push(`→ called ${e.name}${e.detail ? ` (${e.detail})` : ''}`);
+    else if (e.kind === 'result')
+      lines.push(`  result: ${e.text.slice(0, 160).replace(/\s+/g, ' ')}`);
   }
   return lines.join('\n') || 'Working…';
 }

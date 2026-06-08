@@ -16,7 +16,9 @@ export type RenderItem =
 export function messageText(content: BaseMessage['content']): string {
   if (typeof content === 'string') return content;
   return content
-    .map((c) => (typeof c === 'string' ? c : 'text' in c && typeof c.text === 'string' ? c.text : ''))
+    .map((c) =>
+      typeof c === 'string' ? c : 'text' in c && typeof c.text === 'string' ? c.text : '',
+    )
     .join('');
 }
 
@@ -40,8 +42,9 @@ export function toRenderItems(messages: BaseMessage[]): RenderItem[] {
     } else if (type === 'ai') {
       const text = messageText(m.content).trim();
       if (text) items.push({ id: baseId, kind: 'assistant', text });
-      const calls = ((m as { tool_calls?: ToolCall[] }).tool_calls ?? []);
-      for (const c of calls) items.push({ id: `${baseId}:${c.id ?? c.name}`, kind: 'tool', toolName: c.name });
+      const calls = (m as { tool_calls?: ToolCall[] }).tool_calls ?? [];
+      for (const c of calls)
+        items.push({ id: `${baseId}:${c.id ?? c.name}`, kind: 'tool', toolName: c.name });
     }
     // tool-result messages: omitted from the chat transcript (internal).
   });

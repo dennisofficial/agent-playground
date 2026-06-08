@@ -25,7 +25,10 @@ export function App() {
   }
 
   const { history, liveTools, liveText, busy, ctx, running } = conductor.getState();
-  const ctxLabel = ctx.input !== undefined ? `ctx ${ctx.input.toLocaleString()} in · ${(ctx.output ?? 0).toLocaleString()} out` : '';
+  const ctxLabel =
+    ctx.input !== undefined
+      ? `ctx ${ctx.input.toLocaleString()} in · ${(ctx.output ?? 0).toLocaleString()} out`
+      : '';
 
   return (
     <Box flexDirection="column">
@@ -57,7 +60,9 @@ export function App() {
       {(ctxLabel || running > 0) && (
         <Box>
           <Text dimColor>
-            {[ctxLabel, running > 0 ? `${running} job${running === 1 ? '' : 's'} running` : ''].filter(Boolean).join('  ·  ')}
+            {[ctxLabel, running > 0 ? `${running} job${running === 1 ? '' : 's'} running` : '']
+              .filter(Boolean)
+              .join('  ·  ')}
           </Text>
         </Box>
       )}

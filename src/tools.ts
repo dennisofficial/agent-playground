@@ -1,49 +1,21 @@
 import { tool } from '@langchain/core/tools';
 import { exec, execFile } from 'node:child_process';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { bashDenyReason, resolveInCwd, ROOT } from './engines/guard.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
-const ROOT = process.cwd();
-
-/**
- * v0 permission boundary. Resolves a user/agent-supplied path against the project root and
- * rejects anything that escapes it (absolute out-of-tree paths, `..` traversal). The root
- * itself is allowed (rel === ''). This is the prototype-grade sandbox; the real boundary is
- * the v1 approval/interrupt() flow.
- */
-function resolveInCwd(p: string): string {
-  const resolved = resolve(ROOT, p);
-  const rel = relative(ROOT, resolved);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`Path "${p}" escapes the project directory — refused. Stay within ${ROOT}.`);
-  }
-  return resolved;
-}
-
 const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'coverage', '.turbo']);
-
-// Best-effort guard-rails against obviously destructive shell forms. NOT a real sandbox.
-const DENY = [
-  /\brm\s+-rf\s+\/(?!\S)/, // rm -rf /
-  /\bsudo\b/,
-  /:\(\)\s*\{/, // fork bomb :(){
-  /\bmkfs\b/,
-  /\bdd\s+if=/,
-  />\s*\/(?:etc|usr|bin|sbin|var|dev|sys|proc)\b/, // redirect into system dirs
-  /(^|\s)~\//, // home-dir expansion (outside cwd)
-];
 
 export const bash = tool(
   async ({ command }) => {
-    for (const rule of DENY) {
-      if (rule.test(command)) {
-        return `Refused: command matches a blocked destructive pattern (${rule}). Stay within the project directory and avoid system-level operations.`;
-      }
+    const reason = bashDenyReason(command);
+    if (reason) {
+      return `Refused: ${reason}. Stay within the project directory and avoid system-level operations.`;
     }
     try {
       const { stdout, stderr } = await execAsync(command, {

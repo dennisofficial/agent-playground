@@ -12,11 +12,20 @@ Each AI employee is **one self-contained process** with two layers and a connect
 - **Chat layer** — event-driven conversational identity. One LangGraph thread per Slack
   surface, scoped by `(channel, thread_ts)` — covers channels, DMs, and threads inside
   either. Decides respond/acknowledge/ignore via the gate. *Dispatches* jobs — does not run them.
-- **Job runner** — always-on background process. Owns the agent's job registry. *Spawns*
-  and owns the worker sub-agents. Posts results when they finish. This is what decouples
-  chat from work: the chat turn can end while the worker keeps running.
-- **Worker layer** — ReAct sub-agents, one per job thread (`job:{id}`). Tools always
-  available; skills loaded on demand. Do the actual work.
+- **Job runner** — always-on background process. Owns the agent's job registry. *Runs* the
+  employee's background turns and posts results when they report back. This is what decouples
+  chat from work: the chat turn can end while the background thread keeps running.
+- **Worker layer** — the employee's **own background-execution thread**, one per job (`job:{id}`):
+  the *same self* as the chat layer, just working in the background. Backed by an agent engine
+  (Claude Agent SDK / Codex SDK / a custom ReAct loop). Tools always available; skills on demand.
+
+> **One self, two surfaces.** The chat layer and the worker layer are the *same identity*, not a
+> manager and its minions. The chat agent's system prompt tells it that *it* is the worker — when it
+> takes on a task it carries it out in a background thread, and it speaks about that work in the
+> first person ("I ran the migration, hit a timeout, sorted it"). A dispatched task runs to
+> completion on its own and reports back **once** when done — the chat-self relays it. It does not
+> check in step by step. The rare exception: if the thread genuinely needs a human decision it
+> surfaces that once, and the chat-self resumes it after the human answers.
 
 **The job registry is the connective tissue.** All of an agent's chat threads share its one
 registry, so any conversation can find any job and read its live state via a non-interrupting
@@ -111,8 +120,8 @@ background process that's part of the agent, not shared infrastructure.
 When you tell Alex "work on ticket XYZ":
 1. Alex's chat handler creates a job entry: `{ task, requestedBy, notifyChannel }`
 2. Dispatches it to Alex's own job runner
-3. Job runner spawns a ReAct sub-agent for the task
-4. When the sub-agent finishes, the job runner posts the result to `notifyChannel`
+3. The job runner runs the task to completion in Alex's background-execution thread — still Alex, not a separate agent
+4. When that thread finishes, Alex (the chat-self) relays the result once (or, if it needs a human decision, surfaces that and resumes after the answer)
 
 Alex's chat handler doesn't need to be awake for step 4. The notification target is
 recorded at job creation — the job runner handles delivery.
@@ -120,6 +129,11 @@ recorded at job creation — the job runner handles delivery.
 ---
 
 ## Sub-Agent Loop (ReAct)
+
+> **Naming note:** "sub-agent" here is the employee's *own background-execution thread*, not a
+> distinct colleague — it runs the same identity. The loop below is how that thread does the work,
+> and it can be a homegrown `createReactAgent` **or** delegated wholesale to an agent engine (Claude
+> Agent SDK / Codex SDK) that already implements reason→act→observe.
 
 Sub-agents are **rolling agentic workers** — reason → act → observe, looping until done.
 This is the same pattern as Claude Code.
