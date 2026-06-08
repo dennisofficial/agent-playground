@@ -2,7 +2,8 @@ import { AIMessageChunk, type BaseMessage, HumanMessage } from '@langchain/core/
 import { getGraphFor } from './chat.js';
 import { gate } from './gate.js';
 import { type Job, listJobs, onJobUpdate } from './jobs.js';
-import { companyScope, type Identity, personScope } from './memory/identity.js';
+import { extractAndRemember } from './memory/extract.js';
+import { type Identity } from './memory/identity.js';
 import { type Bot, botById, ROSTER } from './roster.js';
 import { type ContextUsage, messageText, type RenderItem, toRenderItems } from './ui/messages.js';
 
@@ -24,7 +25,7 @@ const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slic
 /** Cap on bot replies per processing burst — the loop breaker so bots can't ping-pong forever. */
 const MAX_BOT_REPLIES = 3;
 
-type ChannelMsg = { author: string; authorBotId?: string; text: string };
+type ChannelMsg = { author: string; authorId: string; authorBotId?: string; text: string };
 
 type AssistantItem = Extract<RenderItem, { kind: 'assistant' }>;
 type ToolItem = Extract<RenderItem, { kind: 'tool' }>;
@@ -94,7 +95,7 @@ class Conductor {
   submitUser(text: string): void {
     const who = titleCase(this.state.speaker);
     this.members.add(this.state.speaker);
-    this.channelLog.push({ author: who, text });
+    this.channelLog.push({ author: who, authorId: this.state.speaker, text });
     this.patch({
       history: [...this.state.history, { id: `u-${this.seq++}`, kind: 'user', text, speaker: who }],
     });
@@ -114,15 +115,30 @@ class Conductor {
     for (const cb of this.subs) cb();
   }
 
-  /** Build the run identity for a bot's turn: who's present + who's speaking + this bot as owner. */
+  /** Build the run identity for a bot's turn: who's present + who's speaking + this bot as self. */
   private identityFor(botId: string, surface: string): Identity {
     return {
-      participants: [...this.members].map(personScope),
-      speaker: personScope(this.state.speaker),
-      company: companyScope('local'),
-      surface,
       selfAgent: botId,
+      company: 'local',
+      participants: [...this.members],
+      speaker: this.state.speaker,
+      surface,
+      isChannel: true, // #dev is a shared channel — 1:1 facts never surface here
     };
+  }
+
+  /** Memory gate: learn a durable fact from a human message (fire-and-forget). Bot messages skipped. */
+  private learnFrom(bot: Bot, m: ChannelMsg): void {
+    if (m.authorBotId) return; // only learn from human messages
+    const identity: Identity = {
+      selfAgent: bot.id,
+      company: 'local',
+      participants: [...this.members],
+      speaker: m.authorId, // the actual author, not the mutable current speaker
+      surface: `${bot.id}:dev:root`,
+      isChannel: true,
+    };
+    void extractAndRemember({ bot, author: m.author, text: m.text, identity });
   }
 
   private recentContext(n = 6): string {
@@ -186,6 +202,7 @@ class Conductor {
         } else {
           await this.recordIgnored(bot, m);
         }
+        this.learnFrom(bot, m); // memory gate: learn from it whether or not we replied
         break; // re-scan from the top — a reply may have appended new messages
       }
     }
@@ -276,7 +293,8 @@ class Conductor {
     }
 
     const reply = (spoken || (cur ? messageText(cur.content) : '')).trim();
-    if (reply) this.channelLog.push({ author: bot.name, authorBotId: bot.id, text: reply });
+    if (reply)
+      this.channelLog.push({ author: bot.name, authorId: bot.id, authorBotId: bot.id, text: reply });
   }
 }
 

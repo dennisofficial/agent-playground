@@ -1,67 +1,50 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { getIdentity, type Visibility } from './identity.js';
+import { getIdentity, type Tier } from './identity.js';
 import { forgetFact, recall, remember, type StoredFact, updateFact } from './semantic.js';
 
 /**
- * Zero's self-managed memory tools. They read the active identity from the run config (set by the
- * conductor / Slack adapter), so a fact scopes to who/what it's ABOUT and recalls by who's PRESENT —
- * never by the channel/thread id. Chat-layer only in v1 (subprocess workers reach memory via MCP later).
+ * Zero's self-managed memory tools. Identity (which bot, which project, who's present) is read from the
+ * run config set by the conductor, so `remember` resolves the chosen tier to a concrete scope.
  */
 
-const fmt = (f: StoredFact): string =>
-  `- (${f.subject_scope}${f.kind === 'personal' ? ', personal' : ''}) ${f.fact}`;
+const fmt = (f: StoredFact): string => `- ${f.fact}`;
 
 export const remember_tool = tool(
-  async ({ fact, about, visibility, personal }, config) => {
+  async ({ fact, tier }, config) => {
     const id = getIdentity(config);
-    const subjectScope = about ?? id.speaker;
-    const res = await remember({
-      fact,
-      subjectScope,
-      id,
-      visibility: visibility as Visibility | undefined,
-      kind: personal ? 'personal' : 'work',
-    });
-    const verb = res.action === 'updated' ? 'Updated what I knew' : 'Got it — remembered that';
-    return `${verb} (about ${subjectScope}).`;
+    const t = (tier ?? 'company') as Tier;
+    const res = await remember({ fact, tier: t, id });
+    return `${res.action === 'updated' ? 'Updated what I knew' : 'Remembered'} (${t}).`;
   },
   {
     name: 'remember',
     description:
-      "Save a durable fact worth recalling in later conversations — a preference, a decision, a detail about a person or the company. Scope it to who/what it's ABOUT; the fact then follows that entity across every surface (DMs, channels, group chats).",
+      'Save a durable fact worth recalling in later conversations — a decision, a preference, a work detail. Pick who should know it.',
     schema: z.object({
       fact: z
         .string()
-        .describe('The fact stated plainly, e.g. "Dennis prefers TypeScript over JavaScript".'),
-      about: z
-        .string()
+        .describe('The fact, stated plainly, e.g. "We are standardizing on Postgres for all services".'),
+      tier: z
+        .enum(['company', 'bot', 'private'])
         .optional()
         .describe(
-          'Subject scope it is about: person:<id>, team:<id>, company:<id>, or global. Defaults to the person you are talking with.',
+          "Who should know it: 'company' (default — all bots in the workspace), 'bot' (just you, across all your chats), or 'private' (1:1 with this person — use for personal or sensitive things).",
         ),
-      visibility: z
-        .enum(['private', 'company'])
-        .optional()
-        .describe(
-          "Who may surface it. 'private' (default for person facts) stays in 1:1s with that person; 'company' is shareable in any conversation.",
-        ),
-      personal: z.boolean().optional().describe('True for a personal (non-work) detail.'),
     }),
   },
 );
 
 export const recall_tool = tool(
   async ({ query }, config) => {
-    const id = getIdentity(config);
-    const facts = await recall(query, id);
+    const facts = await recall(query, getIdentity(config));
     if (facts.length === 0) return 'Nothing saved that matches.';
     return `What I know that's relevant:\n${facts.map(fmt).join('\n')}`;
   },
   {
     name: 'recall',
     description:
-      'Look up what you already know that is relevant to the current moment — about the people present, the team, or the company. Use it to ground yourself before answering when prior context would help.',
+      'Look up what you already know that is relevant right now — company knowledge, your own notes, or (in a 1:1) what you know about this person. Use it to ground yourself before answering.',
     schema: z.object({
       query: z.string().describe('What you want to remember about, in natural language.'),
     }),
@@ -71,14 +54,12 @@ export const recall_tool = tool(
 export const update_memory_tool = tool(
   async ({ query, newFact }, config) => {
     const updated = await updateFact(query, newFact, getIdentity(config));
-    return updated
-      ? `Updated it (about ${updated.subject_scope}).`
-      : 'No matching memory to update.';
+    return updated ? 'Updated it.' : 'No matching memory to update.';
   },
   {
     name: 'update_memory',
     description:
-      'Correct or replace an existing fact when something changes (e.g. a preference or role changed). Finds the closest saved fact by meaning and overwrites it.',
+      'Correct or replace an existing fact when something changes. Finds the closest saved fact by meaning and overwrites it.',
     schema: z.object({
       query: z.string().describe('Roughly what the existing fact is about.'),
       newFact: z.string().describe('The corrected fact.'),
@@ -89,7 +70,7 @@ export const update_memory_tool = tool(
 export const forget_tool = tool(
   async ({ query }, config) => {
     const gone = await forgetFact(query, getIdentity(config));
-    return gone ? `Forgot it (about ${gone.subject_scope}).` : 'No matching memory to forget.';
+    return gone ? 'Forgot it.' : 'No matching memory to forget.';
   },
   {
     name: 'forget',

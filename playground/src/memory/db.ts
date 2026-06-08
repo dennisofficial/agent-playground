@@ -27,18 +27,15 @@ function migrate(d: Database.Database): void {
       id             INTEGER PRIMARY KEY,
       fact           TEXT NOT NULL,
       embedding      TEXT NOT NULL,                 -- JSON float[] (text-embedding-3-small, 1536d)
-      subject_scope  TEXT NOT NULL,                 -- WHO/WHAT it's about: person:<id> | team:<id> | company:<id> | global
-      visibility     TEXT NOT NULL,                 -- WHO may surface it: 'private' | 'company'
-      owner_agent    TEXT NOT NULL,                 -- which agent holds it
+      scope          TEXT NOT NULL,                 -- access tier: company:<id> | bot:<id> | pair:<bot>:<human>
       asserted_by    TEXT,                          -- who stated it (provenance)
-      source_surface TEXT,                          -- where it was stated (provenance, NOT a scope key)
-      kind           TEXT NOT NULL DEFAULT 'work',  -- 'work' | 'personal'
+      source_surface TEXT,                          -- where it was stated (provenance)
       confidence     REAL NOT NULL DEFAULT 1.0,
       created_at     TEXT NOT NULL,
       updated_at     TEXT NOT NULL,
       deleted_at     TEXT                           -- soft-delete tombstone (never hard-delete human facts)
     );
-    CREATE INDEX IF NOT EXISTS facts_subject ON facts(subject_scope);
+    CREATE INDEX IF NOT EXISTS facts_scope ON facts(scope);
 
     CREATE TABLE IF NOT EXISTS worklog (
       id           INTEGER PRIMARY KEY,

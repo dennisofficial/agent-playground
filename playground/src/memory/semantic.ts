@@ -1,27 +1,16 @@
 import { getDb } from './db.js';
 import { cosine, embed } from './embeddings.js';
-import {
-  canSurface,
-  defaultVisibility,
-  type FactKind,
-  type Identity,
-  recallScopes,
-  type Visibility,
-} from './identity.js';
+import { type Identity, recallScopes, scopeForTier, type Tier } from './identity.js';
 
 /**
- * Self-managed semantic memory — the `remember` / `recall` / `update` / `forget` surface from
- * ARCHITECTURE.md. This is the abstraction boundary: callers never see SQLite or cosine, so the
- * backend can become sqlite-vec or Hindsight later without touching them.
+ * Self-managed semantic memory — `remember` / `recall` / `update` / `forget` over distilled facts,
+ * stored at one of three sharing tiers (see identity.ts). The tier is the abstraction boundary; a
+ * vector index or Hindsight could drop in behind these without touching callers.
  */
-
 export interface StoredFact {
   id: number;
   fact: string;
-  subject_scope: string;
-  visibility: Visibility;
-  kind: FactKind;
-  owner_agent: string;
+  scope: string;
   asserted_by: string | null;
   source_surface: string | null;
   confidence: number;
@@ -31,8 +20,7 @@ export interface StoredFact {
 
 type Row = StoredFact & { embedding: string };
 
-// Cosine above this, within the same subject scope, means "the same fact" → update in place rather
-// than storing a near-duplicate. This is what makes repeated "Dennis prefers TypeScript" converge.
+// Cosine above this, within the same scope, means "the same fact" → update in place, not a duplicate.
 const DEDUP_THRESHOLD = 0.92;
 
 const nowIso = () => new Date().toISOString();
@@ -41,27 +29,24 @@ const stripEmb = ({ embedding: _embedding, ...rest }: Row): StoredFact => rest;
 
 export interface RememberInput {
   fact: string;
-  /** Who/what the fact is about, e.g. `person:dennis`, `company:local`. */
-  subjectScope: string;
-  visibility?: Visibility;
-  kind?: FactKind;
-  /** The active identity — provides owner_agent, asserted_by, source_surface. */
+  /** Which sharing tier to store at. */
+  tier: Tier;
+  /** The active identity — resolves the tier to a concrete scope and provides provenance. */
   id: Identity;
 }
 
-/** Store a fact, or update the nearest near-duplicate in the same subject scope (dedup-on-upsert). */
+/** Store a fact at its tier's scope, or update the nearest near-duplicate in that scope (dedup-on-upsert). */
 export async function remember(
   input: RememberInput,
 ): Promise<{ action: 'inserted' | 'updated'; id: number }> {
   const db = getDb();
   const vec = await embed(input.fact);
-  const kind = input.kind ?? 'work';
-  const visibility = input.visibility ?? defaultVisibility(kind);
+  const scope = scopeForTier(input.tier, input.id);
   const ts = nowIso();
 
   const candidates = db
-    .prepare(`SELECT id, embedding FROM facts WHERE subject_scope = ? AND deleted_at IS NULL`)
-    .all(input.subjectScope) as { id: number; embedding: string }[];
+    .prepare(`SELECT id, embedding FROM facts WHERE scope = ? AND deleted_at IS NULL`)
+    .all(scope) as { id: number; embedding: string }[];
   let best: { id: number; sim: number } | undefined;
   for (const c of candidates) {
     const sim = cosine(vec, parseEmb(c.embedding));
@@ -69,46 +54,35 @@ export async function remember(
   }
 
   if (best && best.sim >= DEDUP_THRESHOLD) {
-    db.prepare(
-      `UPDATE facts SET fact = ?, embedding = ?, visibility = ?, kind = ?, updated_at = ? WHERE id = ?`,
-    ).run(input.fact, JSON.stringify(vec), visibility, kind, ts, best.id);
+    db.prepare(`UPDATE facts SET fact = ?, embedding = ?, updated_at = ? WHERE id = ?`).run(
+      input.fact,
+      JSON.stringify(vec),
+      ts,
+      best.id,
+    );
     return { action: 'updated', id: best.id };
   }
 
   const info = db
     .prepare(
-      `INSERT INTO facts
-         (fact, embedding, subject_scope, visibility, owner_agent, asserted_by, source_surface, kind, confidence, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO facts (fact, embedding, scope, asserted_by, source_surface, confidence, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(
-      input.fact,
-      JSON.stringify(vec),
-      input.subjectScope,
-      visibility,
-      input.id.selfAgent,
-      input.id.speaker,
-      input.id.surface,
-      kind,
-      1.0,
-      ts,
-      ts,
-    );
+    .run(input.fact, JSON.stringify(vec), scope, input.id.speaker, input.id.surface, 1.0, ts, ts);
   return { action: 'inserted', id: Number(info.lastInsertRowid) };
 }
 
-/** Load the live, surfaceable facts in the current scopes (no embedding column). */
+/** Live facts in the scopes this identity may recall from (company + bot-wide + 1:1-if-DM). */
 function liveFacts(id: Identity): Row[] {
   const scopes = recallScopes(id);
   if (scopes.length === 0) return [];
   const placeholders = scopes.map(() => '?').join(',');
-  const rows = getDb()
-    .prepare(`SELECT * FROM facts WHERE subject_scope IN (${placeholders}) AND deleted_at IS NULL`)
+  return getDb()
+    .prepare(`SELECT * FROM facts WHERE scope IN (${placeholders}) AND deleted_at IS NULL`)
     .all(...scopes) as Row[];
-  return rows.filter((r) => canSurface(r, id));
 }
 
-/** Semantic recall: facts whose subject is in scope AND whose visibility permits this surface, ranked by cosine. */
+/** Semantic recall over the tiers this bot can access, ranked by cosine. */
 export async function recall(query: string, id: Identity, limit = 5): Promise<StoredFact[]> {
   const rows = liveFacts(id);
   if (rows.length === 0) return [];
@@ -120,7 +94,7 @@ export async function recall(query: string, id: Identity, limit = 5): Promise<St
     .map(({ r }) => stripEmb(r));
 }
 
-/** Find the single nearest surfaceable fact to a query (used by update/forget to target a fact by meaning). */
+/** Nearest accessible fact to a query — used by update/forget to target a fact by meaning. */
 async function nearest(query: string, id: Identity): Promise<{ row: Row; sim: number } | undefined> {
   const rows = liveFacts(id);
   if (rows.length === 0) return undefined;
@@ -133,7 +107,7 @@ async function nearest(query: string, id: Identity): Promise<{ row: Row; sim: nu
   return best;
 }
 
-/** Overwrite the fact nearest to `query` with `newFact` (re-embedded). Returns the updated fact, or null. */
+/** Overwrite the fact nearest to `query` with `newFact`. Returns the updated fact, or null. */
 export async function updateFact(
   query: string,
   newFact: string,
@@ -149,8 +123,7 @@ export async function updateFact(
   return { ...stripEmb(hit.row), fact: newFact, updated_at: ts };
 }
 
-/** Soft-delete (tombstone) the fact nearest to `query` — never a hard delete, so human-asserted facts
- *  can be recovered/audited (D6). Returns the forgotten fact, or null. */
+/** Soft-delete (tombstone) the fact nearest to `query` — never a hard delete. Returns it, or null. */
 export async function forgetFact(query: string, id: Identity): Promise<StoredFact | null> {
   const hit = await nearest(query, id);
   if (!hit) return null;

@@ -29,3 +29,11 @@ export function buildModel() {
 export function buildGateModel() {
   return new ChatAnthropic({ model: 'claude-haiku-4-5-20251001', maxTokens: 16, temperature: 0 });
 }
+
+/**
+ * Cheap model for the memory gate's fact extraction — runs in the background on messages, so it stays
+ * on Haiku. A bit more room than the response gate since the output is a short fact, not one word.
+ */
+export function buildExtractModel() {
+  return new ChatAnthropic({ model: 'claude-haiku-4-5-20251001', maxTokens: 128, temperature: 0 });
+}

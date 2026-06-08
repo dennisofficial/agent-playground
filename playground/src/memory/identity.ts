@@ -1,79 +1,62 @@
 /**
- * The identity seam: who is present *right now*, resolved per turn. This is what lets fact memory be
- * scoped to ENTITIES (people, teams, the company) and recalled by PARTICIPANTS — never by the Slack
- * channel/thread id. The conductor sets a CLI stub today; a Slack adapter fills real ids later.
- *
- * Two independent axes on every fact (kept separate on purpose):
- *  - SUBJECT  (`subject_scope`): who/what the fact is about. Follows the entity across every surface.
- *  - VISIBILITY: who may *surface* it. `company` = any agent, anywhere; `private` = only in a 1:1 with
- *    the subject. So a DM-private fact about Dennis is never surfaced into a group channel — even
- *    though its subject (Dennis) is present there.
+ * The identity seam + the three memory SHARING tiers. A fact's `scope` is exactly one access tier:
+ *  - `pair:{bot}:{human}` — 1:1 private (a bot's relationship with one human); surfaces ONLY in a DM.
+ *  - `bot:{bot}`          — bot-wide (that bot, across all its conversations). Lightly used: most role
+ *                           knowledge lives in the system prompt + skills, not learned memory.
+ *  - `company:{id}`       — shared by all bots in the workspace.
+ * "Who a fact is about" lives in the fact text; the scope decides WHO MAY ACCESS it.
  */
-export type Visibility = 'private' | 'company';
-export type FactKind = 'work' | 'personal';
+export type Tier = 'company' | 'bot' | 'private';
 
-// Scope string format: `person:<id>` | `team:<id>` | `company:<id>` | `agent:<id>` | `global`.
-export const personScope = (id: string) => `person:${id}`;
-export const companyScope = (id: string) => `company:${id}`;
-export const teamScope = (id: string) => `team:${id}`;
+export const companyScope = (companyId: string) => `company:${companyId}`;
+export const botScope = (botId: string) => `bot:${botId}`;
+export const pairScope = (botId: string, humanId: string) => `pair:${botId}:${humanId}`;
 
 export interface Identity {
-  /** Humans present, as `person:<id>` — recall pulls facts about each of them. */
-  participants: string[];
-  /** The person speaking *this* turn, as `person:<id>` — used for `asserted_by` and as the default
-   *  subject of a new fact ("remember this about the person I'm talking with"). */
-  speaker: string;
-  /** `team:<id>` if this surface maps to a team. */
-  team?: string;
-  /** `company:<id>` — the shared scope. */
-  company: string;
-  /** The thread/surface id — provenance + 1:1 detection only; NEVER a scope key. */
-  surface: string;
-  /** This agent's id — `owner_agent` on writes. */
+  /** This bot's id (e.g. "alex"). */
   selfAgent: string;
+  /** The project/workspace id (e.g. "local") — the company tier. */
+  company: string;
+  /** Human ids present in the conversation (e.g. ["dennis"]). */
+  participants: string[];
+  /** The human id speaking this turn — used for the pair scope and `asserted_by`. */
+  speaker: string;
+  /** The surface/thread id (provenance). */
+  surface: string;
+  /** True for a shared channel (no 1:1 facts surface); false for a 1:1 DM. */
+  isChannel: boolean;
 }
 
-/** v0 CLI stub: one human (Dennis), one company, a DM-like 1:1 surface. Slack fills real ids later. */
+/** v0 CLI stub: bot Alex, project "local", Dennis present, in a channel. Slack fills real ids later. */
 export const CLI_IDENTITY: Identity = {
-  participants: [personScope('dennis')],
-  speaker: personScope('dennis'),
-  company: companyScope('local'),
-  surface: 'dev:root',
   selfAgent: 'alex',
+  company: 'local',
+  participants: ['dennis'],
+  speaker: 'dennis',
+  surface: 'dev:root',
+  isChannel: true,
 };
 
-/**
- * Pull identity out of a run's config (set by the conductor / Slack adapter), falling back to the CLI
- * stub. Defensive so a memory tool still works if a caller forgets to thread it through.
- */
+/** Pull identity out of a run's config (set by the conductor / Slack adapter), falling back to the stub. */
 export function getIdentity(config?: { configurable?: Record<string, unknown> }): Identity {
   return (config?.configurable?.identity as Identity | undefined) ?? CLI_IDENTITY;
 }
 
-/** Subject scopes whose facts are candidates this turn: every participant + team + company + global. */
+/**
+ * The scope keys a bot may recall from: company-wide + its own bot-wide, plus — only in a 1:1 DM
+ * (`!isChannel`) — the present human's 1:1 facts. In a channel, 1:1 facts never surface (the leak guard).
+ */
 export function recallScopes(id: Identity): string[] {
-  return [...id.participants, ...(id.team ? [id.team] : []), id.company, 'global'];
+  const scopes = [companyScope(id.company), botScope(id.selfAgent)];
+  if (!id.isChannel) {
+    for (const h of id.participants) scopes.push(pairScope(id.selfAgent, h));
+  }
+  return scopes;
 }
 
-/**
- * Default visibility for a new fact, keyed off its kind: WORK facts are company-shareable (so the
- * team can use them in the channel — "Dennis prefers TypeScript"); PERSONAL facts are private (they
- * only surface in a 1:1 with the subject — "Dennis has a cat"). The caller can always override.
- */
-export function defaultVisibility(kind: FactKind): Visibility {
-  return kind === 'personal' ? 'private' : 'company';
-}
-
-/**
- * The access gate, separate from subject scoping: may this fact be surfaced in the current context?
- * `company` facts: anywhere. `private` facts: only in a 1:1 with the subject (the CLI is a 1:1 with its
- * single participant). This is what keeps DM-private facts out of group channels.
- */
-export function canSurface(
-  fact: { subject_scope: string; visibility: Visibility },
-  id: Identity,
-): boolean {
-  if (fact.visibility === 'company') return true;
-  const isOneOnOne = id.participants.length === 1;
-  return isOneOnOne && id.participants.includes(fact.subject_scope);
+/** The scope key a new fact is stored under, by tier. `private` = 1:1 with the current speaker. */
+export function scopeForTier(tier: Tier, id: Identity): string {
+  if (tier === 'company') return companyScope(id.company);
+  if (tier === 'bot') return botScope(id.selfAgent);
+  return pairScope(id.selfAgent, id.speaker);
 }
