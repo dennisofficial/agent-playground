@@ -7,8 +7,8 @@ import type { BaseMessage } from '@langchain/core/messages';
  * consume the same RenderItem shape.
  */
 export type RenderItem =
-  | { id: string; kind: 'user'; text: string; speaker?: string }
-  | { id: string; kind: 'assistant'; text: string; speaker?: string }
+  | { id: string; kind: 'user'; text: string; speaker?: string; ts?: string }
+  | { id: string; kind: 'assistant'; text: string; speaker?: string; ts?: string }
   | { id: string; kind: 'tool'; toolName: string }
   | { id: string; kind: 'reaction'; emoji: string; by: string }
   | { id: string; kind: 'error'; text: string };

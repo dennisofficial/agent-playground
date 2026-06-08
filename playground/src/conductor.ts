@@ -1,7 +1,6 @@
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
+import { type BotStateDelta, getBotGraph } from './bot-graph.js';
 import { channel, type ChannelMsg } from './channel.js';
-import { getGraphFor } from './chat.js';
-import { gate, type GateDecision } from './gate.js';
 import { type Job, listJobs, onJobUpdate } from './jobs.js';
 import { extractAndRemember } from './memory/extract.js';
 import { type Identity } from './memory/identity.js';
@@ -15,11 +14,22 @@ import { type ContextUsage, type RenderItem, toRenderItems } from './ui/messages
  * emits its own messages back as they're produced so teammates see them. This is the Slack model; the
  * `channel` + this dispatcher are the seam a Slack adapter replaces.
  *
- * (Phase 1: turns still run on the per-bot createAgent graph, streamed at the message level. Phase 2
- * swaps that for a custom LangGraph turn-graph with mid-step channel re-read.)
+ * Each turn runs on the bot's LangGraph turn-graph ([bot-graph.ts](bot-graph.ts)): gate → respond
+ * (llm ⇄ tools) | acknowledge | ignore. The graph owns the gate, the mid-step channel re-read, and the
+ * checkpoint; the dispatcher owns scheduling, the cursor's coordinate space, channel/UI emission, and the
+ * memory gate. The graph's streamed deltas drive what the dispatcher renders and emits.
  */
 
 const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** A short HH:MM:SS stamp for the transcript — handy for eyeballing the async/parallel flow. */
+const clock = (): string =>
+  new Date().toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 
 /** Max bot RESPONSE turns between human messages — the loop breaker so bots can't ping-pong forever. */
 const MAX_BOT_BURST = 4;
@@ -96,7 +106,7 @@ class Conductor {
       authorId: this.state.speaker,
       text,
     });
-    this.pushHistory({ id: msg.id, kind: 'user', text, speaker: who });
+    this.pushHistory({ id: msg.id, kind: 'user', text, speaker: who, ts: clock() });
     // channel.subscribe → schedule() already fired; nothing to await.
   }
 
@@ -144,8 +154,8 @@ class Conductor {
     // Channel deliveries: each idle bot with undelivered non-own work.
     for (const bot of ROSTER) {
       if (this.runningBots.has(bot.id)) continue;
-      if (!this.nextFor(bot)) continue; // also advances the cursor past leading own messages
-      this.claim(bot.id, () => this.processBot(bot));
+      if (!this.hasWork(bot)) continue;
+      this.claim(bot.id, () => this.runBotGraph(bot));
     }
     this.maybeResolveIdle();
   }
@@ -161,67 +171,44 @@ class Conductor {
     });
   }
 
-  /** Peek the next non-own undelivered message for a bot, advancing the cursor past leading own ones. */
-  private nextFor(bot: Bot): ChannelMsg | undefined {
-    const undelivered = channel.since(this.deliveredUpTo.get(bot.id) ?? 0);
-    let i = 0;
-    while (i < undelivered.length && undelivered[i].authorBotId === bot.id) i++;
-    if (i > 0) this.deliveredUpTo.set(bot.id, undelivered[i - 1].seq + 1); // consume own (no work)
-    return undelivered[i];
-  }
-
-  /** Gate + act on a bot's whole undelivered batch, consuming it exactly once. */
-  private async processBot(bot: Bot): Promise<void> {
-    const cursor = this.deliveredUpTo.get(bot.id) ?? 0;
-    const upto = channel.length; // consume up to here; messages arriving later stay undelivered
-    const batch = channel.since(cursor).filter((m) => m.seq < upto && m.authorBotId !== bot.id);
-    if (batch.length === 0) {
-      this.deliveredUpTo.set(bot.id, upto);
-      return;
-    }
-    const latest = batch[batch.length - 1];
-    const capped = !!latest.authorBotId && this.botBurst >= MAX_BOT_BURST;
-    try {
-      const decision: GateDecision = capped
-        ? { action: 'ignore' }
-        : await gate(bot, latest.text, {
-            authorBotId: latest.authorBotId,
-            recentContext: this.recentContext(),
-          });
-      if (decision.action === 'respond') {
-        this.botBurst++;
-        await this.runBotTurn(bot, batch.map(asInput));
-      } else if (decision.action === 'acknowledge') {
-        await this.recordSeen(bot, batch);
-        this.react(bot, decision.emoji ?? '👍');
-      } else {
-        await this.recordSeen(bot, batch);
-      }
-    } catch (err) {
-      this.pushError(err);
-    } finally {
-      this.deliveredUpTo.set(bot.id, upto); // consumed exactly once, whatever the branch
-      for (const m of batch) this.learnFrom(bot, m);
-    }
+  /** True if the channel holds a non-own message this bot hasn't consumed yet (its trailing own ones don't count). */
+  private hasWork(bot: Bot): boolean {
+    return channel.since(this.deliveredUpTo.get(bot.id) ?? 0).some((m) => m.authorBotId !== bot.id);
   }
 
   // ── Turn execution ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Run one bot turn on its createAgent graph, streamed at the message level. Each completed assistant
-   * message is emitted to the CHANNEL as it's produced (so teammates see it mid-turn) and to history;
-   * the first tool-only step fires a 👀.
+   * Run one bot turn on its LangGraph turn-graph. The graph gates, consumes the channel (mid-step), and
+   * checkpoints; the dispatcher interprets its streamed node deltas — emitting each assistant message to
+   * the CHANNEL (so teammates see it mid-turn) + history, firing 👀 on the first tool-only step, and
+   * surfacing the ack reaction. After the turn it reads the authoritative cursor back from the checkpoint
+   * and runs the memory gate over the human messages this bot consumed (including mid-step ones).
+   *
+   * `seed` forces a gate-bypassed respond on a synthetic message (job relays); `surface` overrides the
+   * identity surface (a job's notify thread).
    */
-  private async runBotTurn(bot: Bot, inputs: HumanMessage[], surface?: string): Promise<void> {
+  private async runBotGraph(
+    bot: Bot,
+    opts: { seed?: string; surface?: string } = {},
+  ): Promise<void> {
     const thread = `${bot.id}:dev:root`;
-    const identity = this.identityFor(bot.id, surface ?? thread);
+    const identity = this.identityFor(bot.id, opts.surface ?? thread);
+    const cursorBefore = this.deliveredUpTo.get(bot.id) ?? 0;
+    const capped = this.botBurst >= MAX_BOT_BURST;
     let firstAi = true;
+    let responded = false;
 
     const commit = (msg: BaseMessage) => {
       const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
         .usage_metadata;
-      const rows = toRenderItems([msg], bot.name).map((r) => ({ ...r, id: `${bot.id}:${this.emitSeq++}` }));
-      if (firstAi && msg.getType() === 'ai') {
+      const stamp = clock();
+      const rows = toRenderItems([msg], bot.name).map((r) => ({
+        ...r,
+        id: `${bot.id}:${this.emitSeq++}`,
+        ...(r.kind === 'assistant' ? { ts: stamp } : {}),
+      }));
+      if (firstAi) {
         firstAi = false;
         const hasText = rows.some((r) => r.kind === 'assistant' && r.text);
         const hasTool = rows.some((r) => r.kind === 'tool');
@@ -229,7 +216,13 @@ class Conductor {
       }
       for (const r of rows) {
         if (r.kind === 'assistant' && r.text) {
-          channel.append({ id: r.id, author: bot.name, authorId: bot.id, authorBotId: bot.id, text: r.text });
+          channel.append({
+            id: r.id,
+            author: bot.name,
+            authorId: bot.id,
+            authorBotId: bot.id,
+            text: r.text,
+          });
         }
       }
       if (rows.length || usage) {
@@ -240,24 +233,47 @@ class Conductor {
       }
     };
 
+    // Input overwrites the (intentionally dead) persisted cursor with our in-memory one — see bot-graph.ts.
+    const input: Record<string, unknown> = { cursor: cursorBefore, forced: !!opts.seed };
+    if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
+
     try {
-      const stream = await getGraphFor(bot.id).stream(
-        { messages: inputs },
-        { configurable: { thread_id: thread, identity }, streamMode: 'updates', recursionLimit: 50 },
-      );
-      for await (const update of stream as AsyncIterable<
-        Record<string, { messages?: BaseMessage[] }>
-      >) {
-        for (const payload of Object.values(update)) {
-          for (const msg of payload?.messages ?? []) commit(msg);
+      const stream = await getBotGraph(bot.id).stream(input, {
+        configurable: { thread_id: thread, identity, capped },
+        streamMode: 'updates',
+        recursionLimit: 50,
+      });
+      for await (const update of stream as AsyncIterable<Record<string, BotStateDelta>>) {
+        for (const delta of Object.values(update)) {
+          if (delta.decision === 'respond' && !responded) {
+            responded = true;
+            this.botBurst++; // a real reply counts toward the loop breaker
+          }
+          if (delta.decision === 'acknowledge') this.react(bot, delta.ackEmoji ?? '👍');
+          for (const msg of delta.messages ?? []) {
+            if (msg.getType() === 'ai') commit(msg); // skip injected Human messages (already in channel/UI)
+          }
         }
       }
     } catch (err) {
       this.pushError(err);
     }
+
+    // The checkpoint is the cursor's source of truth; read it back, then learn from what we consumed.
+    let cursorAfter = cursorBefore;
+    try {
+      const final = await getBotGraph(bot.id).getState({ configurable: { thread_id: thread } });
+      cursorAfter = (final.values.cursor as number) ?? cursorBefore;
+    } catch {
+      /* keep cursorBefore — a getState failure must not advance the cursor past unconsumed messages */
+    }
+    this.deliveredUpTo.set(bot.id, cursorAfter);
+    for (const m of channel.since(cursorBefore)) {
+      if (m.seq < cursorAfter && !m.authorBotId) this.learnFrom(bot, m);
+    }
   }
 
-  /** Relay a finished job through its owner bot (gate-bypassed); its reply enters the channel. */
+  /** Relay a finished job through its owner bot (gate-bypassed seed); its reply enters the channel. */
   private async runJobRelay(job: Job): Promise<void> {
     if (job.status !== 'done' && job.status !== 'awaiting' && job.status !== 'failed') return;
     const bot = botById(job.ownerBot) ?? ROSTER[0];
@@ -267,19 +283,7 @@ class Conductor {
         : job.status === 'awaiting'
           ? `[Background task] ${job.id} ("${job.task}") needs your input:\n${job.lastReport ?? '(no report)'}\n\nThis is your own background work. Relay what it needs (first person); when answered, continue_work("${job.id}", <answer>) to resume it.`
           : `[Background task] ${job.id} ("${job.task}") finished:\n${job.lastReport ?? '(no report)'}\n\nThis is your own work — relay the outcome to the team in the first person, briefly. The task is done; don't check it again.`;
-    await this.runBotTurn(bot, [new HumanMessage(prompt)], job.notifyThread);
-  }
-
-  /** Record messages in a bot's checkpoint without a model call (the silent/ack path). Awaited → exactly-once. */
-  private async recordSeen(bot: Bot, batch: ChannelMsg[]): Promise<void> {
-    try {
-      await getGraphFor(bot.id).updateState(
-        { configurable: { thread_id: `${bot.id}:dev:root` } },
-        { messages: batch.map(asInput) },
-      );
-    } catch {
-      /* best-effort — a failure must never break the channel */
-    }
+    await this.runBotGraph(bot, { seed: prompt, surface: job.notifyThread });
   }
 
   /** Surface a reaction from a bot (the gate's ack, or the "seen, working" 👀). Slack seam: reactions.add. */
@@ -314,13 +318,6 @@ class Conductor {
     void extractAndRemember({ bot, author: m.author, text: m.text, identity });
   }
 
-  private recentContext(n = 6): string {
-    return channel
-      .since(Math.max(0, channel.length - n))
-      .map((m) => `${m.author}: ${m.text}`)
-      .join('\n');
-  }
-
   private pushError(err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
     this.pushHistory({ id: `e-${this.emitSeq++}`, kind: 'error', text: message });
@@ -329,9 +326,7 @@ class Conductor {
   // ── Quiescence ───────────────────────────────────────────────────────────────────────────────────
 
   private anyUndelivered(): boolean {
-    return ROSTER.some((b) =>
-      channel.since(this.deliveredUpTo.get(b.id) ?? 0).some((m) => m.authorBotId !== b.id),
-    );
+    return ROSTER.some((b) => this.hasWork(b));
   }
 
   private isQuiescent(): boolean {
@@ -345,7 +340,5 @@ class Conductor {
     for (const r of resolvers) r();
   }
 }
-
-const asInput = (m: ChannelMsg): HumanMessage => new HumanMessage(`${m.author}: ${m.text}`);
 
 export const conductor = new Conductor();

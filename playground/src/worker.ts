@@ -19,6 +19,10 @@ export interface ActionResult {
   reason?: string;
 }
 
+// Live AbortControllers for in-flight worker runs, keyed by job id — the handle `cancelJob` aborts.
+// (In-process for now; when workers move to their own containers this becomes a remote stop signal.)
+const controllers = new Map<string, AbortController>();
+
 /**
  * A finished run reports as 'done' — a background task runs all the way to completion and reports
  * ONCE; it does not check in after every step. The only exception: if it explicitly ended needing a
@@ -44,6 +48,8 @@ function statusFromReport(report: string): 'done' | 'awaiting' {
 export async function runWorkerTurn(jobId: string, message: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) return;
+  const ac = new AbortController();
+  controllers.set(jobId, ac);
   try {
     const { result, sessionId } = await getEngine(job.engine).run({
       task: message,
@@ -51,7 +57,10 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
       systemPrompt: workerPromptFor(job.engine, botById(job.ownerBot) ?? ROSTER[0]),
       sessionId: job.sessionId,
       onEvent: (e) => appendJobProgress(jobId, e),
+      signal: ac.signal,
     });
+    // Cancelled while we were finishing up: discard the result, don't mark done or relay.
+    if (ac.signal.aborted) return;
     const report = result || '(no report)';
     const status = statusFromReport(report);
     updateJob(jobId, {
@@ -63,11 +72,39 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
     });
     // Record completed work to the durable log so standups / "what did you do" have a real answer.
     if (status === 'done') {
-      logWork({ ownerBot: job.ownerBot, company: job.company, task: job.task, summary: report.slice(0, 600) });
+      logWork({
+        ownerBot: job.ownerBot,
+        company: job.company,
+        task: job.task,
+        summary: report.slice(0, 600),
+      });
     }
   } catch (err) {
-    updateJob(jobId, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
+    // An abort surfaces here as a thrown error — that's a cancellation, not a failure.
+    if (ac.signal.aborted) updateJob(jobId, { status: 'cancelled' });
+    else
+      updateJob(jobId, {
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err),
+      });
+  } finally {
+    controllers.delete(jobId);
   }
+}
+
+/**
+ * Cancel a job the owner no longer wants: abort its running worker (the engine kills its child
+ * process / aborts its stream) and mark it 'cancelled' so its result is discarded, not relayed. Works
+ * on a 'running' job or one parked in 'awaiting'; a finished/failed/already-cancelled job is a no-op.
+ */
+export function cancelJob(jobId: string): ActionResult {
+  const job = getJob(jobId);
+  if (!job) return { ok: false, reason: `No job "${jobId}".` };
+  if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled')
+    return { ok: false, reason: `${jobId} is already ${job.status} — nothing to cancel.` };
+  controllers.get(jobId)?.abort(); // running: stop the worker; awaiting: no controller, just mark it
+  updateJob(jobId, { status: 'cancelled' });
+  return { ok: true };
 }
 
 /**

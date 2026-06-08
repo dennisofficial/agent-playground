@@ -37,7 +37,13 @@ const canUseTool: CanUseTool = async (toolName, input): Promise<PermissionResult
 
 export const claudeEngine: WorkerEngine = {
   name: 'claude',
-  async run({ task, cwd, systemPrompt, sessionId, onEvent }: RunWorkerArgs) {
+  async run({ task, cwd, systemPrompt, sessionId, onEvent, signal }: RunWorkerArgs) {
+    // The SDK cancels via its own AbortController (it kills the child process); bridge our run signal to it.
+    const abortController = new AbortController();
+    if (signal) {
+      if (signal.aborted) abortController.abort();
+      else signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
     const options: Options = {
       cwd,
       systemPrompt,
@@ -47,6 +53,7 @@ export const claudeEngine: WorkerEngine = {
       allowedTools: AUTO_APPROVE,
       canUseTool,
       permissionMode: 'default',
+      abortController,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(process.env.WORKER_MODEL ? { model: process.env.WORKER_MODEL } : {}),
     };

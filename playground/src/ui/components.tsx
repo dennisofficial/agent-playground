@@ -6,12 +6,17 @@ import type { RenderItem } from './messages.js';
 export function MessageView({ item }: { item: RenderItem }) {
   switch (item.kind) {
     case 'user':
+      // One wrapping Text (ts as a dim prefix), NOT flex-row siblings — otherwise a long message's
+      // timestamp floats to the first line's right edge and the wrapping looks broken.
       return (
         <Box>
-          <Text color="cyan" bold>
-            {item.speaker ? `${item.speaker} ❯ ` : '❯ '}
+          <Text>
+            {item.ts ? <Text dimColor>{item.ts} </Text> : null}
+            <Text color="cyan" bold>
+              {item.speaker ? `${item.speaker} ❯ ` : '❯ '}
+            </Text>
+            {item.text}
           </Text>
-          <Text>{item.text}</Text>
         </Box>
       );
 
@@ -41,9 +46,12 @@ export function MessageView({ item }: { item: RenderItem }) {
     case 'assistant':
       return (
         <Box flexDirection="column" marginBottom={1}>
-          <Text color="green" bold>
-            {item.speaker ?? 'bot'}
-          </Text>
+          <Box>
+            <Text color="green" bold>
+              {item.speaker ?? 'bot'}
+            </Text>
+            {item.ts && <Text dimColor>{`  ${item.ts}`}</Text>}
+          </Box>
           <Text>{renderMarkdown(item.text)}</Text>
         </Box>
       );

@@ -18,7 +18,7 @@ function threadOptions(cwd: string): ThreadOptions {
 
 export const codexEngine: WorkerEngine = {
   name: 'codex',
-  async run({ task, cwd, systemPrompt, sessionId, onEvent }: RunWorkerArgs) {
+  async run({ task, cwd, systemPrompt, sessionId, onEvent, signal }: RunWorkerArgs) {
     const client = getCodex();
     const thread = sessionId
       ? client.resumeThread(sessionId, threadOptions(cwd))
@@ -29,7 +29,7 @@ export const codexEngine: WorkerEngine = {
 
     let result = '';
     let resolvedSession = sessionId;
-    const { events } = await thread.runStreamed(input);
+    const { events } = await thread.runStreamed(input, { signal });
     for await (const event of events) {
       switch (event.type) {
         case 'thread.started':

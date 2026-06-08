@@ -30,7 +30,7 @@ let threadCounter = 0;
 
 export const langgraphEngine: WorkerEngine = {
   name: 'langgraph',
-  async run({ task, systemPrompt, sessionId, onEvent }: RunWorkerArgs) {
+  async run({ task, systemPrompt, sessionId, onEvent, signal }: RunWorkerArgs) {
     const threadId = sessionId ?? `lg-${(++threadCounter).toString().padStart(3, '0')}`;
     // createAgent takes no per-invoke system prompt, so seed it as a leading SystemMessage on the
     // first turn only (resumes already carry it in the checkpointed history).
@@ -43,7 +43,7 @@ export const langgraphEngine: WorkerEngine = {
     // cleanly onto WorkerEvents. The update keys are node names; we don't depend on them.
     const stream = await getAgent().stream(
       { messages },
-      { configurable: { thread_id: threadId }, streamMode: 'updates', recursionLimit: 50 },
+      { configurable: { thread_id: threadId }, streamMode: 'updates', recursionLimit: 50, signal },
     );
     for await (const update of stream as AsyncIterable<
       Record<string, { messages?: BaseMessage[] }>

@@ -9,6 +9,9 @@ export function App() {
   // The conductor is the single source of truth. Re-render whenever its state changes.
   const [, force] = useReducer((x: number) => x + 1, 0);
   useEffect(() => conductor.subscribe(force), []);
+  // The input stays mounted now (so you can type while bots think), so it no longer clears itself on
+  // submit — bump this key to remount it empty after each send.
+  const [inputKey, clearInput] = useReducer((x: number) => x + 1, 0);
 
   useInput((input, key) => {
     if (key.ctrl && input === 'd') exit();
@@ -25,9 +28,11 @@ export function App() {
     const as = text.match(/^\/as\s+(.+)$/i);
     if (as) {
       conductor.setSpeaker(as[1]);
+      clearInput();
       return;
     }
     conductor.submitUser(text);
+    clearInput();
   }
 
   const { history, ctx, running, speaker, thinking } = conductor.getState();
@@ -54,6 +59,7 @@ export function App() {
       <Box>
         <Text color="cyan">{`${who} ❯ `}</Text>
         <TextInput
+          key={inputKey}
           placeholder="message   ·   /as <name> to switch speaker   ·   /exit"
           onSubmit={handleSubmit}
         />

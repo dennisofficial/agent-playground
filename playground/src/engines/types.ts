@@ -27,6 +27,10 @@ export interface RunWorkerArgs {
   sessionId?: string;
   /** Called for each progress event as the worker runs. */
   onEvent: (e: WorkerEvent) => void;
+  /** Aborts the run when signalled — the engine wires it to its native cancellation (claude's
+   * abortController, codex/langgraph's signal). Kept engine-agnostic so it survives the move to
+   * out-of-process / containerized workers. */
+  signal?: AbortSignal;
 }
 
 export interface WorkerEngine {

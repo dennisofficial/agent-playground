@@ -1,19 +1,20 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { tool } from '@langchain/core/tools';
-import { createAgent } from 'langchain';
 import { z } from 'zod';
 import { defaultEngine, ENGINE_NAMES } from './engines/index.js';
 import type { WorkerEngineName } from './engines/types.js';
 import { createJob, getJob, latestJob } from './jobs.js';
-import { getCheckpointer } from './memory/checkpointer.js';
 import { getIdentity } from './memory/identity.js';
 import { memoryTools } from './memory/tools.js';
 import { recentWork } from './memory/worklog.js';
-import { buildModel } from './model.js';
-import { chatPromptFor } from './persona.js';
-import { type Bot, botById, ROSTER } from './roster.js';
 import { grep, list_dir, read_file } from './tools.js';
-import { type ActionResult, continueWork, getJobState, runWorkerTurn } from './worker.js';
+import {
+  type ActionResult,
+  cancelJob,
+  continueWork,
+  getJobState,
+  runWorkerTurn,
+} from './worker.js';
 
 // A bot's chat-side tools. The chat surface has NO filesystem/shell access itself — that lives in the
 // background-execution thread (a job). This is the structural "plan-mode" boundary: chat dispatches,
@@ -104,6 +105,27 @@ const check_job = tool(
   },
 );
 
+const cancel_job = tool(
+  async ({ jobId }, config) => {
+    const id = getIdentity(config);
+    const job = jobId ? getJob(jobId) : latestJob(id.selfAgent);
+    if (!job || job.ownerBot !== id.selfAgent)
+      return jobId ? `No job "${jobId}" of yours to cancel.` : 'You have no jobs to cancel.';
+    const res = cancelJob(job.id);
+    return res.ok
+      ? `Cancelled ${job.id} ("${job.task}") — it's stopped and its result will be discarded.`
+      : `Couldn't cancel ${job.id}: ${res.reason}`;
+  },
+  {
+    name: 'cancel_job',
+    description:
+      "Stop a background job of yours that's running (or parked awaiting input) — e.g. you dispatched the wrong thing. It aborts the worker and discards its result. Pass the job id; omit it to cancel your most recent job.",
+    schema: z.object({
+      jobId: z.string().optional().describe('The job id to cancel; omit for your most recent job.'),
+    }),
+  },
+);
+
 const recent_work = tool(
   async ({ scope }, config) => {
     const id = getIdentity(config);
@@ -115,9 +137,12 @@ const recent_work = tool(
     if (entries.length === 0)
       return scope === 'team'
         ? 'No completed work is logged for the team yet.'
-        : "I have no completed work logged yet — nothing finished in a previous session.";
+        : 'I have no completed work logged yet — nothing finished in a previous session.';
     return entries
-      .map((e) => `- [${e.completedAt.slice(0, 10)}] ${e.ownerBot}: ${e.task} — ${e.summary.slice(0, 160)}`)
+      .map(
+        (e) =>
+          `- [${e.completedAt.slice(0, 10)}] ${e.ownerBot}: ${e.task} — ${e.summary.slice(0, 160)}`,
+      )
       .join('\n');
   },
   {
@@ -133,35 +158,17 @@ const recent_work = tool(
   },
 );
 
-const CHAT_TOOLS = [
+// A bot's chat-side tools. The conductor's turn graph ([bot-graph.ts](bot-graph.ts)) binds these in its
+// `llm` node and runs them through a prebuilt ToolNode; this module just defines them (and their job /
+// memory plumbing) in one place.
+export const CHAT_TOOLS = [
   read_file,
   list_dir,
   grep,
   dispatch_job,
   continue_work,
   check_job,
+  cancel_job,
   recent_work,
   ...memoryTools,
 ];
-
-// One graph per bot, lazy + memoized: ChatAnthropic's constructor throws without ANTHROPIC_API_KEY, so
-// building at module top-level would crash on import before Ink can render an error row.
-const graphs = new Map<string, ReturnType<typeof buildFor>>();
-
-function buildFor(bot: Bot) {
-  return createAgent({
-    model: buildModel(),
-    tools: CHAT_TOOLS,
-    systemPrompt: chatPromptFor(bot),
-    checkpointer: getCheckpointer(),
-  });
-}
-
-export function getGraphFor(botId: string): ReturnType<typeof buildFor> {
-  let g = graphs.get(botId);
-  if (!g) {
-    g = buildFor(botById(botId) ?? ROSTER[0]);
-    graphs.set(botId, g);
-  }
-  return g;
-}

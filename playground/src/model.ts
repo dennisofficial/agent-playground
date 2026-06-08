@@ -22,12 +22,13 @@ export function buildModel() {
 }
 
 /**
- * Cheap, fast model for the response gate. The gate fires on EVERY message for EVERY bot, so it sets
- * the token floor — Haiku keeps the respond/ignore decision near-free. The decision is a single word,
- * hence the tiny maxTokens.
+ * Cheap, fast model for the response gate. The gate fires on EVERY message for EVERY bot, so it sets the
+ * token floor — Haiku keeps the respond/ignore decision near-free. It now returns a small structured
+ * tool call (a one-line reasoning + the action + an optional emoji), so it needs more than a single
+ * word's worth of room — still tiny.
  */
 export function buildGateModel() {
-  return new ChatAnthropic({ model: 'claude-haiku-4-5-20251001', maxTokens: 16, temperature: 0 });
+  return new ChatAnthropic({ model: 'claude-haiku-4-5-20251001', maxTokens: 256, temperature: 0 });
 }
 
 /**

@@ -5,7 +5,8 @@ import type { WorkerEngineName, WorkerEvent } from './engines/types.js';
 export const CLI_THREAD_ID = 'zero:cli:main';
 
 // 'awaiting' = a background turn finished and is waiting for the chat-self to decide what's next.
-export type JobStatus = 'running' | 'awaiting' | 'done' | 'failed';
+// 'cancelled' = the owner aborted it mid-run (or while awaiting); its result is discarded, not relayed.
+export type JobStatus = 'running' | 'awaiting' | 'done' | 'failed' | 'cancelled';
 
 export interface Job {
   id: string;
