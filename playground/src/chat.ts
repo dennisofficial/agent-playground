@@ -5,7 +5,7 @@ import { defaultEngine, ENGINE_NAMES } from './engines/index.js';
 import type { WorkerEngineName } from './engines/types.js';
 import { createJob, getJob, latestJob } from './jobs.js';
 import { getIdentity } from './memory/identity.js';
-import { memoryTools } from './memory/tools.js';
+import { memoryTools, taskTools } from './memory/tools.js';
 import { recentWork } from './memory/worklog.js';
 import { grep, list_dir, read_file } from './tools.js';
 import {
@@ -171,4 +171,5 @@ export const CHAT_TOOLS = [
   cancel_job,
   recent_work,
   ...memoryTools,
+  ...taskTools,
 ];

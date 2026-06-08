@@ -46,5 +46,25 @@ function migrate(d: Database.Database): void {
       completed_at TEXT NOT NULL                  -- ISO timestamp (the "when" a standup asks for)
     );
     CREATE INDEX IF NOT EXISTS worklog_lookup ON worklog(company, owner_bot, completed_at);
+
+    -- The internal task board: open handoffs/todos the reflect pass captures, so a commitment made in
+    -- passing ("you'll add tracking hooks once the API's up") doesn't get lost. Worklog is "what got
+    -- done"; this is "what still needs doing". Company-scoped, plain SQL (no embeddings).
+    CREATE TABLE IF NOT EXISTS tasks (
+      id          INTEGER PRIMARY KEY,
+      company     TEXT NOT NULL,                  -- workspace isolation (multi-project)
+      description TEXT NOT NULL,                  -- "Add analytics/tracking hooks to the API + worker"
+      norm        TEXT NOT NULL,                  -- normalized description (lowercased, ws-collapsed) — dedup key
+      assignee    TEXT,                           -- bot/human id the task is for; null = unassigned
+      created_by  TEXT,                           -- who raised it (bot id)
+      status      TEXT NOT NULL DEFAULT 'open',   -- open | done | dropped
+      source      TEXT,                           -- provenance (surface/turn)
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS tasks_lookup ON tasks(company, status, assignee);
+    -- DB-enforced dedup: at most one OPEN task per (company, normalized description), so two concurrent
+    -- bots reflecting on the same handoff can't both insert it (INSERT … ON CONFLICT DO NOTHING).
+    CREATE UNIQUE INDEX IF NOT EXISTS tasks_open_uniq ON tasks(company, norm) WHERE status = 'open';
   `);
 }

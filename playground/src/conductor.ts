@@ -2,8 +2,9 @@ import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { type BotStateDelta, getBotGraph } from './bot-graph.js';
 import { channel, type ChannelMsg } from './channel.js';
 import { type Job, listJobs, onJobUpdate } from './jobs.js';
-import { extractAndRemember } from './memory/extract.js';
 import { type Identity } from './memory/identity.js';
+import { reflect } from './memory/reflect.js';
+import { listTasks } from './memory/tasks.js';
 import { type Bot, botById, ROSTER } from './roster.js';
 import { type ContextUsage, type RenderItem, toRenderItems } from './ui/messages.js';
 
@@ -118,6 +119,21 @@ class Conductor {
     this.patch({ speaker: id });
   }
 
+  /** CLI "/tasks": dump the open task board into the transcript so you can glance at what reflect captured. */
+  showTasks(): void {
+    const tasks = listTasks({ company: 'local', status: 'open' });
+    const text = tasks.length
+      ? `Open tasks (${tasks.length}):\n` +
+        tasks
+          .map(
+            (t) =>
+              `  #${t.id}  ${t.assignee ? `[${t.assignee}]` : '[unassigned]'}  ${t.description}`,
+          )
+          .join('\n')
+      : 'No open tasks yet.';
+    this.pushHistory({ id: `note-${this.emitSeq++}`, kind: 'note', text });
+  }
+
   private patch(p: Partial<ConductorState>): void {
     this.state = { ...this.state, ...p };
     for (const cb of this.subs) cb();
@@ -183,7 +199,7 @@ class Conductor {
    * checkpoints; the dispatcher interprets its streamed node deltas — emitting each assistant message to
    * the CHANNEL (so teammates see it mid-turn) + history, firing 👀 on the first tool-only step, and
    * surfacing the ack reaction. After the turn it reads the authoritative cursor back from the checkpoint
-   * and runs the memory gate over the human messages this bot consumed (including mid-step ones).
+   * and runs the reflect pass over what this bot consumed (facts to remember + open tasks to track).
    *
    * `seed` forces a gate-bypassed respond on a synthetic message (job relays); `surface` overrides the
    * identity surface (a job's notify thread).
@@ -198,6 +214,7 @@ class Conductor {
     const capped = this.botBurst >= MAX_BOT_BURST;
     let firstAi = true;
     let responded = false;
+    const emitted: ChannelMsg[] = []; // this bot's own replies this turn — for the reflect transcript
 
     const commit = (msg: BaseMessage) => {
       const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
@@ -216,13 +233,15 @@ class Conductor {
       }
       for (const r of rows) {
         if (r.kind === 'assistant' && r.text) {
-          channel.append({
-            id: r.id,
-            author: bot.name,
-            authorId: bot.id,
-            authorBotId: bot.id,
-            text: r.text,
-          });
+          emitted.push(
+            channel.append({
+              id: r.id,
+              author: bot.name,
+              authorId: bot.id,
+              authorBotId: bot.id,
+              text: r.text,
+            }),
+          );
         }
       }
       if (rows.length || usage) {
@@ -245,6 +264,17 @@ class Conductor {
       });
       for await (const update of stream as AsyncIterable<Record<string, BotStateDelta>>) {
         for (const delta of Object.values(update)) {
+          // Debug only: surface the soft gate's verdict + rationale inline, BEFORE the reply/reaction it
+          // explains. This is the only UI trace of an `ignore`, which otherwise leaves no mark.
+          if (delta.reasoning) {
+            this.pushHistory({
+              id: `g-${this.emitSeq++}`,
+              kind: 'gate',
+              by: bot.name,
+              action: delta.decision ?? 'ignore',
+              reasoning: delta.reasoning,
+            });
+          }
           if (delta.decision === 'respond' && !responded) {
             responded = true;
             this.botBurst++; // a real reply counts toward the loop breaker
@@ -268,8 +298,22 @@ class Conductor {
       /* keep cursorBefore — a getState failure must not advance the cursor past unconsumed messages */
     }
     this.deliveredUpTo.set(bot.id, cursorAfter);
-    for (const m of channel.since(cursorBefore)) {
-      if (m.seq < cursorAfter && !m.authorBotId) this.learnFrom(bot, m);
+
+    // Reflect: one cheap pass over what this bot consumed this turn (bounded by cursorAfter, NOT
+    // channel.length — other bots' concurrent emissions aren't ours) plus its own replies, to save
+    // durable facts and capture open tasks/handoffs. Fire-and-forget, off the critical path.
+    const consumed = channel
+      .since(cursorBefore)
+      .filter((m) => m.seq < cursorAfter && m.authorBotId !== bot.id);
+    if (consumed.length > 0) {
+      const turn = [...consumed, ...emitted].sort((a, b) => a.seq - b.seq);
+      const transcript = turn.map((m) => `${m.author}: ${m.text}`).join('\n');
+      const latestHuman = [...consumed].reverse().find((m) => !m.authorBotId);
+      const baseIdentity: Identity = {
+        ...this.identityFor(bot.id, thread),
+        speaker: latestHuman?.authorId ?? this.state.speaker,
+      };
+      void reflect(bot, transcript, baseIdentity);
     }
   }
 
@@ -302,20 +346,6 @@ class Conductor {
       surface,
       isChannel: true,
     };
-  }
-
-  /** Memory gate: learn a durable fact from a human message (fire-and-forget). Bot messages skipped. */
-  private learnFrom(bot: Bot, m: ChannelMsg): void {
-    if (m.authorBotId) return;
-    const identity: Identity = {
-      selfAgent: bot.id,
-      company: 'local',
-      participants: [...this.members],
-      speaker: m.authorId,
-      surface: `${bot.id}:dev:root`,
-      isChannel: true,
-    };
-    void extractAndRemember({ bot, author: m.author, text: m.text, identity });
   }
 
   private pushError(err: unknown): void {

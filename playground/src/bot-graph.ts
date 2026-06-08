@@ -47,6 +47,8 @@ export interface BotStateDelta {
   cursor?: number;
   decision?: GateAction;
   ackEmoji?: string;
+  /** Debug only: the soft gate's one-line rationale, surfaced inline in the TUI. Absent for hard rules. */
+  reasoning?: string;
 }
 
 const BotState = Annotation.Root({
@@ -66,6 +68,11 @@ const BotState = Annotation.Root({
   }),
   /** Ack emoji, surfaced by the `react` node when the gate said acknowledge. */
   ackEmoji: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
+    default: () => undefined,
+  }),
+  /** Debug only: the soft gate's rationale this turn, surfaced inline by the dispatcher (like ackEmoji). */
+  reasoning: Annotation<string | undefined>({
     reducer: (_: unknown, b: string | undefined) => b,
     default: () => undefined,
   }),
@@ -113,7 +120,8 @@ function buildBotGraph(bot: Bot) {
       authorName: latest.author,
       history: historyBefore(latest.seq),
     });
-    return { decision: d.action, ackEmoji: d.emoji, pending: batch };
+    // `reasoning` rides the delta so the dispatcher can render it inline (debug only; hard rules omit it).
+    return { decision: d.action, ackEmoji: d.emoji, reasoning: d.reasoning, pending: batch };
   };
 
   /**

@@ -9,18 +9,25 @@ export interface GateDecision {
   action: 'respond' | 'acknowledge' | 'ignore';
   /** The reaction emoji, when action is 'acknowledge'. */
   emoji?: string;
+  /** Debug only: the soft gate's one-line rationale. Absent for hard-rule decisions. Never shown in the UI. */
+  reasoning?: string;
 }
 
 const RESPOND: GateDecision = { action: 'respond' };
 const IGNORE: GateDecision = { action: 'ignore' };
 
 /**
- * The soft gate, as a few-shot classification chain (the project's `RunnableSequence.from` pattern):
- * input formatter → prompt (with worked examples) → Haiku with a structured `{action, emoji}` tool call →
- * output formatter. The examples are where the real work happens: they teach the model to READ THE ROOM —
- * to stay out of a back-and-forth that's clearly between the human and another teammate, and to never
- * speak up just to defer, agree, or volunteer. The conversation history is the signal that makes that
- * judgment possible, so the caller passes a generous window.
+ * The soft gate, as a zero-shot classification chain (the project's `RunnableSequence.from` pattern):
+ * input formatter → prompt → Haiku with a structured `{reasoning, action, emoji}` tool call → output
+ * formatter. The instructions carry the whole judgment — READ THE ROOM: stay out of a back-and-forth
+ * clearly between the human and another teammate, and never speak up just to defer, agree, or volunteer.
+ * The conversation history is the signal that makes that judgment possible, so the caller passes a
+ * generous window.
+ *
+ * NOTE: we dropped the few-shot worked examples. They reused the real teammates' names (Alex/James/
+ * Dennis), and on Haiku that bled into the model's self-identity — it would reason "as James" while
+ * gating FOR Alex. Identity now comes only from `{botName}`/`{botRole}` at the top, with no competing
+ * "you are <someone else>" lines below it. Re-add examples only with neutral, non-roster names.
  */
 namespace ResponseGate {
   export interface Input {
@@ -50,99 +57,6 @@ namespace ResponseGate {
   });
   type DecisionT = z.infer<typeof Decision>;
 
-  interface Example {
-    you: string;
-    history: string;
-    author: string;
-    text: string;
-    decision: DecisionT;
-  }
-
-  // Worked examples — the heart of the gate. Each shows a snippet of conversation, the next message, who
-  // YOU are, and the right call. They cover the failure modes we actually saw (a teammate popping into a
-  // solo human↔teammate thread, replying just to defer, replying to a thanks/dismissal) plus the genuine
-  // reasons to speak (addressed to you, your lane, an open team question, a real handoff, an FYI).
-  const EXAMPLES: Example[] = [
-    {
-      you: 'James (marketing & analytics)',
-      history:
-        "Dennis: Alex, let's start planning our NestJS backend. How should we structure it?\nAlex: Good question — I'd start by mapping the core modules and the data layer.",
-      author: 'Dennis',
-      text: 'Do you have access to that?',
-      decision: {
-        reasoning:
-          'This is an ongoing back-and-forth between Dennis and Alex about the backend — not mine.',
-        action: 'ignore',
-      },
-    },
-    {
-      you: 'James (marketing & analytics)',
-      history:
-        'Dennis: Alex, can you look at how the UI loads history on startup?\nAlex: On it — digging into the checkpoint loading now.',
-      author: 'Alex',
-      text: "I think the history persists but the UI never replays it on boot. I'll write up a fix.",
-      decision: {
-        reasoning:
-          "Alex is thinking out loud on his own task; I have nothing to add and shouldn't chime in to say it's his area.",
-        action: 'ignore',
-      },
-    },
-    {
-      you: 'James (marketing & analytics)',
-      history:
-        "Dennis: Alex, let's take the backend planning from here.\nAlex: Sounds good, I'll scope it out.",
-      author: 'Dennis',
-      text: "Thanks James, we'll take it from here.",
-      decision: {
-        reasoning: 'A thanks / dismissal aimed at me — nothing to do but step back.',
-        action: 'ignore',
-      },
-    },
-    {
-      you: 'Alex (backend engineer)',
-      history: 'Dennis: Morning team — standup time.',
-      author: 'Dennis',
-      text: "What's the single most important thing each of us should focus on today?",
-      decision: {
-        reasoning: 'An open question to the whole team — I should give my own backend priority.',
-        action: 'respond',
-      },
-    },
-    {
-      you: 'James (marketing & analytics)',
-      history: 'Alex: Pushed the new analytics endpoint to staging.',
-      author: 'Dennis',
-      text: 'James, can you pull last week’s funnel numbers and see where we’re losing people?',
-      decision: { reasoning: 'Directly asked of me and squarely in my lane.', action: 'respond' },
-    },
-    {
-      you: 'James (marketing & analytics)',
-      history: 'Dennis: Standup done, thanks both.',
-      author: 'Alex',
-      text: '@James the tracking API is live now — you can start wiring the funnel events whenever.',
-      decision: {
-        reasoning: 'A real handoff to me — a concrete task I can pick up.',
-        action: 'respond',
-      },
-    },
-    {
-      you: 'Alex (backend engineer)',
-      history: 'Dennis: Pushing a config change.',
-      author: 'Dennis',
-      text: 'FYI — the staging deploy just went green. No action needed.',
-      decision: {
-        reasoning: 'An FYI to everyone that asks nothing — a reaction is enough.',
-        action: 'acknowledge',
-        emoji: '✅',
-      },
-    },
-  ];
-
-  const formatExample = (e: Example): string =>
-    `[you are ${e.you}]\n${e.history}\n↳ new message from ${e.author}: "${e.text}"\n→ ${JSON.stringify(
-      e.decision,
-    )}`;
-
   const PROMPT = `You are {botName}, the {botRole} on a small team, in the shared #dev channel.
 Team: {roster}.
 
@@ -162,12 +76,9 @@ Pick one action:
 - "acknowledge": an FYI/announcement to everyone that asks nothing — a single emoji, no words.
 - "ignore": NOT yours. This is the default when unsure. IGNORE when the latest message continues a
   back-and-forth between {author} and another teammate, sits in someone else's lane, or is a thanks,
-  dismissal, or small talk not aimed at you. NEVER speak up just to defer ("that's Alex's area"), to
+  dismissal, or small talk not aimed at you. NEVER speak up just to defer ("that's their area"), to
   agree, to encourage, to volunteer for later, or to be polite — staying silent IS the right move; the
-  teammate it belongs to will pick it up on their own.
-
-Worked examples (different "you" in each):
-{examples}`;
+  teammate it belongs to will pick it up on their own.`;
 
   let chain: ReturnType<typeof build> | undefined;
   export const get = () => (chain ??= build());
@@ -189,13 +100,12 @@ Worked examples (different "you" in each):
           'teammateNote',
           'text',
         ],
-        partialVariables: { examples: EXAMPLES.map(formatExample).join('\n\n') },
       }),
       buildGateModel().withStructuredOutput(Decision, { name: 'gate_decision' }),
       RunnableLambda.from<DecisionT, GateDecision>((d) =>
         d.action === 'acknowledge'
-          ? { action: 'acknowledge', emoji: cleanEmoji(d.emoji) }
-          : { action: d.action },
+          ? { action: 'acknowledge', emoji: cleanEmoji(d.emoji), reasoning: d.reasoning }
+          : { action: d.action, reasoning: d.reasoning },
       ),
     ]).withConfig({ runName: 'Response Gate' });
 

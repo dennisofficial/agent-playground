@@ -24,6 +24,12 @@ export function App() {
       exit();
       return;
     }
+    // "/tasks" dumps the open task board (what the reflect pass has captured) into the transcript.
+    if (text === '/tasks') {
+      conductor.showTasks();
+      clearInput();
+      return;
+    }
     // "/as <name>" switches who you're speaking as in the channel — lets you simulate a group chat.
     const as = text.match(/^\/as\s+(.+)$/i);
     if (as) {
@@ -53,14 +59,16 @@ export function App() {
           think and fire messages as you go (they fold them in at their next step). */}
       {thinking.length > 0 && (
         <Box>
-          <Spinner label={`${thinking.join(', ')} ${thinking.length === 1 ? 'is' : 'are'} thinking…`} />
+          <Spinner
+            label={`${thinking.join(', ')} ${thinking.length === 1 ? 'is' : 'are'} thinking…`}
+          />
         </Box>
       )}
       <Box>
         <Text color="cyan">{`${who} ❯ `}</Text>
         <TextInput
           key={inputKey}
-          placeholder="message   ·   /as <name> to switch speaker   ·   /exit"
+          placeholder="message   ·   /tasks   ·   /as <name> to switch speaker   ·   /exit"
           onSubmit={handleSubmit}
         />
       </Box>

@@ -11,6 +11,17 @@ export type RenderItem =
   | { id: string; kind: 'assistant'; text: string; speaker?: string; ts?: string }
   | { id: string; kind: 'tool'; toolName: string }
   | { id: string; kind: 'reaction'; emoji: string; by: string }
+  // Debug only: the response gate's verdict + rationale for a bot, shown inline so you can see why a
+  // bot spoke, reacted, or (importantly) stayed silent. Only soft-gate (LLM) calls carry a reason.
+  | {
+      id: string;
+      kind: 'gate';
+      by: string;
+      action: 'respond' | 'acknowledge' | 'ignore';
+      reasoning: string;
+    }
+  // CLI-local output for a slash command (e.g. /tasks dumping the open board) — never a chat message.
+  | { id: string; kind: 'note'; text: string }
   | { id: string; kind: 'error'; text: string };
 
 /** Flatten message content (string | content blocks) to a plain string. */

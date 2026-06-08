@@ -6,17 +6,17 @@ import type { RenderItem } from './messages.js';
 export function MessageView({ item }: { item: RenderItem }) {
   switch (item.kind) {
     case 'user':
-      // One wrapping Text (ts as a dim prefix), NOT flex-row siblings — otherwise a long message's
-      // timestamp floats to the first line's right edge and the wrapping looks broken.
+      // Same shape as a bot message (name header + body below), just cyan instead of green — so the
+      // transcript reads as one uniform stream of "speaker: message" and is easy to skim.
       return (
-        <Box>
-          <Text>
-            {item.ts ? <Text dimColor>{item.ts} </Text> : null}
+        <Box flexDirection="column" marginBottom={1}>
+          <Box>
             <Text color="cyan" bold>
-              {item.speaker ? `${item.speaker} ❯ ` : '❯ '}
+              {item.speaker ?? 'You'}
             </Text>
-            {item.text}
-          </Text>
+            {item.ts && <Text dimColor>{`  ${item.ts}`}</Text>}
+          </Box>
+          <Text>{item.text}</Text>
         </Box>
       );
 
@@ -33,6 +33,24 @@ export function MessageView({ item }: { item: RenderItem }) {
       return (
         <Box>
           <Text dimColor>{`   ↳ ${item.by} reacted ${item.emoji}`}</Text>
+        </Box>
+      );
+
+    // Debug only: the gate's verdict + reasoning, dim magenta so it's clearly meta and skimmable.
+    case 'gate':
+      return (
+        <Box>
+          <Text color="magenta" dimColor>
+            {`   ▸ gate · ${item.by} → ${item.action}: ${item.reasoning}`}
+          </Text>
+        </Box>
+      );
+
+    // CLI-local output (e.g. the /tasks board) — dim, set off from the chat stream.
+    case 'note':
+      return (
+        <Box marginY={1} paddingLeft={1}>
+          <Text dimColor>{item.text}</Text>
         </Box>
       );
 

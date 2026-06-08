@@ -32,9 +32,10 @@ export function buildGateModel() {
 }
 
 /**
- * Cheap model for the memory gate's fact extraction — runs in the background on messages, so it stays
- * on Haiku. A bit more room than the response gate since the output is a short fact, not one word.
+ * Cheap model for the post-turn REFLECT pass (facts + tasks) — runs in the background after a turn, so it
+ * stays on Haiku. Roomier than the response gate because it returns a small structured tool call: a
+ * one-line reasoning plus a facts[] and a tasks[] array.
  */
 export function buildExtractModel() {
-  return new ChatAnthropic({ model: 'claude-haiku-4-5-20251001', maxTokens: 128, temperature: 0 });
+  return new ChatAnthropic({ model: 'claude-haiku-4-5-20251001', maxTokens: 512, temperature: 0 });
 }
