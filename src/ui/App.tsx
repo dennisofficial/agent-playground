@@ -1,7 +1,7 @@
 import { Spinner, TextInput } from '@inkjs/ui';
+import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useState } from 'react';
-import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
 import { getGraph } from '../chat.js';
 import { MessageView, type Turn } from './components.js';
 
