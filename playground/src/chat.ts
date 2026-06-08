@@ -1,13 +1,14 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { tool } from '@langchain/core/tools';
-import { MemorySaver } from '@langchain/langgraph';
 import { createAgent } from 'langchain';
 import { z } from 'zod';
 import { defaultEngine, ENGINE_NAMES } from './engines/index.js';
 import type { WorkerEngineName } from './engines/types.js';
 import { CLI_THREAD_ID, createJob, getJob, latestJob } from './jobs.js';
+import { getCheckpointer } from './memory/checkpointer.js';
+import { memoryTools } from './memory/tools.js';
 import { buildModel } from './model.js';
-import { ZERO_CHAT_PROMPT } from './persona.js';
+import { CHAT_PROMPT } from './persona.js';
 import { grep, list_dir, read_file } from './tools.js';
 import { type ActionResult, continueWork, getJobState, runWorkerTurn } from './worker.js';
 
@@ -103,9 +104,9 @@ function build() {
     model: buildModel(),
     // Read-only tools (read_file/list_dir/grep) so Zero answers questions directly, plus the
     // background-work tools. No write/shell here — that lives in the background thread.
-    tools: [read_file, list_dir, grep, dispatch_job, continue_work, check_job],
-    systemPrompt: ZERO_CHAT_PROMPT,
-    checkpointer: new MemorySaver(),
+    tools: [read_file, list_dir, grep, dispatch_job, continue_work, check_job, ...memoryTools],
+    systemPrompt: CHAT_PROMPT,
+    checkpointer: getCheckpointer(),
   });
 }
 

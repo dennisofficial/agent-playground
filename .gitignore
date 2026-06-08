@@ -4,8 +4,4 @@ dist
 .DS_Store
 .idea/
 
-# env — never commit secrets
-.env
-.env.personal
-.env.keys
-.env*.local
+graphify-out/

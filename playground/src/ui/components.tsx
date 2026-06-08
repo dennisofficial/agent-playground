@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import { renderMarkdown } from '../markdown.js';
+import { BOT } from '../persona.js';
 import type { RenderItem } from './messages.js';
 
 /** One finalized transcript row, rendered by kind. Assistant text is terminal markdown. */
@@ -9,7 +10,7 @@ export function MessageView({ item }: { item: RenderItem }) {
       return (
         <Box>
           <Text color="cyan" bold>
-            {'❯ '}
+            {item.speaker ? `${item.speaker} ❯ ` : '❯ '}
           </Text>
           <Text>{item.text}</Text>
         </Box>
@@ -33,7 +34,10 @@ export function MessageView({ item }: { item: RenderItem }) {
 
     case 'assistant':
       return (
-        <Box marginBottom={1}>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="green" bold>
+            {BOT.name}
+          </Text>
           <Text>{renderMarkdown(item.text)}</Text>
         </Box>
       );

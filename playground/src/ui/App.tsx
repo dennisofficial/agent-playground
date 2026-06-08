@@ -2,6 +2,7 @@ import { Spinner, TextInput } from '@inkjs/ui';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useEffect, useReducer } from 'react';
 import { conductor } from '../conductor.js';
+import { BOT } from '../persona.js';
 import { MessageView } from './components.js';
 
 export function App() {
@@ -21,10 +22,17 @@ export function App() {
       exit();
       return;
     }
+    // "/as <name>" switches who you're speaking as in the channel — lets you simulate a group chat.
+    const as = text.match(/^\/as\s+(.+)$/i);
+    if (as) {
+      conductor.setSpeaker(as[1]);
+      return;
+    }
     conductor.submitUser(text);
   }
 
-  const { history, liveTools, liveText, busy, ctx, running } = conductor.getState();
+  const { history, liveTools, liveText, busy, ctx, running, speaker } = conductor.getState();
+  const who = speaker.charAt(0).toUpperCase() + speaker.slice(1);
   const ctxLabel =
     ctx.input !== undefined
       ? `ctx ${ctx.input.toLocaleString()} in · ${(ctx.output ?? 0).toLocaleString()} out`
@@ -38,7 +46,10 @@ export function App() {
           and marked-terminal's ANSI destabilizes Ink's line accounting), then its tool rows
           below. Both finalize to history via commit(), where text gets full markdown. */}
       {liveText.map((item) => (
-        <Box key={item.id} marginBottom={1}>
+        <Box key={item.id} flexDirection="column" marginBottom={1}>
+          <Text color="green" bold>
+            {BOT.name}
+          </Text>
           <Text>{item.text}</Text>
         </Box>
       ))}
@@ -48,12 +59,15 @@ export function App() {
 
       {busy ? (
         <Box>
-          <Spinner label="thinking…" />
+          <Spinner label={`${BOT.name} is thinking…`} />
         </Box>
       ) : (
         <Box>
-          <Text color="cyan">{'❯ '}</Text>
-          <TextInput placeholder="Type a message  (/exit to quit)" onSubmit={handleSubmit} />
+          <Text color="cyan">{`${who} ❯ `}</Text>
+          <TextInput
+            placeholder="message   ·   /as <name> to switch speaker   ·   /exit"
+            onSubmit={handleSubmit}
+          />
         </Box>
       )}
 

@@ -1,8 +1,12 @@
 import { AIMessageChunk, type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { getGraph } from './chat.js';
 import { CLI_THREAD_ID, type Job, listJobs, onJobUpdate } from './jobs.js';
+import { companyScope, type Identity, personScope } from './memory/identity.js';
+import { BOT } from './persona.js';
 import type { ContextUsage, RenderItem } from './ui/messages.js';
 import { toRenderItems } from './ui/messages.js';
+
+const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 /**
  * The single runtime that drives Zero. ALL invocations of the chat graph go through here,
@@ -14,7 +18,7 @@ import { toRenderItems } from './ui/messages.js';
  * per-surface state/queues are v1. Jobs already carry `notifyThread` so completions route to a
  * recorded surface rather than a hardcoded constant.
  */
-type Turn = { kind: 'user'; text: string } | { kind: 'job'; job: Job };
+type Turn = { kind: 'user'; text: string; speaker: string } | { kind: 'job'; job: Job };
 
 // Narrowed render items for the live region: the in-flight message's tool rows and its streaming
 // text are tracked separately so they render as distinct, stable groups (text doesn't bleed into
@@ -29,6 +33,8 @@ export interface ConductorState {
   busy: boolean;
   ctx: ContextUsage;
   running: number;
+  /** Who the CLI is currently speaking as in the channel (lowercased id). */
+  speaker: string;
 }
 
 class Conductor {
@@ -39,12 +45,16 @@ class Conductor {
     busy: false,
     ctx: {},
     running: 0,
+    speaker: 'dennis',
   };
   private queue: Turn[] = [];
   private processing = false;
   private subs = new Set<() => void>();
   private idleResolvers: (() => void)[] = [];
   private seq = 0;
+  // The channel's members — everyone who's spoken. Recall pulls facts about all of them, so the bot
+  // stays consistent about each person across the group chat (not keyed to the surface).
+  private members = new Set<string>(['dennis']);
 
   constructor() {
     // The chat layer — not the UI — is the subscriber to job lifecycle now.
@@ -75,7 +85,26 @@ class Conductor {
   }
 
   submitUser(text: string): void {
-    this.enqueue({ kind: 'user', text });
+    this.enqueue({ kind: 'user', text, speaker: this.state.speaker });
+  }
+
+  /** Switch who's talking in the channel (the CLI's "/as <name>"), adding them to the members set. */
+  setSpeaker(name: string): void {
+    const id = name.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!id) return;
+    this.members.add(id);
+    this.patch({ speaker: id });
+  }
+
+  /** Build the run identity from the channel's members + who's speaking this turn. */
+  private identityFor(speaker: string, surface: string): Identity {
+    return {
+      participants: [...this.members].map(personScope),
+      speaker: personScope(speaker),
+      company: companyScope('local'),
+      surface,
+      selfAgent: BOT.name.toLowerCase(),
+    };
   }
 
   private patch(p: Partial<ConductorState>): void {
@@ -104,9 +133,14 @@ class Conductor {
     let input: HumanMessage;
     if (turn.kind === 'user') {
       thread = CLI_THREAD_ID;
-      input = new HumanMessage(turn.text);
+      const who = titleCase(turn.speaker);
+      // Attribute the sender in the content so the bot reads the channel as a real group chat.
+      input = new HumanMessage(`${who}: ${turn.text}`);
       this.patch({
-        history: [...this.state.history, { id: `u-${this.seq++}`, kind: 'user', text: turn.text }],
+        history: [
+          ...this.state.history,
+          { id: `u-${this.seq++}`, kind: 'user', text: turn.text, speaker: who },
+        ],
         busy: true,
         liveTools: [],
         liveText: [],
@@ -157,9 +191,18 @@ class Conductor {
     let curId: string | undefined;
     let cur: BaseMessage | undefined;
     try {
+      // Identity rides alongside thread_id so the memory tools scope facts to who's present, not to
+      // the surface. Built from the channel's members + who's speaking; a Slack adapter will supply
+      // real participants/company the same way.
+      const speaker = turn.kind === 'user' ? turn.speaker : this.state.speaker;
+      const identity = this.identityFor(speaker, thread);
       const stream = await getGraph().stream(
         { messages: [input] },
-        { configurable: { thread_id: thread }, streamMode: 'messages', recursionLimit: 50 },
+        {
+          configurable: { thread_id: thread, identity },
+          streamMode: 'messages',
+          recursionLimit: 50,
+        },
       );
       for await (const [chunk] of stream) {
         const id = chunk.id ?? curId ?? '_0';

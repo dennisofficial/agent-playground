@@ -1,6 +1,6 @@
 import { type BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { MemorySaver } from '@langchain/langgraph';
 import { createAgent } from 'langchain';
+import { getCheckpointer } from '../memory/checkpointer.js';
 import { buildModel } from '../model.js';
 import { workerTools } from '../tools.js';
 import type { RunWorkerArgs, WorkerEngine } from './types.js';
@@ -10,7 +10,7 @@ import type { RunWorkerArgs, WorkerEngine } from './types.js';
 let agent: ReturnType<typeof build> | undefined;
 
 function build() {
-  return createAgent({ model: buildModel(), tools: workerTools, checkpointer: new MemorySaver() });
+  return createAgent({ model: buildModel(), tools: workerTools, checkpointer: getCheckpointer() });
 }
 
 const getAgent = () => (agent ??= build());
