@@ -30,7 +30,7 @@ export function App() {
     conductor.submitUser(text);
   }
 
-  const { history, busy, ctx, running, speaker, responder } = conductor.getState();
+  const { history, ctx, running, speaker, thinking } = conductor.getState();
   const who = speaker.charAt(0).toUpperCase() + speaker.slice(1);
   const ctxLabel =
     ctx.input !== undefined
@@ -44,19 +44,20 @@ export function App() {
           not token-by-token. The spinner below shows the bot is still working between chunks. */}
       <Static items={history}>{(item) => <MessageView key={item.id} item={item} />}</Static>
 
-      {busy ? (
+      {/* Running-bots indicator — separate from the input, which stays live so you can type while they
+          think and fire messages as you go (they fold them in at their next step). */}
+      {thinking.length > 0 && (
         <Box>
-          <Spinner label={`${responder ?? 'someone'} is thinking…`} />
-        </Box>
-      ) : (
-        <Box>
-          <Text color="cyan">{`${who} ❯ `}</Text>
-          <TextInput
-            placeholder="message   ·   /as <name> to switch speaker   ·   /exit"
-            onSubmit={handleSubmit}
-          />
+          <Spinner label={`${thinking.join(', ')} ${thinking.length === 1 ? 'is' : 'are'} thinking…`} />
         </Box>
       )}
+      <Box>
+        <Text color="cyan">{`${who} ❯ `}</Text>
+        <TextInput
+          placeholder="message   ·   /as <name> to switch speaker   ·   /exit"
+          onSubmit={handleSubmit}
+        />
+      </Box>
 
       {(ctxLabel || running > 0) && (
         <Box>
