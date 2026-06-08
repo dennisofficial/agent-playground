@@ -39,5 +39,15 @@ function migrate(d: Database.Database): void {
       deleted_at     TEXT                           -- soft-delete tombstone (never hard-delete human facts)
     );
     CREATE INDEX IF NOT EXISTS facts_subject ON facts(subject_scope);
+
+    CREATE TABLE IF NOT EXISTS worklog (
+      id           INTEGER PRIMARY KEY,
+      owner_bot    TEXT NOT NULL,                 -- which bot did the work
+      company      TEXT NOT NULL,                 -- the project/workspace it belongs to (isolation)
+      task         TEXT NOT NULL,
+      summary      TEXT NOT NULL,                 -- the worker's report digest
+      completed_at TEXT NOT NULL                  -- ISO timestamp (the "when" a standup asks for)
+    );
+    CREATE INDEX IF NOT EXISTS worklog_lookup ON worklog(company, owner_bot, completed_at);
   `);
 }

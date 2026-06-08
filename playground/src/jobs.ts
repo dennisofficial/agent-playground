@@ -12,8 +12,12 @@ export interface Job {
   task: string;
   status: JobStatus;
   threadId: string;
-  /** Chat thread that should receive the completion relay (routing seed for multi-surface v1). */
+  /** Chat thread that should receive the completion relay (the surface it was dispatched from). */
   notifyThread: string;
+  /** Which bot owns this job — scopes the job tools and routes the completion relay to that bot. */
+  ownerBot: string;
+  /** The project/workspace this work belongs to — scopes the work log (multi-project isolation). */
+  company: string;
   /** Which worker engine runs this job (claude / codex / langgraph). */
   engine: WorkerEngineName;
   /** The engine's session/thread id, recorded once the worker reports it (resume across turns). */
@@ -46,7 +50,13 @@ const progress = new Map<string, WorkerEvent[]>();
 let counter = 0;
 const nextId = () => `job-${(++counter).toString().padStart(3, '0')}`;
 
-export function createJob(task: string, notifyThread: string, engine: WorkerEngineName): Job {
+export function createJob(
+  task: string,
+  notifyThread: string,
+  engine: WorkerEngineName,
+  ownerBot: string,
+  company: string,
+): Job {
   const id = nextId();
   const job: Job = {
     id,
@@ -54,6 +64,8 @@ export function createJob(task: string, notifyThread: string, engine: WorkerEngi
     status: 'running',
     threadId: `job:${id}`,
     notifyThread,
+    ownerBot,
+    company,
     engine,
     turns: 0,
   };
@@ -83,9 +95,9 @@ export function listJobs(): Job[] {
   return [...jobs.values()];
 }
 
-/** Most recently created job, if any — used when check_job is called without an id. */
-export function latestJob(): Job | undefined {
-  const all = listJobs();
+/** Most recently created job (optionally scoped to one owner bot) — used when check_job has no id. */
+export function latestJob(ownerBot?: string): Job | undefined {
+  const all = ownerBot ? listJobs().filter((j) => j.ownerBot === ownerBot) : listJobs();
   return all[all.length - 1];
 }
 

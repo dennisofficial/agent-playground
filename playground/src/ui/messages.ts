@@ -8,7 +8,7 @@ import type { BaseMessage } from '@langchain/core/messages';
  */
 export type RenderItem =
   | { id: string; kind: 'user'; text: string; speaker?: string }
-  | { id: string; kind: 'assistant'; text: string }
+  | { id: string; kind: 'assistant'; text: string; speaker?: string }
   | { id: string; kind: 'tool'; toolName: string }
   | { id: string; kind: 'error'; text: string };
 
@@ -30,9 +30,10 @@ interface ToolCall {
 /**
  * Map canonical graph messages to render items. Caller passes only the messages not yet shown
  * (the list is append-only). Tool *result* messages are internal plumbing for the chat layer
- * and are omitted; an AI message's tool_calls become compact activity items instead.
+ * and are omitted; an AI message's tool_calls become compact activity items instead. `botName`
+ * labels the assistant line with the responding bot (multiple bots share the channel).
  */
-export function toRenderItems(messages: BaseMessage[]): RenderItem[] {
+export function toRenderItems(messages: BaseMessage[], botName?: string): RenderItem[] {
   const items: RenderItem[] = [];
   messages.forEach((m, i) => {
     const type = m.getType();
@@ -41,7 +42,7 @@ export function toRenderItems(messages: BaseMessage[]): RenderItem[] {
       items.push({ id: baseId, kind: 'user', text: messageText(m.content).trim() });
     } else if (type === 'ai') {
       const text = messageText(m.content).trim();
-      if (text) items.push({ id: baseId, kind: 'assistant', text });
+      if (text) items.push({ id: baseId, kind: 'assistant', text, speaker: botName });
       const calls = (m as { tool_calls?: ToolCall[] }).tool_calls ?? [];
       for (const c of calls)
         items.push({ id: `${baseId}:${c.id ?? c.name}`, kind: 'tool', toolName: c.name });

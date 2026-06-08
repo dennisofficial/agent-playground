@@ -1,7 +1,9 @@
 import { ROOT } from './engines/guard.js';
 import { getEngine } from './engines/index.js';
 import { appendJobProgress, getJob, getJobProgress, updateJob } from './jobs.js';
+import { logWork } from './memory/worklog.js';
 import { workerPromptFor } from './persona.js';
+import { botById, ROSTER } from './roster.js';
 
 // Zero's background-execution thread. A dispatched task runs to completion on its engine (the engine
 // loops internally until done), streams normalized events into the progress buffer, and reports ONCE
@@ -46,7 +48,7 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
     const { result, sessionId } = await getEngine(job.engine).run({
       task: message,
       cwd: ROOT,
-      systemPrompt: workerPromptFor(job.engine),
+      systemPrompt: workerPromptFor(job.engine, botById(job.ownerBot) ?? ROSTER[0]),
       sessionId: job.sessionId,
       onEvent: (e) => appendJobProgress(jobId, e),
     });
@@ -59,6 +61,10 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
       turns: job.turns + 1,
       ...(status === 'done' ? { result: report } : {}),
     });
+    // Record completed work to the durable log so standups / "what did you do" have a real answer.
+    if (status === 'done') {
+      logWork({ ownerBot: job.ownerBot, company: job.company, task: job.task, summary: report.slice(0, 600) });
+    }
   } catch (err) {
     updateJob(jobId, { status: 'failed', error: err instanceof Error ? err.message : String(err) });
   }

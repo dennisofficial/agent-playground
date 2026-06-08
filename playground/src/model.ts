@@ -4,7 +4,7 @@ import { ChatAnthropic } from '@langchain/anthropic';
 const num = (v: string | undefined, d: number) => (v === undefined || v === '' ? d : Number(v));
 
 /**
- * Reusable Anthropic model builder, shared by the chat agent (Zero) and the worker.
+ * Reusable Anthropic model builder, shared by the chat agents and the worker.
  * One model for v0; per-role / multi-LLM config comes later.
  *
  * Note: ChatAnthropic's constructor throws if ANTHROPIC_API_KEY is missing, so callers
@@ -19,4 +19,13 @@ export function buildModel() {
     maxTokens,
     temperature,
   });
+}
+
+/**
+ * Cheap, fast model for the response gate. The gate fires on EVERY message for EVERY bot, so it sets
+ * the token floor — Haiku keeps the respond/ignore decision near-free. The decision is a single word,
+ * hence the tiny maxTokens.
+ */
+export function buildGateModel() {
+  return new ChatAnthropic({ model: 'claude-haiku-4-5-20251001', maxTokens: 16, temperature: 0 });
 }

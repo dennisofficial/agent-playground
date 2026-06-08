@@ -1,28 +1,31 @@
 import { AIMessageChunk, type BaseMessage, HumanMessage } from '@langchain/core/messages';
-import { getGraph } from './chat.js';
-import { CLI_THREAD_ID, type Job, listJobs, onJobUpdate } from './jobs.js';
+import { getGraphFor } from './chat.js';
+import { gate } from './gate.js';
+import { type Job, listJobs, onJobUpdate } from './jobs.js';
 import { companyScope, type Identity, personScope } from './memory/identity.js';
-import { BOT } from './persona.js';
-import type { ContextUsage, RenderItem } from './ui/messages.js';
-import { toRenderItems } from './ui/messages.js';
+import { type Bot, botById, ROSTER } from './roster.js';
+import { type ContextUsage, messageText, type RenderItem, toRenderItems } from './ui/messages.js';
+
+/**
+ * The single runtime that drives the #dev channel. ALL bot turns go through here, serialized one at a
+ * time, so the shared transcript stays coherent. It owns:
+ *  - the channel log (the canonical transcript),
+ *  - the response gate routing (which bot speaks to each message),
+ *  - the bot↔bot cascade and its loop breaker,
+ *  - relaying finished background jobs through their owner bot.
+ *
+ * Each bot has its own chat graph + checkpoint (`${botId}:dev:root`); a message is delivered to every
+ * bot exactly once (respond → invoke, ignore → updateState), so each bot's working memory stays
+ * complete even when silent.
+ */
 
 const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
-/**
- * The single runtime that drives Zero. ALL invocations of the chat graph go through here,
- * serialized one turn at a time — both user input and background-job completions. This is what
- * lets a finished job flow *through* Zero (he composes the relay) instead of the UI rendering a
- * side-channel notice, and it prevents concurrent invocation of the chat thread.
- *
- * v0 is single-surface (one CLI chat). The conductor is the seam a Slack adapter plugs into;
- * per-surface state/queues are v1. Jobs already carry `notifyThread` so completions route to a
- * recorded surface rather than a hardcoded constant.
- */
-type Turn = { kind: 'user'; text: string; speaker: string } | { kind: 'job'; job: Job };
+/** Cap on bot replies per processing burst — the loop breaker so bots can't ping-pong forever. */
+const MAX_BOT_REPLIES = 3;
 
-// Narrowed render items for the live region: the in-flight message's tool rows and its streaming
-// text are tracked separately so they render as distinct, stable groups (text doesn't bleed into
-// the ⚙ tool indicators). The `tool` variant has no `text` field, hence the split.
+type ChannelMsg = { author: string; authorBotId?: string; text: string };
+
 type AssistantItem = Extract<RenderItem, { kind: 'assistant' }>;
 type ToolItem = Extract<RenderItem, { kind: 'tool' }>;
 
@@ -33,8 +36,10 @@ export interface ConductorState {
   busy: boolean;
   ctx: ContextUsage;
   running: number;
-  /** Who the CLI is currently speaking as in the channel (lowercased id). */
+  /** Who the CLI is currently speaking as (lowercased id). */
   speaker: string;
+  /** The bot currently streaming a reply, if any (for the spinner). */
+  responder?: string;
 }
 
 class Conductor {
@@ -47,24 +52,26 @@ class Conductor {
     running: 0,
     speaker: 'dennis',
   };
-  private queue: Turn[] = [];
-  private processing = false;
   private subs = new Set<() => void>();
   private idleResolvers: (() => void)[] = [];
   private seq = 0;
-  // The channel's members — everyone who's spoken. Recall pulls facts about all of them, so the bot
-  // stays consistent about each person across the group chat (not keyed to the surface).
+
+  // The channel's members — everyone who's spoken (recall pulls facts about all of them).
   private members = new Set<string>(['dennis']);
+  // Canonical channel transcript; every bot is delivered each entry exactly once.
+  private channelLog: ChannelMsg[] = [];
+  private deliveredUpTo = new Map<string, number>();
+  // Pending job-completion relays to run through their owner bot.
+  private relayQueue: Job[] = [];
+  private draining = false;
 
   constructor() {
-    // The chat layer — not the UI — is the subscriber to job lifecycle now.
     onJobUpdate((job) => {
       this.patch({ running: listJobs().filter((j) => j.status === 'running').length });
-      // A background task wakes the chat-self once it's reached a terminal/blocking state: 'done'
-      // (relay it), 'failed' (relay the error), or 'awaiting' (it needs human input). 'running' just
-      // refreshes the footer count — it never wakes the chat, so a task runs silently to completion.
+      // A finished/blocked job wakes its owner bot to relay it (gate-bypassed — the owner always relays).
       if (job.status === 'done' || job.status === 'awaiting' || job.status === 'failed') {
-        this.enqueue({ kind: 'job', job });
+        this.relayQueue.push(job);
+        void this.drain();
       }
     });
   }
@@ -78,14 +85,20 @@ class Conductor {
     return this.state;
   }
 
-  /** Resolves once the queue is drained and no turn is processing. For deterministic tests. */
+  /** Resolves once the channel is quiescent (no turn streaming, nothing pending). For tests. */
   whenIdle(): Promise<void> {
-    if (!this.processing && this.queue.length === 0) return Promise.resolve();
+    if (!this.draining) return Promise.resolve();
     return new Promise((resolve) => this.idleResolvers.push(resolve));
   }
 
   submitUser(text: string): void {
-    this.enqueue({ kind: 'user', text, speaker: this.state.speaker });
+    const who = titleCase(this.state.speaker);
+    this.members.add(this.state.speaker);
+    this.channelLog.push({ author: who, text });
+    this.patch({
+      history: [...this.state.history, { id: `u-${this.seq++}`, kind: 'user', text, speaker: who }],
+    });
+    void this.drain();
   }
 
   /** Switch who's talking in the channel (the CLI's "/as <name>"), adding them to the members set. */
@@ -96,88 +109,129 @@ class Conductor {
     this.patch({ speaker: id });
   }
 
-  /** Build the run identity from the channel's members + who's speaking this turn. */
-  private identityFor(speaker: string, surface: string): Identity {
-    return {
-      participants: [...this.members].map(personScope),
-      speaker: personScope(speaker),
-      company: companyScope('local'),
-      surface,
-      selfAgent: BOT.name.toLowerCase(),
-    };
-  }
-
   private patch(p: Partial<ConductorState>): void {
     this.state = { ...this.state, ...p };
     for (const cb of this.subs) cb();
   }
 
-  private enqueue(turn: Turn): void {
-    this.queue.push(turn);
-    if (!this.processing) void this.drain();
+  /** Build the run identity for a bot's turn: who's present + who's speaking + this bot as owner. */
+  private identityFor(botId: string, surface: string): Identity {
+    return {
+      participants: [...this.members].map(personScope),
+      speaker: personScope(this.state.speaker),
+      company: companyScope('local'),
+      surface,
+      selfAgent: botId,
+    };
   }
 
+  private recentContext(n = 6): string {
+    return this.channelLog
+      .slice(-n)
+      .map((m) => `${m.author}: ${m.text}`)
+      .join('\n');
+  }
+
+  // Single serialized loop: drain job relays, then deliver the channel to all bots, until quiescent.
   private async drain(): Promise<void> {
-    this.processing = true;
-    while (this.queue.length) {
-      await this.runTurn(this.queue.shift()!);
+    if (this.draining) return;
+    this.draining = true;
+    this.patch({ busy: true });
+    try {
+      do {
+        while (this.relayQueue.length) await this.runJobRelay(this.relayQueue.shift()!);
+        await this.pump();
+      } while (this.relayQueue.length || this.hasUndelivered());
+    } finally {
+      this.draining = false;
+      this.patch({ busy: false, responder: undefined, liveTools: [], liveText: [] });
+      const resolvers = this.idleResolvers;
+      this.idleResolvers = [];
+      for (const r of resolvers) r();
     }
-    this.processing = false;
-    const resolvers = this.idleResolvers;
-    this.idleResolvers = [];
-    for (const r of resolvers) r();
   }
 
-  private async runTurn(turn: Turn): Promise<void> {
-    let thread: string;
-    let input: HumanMessage;
-    if (turn.kind === 'user') {
-      thread = CLI_THREAD_ID;
-      const who = titleCase(turn.speaker);
-      // Attribute the sender in the content so the bot reads the channel as a real group chat.
-      input = new HumanMessage(`${who}: ${turn.text}`);
-      this.patch({
-        history: [
-          ...this.state.history,
-          { id: `u-${this.seq++}`, kind: 'user', text: turn.text, speaker: who },
-        ],
-        busy: true,
-        liveTools: [],
-        liveText: [],
-      });
-    } else {
-      const j = turn.job;
-      // Stale guard: by the time this turn is processed the job may have moved on (e.g. resumed).
-      if (j.status !== 'done' && j.status !== 'awaiting' && j.status !== 'failed') return;
-      thread = j.notifyThread;
-      input =
-        j.status === 'failed'
-          ? new HumanMessage(
-              `[Background task] ${j.id} ("${j.task}") failed: ${j.error ?? '(unknown)'}. Let the user know in your own words — briefly, first person.`,
-            )
-          : j.status === 'awaiting'
-            ? new HumanMessage(
-                `[Background task] ${j.id} ("${j.task}") needs your input:\n${j.lastReport ?? '(no report)'}\n\n` +
-                  `This is your own background work. Relay what it needs to the user (first person); when they answer, ` +
-                  `continue_work("${j.id}", <their answer>) to resume it to completion.`,
-              )
-            : new HumanMessage(
-                `[Background task] ${j.id} ("${j.task}") finished:\n${j.lastReport ?? '(no report)'}\n\n` +
-                  `This is your own work — relay the outcome to the user in the first person, briefly. The task is ` +
-                  `done; don't check it again.`,
-              );
-      this.patch({ busy: true, liveTools: [], liveText: [] });
-    }
+  private hasUndelivered(): boolean {
+    return ROSTER.some((b) => (this.deliveredUpTo.get(b.id) ?? 0) < this.channelLog.length);
+  }
 
-    // Finalize a streamed message into the static history (and refresh the token gauge).
+  /**
+   * Deliver pending channel messages to every bot, gating each. Idempotent — each (bot, message) is
+   * processed exactly once (the pointer advances before any await), so a bot can't double-run; bot↔bot
+   * cascades emerge from pointers reaching replies that land in the log. Capped by MAX_BOT_REPLIES.
+   */
+  private async pump(): Promise<void> {
+    let replies = 0;
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (const bot of ROSTER) {
+        const ptr = this.deliveredUpTo.get(bot.id) ?? 0;
+        if (ptr >= this.channelLog.length) continue;
+        const m = this.channelLog[ptr];
+        this.deliveredUpTo.set(bot.id, ptr + 1); // advance first → never re-taken
+        progressed = true;
+        if (m.authorBotId === bot.id) break; // own message: already in this bot's thread; skip
+
+        const decision =
+          replies < MAX_BOT_REPLIES
+            ? await gate(bot, m.text, {
+                authorBotId: m.authorBotId,
+                recentContext: this.recentContext(),
+              })
+            : 'ignore'; // past the cap: record but don't reply
+        if (decision === 'respond') {
+          await this.runBotTurn(bot, new HumanMessage(`${m.author}: ${m.text}`));
+          replies++;
+        } else {
+          await this.recordIgnored(bot, m);
+        }
+        break; // re-scan from the top — a reply may have appended new messages
+      }
+    }
+  }
+
+  /** Record a message in a bot's checkpoint without a model call (the silent/ignore path). Best-effort. */
+  private async recordIgnored(bot: Bot, m: ChannelMsg): Promise<void> {
+    try {
+      await getGraphFor(bot.id).updateState(
+        { configurable: { thread_id: `${bot.id}:dev:root` } },
+        { messages: [new HumanMessage(`${m.author}: ${m.text}`)] },
+      );
+    } catch {
+      /* recording is best-effort — a failure must never break the channel */
+    }
+  }
+
+  /** Relay a finished job through its owner bot (gate-bypassed); its reply enters the channel. */
+  private async runJobRelay(job: Job): Promise<void> {
+    if (job.status !== 'done' && job.status !== 'awaiting' && job.status !== 'failed') return; // stale
+    const bot = botById(job.ownerBot) ?? ROSTER[0];
+    const prompt =
+      job.status === 'failed'
+        ? `[Background task] ${job.id} ("${job.task}") failed: ${job.error ?? '(unknown)'}. Let the team know in your own words — briefly, first person.`
+        : job.status === 'awaiting'
+          ? `[Background task] ${job.id} ("${job.task}") needs your input:\n${job.lastReport ?? '(no report)'}\n\nThis is your own background work. Relay what it needs (first person); when answered, continue_work("${job.id}", <answer>) to resume it.`
+          : `[Background task] ${job.id} ("${job.task}") finished:\n${job.lastReport ?? '(no report)'}\n\nThis is your own work — relay the outcome to the team in the first person, briefly. The task is done; don't check it again.`;
+    await this.runBotTurn(bot, new HumanMessage(prompt), job.notifyThread);
+  }
+
+  /**
+   * Run one bot's turn: stream its graph (labeled with the bot's name), finalize messages into history,
+   * and append its spoken reply to the channel log so teammates can react to it.
+   */
+  private async runBotTurn(bot: Bot, input: HumanMessage, surface?: string): Promise<void> {
+    const thread = `${bot.id}:dev:root`;
+    const identity = this.identityFor(bot.id, surface ?? thread);
+    this.patch({ responder: bot.name, liveTools: [], liveText: [] });
+
+    let spoken = '';
     const commit = (msg: BaseMessage | undefined) => {
       if (!msg) return;
       const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
         .usage_metadata;
-      const rows = toRenderItems([msg]);
-      // Clear the live lists in the same patch that appends to history, so a finished message's
-      // rows never appear in both <Static> and the live region during a message-id transition.
-      // The next streaming chunk repopulates live immediately.
+      const rows = toRenderItems([msg], bot.name);
+      for (const r of rows) if (r.kind === 'assistant' && r.text) spoken += `${r.text}\n`;
       this.patch({
         ...(usage ? { ctx: { input: usage.input_tokens, output: usage.output_tokens } } : {}),
         ...(rows.length ? { history: [...this.state.history, ...rows] } : {}),
@@ -186,23 +240,12 @@ class Conductor {
       });
     };
 
-    // Accumulate streamed chunks into real message objects; the in-flight one renders live, and
-    // each completed message moves to history as the next begins.
     let curId: string | undefined;
     let cur: BaseMessage | undefined;
     try {
-      // Identity rides alongside thread_id so the memory tools scope facts to who's present, not to
-      // the surface. Built from the channel's members + who's speaking; a Slack adapter will supply
-      // real participants/company the same way.
-      const speaker = turn.kind === 'user' ? turn.speaker : this.state.speaker;
-      const identity = this.identityFor(speaker, thread);
-      const stream = await getGraph().stream(
+      const stream = await getGraphFor(bot.id).stream(
         { messages: [input] },
-        {
-          configurable: { thread_id: thread, identity },
-          streamMode: 'messages',
-          recursionLimit: 50,
-        },
+        { configurable: { thread_id: thread, identity }, streamMode: 'messages', recursionLimit: 50 },
       );
       for await (const [chunk] of stream) {
         const id = chunk.id ?? curId ?? '_0';
@@ -216,7 +259,7 @@ class Conductor {
           cur = chunk;
           curId = id;
         }
-        const items = toRenderItems([cur]);
+        const items = toRenderItems([cur], bot.name);
         this.patch({
           liveText: items.filter((i): i is AssistantItem => i.kind === 'assistant'),
           liveTools: items.filter((i): i is ToolItem => i.kind === 'tool'),
@@ -229,8 +272,11 @@ class Conductor {
         history: [...this.state.history, { id: `e-${this.seq++}`, kind: 'error', text: message }],
       });
     } finally {
-      this.patch({ liveTools: [], liveText: [], busy: false });
+      this.patch({ liveTools: [], liveText: [] });
     }
+
+    const reply = (spoken || (cur ? messageText(cur.content) : '')).trim();
+    if (reply) this.channelLog.push({ author: bot.name, authorBotId: bot.id, text: reply });
   }
 }
 

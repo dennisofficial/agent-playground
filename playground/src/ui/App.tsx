@@ -2,7 +2,6 @@ import { Spinner, TextInput } from '@inkjs/ui';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useEffect, useReducer } from 'react';
 import { conductor } from '../conductor.js';
-import { BOT } from '../persona.js';
 import { MessageView } from './components.js';
 
 export function App() {
@@ -31,7 +30,8 @@ export function App() {
     conductor.submitUser(text);
   }
 
-  const { history, liveTools, liveText, busy, ctx, running, speaker } = conductor.getState();
+  const { history, liveTools, liveText, busy, ctx, running, speaker, responder } =
+    conductor.getState();
   const who = speaker.charAt(0).toUpperCase() + speaker.slice(1);
   const ctxLabel =
     ctx.input !== undefined
@@ -48,7 +48,7 @@ export function App() {
       {liveText.map((item) => (
         <Box key={item.id} flexDirection="column" marginBottom={1}>
           <Text color="green" bold>
-            {BOT.name}
+            {item.speaker ?? responder ?? 'bot'}
           </Text>
           <Text>{item.text}</Text>
         </Box>
@@ -59,7 +59,7 @@ export function App() {
 
       {busy ? (
         <Box>
-          <Spinner label={`${BOT.name} is thinking…`} />
+          <Spinner label={`${responder ?? 'someone'} is thinking…`} />
         </Box>
       ) : (
         <Box>

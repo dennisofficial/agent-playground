@@ -4,33 +4,37 @@ import { createAgent } from 'langchain';
 import { z } from 'zod';
 import { defaultEngine, ENGINE_NAMES } from './engines/index.js';
 import type { WorkerEngineName } from './engines/types.js';
-import { CLI_THREAD_ID, createJob, getJob, latestJob } from './jobs.js';
+import { createJob, getJob, latestJob } from './jobs.js';
 import { getCheckpointer } from './memory/checkpointer.js';
+import { getIdentity } from './memory/identity.js';
 import { memoryTools } from './memory/tools.js';
+import { recentWork } from './memory/worklog.js';
 import { buildModel } from './model.js';
-import { CHAT_PROMPT } from './persona.js';
+import { chatPromptFor } from './persona.js';
+import { type Bot, botById, ROSTER } from './roster.js';
 import { grep, list_dir, read_file } from './tools.js';
 import { type ActionResult, continueWork, getJobState, runWorkerTurn } from './worker.js';
 
-// Zero's chat-side tools. The chat surface has NO filesystem/shell access itself — that lives in the
+// A bot's chat-side tools. The chat surface has NO filesystem/shell access itself — that lives in the
 // background-execution thread (a job). This is the structural "plan-mode" boundary: chat dispatches,
-// continues, finishes, and inspects its own background work; it never mutates directly.
+// continues, finishes, and inspects its own background work; it never mutates directly. Each tool reads
+// the calling bot's identity from the run config (set by the conductor) so jobs are scoped per bot.
 
 const dispatch_job = tool(
-  async ({ task, engine }) => {
+  async ({ task, engine }, config) => {
+    const id = getIdentity(config);
     const engineName: WorkerEngineName = engine ?? defaultEngine();
-    // v0: single CLI surface. v1 reads config.configurable.thread_id to route per surface.
-    const job = createJob(task, CLI_THREAD_ID, engineName);
+    // notifyThread = the surface this was dispatched from; ownerBot = the calling bot; company scopes
+    // the work log to this project.
+    const job = createJob(task, id.surface, engineName, id.selfAgent, id.company);
     // Fire-and-forget: the worker runs in the background, the chat turn returns immediately.
     //
     // Detach the background turn from the conductor's streaming callback context. dispatch_job runs
     // inside the chat graph's `streamMode: 'messages'` run, and LangChain propagates that run's
-    // callbacks to nested runnables via AsyncLocalStorage (ensureConfig → getRunnableConfig merges,
-    // not replaces — so passing `callbacks: []` wouldn't help). Without clearing the store, a
-    // LangGraph turn's invoke() inherits the chat stream's message handler and its tokens/tool-calls
-    // bleed into the main chat. run(undefined, …) roots the turn in a clean store. (The SDK engines
-    // spawn their own subprocess and don't share the store, but this is harmless for them.)
-    // `@langchain/core/singletons` is a semi-internal surface — hence this comment.
+    // callbacks to nested runnables via AsyncLocalStorage. Without clearing the store, a LangGraph
+    // turn's invoke() inherits the chat stream's message handler and its tokens/tool-calls bleed into
+    // the main chat. run(undefined, …) roots the turn in a clean store. (The SDK engines spawn their
+    // own subprocess and don't share the store, but this is harmless for them.)
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
       void runWorkerTurn(job.id, task);
     });
@@ -53,7 +57,10 @@ const dispatch_job = tool(
 );
 
 const continue_work = tool(
-  async ({ jobId, note }) => {
+  async ({ jobId, note }, config) => {
+    const id = getIdentity(config);
+    const job = getJob(jobId);
+    if (!job || job.ownerBot !== id.selfAgent) return `Couldn't resume ${jobId}: not your job.`;
     // Resume fires fire-and-forget and must run in a clean store so a LangGraph run's callbacks don't
     // bleed into the chat stream. continueWork fires it synchronously inside this callback.
     let res: ActionResult = { ok: false };
@@ -76,9 +83,11 @@ const continue_work = tool(
 );
 
 const check_job = tool(
-  async ({ jobId }) => {
-    const job = jobId ? getJob(jobId) : latestJob();
-    if (!job) return jobId ? `No job "${jobId}" found.` : 'No jobs have been started yet.';
+  async ({ jobId }, config) => {
+    const id = getIdentity(config);
+    const job = jobId ? getJob(jobId) : latestJob(id.selfAgent);
+    if (!job || job.ownerBot !== id.selfAgent)
+      return jobId ? `No job "${jobId}" found.` : 'No jobs have been started yet.';
     const header = `${job.id} [${job.status}]: "${job.task}"`;
     if (job.status === 'done') return `${header}\nResult: ${job.result ?? '(none)'}`;
     if (job.status === 'failed') return `${header}\nFailed: ${job.error ?? '(unknown error)'}`;
@@ -88,26 +97,71 @@ const check_job = tool(
   {
     name: 'check_job',
     description:
-      "Check a job's progress (or the most recent job if no id is given). Returns the worker's recent steps to summarize for the user.",
+      "Check one of your jobs' progress (or your most recent if no id is given). Returns the worker's recent steps to summarize.",
     schema: z.object({
-      jobId: z.string().optional().describe('The job id to check; omit for the latest job.'),
+      jobId: z.string().optional().describe('The job id to check; omit for your latest job.'),
     }),
   },
 );
 
-// Lazy + memoized: ChatAnthropic's constructor throws if ANTHROPIC_API_KEY is missing.
-// Building at module top-level would crash on import before Ink can render an error row.
-let graph: ReturnType<typeof build> | undefined;
+const recent_work = tool(
+  async ({ scope }, config) => {
+    const id = getIdentity(config);
+    const entries = recentWork({
+      company: id.company,
+      ownerBot: scope === 'team' ? undefined : id.selfAgent,
+      limit: 10,
+    });
+    if (entries.length === 0)
+      return scope === 'team'
+        ? 'No completed work is logged for the team yet.'
+        : "I have no completed work logged yet — nothing finished in a previous session.";
+    return entries
+      .map((e) => `- [${e.completedAt.slice(0, 10)}] ${e.ownerBot}: ${e.task} — ${e.summary.slice(0, 160)}`)
+      .join('\n');
+  },
+  {
+    name: 'recent_work',
+    description:
+      "Your (or the team's) recently completed background work, newest first. Use this for standups or whenever someone asks what you've been working on — it's how you remember what you actually did.",
+    schema: z.object({
+      scope: z
+        .enum(['mine', 'team'])
+        .optional()
+        .describe("'mine' (default) for your own completed work, 'team' for everyone's."),
+    }),
+  },
+);
 
-function build() {
+const CHAT_TOOLS = [
+  read_file,
+  list_dir,
+  grep,
+  dispatch_job,
+  continue_work,
+  check_job,
+  recent_work,
+  ...memoryTools,
+];
+
+// One graph per bot, lazy + memoized: ChatAnthropic's constructor throws without ANTHROPIC_API_KEY, so
+// building at module top-level would crash on import before Ink can render an error row.
+const graphs = new Map<string, ReturnType<typeof buildFor>>();
+
+function buildFor(bot: Bot) {
   return createAgent({
     model: buildModel(),
-    // Read-only tools (read_file/list_dir/grep) so Zero answers questions directly, plus the
-    // background-work tools. No write/shell here — that lives in the background thread.
-    tools: [read_file, list_dir, grep, dispatch_job, continue_work, check_job, ...memoryTools],
-    systemPrompt: CHAT_PROMPT,
+    tools: CHAT_TOOLS,
+    systemPrompt: chatPromptFor(bot),
     checkpointer: getCheckpointer(),
   });
 }
 
-export const getGraph = () => (graph ??= build());
+export function getGraphFor(botId: string): ReturnType<typeof buildFor> {
+  let g = graphs.get(botId);
+  if (!g) {
+    g = buildFor(botById(botId) ?? ROSTER[0]);
+    graphs.set(botId, g);
+  }
+  return g;
+}

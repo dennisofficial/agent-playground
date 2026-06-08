@@ -1,6 +1,5 @@
 import { Box, Text } from 'ink';
 import { renderMarkdown } from '../markdown.js';
-import { BOT } from '../persona.js';
 import type { RenderItem } from './messages.js';
 
 /** One finalized transcript row, rendered by kind. Assistant text is terminal markdown. */
@@ -36,7 +35,7 @@ export function MessageView({ item }: { item: RenderItem }) {
       return (
         <Box flexDirection="column" marginBottom={1}>
           <Text color="green" bold>
-            {BOT.name}
+            {item.speaker ?? 'bot'}
           </Text>
           <Text>{renderMarkdown(item.text)}</Text>
         </Box>
