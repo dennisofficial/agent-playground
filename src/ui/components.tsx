@@ -24,15 +24,6 @@ export function MessageView({ item }: { item: RenderItem }) {
         </Box>
       );
 
-    case 'notice':
-      return (
-        <Box marginBottom={1}>
-          <Text color="green" dimColor>
-            {item.text}
-          </Text>
-        </Box>
-      );
-
     case 'error':
       return (
         <Box marginBottom={1}>

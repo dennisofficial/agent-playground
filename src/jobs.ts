@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events';
 
+/** The single chat surface in v0. Jobs record which chat thread should receive their relay. */
+export const CLI_THREAD_ID = 'zero:cli:main';
+
 export type JobStatus = 'running' | 'done' | 'failed';
 
 export interface Job {
@@ -7,6 +10,8 @@ export interface Job {
   task: string;
   status: JobStatus;
   threadId: string;
+  /** Chat thread that should receive the completion relay (routing seed for multi-surface v1). */
+  notifyThread: string;
   result?: string;
   error?: string;
 }
@@ -27,9 +32,9 @@ const emitter = new EventEmitter();
 let counter = 0;
 const nextId = () => `job-${(++counter).toString().padStart(3, '0')}`;
 
-export function createJob(task: string): Job {
+export function createJob(task: string, notifyThread: string): Job {
   const id = nextId();
-  const job: Job = { id, task, status: 'running', threadId: `job:${id}` };
+  const job: Job = { id, task, status: 'running', threadId: `job:${id}`, notifyThread };
   jobs.set(id, job);
   emitter.emit('update', job);
   return job;

@@ -10,7 +10,6 @@ export type RenderItem =
   | { id: string; kind: 'user'; text: string }
   | { id: string; kind: 'assistant'; text: string }
   | { id: string; kind: 'tool'; toolName: string }
-  | { id: string; kind: 'notice'; text: string }
   | { id: string; kind: 'error'; text: string };
 
 /** Flatten message content (string | content blocks) to a plain string. */

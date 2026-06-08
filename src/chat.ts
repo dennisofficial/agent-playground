@@ -2,7 +2,7 @@ import { tool } from '@langchain/core/tools';
 import { MemorySaver } from '@langchain/langgraph';
 import { createAgent } from 'langchain';
 import { z } from 'zod';
-import { createJob, getJob, latestJob } from './jobs.js';
+import { CLI_THREAD_ID, createJob, getJob, latestJob } from './jobs.js';
 import { buildModel } from './model.js';
 import { ZERO_CHAT_PROMPT } from './persona.js';
 import { grep, list_dir, read_file } from './tools.js';
@@ -13,7 +13,8 @@ import { getJobState, runJob } from './worker.js';
 
 const dispatch_job = tool(
   async ({ task }) => {
-    const job = createJob(task);
+    // v0: single CLI surface. v1 reads config.configurable.thread_id to route per surface.
+    const job = createJob(task, CLI_THREAD_ID);
     // Fire-and-forget: the worker runs in the background, the chat turn returns immediately.
     void runJob(job.id, task);
     return `Started ${job.id}: "${task}". It's running in the background; use check_job to see progress.`;
