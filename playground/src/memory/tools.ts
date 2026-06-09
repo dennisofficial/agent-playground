@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { botById } from '../employees/index.js';
 import { rememberDeduped } from './dedup.js';
 import { getIdentity, type Tier } from './identity.js';
-import { forgetFact, recall, type StoredFact, updateFact } from './semantic.js';
+import { forgetFactById, recall, type StoredFact, updateFactById } from './semantic.js';
 import { addTask, completeTask, getTask, listTasks, type Task } from './tasks.js';
 
 /**
@@ -11,7 +11,7 @@ import { addTask, completeTask, getTask, listTasks, type Task } from './tasks.js
  * run config set by the conductor, so `remember` resolves the chosen tier to a concrete scope.
  */
 
-const fmt = (f: StoredFact): string => `- ${f.fact}`;
+const fmt = (f: StoredFact): string => `- [#${f.id}] ${f.fact}`;
 
 export const remember_tool = tool(
   async ({ fact, tier }, config) => {
@@ -23,12 +23,12 @@ export const remember_tool = tool(
   {
     name: 'remember',
     description:
-      'Save a durable fact worth recalling in later conversations — a decision, a preference, a work detail. Pick who should know it.',
+      'Save a durable fact worth recalling in later conversations — a decision, a preference, a work detail. State it as ONE bare, atomic claim: the fact itself, with no interpretation, consequences, or "what this means" elaboration (those make near-duplicates that never dedup). Pick who should know it.',
     schema: z.object({
       fact: z
         .string()
         .describe(
-          'The fact, stated plainly, e.g. "We are standardizing on Postgres for all services".',
+          'The single bare fact, stated minimally — the claim itself, no elaboration or consequences, e.g. "We standardize on Postgres for all services" (NOT a paragraph about migrations or what it affects).',
         ),
       tier: z
         .enum(['team', 'project', 'bot', 'private'])
@@ -49,7 +49,7 @@ export const recall_tool = tool(
   {
     name: 'recall',
     description:
-      'Look up what you already know that is relevant right now — this project, team knowledge, your own notes, or (in a 1:1) what you know about this person. Use it to ground yourself before answering.',
+      'Look up what you already know that is relevant right now — this project, team knowledge, your own notes, or (in a 1:1) what you know about this person. Use it to ground yourself before answering. Each result carries its #id — pass that id to update_memory or forget to change a specific fact.',
     schema: z.object({
       query: z.string().describe('What you want to remember about, in natural language.'),
     }),
@@ -57,32 +57,36 @@ export const recall_tool = tool(
 );
 
 export const update_memory_tool = tool(
-  async ({ query, newFact }, config) => {
-    const updated = await updateFact(query, newFact, getIdentity(config));
-    return updated ? 'Updated it.' : 'No matching memory to update.';
+  async ({ id: factId, newFact }, config) => {
+    const updated = await updateFactById(factId, newFact, getIdentity(config));
+    return updated ? `Updated #${factId}.` : `No live fact #${factId} to update.`;
   },
   {
     name: 'update_memory',
     description:
-      'Correct or replace an existing fact when something changes. Finds the closest saved fact by meaning and overwrites it.',
+      'Correct an existing fact by its #id (the [#N] shown by recall) when something changes. Recall first to get the id — there is no fuzzy matching, and an unknown id is a no-op.',
     schema: z.object({
-      query: z.string().describe('Roughly what the existing fact is about.'),
-      newFact: z.string().describe('The corrected fact.'),
+      id: z.number().describe('The #id of the fact to correct (the [#N] from recall).'),
+      newFact: z
+        .string()
+        .describe(
+          'The corrected fact, stated minimally — one bare atomic claim, no elaboration or consequences.',
+        ),
     }),
   },
 );
 
 export const forget_tool = tool(
-  async ({ query }, config) => {
-    const gone = await forgetFact(query, getIdentity(config));
-    return gone ? 'Forgot it.' : 'No matching memory to forget.';
+  async ({ id: factId }, config) => {
+    const gone = forgetFactById(factId, getIdentity(config));
+    return gone ? `Forgot #${factId}.` : `No live fact #${factId} to forget.`;
   },
   {
     name: 'forget',
     description:
-      'Forget a saved fact (soft-deleted, not destroyed). Use when something is no longer true or should not be kept.',
+      'Forget a saved fact by its #id (the [#N] shown by recall; soft-deleted, not destroyed). Recall first to get the id — there is no fuzzy matching, and an unknown id is a no-op. Use when something is no longer true.',
     schema: z.object({
-      query: z.string().describe('Roughly what the fact to forget is about.'),
+      id: z.number().describe('The #id of the fact to forget (the [#N] from recall).'),
     }),
   },
 );

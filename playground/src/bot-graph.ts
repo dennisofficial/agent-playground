@@ -328,7 +328,10 @@ function buildBotGraph(bot: Employee) {
     config: RunnableConfig,
   ): Promise<Partial<BotStateType>> => {
     const transcript = turnTranscript(state);
-    if (transcript.trim()) await reconcileMemory(bot, transcript, getIdentity(config));
+    // Tag the reconcile with this turn's gate verdict, so the session metric can separate writes made on
+    // the respond path from those a silent (acknowledge/ignore) bot makes — the data the deferred
+    // "should silent bots reconcile at all?" decision needs.
+    if (transcript.trim()) await reconcileMemory(bot, transcript, getIdentity(config), state.decision);
     return {};
   };
 
@@ -338,7 +341,7 @@ function buildBotGraph(bot: Employee) {
     config: RunnableConfig,
   ): Promise<Partial<BotStateType>> => {
     const transcript = turnTranscript(state);
-    if (transcript.trim()) await reconcileTasks(bot, transcript, getIdentity(config));
+    if (transcript.trim()) await reconcileTasks(bot, transcript, getIdentity(config), state.decision);
     return {};
   };
 

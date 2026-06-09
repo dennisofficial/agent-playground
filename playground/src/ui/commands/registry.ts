@@ -1,6 +1,8 @@
 import { approveCommand, approveTicketCommand, rejectCommand } from './approval.js';
 import { standupCommand, ticketsCommand } from './board.js';
+import { debugCommand } from './debug.js';
 import { exitCommand } from './exit.js';
+import { metricsCommand } from './metrics.js';
 import { asCommand } from './speaker.js';
 import { tasksCommand } from './tasks.js';
 import type { Command, CommandContext } from './types.js';
@@ -18,6 +20,8 @@ export const COMMANDS: Command[] = [
   exitCommand,
   tasksCommand,
   asCommand,
+  debugCommand,
+  metricsCommand,
   approveTicketCommand,
   approveCommand,
   rejectCommand,

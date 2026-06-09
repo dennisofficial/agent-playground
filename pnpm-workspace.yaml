@@ -1,11 +1,31 @@
 packages:
+  - packages/**
+  - backend
+  - shared
+  - web
   - playground
-# Workspace with one package today (`playground`); more land as the app is carved out of it.
+# Submodule packages (e.g. @workspace/nestjs-core) live under packages/ and resolve via the glob above.
 # pnpm 11 also uses this file as the workspace settings store:
+#   - injectWorkspacePackages + nodeLinker: isolated — inject workspace packages the way `pnpm install`
+#     would for external packages, so peerDependencies don't get duplicate runtime instances
+#     (one @nestjs/* + one @langchain/core shared across backend and the submodule).
 #   - allowBuilds: which dependency postinstall/build scripts may run (native deps need this)
-#   - overrides:   force a single @langchain/core instance across @langchain/* packages
+#   - overrides:   force single instances / pin the workspace TS version
+ignoreWorkspaceRootCheck: true
+injectWorkspacePackages: true
+nodeLinker: isolated
+preferWorkspacePackages: true
+syncInjectedDepsAfterScripts:
+  - build
+  - prepare
 allowBuilds:
-  esbuild: true
+  '@nestjs/core': true
+  '@swc/core': true
   better-sqlite3: true
+  esbuild: true
+  msgpackr-extract: true
+  sharp: true
+  unrs-resolver: true
 overrides:
   '@langchain/core': 1.1.48
+  typescript: 6.0.3

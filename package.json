@@ -1,0 +1,15 @@
+{
+  "name": "agent-playground-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Slack-employee workforce — pnpm monorepo (NestJS backend + Next.js admin web + shared + terminal playground).",
+  "packageManager": "pnpm@11.1.2",
+  "scripts": {
+    "build:packages": "pnpm --filter \"./packages/**\" run build"
+  },
+  "devDependencies": {
+    "@dotenvx/dotenvx": "^1.71.0",
+    "prettier": "^3.8.3",
+    "tsup": "^8.5.1"
+  }
+}

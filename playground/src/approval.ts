@@ -83,7 +83,9 @@ export function executeApprovedPlan(
     isChannel: true,
   };
   void rememberDeduped({
-    fact: `Approved plan for "${planJob.task}"${edits ? ' (with edits)' : ''}: ${plan.slice(0, 300)}`,
+    // A bare approval fact — just the decision. The full plan is already seeded into the execute job
+    // below, so storing a 300-char slice here only pollutes semantic recall with an un-dedupable blob.
+    fact: `Approved plan for "${planJob.task}"${edits ? ' (with edits)' : ''}.`,
     tier: 'project',
     id: approver,
   }).catch(() => {});

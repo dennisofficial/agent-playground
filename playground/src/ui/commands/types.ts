@@ -16,8 +16,10 @@
 export interface CommandContext {
   /** Print a local-only transcript row (RenderItem kind:'note') — CLI output, never a channel message. */
   note(text: string): void;
-  /** Quit the app (Ink `useApp().exit`). */
+  /** Quit the app (dumps the transcript to the restored screen, then Ink `useApp().exit`). */
   exit(): void;
+  /** Toggle (or set) debug-row visibility; returns the new state. Hidden debug stays logged in state. */
+  setDebug(show?: boolean): boolean;
 }
 
 export interface Command {

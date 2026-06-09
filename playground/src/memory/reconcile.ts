@@ -6,6 +6,7 @@ import { logBus } from '../logbus.js';
 import { buildExtractModel } from '../model.js';
 import { rememberDeduped, withMemoryLock } from './dedup.js';
 import { type Identity } from './identity.js';
+import { type Decision, recordMemoryReconcile, recordTaskReconcile } from './metrics.js';
 import { forgetFactById, recall, updateFactById } from './semantic.js';
 import { addTask, completeTask, dropTask, remindersForBot } from './tasks.js';
 
@@ -71,7 +72,9 @@ namespace MemoryReconcile {
           id: z
             .number()
             .describe('the #id of the existing fact (from the list above) that changed'),
-          newFact: z.string(),
+          newFact: z
+            .string()
+            .describe('the corrected fact, stated minimally — one bare atomic claim, no elaboration'),
         }),
       )
       .describe('existing facts (by #id) that CHANGED; [] if none'),
@@ -98,7 +101,10 @@ Decide what should change (be conservative — most turns change nothing). Refer
 by the #id shown above — never invent an id:
 - add: NEW durable facts worth keeping long-term — a stable preference, decision, role, or project fact.
   ONLY from what the HUMANS said (not teammates' replies). NOT chatter, greetings, questions, task
-  instructions, or coding-style. Set "tier": project = DEFAULT for work facts (about THIS project — its
+  instructions, or coding-style. State each as the BARE atomic claim ONLY — the decision/preference
+  itself, with no interpretation, consequences, rationale, or "what this means for X" elaboration (store
+  "Backend standardizes on PostgreSQL", NOT a paragraph about migrations and future work); elaborated
+  facts pile up as near-duplicates that never dedup. Set "tier": project = DEFAULT for work facts (about THIS project — its
   repo, stack, goals, or a decision made here); team = roles, who does what, and the boss's STANDING
   preferences that hold across every project; private = personal/sensitive; bot = only you. Set "authorId"
   = the human who said it. Do NOT re-add something already above — even if worded differently. If the new
@@ -130,6 +136,7 @@ export async function reconcileMemory(
   bot: Employee,
   transcript: string,
   id: Identity,
+  decision: Decision = 'respond',
 ): Promise<void> {
   try {
     // Show a wider slice of the accessible store (was 10) so the model's "is this a duplicate / does this
@@ -152,29 +159,47 @@ export async function reconcileMemory(
     // update/delete/supersede act ONLY on ids actually shown to the model this turn (no clobbering a fact
     // it never saw); updateFactById additionally scope-checks each id as defense in depth.
     const ids = knownIds(id);
+    // Tally what ACTUALLY landed (not what the model proposed): an add can dedup-merge instead of insert,
+    // and an update/delete/supersede no-ops when its id isn't live/accessible. These actuals drive both the
+    // debug row and the per-path session metric.
+    let inserted = 0;
+    let deduped = 0;
+    let updated = 0;
+    let deleted = 0;
     for (const a of result.add) {
       if (!a.fact?.trim()) continue;
       // A contradicting/replacing add overwrites the named fact in place instead of co-storing the
       // opposite (the dedup judge treats opposites as distinct, so a plain add would keep both).
       if (typeof a.supersedes === 'number' && shownIds.has(a.supersedes)) {
-        await withMemoryLock(() => updateFactById(a.supersedes as number, a.fact, id));
+        const r = await withMemoryLock(() => updateFactById(a.supersedes as number, a.fact, id));
+        if (r) updated++;
         continue;
       }
       const speaker = realId(a.authorId, ids) ?? id.speaker;
-      await rememberDeduped({ fact: a.fact, tier: a.tier, id: { ...id, speaker } });
+      const r = await rememberDeduped({ fact: a.fact, tier: a.tier, id: { ...id, speaker } });
+      if (r.action === 'inserted') inserted++;
+      else deduped++;
     }
     for (const u of result.update) {
-      if (shownIds.has(u.id) && u.newFact?.trim())
-        await withMemoryLock(() => updateFactById(u.id, u.newFact, id));
+      if (shownIds.has(u.id) && u.newFact?.trim()) {
+        const r = await withMemoryLock(() => updateFactById(u.id, u.newFact, id));
+        if (r) updated++;
+      }
     }
     for (const d of result.delete) {
-      if (shownIds.has(d.id)) await withMemoryLock(async () => forgetFactById(d.id, id));
+      if (shownIds.has(d.id)) {
+        const r = await withMemoryLock(async () => forgetFactById(d.id, id));
+        if (r) deleted++;
+      }
     }
-    if (result.add.length || result.update.length || result.delete.length) {
+    // Record EVERY pass (even all-zero) so `ignore`/`acknowledge` attempts form the denominator for "do
+    // silent reconciles ever write?" The debug row, by contrast, fires only when something changed.
+    recordMemoryReconcile(decision, { inserted, deduped, updated, deleted });
+    if (inserted || deduped || updated || deleted) {
       logBus.publish({
         kind: 'memory',
         by: bot.name,
-        text: `+${result.add.length} ~${result.update.length} -${result.delete.length}`,
+        text: `[${decision}] +${inserted} ≈${deduped} ✎${updated} -${deleted}`,
       });
     }
   } catch {
@@ -254,6 +279,7 @@ export async function reconcileTasks(
   bot: Employee,
   transcript: string,
   id: Identity,
+  decision: Decision = 'respond',
 ): Promise<void> {
   try {
     const open = remindersForBot(id.project, bot.id);
@@ -267,23 +293,32 @@ export async function reconcileTasks(
       transcript,
     });
     const ids = knownIds(id);
+    // Actual outcomes, not proposed lengths: addTask dedups to undefined on the unique index, and
+    // complete/drop return false when the id isn't an open reminder this turn could act on.
+    let added = 0;
+    let completed = 0;
+    let dropped = 0;
     for (const a of result.add) {
-      if (a.description?.trim())
-        addTask({
+      if (a.description?.trim()) {
+        const t = addTask({
           project: id.project,
           description: a.description,
           owner: realId(a.owner, ids) ?? bot.id, // default to the committing bot's own plate
           createdBy: bot.id,
           source: id.surface,
         });
+        if (t) added++;
+      }
     }
-    for (const c of result.complete) if (shownIds.has(c.id)) completeTask(id.project, c.id);
-    for (const d of result.drop) if (shownIds.has(d.id)) dropTask(id.project, d.id);
-    if (result.add.length || result.complete.length || result.drop.length) {
+    for (const c of result.complete)
+      if (shownIds.has(c.id) && completeTask(id.project, c.id)) completed++;
+    for (const d of result.drop) if (shownIds.has(d.id) && dropTask(id.project, d.id)) dropped++;
+    recordTaskReconcile(decision, { added, completed, dropped });
+    if (added || completed || dropped) {
       logBus.publish({
         kind: 'reminders',
         by: bot.name,
-        text: `+${result.add.length} ✓${result.complete.length} -${result.drop.length}`,
+        text: `[${decision}] +${added} ✓${completed} -${dropped}`,
       });
     }
   } catch {

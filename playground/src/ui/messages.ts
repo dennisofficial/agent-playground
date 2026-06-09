@@ -64,6 +64,19 @@ export type RenderItem =
     }
   | { id: string; kind: 'error'; text: string };
 
+/** Debug/observability rows — hidden by default and toggled by `/debug` (a "pure Slack" view shows only
+ * chat: messages, reactions, approvals, notes, errors). Everything else is operator-facing diagnostics. */
+const DEBUG_KINDS = new Set<RenderItem['kind']>([
+  'gate',
+  'recall',
+  'memory',
+  'reminders',
+  'workspace',
+  'worker',
+  'tool',
+]);
+export const isDebug = (item: RenderItem): boolean => DEBUG_KINDS.has(item.kind);
+
 /**
  * Map a conductor domain event to a terminal render row. Presentation decisions live here, not in the
  * core: the gate row's `$cost` string is formatted from the event's raw usage via `gateCostUsd`.

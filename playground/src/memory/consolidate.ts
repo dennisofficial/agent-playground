@@ -1,6 +1,7 @@
 import { getDb } from './db.js';
 import { dedupJudge } from './dedup.js';
 import { cosine } from './embeddings.js';
+import { getMemoryMetrics, recordWrite } from './metrics.js';
 import { DEDUP_THRESHOLD, GRAY_FLOOR } from './semantic.js';
 
 /**
@@ -62,6 +63,7 @@ async function consolidateScope(scope: string): Promise<{ kept: number; merged: 
           new Date().toISOString(),
           other.id,
         );
+        recordWrite('updated'); // a merge is a dedup — count only REAL writes (never under --dry-run)
       }
     }
   }
@@ -100,6 +102,15 @@ async function main(): Promise<void> {
     `${DRY_RUN ? '[dry-run] ' : ''}done: ${totalKept} canonical kept, ${totalMerged} merged${
       DRY_RUN ? ' (nothing written)' : ''
     }.`,
+  );
+
+  // The shared session metric: judge calls are real even in a dry-run (the LLM was actually consulted),
+  // but merges only count as deduped writes when we actually wrote — so dry-run reports "would merge".
+  const m = getMemoryMetrics();
+  console.log(
+    DRY_RUN
+      ? `metrics: ${m.judgeCallCount} judge calls · would merge: ${totalMerged} (no writes).`
+      : `metrics: ${m.judgeCallCount} judge calls · ≈${m.dedupCount} deduped (merged).`,
   );
 }
 

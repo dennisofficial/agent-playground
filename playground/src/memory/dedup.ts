@@ -2,6 +2,7 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { buildExtractModel } from '../model.js';
+import { recordJudgeCall, recordWrite } from './metrics.js';
 import { remember, type RememberInput } from './semantic.js';
 
 /**
@@ -73,6 +74,7 @@ New: {candidate}`;
  * fires rarely. On any failure it returns false — a recoverable duplicate beats a wrong merge.
  */
 export async function dedupJudge(existing: string, candidate: string): Promise<boolean> {
+  recordJudgeCall(); // the only LLM call on the write path — count every gray-band invocation
   try {
     const { same } = await DedupJudge.get().invoke({ existing, candidate });
     return same;
@@ -81,9 +83,13 @@ export async function dedupJudge(existing: string, candidate: string): Promise<b
   }
 }
 
-/** The canonical fact-write: judge-guarded and serialized. All add paths should use this, not `remember`. */
-export function rememberDeduped(
+/** The canonical fact-write: judge-guarded and serialized. All add paths should use this, not `remember`.
+ * Self-records the session write metric here (insert vs dedup-merge) so every caller — reconcile, the
+ * `remember` tool, approval — is counted without touching each call site. */
+export async function rememberDeduped(
   input: RememberInput,
 ): Promise<{ action: 'inserted' | 'updated'; id: number }> {
-  return withMemoryLock(() => remember(input, { judge: dedupJudge }));
+  const res = await withMemoryLock(() => remember(input, { judge: dedupJudge }));
+  recordWrite(res.action);
+  return res;
 }

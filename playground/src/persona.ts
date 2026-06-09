@@ -14,7 +14,8 @@ import type { Workspace } from './workspace.js';
 // The shared identity core: a universal calibration line (precision + saying plainly when blocked/uncertain
 // — the natural-language twin of the STATUS: QUESTION/BLOCKED contract) that holds for EVERY employee, plus
 // the per-employee `personality` appended for flavor. The code-specific "minimal, surgical changes" value
-// that used to live here now rides in the engineers' `protocols`, so it doesn't leak onto non-engineers.
+// that used to live here now rides in the per-engine `WORKER_TOOL_GUIDE` (the worker surface, where edits
+// actually happen), so it doesn't leak onto non-engineers or the chat surface.
 const identityLine = (employee: Employee) => {
   const base = `You are ${employee.name}, the team's ${employee.role} — a capable, conscientious AI employee. You have real taste and judgment: you're precise, and you say plainly when something is blocked or uncertain instead of guessing.`;
   return employee.personality ? `${base} ${employee.personality}` : base;
@@ -234,6 +235,10 @@ Teammates building this ticket work on their own branches; you all converge on t
 ${mode === 'plan' ? PLAN_DIRECTIVE : EXECUTE_DIRECTIVE}
 
 ${WORKER_TOOL_GUIDE[employee.engine]}${collab}${skillsLine(employee)}${protocolsBlock(employee)}
+
+Your teammates and their lanes: ${rosterSummary()}. Stay in yours; if a seam needs another
+discipline's contract or hands, flag it for handoff in your report rather than deciding or
+building it yourself.
 
 ${TEAM_RULES}
 

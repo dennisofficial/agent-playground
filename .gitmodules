@@ -1,0 +1,3 @@
+[submodule "packages/nestjs-core-essentials"]
+	path = packages/nestjs-core-essentials
+	url = https://github.com/dennisofficial/nestjs-core-essentials.git

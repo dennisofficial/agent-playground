@@ -39,13 +39,9 @@ export const GRAY_FLOOR = 0.82;
 // `recall` returns the "least irrelevant" facts on every turn (e.g. a thin "thanks" embeds to noise),
 // polluting context. Tuned conservative; raise if junk still leaks, lower if real recall is missed.
 export const MIN_RECALL_SIM = 0.3;
-// Targeting floor for the query-based update/forget TOOLS: below this, there is no real match, so the
-// op no-ops instead of clobbering the nearest unrelated fact. Higher than the recall floor — overwriting
-// a fact demands a confident match. (The reconcile pass targets by id and bypasses this entirely.)
-export const MIN_TARGET_SIM = 0.6;
 // Cross-project recall floor: a fact from ANOTHER project crosses into the current turn only when it's
 // at least this similar to the query. Calibrated against this file's own bars — MIN_RECALL_SIM 0.3
-// ("relevant enough to inject" in-project), MIN_TARGET_SIM 0.6 ("confident same-topic match"), DEDUP 0.92
+// ("relevant enough to inject" in-project) and DEDUP 0.92
 // ("near-duplicate"). We want "clearly on-point, not just relevant" — above the 0.3 inject floor so it's
 // stricter for cross-project, but well below paraphrase territory (a cross-project parallel like "we hit
 // this same auth issue on customer-panel" is RELATED, not a duplicate of the query). TUNE once running.
@@ -215,28 +211,6 @@ export async function recallOtherProjects(
     .map(({ r, sim }) => ({ fact: stripEmb(r), sim, project: projectLabel(r.scope) ?? r.scope }));
 }
 
-/**
- * Nearest accessible fact to a query — used by the query-based update/forget tools to target a fact by
- * meaning. Returns undefined when the best match is below `floor` (default `MIN_TARGET_SIM`): the data-
- * loss guard — without it, a target that doesn't really exist in the store overwrites/tombstones the
- * nearest unrelated fact. (The reconcile pass targets by id and never calls this.)
- */
-async function nearest(
-  query: string,
-  id: Identity,
-  floor = MIN_TARGET_SIM,
-): Promise<{ row: Row; sim: number } | undefined> {
-  const rows = liveFacts(id);
-  if (rows.length === 0) return undefined;
-  const qv = await embed(query);
-  let best: { row: Row; sim: number } | undefined;
-  for (const r of rows) {
-    const sim = cosine(qv, parseEmb(r.embedding));
-    if (!best || sim > best.sim) best = { row: r, sim };
-  }
-  return best && best.sim >= floor ? best : undefined;
-}
-
 /** Re-embed `newFact` and overwrite the given row in place; returns the new updated_at timestamp. */
 async function writeFactUpdate(rowId: number, newFact: string): Promise<string> {
   const vec = await embed(newFact);
@@ -259,26 +233,6 @@ function liveFactById(rowId: number, id: Identity): Row | undefined {
       `SELECT * FROM facts WHERE id = ? AND deleted_at IS NULL AND scope IN (${placeholders})`,
     )
     .get(rowId, ...scopes) as Row | undefined;
-}
-
-/** Overwrite the fact nearest to `query` with `newFact` — no-ops when no match clears `MIN_TARGET_SIM`. */
-export async function updateFact(
-  query: string,
-  newFact: string,
-  id: Identity,
-): Promise<StoredFact | null> {
-  const hit = await nearest(query, id);
-  if (!hit) return null;
-  const ts = await writeFactUpdate(hit.row.id, newFact);
-  return { ...stripEmb(hit.row), fact: newFact, updated_at: ts };
-}
-
-/** Soft-delete (tombstone) the fact nearest to `query` — never a hard delete. Returns it, or null. */
-export async function forgetFact(query: string, id: Identity): Promise<StoredFact | null> {
-  const hit = await nearest(query, id);
-  if (!hit) return null;
-  getDb().prepare(`UPDATE facts SET deleted_at = ? WHERE id = ?`).run(nowIso(), hit.row.id);
-  return stripEmb(hit.row);
 }
 
 /**
