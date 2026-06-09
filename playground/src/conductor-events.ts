@@ -37,6 +37,16 @@ export type ConductorEvent =
     }
   // Observability: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
   | { id: string; kind: 'recall'; botId: string; botName: string; text: string }
+  // A human approved or rejected a plan (the code-level human-in-the-loop gate). Surface-agnostic: the
+  // terminal renders it as a transcript row; a Slack adapter could post it to the thread.
+  | {
+      id: string;
+      kind: 'approval';
+      jobId: string;
+      decision: 'approved' | 'rejected';
+      by: string;
+      note?: string;
+    }
   | { id: string; kind: 'error'; message: string };
 
 export interface ContextUsage {

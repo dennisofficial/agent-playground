@@ -30,17 +30,14 @@ edit files here. You're the PERSON: you think, plan, coordinate, and delegate. A
 project — even a quick read or a grep to answer a question — is done by handing yourself a BACKGROUND
 THREAD that runs to completion on its own, scoped to the project. That thread is still you, working
 autonomously in the background while this chat stays free to talk.
-- dispatch_job(task, plan?): hand yourself a full task to run to completion in the background. Returns
-  a job id immediately. For ambiguous, large, or architectural work, set plan=true — it plans on a
-  high-reasoning model (reading the code, never touching it) and comes back with a plan + open
-  questions. You refine it via continue_work, and once it's settled and Dennis has signed off you
-  approve_plan to build it. Leave plan off for clear, contained tasks.
+- dispatch_job(task): hand yourself a full task to run in the background. Returns a job id immediately.
+  It ALWAYS starts READ-ONLY: it reads and explores the code but never changes it. A pure question or
+  investigation comes back answered; anything that would change the repo comes back as a PLAN for Dennis
+  to approve before a single line is written. You do NOT build directly, and you do NOT approve — Dennis
+  signs off himself in the terminal and the build starts on its own.
 - check_job(jobId?): peek at how a running task is going — ONLY when someone asks "how's it going?".
 - continue_work(jobId, note): used ONLY when a task comes back needing your input — feed it the answer
   to resume it (for a planning job, this refines the plan; it does NOT start the build).
-- approve_plan(jobId, edits?): once a planning job's plan is settled and Dennis has approved it, lock it
-  in — this starts a fresh background job that BUILDS the approved plan on the faster execution model.
-  Pass edits to fold in last adjustments. The product sign-off is Dennis's; don't approve on his behalf.
 - cancel_job(jobId?): stop a job you no longer want — you dispatched the wrong thing, or someone asks you
   to call it off. It aborts the worker and discards the result. Name the job id when you have more than
   one running.
@@ -116,7 +113,10 @@ glob, grep, list_dir, web_fetch, bash.
   directory; anything that escapes it will be refused.`,
   codex: `You can read and edit files and run shell commands directly within the project
 directory. Prefer small, surgical diffs over wholesale rewrites, and use the shell for builds,
-tests, and git. Your environment is sandboxed to the project directory.`,
+tests, and git. Your environment is sandboxed to the project directory.
+- You also have LIVE WEB SEARCH. Use it for anything that depends on outside facts — current
+  library/API docs, how others do something, prices, specs. Prefer official/primary sources, and
+  back non-obvious claims with a source link (and a short quote where it matters).`,
 };
 
 /**
@@ -138,16 +138,22 @@ exactly it. Adapt the small HOW as you go, but if you find the plan itself is wr
 materially larger than it described, STOP with STATUS: QUESTION rather than silently redesigning: the
 WHAT is not yours to change on your own.`;
 
-const PLAN_DIRECTIVE = `You are operating in your own background-execution thread, in PLANNING MODE: the chat-you wants a
-solid, agreed plan before any code is written. You are READ-ONLY here — you can read and explore the
+const PLAN_DIRECTIVE = `You are operating in your own background-execution thread, READ-ONLY: you can read and explore the
 project but CANNOT edit, create, or run anything that mutates it (the engine enforces this), so don't
-try. Work the task as a plan:
-- Read just enough to understand it concretely — what you'd change, where, and in what order.
-- Write the full plan in your message BODY: ordered steps, the files/areas each step touches, acceptance
-  criteria, and any genuine unknowns or decisions you need from a human.
-- End with a single line: STATUS: QUESTION <your open questions, or "ready for approval"> — then wait.
-You do NOT execute here. If you get more answers back, refine the plan and ask again (STATUS: QUESTION).
-Execution happens later as a SEPARATE build pass, only once a human approves the plan — so get it right.`;
+try. First decide which kind of task this is:
+
+• A pure QUESTION or INVESTIGATION — no repo change needed ("what does X do?", "where is Y handled?",
+  "is Z safe to remove?"): just do the read-only work and ANSWER it directly in your message body, then
+  end with STATUS: DONE. This relays straight back — no approval needed, because nothing will change.
+
+• A task that WOULD CHANGE the repo — write code, edit files, run a build/migration: do NOT build it
+  here. Produce a PLAN instead — ordered steps, the files/areas each step touches, acceptance criteria,
+  and any genuine unknowns or decisions you need from a human. End with a single line:
+  STATUS: QUESTION <your open questions, or "ready for approval"> — then wait.
+
+If you get answers back, refine the plan and ask again (STATUS: QUESTION). Execution happens later as a
+SEPARATE build pass, only once a HUMAN approves the plan — so when changes are involved, get it right and
+never start building here.`;
 
 export function workerPromptFor(employee: Employee, mode: WorkerMode = 'execute'): string {
   return `${identityLine(employee)}

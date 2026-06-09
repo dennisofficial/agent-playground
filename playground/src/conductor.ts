@@ -1,11 +1,13 @@
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { GraphRecursionError } from '@langchain/langgraph';
+import { executeApprovedPlan } from './approval.js';
 import { type BotStateDelta, getBotGraph } from './bot-graph.js';
 import { channel } from './channel.js';
 import { type ConductorEvent, type ContextUsage, type MessageUsage } from './conductor-events.js';
 import { type Employee, botById, ROSTER } from './employees/index.js';
-import { type Job, listJobs, onJobUpdate } from './jobs.js';
+import { type Job, getJob, listJobs, onJobUpdate } from './jobs.js';
 import { type Identity } from './memory/identity.js';
+import { type ActionResult, continueWork } from './worker.js';
 
 /**
  * The dispatcher: a thin event loop around the shared `channel`. You append to the channel and move on
@@ -173,6 +175,58 @@ class Conductor {
     if (!id) return;
     this.members.add(id);
     this.patch({ speaker: id });
+  }
+
+  /**
+   * HUMAN-ONLY plan approval — the code-level human-in-the-loop gate. Triggered by the terminal
+   * `/approve` command (and a future Slack "Approve" button), NEVER by a model tool. Validates the job
+   * is a plan awaiting approval and spawns the execute build through the single chokepoint
+   * (`executeApprovedPlan`); on success, emits an `approval` event so the transcript records who built what.
+   */
+  approvePlan(jobId: string, edits?: string): ActionResult {
+    const res = executeApprovedPlan(jobId, edits, this.state.speaker);
+    if (res.ok) {
+      const job = getJob(jobId);
+      this.emit({
+        id: `a-${this.emitSeq++}`,
+        kind: 'approval',
+        jobId,
+        decision: 'approved',
+        by: this.state.speaker,
+        note: `building ${res.execJobId}${job ? ` — "${job.task}"` : ''}`,
+      });
+    }
+    return { ok: res.ok, reason: res.reason };
+  }
+
+  /**
+   * HUMAN-ONLY plan rejection: bounce the reason back to the planner so it revises and re-surfaces
+   * (reuses the awaiting → continue_work refine loop). Emits a `rejected` approval event.
+   */
+  rejectPlan(jobId: string, reason: string): ActionResult {
+    const job = getJob(jobId);
+    if (!job || job.mode !== 'plan' || job.status !== 'awaiting')
+      return { ok: false, reason: `${jobId} isn't a plan awaiting approval.` };
+    const res = continueWork(
+      jobId,
+      `${this.state.speaker} did NOT approve the plan: ${reason}\n\nRevise the plan to address this, then re-surface it (STATUS: QUESTION). Do not proceed as-is.`,
+    );
+    if (res.ok) {
+      this.emit({
+        id: `a-${this.emitSeq++}`,
+        kind: 'approval',
+        jobId,
+        decision: 'rejected',
+        by: this.state.speaker,
+        note: reason,
+      });
+    }
+    return res;
+  }
+
+  /** Plan jobs currently awaiting the human's approval — drives the TUI's awaiting-approvals panel. */
+  awaitingApprovals(): Job[] {
+    return listJobs().filter((j) => j.status === 'awaiting' && j.mode === 'plan');
   }
 
   private patch(p: Partial<ConductorStatus>): void {
@@ -415,7 +469,7 @@ class Conductor {
         ? `[Background task] ${job.id} ("${job.task}") failed: ${job.error ?? '(unknown)'}. Let the team know in your own words — briefly, first person.`
         : job.status === 'awaiting'
           ? job.mode === 'plan'
-            ? `[Background planning] ${job.id} ("${job.task}") came back with a PLAN + open questions:\n${job.lastReport ?? '(no report)'}\n\nThis is your own planning work. Relay the plan and its questions to the team (first person). Triage each question: anything about WHAT to build or WHY is Dennis's call — surface it to him; anything technical/reversible, answer yourself or @mention the right teammate. To refine the plan with an answer, continue_work("${job.id}", <answer>). Once the plan is settled and Dennis signs off, approve_plan("${job.id}", <optional edits>) to build it on the execution model.`
+            ? `[Background planning] ${job.id} ("${job.task}") came back with a PLAN + open questions:\n${job.lastReport ?? '(no report)'}\n\nThis is your own planning work. Relay the plan and its questions to the team (first person). Triage each question: anything about WHAT to build or WHY is Dennis's call — surface it to him; anything technical/reversible, answer yourself or @mention the right teammate. To refine the plan with an answer, continue_work("${job.id}", <answer>). You do NOT approve or start the build yourself — once the plan is settled, Dennis signs off directly in the terminal (/approve ${job.id}) and the build kicks off on its own. Hand it to him for sign-off; don't promise to build it.`
             : `[Background task] ${job.id} ("${job.task}") needs your input:\n${job.lastReport ?? '(no report)'}\n\nThis is your own background work. Relay what it needs (first person); when answered, continue_work("${job.id}", <answer>) to resume it.`
           : `[Background task] ${job.id} ("${job.task}") finished:\n${job.lastReport ?? '(no report)'}\n\nThis is your own work — relay the outcome to the team in the first person, briefly. The task is done; don't check it again.`;
     await this.runBotGraph(bot, { seed: prompt, surface: job.notifyThread });

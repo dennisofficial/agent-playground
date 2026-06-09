@@ -70,6 +70,19 @@ export function MessageView({ item }: { item: RenderItem }) {
         </Box>
       );
 
+    // The human-in-the-loop gate's decision — green ✓ for an approved plan (build started), yellow ✕ for
+    // a rejection sent back to revise. A first-class transcript row, not a chat message.
+    case 'approval':
+      return (
+        <Box marginY={1}>
+          <Text color={item.decision === 'approved' ? 'green' : 'yellow'} bold>
+            {`${item.decision === 'approved' ? '✓' : '✕'} ${item.by} ${item.decision} ${item.jobId}${
+              item.note ? ` — ${item.note}` : ''
+            }`}
+          </Text>
+        </Box>
+      );
+
     case 'error':
       return (
         <Box marginBottom={1}>

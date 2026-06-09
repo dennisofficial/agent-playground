@@ -307,5 +307,10 @@ export const web_fetch = tool(
 /** Read-only tools — safe for the chat layer (Zero answers questions directly, no mutations). */
 export const readOnlyTools = [read_file, list_dir, grep];
 
+/** Planning tools — everything a PLAN pass needs to explore the repo, but NOTHING that can mutate it
+ * (no write_file / str_replace / bash). This is what keeps a langgraph plan job read-only, matching the
+ * engine-enforced read-only of the claude/codex planning passes. */
+export const planningTools = [read_file, list_dir, grep, glob, web_fetch];
+
 /** Worker tools — read-only set plus the mutating/extra tools (write, edit, glob, fetch, shell). */
 export const workerTools = [...readOnlyTools, write_file, str_replace, glob, web_fetch, bash];

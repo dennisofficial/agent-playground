@@ -11,6 +11,7 @@ import type { WorkerMode } from '../jobs.js';
 import { alex } from './alex.js';
 import { james } from './james.js';
 import { maya } from './maya.js';
+import { nora } from './nora.js';
 import { riley } from './riley.js';
 import { sam } from './sam.js';
 import type { Employee } from './types.js';
@@ -19,7 +20,7 @@ export type { Employee } from './types.js';
 
 // Order groups the build team (backend → frontend → design) ahead of marketing + scrum. ROSTER[0]
 // (alex) is the fallback owner used when a bot lookup misses.
-export const ROSTER: Employee[] = [alex, riley, maya, james, sam];
+export const ROSTER: Employee[] = [alex, riley, maya, james, nora, sam];
 
 export const botById = (id: string): Employee | undefined => ROSTER.find((b) => b.id === id);
 

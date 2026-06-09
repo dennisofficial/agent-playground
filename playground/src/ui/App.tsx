@@ -45,6 +45,9 @@ export function App() {
 
   const { ctx, running, speaker, thinking } = conductor.getStatus();
   const who = speaker.charAt(0).toUpperCase() + speaker.slice(1);
+  // Plan jobs waiting on the human's /approve. Re-read each render — the status subscription fires on
+  // every job update, so this panel appears the moment a plan lands in 'awaiting'.
+  const awaiting = conductor.awaitingApprovals();
 
   function handleSubmit(value: string) {
     const text = value.trim();
@@ -77,6 +80,41 @@ export function App() {
       clearInput();
       return;
     }
+    // "/approve <jobId> [edits]" / "/reject <jobId> <reason>" — the HUMAN-ONLY plan-approval gate. These
+    // call the conductor directly (never a chat bot), so the model can't approve its own plan. The result
+    // is a local note, not a channel message.
+    const approve = text.match(/^\/approve\s+(\S+)\s*(.*)$/i);
+    if (approve) {
+      const res = conductor.approvePlan(approve[1], approve[2].trim() || undefined);
+      pushHistory({
+        id: localId(),
+        kind: 'note',
+        text: res.ok
+          ? `✓ Approved ${approve[1]} — building now.`
+          : `Couldn't approve ${approve[1]}: ${res.reason}`,
+      });
+      clearInput();
+      return;
+    }
+    const reject = text.match(/^\/reject\s+(\S+)\s*(.*)$/i);
+    if (reject) {
+      const reason = reject[2].trim();
+      if (!reason) {
+        pushHistory({ id: localId(), kind: 'note', text: 'Usage: /reject <jobId> <reason>' });
+        clearInput();
+        return;
+      }
+      const res = conductor.rejectPlan(reject[1], reason);
+      pushHistory({
+        id: localId(),
+        kind: 'note',
+        text: res.ok
+          ? `✕ Rejected ${reject[1]} — sent back to revise.`
+          : `Couldn't reject ${reject[1]}: ${res.reason}`,
+      });
+      clearInput();
+      return;
+    }
     // Echo the user's own message locally (the conductor only puts it on the channel), then submit.
     pushHistory({ id: localId(), kind: 'user', text, speaker: who, ts: clock() });
     conductor.submitUser(text);
@@ -104,11 +142,22 @@ export function App() {
           />
         </Box>
       )}
+      {awaiting.length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          {awaiting.map((j) => (
+            <Text key={j.id} color="yellow">
+              {`⏳ Awaiting your approval: ${j.id} ("${j.task.slice(0, 60)}${
+                j.task.length > 60 ? '…' : ''
+              }")  ·  /approve ${j.id}  ·  /reject ${j.id} <reason>`}
+            </Text>
+          ))}
+        </Box>
+      )}
       <Box>
         <Text color="cyan">{`${who} ❯ `}</Text>
         <TextInput
           key={inputKey}
-          placeholder="message   ·   /tasks   ·   /as <name> to switch speaker   ·   /exit"
+          placeholder="message   ·   /approve <job>   ·   /tasks   ·   /as <name>   ·   /exit"
           onSubmit={handleSubmit}
         />
       </Box>

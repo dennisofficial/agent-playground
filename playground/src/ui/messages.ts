@@ -34,6 +34,15 @@ export type RenderItem =
   | { id: string; kind: 'note'; text: string }
   // Debug only: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
   | { id: string; kind: 'recall'; by: string; text: string }
+  // A human's approve/reject decision on a plan — shown inline so the transcript records the gate.
+  | {
+      id: string;
+      kind: 'approval';
+      decision: 'approved' | 'rejected';
+      by: string;
+      jobId: string;
+      note?: string;
+    }
   | { id: string; kind: 'error'; text: string };
 
 /**
@@ -70,6 +79,15 @@ export function renderEvent(e: ConductorEvent): RenderItem {
     }
     case 'recall':
       return { id: e.id, kind: 'recall', by: e.botName, text: e.text };
+    case 'approval':
+      return {
+        id: e.id,
+        kind: 'approval',
+        decision: e.decision,
+        by: e.by,
+        jobId: e.jobId,
+        note: e.note,
+      };
     case 'error':
       return { id: e.id, kind: 'error', text: e.message };
   }

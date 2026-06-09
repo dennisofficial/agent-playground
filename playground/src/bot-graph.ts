@@ -286,7 +286,7 @@ function buildBotGraph(bot: Employee) {
   // dispatch or an explicit `end_turn`. This is what stops "I'll let you know when I'm done" after a
   // dispatch — the heads-up rides on the dispatch message itself (see chat.ts/persona.ts). `every` (not
   // `some`) is load-bearing: a message mixing a terminal tool with an informational one (e.g. recent_work)
-  // OR with a FALLIBLE dispatcher (continue_work/approve_plan, which have guard-failure returns) loops
+  // OR with a FALLIBLE dispatcher (continue_work, which has guard-failure returns) loops
   // back so that result is relayed — the conductor only surfaces assistant text, never tool-result content,
   // so a swallowed failure would be invisible. Hence only the can't-fail tools are terminal.
   const TERMINAL = new Set(['dispatch_job', 'end_turn']);

@@ -2,8 +2,7 @@ import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { botById, resolveWorkerModel, ROSTER } from './employees/index.js';
-import { createJob, getJob, latestJob, updateJob } from './jobs.js';
-import { rememberDeduped } from './memory/dedup.js';
+import { createJob, getJob, latestJob } from './jobs.js';
 import { getIdentity } from './memory/identity.js';
 import { memoryTools, taskTools } from './memory/tools.js';
 import { recentWork } from './memory/worklog.js';
@@ -26,20 +25,15 @@ import {
 // jobs are scoped per bot.
 
 const dispatch_job = tool(
-  async ({ task, plan }, config) => {
+  async ({ task }, config) => {
     const id = getIdentity(config);
     // The engine is the dispatching employee's locked engine — there is no per-dispatch override.
     const engineName = (botById(id.selfAgent) ?? ROSTER[0]).engine;
-    // notifyThread = the surface this was dispatched from; ownerBot = the calling bot; company scopes
-    // the work log to this project. plan=true starts it in planning mode (plan + confirm first).
-    const job = createJob(
-      task,
-      id.surface,
-      engineName,
-      id.selfAgent,
-      id.company,
-      plan ? 'plan' : 'execute',
-    );
+    // ALWAYS planning mode (read-only). The bot can only ever create a read-only PLAN job; a
+    // write-capable EXECUTE job is created exclusively by the human-approval path (executeApprovedPlan),
+    // so the AI can never authorize its own code changes. A pure question/investigation just answers and
+    // ends DONE; a task that would mutate the repo comes back with a plan for Dennis to approve.
+    const job = createJob(task, id.surface, engineName, id.selfAgent, id.company, 'plan');
     // Fire-and-forget: the worker runs in the background, the chat turn returns immediately.
     //
     // Detach the background turn from the conductor's streaming callback context. dispatch_job runs
@@ -51,22 +45,14 @@ const dispatch_job = tool(
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
       void runWorkerTurn(job.id, task);
     });
-    return plan
-      ? `Started ${job.id} (${engineName}) in planning mode: "${task}". It reads enough to plan (read-only), then comes back with a plan + any questions. Refine it with continue_work; once it's settled and Dennis signs off, approve_plan to build it.`
-      : `Started ${job.id} (${engineName}) in the background: "${task}". It runs to completion and reports back once when it's done.`;
+    return `Started ${job.id} (${engineName}): "${task}". It explores read-only, then either answers directly (if it's just a question) or comes back with a plan for Dennis to approve in the terminal before anything is built — you can't start a build yourself. You're notified once when it reports back.`;
   },
   {
     name: 'dispatch_job',
     description:
-      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run to completion in your background thread. Returns immediately with a job id; you are notified once when it finishes. Set plan=true for ambiguous, large, or architectural tasks where the approach should be agreed first: it plans read-only on a high-reasoning model and comes back with a plan + questions. Refine it with continue_work, then approve_plan (once the human signs off) to build it on the execution model. Calling this ENDS YOUR TURN — there is no follow-up reply afterward, so put any brief first-person heads-up (e.g. "On it — give me a bit") in THIS message\'s text, not as a separate message, and never add an "I\'ll let you know when I\'m done" after.',
+      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run in your background thread. Returns immediately with a job id; you are notified once when it reports back. It ALWAYS starts read-only: a pure question/investigation is answered directly; anything that would change the repo comes back as a plan for Dennis to approve in the terminal before it builds — you cannot start a build yourself. Calling this ENDS YOUR TURN — there is no follow-up reply afterward, so put any brief first-person heads-up (e.g. "On it — give me a bit") in THIS message\'s text, not as a separate message, and never add an "I\'ll let you know when I\'m done" after.',
     schema: z.object({
       task: z.string().describe('A clear, self-contained description of the work to do.'),
-      plan: z
-        .boolean()
-        .optional()
-        .describe(
-          'When true, the task plans and surfaces its approach + open questions for your confirmation before writing any code. Use for ambiguous/large/architectural work; leave off (default) for clear, contained tasks.',
-        ),
     }),
   },
 );
@@ -97,72 +83,10 @@ const continue_work = tool(
   },
 );
 
-/** Drop trailing `STATUS: …` line(s) from a worker report, leaving the plan body for the execute job. */
-const stripStatusLine = (report: string): string =>
-  report.replace(/^[\s>*_-]*STATUS:\s*(DONE|QUESTION|BLOCKED|PROGRESS)\b.*$/gim, '').trimEnd();
-
-const approve_plan = tool(
-  async ({ jobId, edits }, config) => {
-    const id = getIdentity(config);
-    const planJob = getJob(jobId);
-    if (!planJob || planJob.ownerBot !== id.selfAgent)
-      return `Couldn't approve ${jobId}: not your job.`;
-    if (planJob.mode !== 'plan') return `${jobId} isn't a planning job — nothing to approve.`;
-    if (planJob.status !== 'awaiting')
-      return `${jobId} is ${planJob.status}, not a plan awaiting approval.`;
-    // Prefer the plan body with its trailing STATUS line stripped; but if the worker crammed the whole
-    // plan INTO the STATUS: QUESTION line (leaving little body), fall back to the full report so we
-    // never execute an empty plan.
-    const body = stripStatusLine(planJob.lastReport ?? '');
-    const plan = body.length >= 40 ? body : (planJob.lastReport ?? '').trim();
-    if (!plan) return `${jobId} has no plan captured yet — let it finish planning first.`;
-
-    // Planning is done: record the approved plan on the plan job and close it. (The conductor skips the
-    // relay for an approved plan job — the execute job below is what reports back.)
-    updateJob(jobId, { status: 'done', plan, result: plan });
-
-    // Capture the approved approach into durable memory so future planning recalls the decision instead
-    // of re-asking. reconcile.ts only mines HUMAN chat utterances; an approved plan is bot-authored, so
-    // it would otherwise never be remembered — this is the deliberate write that closes that gap.
-    void rememberDeduped({
-      fact: `Approved plan for "${planJob.task}"${edits ? ' (with edits)' : ''}: ${plan.slice(0, 300)}`,
-      tier: 'company',
-      id,
-    }).catch(() => {});
-
-    // Spawn a SEPARATE execute job: fresh session → the cheaper EXECUTE-tier model (the plan ran on the
-    // high-reasoning tier, and a session can't switch models mid-stream), mutations allowed, seeded with
-    // the approved plan as its contract.
-    const seeded = `Execute this APPROVED plan, end to end:\n\n${plan}${
-      edits ? `\n\nAdjustments from the team to fold in first:\n${edits}` : ''
-    }\n\n(Originating request: ${planJob.task})`;
-    const execJob = createJob(
-      seeded,
-      planJob.notifyThread,
-      planJob.engine,
-      planJob.ownerBot,
-      planJob.company,
-      'execute',
-    );
-    updateJob(execJob.id, { planJobId: jobId });
-    AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void runWorkerTurn(execJob.id, seeded);
-    });
-    return `Approved ${jobId}'s plan${edits ? ' with your adjustments' : ''} and started ${execJob.id} to build it on the execution model. It runs to completion and reports back when done.`;
-  },
-  {
-    name: 'approve_plan',
-    description:
-      "Approve a planning job's plan (one that came back awaiting with a plan + questions) so it gets built. Optionally pass `edits` to adjust the plan before it runs. This starts a SEPARATE background job that executes the approved plan on the faster build model. Owner-scoped: only the bot that planned it can approve. Use this once the plan is settled and the human has signed off — not continue_work, which is for answering a planning question to refine the plan further.",
-    schema: z.object({
-      jobId: z.string().describe('The planning job id to approve.'),
-      edits: z
-        .string()
-        .optional()
-        .describe('Optional adjustments to fold into the plan before executing.'),
-    }),
-  },
-);
+// Plan approval is NOT a bot tool — it's a human-only action. The execute-spawn logic lives in
+// executeApprovedPlan (approval.ts), reached only via the conductor's approvePlan (driven by the
+// terminal `/approve` command, a future Slack button). The model has no way to approve its own plan or
+// start a build — that's the code-level human-in-the-loop gate.
 
 const check_job = tool(
   async ({ jobId }, config) => {
@@ -249,7 +173,7 @@ const end_turn = tool(async () => '(turn ended)', {
   name: 'end_turn',
   description:
     'End your turn right now with no further reply. Call it alongside dispatch_job (give a brief ' +
-    'first-person heads-up as THIS message\'s text, then dispatch_job + end_turn together) so you do ' +
+    "first-person heads-up as THIS message's text, then dispatch_job + end_turn together) so you do " +
     'not add a chatty "I\'ll let you know when I\'m done" afterward — or alone, when a message in the ' +
     'channel simply is not yours to answer.',
   schema: z.object({}),
@@ -261,7 +185,6 @@ const end_turn = tool(async () => '(turn ended)', {
 export const CHAT_TOOLS = [
   dispatch_job,
   continue_work,
-  approve_plan,
   check_job,
   cancel_job,
   recent_work,

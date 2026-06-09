@@ -17,6 +17,10 @@ function threadOptions(
     sandboxMode: opts.planning ? 'read-only' : 'workspace-write',
     approvalPolicy: 'never',
     skipGitRepoCheck: true,
+    // Live web search is the whole point of using Codex for research (Nora) and useful for any
+    // codex worker. It's a model-side tool, separate from the shell sandbox's network access, so
+    // it's safe to leave on even in the read-only PLAN pass — and off by default unless we set it.
+    webSearchMode: 'live',
     ...(model ? { model } : {}),
   };
 }
