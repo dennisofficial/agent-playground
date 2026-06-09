@@ -2,7 +2,13 @@ import type { AIMessage } from '@langchain/core/messages';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableLambda, RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
-import { addressedBots, type Employee, mentionedBots, rosterSummary } from './employees/index.js';
+import {
+  addressedBots,
+  type Employee,
+  isBroadcast,
+  mentionedBots,
+  rosterSummary,
+} from './employees/index.js';
 import { buildGateModel } from './model.js';
 
 /** The three-tier response gate: reply, react ("got it" without noise), or stay silent. */
@@ -73,10 +79,18 @@ Conversation so far (oldest first):
 Latest message — from {author}{teammateNote}:
 "{text}"
 
-Pick one action:
-- "respond": it's genuinely yours — addressed to you, squarely in your lane ({botRole}), or an open
-  question to the whole team you can add real substance to.
-- "acknowledge": an FYI/announcement to everyone that asks nothing — a single emoji, no words.
+Pick one action. Each one triggers something different AFTER you choose it — so pick by what the message
+needs from you, not just by tone:
+- "respond": you take the floor — you read context, think, then ACT: you answer, or use your tools to
+  actually DO the work being asked. This is the ONLY action that does real work; the other two just react
+  or stay quiet. Pick it when the message is addressed to you, hands you a task or a go-ahead to start
+  work in your lane ({botRole}), asks you a question, or is an open question to the whole team you can add
+  real substance to. If it needs you to act or reply, it's respond.
+- "acknowledge": you drop a single emoji and the turn ENDS right there — no words, no work, nothing else
+  runs. ONLY for a message that needs nothing active from you: a pure FYI/announcement, or a note that
+  just adjusts what's already on your plate (you've seen it — there's nothing to DO). If the message asks
+  you to start, build, run, execute, ship, produce, or answer something, "acknowledge" would silently
+  drop that on the floor — use "respond" instead.
 - "ignore": NOT yours. This is the default when unsure. IGNORE when the latest message continues a
   back-and-forth between {author} and another teammate, sits in someone else's lane, or is a thanks,
   dismissal, or small talk not aimed at you. NEVER speak up just to defer ("that's their area"), to
@@ -128,10 +142,12 @@ Pick one action:
 
 /**
  * Decide how `bot` should handle the latest channel message. Deterministic hard rules first (they save a
- * model call and are unambiguous), then the few-shot soft gate for everything nuanced:
+ * model call and are unambiguous), then the soft gate for everything nuanced:
  *  - your own message → ignore;
- *  - an explicit `@you` from a human → respond (a direct hail);
- *  - someone ELSE named/@'d (not you) → ignore (it's their thread);
+ *  - an explicit `@you` from ANYONE (boss or teammate) → respond (a direct hail — this is what makes a
+ *    teammate's "@Alex, go execute" land, not just the boss's; an @mention is a deliberate "you, now");
+ *  - `@here`/`@channel`/`@everyone` → respond (a team-wide broadcast everyone takes the floor on);
+ *  - someone ELSE named/@'d (not you), with no broadcast → ignore (it's their thread);
  *  - otherwise (no names, or your BARE name — which might be a thanks/dismissal) → the soft chain reads
  *    the conversation and decides respond / acknowledge / ignore.
  */
@@ -148,7 +164,8 @@ export async function gate(
   const meMentioned = mentioned.some((b) => b.id === bot.id);
   const meAddressed = addressed.some((b) => b.id === bot.id);
 
-  if (!fromBot && meMentioned) return RESPOND; // a human @'d you by name — a direct hail
+  if (meMentioned) return RESPOND; // an explicit @you from ANYONE (boss or teammate) — a direct hail
+  if (isBroadcast(text)) return RESPOND; // @here/@channel/@everyone — team-wide broadcast, all take the floor
   if (addressed.length > 0 && !meAddressed) return IGNORE; // named/@'d someone else, not you → their thread
 
   try {

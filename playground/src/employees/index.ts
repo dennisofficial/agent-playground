@@ -84,5 +84,15 @@ export function addressedBots(text: string): Employee[] {
   );
 }
 
+/**
+ * True when a message broadcasts to the WHOLE team (`@here` / `@channel` / `@everyone`), Slack-style — a
+ * hail every bot takes the floor on, distinct from `@name` (one bot) or a bare name (soft-gated). Requires
+ * the leading `@` so casual prose ("I'm here", "the channel") doesn't trip it, and a trailing word boundary
+ * so "@hereby" / "@channels" don't match.
+ */
+export function isBroadcast(text: string): boolean {
+  return /@(here|channel|everyone)\b/i.test(text);
+}
+
 /** One-line roster summary for prompts ("Alex — backend engineer; James — marketing & analytics"). */
 export const rosterSummary = (): string => ROSTER.map((b) => `${b.name} — ${b.role}`).join('; ');
