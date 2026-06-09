@@ -58,7 +58,7 @@ const dispatch_job = tool(
   {
     name: 'dispatch_job',
     description:
-      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run to completion in your background thread. Returns immediately with a job id; you are notified once when it finishes. Set plan=true for ambiguous, large, or architectural tasks where the approach should be agreed first: it plans read-only on a high-reasoning model and comes back with a plan + questions. Refine it with continue_work, then approve_plan (once the human signs off) to build it on the execution model.',
+      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run to completion in your background thread. Returns immediately with a job id; you are notified once when it finishes. Set plan=true for ambiguous, large, or architectural tasks where the approach should be agreed first: it plans read-only on a high-reasoning model and comes back with a plan + questions. Refine it with continue_work, then approve_plan (once the human signs off) to build it on the execution model. Calling this ENDS YOUR TURN — there is no follow-up reply afterward, so put any brief first-person heads-up (e.g. "On it — give me a bit") in THIS message\'s text, not as a separate message, and never add an "I\'ll let you know when I\'m done" after.',
     schema: z.object({
       task: z.string().describe('A clear, self-contained description of the work to do.'),
       plan: z
@@ -241,6 +241,20 @@ const recent_work = tool(
   },
 );
 
+// Closes the turn with no further reply. A no-op that just returns a result (so the ToolNode produces a
+// valid tool message for it — Anthropic requires a result for every tool-call id); the turn actually ends
+// because the graph's `afterTools` router treats `end_turn` as terminal (see bot-graph.ts). This is what
+// lets a bot dispatch-and-go-quiet, or decline a message that isn't its own, without a trailing message.
+const end_turn = tool(async () => '(turn ended)', {
+  name: 'end_turn',
+  description:
+    'End your turn right now with no further reply. Call it alongside dispatch_job (give a brief ' +
+    'first-person heads-up as THIS message\'s text, then dispatch_job + end_turn together) so you do ' +
+    'not add a chatty "I\'ll let you know when I\'m done" afterward — or alone, when a message in the ' +
+    'channel simply is not yours to answer.',
+  schema: z.object({}),
+});
+
 // A bot's chat-side tools. The conductor's turn graph ([bot-graph.ts](bot-graph.ts)) binds these in its
 // `llm` node and runs them through a prebuilt ToolNode; this module just defines them (and their job /
 // memory plumbing) in one place.
@@ -251,6 +265,7 @@ export const CHAT_TOOLS = [
   check_job,
   cancel_job,
   recent_work,
+  end_turn,
   ...memoryTools,
   ...taskTools,
 ];

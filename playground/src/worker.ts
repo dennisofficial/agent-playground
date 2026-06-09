@@ -11,10 +11,11 @@ import { workerPromptFor } from './persona.js';
 // `updateJob` is the wake signal the conductor relays through Zero. continueWork resumes the rare
 // 'awaiting' case; there is no step-by-step check-in loop.
 
-/** Hard cap on background turns per job — a HIGH backstop against an endless continue↔report ping-pong.
- * Jobs are meant to run autonomously to completion, so keep this generous; it only catches a truly stuck
- * loop, and the human sees the job's progress and can intervene long before it's reached. */
-export const MAX_TURNS = 100;
+/** Cap on background turns per job. TEMPORARILY UNCAPPED (2026-06-09, Dennis) — running jobs fully
+ * autonomous to completion with no turn limit; `Infinity` makes the `job.turns >= MAX_TURNS` check never
+ * fire. Restore to 100 when unattended operation needs a backstop (paired with the progress/cost breaker
+ * in the conductor — see memory `agent-playground-autonomy-endgoal`). */
+export const MAX_TURNS = Number.POSITIVE_INFINITY;
 
 export interface ActionResult {
   ok: boolean;

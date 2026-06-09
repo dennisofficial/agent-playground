@@ -48,22 +48,29 @@ const clock = (): string =>
     second: '2-digit',
   });
 
-/** Max bot RESPONSE turns between human messages — a HIGH backstop against runaway bot-to-bot ping-pong,
- * NOT the primary control. Bots are meant to collaborate autonomously over many turns; the human stays in
- * the loop and halts a haywire thread just by speaking ("stop"), which always reaches them mid-loop, is
- * never gated out (the cap only suppresses bot-authored messages, never a human's — bot-graph gateNode),
- * and resets this counter. So keep it generous; it only catches a loop with no human watching at all. */
-const MAX_BOT_BURST = 50;
+// ── Autonomy loop caps — TEMPORARILY UNCAPPED (2026-06-09, Dennis) ──────────────────────────────────
+// Running the team fully unthrottled while we develop/observe it attended. The old caps reset on a HUMAN
+// message, which throttles legitimate collaboration once no human is in the loop to reset them. Safety
+// right now is the human watching the channel and killing the process. When unattended operation needs a
+// real backstop, these get REPLACED (not lowered) by a progress-gated breaker — reset on work/triggers,
+// trip on talk-without-work — and a token/$ cost ceiling. See memory `agent-playground-autonomy-endgoal`.
+// To restore the prior guards: MAX_BOT_BURST = 50, MAX_TURN_STEPS = 200.
 
-/** Attempts before the conductor gives up on a turn that keeps erroring without progress (drops + logs). */
+/** Bot RESPONSE turns between human messages before bot↔bot traffic is force-ignored. `Infinity` = no cap
+ * (the `botBurst >= MAX_BOT_BURST` check is never true), so bots collaborate without a turn limit. */
+const MAX_BOT_BURST = Number.POSITIVE_INFINITY;
+
+/** Max LangGraph super-steps in a SINGLE bot turn (`llm ⇄ tools`). Effectively uncapped — finite only
+ * because LangGraph's `recursionLimit` requires a real number; at ~2 steps/tool-call this is a "never" in
+ * practice. It still pauses GRACEFULLY if somehow reached (see `handleStepCap`), so it's a harmless
+ * last-resort guard on a single turn's tool loop, not an autonomy throttle. */
+const MAX_TURN_STEPS = 1_000_000;
+
+// ── Crash safety (NOT an autonomy throttle — kept on purpose) ───────────────────────────────────────
+/** Attempts before the conductor gives up on a turn that keeps ERRORING without progress (drops + logs).
+ * This only ever fires on a crashing turn; removing it wouldn't free autonomy, it would let a broken turn
+ * re-bill forever. So it stays even while the autonomy caps above are off. */
 const MAX_TURN_RETRIES = 3;
-
-/** Max LangGraph super-steps in a SINGLE bot turn — a HIGH per-turn ceiling on the `llm ⇄ tools` reactive
- * loop (each tool round-trip ≈ 2 steps, so this allows ~90-some tool calls before the gate/fetch/reconcile
- * overhead). Hitting it throws `GraphRecursionError`, which we turn into a clean "pausing" message rather
- * than a raw error (see `handleStepCap`). The budget is PER TURN: it resets on the bot's next turn, which
- * the next incoming message kicks off — so a bot doing deep autonomous work in one turn has real room. */
-const MAX_TURN_STEPS = 200;
 
 /** Ephemeral, overwrite-style status that drives the spinner/footer — a pull snapshot (`getStatus`),
  * distinct from the append-only `ConductorEvent` stream. A presentation surface that doesn't need a

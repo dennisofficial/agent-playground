@@ -281,6 +281,24 @@ function buildBotGraph(bot: Employee) {
     return last?.tool_calls?.length ? 'tools' : RECONCILE;
   };
 
+  // After tools run, END the turn (skip the loop back to `llm` that would otherwise force a chatty
+  // text-only follow-up) when EVERY call in the triggering message is terminal: a fire-and-forget
+  // dispatch or an explicit `end_turn`. This is what stops "I'll let you know when I'm done" after a
+  // dispatch — the heads-up rides on the dispatch message itself (see chat.ts/persona.ts). `every` (not
+  // `some`) is load-bearing: a message mixing a terminal tool with an informational one (e.g. recent_work)
+  // OR with a FALLIBLE dispatcher (continue_work/approve_plan, which have guard-failure returns) loops
+  // back so that result is relayed — the conductor only surfaces assistant text, never tool-result content,
+  // so a swallowed failure would be invisible. Hence only the can't-fail tools are terminal.
+  const TERMINAL = new Set(['dispatch_job', 'end_turn']);
+  const afterTools = (state: BotStateType): 'llm' | string[] => {
+    const lastAi = [...state.messages].reverse().find((m) => m.getType() === 'ai') as
+      | AIMessage
+      | undefined;
+    const calls = lastAi?.tool_calls ?? [];
+    const allTerminal = calls.length > 0 && calls.every((c) => TERMINAL.has(c.name));
+    return allTerminal ? RECONCILE : 'llm';
+  };
+
   const graph = new StateGraph(BotState)
     .addNode('gate', gateNode)
     .addNode('fetch', fetchNode)
@@ -293,7 +311,7 @@ function buildBotGraph(bot: Employee) {
     .addConditionalEdges('gate', route, ['fetch', 'consume'])
     .addEdge('fetch', 'llm')
     .addConditionalEdges('llm', afterLlm, ['tools', 'reconcileMemory', 'reconcileTask'])
-    .addEdge('tools', 'llm')
+    .addConditionalEdges('tools', afterTools, ['llm', 'reconcileMemory', 'reconcileTask'])
     .addEdge('consume', 'reconcileMemory')
     .addEdge('consume', 'reconcileTask')
     .addEdge('reconcileMemory', END)
