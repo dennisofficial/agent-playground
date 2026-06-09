@@ -1,4 +1,4 @@
-import type { Bot } from '../roster.js';
+import type { Employee } from '../employees/index.js';
 import { getDb } from './db.js';
 import { type Identity, recallScopes } from './identity.js';
 import { recall } from './semantic.js';
@@ -28,7 +28,7 @@ function hasFacts(id: Identity): boolean {
  * bot + unassigned (skipped when there are none). Returns '' when there's nothing — the caller MUST still
  * write that empty string into state so a stale recall from a prior turn never lingers.
  */
-export async function fetchContext(bot: Bot, query: string, id: Identity): Promise<string> {
+export async function fetchContext(bot: Employee, query: string, id: Identity): Promise<string> {
   const parts: string[] = [];
 
   if (query.trim() && hasFacts(id)) {

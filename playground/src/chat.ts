@@ -1,8 +1,7 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { defaultEngine, ENGINE_NAMES } from './engines/index.js';
-import type { WorkerEngineName } from './engines/types.js';
+import { botById, ROSTER } from './employees/index.js';
 import { createJob, getJob, latestJob } from './jobs.js';
 import { getIdentity } from './memory/identity.js';
 import { memoryTools, taskTools } from './memory/tools.js';
@@ -26,9 +25,10 @@ import {
 // jobs are scoped per bot.
 
 const dispatch_job = tool(
-  async ({ task, engine }, config) => {
+  async ({ task }, config) => {
     const id = getIdentity(config);
-    const engineName: WorkerEngineName = engine ?? defaultEngine();
+    // The engine is the dispatching employee's locked engine — there is no per-dispatch override.
+    const engineName = (botById(id.selfAgent) ?? ROSTER[0]).engine;
     // notifyThread = the surface this was dispatched from; ownerBot = the calling bot; company scopes
     // the work log to this project.
     const job = createJob(task, id.surface, engineName, id.selfAgent, id.company);
@@ -48,15 +48,9 @@ const dispatch_job = tool(
   {
     name: 'dispatch_job',
     description:
-      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run to completion in your background thread. Returns immediately with a job id; you are notified once when it finishes. Optionally pick which engine runs it.',
+      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run to completion in your background thread. Returns immediately with a job id; you are notified once when it finishes.',
     schema: z.object({
       task: z.string().describe('A clear, self-contained description of the work to do.'),
-      engine: z
-        .enum(ENGINE_NAMES as [WorkerEngineName, ...WorkerEngineName[]])
-        .optional()
-        .describe(
-          'Which engine runs it: claude (default), codex, or langgraph. Omit unless the user asks for a specific one.',
-        ),
     }),
   },
 );

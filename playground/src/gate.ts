@@ -2,8 +2,8 @@ import type { AIMessage } from '@langchain/core/messages';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableLambda, RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
+import { addressedBots, type Employee, mentionedBots, rosterSummary } from './employees/index.js';
 import { buildGateModel } from './model.js';
-import { addressedBots, type Bot, mentionedBots, rosterSummary } from './roster.js';
 
 /** The three-tier response gate: reply, react ("got it" without noise), or stay silent. */
 export interface GateDecision {
@@ -107,15 +107,17 @@ Pick one action:
       // includeRaw keeps the raw AIMessage so we can read its usage_metadata (exact token counts).
       // Plain withStructuredOutput returns only the parsed object and would drop the usage.
       buildGateModel().withStructuredOutput(Decision, { name: 'gate_decision', includeRaw: true }),
-      RunnableLambda.from<{ raw: AIMessage; parsed: DecisionT }, GateDecision>(({ raw, parsed }) => {
-        const u = raw.usage_metadata;
-        const usage = u ? { input: u.input_tokens, output: u.output_tokens } : undefined;
-        const base =
-          parsed.action === 'acknowledge'
-            ? { action: 'acknowledge' as const, emoji: cleanEmoji(parsed.emoji) }
-            : { action: parsed.action };
-        return { ...base, reasoning: parsed.reasoning, usage };
-      }),
+      RunnableLambda.from<{ raw: AIMessage; parsed: DecisionT }, GateDecision>(
+        ({ raw, parsed }) => {
+          const u = raw.usage_metadata;
+          const usage = u ? { input: u.input_tokens, output: u.output_tokens } : undefined;
+          const base =
+            parsed.action === 'acknowledge'
+              ? { action: 'acknowledge' as const, emoji: cleanEmoji(parsed.emoji) }
+              : { action: parsed.action };
+          return { ...base, reasoning: parsed.reasoning, usage };
+        },
+      ),
     ]).withConfig({ runName: 'Response Gate' });
 
   const cleanEmoji = (e?: string): string => {
@@ -134,7 +136,7 @@ Pick one action:
  *    the conversation and decides respond / acknowledge / ignore.
  */
 export async function gate(
-  bot: Bot,
+  bot: Employee,
   text: string,
   opts: { authorBotId?: string; authorName?: string; history?: string } = {},
 ): Promise<GateDecision> {

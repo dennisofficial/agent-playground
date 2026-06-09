@@ -1,9 +1,9 @@
+import { botById, ROSTER } from './employees/index.js';
 import { ROOT } from './engines/guard.js';
 import { getEngine } from './engines/index.js';
 import { appendJobProgress, getJob, getJobProgress, updateJob } from './jobs.js';
 import { logWork } from './memory/worklog.js';
 import { workerPromptFor } from './persona.js';
-import { botById, ROSTER } from './roster.js';
 
 // Zero's background-execution thread. A dispatched task runs to completion on its engine (the engine
 // loops internally until done), streams normalized events into the progress buffer, and reports ONCE
@@ -54,7 +54,7 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
     const { result, sessionId } = await getEngine(job.engine).run({
       task: message,
       cwd: ROOT,
-      systemPrompt: workerPromptFor(job.engine, botById(job.ownerBot) ?? ROSTER[0]),
+      systemPrompt: workerPromptFor(botById(job.ownerBot) ?? ROSTER[0]),
       sessionId: job.sessionId,
       onEvent: (e) => appendJobProgress(jobId, e),
       signal: ac.signal,

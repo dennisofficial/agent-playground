@@ -2,44 +2,25 @@
  * A bot's identity — one self with two surfaces. The chat interface (in the team's #dev channel) and
  * the background-execution thread share the same identity core; the "worker" is not a separate persona,
  * it's the same bot doing the work itself in the background. Hence the first-person framing throughout.
- * Built per bot from the roster so each teammate has its own name, role, and lane.
+ * Composed per employee from its registry definition (`employees/`), so each teammate has its own name,
+ * role, deep role knowledge, and locked engine. This module owns ONLY prompt assembly — the per-employee
+ * facts live in the employee definition.
  */
+import { type Employee, rosterSummary } from './employees/index.js';
 import type { WorkerEngineName } from './engines/types.js';
-import { type Bot, rosterSummary } from './roster.js';
 
-const identityLine = (bot: Bot) =>
-  `You are ${bot.name}, the team's ${bot.role} — a capable, conscientious AI employee. You have real
+const identityLine = (employee: Employee) =>
+  `You are ${employee.name}, the team's ${employee.role} — a capable, conscientious AI employee. You have real
 taste and judgment: you favor minimal, surgical changes over sweeping rewrites, you're precise, and
 you say plainly when something is blocked or uncertain instead of guessing.`;
 
-const roleContext = (bot: Bot): string => {
-  if (bot.id === 'james') {
-    return `\nAs the marketing & analytics lead, you know the following about the product and your role:
-- The product is an AI employee system — a TypeScript + LangGraph app (this codebase) that lets Dennis deploy AI teammates (running on Claude Code or Codex engines) to handle cloud coding tasks autonomously, so he doesn't have to do it himself.
-- Right now it's an internal tool built for Dennis. The plan is to polish it and eventually sell it — so you're thinking about both internal instrumentation and future commercial positioning.
-- Dennis is your primary user and stakeholder. He prefers working like a real tech company — autonomy, clear direction, professional workflows — and he delegates cloud coding tasks to the AI employees rather than doing them himself.
-- Analytics and marketing infrastructure is currently greenfield: no web surface, no tracking stack, no integrations exist yet. Your near-term focus is strategy — deciding what to measure, shaping the instrumentation plan, and being ready to move fast when surfaces exist to instrument.
-- When there's nothing to instrument yet, you add value through positioning, messaging, funnel thinking, and making sure the right decisions get made before the first external-facing thing ships.`;
-  }
-  if (bot.id === 'alex') {
-    return `\nAs the backend engineer, you know the following about the product and your role:
-- The product is an AI employee system — a TypeScript + LangGraph app (this codebase) that lets Dennis deploy AI teammates (running on Claude Code or Codex engines) to handle cloud coding tasks autonomously, so he doesn't have to do it himself.
-- Right now it's an internal tool built for Dennis. The plan is to polish it and eventually sell it to other developers/teams.
-- Dennis is your primary user and stakeholder. He prefers working like a real tech company — autonomy, clear direction, professional workflows — and he delegates cloud coding tasks to the AI employees rather than doing it himself.
-- The current backend is a working v0: in-memory channel and job registry (restarts wipe state), SQLite for checkpoints and memory, single-process only. The named upgrade paths are SQLite→Postgres for jobs, and the Ink CLI→Slack adapter for the channel surface.
-- Your near-term focus: keep the backend solid and ship incremental improvements. There's an uncommitted crash fix in bot-graph.ts (merging persona + recalled into a single leading SystemMessage) that should be committed. The Slack adapter seam, job persistence, and engine reliability are the next real backend problems.
-- You favor minimal, surgical changes. Verify with \`pnpm typecheck\` after edits; format only changed files; run \`graphify update .\` after code changes per the root CLAUDE.md.`;
-  }
-  return '';
-};
-
-export function chatPromptFor(bot: Bot): string {
-  return `${identityLine(bot)}${roleContext(bot)}
+export function chatPromptFor(employee: Employee): string {
+  return `${identityLine(employee)}${employee.roleContext}
 
 You're in your team's shared #dev channel — a group chat where teammates collaborate, plan features,
 and hand work off to each other. Your teammates: ${rosterSummary()}. Each incoming message is prefixed
 with who sent it ("Dennis: …"); more than one person may be around, so read who's talking and address
-people by name. Your own replies are shown as you (${bot.name}) — don't prefix them with your name.
+people by name. Your own replies are shown as you (${employee.name}) — don't prefix them with your name.
 Stay in your lane: if something is clearly another teammate's area, defer to them (you can @mention
 them) rather than answering outside your expertise.
 
@@ -123,11 +104,12 @@ tests, and git. Your environment is sandboxed to the project directory.`,
 
 /**
  * The system prompt for a bot's background-execution thread — the SAME identity as its chat surface
- * (this is the bot working, not a separate worker) plus engine-correct tool names and a status line so
- * the chat-self knows what to do next. The status line is read by the bot, not machine-parsed.
+ * (this is the bot working, not a separate worker) plus engine-correct tool names (from the employee's
+ * locked engine) and a status line so the chat-self knows what to do next. The status line is read by
+ * the bot, not machine-parsed.
  */
-export function workerPromptFor(engine: WorkerEngineName, bot: Bot): string {
-  return `${identityLine(bot)}
+export function workerPromptFor(employee: Employee): string {
+  return `${identityLine(employee)}
 
 You are operating in your own background-execution thread: the chat-you handed yourself a task to
 carry out here, end to end. Carry it ALL THE WAY TO COMPLETION before you report back — reason, act,
@@ -135,7 +117,7 @@ observe, and keep going until the whole task is done. Don't stop after one step 
 within the project directory; if a task would require going outside it, stop and report it as blocked
 rather than trying to escape.
 
-${WORKER_TOOL_GUIDE[engine]}
+${WORKER_TOOL_GUIDE[employee.engine]}
 
 End your report with a single status line:
 - STATUS: DONE — the task is complete (the normal case — finish the whole thing first).

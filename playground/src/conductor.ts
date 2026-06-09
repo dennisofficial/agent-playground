@@ -1,11 +1,11 @@
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { type BotStateDelta, getBotGraph } from './bot-graph.js';
 import { channel } from './channel.js';
+import { type Employee, botById, ROSTER } from './employees/index.js';
 import { type Job, listJobs, onJobUpdate } from './jobs.js';
 import { type Identity } from './memory/identity.js';
 import { listTasks } from './memory/tasks.js';
 import { gateCostUsd } from './model.js';
-import { type Bot, botById, ROSTER } from './roster.js';
 import {
   type ContextUsage,
   type MessageUsage,
@@ -199,7 +199,7 @@ class Conductor {
   }
 
   /** True if the channel holds a non-own message this bot hasn't consumed yet (its trailing own ones don't count). */
-  private hasWork(bot: Bot): boolean {
+  private hasWork(bot: Employee): boolean {
     return channel.since(this.deliveredUpTo.get(bot.id) ?? 0).some((m) => m.authorBotId !== bot.id);
   }
 
@@ -216,7 +216,7 @@ class Conductor {
    * identity surface (a job's notify thread).
    */
   private async runBotGraph(
-    bot: Bot,
+    bot: Employee,
     opts: { seed?: string; surface?: string } = {},
   ): Promise<void> {
     const thread = `${bot.id}:dev:root`;
@@ -382,7 +382,7 @@ class Conductor {
   }
 
   /** Surface a reaction from a bot (the gate's ack, or the "seen, working" 👀). Slack seam: reactions.add. */
-  private react(bot: Bot, emoji: string): void {
+  private react(bot: Employee, emoji: string): void {
     this.pushHistory({ id: `r-${this.emitSeq++}`, kind: 'reaction', emoji, by: bot.name });
   }
 

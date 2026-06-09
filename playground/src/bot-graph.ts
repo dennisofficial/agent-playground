@@ -9,6 +9,7 @@ import { Annotation, END, messagesStateReducer, START, StateGraph } from '@langc
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { channel, type ChannelMsg } from './channel.js';
 import { CHAT_TOOLS } from './chat.js';
+import { botById, type Employee, ROSTER } from './employees/index.js';
 import { gate } from './gate.js';
 import { getCheckpointer } from './memory/checkpointer.js';
 import { fetchContext } from './memory/fetch.js';
@@ -16,7 +17,6 @@ import { getIdentity } from './memory/identity.js';
 import { reconcileMemory, reconcileTasks } from './memory/reconcile.js';
 import { buildModel } from './model.js';
 import { chatPromptFor } from './persona.js';
-import { type Bot, botById, ROSTER } from './roster.js';
 
 /**
  * A bot's TURN, as an explicit LangGraph state machine (the user's vision: nodes you can see, trace, and
@@ -134,8 +134,9 @@ const historyBefore = (seq: number, n = 16): string =>
     .map((m) => `${m.author}: ${m.text}`)
     .join('\n');
 
-function buildBotGraph(bot: Bot) {
-  const model = buildModel().bindTools(CHAT_TOOLS);
+function buildBotGraph(bot: Employee) {
+  const tools = bot.chatTools ?? CHAT_TOOLS;
+  const model = buildModel().bindTools(tools);
 
   /** Peek the channel (read-only — never touches messages/cursor) and pick respond/acknowledge/ignore. */
   const gateNode = async (
@@ -219,7 +220,7 @@ function buildBotGraph(bot: Bot) {
     return { messages: [...injected, ai], cursor: newCursor };
   };
 
-  const toolsNode = new ToolNode(CHAT_TOOLS);
+  const toolsNode = new ToolNode(tools);
 
   /** This turn's exchange — the messages added since `gate` marked `turnStart`, with tool-result/internal
    * plumbing filtered out (human messages + the bot's own text replies only) — fed to the reconcile passes. */

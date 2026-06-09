@@ -1,8 +1,8 @@
 import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
+import { type Employee, ROSTER } from '../employees/index.js';
 import { buildExtractModel } from '../model.js';
-import { type Bot, ROSTER } from '../roster.js';
 import { createMutex, rememberDeduped, withMemoryLock } from './dedup.js';
 import { type Identity } from './identity.js';
 import { forgetFact, recall, updateFact } from './semantic.js';
@@ -104,7 +104,11 @@ Return empty arrays when nothing changed.`;
  * ones. Concurrent across bots — `remember` dedups-on-upsert by cosine, so parallel adds merge. Per-fact
  * identity (speaker = the asserting human). Fire-and-forget — errors swallowed.
  */
-export async function reconcileMemory(bot: Bot, transcript: string, id: Identity): Promise<void> {
+export async function reconcileMemory(
+  bot: Employee,
+  transcript: string,
+  id: Identity,
+): Promise<void> {
   try {
     const current = await recall(transcript, id, 10);
     const result = await MemoryReconcile.get().invoke({
@@ -202,7 +206,11 @@ const withTaskLock = createMutex();
  * Serialized across bots (read-board → model → write all under `withTaskLock`) so always-run can't mint
  * duplicates. Fire-and-forget — errors swallowed.
  */
-export async function reconcileTasks(bot: Bot, transcript: string, id: Identity): Promise<void> {
+export async function reconcileTasks(
+  bot: Employee,
+  transcript: string,
+  id: Identity,
+): Promise<void> {
   await withTaskLock(async () => {
     try {
       const open = openTasks(id.company);
