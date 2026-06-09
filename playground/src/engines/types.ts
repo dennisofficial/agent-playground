@@ -9,6 +9,13 @@
 export type WorkerEngineName = 'claude' | 'codex' | 'langgraph';
 
 /**
+ * Reasoning-effort level for a worker run. Mirrors the Claude Agent SDK's `effort` option (the seam
+ * stays SDK-agnostic by re-declaring the union rather than importing it). Only the Claude engine
+ * honors it today; Codex/LangGraph ignore it.
+ */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
  * A normalized progress event, emitted by every engine regardless of its native event shape. This
  * is what feeds the per-job progress buffer that `check_job` reads — decoupled from any one SDK.
  */
@@ -25,6 +32,14 @@ export interface RunWorkerArgs {
   systemPrompt: string;
   /** A prior engine session/thread id to resume, if any. */
   sessionId?: string;
+  /** Override the engine's model for this run (e.g. a high-reasoning model for planning, a cheaper
+   * one for executing). Falls back to the engine's env/default when unset. */
+  model?: string;
+  /** Reasoning effort for this run (Claude only). Unset → the model's default. */
+  effort?: EffortLevel;
+  /** True for a PLAN pass: the engine restricts the worker to read-only (no file writes / mutating
+   * shell), so "plan first, don't touch anything" is structurally enforced, not just requested. */
+  planning?: boolean;
   /** Called for each progress event as the worker runs. */
   onEvent: (e: WorkerEvent) => void;
   /** Aborts the run when signalled — the engine wires it to its native cancellation (claude's

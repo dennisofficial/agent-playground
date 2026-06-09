@@ -1,4 +1,4 @@
-import { botById, ROSTER } from './employees/index.js';
+import { botById, resolveWorkerModel, ROSTER } from './employees/index.js';
 import { ROOT } from './engines/guard.js';
 import { getEngine } from './engines/index.js';
 import { appendJobProgress, getJob, getJobProgress, updateJob } from './jobs.js';
@@ -11,8 +11,10 @@ import { workerPromptFor } from './persona.js';
 // `updateJob` is the wake signal the conductor relays through Zero. continueWork resumes the rare
 // 'awaiting' case; there is no step-by-step check-in loop.
 
-/** Hard cap on background turns per job — backstop against an endless continue↔report ping-pong. */
-export const MAX_TURNS = 25;
+/** Hard cap on background turns per job — a HIGH backstop against an endless continue↔report ping-pong.
+ * Jobs are meant to run autonomously to completion, so keep this generous; it only catches a truly stuck
+ * loop, and the human sees the job's progress and can intervene long before it's reached. */
+export const MAX_TURNS = 100;
 
 export interface ActionResult {
   ok: boolean;
@@ -51,11 +53,21 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
   const ac = new AbortController();
   controllers.set(jobId, ac);
   try {
+    const bot = botById(job.ownerBot) ?? ROSTER[0];
+    // Per-phase model tiering: PLAN runs on a high-reasoning model + max effort; EXECUTE on the cheaper
+    // everyday model. `planning` makes the plan pass read-only at the engine seam.
+    const { model, effort } = resolveWorkerModel(bot, job.mode);
+    process.stderr.write(
+      `[worker:${jobId}] ${bot.name} ${job.mode} on ${model ?? `${job.engine} default`}${effort ? ` (effort:${effort})` : ''}\n`,
+    );
     const { result, sessionId } = await getEngine(job.engine).run({
       task: message,
       cwd: ROOT,
-      systemPrompt: workerPromptFor(botById(job.ownerBot) ?? ROSTER[0], job.mode),
+      systemPrompt: workerPromptFor(bot, job.mode),
       sessionId: job.sessionId,
+      model,
+      effort,
+      planning: job.mode === 'plan',
       onEvent: (e) => appendJobProgress(jobId, e),
       signal: ac.signal,
     });

@@ -6,6 +6,8 @@
  * Mirrors the engine registry (`../engines/index.ts`): per-unit definitions imported here, exposed
  * through a small set of lookup/match helpers.
  */
+import type { EffortLevel, WorkerEngineName } from '../engines/types.js';
+import type { WorkerMode } from '../jobs.js';
 import { alex } from './alex.js';
 import { james } from './james.js';
 import { sam } from './sam.js';
@@ -16,6 +18,45 @@ export type { Employee } from './types.js';
 export const ROSTER: Employee[] = [alex, james, sam];
 
 export const botById = (id: string): Employee | undefined => ROSTER.find((b) => b.id === id);
+
+/** The model + reasoning effort a worker run resolves to, by employee and phase. */
+export interface ResolvedWorkerModel {
+  /** Model id, or undefined to let the engine use its env/SDK default (e.g. Codex via CODEX_MODEL). */
+  model?: string;
+  /** Reasoning effort (Claude only). */
+  effort?: EffortLevel;
+}
+
+// Per-engine model tiers: a high-reasoning model for PLAN, a cheaper one for EXECUTE. Single source of
+// truth — an employee only sets planModel/execModel to deviate. Codex/LangGraph carry no fixed ids here
+// (Codex resolves via CODEX_MODEL; effort is Claude-only), so they fall back to the engine's own default
+// until concrete ids are wired.
+const ENGINE_MODEL_TIERS: Record<
+  WorkerEngineName,
+  { plan: ResolvedWorkerModel; exec: ResolvedWorkerModel }
+> = {
+  claude: {
+    plan: { model: 'claude-opus-4-8', effort: 'max' },
+    exec: { model: 'claude-sonnet-4-6' },
+  },
+  codex: { plan: {}, exec: {} },
+  langgraph: { plan: {}, exec: {} },
+};
+
+/**
+ * Resolve the model + effort for a worker run: the employee's per-phase override if set, else the
+ * engine's default tier. PLAN → high-reasoning model + max effort; EXECUTE → the everyday model.
+ */
+export function resolveWorkerModel(employee: Employee, mode: WorkerMode): ResolvedWorkerModel {
+  const tier = ENGINE_MODEL_TIERS[employee.engine];
+  if (mode === 'plan') {
+    return {
+      model: employee.planModel ?? tier.plan.model,
+      effort: employee.planEffort ?? tier.plan.effort,
+    };
+  }
+  return { model: employee.execModel ?? tier.exec.model };
+}
 
 /** Roster employees @mentioned in a message (matches name or id, case-insensitive). */
 export function mentionedBots(text: string): Employee[] {

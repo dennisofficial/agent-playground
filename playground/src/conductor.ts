@@ -1,4 +1,5 @@
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
+import { GraphRecursionError } from '@langchain/langgraph';
 import { type BotStateDelta, getBotGraph } from './bot-graph.js';
 import { channel } from './channel.js';
 import { type ConductorEvent, type ContextUsage, type MessageUsage } from './conductor-events.js';
@@ -47,11 +48,22 @@ const clock = (): string =>
     second: '2-digit',
   });
 
-/** Max bot RESPONSE turns between human messages — the loop breaker so bots can't ping-pong forever. */
-const MAX_BOT_BURST = 4;
+/** Max bot RESPONSE turns between human messages — a HIGH backstop against runaway bot-to-bot ping-pong,
+ * NOT the primary control. Bots are meant to collaborate autonomously over many turns; the human stays in
+ * the loop and halts a haywire thread just by speaking ("stop"), which always reaches them mid-loop, is
+ * never gated out (the cap only suppresses bot-authored messages, never a human's — bot-graph gateNode),
+ * and resets this counter. So keep it generous; it only catches a loop with no human watching at all. */
+const MAX_BOT_BURST = 50;
 
 /** Attempts before the conductor gives up on a turn that keeps erroring without progress (drops + logs). */
 const MAX_TURN_RETRIES = 3;
+
+/** Max LangGraph super-steps in a SINGLE bot turn — a HIGH per-turn ceiling on the `llm ⇄ tools` reactive
+ * loop (each tool round-trip ≈ 2 steps, so this allows ~90-some tool calls before the gate/fetch/reconcile
+ * overhead). Hitting it throws `GraphRecursionError`, which we turn into a clean "pausing" message rather
+ * than a raw error (see `handleStepCap`). The budget is PER TURN: it resets on the bot's next turn, which
+ * the next incoming message kicks off — so a bot doing deep autonomous work in one turn has real room. */
+const MAX_TURN_STEPS = 200;
 
 /** Ephemeral, overwrite-style status that drives the spinner/footer — a pull snapshot (`getStatus`),
  * distinct from the append-only `ConductorEvent` stream. A presentation surface that doesn't need a
@@ -98,6 +110,10 @@ class Conductor {
     channel.subscribe(() => this.schedule());
     onJobUpdate((job) => {
       this.patch({ running: listJobs().filter((j) => j.status === 'running').length });
+      // An APPROVED plan job transitions to 'done' but must NOT relay — the bot already presented the
+      // plan when it went 'awaiting', and the execute job it spawned is what reports the build. (A plan
+      // job that NATURALLY finished — STATUS: DONE, no execution needed — has no `plan` set and relays.)
+      if (job.status === 'done' && job.mode === 'plan' && job.plan) return;
       if (job.status === 'done' || job.status === 'awaiting' || job.status === 'failed') {
         this.relayQueue.push(job);
         this.schedule();
@@ -292,7 +308,7 @@ class Conductor {
       const stream = await getBotGraph(bot.id).stream(input, {
         configurable: { thread_id: thread, identity, capped },
         streamMode: 'updates',
-        recursionLimit: 50,
+        recursionLimit: MAX_TURN_STEPS,
       });
       for await (const update of stream as AsyncIterable<Record<string, BotStateDelta>>) {
         for (const delta of Object.values(update)) {
@@ -334,6 +350,12 @@ class Conductor {
         }
       }
     } catch (err) {
+      // The per-turn step cap (`recursionLimit`) is an expected ceiling on a long reactive loop, not a
+      // crash — turn it into a clean first-person "pausing" message instead of a raw error, and end here.
+      if (err instanceof GraphRecursionError) {
+        this.handleStepCap(bot, { seed: !!opts.seed });
+        return;
+      }
       this.emitError(err);
       failed = true;
     }
@@ -385,7 +407,9 @@ class Conductor {
       job.status === 'failed'
         ? `[Background task] ${job.id} ("${job.task}") failed: ${job.error ?? '(unknown)'}. Let the team know in your own words — briefly, first person.`
         : job.status === 'awaiting'
-          ? `[Background task] ${job.id} ("${job.task}") needs your input:\n${job.lastReport ?? '(no report)'}\n\nThis is your own background work. Relay what it needs (first person); when answered, continue_work("${job.id}", <answer>) to resume it.`
+          ? job.mode === 'plan'
+            ? `[Background planning] ${job.id} ("${job.task}") came back with a PLAN + open questions:\n${job.lastReport ?? '(no report)'}\n\nThis is your own planning work. Relay the plan and its questions to the team (first person). Triage each question: anything about WHAT to build or WHY is Dennis's call — surface it to him; anything technical/reversible, answer yourself or @mention the right teammate. To refine the plan with an answer, continue_work("${job.id}", <answer>). Once the plan is settled and Dennis signs off, approve_plan("${job.id}", <optional edits>) to build it on the execution model.`
+            : `[Background task] ${job.id} ("${job.task}") needs your input:\n${job.lastReport ?? '(no report)'}\n\nThis is your own background work. Relay what it needs (first person); when answered, continue_work("${job.id}", <answer>) to resume it.`
           : `[Background task] ${job.id} ("${job.task}") finished:\n${job.lastReport ?? '(no report)'}\n\nThis is your own work — relay the outcome to the team in the first person, briefly. The task is done; don't check it again.`;
     await this.runBotGraph(bot, { seed: prompt, surface: job.notifyThread });
   }
@@ -399,6 +423,28 @@ class Conductor {
       botName: bot.name,
       emoji,
     });
+  }
+
+  /**
+   * A reactive loop hit the per-turn step cap (`MAX_TURN_STEPS`). End it gracefully: the bot tells the team
+   * — first person, in the channel, so it reads like it's aware — that it's pausing, instead of the turn
+   * dying with a raw `GraphRecursionError`. The cap is PER TURN, so a fresh budget starts on the bot's next
+   * turn; it picks back up when someone messages it again.
+   *
+   * For a normal channel turn we also advance the cursor to the high-water mark so the bot doesn't
+   * immediately re-fire and re-hit the cap (the loop's instruction is still in its history) — anything
+   * unread is "ping me to resume." Seed turns (job relays) aren't re-scheduled, so we leave their cursor
+   * alone (advancing it would wrongly swallow pending channel work).
+   */
+  private handleStepCap(bot: Employee, opts: { seed?: boolean }): void {
+    const id = `${bot.id}:${this.emitSeq++}`;
+    const text =
+      `Oh — I hit my per-turn step cap, so I've gotta pause this loop here. ` +
+      `Ping me and I'll pick it right back up.`;
+    channel.append({ id, author: bot.name, authorId: bot.id, authorBotId: bot.id, text });
+    this.emit({ id, kind: 'message', botId: bot.id, botName: bot.name, text, ts: clock() });
+    if (!opts.seed) this.deliveredUpTo.set(bot.id, channel.length);
+    this.failures.delete(bot.id); // a step cap isn't a failure — don't count it toward the retry streak
   }
 
   // ── Memory + identity (unchanged) ────────────────────────────────────────────────────────────────

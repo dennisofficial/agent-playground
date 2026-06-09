@@ -36,6 +36,11 @@ export interface Job {
   version: number;
   /** The latest turn's report to the chat-self (its final text, including the STATUS line). */
   lastReport?: string;
+  /** Planning mode: the approved plan text, captured by `approve_plan` — the contract the execute job
+   * runs. Set on a 'plan' job when it's approved (and it transitions to 'done'). */
+  plan?: string;
+  /** For an EXECUTE job spawned from an approved plan: the originating 'plan' job's id (audit link). */
+  planJobId?: string;
   result?: string;
   error?: string;
 }

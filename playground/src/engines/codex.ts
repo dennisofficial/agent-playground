@@ -5,24 +5,37 @@ import type { RunWorkerArgs, WorkerEngine } from './types.js';
 let codex: Codex | undefined;
 const getCodex = () => (codex ??= new Codex());
 
-function threadOptions(cwd: string): ThreadOptions {
+function threadOptions(
+  cwd: string,
+  opts: { model?: string; planning?: boolean } = {},
+): ThreadOptions {
+  const model = opts.model ?? process.env.CODEX_MODEL;
   return {
     workingDirectory: cwd,
     // Confine writes/shell to the project; run autonomously (no interactive approval surface).
-    sandboxMode: 'workspace-write',
+    // A PLAN pass is read-only so it physically cannot mutate the project before approval.
+    sandboxMode: opts.planning ? 'read-only' : 'workspace-write',
     approvalPolicy: 'never',
     skipGitRepoCheck: true,
-    ...(process.env.CODEX_MODEL ? { model: process.env.CODEX_MODEL } : {}),
+    ...(model ? { model } : {}),
   };
 }
 
 export const codexEngine: WorkerEngine = {
   name: 'codex',
-  async run({ task, cwd, systemPrompt, sessionId, onEvent, signal }: RunWorkerArgs) {
+  async run({
+    task,
+    cwd,
+    systemPrompt,
+    sessionId,
+    model,
+    planning,
+    onEvent,
+    signal,
+  }: RunWorkerArgs) {
     const client = getCodex();
-    const thread = sessionId
-      ? client.resumeThread(sessionId, threadOptions(cwd))
-      : client.startThread(threadOptions(cwd));
+    const opts = threadOptions(cwd, { model, planning });
+    const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 
     // Codex has no systemPrompt option, so seed our worker persona as a preamble on the first turn.
     const input = sessionId ? task : `${systemPrompt}\n\n---\n\nTask: ${task}`;

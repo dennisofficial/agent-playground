@@ -1,5 +1,5 @@
 import type { StructuredToolInterface } from '@langchain/core/tools';
-import type { WorkerEngineName } from '../engines/types.js';
+import type { EffortLevel, WorkerEngineName } from '../engines/types.js';
 
 /**
  * An employee — one self-contained AI teammate. Everything that makes a teammate distinct lives in one
@@ -28,6 +28,15 @@ export interface Employee {
    * — there is no per-dispatch override; switch engines by changing this field.
    */
   engine: WorkerEngineName;
+  /**
+   * Per-phase model tiering (optional overrides; per-engine defaults in `resolveWorkerModel` apply when
+   * unset). The PLAN pass runs on a high-reasoning model + effort so the worker thinks hard about WHAT
+   * to build; the EXECUTE pass runs on a cheaper model to build the already-approved plan. Only set
+   * these to deviate from the engine defaults (e.g. a different model for one teammate).
+   */
+  planModel?: string;
+  planEffort?: EffortLevel;
+  execModel?: string;
   /**
    * Optional override for the employee's chat-side tools; defaults to the shared `CHAT_TOOLS` (resolved
    * at the consumer in bot-graph.ts, so unset employees never import chat.ts).

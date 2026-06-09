@@ -4,7 +4,7 @@ import {
   type PermissionResult,
   query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { bashDenyReason, isInsideRoot } from './guard.js';
+import { bashDenyReason, bashWriteReason, isInsideRoot } from './guard.js';
 import type { RunWorkerArgs, WorkerEngine } from './types.js';
 
 // The base set of built-in tools the worker may use. `tools` RESTRICTS the available set — unlike
@@ -19,31 +19,58 @@ const AUTO_APPROVE = ['Read', 'Glob', 'Grep'];
  * inside the project root, and bash commands must clear the deny-list. With `permissionMode:
  * 'default'`, every non-auto-approved tool call routes here — this is a programmatic gate (there is
  * no interactive surface), so it never blocks waiting on a human.
+ *
+ * When `planning` is set, the gate is also READ-ONLY: Write/Edit are denied outright and mutating
+ * shell is refused, so a PLAN pass physically cannot touch the project (the core "plan first, build
+ * only once approved" guarantee). Built per-run because the planning flag varies by job.
  */
-const canUseTool: CanUseTool = async (toolName, input): Promise<PermissionResult> => {
-  if (toolName === 'Bash') {
-    const command = typeof input.command === 'string' ? input.command : '';
-    const reason = bashDenyReason(command);
-    if (reason) return { behavior: 'deny', message: `Refused: ${reason}.` };
-  }
-  if (toolName === 'Write' || toolName === 'Edit') {
-    const path = typeof input.file_path === 'string' ? input.file_path : '';
-    if (path && !isInsideRoot(path)) {
-      return { behavior: 'deny', message: `Refused: "${path}" escapes the project directory.` };
+const makeCanUseTool =
+  (planning: boolean): CanUseTool =>
+  async (toolName, input): Promise<PermissionResult> => {
+    if (planning && (toolName === 'Write' || toolName === 'Edit')) {
+      return {
+        behavior: 'deny',
+        message: 'Planning is read-only — describe the change in your plan instead of writing it.',
+      };
     }
-  }
-  return { behavior: 'allow', updatedInput: input };
-};
+    if (toolName === 'Bash') {
+      const command = typeof input.command === 'string' ? input.command : '';
+      const reason = bashDenyReason(command);
+      if (reason) return { behavior: 'deny', message: `Refused: ${reason}.` };
+      if (planning) {
+        const write = bashWriteReason(command);
+        if (write) return { behavior: 'deny', message: `Planning is read-only — ${write}.` };
+      }
+    }
+    if (toolName === 'Write' || toolName === 'Edit') {
+      const path = typeof input.file_path === 'string' ? input.file_path : '';
+      if (path && !isInsideRoot(path)) {
+        return { behavior: 'deny', message: `Refused: "${path}" escapes the project directory.` };
+      }
+    }
+    return { behavior: 'allow', updatedInput: input };
+  };
 
 export const claudeEngine: WorkerEngine = {
   name: 'claude',
-  async run({ task, cwd, systemPrompt, sessionId, onEvent, signal }: RunWorkerArgs) {
+  async run({
+    task,
+    cwd,
+    systemPrompt,
+    sessionId,
+    model,
+    effort,
+    planning,
+    onEvent,
+    signal,
+  }: RunWorkerArgs) {
     // The SDK cancels via its own AbortController (it kills the child process); bridge our run signal to it.
     const abortController = new AbortController();
     if (signal) {
       if (signal.aborted) abortController.abort();
       else signal.addEventListener('abort', () => abortController.abort(), { once: true });
     }
+    const resolvedModel = model ?? process.env.WORKER_MODEL;
     const options: Options = {
       cwd,
       systemPrompt,
@@ -51,11 +78,12 @@ export const claudeEngine: WorkerEngine = {
       settingSources: [],
       tools: WORKER_TOOLS,
       allowedTools: AUTO_APPROVE,
-      canUseTool,
+      canUseTool: makeCanUseTool(planning ?? false),
       permissionMode: 'default',
       abortController,
       ...(sessionId ? { resume: sessionId } : {}),
-      ...(process.env.WORKER_MODEL ? { model: process.env.WORKER_MODEL } : {}),
+      ...(resolvedModel ? { model: resolvedModel } : {}),
+      ...(effort ? { effort } : {}),
     };
 
     let result = '';
