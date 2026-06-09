@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { Codex, type ThreadOptions } from '@openai/codex-sdk';
 import type { RunWorkerArgs, WorkerEngine } from './types.js';
 
@@ -5,11 +6,33 @@ import type { RunWorkerArgs, WorkerEngine } from './types.js';
 let codex: Codex | undefined;
 const getCodex = () => (codex ??= new Codex());
 
+/**
+ * The repo's SHARED git dir for `cwd`. In this monorepo the app runs from a subdir AND ticket workers run
+ * in linked git worktrees, so `.git` lives OUTSIDE the workingDirectory — codex's workspace-write sandbox
+ * must be granted it explicitly or commit/push/merge (needed for the shared-branch coworker flow) fail.
+ * Best-effort: returns undefined when `cwd` isn't in a git repo.
+ */
+function gitCommonDir(cwd: string): string | undefined {
+  try {
+    return (
+      execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+        cwd,
+        encoding: 'utf8',
+      }).trim() || undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 function threadOptions(
   cwd: string,
   opts: { model?: string; planning?: boolean } = {},
 ): ThreadOptions {
   const model = opts.model ?? process.env.CODEX_MODEL;
+  // Grant write access to the shared git dir (it's outside cwd here) so an EXECUTE worker can commit /
+  // push / merge on its branch. Not needed in the read-only PLAN pass.
+  const gitDir = opts.planning ? undefined : gitCommonDir(cwd);
   return {
     workingDirectory: cwd,
     // Confine writes/shell to the project; run autonomously (no interactive approval surface).
@@ -21,6 +44,7 @@ function threadOptions(
     // codex worker. It's a model-side tool, separate from the shell sandbox's network access, so
     // it's safe to leave on even in the read-only PLAN pass — and off by default unless we set it.
     webSearchMode: 'live',
+    ...(gitDir ? { additionalDirectories: [gitDir] } : {}),
     ...(model ? { model } : {}),
   };
 }

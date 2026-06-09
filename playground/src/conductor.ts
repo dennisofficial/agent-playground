@@ -8,6 +8,7 @@ import { type ConductorEvent, type ContextUsage, type MessageUsage } from './con
 import { type Employee, ROSTER, botById } from './employees/index.js';
 import { type Job, getJob, listJobs, onJobUpdate } from './jobs.js';
 import { DEFAULT_PROJECT, DEFAULT_TEAM, type Identity } from './memory/identity.js';
+import { ticketStatusAfterExecute } from './ticket-completion.js';
 import { type ActionResult, continueWork } from './worker.js';
 
 /**
@@ -156,24 +157,27 @@ class Conductor {
     }
   }
 
-  /** When an execute job for a ticket finishes, advance the ticket — but only once the LAST discipline's
-   * job is done, and never overriding a human/scrum-master decision (blocked/dropped). */
+  /** When an execute job for a ticket finishes, advance the ticket — but a ticket only goes `done` once
+   * EVERY approved-plan discipline has an integrated (done) execute job, not merely when no sibling is
+   * currently active. Otherwise a discipline that hasn't started its build yet gets locked out (a `done`
+   * ticket is no longer executable). Never overrides a human/scrum decision (blocked/dropped). */
   private syncTicketAfterExecute(job: Job): void {
     if (!job.ticketId) return;
     const board = getBoard();
     const ticket = board.getTicket(job.project, job.ticketId);
     if (!ticket || ticket.status === 'blocked' || ticket.status === 'dropped') return;
-    const othersActive = listJobs().some(
-      (j) =>
-        j.ticketId === job.ticketId &&
-        j.mode === 'execute' &&
-        j.id !== job.id &&
-        (j.status === 'running' || j.status === 'awaiting'),
+
+    const ticketJobs = listJobs().filter(
+      (j) => j.ticketId === job.ticketId && j.mode === 'execute',
     );
-    if (othersActive) return; // a sibling discipline is still building — leave it in_progress
-    if (job.status === 'done') board.setStatus(job.project, job.ticketId, 'done');
-    else if (job.status === 'failed') board.setStatus(job.project, job.ticketId, 'blocked');
-    else board.setStatus(job.project, job.ticketId, 'approved'); // cancelled → freed up, can retry
+    const approvedOwners = board
+      .listPlans(job.project, job.ticketId)
+      .filter((p) => p.approvedMd.trim())
+      .map((p) => p.ownerBot);
+    // Pure decision (unit-tested in ticket-completion.test): done only when EVERY approved discipline has
+    // an integrated job; a failed discipline blocks regardless of finish order; otherwise leave unchanged.
+    const next = ticketStatusAfterExecute(job, ticketJobs, approvedOwners);
+    if (next) board.setStatus(job.project, job.ticketId, next);
   }
 
   /** Subscribe to STATUS changes (busy/thinking/ctx/jobs-running) — re-read via `getStatus()`. */

@@ -1,4 +1,5 @@
 import type { Employee } from '../employees/index.js';
+import { listTicketWorkspaces } from '../workspace.js';
 import { getDb } from './db.js';
 import { type Identity, projectScope, recallScopes } from './identity.js';
 import { recall, recallOtherProjects } from './semantic.js';
@@ -90,6 +91,27 @@ export async function fetchContext(bot: Employee, query: string, id: Identity): 
       `${bot.scrumMaster ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${
         more > 0 ? `\n…and ${more} more` : ''
       }`,
+    );
+  }
+
+  // Ticket workspaces: your own branch + worktree per ticket you're building, and who else is on it — so
+  // you know which coworkers to coordinate with on the shared branch (see the team rules).
+  const mine = listTicketWorkspaces(bot.id);
+  if (mine.length > 0) {
+    const all = listTicketWorkspaces();
+    parts.push(
+      `Your ticket workspaces:\n${mine
+        .map((w) => {
+          const coworkers = all
+            .filter((o) => o.ticketId === w.ticketId && o.owner !== bot.id)
+            .map((o) => o.owner);
+          return `- ${w.ticketId} on ${w.branch}${
+            coworkers.length
+              ? ` — also building it: ${coworkers.join(', ')} (coordinate via @mention)`
+              : ''
+          }`;
+        })
+        .join('\n')}`,
     );
   }
 

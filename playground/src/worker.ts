@@ -4,7 +4,15 @@ import { appendJobProgress, getJob, getJobProgress, updateJob } from './jobs.js'
 import { logWork } from './memory/worklog.js';
 import { workerPromptFor } from './persona.js';
 import { localRuntime } from './runtime.js';
-import { acquireWorkspace, releaseWorkspace, type Workspace } from './workspace.js';
+import {
+  acquireTicketWorkspace,
+  acquireWorkspace,
+  activeTicketWorkers,
+  closeTicketWorkspace,
+  publishToTicketBranch,
+  releaseWorkspace,
+  type Workspace,
+} from './workspace.js';
 
 // Zero's background-execution thread. A dispatched task runs to completion on its engine (the engine
 // loops internally until done), streams normalized events into the progress buffer, and reports ONCE
@@ -27,10 +35,14 @@ export interface ActionResult {
 // (In-process for now; when workers move to their own containers this becomes a remote stop signal.)
 const controllers = new Map<string, AbortController>();
 
-// Live worktrees for in-flight EXECUTE jobs, keyed by job id. Job-scoped, NOT turn-scoped: a job that
-// parks in 'awaiting' keeps its worktree so the resume turn continues on the same branch (re-acquiring
-// would collide on the existing branch and lose its uncommitted work). Released on terminal status.
+// Live per-job worktrees for NON-TICKET execute jobs (the human /approve path), keyed by job id;
+// released on terminal status. Ticket execute jobs use the durable, ticket-scoped registry in
+// workspace.ts instead (shared across a discipline's jobs and re-adopted on restart).
 const workspaces = new Map<string, Workspace>();
+
+// How many extra in-process resolve turns a worker gets to auto-heal a merge conflict integrating into
+// the shared ticket branch before it parks 'awaiting' for a human. Self-heal first, escalate as fallback.
+const MAX_RESOLVE_TURNS = 1;
 
 /**
  * A finished run reports as 'done' — a background task runs all the way to completion and reports
@@ -59,63 +71,97 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
   if (!job) return;
   const ac = new AbortController();
   controllers.set(jobId, ac);
+  let workspace: Workspace | undefined; // declared out here so `finally` can tear it down
   try {
     const bot = botById(job.ownerBot) ?? ROSTER[0];
     // Per-phase model tiering: PLAN runs on a high-reasoning model + max effort; EXECUTE on the cheaper
     // everyday model. `planning` makes the plan pass read-only at the engine seam.
     const { model, effort } = resolveWorkerModel(bot, job.mode);
 
-    // EXECUTE jobs run in their own git worktree + branch — isolated from the trunk and from each
-    // other, so an employee can have several workers building at once. PLAN jobs are read-only and run
-    // on the trunk (ROOT). Reuse the worktree on a resume turn (an 'awaiting' job kept it); acquire one
-    // on the first execute turn.
-    let workspace = workspaces.get(jobId);
-    if (job.mode === 'execute' && !workspace) {
-      workspace = await acquireWorkspace(job);
-      workspaces.set(jobId, workspace);
+    // Resolve the worktree an EXECUTE job runs in. A TICKET job uses its shared, ticket-scoped worktree
+    // (its own branch agent/<bot>/<TKT> off the shared ticket/<TKT> branch — reused across this
+    // discipline's jobs, re-adopted on restart). A non-ticket job (the human /approve path) gets a
+    // throwaway per-job worktree. PLAN jobs are read-only and run on the trunk (ROOT).
+    if (job.mode === 'execute') {
+      workspace = job.ticketId
+        ? await acquireTicketWorkspace(job.ticketId, job.ownerBot)
+        : (workspaces.get(jobId) ?? (await acquireWorkspace(job)));
+      if (!job.ticketId) workspaces.set(jobId, workspace);
       updateJob(jobId, { branch: workspace.branch, workspacePath: workspace.path });
     }
     const cwd = workspace?.path ?? ROOT;
 
-    process.stderr.write(
-      `[worker:${jobId}] ${bot.name} ${job.mode} on ${model ?? `${job.engine} default`}${effort ? ` (effort:${effort})` : ''}${workspace ? ` @ ${workspace.branch}` : ''}\n`,
-    );
-    // Jail the in-process langgraph tools to this worktree for the duration of the run (claude/codex
-    // additionally receive `cwd` for their own subprocess sandbox). Outside this scope tools fall back
-    // to ROOT.
-    const { result, sessionId } = await withActiveRoot(cwd, () =>
-      localRuntime.run(job.engine, {
-        task: message,
-        cwd,
-        systemPrompt: workerPromptFor(bot, job.mode),
-        sessionId: job.sessionId,
-        model,
-        effort,
-        planning: job.mode === 'plan',
-        onEvent: (e) => appendJobProgress(jobId, e),
-        signal: ac.signal,
-        workspace,
-      }),
-    );
-    // Cancelled while we were finishing up: discard the result, don't mark done or relay.
-    if (ac.signal.aborted) return;
-    const report = result || '(no report)';
-    const status = statusFromReport(report);
-    updateJob(jobId, {
-      status,
-      sessionId,
-      lastReport: report,
-      turns: job.turns + 1,
-      ...(status === 'done' ? { result: report } : {}),
-    });
-    // Record completed work to the durable log so standups / "what did you do" have a real answer.
-    if (status === 'done') {
-      logWork({
-        ownerBot: job.ownerBot,
-        project: job.project,
-        task: job.task,
-        summary: report.slice(0, 600),
+    // Run the engine to completion. For a TICKET execute job, a clean finish must be PUBLISHED to the
+    // shared branch before we believe "done" — "done" means "integrated". A merge conflict buys the
+    // worker one focused resolve turn (same worktree + session) before it escalates to a human.
+    let currentMessage = message;
+    let resumeSession = job.sessionId;
+    let resolveTurns = 0;
+    for (;;) {
+      // Jail the in-process langgraph tools to this worktree for the run (claude/codex also get `cwd`
+      // for their own subprocess sandbox). Outside this scope tools fall back to ROOT.
+      process.stderr.write(
+        `[worker:${jobId}] ${bot.name} ${job.mode} on ${model ?? `${job.engine} default`}${effort ? ` (effort:${effort})` : ''}${workspace ? ` @ ${workspace.branch}` : ''}${resolveTurns ? ' (resolving conflict)' : ''}\n`,
+      );
+      const { result, sessionId } = await withActiveRoot(cwd, () =>
+        localRuntime.run(job.engine, {
+          task: currentMessage,
+          cwd,
+          systemPrompt: workerPromptFor(bot, job.mode, workspace),
+          sessionId: resumeSession,
+          model,
+          effort,
+          planning: job.mode === 'plan',
+          onEvent: (e) => appendJobProgress(jobId, e),
+          signal: ac.signal,
+          workspace,
+        }),
+      );
+      // Cancelled while we were finishing up: discard the result, don't mark done or relay.
+      if (ac.signal.aborted) return;
+      resumeSession = sessionId;
+      const report = result || '(no report)';
+      const status = statusFromReport(report);
+
+      // Ticket execute job that reports done: integrate it onto the shared branch before trusting it.
+      if (status === 'done' && workspace?.ticketId) {
+        const pub = await publishToTicketBranch(workspace);
+        if (!pub.integrated) {
+          if (resolveTurns < MAX_RESOLVE_TURNS) {
+            resolveTurns++;
+            currentMessage = `Your work hit a MERGE CONFLICT integrating into the shared ticket branch ${workspace.sharedBranch}${
+              pub.files?.length ? ` (conflicts in: ${pub.files.join(', ')})` : ''
+            }. A merge is in progress in your worktree with conflict markers. Resolve the conflicts — preserve BOTH sides' intent — then commit the merge and finish.`;
+            continue; // one resolve turn, same worktree + session
+          }
+          // Couldn't auto-heal — park for a human; the relay surfaces it and the chat-self @mentions Dennis.
+          updateJob(jobId, {
+            status: 'awaiting',
+            sessionId,
+            lastReport: `${report}\n\nSTATUS: BLOCKED — couldn't auto-resolve a merge conflict integrating into ${workspace.sharedBranch}; need a human.`,
+            turns: job.turns + 1,
+          });
+          return;
+        }
+      }
+
+      updateJob(jobId, {
+        status,
+        sessionId,
+        lastReport: report,
+        turns: job.turns + 1,
+        ...(status === 'done' ? { result: report } : {}),
       });
+      // Record completed work to the durable log so standups / "what did you do" have a real answer.
+      if (status === 'done') {
+        logWork({
+          ownerBot: job.ownerBot,
+          project: job.project,
+          task: job.task,
+          summary: report.slice(0, 600),
+        });
+      }
+      break;
     }
   } catch (err) {
     // An abort surfaces here as a thrown error — that's a cancellation, not a failure.
@@ -127,12 +173,22 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
       });
   } finally {
     controllers.delete(jobId);
-    // Release the worktree once the job is truly finished. An 'awaiting' job keeps it for the resume
-    // turn; a terminal job (done/failed/cancelled) lets it go — keeping the branch (its commits / PR).
-    const workspace = workspaces.get(jobId);
-    if (workspace && getJob(jobId)?.status !== 'awaiting') {
-      workspaces.delete(jobId);
-      await releaseWorkspace(workspace).catch(() => {});
+    // Release worktrees once work is finished — but never out from under an 'awaiting' job (it keeps its
+    // worktree for the resume turn).
+    const status = getJob(jobId)?.status;
+    if (status && status !== 'awaiting') {
+      if (workspace?.ticketId && workspace.owner) {
+        // Ticket worktree: close only when no other worker for this discipline is still live (a build
+        // and an explore worker can share it). Branches are kept (commits live on them / the shared branch).
+        if (activeTicketWorkers(workspace.ticketId, workspace.owner) === 0)
+          await closeTicketWorkspace(workspace.ticketId, workspace.owner).catch(() => {});
+      } else if (!workspace?.ticketId) {
+        const ws = workspaces.get(jobId);
+        if (ws) {
+          workspaces.delete(jobId);
+          await releaseWorkspace(ws).catch(() => {});
+        }
+      }
     }
   }
 }
@@ -148,18 +204,22 @@ export function cancelJob(jobId: string): ActionResult {
   if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled')
     return { ok: false, reason: `${jobId} is already ${job.status} — nothing to cancel.` };
   const controller = controllers.get(jobId);
+  updateJob(jobId, { status: 'cancelled' }); // mark first so worker-count checks exclude this job
   if (controller) {
     // Running: abort the worker; its finally tears down the worktree (the status is now terminal).
     controller.abort();
+  } else if (job.ticketId) {
+    // Awaiting ticket job: close this discipline's worktree if no other worker is still live on it.
+    if (activeTicketWorkers(job.ticketId, job.ownerBot) === 0)
+      void closeTicketWorkspace(job.ticketId, job.ownerBot).catch(() => {});
   } else {
-    // Awaiting (no live worker): release the parked worktree here, since no finally will run for it.
+    // Awaiting per-job: release the parked worktree here, since no finally will run for it.
     const workspace = workspaces.get(jobId);
     if (workspace) {
       workspaces.delete(jobId);
       void releaseWorkspace(workspace).catch(() => {});
     }
   }
-  updateJob(jobId, { status: 'cancelled' });
   return { ok: true };
 }
 
