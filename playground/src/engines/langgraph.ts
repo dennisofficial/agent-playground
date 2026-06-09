@@ -51,7 +51,19 @@ export const langgraphEngine: WorkerEngine = {
     // first turn only (resumes already carry it in the checkpointed history).
     const messages: BaseMessage[] = sessionId
       ? [new HumanMessage(task)]
-      : [new SystemMessage(systemPrompt), new HumanMessage(task)];
+      : [
+          // Cache the worker's system prefix. Workers loop many times (MAX_TURNS), so without a breakpoint
+          // the persona is re-sent uncached on every iteration. The breakpoint caches the bound tools +
+          // system together (render order is tools → system → messages), so a separate per-tool breakpoint
+          // is redundant. ttl:'1h' survives long single tool calls (a 5-min default could expire mid-job).
+          // The cached SystemMessage rides into checkpointed history, so resumes keep hitting this prefix.
+          new SystemMessage({
+            content: [
+              { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral', ttl: '1h' } },
+            ],
+          }),
+          new HumanMessage(task),
+        ];
 
     let lastText = '';
     // streamMode 'updates' yields complete messages per node step (not token chunks), which maps

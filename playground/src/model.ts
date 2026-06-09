@@ -27,12 +27,13 @@ export function buildModel() {
  * pricing (the model `buildModel` uses): $3.00 / 1M input, $15.00 / 1M output (verified against the
  * Anthropic model catalog, 2026-06). Unlike the gate, the chat path caches its prompt prefix, so the
  * billed cost splits by token kind: langchain folds cache reads + writes INTO `input`, so back them out
- * to bill the fresh remainder at full rate, cache reads at ~0.1×, and cache writes at ~1.25× (5-min TTL,
- * langchain's default). Kept beside the model id so the price moves with the model if we ever swap it.
+ * to bill the fresh remainder at full rate, cache reads at ~0.1×, and cache writes at ~2× (1-hour TTL —
+ * the chat cache breakpoints set ttl:'1h'). Kept beside the model id so the price moves with the model if
+ * we ever swap it.
  */
 export const CHAT_PRICE_PER_MTOK = { input: 3.0, output: 15.0 } as const;
 const CACHE_READ_MULT = 0.1;
-const CACHE_WRITE_MULT = 1.25;
+const CACHE_WRITE_MULT = 2.0; // 1-hour TTL writes cost 2× base (a 5-min-TTL write would be 1.25×)
 export const chatCostUsd = (u: {
   input: number;
   output: number;

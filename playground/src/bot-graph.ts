@@ -119,6 +119,32 @@ type BotStateType = typeof BotState.State;
 /** Channel message → a `Speaker: text` HumanMessage (how a bot reads what others said). */
 const asInput = (m: ChannelMsg): HumanMessage => new HumanMessage(`${m.author}: ${m.text}`);
 
+/**
+ * A shallow copy of `m` with a cache breakpoint on its last content block — WITHOUT mutating the original
+ * (it rides in checkpointed state, so a mutation would poison the durable history). Only anchors on
+ * human/ai turns carrying cacheable text: a `tool` tail would need `cache_control` on the tool_result block
+ * itself, not nested inside its content (which is what wrapping a string into a text block would do), and an
+ * empty turn has nothing to anchor. Both cases return `m` unchanged, so that turn falls back to system-only
+ * caching — the trailing messages get cached under the next turn's breakpoint anyway. The clone is ephemeral
+ * (only ever handed to `model.invoke`, never persisted), so any lc_kwargs drift from the spread is harmless.
+ */
+const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
+  const kind = m.getType();
+  if (kind !== 'human' && kind !== 'ai') return m;
+  const cc = { type: 'ephemeral', ttl: '1h' } as const;
+  const clone = (content: unknown): BaseMessage => {
+    const Ctor = m.constructor as unknown as new (fields: unknown) => BaseMessage;
+    return new Ctor({ ...m, content });
+  };
+  if (typeof m.content === 'string') {
+    return m.content.trim() ? clone([{ type: 'text', text: m.content, cache_control: cc }]) : m;
+  }
+  const last = m.content.length - 1;
+  return last >= 0
+    ? clone(m.content.map((b, i) => (i === last ? { ...b, cache_control: cc } : b)))
+    : m;
+};
+
 /** Flatten message content (string | content blocks) to plain text. */
 const flat = (c: BaseMessage['content']): string =>
   typeof c === 'string'
@@ -212,16 +238,21 @@ function buildBotGraph(bot: Employee) {
     //   1. persona system prompt — frozen; the `cache_control` breakpoint here caches the bound tools +
     //      persona (everything up to and including this block) on every call. Sonnet 4.6's minimum cacheable
     //      prefix is 2048 tokens; below that it silently won't cache (watch cache_read in usage_metadata —
-    //      the per-message token line in the TUI surfaces it). A second breakpoint on the last history
-    //      message would extend the cache through the durable conversation; not done yet (needs to mutate a
-    //      checkpoint message), so history isn't cached for now.
-    //   2. durable history — append-only, so the prefix grows but never rewrites.
+    //      the per-message token line in the TUI surfaces it).
+    //   2. durable history — append-only, so the prefix grows but never rewrites. A SECOND breakpoint rides
+    //      on the last history message (`withCacheBreakpoint` + `cachedHistory` below), extending the cache
+    //      through the conversation; we clone that message rather than mutate the checkpointed one. (2 of 4
+    //      breakpoints used; the volatile recalled/injected tail stays after the boundary, uncached.)
     //   3. recalled memory — VOLATILE (re-retrieved each turn), so it must come AFTER the history, never in
     //      the system block. In the system block it would (a) bust the whole prefix every turn and (b) be a
     //      second SystemMessage, which langchain-anthropic rejects ("System messages are only permitted as
     //      the first passed message" — it keeps just messages[0] as system). As a tail user-turn preamble it
     //      does neither. Like the persona, it's re-injected each call and never persisted into `messages`.
     //   4. this turn's new channel messages.
+    const history = state.messages;
+    const cachedHistory = history.length
+      ? [...history.slice(0, -1), withCacheBreakpoint(history[history.length - 1])]
+      : history;
     const convo = [
       new SystemMessage({
         content: [
@@ -232,7 +263,7 @@ function buildBotGraph(bot: Employee) {
           },
         ],
       }),
-      ...state.messages,
+      ...cachedHistory,
       ...(state.recalled
         ? [new HumanMessage(`(Relevant memory — for your reference:\n${state.recalled})`)]
         : []),

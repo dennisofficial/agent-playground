@@ -316,6 +316,17 @@ class Conductor {
       by: this.state.speaker,
       note: `ticket ${ticket.id} approved — ${plans.length} plan(s) frozen, ready to build`,
     });
+    // The `emit` above is the AUDIT row (transcript only — bots never read the event stream). To actually
+    // notify the plan owners we post an ACTIONABLE hail to the channel (the bus bots consume): a synthetic
+    // human message, authored as the approver, that @mentions each owner. Each @mention is a hard RESPOND
+    // for that owner (gate.ts: `!fromBot && meMentioned`), so they wake up and build their own frozen plan
+    // via `execute_ticket` (scoped per-bot, so owners don't collide). Same pattern as `/standup` → submitUser.
+    const owners = [...new Set(plans.map((p) => p.ownerBot))];
+    const mentions = owners.map((o) => `@${o}`).join(' ');
+    this.submitUser(
+      `${mentions} — ${ticket.id} ("${ticket.title}") is approved and your plans are frozen. ` +
+        `Go ahead and build your part now (execute_ticket ${ticket.id}); no further sign-off needed.`,
+    );
     return { ok: true };
   }
 

@@ -82,13 +82,18 @@ export function App() {
     // is a local note, not a channel message.
     const approve = text.match(/^\/approve\s+(\S+)\s*(.*)$/i);
     if (approve) {
-      const res = conductor.approvePlan(approve[1], approve[2].trim() || undefined);
+      const id = approve[1];
+      const edits = approve[2].trim() || undefined;
+      const isTicket = /^TKT-/i.test(id);
+      const res = isTicket ? conductor.approveTicket(id, edits) : conductor.approvePlan(id, edits);
       pushHistory({
         id: localId(),
         kind: 'note',
         text: res.ok
-          ? `✓ Approved ${approve[1]} — building now.`
-          : `Couldn't approve ${approve[1]}: ${res.reason}`,
+          ? isTicket
+            ? `✓ Approved ticket ${id} — plans frozen, ready for the team to build.`
+            : `✓ Approved ${id} — building now.`
+          : `Couldn't approve ${id}: ${res.reason}`,
       });
       clearInput();
       return;
