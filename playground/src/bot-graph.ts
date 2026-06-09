@@ -192,17 +192,23 @@ function buildBotGraph(bot: Bot) {
     const injected = fresh.map(asInput);
     // Message order is chosen for PROMPT CACHING (a prefix match — any byte change invalidates everything
     // after it; render order is tools → system → messages):
-    //   1. persona system prompt — frozen, the stable head of the cacheable prefix
-    //   2. durable history — append-only, so the prefix grows but never rewrites
+    //   1. persona system prompt — frozen; the `cache_control` breakpoint here caches the bound tools +
+    //      persona (everything up to and including this block) on every call. Sonnet 4.6's minimum cacheable
+    //      prefix is 2048 tokens; below that it silently won't cache (watch cache_read in usage_metadata —
+    //      the per-message token line in the TUI surfaces it). A second breakpoint on the last history
+    //      message would extend the cache through the durable conversation; not done yet (needs to mutate a
+    //      checkpoint message), so history isn't cached for now.
+    //   2. durable history — append-only, so the prefix grows but never rewrites.
     //   3. recalled memory — VOLATILE (re-retrieved each turn), so it must come AFTER the history, never in
     //      the system block. In the system block it would (a) bust the whole prefix every turn and (b) be a
     //      second SystemMessage, which langchain-anthropic rejects ("System messages are only permitted as
     //      the first passed message" — it keeps just messages[0] as system). As a tail user-turn preamble it
     //      does neither. Like the persona, it's re-injected each call and never persisted into `messages`.
     //   4. this turn's new channel messages.
-    // No cache_control breakpoint is set yet, so nothing is cached today regardless — see note to enable it.
     const convo = [
-      new SystemMessage(chatPromptFor(bot)),
+      new SystemMessage({
+        content: [{ type: 'text', text: chatPromptFor(bot), cache_control: { type: 'ephemeral' } }],
+      }),
       ...state.messages,
       ...(state.recalled
         ? [new HumanMessage(`(Relevant memory — for your reference:\n${state.recalled})`)]

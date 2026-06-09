@@ -7,7 +7,6 @@ import { createJob, getJob, latestJob } from './jobs.js';
 import { getIdentity } from './memory/identity.js';
 import { memoryTools, taskTools } from './memory/tools.js';
 import { recentWork } from './memory/worklog.js';
-import { grep, list_dir, read_file } from './tools.js';
 import {
   type ActionResult,
   cancelJob,
@@ -16,10 +15,15 @@ import {
   runWorkerTurn,
 } from './worker.js';
 
-// A bot's chat-side tools. The chat surface has NO filesystem/shell access itself — that lives in the
-// background-execution thread (a job). This is the structural "plan-mode" boundary: chat dispatches,
-// continues, finishes, and inspects its own background work; it never mutates directly. Each tool reads
-// the calling bot's identity from the run config (set by the conductor) so jobs are scoped per bot.
+// A bot's chat-side tools. The chat surface has NO filesystem/shell access at all — not even reads.
+// The chat-you is a PERSON: it plans, delegates, coordinates, and remembers, but has no hands. Every
+// touch of the codebase — even a one-file read — goes through a dispatched job (worker.ts), which runs
+// to completion in a background thread scoped to the project root. (Per-job isolation — its own
+// worktree/branch, container-style — is the planned direction, NOT yet built: workers currently share
+// ROOT, so don't promise branches/merges.) This is the structural "plan-mode" boundary: chat
+// dispatches, continues, finishes, and inspects its own background work; it never reads or mutates
+// directly. Each tool reads the calling bot's identity from the run config (set by the conductor) so
+// jobs are scoped per bot.
 
 const dispatch_job = tool(
   async ({ task, engine }, config) => {
@@ -162,9 +166,6 @@ const recent_work = tool(
 // `llm` node and runs them through a prebuilt ToolNode; this module just defines them (and their job /
 // memory plumbing) in one place.
 export const CHAT_TOOLS = [
-  read_file,
-  list_dir,
-  grep,
   dispatch_job,
   continue_work,
   check_job,

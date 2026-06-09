@@ -1,6 +1,6 @@
 import { Box, Text } from 'ink';
 import { renderMarkdown } from '../markdown.js';
-import type { RenderItem } from './messages.js';
+import { formatMessageUsage, type RenderItem } from './messages.js';
 
 /** One finalized transcript row, rendered by kind. Assistant text is terminal markdown. */
 export function MessageView({ item }: { item: RenderItem }) {
@@ -87,6 +87,7 @@ export function MessageView({ item }: { item: RenderItem }) {
             {item.ts && <Text dimColor>{`  ${item.ts}`}</Text>}
           </Box>
           <Text>{renderMarkdown(item.text)}</Text>
+          {item.usage && <Text dimColor>{`   ${formatMessageUsage(item.usage)}`}</Text>}
         </Box>
       );
   }

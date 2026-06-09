@@ -21,7 +21,12 @@ export interface StoredFact {
 type Row = StoredFact & { embedding: string };
 
 // Cosine above this, within the same scope, means "the same fact" → update in place, not a duplicate.
-const DEDUP_THRESHOLD = 0.92;
+export const DEDUP_THRESHOLD = 0.92;
+// Below the auto-merge bar but close enough to be a likely paraphrase. A candidate landing in
+// [GRAY_FLOOR, DEDUP_THRESHOLD) is sent to the injected judge (when one is supplied) rather than
+// blindly inserted — paraphrases sit here (~0.85–0.91), but so can adjacent-but-distinct facts, so a
+// judge (not the threshold) makes the call. Anything below GRAY_FLOOR is treated as genuinely new.
+export const GRAY_FLOOR = 0.82;
 
 const nowIso = () => new Date().toISOString();
 const parseEmb = (s: string): number[] => JSON.parse(s) as number[];
@@ -35,32 +40,59 @@ export interface RememberInput {
   id: Identity;
 }
 
-/** Store a fact at its tier's scope, or update the nearest near-duplicate in that scope (dedup-on-upsert). */
+export interface RememberOpts {
+  /**
+   * Gray-zone tiebreaker: given an EXISTING fact and the CANDIDATE being stored, returns true when
+   * they're the same underlying fact (→ merge into that row) and false when they differ in meaning.
+   * Injected (not imported) so this module stays pure DB + embeddings — the LLM lives in dedup.ts.
+   */
+  judge?: (existing: string, candidate: string) => Promise<boolean>;
+}
+
+/**
+ * Store a fact at its tier's scope, or merge it into an existing near-duplicate in that scope
+ * (dedup-on-upsert). A candidate at cosine ≥ DEDUP_THRESHOLD merges outright; one in the gray band
+ * [GRAY_FLOOR, DEDUP_THRESHOLD) merges only if the injected `judge` confirms it's the same fact —
+ * candidates are walked most-similar-first so an adjacent-but-distinct nearest neighbor can't hide a
+ * lower-sim true duplicate behind it.
+ */
 export async function remember(
   input: RememberInput,
+  opts: RememberOpts = {},
 ): Promise<{ action: 'inserted' | 'updated'; id: number }> {
   const db = getDb();
   const vec = await embed(input.fact);
   const scope = scopeForTier(input.tier, input.id);
   const ts = nowIso();
 
-  const candidates = db
-    .prepare(`SELECT id, embedding FROM facts WHERE scope = ? AND deleted_at IS NULL`)
-    .all(scope) as { id: number; embedding: string }[];
-  let best: { id: number; sim: number } | undefined;
-  for (const c of candidates) {
-    const sim = cosine(vec, parseEmb(c.embedding));
-    if (!best || sim > best.sim) best = { id: c.id, sim };
-  }
-
-  if (best && best.sim >= DEDUP_THRESHOLD) {
+  const mergeInto = (id: number): { action: 'updated'; id: number } => {
     db.prepare(`UPDATE facts SET fact = ?, embedding = ?, updated_at = ? WHERE id = ?`).run(
       input.fact,
       JSON.stringify(vec),
       ts,
-      best.id,
+      id,
     );
-    return { action: 'updated', id: best.id };
+    return { action: 'updated', id };
+  };
+
+  // Every same-scope fact near enough to be a candidate duplicate, most-similar first.
+  const candidates = (
+    db
+      .prepare(`SELECT id, fact, embedding FROM facts WHERE scope = ? AND deleted_at IS NULL`)
+      .all(scope) as { id: number; fact: string; embedding: string }[]
+  )
+    .map((c) => ({ id: c.id, fact: c.fact, sim: cosine(vec, parseEmb(c.embedding)) }))
+    .filter((c) => c.sim >= GRAY_FLOOR)
+    .sort((a, b) => b.sim - a.sim);
+
+  // Clear duplicate → merge outright (refresh to the newest wording), no judgment needed.
+  if (candidates[0] && candidates[0].sim >= DEDUP_THRESHOLD) return mergeInto(candidates[0].id);
+
+  // Gray band: let the judge (if any) decide same-vs-distinct, top-down.
+  if (opts.judge) {
+    for (const c of candidates) {
+      if (await opts.judge(c.fact, input.fact)) return mergeInto(c.id);
+    }
   }
 
   const info = db

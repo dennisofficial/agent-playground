@@ -6,7 +6,12 @@ import { type Identity } from './memory/identity.js';
 import { listTasks } from './memory/tasks.js';
 import { gateCostUsd } from './model.js';
 import { type Bot, botById, ROSTER } from './roster.js';
-import { type ContextUsage, type RenderItem, toRenderItems } from './ui/messages.js';
+import {
+  type ContextUsage,
+  type MessageUsage,
+  type RenderItem,
+  toRenderItems,
+} from './ui/messages.js';
 
 /**
  * The dispatcher: a thin event loop around the shared `channel`. You append to the channel and move on
@@ -35,6 +40,9 @@ const clock = (): string =>
 
 /** Max bot RESPONSE turns between human messages — the loop breaker so bots can't ping-pong forever. */
 const MAX_BOT_BURST = 4;
+
+/** Attempts before the conductor gives up on a turn that keeps erroring without progress (drops + logs). */
+const MAX_TURN_RETRIES = 3;
 
 export interface ConductorState {
   history: RenderItem[];
@@ -70,6 +78,8 @@ class Conductor {
   /** Bot response-turns since the last human message (loop breaker). */
   private botBurst = 0;
   private relayQueue: Job[] = [];
+  /** Per-bot consecutive no-progress failures at a stuck cursor — the error retry-cap loop breaker. */
+  private failures = new Map<string, { cursor: number; count: number }>();
 
   constructor() {
     channel.subscribe(() => this.schedule());
@@ -217,13 +227,30 @@ class Conductor {
     let responded = false;
 
     const commit = (msg: BaseMessage) => {
-      const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
-        .usage_metadata;
+      const um = (
+        msg as {
+          usage_metadata?: {
+            input_tokens?: number;
+            output_tokens?: number;
+            input_token_details?: { cache_read?: number; cache_creation?: number };
+          };
+        }
+      ).usage_metadata;
+      const usage: MessageUsage | undefined = um
+        ? {
+            input: um.input_tokens ?? 0,
+            output: um.output_tokens ?? 0,
+            cacheRead: um.input_token_details?.cache_read || undefined,
+            cacheWrite: um.input_token_details?.cache_creation || undefined,
+          }
+        : undefined;
       const stamp = clock();
+      // Attach usage to the assistant text row — "the end of the message" the user sees. Tool-only steps
+      // (no text) don't carry a usage line; their cost still rolls into the footer ctx below.
       const rows = toRenderItems([msg], bot.name).map((r) => ({
         ...r,
         id: `${bot.id}:${this.emitSeq++}`,
-        ...(r.kind === 'assistant' ? { ts: stamp } : {}),
+        ...(r.kind === 'assistant' ? { ts: stamp, usage } : {}),
       }));
       if (firstAi) {
         firstAi = false;
@@ -244,7 +271,7 @@ class Conductor {
       }
       if (rows.length || usage) {
         this.patch({
-          ...(usage ? { ctx: { input: usage.input_tokens, output: usage.output_tokens } } : {}),
+          ...(usage ? { ctx: { input: usage.input, output: usage.output } } : {}),
           ...(rows.length ? { history: [...this.state.history, ...rows] } : {}),
         });
       }
@@ -254,6 +281,7 @@ class Conductor {
     const input: Record<string, unknown> = { cursor: cursorBefore, forced: !!opts.seed };
     if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
 
+    let failed = false;
     try {
       const stream = await getBotGraph(bot.id).stream(input, {
         configurable: { thread_id: thread, identity, capped },
@@ -298,6 +326,7 @@ class Conductor {
       }
     } catch (err) {
       this.pushError(err);
+      failed = true;
     }
 
     // The checkpoint is the cursor's source of truth; read it back, then learn from what we consumed.
@@ -307,6 +336,32 @@ class Conductor {
       cursorAfter = (final.values.cursor as number) ?? cursorBefore;
     } catch {
       /* keep cursorBefore — a getState failure must not advance the cursor past unconsumed messages */
+    }
+
+    // Retry cap (the loop breaker for errors). A turn that threw WITHOUT advancing the cursor would be
+    // re-scheduled forever — hasWork stays true, so gate + fetch re-bill every lap (this is what turned a
+    // single crash into a repeat-storm). For such no-progress failures on a normal channel turn, count
+    // consecutive attempts at this cursor; after MAX_TURN_RETRIES, drop the wedged batch (advance to the
+    // channel's high-water mark — the same "fully consumed" sentinel consume/llm use) and surface it, so
+    // one poison message can't loop a bot. Seed turns (job relays) are excluded: they're spliced from the
+    // queue before running, so a failure isn't re-scheduled and can't loop. Real forward progress (cursor
+    // moved) always resets the streak.
+    if (failed && cursorAfter <= cursorBefore && !opts.seed) {
+      const prior = this.failures.get(bot.id);
+      const attempts = prior?.cursor === cursorBefore ? prior.count + 1 : 1;
+      if (attempts >= MAX_TURN_RETRIES) {
+        const dropTo = channel.length;
+        this.failures.delete(bot.id);
+        this.deliveredUpTo.set(bot.id, dropTo);
+        this.pushError(
+          `${bot.name}: gave up after ${attempts} failed attempts; skipped ${dropTo - cursorBefore} unread message(s) to break the loop (see the error above).`,
+        );
+        return;
+      }
+      this.failures.set(bot.id, { cursor: cursorBefore, count: attempts });
+      // Leave the cursor unadvanced (cursorAfter === cursorBefore) so the next schedule retries the batch.
+    } else if (cursorAfter > cursorBefore) {
+      this.failures.delete(bot.id); // real forward progress resets the streak
     }
     this.deliveredUpTo.set(bot.id, cursorAfter);
     // Memory + tasks are reconciled INSIDE the graph now (the bot's brain), not here — the conductor is

@@ -3,8 +3,9 @@ import { RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { buildExtractModel } from '../model.js';
 import { type Bot, ROSTER } from '../roster.js';
+import { createMutex, rememberDeduped, withMemoryLock } from './dedup.js';
 import { type Identity } from './identity.js';
-import { forgetFact, recall, remember, updateFact } from './semantic.js';
+import { forgetFact, recall, updateFact } from './semantic.js';
 import { addTask, completeTask, dropTask, openTasks } from './tasks.js';
 
 /**
@@ -80,7 +81,7 @@ Decide what should change (be conservative — most turns change nothing):
   ONLY from what the HUMANS said (not teammates' replies). NOT chatter, greetings, questions, task
   instructions, or coding-style. Set "tier" (company = default for work facts + the boss's prefs; private
   = personal/sensitive; bot = only you) and "authorId" = the human who said it. Do NOT re-add something
-  already in the existing facts above.
+  already in the existing facts above — even if it's worded differently or is a paraphrase of one.
 - update: an existing fact that CHANGED — give "target" (roughly the old fact) and "newFact".
 - delete: an existing fact now contradicted or no longer true — give "target".
 
@@ -113,17 +114,21 @@ export async function reconcileMemory(bot: Bot, transcript: string, id: Identity
       currentFacts: current.length ? current.map((f) => `- ${f.fact}`).join('\n') : '(none)',
       transcript,
     });
+    // Write-application: each mutation is serialized (rememberDeduped locks internally; update/delete
+    // wrap withMemoryLock) so concurrent bots reconciling the same turn dedup against each other's
+    // writes instead of racing. The model.invoke above stays OUTSIDE the lock — only the writes need it.
     const ids = knownIds(id);
     for (const a of result.add) {
       if (!a.fact?.trim()) continue;
       const speaker = realId(a.authorId, ids) ?? id.speaker;
-      await remember({ fact: a.fact, tier: a.tier, id: { ...id, speaker } });
+      await rememberDeduped({ fact: a.fact, tier: a.tier, id: { ...id, speaker } });
     }
     for (const u of result.update) {
-      if (u.target?.trim() && u.newFact?.trim()) await updateFact(u.target, u.newFact, id);
+      if (u.target?.trim() && u.newFact?.trim())
+        await withMemoryLock(() => updateFact(u.target, u.newFact, id));
     }
     for (const d of result.delete) {
-      if (d.target?.trim()) await forgetFact(d.target, id);
+      if (d.target?.trim()) await withMemoryLock(() => forgetFact(d.target, id));
     }
     if (result.add.length || result.update.length || result.delete.length) {
       process.stderr.write(
@@ -188,16 +193,9 @@ Return empty arrays when nothing changed.`;
 }
 
 // Process-wide async mutex serializing task reconciliation, so two bots can't both read an empty board
-// and emit the same handoff — the second runs after the first's write and the state-aware model dedups it.
-let taskLock: Promise<void> = Promise.resolve();
-function withTaskLock<T>(fn: () => Promise<T>): Promise<T> {
-  const result = taskLock.then(fn);
-  taskLock = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-}
+// and emit the same handoff — the second runs after the first's write and the state-aware model dedups
+// it. (A sibling of withMemoryLock; both come from the shared createMutex helper in dedup.ts.)
+const withTaskLock = createMutex();
 
 /**
  * Reconcile the task board against the turn: add new handoffs, complete finished ones, drop stale ones.

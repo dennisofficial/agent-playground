@@ -1,7 +1,8 @@
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
+import { rememberDeduped } from './dedup.js';
 import { getIdentity, type Tier } from './identity.js';
-import { forgetFact, recall, remember, type StoredFact, updateFact } from './semantic.js';
+import { forgetFact, recall, type StoredFact, updateFact } from './semantic.js';
 import { addTask, completeTask, listTasks, type Task } from './tasks.js';
 
 /**
@@ -15,7 +16,7 @@ export const remember_tool = tool(
   async ({ fact, tier }, config) => {
     const id = getIdentity(config);
     const t = (tier ?? 'company') as Tier;
-    const res = await remember({ fact, tier: t, id });
+    const res = await rememberDeduped({ fact, tier: t, id });
     return `${res.action === 'updated' ? 'Updated what I knew' : 'Remembered'} (${t}).`;
   },
   {

@@ -8,7 +8,15 @@ import type { BaseMessage } from '@langchain/core/messages';
  */
 export type RenderItem =
   | { id: string; kind: 'user'; text: string; speaker?: string; ts?: string }
-  | { id: string; kind: 'assistant'; text: string; speaker?: string; ts?: string }
+  | {
+      id: string;
+      kind: 'assistant';
+      text: string;
+      speaker?: string;
+      ts?: string;
+      /** Per-message token usage from the model call that produced it; rendered dim at the end. */
+      usage?: MessageUsage;
+    }
   | { id: string; kind: 'tool'; toolName: string; speaker?: string }
   | { id: string; kind: 'reaction'; emoji: string; by: string }
   // Debug only: the response gate's verdict + rationale for a bot, shown inline so you can see why a
@@ -74,4 +82,24 @@ export function toRenderItems(messages: BaseMessage[], botName?: string): Render
 export interface ContextUsage {
   input?: number;
   output?: number;
+}
+
+/**
+ * Per-message token usage, broken out so the renderer can show cache hits. `input` is the TOTAL input
+ * tokens (langchain folds cache reads + writes into it); `cacheRead`/`cacheWrite` are the cached slices
+ * of that total — `cacheRead` served at ~0.1× price, `cacheWrite` written this call at ~1.25×.
+ */
+export interface MessageUsage {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+/** One-line dim token summary shown at the end of a rendered assistant message, e.g. `812 in · 96 out · 640 cached`. */
+export function formatMessageUsage(u: MessageUsage): string {
+  const parts = [`${u.input} in`, `${u.output} out`];
+  if (u.cacheRead) parts.push(`${u.cacheRead} cached`);
+  if (u.cacheWrite) parts.push(`${u.cacheWrite} cache-write`);
+  return parts.join(' · ');
 }

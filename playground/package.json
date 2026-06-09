@@ -11,6 +11,7 @@
     "build": "tsup",
     "start": "dotenvx run -f .env.personal --ignore=MISSING_ENV_FILE --strict -- node dist/index.js",
     "typecheck": "tsc --noEmit",
+    "consolidate-memory": "dotenvx run -f .env.personal --ignore=MISSING_ENV_FILE --strict -- tsx src/memory/consolidate.ts",
     "format": "prettier --write ."
   },
   "packageManager": "pnpm@11.1.2",
