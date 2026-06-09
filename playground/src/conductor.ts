@@ -1,10 +1,10 @@
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { type BotStateDelta, getBotGraph } from './bot-graph.js';
-import { channel, type ChannelMsg } from './channel.js';
+import { channel } from './channel.js';
 import { type Job, listJobs, onJobUpdate } from './jobs.js';
 import { type Identity } from './memory/identity.js';
-import { reflect } from './memory/reflect.js';
 import { listTasks } from './memory/tasks.js';
+import { gateCostUsd } from './model.js';
 import { type Bot, botById, ROSTER } from './roster.js';
 import { type ContextUsage, type RenderItem, toRenderItems } from './ui/messages.js';
 
@@ -15,10 +15,11 @@ import { type ContextUsage, type RenderItem, toRenderItems } from './ui/messages
  * emits its own messages back as they're produced so teammates see them. This is the Slack model; the
  * `channel` + this dispatcher are the seam a Slack adapter replaces.
  *
- * Each turn runs on the bot's LangGraph turn-graph ([bot-graph.ts](bot-graph.ts)): gate → respond
- * (llm ⇄ tools) | acknowledge | ignore. The graph owns the gate, the mid-step channel re-read, and the
- * checkpoint; the dispatcher owns scheduling, the cursor's coordinate space, channel/UI emission, and the
- * memory gate. The graph's streamed deltas drive what the dispatcher renders and emits.
+ * Each turn runs on the bot's LangGraph turn-graph ([bot-graph.ts](bot-graph.ts)): gate → fetch → llm ⇄
+ * tools → reconcile (or the ack/ignore drain). The graph is the bot's BRAIN — it owns the gate, the
+ * mid-step channel re-read, the deterministic memory fetch/reconcile, and the checkpoint. The conductor
+ * is just the event loop: scheduling, the cursor's coordinate space, and channel/UI emission. The graph's
+ * streamed deltas drive what the dispatcher renders and emits.
  */
 
 const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
@@ -214,7 +215,6 @@ class Conductor {
     const capped = this.botBurst >= MAX_BOT_BURST;
     let firstAi = true;
     let responded = false;
-    const emitted: ChannelMsg[] = []; // this bot's own replies this turn — for the reflect transcript
 
     const commit = (msg: BaseMessage) => {
       const usage = (msg as { usage_metadata?: { input_tokens?: number; output_tokens?: number } })
@@ -233,15 +233,13 @@ class Conductor {
       }
       for (const r of rows) {
         if (r.kind === 'assistant' && r.text) {
-          emitted.push(
-            channel.append({
-              id: r.id,
-              author: bot.name,
-              authorId: bot.id,
-              authorBotId: bot.id,
-              text: r.text,
-            }),
-          );
+          channel.append({
+            id: r.id,
+            author: bot.name,
+            authorId: bot.id,
+            authorBotId: bot.id,
+            text: r.text,
+          });
         }
       }
       if (rows.length || usage) {
@@ -267,12 +265,16 @@ class Conductor {
           // Debug only: surface the soft gate's verdict + rationale inline, BEFORE the reply/reaction it
           // explains. This is the only UI trace of an `ignore`, which otherwise leaves no mark.
           if (delta.reasoning) {
+            const u = delta.gateUsage;
+            const cost = u
+              ? `  ·  ${u.input} in · ${u.output} out · $${gateCostUsd(u.input, u.output).toFixed(6)}`
+              : '';
             this.pushHistory({
               id: `g-${this.emitSeq++}`,
               kind: 'gate',
               by: bot.name,
               action: delta.decision ?? 'ignore',
-              reasoning: delta.reasoning,
+              reasoning: `${delta.reasoning}${cost}`,
             });
           }
           if (delta.decision === 'respond' && !responded) {
@@ -280,6 +282,15 @@ class Conductor {
             this.botBurst++; // a real reply counts toward the loop breaker
           }
           if (delta.decision === 'acknowledge') this.react(bot, delta.ackEmoji ?? '👍');
+          // The fetch node's pre-LLM recall — surface what the bot walked in knowing (debug, dim).
+          if (delta.recalled) {
+            this.pushHistory({
+              id: `m-${this.emitSeq++}`,
+              kind: 'recall',
+              by: bot.name,
+              text: delta.recalled,
+            });
+          }
           for (const msg of delta.messages ?? []) {
             if (msg.getType() === 'ai') commit(msg); // skip injected Human messages (already in channel/UI)
           }
@@ -298,23 +309,8 @@ class Conductor {
       /* keep cursorBefore — a getState failure must not advance the cursor past unconsumed messages */
     }
     this.deliveredUpTo.set(bot.id, cursorAfter);
-
-    // Reflect: one cheap pass over what this bot consumed this turn (bounded by cursorAfter, NOT
-    // channel.length — other bots' concurrent emissions aren't ours) plus its own replies, to save
-    // durable facts and capture open tasks/handoffs. Fire-and-forget, off the critical path.
-    const consumed = channel
-      .since(cursorBefore)
-      .filter((m) => m.seq < cursorAfter && m.authorBotId !== bot.id);
-    if (consumed.length > 0) {
-      const turn = [...consumed, ...emitted].sort((a, b) => a.seq - b.seq);
-      const transcript = turn.map((m) => `${m.author}: ${m.text}`).join('\n');
-      const latestHuman = [...consumed].reverse().find((m) => !m.authorBotId);
-      const baseIdentity: Identity = {
-        ...this.identityFor(bot.id, thread),
-        speaker: latestHuman?.authorId ?? this.state.speaker,
-      };
-      void reflect(bot, transcript, baseIdentity);
-    }
+    // Memory + tasks are reconciled INSIDE the graph now (the bot's brain), not here — the conductor is
+    // just the event loop: schedule, stream, emit, advance the cursor.
   }
 
   /** Relay a finished job through its owner bot (gate-bypassed seed); its reply enters the channel. */

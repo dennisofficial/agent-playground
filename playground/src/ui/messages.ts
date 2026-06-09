@@ -9,7 +9,7 @@ import type { BaseMessage } from '@langchain/core/messages';
 export type RenderItem =
   | { id: string; kind: 'user'; text: string; speaker?: string; ts?: string }
   | { id: string; kind: 'assistant'; text: string; speaker?: string; ts?: string }
-  | { id: string; kind: 'tool'; toolName: string }
+  | { id: string; kind: 'tool'; toolName: string; speaker?: string }
   | { id: string; kind: 'reaction'; emoji: string; by: string }
   // Debug only: the response gate's verdict + rationale for a bot, shown inline so you can see why a
   // bot spoke, reacted, or (importantly) stayed silent. Only soft-gate (LLM) calls carry a reason.
@@ -22,6 +22,8 @@ export type RenderItem =
     }
   // CLI-local output for a slash command (e.g. /tasks dumping the open board) — never a chat message.
   | { id: string; kind: 'note'; text: string }
+  // Debug only: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
+  | { id: string; kind: 'recall'; by: string; text: string }
   | { id: string; kind: 'error'; text: string };
 
 /** Flatten message content (string | content blocks) to a plain string. */
@@ -57,7 +59,12 @@ export function toRenderItems(messages: BaseMessage[], botName?: string): Render
       if (text) items.push({ id: baseId, kind: 'assistant', text, speaker: botName });
       const calls = (m as { tool_calls?: ToolCall[] }).tool_calls ?? [];
       for (const c of calls)
-        items.push({ id: `${baseId}:${c.id ?? c.name}`, kind: 'tool', toolName: c.name });
+        items.push({
+          id: `${baseId}:${c.id ?? c.name}`,
+          kind: 'tool',
+          toolName: c.name,
+          speaker: botName,
+        });
     }
     // tool-result messages: omitted from the chat transcript (internal).
   });

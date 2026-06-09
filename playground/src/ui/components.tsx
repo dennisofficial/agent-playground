@@ -24,7 +24,7 @@ export function MessageView({ item }: { item: RenderItem }) {
       return (
         <Box>
           <Text color="yellow" dimColor>
-            {`  ⚙ ${item.toolName}`}
+            {`  ⚙ ${item.speaker ? `${item.speaker}: ` : ''}${item.toolName}`}
           </Text>
         </Box>
       );
@@ -33,6 +33,22 @@ export function MessageView({ item }: { item: RenderItem }) {
       return (
         <Box>
           <Text dimColor>{`   ↳ ${item.by} reacted ${item.emoji}`}</Text>
+        </Box>
+      );
+
+    // Debug only: the pre-LLM fetch — what the bot walked in knowing, dim blue, indented.
+    case 'recall':
+      return (
+        <Box flexDirection="column">
+          <Text color="blue" dimColor>
+            {`   ↳ ${item.by} recalled:`}
+          </Text>
+          <Text color="blue" dimColor>
+            {item.text
+              .split('\n')
+              .map((l) => `      ${l}`)
+              .join('\n')}
+          </Text>
         </Box>
       );
 

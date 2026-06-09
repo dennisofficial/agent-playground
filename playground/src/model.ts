@@ -32,6 +32,16 @@ export function buildGateModel() {
 }
 
 /**
+ * Debug aid: USD cost of one gate call, from the EXACT token counts the API returns (no estimation —
+ * a tokenizer library would only approximate, and the response already carries `usage_metadata`). Haiku
+ * 4.5 pricing: $1.00 / 1M input, $5.00 / 1M output (verified against the Anthropic model catalog,
+ * 2026-06). Kept beside the model id so the price moves with the model if we ever swap it.
+ */
+export const GATE_PRICE_PER_MTOK = { input: 1.0, output: 5.0 } as const;
+export const gateCostUsd = (inputTokens: number, outputTokens: number): number =>
+  (inputTokens * GATE_PRICE_PER_MTOK.input + outputTokens * GATE_PRICE_PER_MTOK.output) / 1_000_000;
+
+/**
  * Cheap model for the post-turn REFLECT pass (facts + tasks) — runs in the background after a turn, so it
  * stays on Haiku. Roomier than the response gate because it returns a small structured tool call: a
  * one-line reasoning plus a facts[] and a tasks[] array.

@@ -1,3 +1,4 @@
+import type { AIMessage } from '@langchain/core/messages';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableLambda, RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
@@ -9,8 +10,10 @@ export interface GateDecision {
   action: 'respond' | 'acknowledge' | 'ignore';
   /** The reaction emoji, when action is 'acknowledge'. */
   emoji?: string;
-  /** Debug only: the soft gate's one-line rationale. Absent for hard-rule decisions. Never shown in the UI. */
+  /** Debug only: the soft gate's one-line rationale. Absent for hard-rule decisions. */
   reasoning?: string;
+  /** Debug only: exact token usage for this gate call (from the API). Absent for hard-rule decisions. */
+  usage?: { input: number; output: number };
 }
 
 const RESPOND: GateDecision = { action: 'respond' };
@@ -101,12 +104,18 @@ Pick one action:
           'text',
         ],
       }),
-      buildGateModel().withStructuredOutput(Decision, { name: 'gate_decision' }),
-      RunnableLambda.from<DecisionT, GateDecision>((d) =>
-        d.action === 'acknowledge'
-          ? { action: 'acknowledge', emoji: cleanEmoji(d.emoji), reasoning: d.reasoning }
-          : { action: d.action, reasoning: d.reasoning },
-      ),
+      // includeRaw keeps the raw AIMessage so we can read its usage_metadata (exact token counts).
+      // Plain withStructuredOutput returns only the parsed object and would drop the usage.
+      buildGateModel().withStructuredOutput(Decision, { name: 'gate_decision', includeRaw: true }),
+      RunnableLambda.from<{ raw: AIMessage; parsed: DecisionT }, GateDecision>(({ raw, parsed }) => {
+        const u = raw.usage_metadata;
+        const usage = u ? { input: u.input_tokens, output: u.output_tokens } : undefined;
+        const base =
+          parsed.action === 'acknowledge'
+            ? { action: 'acknowledge' as const, emoji: cleanEmoji(parsed.emoji) }
+            : { action: parsed.action };
+        return { ...base, reasoning: parsed.reasoning, usage };
+      }),
     ]).withConfig({ runName: 'Response Gate' });
 
   const cleanEmoji = (e?: string): string => {

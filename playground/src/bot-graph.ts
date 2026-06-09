@@ -11,6 +11,9 @@ import { channel, type ChannelMsg } from './channel.js';
 import { CHAT_TOOLS } from './chat.js';
 import { gate } from './gate.js';
 import { getCheckpointer } from './memory/checkpointer.js';
+import { fetchContext } from './memory/fetch.js';
+import { getIdentity } from './memory/identity.js';
+import { reconcileMemory, reconcileTasks } from './memory/reconcile.js';
 import { buildModel } from './model.js';
 import { chatPromptFor } from './persona.js';
 import { type Bot, botById, ROSTER } from './roster.js';
@@ -20,11 +23,15 @@ import { type Bot, botById, ROSTER } from './roster.js';
  * add/remove). One graph per bot, persisted on thread `${bot.id}:dev:root`. The dispatcher invokes it
  * whenever the channel has grown past the bot's cursor.
  *
- *   START → gate ─┬─ respond → llm ⇄ tools ─→ END
- *                 └─ acknowledge / ignore → consume → END
+ *   START → gate ─┬─ respond → fetch → llm ⇄ tools ─┐
+ *                 └─ acknowledge / ignore → consume ─┴→ reconcile-memory ∥ reconcile-task → END
  *
+ * Memory is DETERMINISTIC, not agentic: `fetch` reads the relevant facts + open tasks IN before the bot
+ * thinks (so it always walks in knowing, instead of hoping the llm calls `recall`), and the two parallel
+ * `reconcile` nodes write memory/tasks OUT after — on EVERY path, so the bot reflects on every turn it
+ * saw. The llm keeps its memory/task tools too; reconcile is the state-aware backstop on top of them.
  * (acknowledge differs from ignore only in that the gate also emits an emoji, which the dispatcher
- * renders as a reaction from the gate node's streamed delta; both then just record-and-drain.)
+ * renders as a reaction from the gate node's streamed delta; both then record-drain-and-reconcile.)
  *
  * THE HEART (mid-thought collaboration): the `llm` node consumes `channel.since(cursor)` at the TOP of
  * EVERY step, so a teammate's message that lands WHILE this bot is looping is folded into its very next
@@ -47,8 +54,12 @@ export interface BotStateDelta {
   cursor?: number;
   decision?: GateAction;
   ackEmoji?: string;
+  /** The pre-LLM fetch's `recalled` block — the dispatcher renders a `recall` row from it. */
+  recalled?: string;
   /** Debug only: the soft gate's one-line rationale, surfaced inline in the TUI. Absent for hard rules. */
   reasoning?: string;
+  /** Debug only: token usage for this turn's gate call, surfaced inline in the TUI. Absent for hard rules. */
+  gateUsage?: { input: number; output: number };
 }
 
 const BotState = Annotation.Root({
@@ -76,17 +87,39 @@ const BotState = Annotation.Root({
     reducer: (_: unknown, b: string | undefined) => b,
     default: () => undefined,
   }),
+  /** Debug only: token usage for this turn's gate call, surfaced inline by the dispatcher. */
+  gateUsage: Annotation<{ input: number; output: number } | undefined>({
+    reducer: (_: unknown, b: { input: number; output: number } | undefined) => b,
+    default: () => undefined,
+  }),
   /** The non-own batch the gate decided on — consumed by `consume` on the ack/ignore path. */
   pending: Annotation<ChannelMsg[]>({
     reducer: (_: ChannelMsg[], b: ChannelMsg[]) => b ?? [],
     default: () => [],
   }),
+  /** Ephemeral pre-LLM memory context (the `fetch` node's output). Re-injected each llm call like the
+   * persona, NEVER written into `messages`, so it doesn't accumulate in history. Always overwritten by
+   * `fetch` (to '' when empty) so a stale recall can't linger. */
+  recalled: Annotation<string>({ reducer: (_: string, b: string) => b ?? '', default: () => '' }),
+  /** `messages.length` at the start of this turn (set by `gate`), so reconcile can slice just this
+   * turn's exchange out of the full persisted history. */
+  turnStart: Annotation<number>({ reducer: (_: number, b: number) => b ?? 0, default: () => 0 }),
 });
 
 type BotStateType = typeof BotState.State;
 
 /** Channel message → a `Speaker: text` HumanMessage (how a bot reads what others said). */
 const asInput = (m: ChannelMsg): HumanMessage => new HumanMessage(`${m.author}: ${m.text}`);
+
+/** Flatten message content (string | content blocks) to plain text. */
+const flat = (c: BaseMessage['content']): string =>
+  typeof c === 'string'
+    ? c
+    : c
+        .map((p) =>
+          typeof p === 'string' ? p : 'text' in p && typeof p.text === 'string' ? p.text : '',
+        )
+        .join('');
 
 /**
  * The conversation up to (but NOT including) `seq` — the last `n` messages, oldest first — for the gate
@@ -109,19 +142,40 @@ function buildBotGraph(bot: Bot) {
     state: BotStateType,
     config: RunnableConfig,
   ): Promise<Partial<BotStateType>> => {
-    if (state.forced) return { decision: 'respond', pending: [] }; // job relay: skip the gate
+    // Mark where this turn's messages begin, so the reconcile nodes can slice just this turn out of the
+    // full persisted history (set on every path — reconcile runs on all of them).
+    const turnStart = state.messages.length;
+    if (state.forced) return { decision: 'respond', pending: [], turnStart }; // job relay: skip the gate
     const batch = channel.since(state.cursor).filter((m) => m.authorBotId !== bot.id);
-    if (batch.length === 0) return { decision: 'ignore', pending: [] }; // nothing for me → drain & end
+    if (batch.length === 0) return { decision: 'ignore', pending: [], turnStart }; // nothing for me
     const latest = batch[batch.length - 1];
     const capped = !!config.configurable?.capped;
-    if (capped && latest.authorBotId) return { decision: 'ignore', pending: batch }; // loop breaker
+    if (capped && latest.authorBotId) return { decision: 'ignore', pending: batch, turnStart }; // loop breaker
     const d = await gate(bot, latest.text, {
       authorBotId: latest.authorBotId,
       authorName: latest.author,
       history: historyBefore(latest.seq),
     });
-    // `reasoning` rides the delta so the dispatcher can render it inline (debug only; hard rules omit it).
-    return { decision: d.action, ackEmoji: d.emoji, reasoning: d.reasoning, pending: batch };
+    // reasoning + gateUsage ride the delta so the dispatcher can render them inline (debug only).
+    return {
+      decision: d.action,
+      ackEmoji: d.emoji,
+      reasoning: d.reasoning,
+      gateUsage: d.usage,
+      pending: batch,
+      turnStart,
+    };
+  };
+
+  /** The pre-LLM read: fetch the facts + open tasks relevant to what's being said into `recalled`. */
+  const fetchNode = async (
+    state: BotStateType,
+    config: RunnableConfig,
+  ): Promise<Partial<BotStateType>> => {
+    const fresh = channel.since(state.cursor).filter((m) => m.authorBotId !== bot.id);
+    const query = fresh.map((m) => `${m.author}: ${m.text}`).join('\n');
+    // Always set recalled (to '' when empty) so a stale recall from a prior turn never lingers.
+    return { recalled: await fetchContext(bot, query, getIdentity(config)) };
   };
 
   /**
@@ -136,12 +190,49 @@ function buildBotGraph(bot: Bot) {
     const fresh = channel.since(state.cursor).filter((m) => m.authorBotId !== bot.id);
     const newCursor = channel.length; // own/gap messages are skipped but the cursor still moves past them
     const injected = fresh.map(asInput);
-    const convo = [new SystemMessage(chatPromptFor(bot)), ...state.messages, ...injected];
+    // Prepend the fetched memory like the persona — re-injected each call, never persisted into messages.
+    const convo = [
+      new SystemMessage(chatPromptFor(bot)),
+      ...(state.recalled ? [new SystemMessage(`Relevant memory:\n${state.recalled}`)] : []),
+      ...state.messages,
+      ...injected,
+    ];
     const ai = await model.invoke(convo, config);
     return { messages: [...injected, ai], cursor: newCursor };
   };
 
   const toolsNode = new ToolNode(CHAT_TOOLS);
+
+  /** This turn's exchange — the messages added since `gate` marked `turnStart`, with tool-result/internal
+   * plumbing filtered out (human messages + the bot's own text replies only) — fed to the reconcile passes. */
+  const turnTranscript = (state: BotStateType): string =>
+    state.messages
+      .slice(state.turnStart)
+      .filter((m) => m.getType() === 'human' || (m.getType() === 'ai' && flat(m.content).trim()))
+      .map((m) =>
+        m.getType() === 'ai' ? `${bot.name}: ${flat(m.content).trim()}` : flat(m.content).trim(),
+      )
+      .join('\n');
+
+  /** The post-LLM write: reconcile durable facts (add/update/delete) against the turn. */
+  const reconcileMemoryNode = async (
+    state: BotStateType,
+    config: RunnableConfig,
+  ): Promise<Partial<BotStateType>> => {
+    const transcript = turnTranscript(state);
+    if (transcript.trim()) await reconcileMemory(bot, transcript, getIdentity(config));
+    return {};
+  };
+
+  /** The post-LLM write: reconcile the task board (add/complete/drop) against the turn. */
+  const reconcileTaskNode = async (
+    state: BotStateType,
+    config: RunnableConfig,
+  ): Promise<Partial<BotStateType>> => {
+    const transcript = turnTranscript(state);
+    if (transcript.trim()) await reconcileTasks(bot, transcript, getIdentity(config));
+    return {};
+  };
 
   /** Record the gated batch in the checkpoint without a model call (the ack/ignore path), advance cursor. */
   const consumeNode = (state: BotStateType): Partial<BotStateType> => {
@@ -150,24 +241,33 @@ function buildBotGraph(bot: Bot) {
     return { messages: pending.map(asInput), cursor: newCursor };
   };
 
-  const route = (state: BotStateType): 'llm' | 'consume' =>
-    state.decision === 'respond' ? 'llm' : 'consume';
+  const route = (state: BotStateType): 'fetch' | 'consume' =>
+    state.decision === 'respond' ? 'fetch' : 'consume';
 
-  const afterLlm = (state: BotStateType): 'tools' | typeof END => {
+  // When the llm loop is done, fan out to BOTH reconcile nodes (they run in parallel, then join at END).
+  const RECONCILE: ['reconcileMemory', 'reconcileTask'] = ['reconcileMemory', 'reconcileTask'];
+  const afterLlm = (state: BotStateType): 'tools' | string[] => {
     const last = state.messages[state.messages.length - 1] as AIMessage | undefined;
-    return last?.tool_calls?.length ? 'tools' : END;
+    return last?.tool_calls?.length ? 'tools' : RECONCILE;
   };
 
   const graph = new StateGraph(BotState)
     .addNode('gate', gateNode)
+    .addNode('fetch', fetchNode)
     .addNode('llm', llmNode)
     .addNode('tools', toolsNode)
     .addNode('consume', consumeNode)
+    .addNode('reconcileMemory', reconcileMemoryNode)
+    .addNode('reconcileTask', reconcileTaskNode)
     .addEdge(START, 'gate')
-    .addConditionalEdges('gate', route, ['llm', 'consume'])
-    .addConditionalEdges('llm', afterLlm, ['tools', END])
+    .addConditionalEdges('gate', route, ['fetch', 'consume'])
+    .addEdge('fetch', 'llm')
+    .addConditionalEdges('llm', afterLlm, ['tools', 'reconcileMemory', 'reconcileTask'])
     .addEdge('tools', 'llm')
-    .addEdge('consume', END)
+    .addEdge('consume', 'reconcileMemory')
+    .addEdge('consume', 'reconcileTask')
+    .addEdge('reconcileMemory', END)
+    .addEdge('reconcileTask', END)
     .compile({ checkpointer: getCheckpointer() });
 
   return graph;
