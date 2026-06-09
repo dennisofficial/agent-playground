@@ -21,16 +21,34 @@ export function getDb(): Database.Database {
   return db;
 }
 
+/**
+ * Idempotent `ALTER TABLE … ADD COLUMN` — SQLite has no `ADD COLUMN IF NOT EXISTS`, so we check
+ * `PRAGMA table_info` first. Lets migrations evolve a table additively across restarts without a
+ * version table. `decl` is the column definition minus the name (e.g. "TEXT NOT NULL DEFAULT ''").
+ */
+export function addColumnIfMissing(
+  d: Database.Database,
+  table: string,
+  column: string,
+  decl: string,
+): void {
+  const cols = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+  }
+}
+
 function migrate(d: Database.Database): void {
   d.exec(`
     CREATE TABLE IF NOT EXISTS facts (
       id             INTEGER PRIMARY KEY,
       fact           TEXT NOT NULL,
       embedding      TEXT NOT NULL,                 -- JSON float[] (text-embedding-3-small, 1536d)
-      scope          TEXT NOT NULL,                 -- access tier: company:<id> | bot:<id> | pair:<bot>:<human>
+      scope          TEXT NOT NULL,                 -- access tier: team:<id> | project:<id> | bot:<id> | pair:<bot>:<human>
       asserted_by    TEXT,                          -- who stated it (provenance)
       source_surface TEXT,                          -- where it was stated (provenance)
       confidence     REAL NOT NULL DEFAULT 1.0,
+      embed_model    TEXT,                          -- which embedding model produced the vector (re-embed detection)
       created_at     TEXT NOT NULL,
       updated_at     TEXT NOT NULL,
       deleted_at     TEXT                           -- soft-delete tombstone (never hard-delete human facts)
@@ -40,31 +58,56 @@ function migrate(d: Database.Database): void {
     CREATE TABLE IF NOT EXISTS worklog (
       id           INTEGER PRIMARY KEY,
       owner_bot    TEXT NOT NULL,                 -- which bot did the work
-      company      TEXT NOT NULL,                 -- the project/workspace it belongs to (isolation)
+      project      TEXT NOT NULL,                 -- the project/workspace it belongs to (isolation)
       task         TEXT NOT NULL,
       summary      TEXT NOT NULL,                 -- the worker's report digest
       completed_at TEXT NOT NULL                  -- ISO timestamp (the "when" a standup asks for)
     );
-    CREATE INDEX IF NOT EXISTS worklog_lookup ON worklog(company, owner_bot, completed_at);
+    CREATE INDEX IF NOT EXISTS worklog_lookup ON worklog(project, owner_bot, completed_at);
 
-    -- The internal task board: open handoffs/todos the reflect pass captures, so a commitment made in
-    -- passing ("you'll add tracking hooks once the API's up") doesn't get lost. Worklog is "what got
-    -- done"; this is "what still needs doing". Company-scoped, plain SQL (no embeddings).
+    -- Per-employee REMINDERS (the "plate"): a commitment made in passing ("got it, I'll do that after I
+    -- finish this") that a long, rolling-summarized work session would otherwise drop. Each reminder sits
+    -- on exactly ONE employee's plate (owner NOT NULL — no unassigned reminders; unassigned IDEAS live on
+    -- the Jira board, not here). Sibling to the worklog ("what got done"). Project-scoped, plain SQL.
     CREATE TABLE IF NOT EXISTS tasks (
       id          INTEGER PRIMARY KEY,
-      company     TEXT NOT NULL,                  -- workspace isolation (multi-project)
-      description TEXT NOT NULL,                  -- "Add analytics/tracking hooks to the API + worker"
+      project     TEXT NOT NULL,                  -- workspace isolation (multi-project)
+      description TEXT NOT NULL,                  -- "Wire the tracking hooks once the API is up"
       norm        TEXT NOT NULL,                  -- normalized description (lowercased, ws-collapsed) — dedup key
-      assignee    TEXT,                           -- bot/human id the task is for; null = unassigned
-      created_by  TEXT,                           -- who raised it (bot id)
+      owner       TEXT NOT NULL DEFAULT '',       -- whose plate (bot/human id); '' only as a transient pre-backfill default
+      assignee    TEXT,                           -- legacy/compat column (superseded by owner); unused
+      created_by  TEXT,                           -- who raised it (self-commitment: == owner; handoff: the raiser)
       status      TEXT NOT NULL DEFAULT 'open',   -- open | done | dropped
       source      TEXT,                           -- provenance (surface/turn)
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS tasks_lookup ON tasks(company, status, assignee);
-    -- DB-enforced dedup: at most one OPEN task per (company, normalized description), so two concurrent
-    -- bots reflecting on the same handoff can't both insert it (INSERT … ON CONFLICT DO NOTHING).
-    CREATE UNIQUE INDEX IF NOT EXISTS tasks_open_uniq ON tasks(company, norm) WHERE status = 'open';
+  `);
+
+  // Additive column migrations for DBs created before a column existed (no-op on fresh DBs, which
+  // already have these from the CREATE TABLE above).
+  addColumnIfMissing(d, 'facts', 'embed_model', 'TEXT');
+
+  // Reminders evolve the legacy `tasks` board into a per-employee plate. Be ROBUST on any prior shape:
+  // a fresh table (already `project` + `owner`), a pre-rename table (`company`), or a partially-migrated
+  // one — never throw here, or a stale DB crashes startup.
+  const taskCols = (d.prepare(`PRAGMA table_info(tasks)`).all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  // Align a pre-rename table with the project model (the company→project rename shipped no data migration).
+  if (taskCols.includes('company') && !taskCols.includes('project')) {
+    d.exec(`ALTER TABLE tasks RENAME COLUMN company TO project`);
+  }
+  // Per-employee `owner` (adds with a '' default on an existing table; backfill from legacy assignee/created_by).
+  addColumnIfMissing(d, 'tasks', 'owner', "TEXT NOT NULL DEFAULT ''");
+  d.exec(`
+    UPDATE tasks SET owner = COALESCE(NULLIF(assignee, ''), NULLIF(created_by, ''), 'unassigned')
+      WHERE owner IS NULL OR owner = '';
+    -- Open-dedup is now PER-OWNER (project, owner, norm): the old (project, norm) index wrongly collapsed
+    -- two people's identical-sounding reminders into one. owner is NOT NULL, so there's no NULL-distinct hole.
+    DROP INDEX IF EXISTS tasks_open_uniq;
+    DROP INDEX IF EXISTS tasks_lookup;
+    CREATE INDEX IF NOT EXISTS tasks_lookup ON tasks(project, status, owner);
+    CREATE UNIQUE INDEX IF NOT EXISTS tasks_plate_open_uniq ON tasks(project, owner, norm) WHERE status = 'open';
   `);
 }

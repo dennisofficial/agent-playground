@@ -1,12 +1,13 @@
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { GraphRecursionError } from '@langchain/langgraph';
-import { executeApprovedPlan } from './approval.js';
+import { executeApprovedPlan, stripStatusLine } from './approval.js';
+import { getBoard } from './board/index.js';
 import { type BotStateDelta, getBotGraph } from './bot-graph.js';
 import { channel } from './channel.js';
 import { type ConductorEvent, type ContextUsage, type MessageUsage } from './conductor-events.js';
-import { type Employee, botById, ROSTER } from './employees/index.js';
+import { type Employee, ROSTER, botById } from './employees/index.js';
 import { type Job, getJob, listJobs, onJobUpdate } from './jobs.js';
-import { type Identity } from './memory/identity.js';
+import { DEFAULT_PROJECT, DEFAULT_TEAM, type Identity } from './memory/identity.js';
 import { type ActionResult, continueWork } from './worker.js';
 
 /**
@@ -117,8 +118,19 @@ class Conductor {
 
   constructor() {
     channel.subscribe(() => this.schedule());
+    // Jobs are in-memory and vanish on restart, so any ticket left 'in_progress' from a prior session has
+    // no live job to finish it — reset such orphans back to 'approved' (their frozen plan is intact).
+    this.reconcileOrphanedTickets();
     onJobUpdate((job) => {
       this.patch({ running: listJobs().filter((j) => j.status === 'running').length });
+      // Ticket lifecycle: an EXECUTE job tied to a ticket reaching a terminal state flips the ticket.
+      if (
+        job.mode === 'execute' &&
+        job.ticketId &&
+        (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled')
+      ) {
+        this.syncTicketAfterExecute(job);
+      }
       // An APPROVED plan job transitions to 'done' but must NOT relay — the bot already presented the
       // plan when it went 'awaiting', and the execute job it spawned is what reports the build. (A plan
       // job that NATURALLY finished — STATUS: DONE, no execution needed — has no `plan` set and relays.)
@@ -128,6 +140,40 @@ class Conductor {
         this.schedule();
       }
     });
+  }
+
+  /** Reset tickets orphaned in 'in_progress' by a restart (no live job) back to 'approved'. Best-effort,
+   * active project — see the in-memory job-registry limitation in jobs.ts. */
+  private reconcileOrphanedTickets(): void {
+    try {
+      const project = this.projectForSurface();
+      const board = getBoard();
+      for (const t of board.listTickets({ project, status: 'in_progress' })) {
+        board.setStatus(project, t.id, 'approved');
+      }
+    } catch {
+      // A board hiccup at startup must not crash the conductor — orphan cleanup is best-effort.
+    }
+  }
+
+  /** When an execute job for a ticket finishes, advance the ticket — but only once the LAST discipline's
+   * job is done, and never overriding a human/scrum-master decision (blocked/dropped). */
+  private syncTicketAfterExecute(job: Job): void {
+    if (!job.ticketId) return;
+    const board = getBoard();
+    const ticket = board.getTicket(job.project, job.ticketId);
+    if (!ticket || ticket.status === 'blocked' || ticket.status === 'dropped') return;
+    const othersActive = listJobs().some(
+      (j) =>
+        j.ticketId === job.ticketId &&
+        j.mode === 'execute' &&
+        j.id !== job.id &&
+        (j.status === 'running' || j.status === 'awaiting'),
+    );
+    if (othersActive) return; // a sibling discipline is still building — leave it in_progress
+    if (job.status === 'done') board.setStatus(job.project, job.ticketId, 'done');
+    else if (job.status === 'failed') board.setStatus(job.project, job.ticketId, 'blocked');
+    else board.setStatus(job.project, job.ticketId, 'approved'); // cancelled → freed up, can retry
   }
 
   /** Subscribe to STATUS changes (busy/thinking/ctx/jobs-running) — re-read via `getStatus()`. */
@@ -224,9 +270,56 @@ class Conductor {
     return res;
   }
 
-  /** Plan jobs currently awaiting the human's approval — drives the TUI's awaiting-approvals panel. */
+  /**
+   * HUMAN-ONLY ticket approval — the standup sign-off. Freezes every attached plan into its immutable
+   * `approvedMd` snapshot (the contract) and moves the ticket to `approved`, after which an employee can
+   * build their plan via `execute_ticket` with NO further per-build gate. Optional `edits` are folded into
+   * each plan's draft before the snapshot. Triggered by the terminal `/approve-ticket`, never by a model.
+   */
+  approveTicket(ticketId: string, edits?: string): ActionResult {
+    const project = this.projectForSurface();
+    const board = getBoard();
+    const ticket = board.getTicket(project, ticketId);
+    if (!ticket) return { ok: false, reason: `No ticket "${ticketId}" on the board.` };
+    if (ticket.status !== 'backlog')
+      return {
+        ok: false,
+        reason: `${ticket.id} is ${ticket.status}, not an open backlog item to approve.`,
+      };
+    const plans = board.listPlans(project, ticketId);
+    if (plans.length === 0)
+      return {
+        ok: false,
+        reason: `${ticket.id} has no plans attached yet — let the team plan it first.`,
+      };
+    // Fold standup edits into each draft before the snapshot freezes it (attach is allowed while backlog).
+    if (edits?.trim()) {
+      for (const p of plans)
+        board.attachPlan(
+          project,
+          ticketId,
+          p.ownerBot,
+          `${p.draftMd}\n\n## Adjustments from ${titleCase(this.state.speaker)} at standup\n${edits.trim()}`,
+        );
+    }
+    const approved = board.approve(project, ticketId);
+    if (!approved) return { ok: false, reason: `Couldn't approve ${ticketId}.` };
+    this.emit({
+      id: `a-${this.emitSeq++}`,
+      kind: 'approval',
+      jobId: ticket.id,
+      decision: 'approved',
+      by: this.state.speaker,
+      note: `ticket ${ticket.id} approved — ${plans.length} plan(s) frozen, ready to build`,
+    });
+    return { ok: true };
+  }
+
+  /** Plan jobs currently awaiting the human's approval — drives the TUI's awaiting-approvals panel.
+   * Ticket-linked plan jobs are EXCLUDED: they're approved at the ticket level (`/approve-ticket`), not
+   * per-job, so they never show a `/approve <job>` prompt. */
   awaitingApprovals(): Job[] {
-    return listJobs().filter((j) => j.status === 'awaiting' && j.mode === 'plan');
+    return listJobs().filter((j) => j.status === 'awaiting' && j.mode === 'plan' && !j.ticketId);
   }
 
   private patch(p: Partial<ConductorStatus>): void {
@@ -304,8 +397,11 @@ class Conductor {
     bot: Employee,
     opts: { seed?: string; surface?: string } = {},
   ): Promise<void> {
-    const thread = `${bot.id}:dev:root`;
-    const identity = this.identityFor(bot.id, opts.surface ?? thread);
+    // Scope the LangGraph thread by project so a project's durable conversation history (checkpoints.db)
+    // never replays into another project. Matches the planned {botId}:{channelId}:{thread_ts} convention.
+    const project = this.projectForSurface(opts.surface);
+    const thread = `${bot.id}:${project}:root`;
+    const identity = this.identityFor(bot.id, opts.surface ?? thread, project);
     const cursorBefore = this.deliveredUpTo.get(bot.id) ?? 0;
     const capped = this.botBurst >= MAX_BOT_BURST;
     let responded = false;
@@ -464,6 +560,20 @@ class Conductor {
   private async runJobRelay(job: Job): Promise<void> {
     if (job.status !== 'done' && job.status !== 'awaiting' && job.status !== 'failed') return;
     const bot = botById(job.ownerBot) ?? ROSTER[0];
+
+    // Ticket-linked PLAN job back with a plan: store it onto the ticket (for standup approval) and relay
+    // WITHOUT the per-job /approve ask — approval is ticket-level (/approve-ticket).
+    if (job.status === 'awaiting' && job.mode === 'plan' && job.ticketId) {
+      const board = getBoard();
+      const ticket = board.getTicket(job.project, job.ticketId);
+      const planMd = stripStatusLine(job.lastReport ?? '').trim() || (job.lastReport ?? '').trim();
+      if (ticket && ticket.status === 'backlog' && planMd)
+        board.attachPlan(job.project, job.ticketId, job.ownerBot, planMd);
+      const seed = `[Background planning] ${job.id} finished planning ${job.ticketId}${ticket ? ` ("${ticket.title}")` : ''}. Your plan is attached to the ticket for standup review — Dennis approves the whole ticket there, so there is NOTHING to /approve per-job and you do NOT start the build yourself. Relay briefly (first person) that your plan for ${job.ticketId} is ready for standup; surface any genuine open questions about WHAT to build to Dennis.`;
+      await this.runBotGraph(bot, { seed, surface: job.notifyThread });
+      return;
+    }
+
     const prompt =
       job.status === 'failed'
         ? `[Background task] ${job.id} ("${job.task}") failed: ${job.error ?? '(unknown)'}. Let the team know in your own words — briefly, first person.`
@@ -510,15 +620,25 @@ class Conductor {
 
   // ── Memory + identity (unchanged) ────────────────────────────────────────────────────────────────
 
-  private identityFor(botId: string, surface: string): Identity {
+  private identityFor(botId: string, surface: string, project: string): Identity {
     return {
       selfAgent: botId,
-      company: 'local',
+      team: DEFAULT_TEAM,
+      project,
       participants: [...this.members],
       speaker: this.state.speaker,
       surface,
       isChannel: true,
     };
+  }
+
+  /**
+   * The active project for a turn — the seam the future Slack adapter fills with a channelId→project
+   * lookup (callers never change). v0: one conversation → one project. `ZERO_PROJECT` overrides it as a
+   * manual cross-project test affordance (see the plan's verification section), NOT a production source.
+   */
+  private projectForSurface(_surface?: string): string {
+    return process.env.ZERO_PROJECT ?? DEFAULT_PROJECT;
   }
 
   private emitError(err: unknown): void {

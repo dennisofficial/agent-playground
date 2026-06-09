@@ -1,7 +1,9 @@
 import { Spinner, TextInput } from '@inkjs/ui';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useEffect, useReducer, useRef } from 'react';
+import { getBoard } from '../board/index.js';
 import { conductor } from '../conductor.js';
+import { DEFAULT_PROJECT } from '../memory/identity.js';
 import { listTasks } from '../memory/tasks.js';
 import { MessageView } from './components.js';
 import { type RenderItem, renderEvent } from './messages.js';
@@ -56,19 +58,14 @@ export function App() {
       exit();
       return;
     }
-    // "/tasks" dumps the open task board (what the reflect pass has captured) into the transcript —
-    // a CLI-local view, not a chat message, so the TUI renders it itself.
+    // "/tasks" dumps every employee's open reminders (what the reflect pass has captured) into the
+    // transcript — a CLI-local view, not a chat message, so the TUI renders it itself.
     if (text === '/tasks') {
-      const tasks = listTasks({ company: 'local', status: 'open' });
+      const tasks = listTasks({ project: DEFAULT_PROJECT, status: 'open' });
       const note = tasks.length
-        ? `Open tasks (${tasks.length}):\n` +
-          tasks
-            .map(
-              (t) =>
-                `  #${t.id}  ${t.assignee ? `[${t.assignee}]` : '[unassigned]'}  ${t.description}`,
-            )
-            .join('\n')
-        : 'No open tasks yet.';
+        ? `Open reminders (${tasks.length}):\n` +
+          tasks.map((t) => `  #${t.id}  [${t.owner}]  ${t.description}`).join('\n')
+        : 'No open reminders yet.';
       pushHistory({ id: localId(), kind: 'note', text: note });
       clearInput();
       return;
@@ -112,6 +109,40 @@ export function App() {
           ? `✕ Rejected ${reject[1]} — sent back to revise.`
           : `Couldn't reject ${reject[1]}: ${res.reason}`,
       });
+      clearInput();
+      return;
+    }
+    // "/approve-ticket <TKT-id> [edits]" — the STANDUP sign-off. Freezes the ticket's plans and makes it
+    // buildable without any further per-job approval. Distinct from "/approve <jobId>" (a single plan job).
+    const approveTicket = text.match(/^\/approve-ticket\s+(\S+)\s*(.*)$/i);
+    if (approveTicket) {
+      const res = conductor.approveTicket(approveTicket[1], approveTicket[2].trim() || undefined);
+      pushHistory({
+        id: localId(),
+        kind: 'note',
+        text: res.ok
+          ? `✓ Approved ticket ${approveTicket[1]} — plans frozen, ready for the team to build.`
+          : `Couldn't approve ${approveTicket[1]}: ${res.reason}`,
+      });
+      clearInput();
+      return;
+    }
+    // "/standup" — kick off a standup: post a synthetic prompt as you so Sam leads the backlog review.
+    if (text === '/standup') {
+      conductor.submitUser(
+        "Standup time. Sam, lead us through it — walk me through the backlog and let's decide what to work on. Everyone, share what's on your plate and what you got done.",
+      );
+      clearInput();
+      return;
+    }
+    // "/tickets" dumps the Jira board into the transcript — a CLI-local view, not a chat message.
+    if (text === '/tickets') {
+      const tickets = getBoard().listTickets({ project: DEFAULT_PROJECT });
+      const note = tickets.length
+        ? `Board (${tickets.length}):\n` +
+          tickets.map((t) => `  ${t.id}  (${t.status})  ${t.title}`).join('\n')
+        : 'No tickets on the board yet.';
+      pushHistory({ id: localId(), kind: 'note', text: note });
       clearInput();
       return;
     }

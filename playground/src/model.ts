@@ -16,6 +16,7 @@ export function buildModel() {
   const maxTokens = Math.max(1, num(process.env.CHAT_MAX_TOKENS, 2048));
   return new ChatAnthropic({
     model: 'claude-sonnet-4-6', // ANTHROPIC_API_KEY auto-read from injected process.env
+    thinking: { type: 'adaptive', display: 'summarized' },
     maxTokens,
     temperature,
   });

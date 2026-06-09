@@ -1,9 +1,10 @@
 import { botById, resolveWorkerModel, ROSTER } from './employees/index.js';
-import { ROOT } from './engines/guard.js';
-import { getEngine } from './engines/index.js';
+import { ROOT, withActiveRoot } from './engines/guard.js';
 import { appendJobProgress, getJob, getJobProgress, updateJob } from './jobs.js';
 import { logWork } from './memory/worklog.js';
 import { workerPromptFor } from './persona.js';
+import { localRuntime } from './runtime.js';
+import { acquireWorkspace, releaseWorkspace, type Workspace } from './workspace.js';
 
 // Zero's background-execution thread. A dispatched task runs to completion on its engine (the engine
 // loops internally until done), streams normalized events into the progress buffer, and reports ONCE
@@ -25,6 +26,11 @@ export interface ActionResult {
 // Live AbortControllers for in-flight worker runs, keyed by job id — the handle `cancelJob` aborts.
 // (In-process for now; when workers move to their own containers this becomes a remote stop signal.)
 const controllers = new Map<string, AbortController>();
+
+// Live worktrees for in-flight EXECUTE jobs, keyed by job id. Job-scoped, NOT turn-scoped: a job that
+// parks in 'awaiting' keeps its worktree so the resume turn continues on the same branch (re-acquiring
+// would collide on the existing branch and lose its uncommitted work). Released on terminal status.
+const workspaces = new Map<string, Workspace>();
 
 /**
  * A finished run reports as 'done' — a background task runs all the way to completion and reports
@@ -58,20 +64,39 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
     // Per-phase model tiering: PLAN runs on a high-reasoning model + max effort; EXECUTE on the cheaper
     // everyday model. `planning` makes the plan pass read-only at the engine seam.
     const { model, effort } = resolveWorkerModel(bot, job.mode);
+
+    // EXECUTE jobs run in their own git worktree + branch — isolated from the trunk and from each
+    // other, so an employee can have several workers building at once. PLAN jobs are read-only and run
+    // on the trunk (ROOT). Reuse the worktree on a resume turn (an 'awaiting' job kept it); acquire one
+    // on the first execute turn.
+    let workspace = workspaces.get(jobId);
+    if (job.mode === 'execute' && !workspace) {
+      workspace = await acquireWorkspace(job);
+      workspaces.set(jobId, workspace);
+      updateJob(jobId, { branch: workspace.branch, workspacePath: workspace.path });
+    }
+    const cwd = workspace?.path ?? ROOT;
+
     process.stderr.write(
-      `[worker:${jobId}] ${bot.name} ${job.mode} on ${model ?? `${job.engine} default`}${effort ? ` (effort:${effort})` : ''}\n`,
+      `[worker:${jobId}] ${bot.name} ${job.mode} on ${model ?? `${job.engine} default`}${effort ? ` (effort:${effort})` : ''}${workspace ? ` @ ${workspace.branch}` : ''}\n`,
     );
-    const { result, sessionId } = await getEngine(job.engine).run({
-      task: message,
-      cwd: ROOT,
-      systemPrompt: workerPromptFor(bot, job.mode),
-      sessionId: job.sessionId,
-      model,
-      effort,
-      planning: job.mode === 'plan',
-      onEvent: (e) => appendJobProgress(jobId, e),
-      signal: ac.signal,
-    });
+    // Jail the in-process langgraph tools to this worktree for the duration of the run (claude/codex
+    // additionally receive `cwd` for their own subprocess sandbox). Outside this scope tools fall back
+    // to ROOT.
+    const { result, sessionId } = await withActiveRoot(cwd, () =>
+      localRuntime.run(job.engine, {
+        task: message,
+        cwd,
+        systemPrompt: workerPromptFor(bot, job.mode),
+        sessionId: job.sessionId,
+        model,
+        effort,
+        planning: job.mode === 'plan',
+        onEvent: (e) => appendJobProgress(jobId, e),
+        signal: ac.signal,
+        workspace,
+      }),
+    );
     // Cancelled while we were finishing up: discard the result, don't mark done or relay.
     if (ac.signal.aborted) return;
     const report = result || '(no report)';
@@ -87,7 +112,7 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
     if (status === 'done') {
       logWork({
         ownerBot: job.ownerBot,
-        company: job.company,
+        project: job.project,
         task: job.task,
         summary: report.slice(0, 600),
       });
@@ -102,6 +127,13 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
       });
   } finally {
     controllers.delete(jobId);
+    // Release the worktree once the job is truly finished. An 'awaiting' job keeps it for the resume
+    // turn; a terminal job (done/failed/cancelled) lets it go — keeping the branch (its commits / PR).
+    const workspace = workspaces.get(jobId);
+    if (workspace && getJob(jobId)?.status !== 'awaiting') {
+      workspaces.delete(jobId);
+      await releaseWorkspace(workspace).catch(() => {});
+    }
   }
 }
 
@@ -115,7 +147,18 @@ export function cancelJob(jobId: string): ActionResult {
   if (!job) return { ok: false, reason: `No job "${jobId}".` };
   if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled')
     return { ok: false, reason: `${jobId} is already ${job.status} — nothing to cancel.` };
-  controllers.get(jobId)?.abort(); // running: stop the worker; awaiting: no controller, just mark it
+  const controller = controllers.get(jobId);
+  if (controller) {
+    // Running: abort the worker; its finally tears down the worktree (the status is now terminal).
+    controller.abort();
+  } else {
+    // Awaiting (no live worker): release the parked worktree here, since no finally will run for it.
+    const workspace = workspaces.get(jobId);
+    if (workspace) {
+      workspaces.delete(jobId);
+      void releaseWorkspace(workspace).catch(() => {});
+    }
+  }
   updateJob(jobId, { status: 'cancelled' });
   return { ok: true };
 }

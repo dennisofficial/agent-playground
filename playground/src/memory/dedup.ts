@@ -28,7 +28,15 @@ export function createMutex(): <T>(fn: () => Promise<T>) => Promise<T> {
   };
 }
 
-/** Serializes all durable-memory writes (adds/updates/deletes) so concurrent reconciles can't race. */
+/**
+ * Serializes all durable-memory writes (adds/updates/deletes) so concurrent reconciles can't race.
+ *
+ * MULTI-PROCESS GAP (deferred): this is a PROCESS-LOCAL mutex. It protects concurrent bots within one
+ * Node process, but provides ZERO protection once memory is written from more than one process (the
+ * planned Docker/multi-process worker direction). The `tasks` board already dedups via a DB unique index,
+ * which survives multiple writers; fact dedup does not. When workers move out-of-process, replace this
+ * with a DB-level guard (advisory lock / staging + unique constraint) — see semantic.ts `remember`.
+ */
 export const withMemoryLock = createMutex();
 
 // ── The gray-zone judge ────────────────────────────────────────────────────────────────────────────

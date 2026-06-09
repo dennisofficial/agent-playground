@@ -185,7 +185,12 @@ function buildBotGraph(bot: Employee) {
     config: RunnableConfig,
   ): Promise<Partial<BotStateType>> => {
     const fresh = channel.since(state.cursor).filter((m) => m.authorBotId !== bot.id);
-    const query = fresh.map((m) => `${m.author}: ${m.text}`).join('\n');
+    const freshText = fresh.map((m) => `${m.author}: ${m.text}`).join('\n');
+    // Enrich the retrieval query with a few lines of prior context so a THIN turn ("sounds good", "thanks")
+    // doesn't embed to noise and recall whatever's least-irrelevant. The tail is query-only — it shapes
+    // what we retrieve, never what's stored.
+    const priorTail = fresh.length ? historyBefore(fresh[0].seq, 3) : '';
+    const query = [priorTail, freshText].filter((s) => s.trim()).join('\n');
     // Always set recalled (to '' when empty) so a stale recall from a prior turn never lingers.
     return { recalled: await fetchContext(bot, query, getIdentity(config)) };
   };
@@ -233,15 +238,39 @@ function buildBotGraph(bot: Employee) {
 
   const toolsNode = new ToolNode(tools);
 
-  /** This turn's exchange — the messages added since `gate` marked `turnStart`, with tool-result/internal
-   * plumbing filtered out (human messages + the bot's own text replies only) — fed to the reconcile passes. */
+  /** A compact note of a turn-ending action worth reconciling against (a dispatched job is a commitment
+   * being acted on, so reminder-reconcile can see it satisfied), else undefined. Tool RESULTS stay hidden. */
+  const toolActionNote = (m: AIMessage): string | undefined => {
+    const tasks = (m.tool_calls ?? [])
+      .filter((c) => c.name === 'dispatch_job')
+      .map((c) => (typeof c.args?.task === 'string' ? c.args.task : ''))
+      .filter(Boolean);
+    return tasks.length
+      ? `${bot.name}: (started background work — ${tasks.map((t) => `"${t}"`).join('; ')})`
+      : undefined;
+  };
+
+  /** This turn's exchange — the messages added since `gate` marked `turnStart` — fed to the reconcile
+   * passes: human messages + the bot's own text replies, plus a one-line note for terminal tool actions
+   * (a dispatch). Tool-result/internal plumbing stays filtered out. */
   const turnTranscript = (state: BotStateType): string =>
     state.messages
       .slice(state.turnStart)
-      .filter((m) => m.getType() === 'human' || (m.getType() === 'ai' && flat(m.content).trim()))
-      .map((m) =>
-        m.getType() === 'ai' ? `${bot.name}: ${flat(m.content).trim()}` : flat(m.content).trim(),
-      )
+      .flatMap((m): string[] => {
+        if (m.type === 'human') {
+          const t = flat(m.content).trim();
+          return t ? [t] : [];
+        }
+        if (m.type === 'ai') {
+          const lines: string[] = [];
+          const t = flat(m.content).trim();
+          if (t) lines.push(`${bot.name}: ${t}`);
+          const note = toolActionNote(m as AIMessage);
+          if (note) lines.push(note);
+          return lines;
+        }
+        return [];
+      })
       .join('\n');
 
   /** The post-LLM write: reconcile durable facts (add/update/delete) against the turn. */
@@ -289,7 +318,7 @@ function buildBotGraph(bot: Employee) {
   // OR with a FALLIBLE dispatcher (continue_work, which has guard-failure returns) loops
   // back so that result is relayed — the conductor only surfaces assistant text, never tool-result content,
   // so a swallowed failure would be invisible. Hence only the can't-fail tools are terminal.
-  const TERMINAL = new Set(['dispatch_job', 'end_turn']);
+  const TERMINAL = new Set(['dispatch_job', 'execute_ticket', 'end_turn']);
   const afterTools = (state: BotStateType): 'llm' | string[] => {
     const lastAi = [...state.messages].reverse().find((m) => m.getType() === 'ai') as
       | AIMessage

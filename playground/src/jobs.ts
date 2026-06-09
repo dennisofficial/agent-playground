@@ -22,12 +22,18 @@ export interface Job {
   notifyThread: string;
   /** Which bot owns this job — scopes the job tools and routes the completion relay to that bot. */
   ownerBot: string;
-  /** The project/workspace this work belongs to — scopes the work log (multi-project isolation). */
-  company: string;
+  /** The project/workspace this work belongs to — scopes the work log + task board (isolation). */
+  project: string;
   /** Which worker engine runs this job (claude / codex / langgraph). */
   engine: WorkerEngineName;
   /** Whether this job plans-then-confirms before executing, or runs straight through. */
   mode: WorkerMode;
+  /** The isolated git branch this (execute) job works on — its own worktree, so concurrent workers
+   * never share a tree. Set when the worktree is acquired; the branch outlives the worktree dir.
+   * Unset for read-only plan jobs, which run on the trunk. See workspace.ts. */
+  branch?: string;
+  /** Absolute path to this job's worktree while it's live (cleaned up on terminal status). */
+  workspacePath?: string;
   /** The engine's session/thread id, recorded once the worker reports it (resume across turns). */
   sessionId?: string;
   /** How many background turns have run — drives the runaway cap. */
@@ -41,6 +47,10 @@ export interface Job {
   plan?: string;
   /** For an EXECUTE job spawned from an approved plan: the originating 'plan' job's id (audit link). */
   planJobId?: string;
+  /** The board ticket this job works FOR, if any. A ticket-linked PLAN job stores its plan onto the ticket
+   * (instead of the per-job /approve flow); an EXECUTE job from `executeTicketPlan` builds the ticket's
+   * approved plan. Links worker output back to the ticket; drives the ticket-aware relay in the conductor. */
+  ticketId?: string;
   /** Who approved the plan (human id) and when — set by executeApprovedPlan. The audit trail for the
    * code-level human-in-the-loop gate: an execute job exists only because a human approved its plan. */
   approvedBy?: string;
@@ -74,7 +84,7 @@ export function createJob(
   notifyThread: string,
   engine: WorkerEngineName,
   ownerBot: string,
-  company: string,
+  project: string,
   // REQUIRED (no default): a missing mode must never silently create a write-capable 'execute' job.
   // The human-approval path (executeApprovedPlan) is the ONLY caller that passes 'execute'.
   mode: WorkerMode,
@@ -87,7 +97,7 @@ export function createJob(
     threadId: `job:${id}`,
     notifyThread,
     ownerBot,
-    company,
+    project,
     engine,
     mode,
     turns: 0,

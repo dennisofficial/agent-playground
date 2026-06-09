@@ -3,10 +3,10 @@ import { RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { type Employee, ROSTER } from '../employees/index.js';
 import { buildExtractModel } from '../model.js';
-import { createMutex, rememberDeduped, withMemoryLock } from './dedup.js';
+import { rememberDeduped, withMemoryLock } from './dedup.js';
 import { type Identity } from './identity.js';
-import { forgetFact, recall, updateFact } from './semantic.js';
-import { addTask, completeTask, dropTask, openTasks } from './tasks.js';
+import { forgetFactById, recall, updateFactById } from './semantic.js';
+import { addTask, completeTask, dropTask, remindersForBot } from './tasks.js';
 
 /**
  * The post-LLM RECONCILE — the write half of deterministic memory. After a bot's turn, two cheap Haiku
@@ -15,6 +15,15 @@ import { addTask, completeTask, dropTask, openTasks } from './tasks.js';
  * TOP of whatever the bot did with its own tools, and run on every gate path without minting duplicates.
  * Built in the project's `RunnableSequence + withStructuredOutput` style (same as gate.ts / fetch.ts).
  */
+
+// How many accessible facts to show the memory-reconcile model as "what you currently know". Wider than
+// the recall-tool default so the dedup/supersede judgment sees most of the relevant store, not a top-few.
+const RECONCILE_RECALL_LIMIT = 25;
+// Reconcile uses a LOWER recall floor than fetch: fetch wants to suppress junk (MIN_RECALL_SIM), but
+// reconcile wants to SEE marginal neighbors so it can spot a fact this turn contradicts/supersedes — a
+// floor too high here means it never sees the old fact and re-accumulates the contradiction. (Tune with
+// MIN_RECALL_SIM against real text-embedding-3-small cosines, which run low — see memory-scope-model.)
+const RECONCILE_FLOOR = 0.15;
 
 const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
@@ -44,46 +53,58 @@ namespace MemoryReconcile {
       .array(
         z.object({
           fact: z.string(),
-          tier: z.enum(['company', 'bot', 'private']),
+          tier: z.enum(['team', 'project', 'bot', 'private']),
           authorId: z.string().describe('id of the HUMAN who asserted it'),
+          supersedes: z
+            .number()
+            .optional()
+            .describe(
+              'the #id of an existing fact this one CONTRADICTS or replaces (e.g. "we use MySQL now" vs an existing "we use Postgres") — set it so the old fact is overwritten, not kept alongside. Omit for a genuinely new fact.',
+            ),
         }),
       )
       .describe('NEW durable facts to remember; [] if none'),
     update: z
       .array(
         z.object({
-          target: z.string().describe('roughly the existing fact to change'),
+          id: z
+            .number()
+            .describe('the #id of the existing fact (from the list above) that changed'),
           newFact: z.string(),
         }),
       )
-      .describe('existing facts that CHANGED; [] if none'),
+      .describe('existing facts (by #id) that CHANGED; [] if none'),
     delete: z
       .array(
         z.object({
-          target: z.string().describe('roughly the existing fact that is no longer true'),
+          id: z.number().describe('the #id of the existing fact (from the list above) to remove'),
         }),
       )
-      .describe('facts contradicted/no longer true; [] if none'),
+      .describe('existing facts (by #id) contradicted/no longer true; [] if none'),
   });
   export type Result = z.infer<typeof Schema>;
 
   const PROMPT = `You are {botName}, the team's {botRole}, reconciling your MEMORY after a turn in the
 #dev channel. People and their ids: {people}.
 
-What you currently know (existing facts):
+What you currently know (existing facts, each with its #id):
 {currentFacts}
 
 This turn:
 {transcript}
 
-Decide what should change (be conservative — most turns change nothing):
-- add: NEW durable facts worth keeping long-term — a stable preference, decision, role, or company fact.
+Decide what should change (be conservative — most turns change nothing). Reference existing facts ONLY
+by the #id shown above — never invent an id:
+- add: NEW durable facts worth keeping long-term — a stable preference, decision, role, or project fact.
   ONLY from what the HUMANS said (not teammates' replies). NOT chatter, greetings, questions, task
-  instructions, or coding-style. Set "tier" (company = default for work facts + the boss's prefs; private
-  = personal/sensitive; bot = only you) and "authorId" = the human who said it. Do NOT re-add something
-  already in the existing facts above — even if it's worded differently or is a paraphrase of one.
-- update: an existing fact that CHANGED — give "target" (roughly the old fact) and "newFact".
-- delete: an existing fact now contradicted or no longer true — give "target".
+  instructions, or coding-style. Set "tier": project = DEFAULT for work facts (about THIS project — its
+  repo, stack, goals, or a decision made here); team = roles, who does what, and the boss's STANDING
+  preferences that hold across every project; private = personal/sensitive; bot = only you. Set "authorId"
+  = the human who said it. Do NOT re-add something already above — even if worded differently. If the new
+  fact CONTRADICTS or replaces an existing one, set "supersedes" to that fact's #id (so the stale one is
+  overwritten, not kept alongside it).
+- update: an existing fact (by #id) whose wording/value CHANGED — give "id" and "newFact".
+- delete: an existing fact (by #id) now contradicted or no longer true — give "id".
 
 Return empty arrays when nothing changed.`;
 
@@ -110,29 +131,43 @@ export async function reconcileMemory(
   id: Identity,
 ): Promise<void> {
   try {
-    const current = await recall(transcript, id, 10);
+    // Show a wider slice of the accessible store (was 10) so the model's "is this a duplicate / does this
+    // supersede something" judgment isn't blind to most of memory. recall's relevance floor keeps it to
+    // facts actually related to this turn.
+    const current = await recall(transcript, id, RECONCILE_RECALL_LIMIT, RECONCILE_FLOOR);
+    const shownIds = new Set(current.map((f) => f.id));
     const result = await MemoryReconcile.get().invoke({
       botName: bot.name,
       botRole: bot.role,
       people: peopleHint(id),
-      currentFacts: current.length ? current.map((f) => `- ${f.fact}`).join('\n') : '(none)',
+      currentFacts: current.length
+        ? current.map((f) => `- [#${f.id}] ${f.fact}`).join('\n')
+        : '(none)',
       transcript,
     });
     // Write-application: each mutation is serialized (rememberDeduped locks internally; update/delete
     // wrap withMemoryLock) so concurrent bots reconciling the same turn dedup against each other's
     // writes instead of racing. The model.invoke above stays OUTSIDE the lock — only the writes need it.
+    // update/delete/supersede act ONLY on ids actually shown to the model this turn (no clobbering a fact
+    // it never saw); updateFactById additionally scope-checks each id as defense in depth.
     const ids = knownIds(id);
     for (const a of result.add) {
       if (!a.fact?.trim()) continue;
+      // A contradicting/replacing add overwrites the named fact in place instead of co-storing the
+      // opposite (the dedup judge treats opposites as distinct, so a plain add would keep both).
+      if (typeof a.supersedes === 'number' && shownIds.has(a.supersedes)) {
+        await withMemoryLock(() => updateFactById(a.supersedes as number, a.fact, id));
+        continue;
+      }
       const speaker = realId(a.authorId, ids) ?? id.speaker;
       await rememberDeduped({ fact: a.fact, tier: a.tier, id: { ...id, speaker } });
     }
     for (const u of result.update) {
-      if (u.target?.trim() && u.newFact?.trim())
-        await withMemoryLock(() => updateFact(u.target, u.newFact, id));
+      if (shownIds.has(u.id) && u.newFact?.trim())
+        await withMemoryLock(() => updateFactById(u.id, u.newFact, id));
     }
     for (const d of result.delete) {
-      if (d.target?.trim()) await withMemoryLock(() => forgetFact(d.target, id));
+      if (shownIds.has(d.id)) await withMemoryLock(async () => forgetFactById(d.id, id));
     }
     if (result.add.length || result.update.length || result.delete.length) {
       process.stderr.write(
@@ -148,39 +183,47 @@ export async function reconcileMemory(
 
 namespace TaskReconcile {
   const Schema = z.object({
-    reasoning: z.string().describe('one short sentence on what changed on the board, if anything'),
+    reasoning: z.string().describe('one short sentence on what changed on the plates, if anything'),
     add: z
       .array(
         z.object({
           description: z.string(),
-          assignee: z.string().optional().describe('id, if clear'),
+          owner: z
+            .string()
+            .describe(
+              'id of who is RESPONSIBLE — the teammate who committed ("I\'ll…" → themselves) or who it was handed to',
+            ),
         }),
       )
-      .describe('NEW open tasks/handoffs not already on the board; [] if none'),
+      .describe(
+        'NEW commitments to future work made THIS turn, especially DEFERRED ones ("after I finish X", "later", "once Y is up"); [] if none',
+      ),
     complete: z
       .array(z.object({ id: z.number() }))
-      .describe('open tasks that just got DONE (by #id); [] if none'),
+      .describe('open reminders (by #id above) this turn shows are now DONE; [] if none'),
     drop: z
       .array(z.object({ id: z.number() }))
-      .describe('open tasks no longer relevant (by #id); [] if none'),
+      .describe('open reminders (by #id above) no longer relevant; [] if none'),
   });
   export type Result = z.infer<typeof Schema>;
 
-  const PROMPT = `You are {botName}, reconciling the team's TASK BOARD after a turn in the #dev channel.
-People and their ids: {people}.
+  const PROMPT = `You are {botName}, keeping the team's personal REMINDERS straight after a turn in the
+#dev channel. People and their ids: {people}.
 
-Open tasks right now (with #ids):
+Open reminders right now (with #ids — yours, and ones you raised for others):
 {openTasks}
 
 This turn:
 {transcript}
 
-Decide (be conservative):
-- add: a NEW concrete open task or handoff that someone needs to follow up on ("you'll wire the hooks
-  once the API's up", "I'll send you the spec"). Set "assignee" id when clear. Do NOT add something that
-  is ALREADY on the board above — even if worded differently.
-- complete: an open task (by #id) that this turn shows is now DONE.
-- drop: an open task (by #id) that's no longer relevant.
+A reminder is a concrete commitment to FUTURE work, captured so it isn't lost in a long, summarized work
+session — ESPECIALLY a deferred one ("got it, I'll do that after I finish this", "I'll send the spec
+later", "once the API's up I'll wire the hooks"). Decide (be conservative — most turns add nothing):
+- add: a NEW such commitment made THIS turn. Set "owner" to whoever is responsible — {botName} for "I'll
+  …", or the named teammate for a handoff ("Riley, you'll wire the UI" → owner riley). Do NOT re-add work
+  already a reminder above, and do NOT capture chit-chat, finished replies, or vague non-commitments.
+- complete: an open reminder (by #id above) this turn shows is finished.
+- drop: an open reminder (by #id above) no longer relevant.
 
 Return empty arrays when nothing changed.`;
 
@@ -196,54 +239,49 @@ Return empty arrays when nothing changed.`;
     ]).withConfig({ runName: 'Reconcile Tasks' });
 }
 
-// Process-wide async mutex serializing task reconciliation, so two bots can't both read an empty board
-// and emit the same handoff — the second runs after the first's write and the state-aware model dedups
-// it. (A sibling of withMemoryLock; both come from the shared createMutex helper in dedup.ts.)
-const withTaskLock = createMutex();
-
 /**
- * Reconcile the task board against the turn: add new handoffs, complete finished ones, drop stale ones.
- * Serialized across bots (read-board → model → write all under `withTaskLock`) so always-run can't mint
- * duplicates. Fire-and-forget — errors swallowed.
+ * Reconcile THIS bot's reminders against the turn: capture new forward commitments (esp. deferred ones)
+ * onto the responsible person's plate, complete finished ones, drop stale ones. Runs per-bot (each owns
+ * its own plate + the handoffs it raised). No process-wide lock: open-dedup is enforced at the DB by the
+ * per (project, owner, norm) unique index, so concurrent bots reflecting on the same handoff can't double-
+ * insert. complete/drop act ONLY on reminders actually shown this turn (no closing one it never saw).
+ * Fire-and-forget — errors swallowed.
  */
 export async function reconcileTasks(
   bot: Employee,
   transcript: string,
   id: Identity,
 ): Promise<void> {
-  await withTaskLock(async () => {
-    try {
-      const open = openTasks(id.company);
-      const result = await TaskReconcile.get().invoke({
-        botName: bot.name,
-        people: peopleHint(id),
-        openTasks: open.length
-          ? open
-              .map((t) => `- [#${t.id}] ${t.description}${t.assignee ? ` (→ ${t.assignee})` : ''}`)
-              .join('\n')
-          : '(none)',
-        transcript,
-      });
-      const ids = knownIds(id);
-      for (const a of result.add) {
-        if (a.description?.trim())
-          addTask({
-            company: id.company,
-            description: a.description,
-            assignee: realId(a.assignee, ids),
-            createdBy: bot.id,
-            source: id.surface,
-          });
-      }
-      for (const c of result.complete) if (typeof c.id === 'number') completeTask(id.company, c.id);
-      for (const d of result.drop) if (typeof d.id === 'number') dropTask(id.company, d.id);
-      if (result.add.length || result.complete.length || result.drop.length) {
-        process.stderr.write(
-          `[reconcile:${bot.name}] tasks +${result.add.length} ✓${result.complete.length} -${result.drop.length}\n`,
-        );
-      }
-    } catch {
-      /* fire-and-forget */
+  try {
+    const open = remindersForBot(id.project, bot.id);
+    const shownIds = new Set(open.map((t) => t.id));
+    const result = await TaskReconcile.get().invoke({
+      botName: bot.name,
+      people: peopleHint(id),
+      openTasks: open.length
+        ? open.map((t) => `- [#${t.id}] ${t.description} (→ ${t.owner})`).join('\n')
+        : '(none)',
+      transcript,
+    });
+    const ids = knownIds(id);
+    for (const a of result.add) {
+      if (a.description?.trim())
+        addTask({
+          project: id.project,
+          description: a.description,
+          owner: realId(a.owner, ids) ?? bot.id, // default to the committing bot's own plate
+          createdBy: bot.id,
+          source: id.surface,
+        });
     }
-  });
+    for (const c of result.complete) if (shownIds.has(c.id)) completeTask(id.project, c.id);
+    for (const d of result.drop) if (shownIds.has(d.id)) dropTask(id.project, d.id);
+    if (result.add.length || result.complete.length || result.drop.length) {
+      process.stderr.write(
+        `[reconcile:${bot.name}] reminders +${result.add.length} ✓${result.complete.length} -${result.drop.length}\n`,
+      );
+    }
+  } catch {
+    /* fire-and-forget */
+  }
 }

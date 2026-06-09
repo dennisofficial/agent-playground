@@ -1,8 +1,11 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
+import { executeTicketPlan } from './approval.js';
+import { getBoard } from './board/index.js';
+import { boardTools } from './board/tools.js';
 import { botById, resolveWorkerModel, ROSTER } from './employees/index.js';
-import { createJob, getJob, latestJob } from './jobs.js';
+import { createJob, getJob, latestJob, listJobs, updateJob } from './jobs.js';
 import { getIdentity } from './memory/identity.js';
 import { memoryTools, taskTools } from './memory/tools.js';
 import { recentWork } from './memory/worklog.js';
@@ -25,15 +28,25 @@ import {
 // jobs are scoped per bot.
 
 const dispatch_job = tool(
-  async ({ task }, config) => {
+  async ({ task, ticketId }, config) => {
     const id = getIdentity(config);
     // The engine is the dispatching employee's locked engine — there is no per-dispatch override.
     const engineName = (botById(id.selfAgent) ?? ROSTER[0]).engine;
+    // Planning FOR a ticket: validate it's a backlog item (plans are drafted before approval, then frozen).
+    if (ticketId) {
+      const ticket = getBoard().getTicket(id.project, ticketId);
+      if (!ticket) return `No ticket "${ticketId}" on the board — can't plan against it.`;
+      if (ticket.status !== 'backlog')
+        return `${ticket.id} is ${ticket.status}, not an open backlog item — its plans are already locked.`;
+    }
     // ALWAYS planning mode (read-only). The bot can only ever create a read-only PLAN job; a
-    // write-capable EXECUTE job is created exclusively by the human-approval path (executeApprovedPlan),
-    // so the AI can never authorize its own code changes. A pure question/investigation just answers and
-    // ends DONE; a task that would mutate the repo comes back with a plan for Dennis to approve.
-    const job = createJob(task, id.surface, engineName, id.selfAgent, id.company, 'plan');
+    // write-capable EXECUTE job is created exclusively by the human-approval paths (executeApprovedPlan /
+    // executeTicketPlan), so the AI can never authorize its own code changes. A pure question just answers
+    // and ends DONE; a task that would mutate the repo comes back with a plan to approve.
+    const job = createJob(task, id.surface, engineName, id.selfAgent, id.project, 'plan');
+    // Tag the job to its ticket: the conductor stores the resulting plan onto the ticket (for standup
+    // approval) instead of driving the usual per-job /approve flow.
+    if (ticketId) updateJob(job.id, { ticketId });
     // Fire-and-forget: the worker runs in the background, the chat turn returns immediately.
     //
     // Detach the background turn from the conductor's streaming callback context. dispatch_job runs
@@ -45,14 +58,22 @@ const dispatch_job = tool(
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
       void runWorkerTurn(job.id, task);
     });
-    return `Started ${job.id} (${engineName}): "${task}". It explores read-only, then either answers directly (if it's just a question) or comes back with a plan for Dennis to approve in the terminal before anything is built — you can't start a build yourself. You're notified once when it reports back.`;
+    return ticketId
+      ? `Started ${job.id} (${engineName}) planning ${ticketId}: "${task}". It explores read-only and attaches a plan to the ticket for standup review — no separate per-job approval; the whole ticket gets approved at once.`
+      : `Started ${job.id} (${engineName}): "${task}". It explores read-only, then either answers directly (if it's just a question) or comes back with a plan for Dennis to approve in the terminal before anything is built — you can't start a build yourself. You're notified once when it reports back.`;
   },
   {
     name: 'dispatch_job',
     description:
-      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run in your background thread. Returns immediately with a job id; you are notified once when it reports back. It ALWAYS starts read-only: a pure question/investigation is answered directly; anything that would change the repo comes back as a plan for Dennis to approve in the terminal before it builds — you cannot start a build yourself. Calling this ENDS YOUR TURN — there is no follow-up reply afterward, so put any brief first-person heads-up (e.g. "On it — give me a bit") in THIS message\'s text, not as a separate message, and never add an "I\'ll let you know when I\'m done" after.',
+      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run in your background thread. Returns immediately with a job id; you are notified once when it reports back. It ALWAYS starts read-only: a pure question/investigation is answered directly; anything that would change the repo comes back as a plan for approval before it builds — you cannot start a build yourself. Pass a ticketId to plan FOR a backlog ticket (the plan attaches to that ticket for standup approval). Calling this ENDS YOUR TURN — there is no follow-up reply afterward, so put any brief first-person heads-up (e.g. "On it — give me a bit") in THIS message\'s text, not as a separate message, and never add an "I\'ll let you know when I\'m done" after.',
     schema: z.object({
       task: z.string().describe('A clear, self-contained description of the work to do.'),
+      ticketId: z
+        .string()
+        .optional()
+        .describe(
+          'Optional: a backlog ticket id (e.g. "TKT-001") this plan is FOR. The plan is attached to that ticket for standup review instead of the usual per-job approval.',
+        ),
     }),
   },
 );
@@ -137,7 +158,7 @@ const recent_work = tool(
   async ({ scope }, config) => {
     const id = getIdentity(config);
     const entries = recentWork({
-      company: id.company,
+      project: id.project,
       ownerBot: scope === 'team' ? undefined : id.selfAgent,
       limit: 10,
     });
@@ -165,6 +186,68 @@ const recent_work = tool(
   },
 );
 
+// Build YOUR approved plan for a ticket — the autonomy seam. Calls executeTicketPlan, which spawns a
+// write-capable EXECUTE job from the ticket's FROZEN approved plan (no second human gate — the ticket was
+// approved at standup). Terminal like dispatch_job (it kicks off background work, then reports back once).
+const execute_ticket = tool(
+  async ({ ticketId }, config) => {
+    const id = getIdentity(config);
+    const res = executeTicketPlan(ticketId, id.selfAgent, id.project, id.surface);
+    return res.ok
+      ? `On it — building ${ticketId} now (${res.execJobId}). It's already approved, so no further sign-off needed; I'll report back when it's done.`
+      : `Can't build ${ticketId}: ${res.reason}`;
+  },
+  {
+    name: 'execute_ticket',
+    description:
+      "Build YOUR approved plan for a ticket, end to end. Works ONLY once Dennis has approved the ticket at standup — then it goes straight to a real build with NO further approval (the sign-off already happened; you're not approving your own work). Use it to start work you were assigned on the board. Like dispatch_job it kicks off background work and ENDS YOUR TURN — put a brief first-person heads-up in this message's text.",
+    schema: z.object({
+      ticketId: z.string().describe('The approved ticket id to build, e.g. "TKT-001".'),
+    }),
+  },
+);
+
+// SCRUM-MASTER ONLY: pause a teammate drifting out of scope and escalate to Dennis. Cancels their running
+// job(s) (cancelJob has no owner check — the authority gate is the scrumMaster check here), marks any
+// linked ticket `blocked`, and reports back so the scrum master loops in Dennis. It does NOT redirect or
+// reassign — it stops and escalates; Dennis decides what's next.
+const flag_scope = tool(
+  async ({ teammate, reason }, config) => {
+    const id = getIdentity(config);
+    if (!botById(id.selfAgent)?.scrumMaster)
+      return 'Only the scrum master can flag work as out of scope.';
+    const targetId = teammate.trim().toLowerCase();
+    if (targetId === id.selfAgent) return "You can't flag your own work.";
+    const active = listJobs().filter(
+      (j) =>
+        j.ownerBot === targetId &&
+        j.project === id.project &&
+        (j.status === 'running' || j.status === 'awaiting'),
+    );
+    if (active.length === 0) return `${teammate} has no work running to pause.`;
+    const board = getBoard();
+    const blocked = new Set<string>();
+    for (const j of active) {
+      cancelJob(j.id);
+      if (j.ticketId) {
+        board.setStatus(j.project, j.ticketId, 'blocked');
+        blocked.add(j.ticketId);
+      }
+    }
+    const ticketNote = blocked.size ? `; marked ${[...blocked].join(', ')} blocked` : '';
+    return `Paused ${targetId}'s work (${active.map((j) => j.id).join(', ')})${ticketNote}. Reason: ${reason}. Now loop in Dennis before anything continues — don't redirect the work yourself.`;
+  },
+  {
+    name: 'flag_scope',
+    description:
+      "Scrum master only: pause a teammate whose work is drifting out of the approved scope, and escalate. It stops their running job(s) and marks any linked ticket blocked, then you loop in Dennis — you don't reassign or redirect, you halt and raise it. Use sparingly, only when work is genuinely going beyond what was approved.",
+    schema: z.object({
+      teammate: z.string().describe("The teammate's id whose work to pause, e.g. 'alex'."),
+      reason: z.string().describe('Briefly, how the work is going out of scope.'),
+    }),
+  },
+);
+
 // Closes the turn with no further reply. A no-op that just returns a result (so the ToolNode produces a
 // valid tool message for it — Anthropic requires a result for every tool-call id); the turn actually ends
 // because the graph's `afterTools` router treats `end_turn` as terminal (see bot-graph.ts). This is what
@@ -188,7 +271,10 @@ export const CHAT_TOOLS = [
   check_job,
   cancel_job,
   recent_work,
+  execute_ticket,
+  flag_scope,
   end_turn,
   ...memoryTools,
   ...taskTools,
+  ...boardTools,
 ];

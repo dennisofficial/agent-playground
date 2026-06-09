@@ -34,7 +34,9 @@ async function consolidateScope(scope: string): Promise<{ kept: number; merged: 
        WHERE scope = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
     )
     .all(scope) as FactRow[];
-  const vecs = new Map<number, number[]>(rows.map((r) => [r.id, JSON.parse(r.embedding) as number[]]));
+  const vecs = new Map<number, number[]>(
+    rows.map((r) => [r.id, JSON.parse(r.embedding) as number[]]),
+  );
 
   const consumed = new Set<number>();
   let kept = 0;
@@ -80,7 +82,9 @@ async function main(): Promise<void> {
   let totalMerged = 0;
   for (const scope of scopes) {
     const before = (
-      db.prepare(`SELECT COUNT(*) AS n FROM facts WHERE scope = ? AND deleted_at IS NULL`).get(scope) as {
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM facts WHERE scope = ? AND deleted_at IS NULL`)
+        .get(scope) as {
         n: number;
       }
     ).n;

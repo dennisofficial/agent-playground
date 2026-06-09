@@ -17,6 +17,13 @@ export interface Employee {
   /** Short role label (e.g. "backend engineer") — shown in the roster summary. */
   role: string;
   /**
+   * Scrum-master clearance: board-wide authority. A scrum master sees EVERY teammate's reminders and
+   * tickets (others see only their own), and can pause + escalate a teammate's out-of-scope work. Exactly
+   * one employee should carry this (Sam). Read programmatically (not from the `role` string) wherever
+   * authority is gated — see memory/tools.ts, board/tools.ts.
+   */
+  scrumMaster?: boolean;
+  /**
    * The deep role knowledge folded into this employee's chat system prompt (what `persona.ts` used to
    * carry in per-id if-branches). MUST be a static, byte-stable string: `chatPromptFor` runs on every
    * LLM step under a `cache_control: ephemeral` breakpoint, so any per-call variation here silently

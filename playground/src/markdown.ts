@@ -28,9 +28,7 @@ function isPlainText(md: string): boolean {
     // Paragraph is plain only when every inline token is bare text (no strong,
     // em, codespan, link, image, html, …).
     const para = token as Extract<Token, { type: 'paragraph' }>;
-    return para.tokens.every(
-      (t: Token) => t.type === 'text' || t.type === 'space',
-    );
+    return para.tokens.every((t: Token) => t.type === 'text' || t.type === 'space');
   });
 }
 

@@ -1,29 +1,53 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 /**
- * The project root — the single boundary every worker engine's file/shell access is jailed to.
- * Extracted here so the same checks back (a) the LangChain worker tools, and (b) the Claude
- * adapter's `canUseTool` guard (and inform the Codex sandbox config).
+ * The process root — the default boundary worker file/shell access is jailed to. Extracted here so
+ * the same checks back (a) the LangChain worker tools, and (b) the Claude adapter's `canUseTool`
+ * guard (and inform the Codex sandbox config).
+ *
+ * A worker that has its own isolated workspace (a git worktree — see workspace.ts) runs jailed to
+ * THAT directory instead, not the process root, so concurrent workers can't read or clobber each
+ * other's trees (or the trunk). The active workspace is carried per async context below.
  */
 export const ROOT = process.cwd();
 
 /**
- * Resolve an agent-supplied path against the project root, throwing if it escapes (absolute
+ * The jail root for the CURRENTLY EXECUTING worker. Set (via `withActiveRoot`) to the worker's
+ * worktree for the duration of its engine run, so the in-process LangChain tools resolve paths and
+ * shell `cwd` against the worktree rather than ROOT. Unset → ROOT (the chat process, and read-only
+ * PLAN jobs that run on the trunk). The SDK engines (claude/codex) additionally pass their own `cwd`
+ * to the subprocess; this store is what keeps the langgraph in-process tools isolated to match.
+ */
+const activeRootStore = new AsyncLocalStorage<string>();
+
+/** The jail root for the current async context — the active worker's worktree, or ROOT. */
+export function activeRoot(): string {
+  return activeRootStore.getStore() ?? ROOT;
+}
+
+/** Run `fn` with `root` as the active jail root for everything it (transitively) awaits. */
+export function withActiveRoot<T>(root: string, fn: () => T): T {
+  return activeRootStore.run(root, fn);
+}
+
+/**
+ * Resolve an agent-supplied path against the active root, throwing if it escapes (absolute
  * out-of-tree paths, `..` traversal). The root itself is allowed (rel === ''). Used by the
  * throwing LangChain tools in tools.ts.
  */
-export function resolveInCwd(p: string): string {
-  const resolved = resolve(ROOT, p);
-  const rel = relative(ROOT, resolved);
+export function resolveInCwd(p: string, root: string = activeRoot()): string {
+  const resolved = resolve(root, p);
+  const rel = relative(root, resolved);
   if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`Path "${p}" escapes the project directory — refused. Stay within ${ROOT}.`);
+    throw new Error(`Path "${p}" escapes the project directory — refused. Stay within ${root}.`);
   }
   return resolved;
 }
 
 /** Non-throwing variant for permission guards (canUseTool): true if `p` resolves inside the root. */
-export function isInsideRoot(p: string): boolean {
-  const rel = relative(ROOT, resolve(ROOT, p));
+export function isInsideRoot(p: string, root: string = activeRoot()): boolean {
+  const rel = relative(root, resolve(root, p));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 

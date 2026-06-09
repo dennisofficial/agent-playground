@@ -4,7 +4,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { z } from 'zod';
-import { bashDenyReason, resolveInCwd, ROOT } from './engines/guard.js';
+import { activeRoot, bashDenyReason, resolveInCwd } from './engines/guard.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -19,7 +19,7 @@ export const bash = tool(
     }
     try {
       const { stdout, stderr } = await execAsync(command, {
-        cwd: ROOT,
+        cwd: activeRoot(),
         timeout: 60_000,
         maxBuffer: 1024 * 1024,
       });
@@ -115,7 +115,7 @@ export const grep = tool(
           pattern,
           target,
         ],
-        { cwd: ROOT, timeout: 30_000, maxBuffer: 1024 * 1024 },
+        { cwd: activeRoot(), timeout: 30_000, maxBuffer: 1024 * 1024 },
       );
       return stdout.trim() || 'no matches';
     } catch (err) {
@@ -177,7 +177,7 @@ export const glob = tool(
       const re = globToRegExp(pattern);
       const matches = files
         .filter((f) => re.test(relative(base, f)))
-        .map((f) => relative(ROOT, f))
+        .map((f) => relative(activeRoot(), f))
         .sort();
       return matches.length ? matches.join('\n') : 'no matches';
     } catch (err) {
@@ -209,7 +209,7 @@ export const write_file = tool(
     try {
       const target = resolveInCwd(path);
       await writeFile(target, content, 'utf8');
-      return `Wrote ${content.length} bytes to ${relative(ROOT, target)}.`;
+      return `Wrote ${content.length} bytes to ${relative(activeRoot(), target)}.`;
     } catch (err) {
       return `Could not write "${path}": ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -235,11 +235,11 @@ export const str_replace = tool(
       // $&/$1/$$ interpretation inside new_str. The count enforces the "exactly one" rule.
       const count = content.split(old_str).length - 1;
       if (count === 0)
-        return `str_replace failed: old_str not found in ${relative(ROOT, target)}. The match must be exact (whitespace and indentation included).`;
+        return `str_replace failed: old_str not found in ${relative(activeRoot(), target)}. The match must be exact (whitespace and indentation included).`;
       if (count > 1)
-        return `str_replace failed: old_str matches ${count} times in ${relative(ROOT, target)} — ambiguous. Add surrounding context to make it unique.`;
+        return `str_replace failed: old_str matches ${count} times in ${relative(activeRoot(), target)} — ambiguous. Add surrounding context to make it unique.`;
       await writeFile(target, content.split(old_str).join(new_str), 'utf8');
-      return `Replaced 1 occurrence in ${relative(ROOT, target)}.`;
+      return `Replaced 1 occurrence in ${relative(activeRoot(), target)}.`;
     } catch (err) {
       return `str_replace failed: ${err instanceof Error ? err.message : String(err)}`;
     }

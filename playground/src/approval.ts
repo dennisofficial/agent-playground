@@ -1,7 +1,9 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
-import { createJob, getJob, updateJob } from './jobs.js';
+import { getBoard } from './board/index.js';
+import { botById, ROSTER } from './employees/index.js';
+import { createJob, getJob, listJobs, updateJob } from './jobs.js';
 import { rememberDeduped } from './memory/dedup.js';
-import type { Identity } from './memory/identity.js';
+import { DEFAULT_TEAM, type Identity } from './memory/identity.js';
 import { type ActionResult, runWorkerTurn } from './worker.js';
 
 /**
@@ -16,7 +18,7 @@ import { type ActionResult, runWorkerTurn } from './worker.js';
  */
 
 /** Drop trailing `STATUS: …` line(s) from a worker report, leaving the plan body for the execute job. */
-const stripStatusLine = (report: string): string =>
+export const stripStatusLine = (report: string): string =>
   report.replace(/^[\s>*_-]*STATUS:\s*(DONE|QUESTION|BLOCKED|PROGRESS)\b.*$/gim, '').trimEnd();
 
 export interface ApprovalResult extends ActionResult {
@@ -68,10 +70,13 @@ export function executeApprovedPlan(
   // Capture the approved approach into durable memory so future planning recalls the decision instead of
   // re-asking. reconcile only mines HUMAN chat utterances; an approved plan is bot-authored, so it would
   // otherwise never be remembered. There's no run config here, so construct the approver Identity from
-  // the plan job's own scoping (owner bot + company + notify surface).
+  // the plan job's own scoping (owner bot + project + notify surface).
   const approver: Identity = {
     selfAgent: planJob.ownerBot,
-    company: planJob.company,
+    // A job is scoped to a project, not a team — so reconstruct project from the job; team falls back to
+    // the default (the team tier isn't carried on a Job).
+    team: DEFAULT_TEAM,
+    project: planJob.project,
     participants: [approvedBy],
     speaker: approvedBy,
     surface: planJob.notifyThread,
@@ -79,13 +84,15 @@ export function executeApprovedPlan(
   };
   void rememberDeduped({
     fact: `Approved plan for "${planJob.task}"${edits ? ' (with edits)' : ''}: ${plan.slice(0, 300)}`,
-    tier: 'company',
+    tier: 'project',
     id: approver,
   }).catch(() => {});
 
   // Spawn a SEPARATE execute job: fresh session → the cheaper EXECUTE-tier model (the plan ran on the
   // high-reasoning tier, and a session can't switch models mid-stream), mutations allowed, seeded with
-  // the approved plan as its contract. This is the ONLY createJob(..., 'execute') call in the codebase.
+  // the approved plan as its contract. One of only TWO sanctioned createJob(..., 'execute') paths — this
+  // (per-plan human approval) and `executeTicketPlan` below (standup-approved ticket); no model tool ever
+  // creates an execute job directly.
   const seeded = `Execute this APPROVED plan, end to end:\n\n${plan}${
     edits ? `\n\nAdjustments from the team to fold in first:\n${edits}` : ''
   }\n\n(Originating request: ${planJob.task})`;
@@ -94,13 +101,61 @@ export function executeApprovedPlan(
     planJob.notifyThread,
     planJob.engine,
     planJob.ownerBot,
-    planJob.company,
+    planJob.project,
     'execute',
   );
   updateJob(execJob.id, { planJobId });
   // Detach the background turn from any inherited LangChain callback context (carried from the old
   // approve_plan tool — a LangGraph run's invoke() would otherwise inherit a chat stream's handler and
   // bleed its tokens into the main chat). Harmless for the SDK engines (own subprocess).
+  AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
+    void runWorkerTurn(execJob.id, seeded);
+  });
+  return { ok: true, execJobId: execJob.id };
+}
+
+/**
+ * Execute a STANDUP-APPROVED ticket's plan — the autonomy seam. Unlike `executeApprovedPlan` (human-only),
+ * this IS model-callable (via the `execute_ticket` tool): the work was already approved at standup, so
+ * there's no second per-build gate. The write-safety invariant holds because it runs ONLY the frozen
+ * `approvedMd` snapshot (never the editable draft), only for an `approved`/`in_progress` ticket, and only
+ * the caller's own discipline plan. Several disciplines can build one ticket at once (different owner bots);
+ * the same bot can't double-start its own plan. The ticket goes `in_progress`; the conductor flips it to
+ * `done` when the last discipline's job finishes (and `blocked` if the scrum master halts it).
+ */
+export function executeTicketPlan(
+  ticketId: string,
+  botId: string,
+  project: string,
+  surface: string,
+): ApprovalResult {
+  const board = getBoard();
+  const ticket = board.getTicket(project, ticketId);
+  if (!ticket) return { ok: false, reason: `No ticket "${ticketId}".` };
+  if (ticket.status !== 'approved' && ticket.status !== 'in_progress')
+    return {
+      ok: false,
+      reason: `${ticket.id} is ${ticket.status} — only an approved ticket can be built (its plan was signed off at standup).`,
+    };
+  const plan = board.getPlan(project, ticketId, botId);
+  if (!plan || !plan.approvedMd.trim())
+    return { ok: false, reason: `${ticket.id} has no approved plan for ${botId} to build.` };
+  // One execute run per discipline at a time: don't let the same bot start its plan twice.
+  const alreadyRunning = listJobs().some(
+    (j) =>
+      j.ticketId === ticketId &&
+      j.ownerBot === botId &&
+      j.mode === 'execute' &&
+      (j.status === 'running' || j.status === 'awaiting'),
+  );
+  if (alreadyRunning)
+    return { ok: false, reason: `You're already building ${ticket.id} — let that run finish.` };
+
+  const bot = botById(botId) ?? ROSTER[0];
+  const seeded = `Execute this APPROVED plan for ticket ${ticket.id} ("${ticket.title}"), end to end:\n\n${plan.approvedMd}\n\n(This plan was approved at standup — build exactly it. If the plan itself is wrong or the scope is materially larger than it describes, STOP with STATUS: QUESTION rather than expanding it.)`;
+  const execJob = createJob(seeded, surface, bot.engine, botId, project, 'execute');
+  updateJob(execJob.id, { ticketId, approvedAt: plan.approvedAt });
+  board.setStatus(project, ticketId, 'in_progress');
   AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
     void runWorkerTurn(execJob.id, seeded);
   });

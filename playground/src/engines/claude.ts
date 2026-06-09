@@ -25,7 +25,7 @@ const AUTO_APPROVE = ['Read', 'Glob', 'Grep'];
  * only once approved" guarantee). Built per-run because the planning flag varies by job.
  */
 const makeCanUseTool =
-  (planning: boolean): CanUseTool =>
+  (planning: boolean, root: string): CanUseTool =>
   async (toolName, input): Promise<PermissionResult> => {
     if (planning && (toolName === 'Write' || toolName === 'Edit')) {
       return {
@@ -44,7 +44,7 @@ const makeCanUseTool =
     }
     if (toolName === 'Write' || toolName === 'Edit') {
       const path = typeof input.file_path === 'string' ? input.file_path : '';
-      if (path && !isInsideRoot(path)) {
+      if (path && !isInsideRoot(path, root)) {
         return { behavior: 'deny', message: `Refused: "${path}" escapes the project directory.` };
       }
     }
@@ -78,7 +78,7 @@ export const claudeEngine: WorkerEngine = {
       settingSources: [],
       tools: WORKER_TOOLS,
       allowedTools: AUTO_APPROVE,
-      canUseTool: makeCanUseTool(planning ?? false),
+      canUseTool: makeCanUseTool(planning ?? false, cwd),
       permissionMode: 'default',
       abortController,
       ...(sessionId ? { resume: sessionId } : {}),
