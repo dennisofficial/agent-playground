@@ -1,10 +1,12 @@
-import type { BaseMessage } from '@langchain/core/messages';
+import type { ConductorEvent, MessageUsage } from '../conductor-events.js';
+import { gateCostUsd } from '../model.js';
 
 /**
- * Plain, render-ready view of the conversation. We derive these from the canonical LangGraph
- * message list (the checkpoint is the source of truth) rather than reconstructing from the
- * token stream — so tool calls are first-class and nothing drifts. A Slack renderer would
- * consume the same RenderItem shape.
+ * Plain, render-ready view of the conversation for the terminal UI. The conductor emits domain
+ * `ConductorEvent`s (UI-agnostic); this layer maps each to a `RenderItem` the Ink components draw.
+ * The `user`/`note` kinds have no event — they're the TUI's own local rows (the user's echoed input
+ * and CLI slash-command output). A different surface (Slack, a logger) would consume the same events
+ * and render its own way.
  */
 export type RenderItem =
   | { id: string; kind: 'user'; text: string; speaker?: string; ts?: string }
@@ -34,66 +36,43 @@ export type RenderItem =
   | { id: string; kind: 'recall'; by: string; text: string }
   | { id: string; kind: 'error'; text: string };
 
-/** Flatten message content (string | content blocks) to a plain string. */
-export function messageText(content: BaseMessage['content']): string {
-  if (typeof content === 'string') return content;
-  return content
-    .map((c) =>
-      typeof c === 'string' ? c : 'text' in c && typeof c.text === 'string' ? c.text : '',
-    )
-    .join('');
-}
-
-interface ToolCall {
-  id?: string;
-  name: string;
-}
-
 /**
- * Map canonical graph messages to render items. Caller passes only the messages not yet shown
- * (the list is append-only). Tool *result* messages are internal plumbing for the chat layer
- * and are omitted; an AI message's tool_calls become compact activity items instead. `botName`
- * labels the assistant line with the responding bot (multiple bots share the channel).
+ * Map a conductor domain event to a terminal render row. Presentation decisions live here, not in the
+ * core: the gate row's `$cost` string is formatted from the event's raw usage via `gateCostUsd`.
  */
-export function toRenderItems(messages: BaseMessage[], botName?: string): RenderItem[] {
-  const items: RenderItem[] = [];
-  messages.forEach((m, i) => {
-    const type = m.getType();
-    const baseId = (m as { id?: string }).id ?? `${type}-${i}`;
-    if (type === 'human') {
-      items.push({ id: baseId, kind: 'user', text: messageText(m.content).trim() });
-    } else if (type === 'ai') {
-      const text = messageText(m.content).trim();
-      if (text) items.push({ id: baseId, kind: 'assistant', text, speaker: botName });
-      const calls = (m as { tool_calls?: ToolCall[] }).tool_calls ?? [];
-      for (const c of calls)
-        items.push({
-          id: `${baseId}:${c.id ?? c.name}`,
-          kind: 'tool',
-          toolName: c.name,
-          speaker: botName,
-        });
+export function renderEvent(e: ConductorEvent): RenderItem {
+  switch (e.kind) {
+    case 'message':
+      return {
+        id: e.id,
+        kind: 'assistant',
+        text: e.text,
+        speaker: e.botName,
+        ts: e.ts,
+        usage: e.usage,
+      };
+    case 'tool':
+      return { id: e.id, kind: 'tool', toolName: e.toolName, speaker: e.botName };
+    case 'reaction':
+      return { id: e.id, kind: 'reaction', emoji: e.emoji, by: e.botName };
+    case 'gate': {
+      const u = e.usage;
+      const cost = u
+        ? `  ·  ${u.input} in · ${u.output} out · $${gateCostUsd(u.input, u.output).toFixed(6)}`
+        : '';
+      return {
+        id: e.id,
+        kind: 'gate',
+        by: e.botName,
+        action: e.action,
+        reasoning: `${e.reasoning}${cost}`,
+      };
     }
-    // tool-result messages: omitted from the chat transcript (internal).
-  });
-  return items;
-}
-
-export interface ContextUsage {
-  input?: number;
-  output?: number;
-}
-
-/**
- * Per-message token usage, broken out so the renderer can show cache hits. `input` is the TOTAL input
- * tokens (langchain folds cache reads + writes into it); `cacheRead`/`cacheWrite` are the cached slices
- * of that total — `cacheRead` served at ~0.1× price, `cacheWrite` written this call at ~1.25×.
- */
-export interface MessageUsage {
-  input: number;
-  output: number;
-  cacheRead?: number;
-  cacheWrite?: number;
+    case 'recall':
+      return { id: e.id, kind: 'recall', by: e.botName, text: e.text };
+    case 'error':
+      return { id: e.id, kind: 'error', text: e.message };
+  }
 }
 
 /** One-line dim token summary shown at the end of a rendered assistant message, e.g. `812 in · 96 out · 640 cached`. */

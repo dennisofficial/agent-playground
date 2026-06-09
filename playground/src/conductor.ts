@@ -1,17 +1,10 @@
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { type BotStateDelta, getBotGraph } from './bot-graph.js';
 import { channel } from './channel.js';
+import { type ConductorEvent, type ContextUsage, type MessageUsage } from './conductor-events.js';
 import { type Employee, botById, ROSTER } from './employees/index.js';
 import { type Job, listJobs, onJobUpdate } from './jobs.js';
 import { type Identity } from './memory/identity.js';
-import { listTasks } from './memory/tasks.js';
-import { gateCostUsd } from './model.js';
-import {
-  type ContextUsage,
-  type MessageUsage,
-  type RenderItem,
-  toRenderItems,
-} from './ui/messages.js';
 
 /**
  * The dispatcher: a thin event loop around the shared `channel`. You append to the channel and move on
@@ -23,11 +16,27 @@ import {
  * Each turn runs on the bot's LangGraph turn-graph ([bot-graph.ts](bot-graph.ts)): gate → fetch → llm ⇄
  * tools → reconcile (or the ack/ignore drain). The graph is the bot's BRAIN — it owns the gate, the
  * mid-step channel re-read, the deterministic memory fetch/reconcile, and the checkpoint. The conductor
- * is just the event loop: scheduling, the cursor's coordinate space, and channel/UI emission. The graph's
- * streamed deltas drive what the dispatcher renders and emits.
+ * is just the event loop: scheduling, the cursor's coordinate space, and channel writes. It is UI-agnostic
+ * — it emits a stream of domain `ConductorEvent`s (see [conductor-events.ts](conductor-events.ts)) that a
+ * presentation surface (the terminal UI today, a Slack adapter or logger later) subscribes to and renders.
  */
 
 const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** Flatten message content (string | content blocks) to a plain string — how we read what a bot said. */
+const messageText = (content: BaseMessage['content']): string =>
+  typeof content === 'string'
+    ? content
+    : content
+        .map((c) =>
+          typeof c === 'string' ? c : 'text' in c && typeof c.text === 'string' ? c.text : '',
+        )
+        .join('');
+
+interface ToolCall {
+  id?: string;
+  name: string;
+}
 
 /** A short HH:MM:SS stamp for the transcript — handy for eyeballing the async/parallel flow. */
 const clock = (): string =>
@@ -44,8 +53,10 @@ const MAX_BOT_BURST = 4;
 /** Attempts before the conductor gives up on a turn that keeps erroring without progress (drops + logs). */
 const MAX_TURN_RETRIES = 3;
 
-export interface ConductorState {
-  history: RenderItem[];
+/** Ephemeral, overwrite-style status that drives the spinner/footer — a pull snapshot (`getStatus`),
+ * distinct from the append-only `ConductorEvent` stream. A presentation surface that doesn't need a
+ * spinner (e.g. a Slack adapter) simply never reads this. */
+export interface ConductorStatus {
   /** True while any bot is working (drives the spinner; input stays live regardless). */
   busy: boolean;
   ctx: ContextUsage;
@@ -58,15 +69,17 @@ export interface ConductorState {
 }
 
 class Conductor {
-  private state: ConductorState = {
-    history: [],
+  private state: ConductorStatus = {
     busy: false,
     ctx: {},
     running: 0,
     speaker: 'dennis',
     thinking: [],
   };
+  /** Status-change subscribers (spinner/footer). The append-only event stream is `eventSubs`. */
   private subs = new Set<() => void>();
+  /** Domain-event subscribers — the presentation seam (TUI renders; a logger/Slack adapter could too). */
+  private eventSubs = new Set<(e: ConductorEvent) => void>();
   private idleResolvers: (() => void)[] = [];
   private emitSeq = 0; // unique id per emitted message/row
 
@@ -92,12 +105,21 @@ class Conductor {
     });
   }
 
+  /** Subscribe to STATUS changes (busy/thinking/ctx/jobs-running) — re-read via `getStatus()`. */
   subscribe(cb: () => void): () => void {
     this.subs.add(cb);
     return () => this.subs.delete(cb);
   }
 
-  getState(): ConductorState {
+  /** Subscribe to the append-only domain event stream (messages, tools, reactions, observability) — the
+   * presentation seam. The TUI accumulates these into render rows; a logger/Slack adapter could consume
+   * the same stream. Returns an unsubscribe. */
+  onEvent(cb: (e: ConductorEvent) => void): () => void {
+    this.eventSubs.add(cb);
+    return () => this.eventSubs.delete(cb);
+  }
+
+  getStatus(): ConductorStatus {
     return this.state;
   }
 
@@ -107,18 +129,18 @@ class Conductor {
     return new Promise((resolve) => this.idleResolvers.push(resolve));
   }
 
-  /** Append the user's message to the channel and return immediately — NEVER waits on a bot. */
+  /** Append the user's message to the channel and return immediately — NEVER waits on a bot. The input
+   * surface echoes the user's own message locally; the conductor only puts it on the channel. */
   submitUser(text: string): void {
     const who = titleCase(this.state.speaker);
     this.members.add(this.state.speaker);
     this.botBurst = 0; // a human spoke → reset the bot-cascade budget
-    const msg = channel.append({
+    channel.append({
       id: `u-${this.emitSeq++}`,
       author: who,
       authorId: this.state.speaker,
       text,
     });
-    this.pushHistory({ id: msg.id, kind: 'user', text, speaker: who, ts: clock() });
     // channel.subscribe → schedule() already fired; nothing to await.
   }
 
@@ -130,28 +152,13 @@ class Conductor {
     this.patch({ speaker: id });
   }
 
-  /** CLI "/tasks": dump the open task board into the transcript so you can glance at what reflect captured. */
-  showTasks(): void {
-    const tasks = listTasks({ company: 'local', status: 'open' });
-    const text = tasks.length
-      ? `Open tasks (${tasks.length}):\n` +
-        tasks
-          .map(
-            (t) =>
-              `  #${t.id}  ${t.assignee ? `[${t.assignee}]` : '[unassigned]'}  ${t.description}`,
-          )
-          .join('\n')
-      : 'No open tasks yet.';
-    this.pushHistory({ id: `note-${this.emitSeq++}`, kind: 'note', text });
-  }
-
-  private patch(p: Partial<ConductorState>): void {
+  private patch(p: Partial<ConductorStatus>): void {
     this.state = { ...this.state, ...p };
     for (const cb of this.subs) cb();
   }
 
-  private pushHistory(...items: RenderItem[]): void {
-    this.patch({ history: [...this.state.history, ...items] });
+  private emit(event: ConductorEvent): void {
+    for (const cb of this.eventSubs) cb(event);
   }
 
   private refreshThinking(): void {
@@ -207,9 +214,10 @@ class Conductor {
 
   /**
    * Run one bot turn on its LangGraph turn-graph. The graph gates, consumes the channel (mid-step), and
-   * checkpoints; the dispatcher interprets its streamed node deltas — emitting each assistant message to
-   * the CHANNEL (so teammates see it mid-turn) + history and surfacing the reactions the graph emits (the
-   * gate's "seen, working" 👀 and its ack reaction). After the turn it reads the authoritative cursor back from the checkpoint
+   * checkpoints; the dispatcher interprets its streamed node deltas — writing each assistant message back
+   * to the CHANNEL (so teammates see it mid-turn) and emitting domain `ConductorEvent`s (message, tool,
+   * the reactions the graph decided — the "seen, working" 👀 and its ack — plus gate/recall observability)
+   * for any presentation surface. After the turn it reads the authoritative cursor back from the checkpoint
    * and runs the reflect pass over what this bot consumed (facts to remember + open tasks to track).
    *
    * `seed` forces a gate-bypassed respond on a synthetic message (job relays); `surface` overrides the
@@ -243,29 +251,34 @@ class Conductor {
             cacheWrite: um.input_token_details?.cache_creation || undefined,
           }
         : undefined;
-      const stamp = clock();
-      // Attach usage to the assistant text row — "the end of the message" the user sees. Tool-only steps
-      // (no text) don't carry a usage line; their cost still rolls into the footer ctx below.
-      const rows = toRenderItems([msg], bot.name).map((r) => ({
-        ...r,
-        id: `${bot.id}:${this.emitSeq++}`,
-        ...(r.kind === 'assistant' ? { ts: stamp, usage } : {}),
-      }));
-      for (const r of rows) {
-        if (r.kind === 'assistant' && r.text) {
-          channel.append({
-            id: r.id,
-            author: bot.name,
-            authorId: bot.id,
-            authorBotId: bot.id,
-            text: r.text,
-          });
-        }
+      // Footer ctx tracks EVERY billed step — including tool-only ones, which carry usage but no text and
+      // so emit no `message` event. Update it independently of whether there's text to show.
+      if (usage) this.patch({ ctx: { input: usage.input, output: usage.output } });
+
+      const text = messageText(msg.content).trim();
+      if (text) {
+        // The reply goes back onto the shared channel so teammates + job relays see it, and the `message`
+        // event carries the SAME id so the channel message and its render row line up.
+        const id = `${bot.id}:${this.emitSeq++}`;
+        channel.append({ id, author: bot.name, authorId: bot.id, authorBotId: bot.id, text });
+        this.emit({
+          id,
+          kind: 'message',
+          botId: bot.id,
+          botName: bot.name,
+          text,
+          usage,
+          ts: clock(),
+        });
       }
-      if (rows.length || usage) {
-        this.patch({
-          ...(usage ? { ctx: { input: usage.input, output: usage.output } } : {}),
-          ...(rows.length ? { history: [...this.state.history, ...rows] } : {}),
+      const calls = (msg as { tool_calls?: ToolCall[] }).tool_calls ?? [];
+      for (const c of calls) {
+        this.emit({
+          id: `${bot.id}:${this.emitSeq++}`,
+          kind: 'tool',
+          botId: bot.id,
+          botName: bot.name,
+          toolName: c.name,
         });
       }
     };
@@ -283,19 +296,18 @@ class Conductor {
       });
       for await (const update of stream as AsyncIterable<Record<string, BotStateDelta>>) {
         for (const delta of Object.values(update)) {
-          // Debug only: surface the soft gate's verdict + rationale inline, BEFORE the reply/reaction it
-          // explains. This is the only UI trace of an `ignore`, which otherwise leaves no mark.
+          // Observability: the soft gate's verdict + rationale, emitted BEFORE the reply/reaction it
+          // explains. The only trace of an `ignore`, which otherwise leaves no mark. Raw usage rides the
+          // event; the consumer formats cost (the TUI shows $). A logger/Slack adapter may drop it.
           if (delta.reasoning) {
-            const u = delta.gateUsage;
-            const cost = u
-              ? `  ·  ${u.input} in · ${u.output} out · $${gateCostUsd(u.input, u.output).toFixed(6)}`
-              : '';
-            this.pushHistory({
+            this.emit({
               id: `g-${this.emitSeq++}`,
               kind: 'gate',
-              by: bot.name,
+              botId: bot.id,
+              botName: bot.name,
               action: delta.decision ?? 'ignore',
-              reasoning: `${delta.reasoning}${cost}`,
+              reasoning: delta.reasoning,
+              usage: delta.gateUsage,
             });
           }
           if (delta.decision === 'respond' && !responded) {
@@ -306,12 +318,13 @@ class Conductor {
           // moment it commits to responding) and its ack reaction. The conductor only renders; the brain decides.
           if (delta.reaction) this.react(bot, delta.reaction);
           if (delta.decision === 'acknowledge') this.react(bot, delta.ackEmoji ?? '👍');
-          // The fetch node's pre-LLM recall — surface what the bot walked in knowing (debug, dim).
+          // Observability: the fetch node's pre-LLM recall — what the bot walked in knowing this turn.
           if (delta.recalled) {
-            this.pushHistory({
+            this.emit({
               id: `m-${this.emitSeq++}`,
               kind: 'recall',
-              by: bot.name,
+              botId: bot.id,
+              botName: bot.name,
               text: delta.recalled,
             });
           }
@@ -321,7 +334,7 @@ class Conductor {
         }
       }
     } catch (err) {
-      this.pushError(err);
+      this.emitError(err);
       failed = true;
     }
 
@@ -349,7 +362,7 @@ class Conductor {
         const dropTo = channel.length;
         this.failures.delete(bot.id);
         this.deliveredUpTo.set(bot.id, dropTo);
-        this.pushError(
+        this.emitError(
           `${bot.name}: gave up after ${attempts} failed attempts; skipped ${dropTo - cursorBefore} unread message(s) to break the loop (see the error above).`,
         );
         return;
@@ -377,9 +390,15 @@ class Conductor {
     await this.runBotGraph(bot, { seed: prompt, surface: job.notifyThread });
   }
 
-  /** Surface a reaction from a bot (the gate's ack, or the "seen, working" 👀). Slack seam: reactions.add. */
+  /** Emit a reaction from a bot (the gate's ack, or the "seen, working" 👀). Slack seam: reactions.add. */
   private react(bot: Employee, emoji: string): void {
-    this.pushHistory({ id: `r-${this.emitSeq++}`, kind: 'reaction', emoji, by: bot.name });
+    this.emit({
+      id: `r-${this.emitSeq++}`,
+      kind: 'reaction',
+      botId: bot.id,
+      botName: bot.name,
+      emoji,
+    });
   }
 
   // ── Memory + identity (unchanged) ────────────────────────────────────────────────────────────────
@@ -395,9 +414,9 @@ class Conductor {
     };
   }
 
-  private pushError(err: unknown): void {
+  private emitError(err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
-    this.pushHistory({ id: `e-${this.emitSeq++}`, kind: 'error', text: message });
+    this.emit({ id: `e-${this.emitSeq++}`, kind: 'error', message });
   }
 
   // ── Quiescence ───────────────────────────────────────────────────────────────────────────────────
