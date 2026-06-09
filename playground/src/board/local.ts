@@ -1,6 +1,14 @@
 import type { Database } from 'better-sqlite3';
-import { getDb } from '../memory/db.js';
-import type { Board, NewTicket, Ticket, TicketFilter, TicketPlan, TicketStatus } from './types.js';
+import { addColumnIfMissing, getDb } from '../memory/db.js';
+import type {
+  Board,
+  NewTicket,
+  Ticket,
+  TicketComment,
+  TicketFilter,
+  TicketPlan,
+  TicketStatus,
+} from './types.js';
 
 /**
  * The internal SQLite board — the default `Board` until a real Jira adapter lands. Reuses the shared
@@ -24,6 +32,8 @@ interface TicketRow {
   title: string;
   description: string;
   status: TicketStatus;
+  assignee: string;
+  position: number;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -37,6 +47,14 @@ interface PlanRow {
   created_at: string;
   updated_at: string;
 }
+interface CommentRow {
+  id: number;
+  ticket_num: number;
+  project: string;
+  author: string;
+  body: string;
+  created_at: string;
+}
 
 const toTicket = (r: TicketRow): Ticket => ({
   id: numToId(r.num),
@@ -44,9 +62,17 @@ const toTicket = (r: TicketRow): Ticket => ({
   title: r.title,
   description: r.description,
   status: r.status,
+  assignee: r.assignee || undefined, // '' (the column default) means unassigned
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+});
+const toComment = (r: CommentRow): TicketComment => ({
+  id: r.id,
+  ticketId: numToId(r.ticket_num),
+  author: r.author,
+  body: r.body,
+  createdAt: r.created_at,
 });
 const toPlan = (r: PlanRow): TicketPlan => ({
   ticketId: numToId(r.ticket_num),
@@ -69,6 +95,8 @@ function db(): Database {
         title       TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
         status      TEXT NOT NULL DEFAULT 'backlog',-- backlog | approved | in_progress | done | blocked | dropped
+        assignee    TEXT NOT NULL DEFAULT '',       -- explicit owner (bot id) set by the scrum master; '' = unassigned
+        position    INTEGER,                        -- board sort order; lower = higher on the board (NULL falls back to num)
         created_by  TEXT NOT NULL,                  -- who raised it (bot/human id)
         created_at  TEXT NOT NULL,
         updated_at  TEXT NOT NULL
@@ -87,7 +115,23 @@ function db(): Database {
         updated_at  TEXT NOT NULL,
         PRIMARY KEY (ticket_num, owner_bot)
       );
+
+      -- Pinned notes on a ticket — append-only context that isn't part of the plan/description.
+      CREATE TABLE IF NOT EXISTS ticket_comments (
+        id          INTEGER PRIMARY KEY,
+        ticket_num  INTEGER NOT NULL,
+        project     TEXT NOT NULL,
+        author      TEXT NOT NULL,                  -- who pinned it (bot/human id)
+        body        TEXT NOT NULL,
+        created_at  TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS ticket_comments_lookup ON ticket_comments(project, ticket_num);
     `);
+    // Forward-migrate DBs created before assignee/position existed (matches memory/db.ts's additive pattern);
+    // then backfill position so legacy rows sort by their original insertion order.
+    addColumnIfMissing(d, 'tickets', 'assignee', "TEXT NOT NULL DEFAULT ''");
+    addColumnIfMissing(d, 'tickets', 'position', 'INTEGER');
+    d.exec(`UPDATE tickets SET position = num WHERE position IS NULL`);
     ready = true;
   }
   return d;
@@ -107,12 +151,13 @@ export const localBoard: Board = {
 
   createTicket(t: NewTicket): Ticket {
     const ts = now();
+    // New tickets land at the bottom of the board (highest position within the project).
     const info = db()
       .prepare(
-        `INSERT INTO tickets (project, title, description, status, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, 'backlog', ?, ?, ?)`,
+        `INSERT INTO tickets (project, title, description, status, position, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, 'backlog', (SELECT COALESCE(MAX(position), 0) + 1 FROM tickets WHERE project = ?), ?, ?, ?)`,
       )
-      .run(t.project, t.title, t.description ?? '', t.createdBy, ts, ts);
+      .run(t.project, t.title, t.description ?? '', t.project, t.createdBy, ts, ts);
     const row = db()
       .prepare(`SELECT * FROM tickets WHERE num = ?`)
       .get(info.lastInsertRowid) as TicketRow;
@@ -132,11 +177,14 @@ export const localBoard: Board = {
       args.push(filter.status);
     }
     if (filter.ownerBot) {
-      where.push('num IN (SELECT ticket_num FROM ticket_plans WHERE owner_bot = ?)');
-      args.push(filter.ownerBot);
+      // Visible to a bot = it has a plan on the ticket OR it's the explicit assignee.
+      where.push('(num IN (SELECT ticket_num FROM ticket_plans WHERE owner_bot = ?) OR assignee = ?)');
+      args.push(filter.ownerBot, filter.ownerBot);
     }
     const rows = db()
-      .prepare(`SELECT * FROM tickets WHERE ${where.join(' AND ')} ORDER BY num ASC`)
+      .prepare(
+        `SELECT * FROM tickets WHERE ${where.join(' AND ')} ORDER BY COALESCE(position, num) ASC, num ASC`,
+      )
       .all(...args) as TicketRow[];
     return rows.map(toTicket);
   },
@@ -148,6 +196,83 @@ export const localBoard: Board = {
       .prepare(`UPDATE tickets SET status = ?, updated_at = ? WHERE num = ? AND project = ?`)
       .run(status, now(), num, project);
     return info.changes > 0;
+  },
+
+  updateMeta(
+    project: string,
+    id: string,
+    patch: { title?: string; description?: string },
+  ): Ticket | undefined {
+    const row = ticketRow(project, id);
+    if (!row) return undefined;
+    const title = patch.title ?? row.title;
+    const description = patch.description ?? row.description;
+    db()
+      .prepare(
+        `UPDATE tickets SET title = ?, description = ?, updated_at = ? WHERE num = ? AND project = ?`,
+      )
+      .run(title, description, now(), row.num, project);
+    return localBoard.getTicket(project, id);
+  },
+
+  assign(project: string, id: string, assignee: string): Ticket | undefined {
+    const num = idToNum(id);
+    if (!Number.isFinite(num)) return undefined;
+    const info = db()
+      .prepare(`UPDATE tickets SET assignee = ?, updated_at = ? WHERE num = ? AND project = ?`)
+      .run(assignee, now(), num, project);
+    return info.changes > 0 ? localBoard.getTicket(project, id) : undefined;
+  },
+
+  moveTicket(project: string, id: string, beforeId?: string): boolean {
+    const target = ticketRow(project, id);
+    if (!target) return false;
+    // Read the current order, lift the target out, reinsert it before `beforeId` (or at the end), then
+    // rewrite a dense 1..n position sequence. O(n) but trivially correct for a board of this size, and it
+    // never touches updated_at on the unmoved tickets (a reorder isn't an edit to them).
+    const ordered = (
+      db()
+        .prepare(
+          `SELECT num FROM tickets WHERE project = ? ORDER BY COALESCE(position, num) ASC, num ASC`,
+        )
+        .all(project) as { num: number }[]
+    ).map((r) => r.num);
+    const without = ordered.filter((n) => n !== target.num);
+    const beforeNum = beforeId ? idToNum(beforeId) : Number.NaN;
+    const idx = Number.isFinite(beforeNum) ? without.indexOf(beforeNum) : -1;
+    const insertAt = idx >= 0 ? idx : without.length; // unknown/omitted beforeId ⇒ move to the end
+    without.splice(insertAt, 0, target.num);
+    const upd = db().prepare(`UPDATE tickets SET position = ? WHERE num = ? AND project = ?`);
+    db().transaction(() => {
+      without.forEach((num, i) => upd.run(i + 1, num, project));
+    })();
+    return true;
+  },
+
+  addComment(project: string, id: string, author: string, body: string): TicketComment | undefined {
+    const ticket = ticketRow(project, id);
+    if (!ticket) return undefined;
+    const info = db()
+      .prepare(
+        `INSERT INTO ticket_comments (ticket_num, project, author, body, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(ticket.num, project, author, body, now());
+    const row = db()
+      .prepare(`SELECT * FROM ticket_comments WHERE id = ?`)
+      .get(info.lastInsertRowid) as CommentRow;
+    return toComment(row);
+  },
+
+  listComments(project: string, id: string): TicketComment[] {
+    const ticket = ticketRow(project, id);
+    if (!ticket) return [];
+    const rows = db()
+      .prepare(
+        `SELECT * FROM ticket_comments WHERE ticket_num = ? AND project = ? ORDER BY created_at ASC, id ASC`,
+      )
+      .all(ticket.num, project) as CommentRow[];
+    return rows.map(toComment);
   },
 
   attachPlan(

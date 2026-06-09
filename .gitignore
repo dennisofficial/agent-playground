@@ -4,7 +4,5 @@ dist
 .DS_Store
 .idea/
 
-graphify-out/
-
 # Per-worker git worktrees (one full-repo checkout per execute job) — see playground/src/workspace.ts
 .worktrees/

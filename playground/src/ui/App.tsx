@@ -1,41 +1,79 @@
 import { Spinner, TextInput } from '@inkjs/ui';
-import { Box, Static, Text, useApp, useInput } from 'ink';
-import { useEffect, useReducer, useRef } from 'react';
+import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
+import { memo, useEffect, useReducer, useRef } from 'react';
 import { conductor } from '../conductor.js';
+import { ROSTER } from '../employees/index.js';
+import { logBus } from '../logbus.js';
 import { type CommandContext, runCommand } from './commands/index.js';
 import { MessageView } from './components.js';
-import { type RenderItem, renderEvent } from './messages.js';
+import { renderEvent } from './messages.js';
+import { initStore, storeReducer, type Viewport } from './store.js';
 
-/** A short HH:MM:SS stamp for the user's own echoed messages (the conductor stamps bot events). */
-const clock = (): string =>
-  new Date().toLocaleTimeString('en-US', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+/** The startup header, rendered as the first transcript item (not a stray stdout write before Ink mounts). */
+const BANNER =
+  `#dev — ${ROSTER.map((b) => `${b.name} (${b.role})`).join(' · ')}\n` +
+  '/as <name> to speak as someone   ·   @Name to address a bot   ·   /exit';
 
-const appendHistory = (state: RenderItem[], item: RenderItem): RenderItem[] => [...state, item];
+// The live tail re-renders on every status tick (spinner/ctx). Items are immutable — a new object only on
+// add/patch — so memoizing by the `item` prop skips re-rendering (and re-parsing markdown for) unchanged rows.
+const Row = memo(MessageView);
 
 export function App() {
   const { exit } = useApp();
-  // The conductor's domain events accumulate into our own render history (it holds no UI state now).
-  const [history, pushHistory] = useReducer(appendHistory, []);
+  const { stdout } = useStdout();
+  // The transcript is a KEYED store: events/log-records become items we `add` or `react`-patch by id, and a
+  // settled prefix flushes to scrollback (see store.ts). It holds all UI state now — the conductor holds none.
+  const [store, dispatch] = useReducer(
+    storeReducer,
+    initStore([{ id: 'banner', kind: 'note', text: BANNER }]),
+  );
   // Status (busy/thinking/ctx/jobs-running/speaker) is a pull snapshot — re-render when it changes.
   const [, force] = useReducer((x: number) => x + 1, 0);
+
+  // The live terminal size, used to bound the dynamic (un-settled) region to ≈ one screen. Read live each
+  // dispatch (stdout is a stable stream), so a resize is picked up on the next item.
+  const viewport = (): Viewport => ({
+    rows: Math.max(6, (stdout.rows ?? 40) - 8), // reserve ~8 lines for spinner/awaiting/input/footer
+    cols: stdout.columns ?? 80,
+  });
+
   useEffect(() => {
     const offStatus = conductor.subscribe(force);
-    const offEvents = conductor.onEvent((e) => pushHistory(renderEvent(e)));
+    const offEvents = conductor.onEvent((e) => {
+      if (e.kind === 'reaction') {
+        // Fold onto the target message node; the store falls back to a standalone row if it's already settled.
+        dispatch({
+          t: 'react',
+          id: e.id,
+          targetId: e.targetId,
+          by: e.botName,
+          emoji: e.emoji,
+          vp: viewport(),
+        });
+      } else {
+        dispatch({ t: 'add', item: renderEvent(e), vp: viewport() });
+      }
+    });
+    // Observability that used to tear the render via stderr now arrives here as keyed debug nodes.
+    const offLog = logBus.subscribe((r) =>
+      dispatch({
+        t: 'add',
+        item: { id: r.id, kind: r.kind, by: r.by, text: r.text },
+        vp: viewport(),
+      }),
+    );
     return () => {
       offStatus();
       offEvents();
+      offLog();
     };
-  }, []);
-  // The input stays mounted now (so you can type while bots think), so it no longer clears itself on
-  // submit — bump this key to remount it empty after each send.
+    // stdout is stable; viewport reads it live, so the subscriptions never need to re-bind.
+  }, [stdout]);
+
+  // The input stays mounted (so you can type while bots think); bump this key to remount it empty after send.
   const [inputKey, clearInput] = useReducer((x: number) => x + 1, 0);
-  // Ids for the TUI's own local rows (the echoed user input, /tasks output) — namespaced so they can't
-  // collide with conductor-emitted event ids.
+  // Ids for the TUI's own local rows (slash-command output) — namespaced so they can't collide with
+  // conductor/log-bus event ids.
   const localSeq = useRef(0);
   const localId = () => `local-${localSeq.current++}`;
 
@@ -53,20 +91,18 @@ export function App() {
     const text = value.trim();
     if (!text) return;
     // Slash-commands live in ./commands as a registry of plugins; the first one that recognizes `text`
-    // handles it. This context is the only UI seam they get — note() prints a local transcript row, exit()
-    // quits. Everything else (conductor/board/tasks) they import directly. (Named cmdCtx to avoid shadowing
-    // the `ctx` context-usage snapshot above.)
+    // handles it. The context is the only UI seam they get — note() adds a local transcript item, exit() quits.
     const cmdCtx: CommandContext = {
-      note: (t) => pushHistory({ id: localId(), kind: 'note', text: t }),
+      note: (t) =>
+        dispatch({ t: 'add', item: { id: localId(), kind: 'note', text: t }, vp: viewport() }),
       exit,
     };
     if (runCommand(text, cmdCtx)) {
       clearInput();
       return;
     }
-    // Not a command → echo the user's own message locally (the conductor only puts it on the channel),
-    // then submit it to the channel.
-    pushHistory({ id: localId(), kind: 'user', text, speaker: who, ts: clock() });
+    // Not a command → put it on the channel. The conductor emits it back through the event stream (keyed by
+    // the channel id), so it renders via the same path as everything else — no local echo.
     conductor.submitUser(text);
     clearInput();
   }
@@ -76,12 +112,19 @@ export function App() {
       ? `ctx ${ctx.input.toLocaleString()} in · ${(ctx.output ?? 0).toLocaleString()} out`
       : '';
 
+  const settled = store.items.slice(0, store.settledCount);
+  const live = store.items.slice(store.settledCount);
+
   return (
     <Box flexDirection="column">
-      {/* Completed messages stream into history at the MESSAGE level (streamMode 'updates'): each
-          chunk of a bot's turn — text or tool calls — appears whole as soon as that step finishes,
-          not token-by-token. The spinner below shows the bot is still working between chunks. */}
-      <Static items={history}>{(item) => <MessageView key={item.id} item={item} />}</Static>
+      {/* Settled items flush to native scrollback exactly once (Ink <Static> draws each new prefix row a
+          single time). The live tail below re-renders every update, so a reaction can fold into its message. */}
+      <Static items={settled}>{(item) => <Row key={item.id} item={item} />}</Static>
+      <Box flexDirection="column">
+        {live.map((item) => (
+          <Row key={item.id} item={item} />
+        ))}
+      </Box>
 
       {/* Running-bots indicator — separate from the input, which stays live so you can type while they
           think and fire messages as you go (they fold them in at their next step). */}

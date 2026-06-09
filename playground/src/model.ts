@@ -16,6 +16,7 @@ export function buildModel() {
   const maxTokens = Math.max(1, num(process.env.CHAT_MAX_TOKENS, 2048));
   return new ChatAnthropic({
     model: 'claude-sonnet-4-6', // ANTHROPIC_API_KEY auto-read from injected process.env
+    betas: ['extended-cache-ttl-2025-04-11'], // honor `ttl: '1h'` cache_control; without it 1h silently falls back to 5m
     thinking: { type: 'adaptive', display: 'summarized' },
     maxTokens,
     temperature,

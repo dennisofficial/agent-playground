@@ -56,6 +56,10 @@ export interface BotStateDelta {
   ackEmoji?: string;
   /** A reaction emoji to surface immediately — the gate's "seen, working" 👀 on a real respond. */
   reaction?: string;
+  /** The channel-message id this turn's reaction (👀 or ack) is ON — the message the gate judged. Chosen
+   * HERE in the graph (not reconstructed conductor-side, which concurrent channel growth could make stale)
+   * so the dispatcher can tell the UI which message node to fold the reaction into. */
+  reactionTargetId?: string;
   /** The pre-LLM fetch's `recalled` block — the dispatcher renders a `recall` row from it. */
   recalled?: string;
   /** Debug only: the soft gate's one-line rationale, surfaced inline in the TUI. Absent for hard rules. */
@@ -87,6 +91,12 @@ const BotState = Annotation.Root({
   /** The "seen, working" reaction the gate emits the moment it commits to a (non-forced) respond, so the
    * dispatcher can surface it before fetch/LLM/tools run. Distinct from `ackEmoji` (the acknowledge path). */
   reaction: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
+    default: () => undefined,
+  }),
+  /** The channel-message id this turn's reaction is on (the gated message), so the dispatcher can fold it
+   * into that message node. Set alongside `reaction`/`ackEmoji` in the gate node. */
+  reactionTargetId: Annotation<string | undefined>({
     reducer: (_: unknown, b: string | undefined) => b,
     default: () => undefined,
   }),
@@ -198,6 +208,8 @@ function buildBotGraph(bot: Employee) {
       // Fire the "seen, working" 👀 the moment we commit to responding — surfaced before fetch/LLM/tools
       // run. Only on a real gated respond; the forced (job-relay) path returns above and never reaches here.
       reaction: d.action === 'respond' ? '👀' : undefined,
+      // The message this reaction (👀 or ack) is on — folded into that node by the UI.
+      reactionTargetId: latest.id,
       reasoning: d.reasoning,
       gateUsage: d.usage,
       pending: batch,
@@ -237,7 +249,7 @@ function buildBotGraph(bot: Employee) {
     // after it; render order is tools → system → messages):
     //   1. persona system prompt — frozen; the `cache_control` breakpoint here caches the bound tools +
     //      persona (everything up to and including this block) on every call. Sonnet 4.6's minimum cacheable
-    //      prefix is 2048 tokens; below that it silently won't cache (watch cache_read in usage_metadata —
+    //      prefix is 1024 tokens; below that it silently won't cache (watch cache_read in usage_metadata —
     //      the per-message token line in the TUI surfaces it).
     //   2. durable history — append-only, so the prefix grows but never rewrites. A SECOND breakpoint rides
     //      on the last history message (`withCacheBreakpoint` + `cachedHistory` below), extending the cache

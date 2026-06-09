@@ -160,12 +160,20 @@ class Conductor {
   /** When an execute job for a ticket finishes, advance the ticket — but a ticket only goes `done` once
    * EVERY approved-plan discipline has an integrated (done) execute job, not merely when no sibling is
    * currently active. Otherwise a discipline that hasn't started its build yet gets locked out (a `done`
-   * ticket is no longer executable). Never overrides a human/scrum decision (blocked/dropped). */
+   * ticket is no longer executable). Never overrides a terminal human/scrum decision (blocked/dropped/done) —
+   * the scrum master can block, drop, or mark done via update_ticket_status, and a late straggler job must
+   * not silently reopen that. */
   private syncTicketAfterExecute(job: Job): void {
     if (!job.ticketId) return;
     const board = getBoard();
     const ticket = board.getTicket(job.project, job.ticketId);
-    if (!ticket || ticket.status === 'blocked' || ticket.status === 'dropped') return;
+    if (
+      !ticket ||
+      ticket.status === 'blocked' ||
+      ticket.status === 'dropped' ||
+      ticket.status === 'done'
+    )
+      return;
 
     const ticketJobs = listJobs().filter(
       (j) => j.ticketId === job.ticketId && j.mode === 'execute',
@@ -210,11 +218,18 @@ class Conductor {
     const who = titleCase(this.state.speaker);
     this.members.add(this.state.speaker);
     this.botBurst = 0; // a human spoke → reset the bot-cascade budget
-    channel.append({
-      id: `u-${this.emitSeq++}`,
-      author: who,
+    const id = `u-${this.emitSeq++}`;
+    channel.append({ id, author: who, authorId: this.state.speaker, text });
+    // Surface the human's own message through the SAME event stream, keyed by the channel id — so the UI
+    // renders it from one uniform path (no separate local echo) and a bot's reaction can fold onto it.
+    this.emit({
+      id,
+      kind: 'message',
       authorId: this.state.speaker,
+      authorName: who,
+      fromHuman: true,
       text,
+      ts: clock(),
     });
     // channel.subscribe → schedule() already fired; nothing to await.
   }
@@ -452,8 +467,9 @@ class Conductor {
         this.emit({
           id,
           kind: 'message',
-          botId: bot.id,
-          botName: bot.name,
+          authorId: bot.id,
+          authorName: bot.name,
+          fromHuman: false,
           text,
           usage,
           ts: clock(),
@@ -504,8 +520,9 @@ class Conductor {
           }
           // Surface whatever reactions the graph decided to emit — the gate's "seen, working" 👀 (fired the
           // moment it commits to responding) and its ack reaction. The conductor only renders; the brain decides.
-          if (delta.reaction) this.react(bot, delta.reaction);
-          if (delta.decision === 'acknowledge') this.react(bot, delta.ackEmoji ?? '👍');
+          if (delta.reaction) this.react(bot, delta.reaction, delta.reactionTargetId);
+          if (delta.decision === 'acknowledge')
+            this.react(bot, delta.ackEmoji ?? '👍', delta.reactionTargetId);
           // Observability: the fetch node's pre-LLM recall — what the bot walked in knowing this turn.
           if (delta.recalled) {
             this.emit({
@@ -600,14 +617,17 @@ class Conductor {
     await this.runBotGraph(bot, { seed: prompt, surface: job.notifyThread });
   }
 
-  /** Emit a reaction from a bot (the gate's ack, or the "seen, working" 👀). Slack seam: reactions.add. */
-  private react(bot: Employee, emoji: string): void {
+  /** Emit a reaction from a bot (the gate's ack, or the "seen, working" 👀) ON a target message, so the UI
+   * folds it into that message node. `targetId` is the gated message id from the graph delta; an empty
+   * string (no target) just renders as a standalone row. Slack seam: reactions.add. */
+  private react(bot: Employee, emoji: string, targetId?: string): void {
     this.emit({
       id: `r-${this.emitSeq++}`,
       kind: 'reaction',
       botId: bot.id,
       botName: bot.name,
       emoji,
+      targetId: targetId ?? '',
     });
   }
 
@@ -628,7 +648,15 @@ class Conductor {
       `Oh — I hit my per-turn step cap, so I've gotta pause this loop here. ` +
       `Ping me and I'll pick it right back up.`;
     channel.append({ id, author: bot.name, authorId: bot.id, authorBotId: bot.id, text });
-    this.emit({ id, kind: 'message', botId: bot.id, botName: bot.name, text, ts: clock() });
+    this.emit({
+      id,
+      kind: 'message',
+      authorId: bot.id,
+      authorName: bot.name,
+      fromHuman: false,
+      text,
+      ts: clock(),
+    });
     if (!opts.seed) this.deliveredUpTo.set(bot.id, channel.length);
     this.failures.delete(bot.id); // a step cap isn't a failure — don't count it toward the retry streak
   }

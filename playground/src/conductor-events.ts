@@ -14,15 +14,28 @@ export type ConductorEvent =
   | {
       id: string;
       kind: 'message';
-      botId: string;
-      botName: string;
+      /** Who authored it — a bot id, or the human speaker's id. */
+      authorId: string;
+      authorName: string;
+      /** True for the human's own messages (rendered distinctly); false for a bot's. Lets a reaction
+       * fold onto a human message too, and keeps the event shape honest for non-TUI consumers. */
+      fromHuman: boolean;
       text: string;
-      /** Per-message token usage from the model call that produced it (rendered dim at the end). */
+      /** Per-message token usage from the model call that produced it — bot messages only. */
       usage?: MessageUsage;
       ts: string;
     }
   | { id: string; kind: 'tool'; botId: string; botName: string; toolName: string }
-  | { id: string; kind: 'reaction'; botId: string; botName: string; emoji: string }
+  | {
+      id: string;
+      kind: 'reaction';
+      botId: string;
+      botName: string;
+      emoji: string;
+      /** The channel-message id this reaction is on, so the UI folds it INTO that message node
+       * instead of appending a standalone row. */
+      targetId: string;
+    }
   // Observability: the response gate's verdict + rationale (why a bot spoke, reacted, or stayed
   // silent). `usage` is the raw gate-call cost — the consumer formats it (e.g. the TUI shows $). Only
   // soft-gate (LLM) calls carry `reasoning`/`usage`; hard rules omit them.
@@ -57,7 +70,7 @@ export interface ContextUsage {
 /**
  * Per-message token usage, broken out so a renderer can show cache hits. `input` is the TOTAL input
  * tokens (langchain folds cache reads + writes into it); `cacheRead`/`cacheWrite` are the cached slices
- * of that total — `cacheRead` served at ~0.1× price, `cacheWrite` written this call at ~1.25×.
+ * of that total — `cacheRead` served at ~0.1× price, `cacheWrite` written this call at ~2× (1-hour TTL).
  */
 export interface MessageUsage {
   input: number;

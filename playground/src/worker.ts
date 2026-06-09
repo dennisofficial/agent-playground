@@ -1,6 +1,7 @@
 import { botById, resolveWorkerModel, ROSTER } from './employees/index.js';
 import { ROOT, withActiveRoot } from './engines/guard.js';
 import { appendJobProgress, getJob, getJobProgress, updateJob } from './jobs.js';
+import { logBus } from './logbus.js';
 import { logWork } from './memory/worklog.js';
 import { workerPromptFor } from './persona.js';
 import { localRuntime } from './runtime.js';
@@ -100,9 +101,11 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
     for (;;) {
       // Jail the in-process langgraph tools to this worktree for the run (claude/codex also get `cwd`
       // for their own subprocess sandbox). Outside this scope tools fall back to ROOT.
-      process.stderr.write(
-        `[worker:${jobId}] ${bot.name} ${job.mode} on ${model ?? `${job.engine} default`}${effort ? ` (effort:${effort})` : ''}${workspace ? ` @ ${workspace.branch}` : ''}${resolveTurns ? ' (resolving conflict)' : ''}\n`,
-      );
+      logBus.publish({
+        kind: 'worker',
+        by: bot.name,
+        text: `${jobId} — ${job.mode} on ${model ?? `${job.engine} default`}${effort ? ` (effort:${effort})` : ''}${workspace ? ` @ ${workspace.branch}` : ''}${resolveTurns ? ' (resolving conflict)' : ''}`,
+      });
       const { result, sessionId } = await withActiveRoot(cwd, () =>
         localRuntime.run(job.engine, {
           task: currentMessage,
@@ -126,6 +129,11 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
       // Ticket execute job that reports done: integrate it onto the shared branch before trusting it.
       if (status === 'done' && workspace?.ticketId) {
         const pub = await publishToTicketBranch(workspace);
+        // A cancel (e.g. the scrum master dropped/blocked this ticket) may have landed during the publish
+        // await — that's the one real async window after the post-run check above. Bail before trusting the
+        // result, so we don't overwrite the 'cancelled' status with awaiting/done, relay a false "finished",
+        // or log phantom work for a ticket that's no longer active.
+        if (ac.signal.aborted) return;
         if (!pub.integrated) {
           if (resolveTurns < MAX_RESOLVE_TURNS) {
             resolveTurns++;

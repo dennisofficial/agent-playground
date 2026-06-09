@@ -8,8 +8,21 @@ import { chatCostUsd, gateCostUsd } from '../model.js';
  * and CLI slash-command output). A different surface (Slack, a logger) would consume the same events
  * and render its own way.
  */
+/** A reaction folded onto its message node (e.g. a bot's gate ack). */
+export interface Reaction {
+  by: string;
+  emoji: string;
+}
+
 export type RenderItem =
-  | { id: string; kind: 'user'; text: string; speaker?: string; ts?: string }
+  | {
+      id: string;
+      kind: 'user';
+      text: string;
+      speaker?: string;
+      ts?: string;
+      reactions?: Reaction[];
+    }
   | {
       id: string;
       kind: 'assistant';
@@ -18,9 +31,15 @@ export type RenderItem =
       ts?: string;
       /** Per-message token usage from the model call that produced it; rendered dim at the end. */
       usage?: MessageUsage;
+      /** Reactions folded onto this message (bots acking/👀-ing it) — patched in by id, not appended. */
+      reactions?: Reaction[];
     }
   | { id: string; kind: 'tool'; toolName: string; speaker?: string }
+  // Fallback ONLY: a reaction whose target message has already scrolled into the Static prefix (so it can
+  // no longer be folded). Live targets fold via the store's `react` action instead.
   | { id: string; kind: 'reaction'; emoji: string; by: string }
+  // Observability nodes, routed through the log bus (replacing raw stderr writes) — dim debug rows.
+  | { id: string; kind: 'worker' | 'memory' | 'reminders' | 'workspace'; by?: string; text: string }
   // Debug only: the response gate's verdict + rationale for a bot, shown inline so you can see why a
   // bot spoke, reacted, or (importantly) stayed silent. Only soft-gate (LLM) calls carry a reason.
   | {
@@ -52,14 +71,18 @@ export type RenderItem =
 export function renderEvent(e: ConductorEvent): RenderItem {
   switch (e.kind) {
     case 'message':
-      return {
-        id: e.id,
-        kind: 'assistant',
-        text: e.text,
-        speaker: e.botName,
-        ts: e.ts,
-        usage: e.usage,
-      };
+      // A human's own message renders as the cyan `user` row; a bot's as the green `assistant` row (with
+      // its token usage). Same `id` as the channel message, so a reaction can fold onto either.
+      return e.fromHuman
+        ? { id: e.id, kind: 'user', text: e.text, speaker: e.authorName, ts: e.ts }
+        : {
+            id: e.id,
+            kind: 'assistant',
+            text: e.text,
+            speaker: e.authorName,
+            ts: e.ts,
+            usage: e.usage,
+          };
     case 'tool':
       return { id: e.id, kind: 'tool', toolName: e.toolName, speaker: e.botName };
     case 'reaction':

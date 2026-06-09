@@ -9,11 +9,19 @@ export const ticketsCommand: Command = {
   summary: '/tickets — show the board',
   run(text, ctx) {
     if (text !== '/tickets') return false;
-    const tickets = getBoard().listTickets({ project: DEFAULT_PROJECT });
+    const board = getBoard();
+    const tickets = board.listTickets({ project: DEFAULT_PROJECT });
     ctx.note(
       tickets.length
         ? `Board (${tickets.length}):\n` +
-            tickets.map((t) => `  ${t.id}  (${t.status})  ${t.title}`).join('\n')
+            tickets
+              .map((t) => {
+                const assignee = t.assignee ? `  → @${t.assignee}` : '';
+                const notes = board.listComments(DEFAULT_PROJECT, t.id).length;
+                const noteTag = notes ? `  📌${notes}` : '';
+                return `  ${t.id}  (${t.status})  ${t.title}${assignee}${noteTag}`;
+              })
+              .join('\n')
         : 'No tickets on the board yet.',
     );
     return true;

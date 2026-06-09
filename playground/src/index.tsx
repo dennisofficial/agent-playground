@@ -1,5 +1,4 @@
 import { render } from 'ink';
-import { ROSTER } from './employees/index.js';
 import { App } from './ui/App.js';
 import { adoptWorkspaces } from './workspace.js';
 
@@ -14,8 +13,6 @@ if (process.stdout.isTTY) {
 // until the user has chatted, planned, and approved.
 void adoptWorkspaces();
 
-const team = ROSTER.map((b) => `${b.name} (${b.role})`).join(' · ');
-console.log(
-  `#dev — ${team}\n/as <name> to speak as someone   ·   @Name to address a bot   ·   /exit\n`,
-);
+// The startup banner is now the first transcript item (App seeds it), so nothing writes to stdout before
+// Ink mounts — everything goes through the interface.
 render(<App />);

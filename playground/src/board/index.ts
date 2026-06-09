@@ -7,7 +7,15 @@ import { jiraBoard } from './jira.js';
 import { localBoard } from './local.js';
 import type { Board } from './types.js';
 
-export type { Board, NewTicket, Ticket, TicketFilter, TicketPlan, TicketStatus } from './types.js';
+export type {
+  Board,
+  NewTicket,
+  Ticket,
+  TicketComment,
+  TicketFilter,
+  TicketPlan,
+  TicketStatus,
+} from './types.js';
 
 export type BoardName = 'local' | 'jira';
 

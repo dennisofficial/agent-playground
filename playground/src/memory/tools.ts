@@ -163,12 +163,14 @@ export const complete_task_tool = tool(
     if (task.owner !== id.selfAgent && !botById(id.selfAgent)?.scrumMaster)
       return `Reminder #${taskId} is on ${task.owner}'s plate — only they or the scrum master can close it.`;
     completeTask(id.project, taskId);
-    return `Marked reminder #${taskId} done.`;
+    return task.owner === id.selfAgent
+      ? `Marked reminder #${taskId} done.`
+      : `Cleared reminder #${taskId} off ${task.owner}'s plate.`;
   },
   {
     name: 'complete_task',
     description:
-      'Mark one of your reminders done once it is actually finished. Pass the reminder id (the #N from list_tasks).',
+      "Mark a reminder done once it's actually finished — pass the reminder id (the #N from list_tasks). Normally one of your own; as scrum master you can also clear a stale or misassigned reminder off any teammate's plate.",
     schema: z.object({
       id: z.number().describe('The reminder id to complete (the #N from list_tasks).'),
     }),

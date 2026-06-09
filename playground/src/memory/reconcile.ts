@@ -2,6 +2,7 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableSequence } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { type Employee, ROSTER } from '../employees/index.js';
+import { logBus } from '../logbus.js';
 import { buildExtractModel } from '../model.js';
 import { rememberDeduped, withMemoryLock } from './dedup.js';
 import { type Identity } from './identity.js';
@@ -170,9 +171,11 @@ export async function reconcileMemory(
       if (shownIds.has(d.id)) await withMemoryLock(async () => forgetFactById(d.id, id));
     }
     if (result.add.length || result.update.length || result.delete.length) {
-      process.stderr.write(
-        `[reconcile:${bot.name}] memory +${result.add.length} ~${result.update.length} -${result.delete.length}\n`,
-      );
+      logBus.publish({
+        kind: 'memory',
+        by: bot.name,
+        text: `+${result.add.length} ~${result.update.length} -${result.delete.length}`,
+      });
     }
   } catch {
     /* fire-and-forget: reconciliation must never break a turn */
@@ -277,9 +280,11 @@ export async function reconcileTasks(
     for (const c of result.complete) if (shownIds.has(c.id)) completeTask(id.project, c.id);
     for (const d of result.drop) if (shownIds.has(d.id)) dropTask(id.project, d.id);
     if (result.add.length || result.complete.length || result.drop.length) {
-      process.stderr.write(
-        `[reconcile:${bot.name}] reminders +${result.add.length} ✓${result.complete.length} -${result.drop.length}\n`,
-      );
+      logBus.publish({
+        kind: 'reminders',
+        by: bot.name,
+        text: `+${result.add.length} ✓${result.complete.length} -${result.drop.length}`,
+      });
     }
   } catch {
     /* fire-and-forget */

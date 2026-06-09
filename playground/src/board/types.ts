@@ -30,8 +30,26 @@ export interface Ticket {
   status: TicketStatus;
   /** Who raised it (bot/human id). */
   createdBy: string;
+  /**
+   * Explicit owner (a teammate's bot id), set by the scrum master via `assign`. Empty/undefined = no
+   * explicit assignee (ownership is implied by whoever attached a plan). Assignment ALSO grants that bot
+   * visibility of the ticket in its `list_tickets` view — but it does NOT authorize a build: executing a
+   * ticket still requires that bot's own APPROVED plan (the write-safety invariant stays intact).
+   */
+  assignee?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A pinned note on a ticket — context that isn't part of the plan or description (e.g. "blocked on an
+ * external dependency, reassess next sprint"). Append-only; written by the scrum master. */
+export interface TicketComment {
+  id: number;
+  ticketId: string;
+  /** Who pinned the note (bot/human id). */
+  author: string;
+  body: string;
+  createdAt: string;
 }
 
 export interface TicketPlan {
@@ -58,7 +76,8 @@ export interface NewTicket {
 export interface TicketFilter {
   project: string;
   status?: TicketStatus;
-  /** Restrict to tickets this bot has a plan on (the per-employee view); omit for the whole board. */
+  /** Restrict to tickets VISIBLE to this bot — ones it has a plan on OR is assigned (the per-employee
+   * view); omit for the whole board (the scrum-master view). */
   ownerBot?: string;
 }
 
@@ -74,6 +93,21 @@ export interface Board {
   listTickets(filter: TicketFilter): Ticket[];
   /** Set a ticket's status directly (lifecycle transitions other than approval). Returns false if absent. */
   setStatus(project: string, id: string, status: TicketStatus): boolean;
+
+  /** Edit a ticket's metadata (title and/or description). Unlike plans (frozen at approval), metadata stays
+   * editable by the scrum master at any status. Returns the updated ticket, or undefined if absent. */
+  updateMeta(project: string, id: string, patch: { title?: string; description?: string }): Ticket | undefined;
+  /** Set a ticket's explicit assignee (a teammate's bot id). Returns the updated ticket, or undefined if
+   * absent. The CALLER enforces authority and that the id is a real teammate — the adapter does not. */
+  assign(project: string, id: string, assignee: string): Ticket | undefined;
+  /** Reorder a ticket on the board: place it immediately BEFORE `beforeId`, or at the end when `beforeId`
+   * is omitted or not found. Returns false if the moved ticket is absent. */
+  moveTicket(project: string, id: string, beforeId?: string): boolean;
+
+  /** Pin a note to a ticket. Returns the stored comment, or undefined if the ticket is absent. */
+  addComment(project: string, id: string, author: string, body: string): TicketComment | undefined;
+  /** All notes pinned to a ticket, oldest first. */
+  listComments(project: string, id: string): TicketComment[];
 
   /**
    * Upsert this bot's DRAFT plan onto a ticket. Returns undefined (a no-op) when the ticket is absent OR

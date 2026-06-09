@@ -4,6 +4,7 @@ import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { ROOT } from './engines/guard.js';
 import { listJobs, type Job } from './jobs.js';
+import { logBus } from './logbus.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -76,10 +77,12 @@ const withSubdir = (checkout: string, subdir: string) =>
 async function warnIfDirtyBase(): Promise<void> {
   const dirty = await git(['status', '--porcelain', '--untracked-files=no']).catch(() => '');
   if (dirty.trim())
-    process.stderr.write(
-      `[workspace] note: uncommitted tracked changes on the main checkout won't appear in new worktrees ` +
-        `(they branch from committed HEAD). Commit them first if a worker needs them.\n`,
-    );
+    logBus.publish({
+      kind: 'workspace',
+      text:
+        `uncommitted tracked changes on the main checkout won't appear in new worktrees ` +
+        `(they branch from committed HEAD). Commit them first if a worker needs them.`,
+    });
 }
 
 /** Turn text into a short, branch-safe slug. */
@@ -254,8 +257,10 @@ export async function adoptWorkspaces(): Promise<void> {
     if (!wt) continue;
     if (wt.startsWith(ticketsDir + '/')) {
       const branch =
-        lines.find((l) => l.startsWith('branch '))?.slice('branch '.length).replace('refs/heads/', '') ??
-        '';
+        lines
+          .find((l) => l.startsWith('branch '))
+          ?.slice('branch '.length)
+          .replace('refs/heads/', '') ?? '';
       const m = branch.match(/^agent\/([^/]+)\/(.+)$/); // agent/<owner>/<TKT>
       if (!m) continue;
       const [, owner, ticketId] = m;
