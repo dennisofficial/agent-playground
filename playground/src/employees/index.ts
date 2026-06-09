@@ -8,11 +8,12 @@
  */
 import { alex } from './alex.js';
 import { james } from './james.js';
+import { sam } from './sam.js';
 import type { Employee } from './types.js';
 
 export type { Employee } from './types.js';
 
-export const ROSTER: Employee[] = [alex, james];
+export const ROSTER: Employee[] = [alex, james, sam];
 
 export const botById = (id: string): Employee | undefined => ROSTER.find((b) => b.id === id);
 

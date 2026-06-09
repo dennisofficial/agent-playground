@@ -25,13 +25,13 @@ import {
 // jobs are scoped per bot.
 
 const dispatch_job = tool(
-  async ({ task }, config) => {
+  async ({ task, plan }, config) => {
     const id = getIdentity(config);
     // The engine is the dispatching employee's locked engine — there is no per-dispatch override.
     const engineName = (botById(id.selfAgent) ?? ROSTER[0]).engine;
     // notifyThread = the surface this was dispatched from; ownerBot = the calling bot; company scopes
-    // the work log to this project.
-    const job = createJob(task, id.surface, engineName, id.selfAgent, id.company);
+    // the work log to this project. plan=true starts it in planning mode (plan + confirm first).
+    const job = createJob(task, id.surface, engineName, id.selfAgent, id.company, plan ? 'plan' : 'execute');
     // Fire-and-forget: the worker runs in the background, the chat turn returns immediately.
     //
     // Detach the background turn from the conductor's streaming callback context. dispatch_job runs
@@ -43,14 +43,22 @@ const dispatch_job = tool(
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
       void runWorkerTurn(job.id, task);
     });
-    return `Started ${job.id} (${engineName}) in the background: "${task}". It runs to completion and reports back once when it's done.`;
+    return plan
+      ? `Started ${job.id} (${engineName}) in planning mode: "${task}". It reads enough to plan, then comes back with a plan + any questions for you to confirm before it writes code.`
+      : `Started ${job.id} (${engineName}) in the background: "${task}". It runs to completion and reports back once when it's done.`;
   },
   {
     name: 'dispatch_job',
     description:
-      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run to completion in your background thread. Returns immediately with a job id; you are notified once when it finishes.',
+      'Hand yourself a full unit of real work (filesystem/shell/build/test/codebase exploration) to run to completion in your background thread. Returns immediately with a job id; you are notified once when it finishes. Set plan=true for ambiguous, large, or architectural tasks where the approach should be agreed first: it comes back with a plan + questions, and you reply via continue_work to approve or adjust before it executes.',
     schema: z.object({
       task: z.string().describe('A clear, self-contained description of the work to do.'),
+      plan: z
+        .boolean()
+        .optional()
+        .describe(
+          'When true, the task plans and surfaces its approach + open questions for your confirmation before writing any code. Use for ambiguous/large/architectural work; leave off (default) for clear, contained tasks.',
+        ),
     }),
   },
 );

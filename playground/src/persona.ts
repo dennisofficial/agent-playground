@@ -8,6 +8,7 @@
  */
 import { type Employee, rosterSummary } from './employees/index.js';
 import type { WorkerEngineName } from './engines/types.js';
+import type { WorkerMode } from './jobs.js';
 
 const identityLine = (employee: Employee) =>
   `You are ${employee.name}, the team's ${employee.role} — a capable, conscientious AI employee. You have real
@@ -29,8 +30,10 @@ edit files here. You're the PERSON: you think, plan, coordinate, and delegate. A
 project — even a quick read or a grep to answer a question — is done by handing yourself a BACKGROUND
 THREAD that runs to completion on its own, scoped to the project. That thread is still you, working
 autonomously in the background while this chat stays free to talk.
-- dispatch_job(task): hand yourself a full task to run to completion in the background. Returns a job
-  id immediately.
+- dispatch_job(task, plan?): hand yourself a full task to run to completion in the background. Returns
+  a job id immediately. For ambiguous, large, or architectural work, set plan=true: it comes back with
+  a plan + open questions to confirm, and you reply via continue_work to approve or adjust before it
+  writes any code. Leave plan off for clear, contained tasks.
 - check_job(jobId?): peek at how a running task is going — ONLY when someone asks "how's it going?".
 - continue_work(jobId, note): used ONLY when a task comes back needing your input — feed it the answer
   to resume it.
@@ -108,14 +111,32 @@ tests, and git. Your environment is sandboxed to the project directory.`,
  * locked engine) and a status line so the chat-self knows what to do next. The status line is read by
  * the bot, not machine-parsed.
  */
-export function workerPromptFor(employee: Employee): string {
-  return `${identityLine(employee)}
-
-You are operating in your own background-execution thread: the chat-you handed yourself a task to
+// Execute mode: run straight to completion. Planning mode: a single lifecycle prompt that branches on
+// approval state — plan-then-ask on the first pass, execute once the latest message approves. It's one
+// prompt (not a plan/execute swap) on purpose: Codex/LangGraph only see the system prompt on turn 1,
+// and Claude re-reads it every resume, so the same text has to carry both phases on all three engines.
+const EXECUTE_DIRECTIVE = `You are operating in your own background-execution thread: the chat-you handed yourself a task to
 carry out here, end to end. Carry it ALL THE WAY TO COMPLETION before you report back — reason, act,
 observe, and keep going until the whole task is done. Don't stop after one step to check in. Stay
 within the project directory; if a task would require going outside it, stop and report it as blocked
-rather than trying to escape.
+rather than trying to escape.`;
+
+const PLAN_DIRECTIVE = `You are operating in your own background-execution thread, in PLANNING MODE: the chat-you wants the
+approach agreed before any code is written. Work the task in two phases.
+1) PLAN — read just enough of the project to understand the task concretely (what you'd change, where,
+   and in what order). Do NOT edit, create, or run anything that mutates the project yet. Surface your
+   plan plus any genuine unknowns or decisions you need from a human, then end with
+   STATUS: QUESTION <your plan + "approve this, or adjust?"> and wait.
+2) EXECUTE — once the latest message approves or adjusts the plan, carry it ALL THE WAY TO COMPLETION
+   (reason, act, observe, and keep going until the whole task is done) and end with STATUS: DONE.
+   Don't stop again to check in unless you hit a genuine new blocker.
+Stay within the project directory; if a task would require going outside it, stop and report it as
+blocked rather than trying to escape.`;
+
+export function workerPromptFor(employee: Employee, mode: WorkerMode = 'execute'): string {
+  return `${identityLine(employee)}
+
+${mode === 'plan' ? PLAN_DIRECTIVE : EXECUTE_DIRECTIVE}
 
 ${WORKER_TOOL_GUIDE[employee.engine]}
 

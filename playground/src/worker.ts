@@ -54,7 +54,7 @@ export async function runWorkerTurn(jobId: string, message: string): Promise<voi
     const { result, sessionId } = await getEngine(job.engine).run({
       task: message,
       cwd: ROOT,
-      systemPrompt: workerPromptFor(botById(job.ownerBot) ?? ROSTER[0]),
+      systemPrompt: workerPromptFor(botById(job.ownerBot) ?? ROSTER[0], job.mode),
       sessionId: job.sessionId,
       onEvent: (e) => appendJobProgress(jobId, e),
       signal: ac.signal,
@@ -122,7 +122,7 @@ export function continueWork(jobId: string, note: string): ActionResult {
     };
   if (job.turns >= MAX_TURNS)
     return { ok: false, reason: `${jobId} reached its ${MAX_TURNS}-run limit.` };
-  updateJob(jobId, { status: 'running' });
+  updateJob(jobId, { status: 'running', version: job.version + 1 });
   void runWorkerTurn(jobId, note);
   return { ok: true };
 }

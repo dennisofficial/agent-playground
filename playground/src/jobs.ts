@@ -8,6 +8,11 @@ export const CLI_THREAD_ID = 'zero:cli:main';
 // 'cancelled' = the owner aborted it mid-run (or while awaiting); its result is discarded, not relayed.
 export type JobStatus = 'running' | 'awaiting' | 'done' | 'failed' | 'cancelled';
 
+// 'plan' = produce + confirm a plan (surface it via STATUS: QUESTION, wait for approval) before
+// executing; 'execute' = run straight to completion. The mode only shapes the worker's prompt — the
+// plan→execute handoff rides the existing awaiting → continue_work resume loop.
+export type WorkerMode = 'plan' | 'execute';
+
 export interface Job {
   id: string;
   task: string;
@@ -21,10 +26,14 @@ export interface Job {
   company: string;
   /** Which worker engine runs this job (claude / codex / langgraph). */
   engine: WorkerEngineName;
+  /** Whether this job plans-then-confirms before executing, or runs straight through. */
+  mode: WorkerMode;
   /** The engine's session/thread id, recorded once the worker reports it (resume across turns). */
   sessionId?: string;
   /** How many background turns have run — drives the runaway cap. */
   turns: number;
+  /** How many times this job has been resumed via continue_work — starts at 0, debugging aid. */
+  version: number;
   /** The latest turn's report to the chat-self (its final text, including the STATUS line). */
   lastReport?: string;
   result?: string;
@@ -57,6 +66,7 @@ export function createJob(
   engine: WorkerEngineName,
   ownerBot: string,
   company: string,
+  mode: WorkerMode = 'execute',
 ): Job {
   const id = nextId();
   const job: Job = {
@@ -68,7 +78,9 @@ export function createJob(
     ownerBot,
     company,
     engine,
+    mode,
     turns: 0,
+    version: 0,
   };
   jobs.set(id, job);
   progress.set(id, []);
