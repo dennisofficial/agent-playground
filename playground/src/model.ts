@@ -23,6 +23,35 @@ export function buildModel() {
 }
 
 /**
+ * Debug aid: USD cost of one chat reply, the employee-facing counterpart to `gateCostUsd`. Sonnet 4.6
+ * pricing (the model `buildModel` uses): $3.00 / 1M input, $15.00 / 1M output (verified against the
+ * Anthropic model catalog, 2026-06). Unlike the gate, the chat path caches its prompt prefix, so the
+ * billed cost splits by token kind: langchain folds cache reads + writes INTO `input`, so back them out
+ * to bill the fresh remainder at full rate, cache reads at ~0.1×, and cache writes at ~1.25× (5-min TTL,
+ * langchain's default). Kept beside the model id so the price moves with the model if we ever swap it.
+ */
+export const CHAT_PRICE_PER_MTOK = { input: 3.0, output: 15.0 } as const;
+const CACHE_READ_MULT = 0.1;
+const CACHE_WRITE_MULT = 1.25;
+export const chatCostUsd = (u: {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}): number => {
+  const cacheRead = u.cacheRead ?? 0;
+  const cacheWrite = u.cacheWrite ?? 0;
+  const fresh = Math.max(0, u.input - cacheRead - cacheWrite);
+  return (
+    (fresh * CHAT_PRICE_PER_MTOK.input +
+      cacheRead * CHAT_PRICE_PER_MTOK.input * CACHE_READ_MULT +
+      cacheWrite * CHAT_PRICE_PER_MTOK.input * CACHE_WRITE_MULT +
+      u.output * CHAT_PRICE_PER_MTOK.output) /
+    1_000_000
+  );
+};
+
+/**
  * Cheap, fast model for the response gate. The gate fires on EVERY message for EVERY bot, so it sets the
  * token floor — Haiku keeps the respond/ignore decision near-free. It now returns a small structured
  * tool call (a one-line reasoning + the action + an optional emoji), so it needs more than a single

@@ -54,4 +54,26 @@ export interface Employee {
    * prompt DESCRIBES the toolset in prose, so an override that changes tools needs that prose updated.
    */
   chatTools?: StructuredToolInterface[];
+  /**
+   * Per-employee flavor appended to the shared identity line (precision + honesty stays universal; this
+   * adds the personal texture). MUST be static/byte-stable — it flows into `chatPromptFor` under the same
+   * `cache_control: ephemeral` breakpoint as `roleContext`, so no volatile interpolation.
+   */
+  personality?: string;
+  /**
+   * Agent Skills this employee is equipped with, referenced by skill name/id — Anthropic Agent Skills
+   * (SKILL.md packages: https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview), NOT
+   * freeform competency strings. This is config for a (not-yet-built) loader that will surface each named
+   * skill to the employee in BOTH the chat surface and the background worker, so a skill can be dropped onto
+   * a teammate and used on demand. Behaviour will differ per surface (filesystem-backed SKILL.md on the
+   * worker vs. metadata-only awareness in chat, which has no filesystem). Empty for now — scaffolding only.
+   */
+  skills?: string[];
+  /**
+   * Standing, discipline-specific work rules (e.g. ["Run the project's typecheck/build before reporting
+   * done"]). Rendered into BOTH chat and worker prompts — this is how protocols finally reach the builder.
+   * Keep these discipline-specific: shared team/collaboration rules already live in `TEAM_RULES`. Static
+   * array of literals — same caching constraint as `roleContext`.
+   */
+  protocols?: string[];
 }

@@ -88,6 +88,15 @@ function migrate(d: Database.Database): void {
   // already have these from the CREATE TABLE above).
   addColumnIfMissing(d, 'facts', 'embed_model', 'TEXT');
 
+  // worklog company→project rename was missing a migration. RENAME (not ADD COLUMN) preserves
+  // historical row values. SQLite auto-updates the worklog_lookup index. No-op on fresh/already-migrated DBs.
+  const worklogCols = (d.prepare(`PRAGMA table_info(worklog)`).all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (worklogCols.includes('company') && !worklogCols.includes('project')) {
+    d.exec(`ALTER TABLE worklog RENAME COLUMN company TO project`);
+  }
+
   // Reminders evolve the legacy `tasks` board into a per-employee plate. Be ROBUST on any prior shape:
   // a fresh table (already `project` + `owner`), a pre-rename table (`company`), or a partially-migrated
   // one — never throw here, or a stale DB crashes startup.

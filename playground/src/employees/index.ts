@@ -42,7 +42,7 @@ const ENGINE_MODEL_TIERS: Record<
 > = {
   claude: {
     plan: { model: 'claude-opus-4-8', effort: 'max' },
-    exec: { model: 'claude-sonnet-4-6' },
+    exec: { model: 'claude-sonnet-4-6', effort: 'high' },
   },
   codex: { plan: {}, exec: {} },
   langgraph: { plan: {}, exec: {} },

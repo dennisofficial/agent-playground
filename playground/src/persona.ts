@@ -11,10 +11,27 @@ import type { WorkerEngineName } from './engines/types.js';
 import type { WorkerMode } from './jobs.js';
 import type { Workspace } from './workspace.js';
 
-const identityLine = (employee: Employee) =>
-  `You are ${employee.name}, the team's ${employee.role} — a capable, conscientious AI employee. You have real
-taste and judgment: you favor minimal, surgical changes over sweeping rewrites, you're precise, and
-you say plainly when something is blocked or uncertain instead of guessing.`;
+// The shared identity core: a universal calibration line (precision + saying plainly when blocked/uncertain
+// — the natural-language twin of the STATUS: QUESTION/BLOCKED contract) that holds for EVERY employee, plus
+// the per-employee `personality` appended for flavor. The code-specific "minimal, surgical changes" value
+// that used to live here now rides in the engineers' `protocols`, so it doesn't leak onto non-engineers.
+const identityLine = (employee: Employee) => {
+  const base = `You are ${employee.name}, the team's ${employee.role} — a capable, conscientious AI employee. You have real taste and judgment: you're precise, and you say plainly when something is blocked or uncertain instead of guessing.`;
+  return employee.personality ? `${base} ${employee.personality}` : base;
+};
+
+// Both render into both surfaces (chat + worker), are static (deterministic join/map under `?.length`
+// guards, so they never bust the prompt cache), and return a leading-blank-line block (or '' when unset)
+// that slots between existing paragraphs. `protocolsBlock` is the keeper. `skillsLine` is a PLACEHOLDER:
+// `skills` is headed for a real Agent Skills (SKILL.md) loader, not a prose list — see the `skills` doc in
+// employees/types.ts. Until then it renders nothing (arrays are empty) and just keeps the wiring in place.
+const skillsLine = (employee: Employee): string =>
+  employee.skills?.length ? `\n\nYour core skills: ${employee.skills.join(', ')}.` : '';
+
+const protocolsBlock = (employee: Employee): string =>
+  employee.protocols?.length
+    ? `\n\nStanding protocols you always follow:\n${employee.protocols.map((p) => `- ${p}`).join('\n')}`
+    : '';
 
 // Standing operating rules for the whole team — how teammates work together. Injected into BOTH the chat
 // surface and the background worker, so they hold across everything a bot does (not memory, not config).
@@ -33,7 +50,7 @@ const TEAM_RULES = `How this team works together (standing rules, always in forc
   materially bigger than its plan, that's the opposite: stop and flag it — never silently redesign.)`;
 
 export function chatPromptFor(employee: Employee): string {
-  return `${identityLine(employee)}${employee.roleContext}
+  return `${identityLine(employee)}${employee.roleContext}${skillsLine(employee)}${protocolsBlock(employee)}
 
 You're in your team's shared #dev channel — a group chat where teammates collaborate, plan features,
 and hand work off to each other. Your teammates: ${rosterSummary()}. Each incoming message is prefixed
@@ -216,7 +233,7 @@ Teammates building this ticket work on their own branches; you all converge on t
 
 ${mode === 'plan' ? PLAN_DIRECTIVE : EXECUTE_DIRECTIVE}
 
-${WORKER_TOOL_GUIDE[employee.engine]}${collab}
+${WORKER_TOOL_GUIDE[employee.engine]}${collab}${skillsLine(employee)}${protocolsBlock(employee)}
 
 ${TEAM_RULES}
 

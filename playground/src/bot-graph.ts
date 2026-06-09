@@ -224,7 +224,13 @@ function buildBotGraph(bot: Employee) {
     //   4. this turn's new channel messages.
     const convo = [
       new SystemMessage({
-        content: [{ type: 'text', text: chatPromptFor(bot), cache_control: { type: 'ephemeral' } }],
+        content: [
+          {
+            type: 'text',
+            text: chatPromptFor(bot),
+            cache_control: { type: 'ephemeral', ttl: '1h' },
+          },
+        ],
       }),
       ...state.messages,
       ...(state.recalled

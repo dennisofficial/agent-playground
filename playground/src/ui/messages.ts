@@ -1,5 +1,5 @@
 import type { ConductorEvent, MessageUsage } from '../conductor-events.js';
-import { gateCostUsd } from '../model.js';
+import { chatCostUsd, gateCostUsd } from '../model.js';
 
 /**
  * Plain, render-ready view of the conversation for the terminal UI. The conductor emits domain
@@ -93,10 +93,15 @@ export function renderEvent(e: ConductorEvent): RenderItem {
   }
 }
 
-/** One-line dim token summary shown at the end of a rendered assistant message, e.g. `812 in · 96 out · 640 cached`. */
+/**
+ * One-line dim token summary shown at the end of a rendered assistant message, e.g.
+ * `812 in · 96 out · 640 cached · $0.001234`. The trailing `$cost` mirrors the gate row — same
+ * presentation-layer treatment of raw usage — priced via `chatCostUsd` (Sonnet 4.6, cache-aware).
+ */
 export function formatMessageUsage(u: MessageUsage): string {
   const parts = [`${u.input} in`, `${u.output} out`];
   if (u.cacheRead) parts.push(`${u.cacheRead} cached`);
   if (u.cacheWrite) parts.push(`${u.cacheWrite} cache-write`);
+  parts.push(`$${chatCostUsd(u).toFixed(6)}`);
   return parts.join(' · ');
 }
