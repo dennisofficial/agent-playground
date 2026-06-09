@@ -54,6 +54,8 @@ export interface BotStateDelta {
   cursor?: number;
   decision?: GateAction;
   ackEmoji?: string;
+  /** A reaction emoji to surface immediately — the gate's "seen, working" 👀 on a real respond. */
+  reaction?: string;
   /** The pre-LLM fetch's `recalled` block — the dispatcher renders a `recall` row from it. */
   recalled?: string;
   /** Debug only: the soft gate's one-line rationale, surfaced inline in the TUI. Absent for hard rules. */
@@ -79,6 +81,12 @@ const BotState = Annotation.Root({
   }),
   /** Ack emoji, surfaced by the `react` node when the gate said acknowledge. */
   ackEmoji: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
+    default: () => undefined,
+  }),
+  /** The "seen, working" reaction the gate emits the moment it commits to a (non-forced) respond, so the
+   * dispatcher can surface it before fetch/LLM/tools run. Distinct from `ackEmoji` (the acknowledge path). */
+  reaction: Annotation<string | undefined>({
     reducer: (_: unknown, b: string | undefined) => b,
     default: () => undefined,
   }),
@@ -161,6 +169,9 @@ function buildBotGraph(bot: Employee) {
     return {
       decision: d.action,
       ackEmoji: d.emoji,
+      // Fire the "seen, working" 👀 the moment we commit to responding — surfaced before fetch/LLM/tools
+      // run. Only on a real gated respond; the forced (job-relay) path returns above and never reaches here.
+      reaction: d.action === 'respond' ? '👀' : undefined,
       reasoning: d.reasoning,
       gateUsage: d.usage,
       pending: batch,

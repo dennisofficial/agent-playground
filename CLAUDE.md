@@ -2,19 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Commands
-
-All commands run from `playground/` (the only workspace package).
-
-| Command | Purpose |
-|---|---|
-| `pnpm dev` | Run CLI with hot-reload (tsx + dotenvx `.env.personal`) |
-| `pnpm build` | Compile to `dist/` via tsup (ESM) |
-| `pnpm start` | Run compiled build |
-| `pnpm typecheck` | Type-check without emit — the primary correctness gate (no test suite) |
-| `pnpm format` | Prettier + import organizer (`.prettierrc` wires `prettier-plugin-organize-imports`) |
-| `pnpm consolidate-memory` | Compact the semantic fact store |
-
 ## Architecture
 
 A terminal proof-of-concept for autonomous AI employees. Each "employee" (Alex, James, Sam — defined in `src/employees/`) has a chat identity, a background job runner, and persistent memory, all in a single Node.js process.
@@ -34,15 +21,15 @@ Memory always updates even when the agent stays silent.
 
 ### Key files
 
-| File | Role |
-|---|---|
-| `src/conductor.ts` | Event loop — manages per-bot cursors, schedules turns, owns the TUI |
-| `src/bot-graph.ts` | LangGraph turn graph (gate → fetch → llm → tools → reconcile) |
-| `src/employees/index.ts` | `ROSTER`, `Employee` type, addressing helpers |
-| `src/engines/index.ts` | Engine registry, `defaultEngine()` |
-| `src/memory/db.ts` | SQLite schema + `getDb()` factory |
-| `src/memory/fetch.ts` | Pre-LLM context assembly |
-| `src/memory/reconcile.ts` | Post-LLM fact/task extraction |
+| File                      | Role                                                                |
+|---------------------------|---------------------------------------------------------------------|
+| `src/conductor.ts`        | Event loop — manages per-bot cursors, schedules turns, owns the TUI |
+| `src/bot-graph.ts`        | LangGraph turn graph (gate → fetch → llm → tools → reconcile)       |
+| `src/employees/index.ts`  | `ROSTER`, `Employee` type, addressing helpers                       |
+| `src/engines/index.ts`    | Engine registry, `defaultEngine()`                                  |
+| `src/memory/db.ts`        | SQLite schema + `getDb()` factory                                   |
+| `src/memory/fetch.ts`     | Pre-LLM context assembly                                            |
+| `src/memory/reconcile.ts` | Post-LLM fact/task extraction                                       |
 
 ### Thread IDs and data
 

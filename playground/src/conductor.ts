@@ -208,8 +208,8 @@ class Conductor {
   /**
    * Run one bot turn on its LangGraph turn-graph. The graph gates, consumes the channel (mid-step), and
    * checkpoints; the dispatcher interprets its streamed node deltas — emitting each assistant message to
-   * the CHANNEL (so teammates see it mid-turn) + history, firing 👀 on the first tool-only step, and
-   * surfacing the ack reaction. After the turn it reads the authoritative cursor back from the checkpoint
+   * the CHANNEL (so teammates see it mid-turn) + history and surfacing the reactions the graph emits (the
+   * gate's "seen, working" 👀 and its ack reaction). After the turn it reads the authoritative cursor back from the checkpoint
    * and runs the reflect pass over what this bot consumed (facts to remember + open tasks to track).
    *
    * `seed` forces a gate-bypassed respond on a synthetic message (job relays); `surface` overrides the
@@ -223,7 +223,6 @@ class Conductor {
     const identity = this.identityFor(bot.id, opts.surface ?? thread);
     const cursorBefore = this.deliveredUpTo.get(bot.id) ?? 0;
     const capped = this.botBurst >= MAX_BOT_BURST;
-    let firstAi = true;
     let responded = false;
 
     const commit = (msg: BaseMessage) => {
@@ -252,12 +251,6 @@ class Conductor {
         id: `${bot.id}:${this.emitSeq++}`,
         ...(r.kind === 'assistant' ? { ts: stamp, usage } : {}),
       }));
-      if (firstAi) {
-        firstAi = false;
-        const hasText = rows.some((r) => r.kind === 'assistant' && r.text);
-        const hasTool = rows.some((r) => r.kind === 'tool');
-        if (hasTool && !hasText) this.react(bot, '👀'); // seen, working
-      }
       for (const r of rows) {
         if (r.kind === 'assistant' && r.text) {
           channel.append({
@@ -309,6 +302,9 @@ class Conductor {
             responded = true;
             this.botBurst++; // a real reply counts toward the loop breaker
           }
+          // Surface whatever reactions the graph decided to emit — the gate's "seen, working" 👀 (fired the
+          // moment it commits to responding) and its ack reaction. The conductor only renders; the brain decides.
+          if (delta.reaction) this.react(bot, delta.reaction);
           if (delta.decision === 'acknowledge') this.react(bot, delta.ackEmoji ?? '👍');
           // The fetch node's pre-LLM recall — surface what the bot walked in knowing (debug, dim).
           if (delta.recalled) {
