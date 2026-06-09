@@ -190,11 +190,23 @@ function buildBotGraph(bot: Bot) {
     const fresh = channel.since(state.cursor).filter((m) => m.authorBotId !== bot.id);
     const newCursor = channel.length; // own/gap messages are skipped but the cursor still moves past them
     const injected = fresh.map(asInput);
-    // Prepend the fetched memory like the persona — re-injected each call, never persisted into messages.
+    // Message order is chosen for PROMPT CACHING (a prefix match — any byte change invalidates everything
+    // after it; render order is tools → system → messages):
+    //   1. persona system prompt — frozen, the stable head of the cacheable prefix
+    //   2. durable history — append-only, so the prefix grows but never rewrites
+    //   3. recalled memory — VOLATILE (re-retrieved each turn), so it must come AFTER the history, never in
+    //      the system block. In the system block it would (a) bust the whole prefix every turn and (b) be a
+    //      second SystemMessage, which langchain-anthropic rejects ("System messages are only permitted as
+    //      the first passed message" — it keeps just messages[0] as system). As a tail user-turn preamble it
+    //      does neither. Like the persona, it's re-injected each call and never persisted into `messages`.
+    //   4. this turn's new channel messages.
+    // No cache_control breakpoint is set yet, so nothing is cached today regardless — see note to enable it.
     const convo = [
       new SystemMessage(chatPromptFor(bot)),
-      ...(state.recalled ? [new SystemMessage(`Relevant memory:\n${state.recalled}`)] : []),
       ...state.messages,
+      ...(state.recalled
+        ? [new HumanMessage(`(Relevant memory — for your reference:\n${state.recalled})`)]
+        : []),
       ...injected,
     ];
     const ai = await model.invoke(convo, config);
