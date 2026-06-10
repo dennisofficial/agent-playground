@@ -1,58 +1,40 @@
-import { EnvService } from '@core/config/env/env.service';
-import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
-import { Module } from '@nestjs/common';
-import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
-import { Fact, Task, Worklog } from '@workspace/shared/schemas';
-import { Repository } from 'typeorm';
-import { createCheckpointer, pgConnString } from './memory/checkpointer';
-import { OpenAIEmbeddingProvider } from './memory/embedding';
-import { SemanticMemory } from './memory/semantic-memory';
-import { TaskStore } from './memory/task-store';
-import { WorklogStore } from './memory/worklog-store';
-
-/** DI token for the working-memory LangGraph checkpointer (PostgresSaver), set up at module init. */
-export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
+import { CreateModule } from '@workspace/nestjs-core';
+import { ChannelModule } from './channel/channel.module';
+import { ConductorModule } from './conductor/conductor.module';
+import { EmployeesModule } from './employees/employees.module';
+import { EnginesModule } from './engines/engines.module';
+import { GateModule } from './gate/gate.module';
+import { JobsModule } from './jobs/jobs.module';
+import { LlmModule } from './llm/llm.module';
+import { MemoryModule } from './memory/memory.module';
+import { SkillsModule } from './skills/skills.module';
+import { SurfaceModule } from './surface/surface.module';
+import { ToolsModule } from './tools/tools.module';
 
 /**
- * The harness composition root. Turns the framework-light memory ports into injectable providers over
- * the TypeORM repositories + the env-derived checkpointer. The `ConductorService` (and the per-employee
- * invoker) get added here as the conductor/orchestration move lands — they inject these ports.
+ * The harness composition root: one import for any app that hosts the AI-employee harness.
+ * Domain modules land here as the migration progresses (channel, employees, tools, engines,
+ * gate, jobs, conductor, surface, skills). The `modules:` bucket re-exports each one, so a
+ * hosting app (the tui today; the api once the Slack adapter lands) imports only this module.
  *
- * Requires `DatabaseModule` (the @Global TypeORM connection) to be imported by the hosting app.
+ * Only ONE process may compose this module at a time — the conductor assumes it is the sole
+ * writer over the channel/cursor tables (no multi-conductor locking story yet).
+ *
+ * Requires `DatabaseModule` and `EsmModule` (both @Global) in the hosting app.
  */
-@Module({
-  imports: [TypeOrmModule.forFeature([Fact, Task, Worklog])],
-  providers: [
-    {
-      provide: SemanticMemory,
-      inject: [getRepositoryToken(Fact)],
-      useFactory: (facts: Repository<Fact>) => new SemanticMemory(facts, new OpenAIEmbeddingProvider()),
-    },
-    {
-      provide: TaskStore,
-      inject: [getRepositoryToken(Task)],
-      useFactory: (tasks: Repository<Task>) => new TaskStore(tasks),
-    },
-    {
-      provide: WorklogStore,
-      inject: [getRepositoryToken(Worklog)],
-      useFactory: (worklog: Repository<Worklog>) => new WorklogStore(worklog),
-    },
-    {
-      provide: CHECKPOINTER,
-      inject: [EnvService],
-      useFactory: (env: EnvService): Promise<PostgresSaver> =>
-        createCheckpointer(
-          pgConnString({
-            host: env.get('POSTGRES_HOST'),
-            port: env.get('POSTGRES_PORT'),
-            user: env.get('POSTGRES_USER'),
-            password: env.get('POSTGRES_PASSWORD'),
-            database: env.get('POSTGRES_DB'),
-          }),
-        ),
-    },
+@CreateModule({
+  modules: [
+    ChannelModule,
+    MemoryModule,
+    EmployeesModule,
+    ToolsModule,
+    SkillsModule,
+    GateModule,
+    LlmModule,
+    EnginesModule,
+    JobsModule,
+    ConductorModule,
+    SurfaceModule,
   ],
-  exports: [SemanticMemory, TaskStore, WorklogStore, CHECKPOINTER],
 })
 export class HarnessModule {}

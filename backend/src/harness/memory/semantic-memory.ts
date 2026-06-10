@@ -9,7 +9,7 @@ import {
   recallScopes,
   scopeForTier,
   Tier,
-} from './identity';
+} from '../domain/identity';
 
 /**
  * Self-managed semantic memory over distilled facts, stored at one of the sharing tiers (see identity.ts).

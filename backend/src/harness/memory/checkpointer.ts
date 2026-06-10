@@ -23,7 +23,7 @@ export function pgConnString(c: PostgresConn): string {
   return `postgresql://${auth}@${c.host ?? 'localhost'}:${c.port ?? 5432}/${c.database ?? ''}`;
 }
 
-/** Build the checkpointer and run its one-time table setup. Call once (the HarnessModule, at bootstrap). */
+/** Build the checkpointer and run its one-time table setup. Call once (the MemoryModule, at bootstrap). */
 export async function createCheckpointer(connString: string): Promise<PostgresSaver> {
   const saver = PostgresSaver.fromConnString(connString);
   await saver.setup();

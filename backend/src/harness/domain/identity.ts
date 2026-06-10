@@ -39,6 +39,22 @@ export interface Identity {
   isChannel: boolean;
 }
 
+/** v0 stub: bot Alex, team+project "local", Dennis present, in a channel. Real surfaces fill ids later. */
+export const CLI_IDENTITY: Identity = {
+  selfAgent: 'alex',
+  team: DEFAULT_TEAM,
+  project: DEFAULT_PROJECT,
+  participants: ['dennis'],
+  speaker: 'dennis',
+  surface: 'dev:root',
+  isChannel: true,
+};
+
+/** Pull identity out of a run's config (set by the conductor / surface adapter), falling back to the stub. */
+export function getIdentity(config?: { configurable?: Record<string, unknown> }): Identity {
+  return (config?.configurable?.identity as Identity | undefined) ?? CLI_IDENTITY;
+}
+
 /**
  * The scope keys a bot may recall from BY DEFAULT: the current project + the team-wide tier + its own
  * bot-wide tier, plus — only in a 1:1 DM — the present human's 1:1 facts. In a channel, 1:1 facts never

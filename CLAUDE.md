@@ -2,37 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Architecture
+## Repo layout
 
-A terminal proof-of-concept for autonomous AI employees. Each "employee" (Alex, James, Sam — defined in `src/employees/`) has a chat identity, a background job runner, and persistent memory, all in a single Node.js process.
+Two implementations of the same autonomous-AI-employee system coexist:
 
-### Three layers per employee
+- **`backend/` — the NestJS harness (CURRENT, actively developed).** The playground's logic recreated as per-domain Nest modules under `backend/src/harness/`, with Postgres durability. Composed by the `tui` app (`pnpm tui:dev` in `backend/`); the `api` app stays a skeleton until the Slack adapter pass.
+- **`playground/` — the original terminal POC (WORKING, kept intact).** Single-process Ink TUI, in-memory channel, SQLite memory. **Do not modify or delete** — it's the reference implementation until the backend reaches feel-parity. Run with `pnpm dev` in `playground/`.
+
+Also: `shared/` (`@workspace/shared` — TypeORM entities under `./schemas` subpath), `web/` (Next.js admin skeleton), `packages/nestjs-core-essentials` (house Nest conventions: `@CreateModule`, `BaseEnvService`).
+
+## Backend harness (`backend/src/harness/`)
+
+One Nest module per domain, all composed by `harness.module.ts` (import that one module to host the harness). **Only ONE process may compose it at a time** (no multi-conductor locking).
+
+| Module | Role |
+|---|---|
+| `conductor/` | Event loop (`ConductorService`, lifecycle-hooked), per-bot LangGraph turn graphs (`BotGraphFactory`), RxJS event/status bus (`ConductorEventsBus`) — the presentation seam |
+| `channel/` | The conversation log. **Synchronous in-memory face, write-behind Postgres durability** (`channel_messages` + `bot_cursors`); hydrates on boot. The sync `append`/`since` contract is load-bearing (mid-thought collaboration) |
+| `employees/` | `@AIEmployee()` decorator + DiscoveryService auto-discovery. One class per teammate in `roster/` (persona, engine, tool allowlist); `EmployeeRegistry` validates at boot; `PersonaService` assembles prompts |
+| `tools/` | `@HarnessTool()` decorator classes → `ToolRegistry`. Employee allowlists are **class references** (the class is the DI token), never name strings. `terminal: true` on a tool ends the turn |
+| `engines/` | `claude`/`codex`/`langgraph` behind the `WorkerEngine` port. ESM-only SDKs arrive via `_lib/esm` DI tokens |
+| `jobs/` | In-memory `JobRegistry` behind the async `JOB_REGISTRY` port (Postgres/BullMQ can swap in); `WorkerService` runs engine sessions (plan/read-only jobs only this pass), jailed to `WORKER_ROOT` |
+| `memory/` | Postgres semantic memory (pgvector facts + dedup judge), reminders (`TaskStore`), worklog, fetch/reconcile passes, and the LangGraph **Postgres checkpointer** (`CHECKPOINTER` token) |
+| `gate/` | Respond/acknowledge/ignore: hard addressing rules + soft Haiku classifier |
+| `surface/` | `CHAT_SURFACE` port (group-chat semantics: post/react/inbound$). Hosting app binds an adapter via a `@Global` module (see `tui/tui-surface.module.ts`); `SurfaceBridge` wires it to the conductor. No binding → headless |
+| `skills/` | Typed scaffold only (`SkillSource` git/local + MCP config slots); loader is a no-op |
+| `llm/` | `ChatModelFactory` (chat/gate/extract model builders, env-driven) + cost helpers |
+
+Deliberately NOT ported yet (playground-only): plan→approve→execute flow, ticket board, worktree isolation, `/standup`-style commands.
+
+### Conventions that matter here
+
+- Decorated classes (employees, tools) must be **plain class providers** — discovery can't see `useFactory` providers. Registries fail boot loudly on misconfiguration.
+- `roleContext`/`personality` must be **byte-stable string constants** (prompt-cache `cache_control` breakpoints — no interpolation or getters).
+- ESM-only deps (`@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, `ink`, `@inkjs/ui`) load via preserved dynamic `import()` (`module: nodenext`); everything LangChain is dual-published and statically imported. The TUI's Ink shim is `src/tui/ink.ts` — `await loadInk()` before rendering, and never destructure its exports in CJS.
+- Tests: `*.spec.ts` unit, `*.int.test.ts` integration (live Postgres via `docker compose up -d postgres`), `*.ai.test.ts` real-LLM (only `pnpm test:ai`). Migrations: `pnpm db:migrate` (hand-written, in `backend/migrations/`).
+
+## Playground (`playground/src/`) — reference implementation
 
 - **Chat layer** (`src/bot-graph.ts`) — LangGraph state machine: gate → fetch context → LLM ⇄ tools → reconcile memory. Dispatches jobs but never blocks on them.
-- **Job runner** (`src/jobs.ts` + `src/worker.ts`) — Fire-and-forget background async. Chat turns return immediately; the job runs to completion and notifies via `onJobUpdate`. **Job registry is in-memory** — jobs and progress vanish on restart.
-- **Worker engines** (`src/engines/`) — Pluggable: `claude` (Anthropic Agent SDK), `codex` (OpenAI Codex SDK), `langgraph` (custom ReAct loop). Selected per employee via `Employee.engine`.
-
-### Memory pipeline (per turn)
-
-- **respond path:** `fetchContext()` injects relevant facts + open tasks → LLM call (may call `remember`/`update`/`forget` tools) → `reconcileMemory()` + `reconcileTasks()` extract and upsert from the exchange
-- **ack/ignore path:** consume messages → `reconcileMemory()` + `reconcileTasks()` (no pre-LLM fetch; reconcile fires as backstop regardless)
-
-Memory always updates even when the agent stays silent.
-
-### Key files
-
-| File                      | Role                                                                |
-|---------------------------|---------------------------------------------------------------------|
-| `src/conductor.ts`        | Event loop — manages per-bot cursors, schedules turns, owns the TUI |
-| `src/bot-graph.ts`        | LangGraph turn graph (gate → fetch → llm → tools → reconcile)       |
-| `src/employees/index.ts`  | `ROSTER`, `Employee` type, addressing helpers                       |
-| `src/engines/index.ts`    | Engine registry, `defaultEngine()`                                  |
-| `src/memory/db.ts`        | SQLite schema + `getDb()` factory                                   |
-| `src/memory/fetch.ts`     | Pre-LLM context assembly                                            |
-| `src/memory/reconcile.ts` | Post-LLM fact/task extraction                                       |
-
-### Thread IDs and data
-
-Current CLI hardcodes `${bot.id}:dev:root` as the LangGraph thread ID (see `conductor.ts:222`). The multi-surface `{botId}:{channelId}:{thread_ts}` convention in `playground/ARCHITECTURE.md` is the planned Slack adapter design, not yet implemented.
-
-Data files live in `./.data/` (`src/memory/paths.ts`): `zero.db` (facts, tasks, worklog) and `checkpoints.db` (LangGraph message history).
+- **Job runner** (`src/jobs.ts` + `src/worker.ts`) — fire-and-forget background async; in-memory registry.
+- **Worker engines** (`src/engines/`) — same three engines, selected per employee.
+- **Memory** (`src/memory/`) — SQLite (`./.data/zero.db` + `checkpoints.db`); fetch pre-LLM, reconcile post-LLM on every gate path.
+- Thread IDs: `${bot.id}:{project}:root`; the multi-surface `{botId}:{channelId}:{thread_ts}` convention in `playground/ARCHITECTURE.md` is the planned Slack design.

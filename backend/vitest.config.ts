@@ -8,6 +8,7 @@ const alias = {
   '@core': resolve(__dirname, 'src/_core'),
   '@api': resolve(__dirname, 'src/api'),
   '@tui': resolve(__dirname, 'src/tui'),
+  '@harness': resolve(__dirname, 'src/harness'),
 };
 
 // Loads the encrypted test env (.env.test.enc) + local secret overlay before tests.

@@ -2,7 +2,7 @@ import { ENTITIES, Fact } from '@workspace/shared/schemas';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DataSource, Repository } from 'typeorm';
 import { EmbeddingProvider } from './embedding';
-import { Identity } from './identity';
+import { Identity } from '../domain/identity';
 import { SemanticMemory } from './semantic-memory';
 
 // Deterministic unit vectors so cosine is exact (no OpenAI calls).

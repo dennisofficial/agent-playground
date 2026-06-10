@@ -25,6 +25,15 @@ importers:
 
   backend:
     dependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.168
+        version: 0.3.168(@anthropic-ai/sdk@0.95.2(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)
+      '@inkjs/ui':
+        specifier: ^2.0.0
+        version: 2.0.0(ink@7.0.5(@types/react@19.2.17)(react@19.2.7))
+      '@langchain/anthropic':
+        specifier: ^1.4.0
+        version: 1.4.0(@langchain/core@1.1.48(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))
       '@langchain/core':
         specifier: 1.1.48
         version: 1.1.48(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0)
@@ -58,6 +67,9 @@ importers:
       '@nestjs/typeorm':
         specifier: ^11.0.1
         version: 11.0.1(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.30(better-sqlite3@12.10.0)(ioredis@5.10.1)(mongodb@6.21.0)(pg@8.21.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)))
+      '@openai/codex-sdk':
+        specifier: ^0.137.0
+        version: 0.137.0
       '@workspace/nestjs-core':
         specifier: workspace:^
         version: file:packages/nestjs-core-essentials(3c8a721d94267111e2fb2f35e348271c)
@@ -73,15 +85,30 @@ importers:
       class-validator:
         specifier: ^0.14.2
         version: 0.14.4
+      ink:
+        specifier: ^7.0.5
+        version: 7.0.5(@types/react@19.2.17)(react@19.2.7)
       joi:
         specifier: ^17.13.3
         version: 17.13.3
+      langchain:
+        specifier: ^1.4.4
+        version: 1.4.4(@langchain/core@1.1.48(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))
+      marked:
+        specifier: ^15.0.12
+        version: 15.0.12
+      marked-terminal:
+        specifier: ^7.3.0
+        version: 7.3.0(marked@15.0.12)
       mongoose:
         specifier: ^9.6.3
         version: 9.6.3
       pg:
         specifier: ^8.13.1
         version: 8.21.0
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -94,6 +121,9 @@ importers:
       typeorm-naming-strategies:
         specifier: ^4.1.0
         version: 4.1.0(typeorm@0.3.30(better-sqlite3@12.10.0)(ioredis@5.10.1)(mongodb@6.21.0)(pg@8.21.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@22.19.20)(typescript@6.0.3)))
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@dotenvx/dotenvx':
         specifier: ^1.71.0
@@ -119,12 +149,18 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
+      '@types/marked-terminal':
+        specifier: ^6.1.1
+        version: 6.1.1
       '@types/node':
         specifier: ^22.10.7
         version: 22.19.20
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
       '@types/supertest':
         specifier: ^6.0.2
         version: 6.0.3

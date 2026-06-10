@@ -59,6 +59,16 @@ export interface IEnvConfig {
   BOARD?: string;
   ZERO_PROJECT?: string;
 
+  // Harness (defaults applied in code, so all optional)
+  HARNESS_SURFACE_ID?: string; // the single chat surface this pass (default 'tui:main')
+  HARNESS_TEAM_ID?: string; // team tier for memory scoping (default 'local')
+  CHANNEL_HYDRATE_LIMIT?: number; // channel messages re-loaded into memory at boot (default 500)
+  GATE_MODEL?: string; // soft-gate model (default in code: Haiku)
+  EXTRACT_MODEL?: string; // reconcile extraction model (default in code: Haiku)
+  // Directory worker engines are jailed to. No code default on purpose: dispatching a job without
+  // it fails loudly rather than letting a worker loose in an arbitrary cwd.
+  WORKER_ROOT?: string;
+
   // LangSmith tracing (optional — LangChain reads these from env automatically)
   LANGSMITH_TRACING?: string;
   LANGSMITH_API_KEY?: string;
@@ -106,6 +116,14 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Board / data selectors
   BOARD: Joi.string().optional(),
   ZERO_PROJECT: Joi.string().optional(),
+
+  // Harness
+  HARNESS_SURFACE_ID: Joi.string().optional(),
+  HARNESS_TEAM_ID: Joi.string().optional(),
+  CHANNEL_HYDRATE_LIMIT: Joi.number().integer().min(1).optional(),
+  GATE_MODEL: Joi.string().optional(),
+  EXTRACT_MODEL: Joi.string().optional(),
+  WORKER_ROOT: Joi.string().optional(),
 
   // LangSmith tracing
   LANGSMITH_TRACING: Joi.string().optional(),

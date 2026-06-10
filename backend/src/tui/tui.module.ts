@@ -1,12 +1,16 @@
 import { EnvService } from '@core/config/env/env.service';
 import { envConfigValidation } from '@core/config/env/validation';
+import { HarnessModule } from '@harness/harness.module';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
+import { DatabaseModule } from '../_lib/database/database.module';
+import { EsmModule } from '../_lib/esm/esm.module';
+import { TuiSurfaceModule } from './tui-surface.module';
 
 /**
  * tui = the terminal entry point. Boots as a headless standalone context (no HTTP
- * server). Placeholder for now — the Ink renderer + the migrated conductor/harness
- * land in the harness-migration pass, at which point this app boots the same harness
- * module the api does and subscribes to its event stream to render the terminal UI.
+ * server), composes the harness via DI, and renders it with Ink. This folder holds
+ * ONLY terminal-interface logic — the harness itself is app-agnostic (`src/harness`)
+ * and the api app will compose the same module once the Slack adapter lands.
  */
 @CreateModule({
   imports: [
@@ -15,6 +19,10 @@ import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
       envService: EnvService,
       validationSchema: envConfigValidation,
     }),
+    DatabaseModule,
+    EsmModule,
+    HarnessModule,
+    TuiSurfaceModule,
   ],
 })
 export class TuiModule {}
