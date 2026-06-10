@@ -3,6 +3,7 @@ import { Runnable, RunnableSequence } from '@langchain/core/runnables';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { Identity } from '../domain/identity';
+import { titleCase } from '../domain/text';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { ChatModelFactory } from '../llm/chat-model.factory';
@@ -27,7 +28,7 @@ const RECONCILE_RECALL_LIMIT = 25;
 // reconcile wants to SEE marginal neighbors so it can spot a fact this turn contradicts/supersedes.
 const RECONCILE_FLOOR = 0.15;
 
-const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
 
 const MemorySchema = z.object({
   reasoning: z.string().describe('one short sentence on what changed in memory, if anything'),

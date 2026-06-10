@@ -1,4 +1,5 @@
 import { CreateModule } from '@workspace/nestjs-core';
+import { ChannelModule } from '../channel/channel.module';
 import { ConductorModule } from '../conductor/conductor.module';
 import { SurfaceBridge } from './surface-bridge.service';
 
@@ -8,7 +9,7 @@ import { SurfaceBridge } from './surface-bridge.service';
  * bridge wires it to the conductor. No adapter bound → harness runs headless.
  */
 @CreateModule({
-  imports: [ConductorModule],
+  imports: [ConductorModule, ChannelModule],
   services: [SurfaceBridge],
 })
 export class SurfaceModule {}

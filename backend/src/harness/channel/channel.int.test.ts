@@ -82,5 +82,22 @@ describe('channel persistence (live Postgres)', () => {
     expect(m2.seq).toBe(2);
     expect(channel.since(2).map((m) => m.id)).toEqual(['u-1']);
     await channel.flush();
+    await moduleRef.close();
+
+    // ── process 3: a TAIL hydration window + an older cursor → backfill closes the gap ────────
+    // (This is the restart-after-heavy-traffic case: a durable cursor below the hydrated window
+    // must not have its gap silently skipped by `since()`.)
+    process.env.CHANNEL_HYDRATE_LIMIT = '1';
+    moduleRef = await boot();
+    await moduleRef.init();
+    channel = moduleRef.get(ChannelService);
+    expect(channel.snapshot()).toHaveLength(1); // only the newest message is in the window
+    expect(channel.floorSeq).toBe(2);
+    expect(channel.since(0)).toHaveLength(1); // the gap is invisible before backfill…
+
+    await channel.backfillTo(0);
+    expect(channel.floorSeq).toBe(0);
+    expect(channel.since(0).map((m) => m.id)).toEqual(['u-0', 'alex:0', 'u-1']); // …and complete after
+    delete process.env.CHANNEL_HYDRATE_LIMIT;
   });
 });

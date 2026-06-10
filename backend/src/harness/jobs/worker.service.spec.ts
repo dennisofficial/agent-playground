@@ -72,7 +72,7 @@ describe('WorkerService (fake engine, no LLM)', () => {
     const after = await jobs.get(job.id);
     expect(after?.status).toBe('done');
     expect(after?.sessionId).toBe('sess-1');
-    expect(after?.result).toContain('Found it.');
+    expect(after?.lastReport).toContain('Found it.');
     expect(after?.turns).toBe(1);
     expect((await jobs.progress(job.id)).map((e) => e.kind)).toEqual(['text', 'tool', 'result']);
     expect(worklogged).toHaveLength(1);
@@ -140,7 +140,7 @@ describe('WorkerService (fake engine, no LLM)', () => {
     expect(res.ok).toBe(true);
     await running;
     expect((await jobs.get(job.id))?.status).toBe('cancelled');
-    expect((await jobs.get(job.id))?.result).toBeUndefined();
+    expect((await jobs.get(job.id))?.lastReport).toBeUndefined();
   });
 
   it('fails the dispatch loudly when WORKER_ROOT is unset', async () => {

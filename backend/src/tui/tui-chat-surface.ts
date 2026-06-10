@@ -1,11 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
 import { DEFAULT_SURFACE_ID } from '@harness/channel/channel.service';
+import { titleCase } from '@harness/domain/text';
 import type { ChatSurface, InboundChatMessage, OutboundChatMessage } from '@harness/surface/chat-surface.port';
 import { Injectable } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 
-const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
 
 /**
  * The terminal's ChatSurface adapter — the local-dev simulation of the group chat. The Ink input

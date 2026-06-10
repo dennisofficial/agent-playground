@@ -124,7 +124,7 @@ export class CheckJobTool implements IHarnessTool<typeof checkSchema> {
     const { model, effort } = this.employees.resolveWorkerModel(bot, job.mode);
     const tier = `${job.mode} on ${model ?? `${job.engine} default`}${effort ? `, effort ${effort}` : ''}`;
     const header = `${job.id} [${job.status}] (${tier}): "${job.task}"`;
-    if (job.status === 'done') return `${header}\nResult: ${job.result ?? '(none)'}`;
+    if (job.status === 'done') return `${header}\nResult: ${job.lastReport ?? '(none)'}`;
     if (job.status === 'failed') return `${header}\nFailed: ${job.error ?? '(unknown error)'}`;
     const progress = await this.worker.getJobState(job.id);
     return `${header}\nProgress so far:\n${progress}`;

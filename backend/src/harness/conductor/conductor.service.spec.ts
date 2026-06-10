@@ -28,6 +28,10 @@ class FakeChannel {
   get length(): number {
     return this.nextSeq;
   }
+  get floorSeq(): number {
+    return 0;
+  }
+  async backfillTo(_seq: number): Promise<void> {}
   snapshot(): ChannelMsg[] {
     return [...this.log];
   }
@@ -42,6 +46,9 @@ class FakeChannel {
 
 class FakeCursors {
   private map = new Map<string, number>();
+  has(botId: string, surfaceId: string): boolean {
+    return this.map.has(`${botId} ${surfaceId}`);
+  }
   get(botId: string, surfaceId: string): number {
     return this.map.get(`${botId} ${surfaceId}`) ?? 0;
   }
@@ -60,7 +67,7 @@ interface FakeGraphBehavior {
   run: (input: { cursor: number; forced: boolean }) => { deltas: object[]; cursorAfter: number; throw?: Error };
 }
 
-function buildConductor(behavior: FakeGraphBehavior) {
+async function buildConductor(behavior: FakeGraphBehavior) {
   const channel = new FakeChannel();
   const cursors = new FakeCursors();
   const bus = new ConductorEventsBus();
@@ -110,13 +117,13 @@ function buildConductor(behavior: FakeGraphBehavior) {
     bus,
     env,
   );
-  conductor.onApplicationBootstrap();
+  await conductor.onApplicationBootstrap();
   return { conductor, channel, cursors, events, fireJobUpdate: (j: Job) => jobUpdateCbs.forEach((cb) => cb(j)) };
 }
 
 describe('ConductorService scheduling', () => {
   it('claims a bot on channel growth, streams deltas, persists the advanced cursor', async () => {
-    const { conductor, channel, cursors, events } = buildConductor({
+    const { conductor, channel, cursors, events } = await buildConductor({
       run: ({ cursor }) => ({
         deltas: [{ decision: 'ignore' }],
         cursorAfter: channel.length, // consumed everything
@@ -130,7 +137,7 @@ describe('ConductorService scheduling', () => {
 
   it('gives up after MAX_TURN_RETRIES no-progress failures and skips the wedged batch', async () => {
     let attempts = 0;
-    const { conductor, channel, cursors, events } = buildConductor({
+    const { conductor, channel, cursors, events } = await buildConductor({
       run: ({ cursor }) => {
         attempts++;
         return { deltas: [], cursorAfter: cursor, throw: new Error('boom') }; // no progress
@@ -147,7 +154,7 @@ describe('ConductorService scheduling', () => {
 
   it('relays a finished job through its owner gate-bypassed (forced seed)', async () => {
     const forcedInputs: boolean[] = [];
-    const { conductor, channel, fireJobUpdate } = buildConductor({
+    const { conductor, channel, fireJobUpdate } = await buildConductor({
       run: ({ forced }) => {
         forcedInputs.push(forced);
         return { deltas: [], cursorAfter: channel.length };
@@ -157,7 +164,6 @@ describe('ConductorService scheduling', () => {
       id: 'job-001',
       task: 'investigate',
       status: 'done',
-      threadId: 'job:job-001',
       notifyThread: 'tui:test',
       ownerBot: 'alex',
       project: 'local',
@@ -172,7 +178,7 @@ describe('ConductorService scheduling', () => {
   });
 
   it('emits gate observability and folds reactions onto the gated message', async () => {
-    const { conductor, events } = buildConductor({
+    const { conductor, events } = await buildConductor({
       run: () => ({
         deltas: [
           { decision: 'respond', reasoning: 'mine to answer', gateUsage: { input: 100, output: 10 }, reaction: '👀', reactionTargetId: 'u-0' },

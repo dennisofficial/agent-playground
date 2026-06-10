@@ -2,6 +2,7 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { Runnable, RunnableSequence } from '@langchain/core/runnables';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
+import { createMutex } from '../domain/async';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { RememberInput, SemanticMemory } from './semantic-memory';
@@ -19,19 +20,6 @@ import { RememberInput, SemanticMemory } from './semantic-memory';
  * replace with a DB-level guard (advisory lock / staging + unique constraint).
  * (Ported from playground/src/memory/dedup.ts.)
  */
-
-/** A process-wide async mutex (promise-chain): serializes the wrapped critical sections. */
-export function createMutex(): <T>(fn: () => Promise<T>) => Promise<T> {
-  let lock: Promise<void> = Promise.resolve();
-  return <T>(fn: () => Promise<T>): Promise<T> => {
-    const result = lock.then(fn);
-    lock = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
-}
 
 const JudgeSchema = z.object({
   same: z

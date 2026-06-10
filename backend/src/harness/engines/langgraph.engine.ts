@@ -2,19 +2,11 @@ import { type BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/m
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { Inject, Injectable } from '@nestjs/common';
 import { createAgent } from 'langchain';
+import { flattenContent } from '../domain/text';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/memory.module';
 import { planningTools, workerTools } from './worker-tools';
 import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
-
-/** Coerce message content (string | content blocks) to a flat string. */
-function asText(content: BaseMessage['content']): string {
-  if (typeof content === 'string') return content;
-  return content
-    .map((c) => (typeof c === 'string' ? c : 'text' in c && typeof c.text === 'string' ? c.text : ''))
-    .join('')
-    .trim();
-}
 
 /**
  * The original hand-rolled ReAct worker, one engine behind the WorkerEngine interface. Kept so the
@@ -76,7 +68,7 @@ export class LanggraphEngine implements WorkerEngine {
       for (const payload of Object.values(update)) {
         for (const m of payload?.messages ?? []) {
           if (m.getType() !== 'ai') continue;
-          const text = asText(m.content);
+          const text = flattenContent(m.content).trim();
           if (text) {
             onEvent({ kind: 'text', text });
             lastText = text;

@@ -6,6 +6,7 @@ import { ChannelService } from '../channel/channel.service';
 import { CursorStore } from '../channel/cursor.store';
 import type { ConductorEvent, MessageUsage } from '../domain/conductor-events';
 import { DEFAULT_PROJECT, DEFAULT_TEAM, type Identity } from '../domain/identity';
+import { flattenContent, titleCase } from '../domain/text';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { JOB_REGISTRY, type Job, type JobRegistry } from '../jobs/job-registry.port';
@@ -27,14 +28,6 @@ import { ConductorEventsBus } from './conductor-events.bus';
  * surfaces (TUI, the future Slack adapter) subscribe to and render.
  * (Ported from playground/src/conductor.ts; board/approval paths are not in this pass.)
  */
-
-const titleCase = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-
-/** Flatten message content (string | content blocks) to a plain string. */
-const messageText = (content: BaseMessage['content']): string =>
-  typeof content === 'string'
-    ? content
-    : content.map((c) => (typeof c === 'string' ? c : 'text' in c && typeof c.text === 'string' ? c.text : '')).join('');
 
 interface ToolCall {
   id?: string;
@@ -95,11 +88,27 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
 
   /** Constructor stays pure; subscriptions + the first schedule happen here (after channel/cursor
    * hydration, which runs in onModuleInit — module init completes before any bootstrap hook). */
-  onApplicationBootstrap(): void {
+  async onApplicationBootstrap(): Promise<void> {
+    // Reconcile durable cursors with the channel's hydration window BEFORE any scheduling. The
+    // channel hydrates only a tail; a bot whose cursor sits below the window would otherwise have
+    // the gap silently skipped by `since()`. A bot with NO stored cursor (brand-new teammate)
+    // starts from the window floor — it joins the conversation at the present instead of replaying
+    // (and re-billing) the entire archived history.
+    const surfaceId = this.channel.surfaceId;
+    const known: number[] = [];
+    for (const bot of this.employees.list()) {
+      if (this.cursors.has(bot.id, surfaceId)) known.push(this.cursors.get(bot.id, surfaceId));
+      else this.cursors.set(bot.id, surfaceId, this.channel.floorSeq);
+    }
+    if (known.length) await this.channel.backfillTo(Math.min(...known));
+
     this.unsubscribers.push(this.channel.subscribe(() => this.schedule()));
     this.unsubscribers.push(
       this.jobs.onUpdate((job) => {
-        void this.jobs.list({ status: 'running' }).then((running) => this.bus.patchStatus({ running: running.length }));
+        void this.jobs
+          .list({ status: 'running' })
+          .then((running) => this.bus.patchStatus({ running: running.length }))
+          .catch((err) => this.logger.warn(`running-jobs count refresh failed: ${err}`));
         if (job.status === 'done' || job.status === 'awaiting' || job.status === 'failed') {
           this.relayQueue.push(job);
           this.schedule();
@@ -253,7 +262,7 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
       // text and so emit no `message` event.
       if (usage) this.bus.patchStatus({ ctx: { input: usage.input, output: usage.output } });
 
-      const text = messageText(msg.content).trim();
+      const text = flattenContent(msg.content).trim();
       if (text) {
         // The reply goes back onto the shared channel so teammates + job relays see it, and the
         // `message` event carries the SAME id so the channel message and its render row line up.
@@ -321,11 +330,17 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
       failed = true;
     }
 
-    // The checkpoint is the cursor's source of truth; read it back, then persist it.
+    // The checkpoint is the cursor's source of truth; read it back, then persist it. MONOTONIC on
+    // purpose: a checkpoint can legitimately report a cursor BELOW ours — a brand-new thread id
+    // (e.g. ZERO_PROJECT changed) whose first committed node left the annotation default 0 while
+    // the durable per-bot cursor is far ahead. `Math.max` keeps such states from rewinding the
+    // durable cursor to 0 and re-gating the whole hydrated history. (Also covers the `0 ?? x`
+    // falsy-zero trap the old `??` fallback had.)
     let cursorAfter = cursorBefore;
     try {
       const final = await this.graphs.getBotGraph(bot).getState({ configurable: { thread_id: thread } });
-      cursorAfter = (final.values.cursor as number) ?? cursorBefore;
+      const committed = final.values.cursor as number | undefined;
+      cursorAfter = Math.max(cursorBefore, typeof committed === 'number' ? committed : cursorBefore);
     } catch {
       /* keep cursorBefore — a getState failure must not advance the cursor past unconsumed messages */
     }
@@ -336,6 +351,9 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
     // after MAX_TURN_RETRIES, drop the wedged batch and surface it, so one poison message can't
     // loop a bot. Seed turns (job relays) are excluded: they're spliced from the queue before
     // running, so a failure isn't re-scheduled and can't loop.
+    // NOTE: unlike the playground (in-memory cursors reset on restart, giving skipped messages a
+    // second chance), this skip is DURABLE — the dropped batch stays dropped across restarts. The
+    // error event above is the only record of it; that's a conscious trade for durable cursors.
     if (failed && cursorAfter <= cursorBefore && !opts.seed) {
       const prior = this.failures.get(bot.id);
       const attempts = prior?.cursor === cursorBefore ? prior.count + 1 : 1;
@@ -359,7 +377,11 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
     // just the event loop: schedule, stream, emit, advance the cursor.
   }
 
-  /** Relay a finished job through its owner bot (gate-bypassed seed); its reply enters the channel. */
+  /** Relay a finished job through its owner bot (gate-bypassed seed); its reply enters the channel.
+   * `job.notifyThread` scopes the relay turn's IDENTITY (memory provenance) only — it does not
+   * route delivery. With one ChannelService per process there is nothing to route to yet; when the
+   * Slack adapter brings multiple surfaces, this is the seam that must resolve notifyThread to a
+   * real destination instead of posting to the single channel. */
   private async runJobRelay(job: Job): Promise<void> {
     if (job.status !== 'done' && job.status !== 'awaiting' && job.status !== 'failed') return;
     const bot = this.employees.byId(job.ownerBot) ?? this.employees.fallbackOwner();

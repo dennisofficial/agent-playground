@@ -78,11 +78,14 @@ export class WorkerService {
    * are caught here so there's never an unhandled rejection.
    */
   async runWorkerTurn(jobId: string, message: string): Promise<void> {
-    const job = await this.jobs.get(jobId);
-    if (!job) return;
+    // Everything — including the registry read — runs inside the try: callers fire-and-forget
+    // (`void runWorkerTurn(...)`), so a rejection escaping this method would vanish and leave the
+    // job stuck in 'running' forever with no failure relay.
     const ac = new AbortController();
     this.controllers.set(jobId, ac);
     try {
+      const job = await this.jobs.get(jobId);
+      if (!job) return;
       const bot = this.employees.byId(job.ownerBot) ?? this.employees.fallbackOwner();
       // Per-phase model tiering: PLAN runs on a high-reasoning model + max effort; EXECUTE on the
       // cheaper everyday model. `planning` makes the plan pass read-only at the engine seam.
@@ -103,12 +106,19 @@ export class WorkerService {
           model,
           effort,
           planning: job.mode === 'plan',
-          onEvent: (e) => void this.jobs.appendProgress(jobId, e),
+          onEvent: (e) =>
+            void this.jobs.appendProgress(jobId, e).catch((err) => this.logger.warn(`appendProgress(${jobId}) failed: ${err}`)),
           signal: ac.signal,
         }),
       );
-      // Cancelled while we were finishing up: discard the result, don't mark done or relay.
+      // Cancelled while we were finishing up: discard the result, don't mark done or relay. The
+      // abort flag alone isn't enough — cancelJob writes 'cancelled' BEFORE calling abort(), so an
+      // engine that resolves inside that window would see aborted=false and overwrite the
+      // cancellation with 'done' (and relay a result the owner explicitly discarded). Re-reading
+      // the live status closes that race: only a still-'running' job may be finalized here.
       if (ac.signal.aborted) return;
+      const live = await this.jobs.get(jobId);
+      if (!live || live.status !== 'running') return;
       const report = result || '(no report)';
       const status = statusFromReport(report);
 
@@ -117,7 +127,6 @@ export class WorkerService {
         sessionId,
         lastReport: report,
         turns: job.turns + 1,
-        ...(status === 'done' ? { result: report } : {}),
       });
       // Record completed work to the durable log so standups / "what did you do" have a real answer.
       if (status === 'done') {
@@ -126,13 +135,20 @@ export class WorkerService {
           .catch(() => {});
       }
     } catch (err) {
-      // An abort surfaces here as a thrown error — that's a cancellation, not a failure.
-      if (ac.signal.aborted) await this.jobs.update(jobId, { status: 'cancelled' });
-      else {
-        await this.jobs.update(jobId, {
-          status: 'failed',
-          error: err instanceof Error ? err.message : String(err),
-        });
+      // An abort surfaces here as a thrown error — that's a cancellation, not a failure. The
+      // updates are themselves guarded (a registry rejection here must not escape the
+      // fire-and-forget caller) and never overwrite a status cancelJob already finalized.
+      try {
+        if (ac.signal.aborted) {
+          await this.jobs.update(jobId, { status: 'cancelled' });
+        } else if ((await this.jobs.get(jobId))?.status === 'running') {
+          await this.jobs.update(jobId, {
+            status: 'failed',
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } catch (updateErr) {
+        this.logger.error(`Failed to record job ${jobId} failure: ${updateErr}`);
       }
     } finally {
       this.controllers.delete(jobId);

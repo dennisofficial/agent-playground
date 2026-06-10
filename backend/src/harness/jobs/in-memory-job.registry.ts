@@ -22,7 +22,6 @@ export class InMemoryJobRegistry implements JobRegistry {
       id,
       task: input.task,
       status: 'running',
-      threadId: `job:${id}`,
       notifyThread: input.notifyThread,
       ownerBot: input.ownerBot,
       project: input.project,

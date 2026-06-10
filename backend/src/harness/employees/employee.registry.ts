@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
 import { collectDecorated } from '../discovery.util';
+import { escapeRegExp } from '../domain/text';
 import type { EffortLevel, WorkerEngineName } from '../engines/worker-engine.port';
 import type { WorkerMode } from '../jobs/job-registry.port';
 import { AI_EMPLOYEE_METADATA } from './ai-employee.decorator';
@@ -45,6 +46,11 @@ export class EmployeeRegistry implements OnModuleInit {
     const roster = found.map((f) => f.instance).sort((a, b) => a.sortOrder - b.sortOrder);
 
     // Fail boot loudly on a misconfigured roster — silent drift here corrupts scoping + addressing.
+    // An EMPTY roster is also a misconfiguration (a forgotten module import would otherwise boot
+    // clean and only crash lazily, minutes later, on the first relay's fallbackOwner()).
+    if (roster.length === 0) {
+      throw new Error('No @AIEmployee providers found — register the roster classes in EmployeesModule');
+    }
     const ids = new Set<string>();
     for (const e of roster) {
       if (!e.id || e.id !== e.id.toLowerCase()) throw new Error(`Employee id '${e.id}' must be non-empty lowercase`);
@@ -55,7 +61,7 @@ export class EmployeeRegistry implements OnModuleInit {
       }
     }
     const scrumMasters = roster.filter((e) => e.scrumMaster);
-    if (roster.length > 0 && scrumMasters.length !== 1) {
+    if (scrumMasters.length !== 1) {
       throw new Error(`Exactly one employee must carry scrumMaster (found ${scrumMasters.length})`);
     }
     this.roster = roster;
@@ -87,12 +93,14 @@ export class EmployeeRegistry implements OnModuleInit {
    */
   addressedBots(text: string): EmployeeDefinition[] {
     const handles = new Set((text.match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1).toLowerCase()));
+    // Names/ids are escaped before interpolation — a roster name like "C.J." or "Alex+" must match
+    // literally, not as a pattern (and must never throw SyntaxError inside the scheduler).
     return this.roster.filter(
       (b) =>
         handles.has(b.name.toLowerCase()) ||
         handles.has(b.id) ||
-        new RegExp(`\\b${b.name}\\b`, 'i').test(text) ||
-        new RegExp(`\\b${b.id}\\b`, 'i').test(text),
+        new RegExp(`\\b${escapeRegExp(b.name)}\\b`, 'i').test(text) ||
+        new RegExp(`\\b${escapeRegExp(b.id)}\\b`, 'i').test(text),
     );
   }
 

@@ -57,37 +57,42 @@ export class FetchService {
   async fetchContext(bot: EmployeeDefinition, query: string, id: Identity): Promise<string> {
     const parts: string[] = [];
 
-    if (query.trim() && (await this.hasFacts(id))) {
+    // The two programmatic empty-skips are independent — run them in parallel. Cross-project recall
+    // is gated INDEPENDENTLY of hasFacts: a clean-slate current project must still surface
+    // strongly-relevant facts from other projects.
+    const [hasOwn, hasOther] = query.trim()
+      ? await Promise.all([this.hasFacts(id), this.hasOtherProjectFacts(id)])
+      : [false, false];
+
+    // Embed the query ONCE and hand the vector to both recall paths (they used to embed the same
+    // text twice). Retrieval failure (e.g. an embeddings outage) must DEGRADE to empty recall, not
+    // abort the turn — a throw here would fail the whole respond turn; match reconcile's posture.
+    let qv: string | undefined;
+    if (hasOwn || hasOther) {
       try {
-        const facts = await this.semantic.recall(query, id);
-        if (facts.length > 0) {
-          parts.push(`What you already know:\n${facts.map((f) => `- ${f.fact}`).join('\n')}`);
-        }
+        qv = await this.semantic.embed(query);
       } catch {
-        // Retrieval failure (e.g. an embeddings outage) must DEGRADE to empty recall, not abort the
-        // turn — a throw here would fail the whole respond turn. Match reconcile's swallow posture.
+        /* degrade to no recall */
       }
     }
 
-    // Cross-project recall — gated INDEPENDENTLY of hasFacts: a clean-slate current project must
-    // still surface strongly-relevant facts from other projects, each labeled with its project.
-    if (query.trim() && (await this.hasOtherProjectFacts(id))) {
-      try {
-        const others = await this.semantic.recallOtherProjects(query, id);
-        if (others.length > 0) {
-          parts.push(
-            `From other projects (for reference):\n${others.map((o) => `- [${o.project}] ${o.fact.fact}`).join('\n')}`,
-          );
-        }
-      } catch {
-        // Same degrade-to-empty posture as the in-project recall above.
-      }
-    }
+    const [facts, others, plate] = await Promise.all([
+      qv && hasOwn ? this.semantic.recall(query, id, undefined, undefined, qv).catch(() => []) : [],
+      qv && hasOther ? this.semantic.recallOtherProjects(query, id, { precomputed: qv }).catch(() => []) : [],
+      // Reminders: this bot's own plate — except the scrum master, who sees the whole team's.
+      bot.scrumMaster
+        ? this.tasks.openTasks(id.project)
+        : this.tasks.listTasks({ project: id.project, status: 'open', owner: bot.id }),
+    ]);
 
-    // Reminders: this bot's own plate — except the scrum master, who walks in seeing the whole team's.
-    const plate = bot.scrumMaster
-      ? await this.tasks.openTasks(id.project)
-      : await this.tasks.listTasks({ project: id.project, status: 'open', owner: bot.id });
+    if (facts.length > 0) {
+      parts.push(`What you already know:\n${facts.map((f) => `- ${f.fact}`).join('\n')}`);
+    }
+    if (others.length > 0) {
+      parts.push(
+        `From other projects (for reference):\n${others.map((o) => `- [${o.project}] ${o.fact.fact}`).join('\n')}`,
+      );
+    }
     if (plate.length > 0) {
       const shown = plate.slice(0, REMINDER_CAP);
       const more = plate.length - shown.length;

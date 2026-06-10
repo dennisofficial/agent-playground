@@ -100,6 +100,12 @@ export class SemanticMemory {
     return rawRows<T>(await this.facts.manager.query(sql, params));
   }
 
+  /** Embed text to the pgvector literal the queries use — exposed so a caller running BOTH recall
+   * paths over the same query (the fetch pass) embeds once and reuses the vector. */
+  async embed(text: string): Promise<string> {
+    return toPgVector(await this.embedder.embed(text));
+  }
+
   /**
    * Store a fact at its tier's scope, or merge into an existing near-duplicate in that scope. A candidate
    * at cosine ≥ DEDUP_THRESHOLD merges outright; one in [GRAY_FLOOR, DEDUP_THRESHOLD) merges only if the
@@ -160,10 +166,11 @@ export class SemanticMemory {
     id: Identity,
     limit = 5,
     floor = MIN_RECALL_SIM,
+    precomputed?: string,
   ): Promise<StoredFact[]> {
     const scopes = recallScopes(id);
     if (scopes.length === 0) return [];
-    const qv = toPgVector(await this.embedder.embed(query));
+    const qv = precomputed ?? (await this.embed(query));
     const rows = await this.query(
       `SELECT ${SELECT_COLS}, 1 - (embedding <=> $1::vector) AS sim
        FROM facts
@@ -182,12 +189,12 @@ export class SemanticMemory {
   async recallOtherProjects(
     query: string,
     id: Identity,
-    opts: { floor?: number; limit?: number } = {},
+    opts: { floor?: number; limit?: number; precomputed?: string } = {},
   ): Promise<OtherProjectFact[]> {
     const floor = opts.floor ?? OTHER_PROJECT_FLOOR;
     const limit = opts.limit ?? 3;
     const self = projectScope(id.project);
-    const qv = toPgVector(await this.embedder.embed(query));
+    const qv = opts.precomputed ?? (await this.embed(query));
     const rows = await this.query(
       `SELECT ${SELECT_COLS}, 1 - (embedding <=> $1::vector) AS sim
        FROM facts

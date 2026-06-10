@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown, Optional } from '@nestjs/common';
 import type { Subscription } from 'rxjs';
+import { ChannelService } from '../channel/channel.service';
 import { ConductorEventsBus } from '../conductor/conductor-events.bus';
 import { ConductorService } from '../conductor/conductor.service';
 import { CHAT_SURFACE, type ChatSurface } from './chat-surface.port';
@@ -21,6 +22,7 @@ export class SurfaceBridge implements OnApplicationBootstrap, OnApplicationShutd
   constructor(
     private readonly conductor: ConductorService,
     private readonly bus: ConductorEventsBus,
+    private readonly channel: ChannelService,
     @Optional() @Inject(CHAT_SURFACE) private readonly surface?: ChatSurface,
   ) {}
 
@@ -35,8 +37,10 @@ export class SurfaceBridge implements OnApplicationBootstrap, OnApplicationShutd
     this.subs.push(
       this.bus.events$.subscribe((e) => {
         if (e.kind === 'message' && !e.fromHuman) {
+          // surfaceId is the CHANNEL coordinate ('tui:main' / 'slack:C042:…') the adapter routes
+          // by — from ChannelService, never the adapter's display name.
           void this.surface!
-            .post({ id: e.id, authorBotId: e.authorId, authorName: e.authorName, text: e.text, surfaceId: this.surfaceId() })
+            .post({ id: e.id, authorBotId: e.authorId, authorName: e.authorName, text: e.text, surfaceId: this.channel.surfaceId })
             .catch((err) => this.logger.error(`surface.post failed: ${err}`));
         } else if (e.kind === 'reaction') {
           void this.surface!
@@ -49,9 +53,5 @@ export class SurfaceBridge implements OnApplicationBootstrap, OnApplicationShutd
 
   onApplicationShutdown(): void {
     for (const s of this.subs) s.unsubscribe();
-  }
-
-  private surfaceId(): string {
-    return this.surface?.name ?? 'headless';
   }
 }

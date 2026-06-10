@@ -17,9 +17,9 @@ export interface Job {
   id: string;
   task: string;
   status: JobStatus;
-  /** The job's own background thread id (`job:{id}`). */
-  threadId: string;
-  /** Chat thread that should receive the completion relay (the surface it was dispatched from). */
+  /** The chat surface/thread the job was dispatched from. Used for memory-identity scoping on the
+   * relay turn; it does NOT route delivery yet — relays post to the process's single channel until
+   * the multi-surface (Slack) pass gives the conductor something to route to. */
   notifyThread: string;
   /** Which bot owns this job — scopes the job tools and routes the completion relay to that bot. */
   ownerBot: string;
@@ -35,9 +35,9 @@ export interface Job {
   turns: number;
   /** How many times this job has been resumed via continue_work — starts at 0, debugging aid. */
   version: number;
-  /** The latest turn's report to the chat-self (its final text, including the STATUS line). */
+  /** The latest turn's report to the chat-self (its final text, including the STATUS line). For a
+   * 'done' job this IS the result. */
   lastReport?: string;
-  result?: string;
   error?: string;
 }
 

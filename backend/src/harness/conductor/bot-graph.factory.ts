@@ -8,6 +8,7 @@ import { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { GateAction } from '../domain/conductor-events';
 import { getIdentity } from '../domain/identity';
+import { flattenContent } from '../domain/text';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
@@ -125,12 +126,6 @@ const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
   const last = m.content.length - 1;
   return last >= 0 ? clone(m.content.map((b, i) => (i === last ? { ...b, cache_control: cc } : b))) : m;
 };
-
-/** Flatten message content (string | content blocks) to plain text. */
-const flat = (c: BaseMessage['content']): string =>
-  typeof c === 'string'
-    ? c
-    : c.map((p) => (typeof p === 'string' ? p : 'text' in p && typeof p.text === 'string' ? p.text : '')).join('');
 
 /**
  * SELF-HEALING GUARD: repair dangling tool calls in the durable history before every model call.
@@ -331,12 +326,12 @@ export class BotGraphFactory {
         .slice(state.turnStart)
         .flatMap((m): string[] => {
           if (m.getType() === 'human') {
-            const t = flat(m.content).trim();
+            const t = flattenContent(m.content).trim();
             return t ? [t] : [];
           }
           if (m.getType() === 'ai') {
             const lines: string[] = [];
-            const t = flat(m.content).trim();
+            const t = flattenContent(m.content).trim();
             if (t) lines.push(`${bot.name}: ${t}`);
             const note = toolActionNote(m as AIMessage);
             if (note) lines.push(note);
