@@ -80,6 +80,11 @@ export interface IEnvConfig {
   // asserts both at boot)
   SLACK_BOT_TOKEN?: string; // xoxb- — Web API (chat.postMessage, reactions.add, users.info)
   SLACK_APP_TOKEN?: string; // xapp- — Socket Mode connection (connections:write)
+  // Public base URL of the employee avatar tree (web/public/avatars — e.g. the repo's
+  // raw.githubusercontent URL, later the hosted web app). Unset → messages post without icons.
+  // Convention: <base>/<style>/<botId>.png
+  AVATAR_BASE_URL?: string;
+  AVATAR_STYLE?: string; // 'illustrated' (default) | 'realistic' — the feature toggle
 
   // LangSmith tracing (optional — LangChain reads these from env automatically)
   LANGSMITH_TRACING?: string;
@@ -145,6 +150,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Slack surface
   SLACK_BOT_TOKEN: Joi.string().optional(),
   SLACK_APP_TOKEN: Joi.string().optional(),
+  AVATAR_BASE_URL: Joi.string().uri().optional(),
+  AVATAR_STYLE: Joi.string().valid('illustrated', 'realistic').optional(),
 
   // LangSmith tracing
   LANGSMITH_TRACING: Joi.string().optional(),

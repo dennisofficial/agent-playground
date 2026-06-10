@@ -1,3 +1,4 @@
+import { EnvService } from '@core/config/env/env.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
 import type {
   ChatSurface,
@@ -57,12 +58,24 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
   /** Harness-minted message id → where it landed in Slack (insertion-ordered, LRU-bounded). */
   private readonly postedIds = new Map<string, { channel: string; ts: string }>();
 
+  /** `<AVATAR_BASE_URL>/<style>/<botId>.png`, or undefined → post without icons. The style
+   * segment is the illustrated↔realistic feature toggle; hosting is swappable via the base URL
+   * (raw GitHub today, the deployed web app later) without touching roster code. */
+  private readonly avatarBase?: string;
+
   constructor(
     @Inject(SLACK_WEB_CLIENT) private readonly web: WebClient,
     @Inject(SLACK_SOCKET_MODE_CLIENT) private readonly socket: SocketModeClient,
     private readonly directory: SlackDirectoryService,
     private readonly bus: ConductorEventsBus,
-  ) {}
+    env: EnvService,
+  ) {
+    const base = env.get('AVATAR_BASE_URL');
+    if (base) {
+      const style = env.get('AVATAR_STYLE') ?? 'illustrated';
+      this.avatarBase = `${base.replace(/\/+$/, '')}/${style}`;
+    }
+  }
 
   get inbound$(): Observable<InboundChatMessage> {
     return this.subject.asObservable();
@@ -155,6 +168,9 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
           channel,
           text: msg.text,
           username: msg.authorName,
+          ...(this.avatarBase
+            ? { icon_url: `${this.avatarBase}/${msg.authorBotId}.png` }
+            : {}),
         });
         if (res.ts) this.recordPostedId(msg.id, { channel, ts: res.ts });
         return;

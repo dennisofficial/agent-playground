@@ -16,7 +16,8 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-/** Write + commit one file in a checkout (worktrees inherit the repo's user config). */
+/** Write + commit one file in a checkout (service-created worktrees commit as their owner via
+ * per-worktree identity; plain checkouts use the repo's user config). */
 async function commit(checkout: string, file: string, content: string): Promise<void> {
   await writeFile(join(checkout, file), content);
   await git(checkout, 'add', file);
@@ -541,5 +542,57 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     expect(adoptedA?.sharedBranch).toBe('shared/feat');
     expect(adoptedB?.project).toBe('');
     expect(adoptedB?.repoRoot).not.toBe(join(reposRoot, 'proj'));
+  });
+});
+
+describe('WorktreeService per-worktree git identity (real git)', () => {
+  let repo: string;
+  let service: WorktreeService;
+
+  beforeEach(async () => {
+    repo = await makeRepo();
+    service = makeService(repo);
+  });
+
+  afterEach(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  it('commits inside a worktree are authored as the owning employee; the base checkout is untouched', async () => {
+    const { worktree } = await service.create({ name: 'intro', ownerBot: 'sam', project: 'local' });
+    await commit(worktree.checkout, 'sam.md', 'hi\n');
+    expect(await git(worktree.checkout, 'log', '-1', '--format=%an <%ae>')).toBe(
+      'Sam <sam@agents.noreply>',
+    );
+
+    await writeFile(join(repo, 'root.md'), 'root\n');
+    await git(repo, 'add', 'root.md');
+    await git(repo, 'commit', '-m', 'root edit');
+    expect(await git(repo, 'log', '-1', '--format=%an <%ae>')).toBe('spec <spec@test>');
+  });
+
+  it('adoption backfills identity onto trees from before it existed', async () => {
+    const { worktree } = await service.create({ name: 'old', ownerBot: 'maya', project: 'local' });
+    // Simulate a pre-identity tree: strip the per-worktree config the create just wrote.
+    await git(worktree.checkout, 'config', '--worktree', '--unset', 'user.name');
+    await git(worktree.checkout, 'config', '--worktree', '--unset', 'user.email');
+
+    const fresh = makeService(repo);
+    await fresh.onApplicationBootstrap();
+    await commit(worktree.checkout, 'maya.md', 'hi\n');
+    expect(await git(worktree.checkout, 'log', '-1', '--format=%an <%ae>')).toBe(
+      'Maya <maya@agents.noreply>',
+    );
+  });
+
+  it('ownerless adopted trees keep the repo identity (no fake author invented)', async () => {
+    // A non-agent branch (no owner segment) adopted from disk.
+    await git(repo, 'worktree', 'add', '-b', 'scratch', join(repo, '.worktrees', 'wt-009-scratch'));
+    const fresh = makeService(repo);
+    await fresh.onApplicationBootstrap();
+    await commit(join(repo, '.worktrees', 'wt-009-scratch'), 'x.md', 'x\n');
+    expect(
+      await git(join(repo, '.worktrees', 'wt-009-scratch'), 'log', '-1', '--format=%an <%ae>'),
+    ).toBe('spec <spec@test>');
   });
 });

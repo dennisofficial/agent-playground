@@ -204,6 +204,31 @@ export class WorktreeService implements OnApplicationBootstrap {
       : undefined;
   }
 
+  /**
+   * Commits made inside a worktree are authored as the OWNING EMPLOYEE, not the host machine's
+   * global git identity. Per-worktree config (`extensions.worktreeConfig`) is the seam: it covers
+   * every engine (SDK, codex subprocess, langgraph bash) and the service's own publish/pull merge
+   * commits, and it survives restarts in `.git/worktrees/<id>/config.worktree`. Enabling the
+   * extension is safe for normal checkouts (the documented relocation caveat only concerns
+   * `core.bare`/`core.worktree`, which plain clones don't set). Ownerless adopted trees are
+   * skipped. Best-effort: attribution must never fail a create/adopt.
+   */
+  private async setWorktreeIdentity(
+    checkout: string,
+    repoRoot: string,
+    ownerBot: string,
+  ): Promise<void> {
+    if (!ownerBot) return;
+    try {
+      await this.git(['config', 'extensions.worktreeConfig', 'true'], repoRoot);
+      const name = ownerBot.charAt(0).toUpperCase() + ownerBot.slice(1);
+      await this.git(['config', '--worktree', 'user.name', name], checkout);
+      await this.git(['config', '--worktree', 'user.email', `${ownerBot}@agents.noreply`], checkout);
+    } catch (err) {
+      this.logger.warn(`could not set git identity for ${ownerBot} at ${checkout}: ${err}`);
+    }
+  }
+
   /** Normalize an employee-supplied shared name to `shared/<slug>` (a leading `shared/` is allowed
    * and stripped first, so passing a full branch name back in can't double-prefix). */
   private sharedBranchName(input: string): string {
@@ -313,6 +338,7 @@ export class WorktreeService implements OnApplicationBootstrap {
       if (shared) {
         await this.git(['config', `branch.${branch}.${SHARED_CONFIG_KEY}`, shared], repoRoot);
       }
+      await this.setWorktreeIdentity(checkout, repoRoot, input.ownerBot);
 
       const worktree: Worktree = {
         id,
@@ -570,6 +596,8 @@ export class WorktreeService implements OnApplicationBootstrap {
           .replace('refs/heads/', '') ?? '';
       const owner = branch.match(/^agent\/([^/]+)\//)?.[1] ?? '';
       const shared = branch ? await this.readSharedConfig(branch, repoRoot) : undefined;
+      // Backfill employee authorship onto trees from before identity existed (idempotent).
+      await this.setWorktreeIdentity(checkout, repoRoot, owner);
       this.worktrees.set(id, {
         id,
         name: slug,

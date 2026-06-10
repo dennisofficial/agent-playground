@@ -124,6 +124,10 @@ export class ClaudeEngine implements WorkerEngine {
         capturedPlan = plan;
       }),
       permissionMode: planMode ? 'plan' : 'default',
+      // Commits are authored via per-worktree git identity — suppress the SDK's default
+      // "Co-Authored-By: Claude" commit attribution so it can't muddy that. Inline settings:
+      // settingSources stays [] (no config FILES are read).
+      settings: { attribution: { commit: '', pr: '' } },
       abortController,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),

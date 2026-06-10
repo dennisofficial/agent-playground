@@ -3,7 +3,7 @@ import { SlackChatSurface } from './slack-chat-surface';
 
 type Handler = (envelope: unknown) => void;
 
-function makeFakes() {
+function makeFakes(envValues: Record<string, string | undefined> = {}) {
   const handlers = new Map<string, Handler>();
   const socket = {
     on: vi.fn((event: string, h: Handler) => handlers.set(event, h)),
@@ -27,11 +27,13 @@ function makeFakes() {
     ensureChannelRegistered: vi.fn(async () => {}),
   };
   const bus = { patchStatus: vi.fn() };
+  const env = { get: (k: string) => envValues[k] };
   const surface = new SlackChatSurface(
     web as never,
     socket as never,
     directory as never,
     bus as never,
+    env as never,
   );
   const inject = async (event: Record<string, unknown>) => {
     const handler = handlers.get('message');
@@ -173,6 +175,43 @@ describe('SlackChatSurface outbound', () => {
     web.reactions.add.mockClear();
     await surface.react('alex:pre-restart:9', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042');
     expect(web.reactions.add).not.toHaveBeenCalled();
+  });
+
+  it('adds icon_url from AVATAR_BASE_URL + style when configured; none when unset', async () => {
+    const { surface, web } = makeFakes({
+      AVATAR_BASE_URL: 'https://cdn.example/avatars/',
+      AVATAR_STYLE: 'realistic',
+    });
+    await surface.connect();
+    await surface.post({
+      id: 'alex:k2:1',
+      authorBotId: 'alex',
+      authorName: 'Alex',
+      text: 'hi',
+      surfaceId: 'slack:C042',
+    });
+    expect(web.chat.postMessage).toHaveBeenCalledWith({
+      channel: 'C042',
+      text: 'hi',
+      username: 'Alex',
+      icon_url: 'https://cdn.example/avatars/realistic/alex.png',
+    });
+
+    // Default style is illustrated.
+    const plain = makeFakes({ AVATAR_BASE_URL: 'https://cdn.example/avatars' });
+    await plain.surface.connect();
+    await plain.surface.post({
+      id: 'sam:k2:1',
+      authorBotId: 'sam',
+      authorName: 'Sam',
+      text: 'yo',
+      surfaceId: 'slack:C042',
+    });
+    expect(plain.web.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        icon_url: 'https://cdn.example/avatars/illustrated/sam.png',
+      }),
+    );
   });
 
   it('react() swallows already_reacted (one Slack app reacts for every employee)', async () => {
