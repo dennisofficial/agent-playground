@@ -1,6 +1,9 @@
+import { ChannelRegistryService } from '@harness/channel/channel-registry.service';
 import { ConductorService } from '@harness/conductor/conductor.service';
 import { DEFAULT_PROJECT } from '@harness/domain/identity';
+import { EmployeeRegistry } from '@harness/employees/employee.registry';
 import { TaskStore } from '@harness/memory/task-store';
+import type { TuiChatSurface } from '../tui-chat-surface';
 
 /**
  * The slash-command plugin contract + registry. Each command owns its own recognition and declines
@@ -19,6 +22,8 @@ export interface CommandContext {
   exit(): void;
   /** Toggle (or set) debug-row visibility; returns the new state. */
   setDebug(show?: boolean): boolean;
+  /** Focus a room: the transcript filters to it and `send()` posts into it. */
+  setActiveChannel(channelId: string): void;
 }
 
 export interface Command {
@@ -31,6 +36,9 @@ export interface Command {
 export interface CommandDeps {
   conductor: ConductorService;
   tasks: TaskStore;
+  registry: ChannelRegistryService;
+  employees: EmployeeRegistry;
+  surface: TuiChatSurface;
   project?: string;
 }
 
@@ -57,7 +65,9 @@ export function buildCommands(deps: CommandDeps): Command[] {
           ctx.note(
             tasks.length
               ? `Open reminders (${tasks.length}):\n` +
-                  tasks.map((t) => `  #${t.id}  [${t.owner}]  ${t.description}`).join('\n')
+                  tasks
+                    .map((t) => `  #${t.id}  [${t.owner}]  ${t.description}`)
+                    .join('\n')
               : 'No open reminders yet.',
           ),
         )
@@ -90,11 +100,128 @@ export function buildCommands(deps: CommandDeps): Command[] {
     },
   };
 
-  return [exitCommand, tasksCommand, asCommand, debugCommand];
+  const roomCommand: Command = {
+    name: 'room',
+    summary:
+      '/room <name> [bot,bot…] — create or switch to a project room (room name = its memory project)',
+    run(text, ctx) {
+      const m = text.match(/^\/room\s+(\S+)(?:\s+(.+))?$/i);
+      if (!m) return false;
+      const name = m[1].toLowerCase().replace(/^#/, '');
+      // Resolve an existing room by its full channelId first ('/room tui:main' must switch to the
+      // default room, not mint a 'tui:tui:main'), then by the tui-prefixed short name.
+      const channelId = deps.registry.get(name) ? name : `tui:${name}`;
+      const existing = deps.registry.get(channelId);
+      if (!existing) {
+        const allBots = deps.employees.list().map((b) => b.id);
+        const requested = m[2]
+          ?.split(/[,\s]+/)
+          .map((s) => s.trim().toLowerCase().replace(/^@/, ''))
+          .filter(Boolean);
+        const unknown = requested?.filter((id) => !allBots.includes(id)) ?? [];
+        if (unknown.length) {
+          ctx.note(
+            `Unknown teammate(s): ${unknown.join(', ')}. Roster: ${allBots.join(', ')}.`,
+          );
+          return true;
+        }
+        const members = requested?.length ? requested : allBots;
+        deps.registry.ensure({
+          channelId,
+          kind: 'channel',
+          project: name,
+          members,
+          displayName: name,
+        });
+        ctx.note(
+          `Created #${name} (project '${name}') with ${members.join(', ')}.`,
+        );
+      } else {
+        ctx.note(`Switched to #${existing.displayName}.`);
+      }
+      ctx.setActiveChannel(channelId);
+      return true;
+    },
+  };
+
+  const dmCommand: Command = {
+    name: 'dm',
+    summary: '/dm <bot> — open (or switch to) a private 1:1 with a teammate',
+    run(text, ctx) {
+      const m = text.match(/^\/dm\s+(\S+)$/i);
+      if (!m) return false;
+      const botId = m[1].toLowerCase().replace(/^@/, '');
+      const bot = deps.employees.byId(botId);
+      if (!bot) {
+        ctx.note(
+          `No teammate '${botId}'. Roster: ${deps.employees
+            .list()
+            .map((b) => b.id)
+            .join(', ')}.`,
+        );
+        return true;
+      }
+      const channelId = `tui:dm:${botId}`;
+      if (!deps.registry.get(channelId)) {
+        // A DM is WORKSPACE-level, not project-bound — the row's project is only the reminders
+        // home; recall spans every project the pair shares (see ConductorService.identityFor).
+        deps.registry.ensure({
+          channelId,
+          kind: 'dm',
+          project: deps.project ?? DEFAULT_PROJECT,
+          members: [botId],
+          displayName: `dm:${bot.name}`,
+        });
+        ctx.note(`Opened a DM with ${bot.name}.`);
+      } else {
+        ctx.note(`Switched to your DM with ${bot.name}.`);
+      }
+      ctx.setActiveChannel(channelId);
+      return true;
+    },
+  };
+
+  const roomsCommand: Command = {
+    name: 'rooms',
+    summary: '/rooms — list rooms and DMs',
+    run(text, ctx) {
+      if (text !== '/rooms' && text !== '/channels') return false;
+      const active = deps.surface.activeChannel;
+      // Label each room by the handle that SWITCHES to it (channelId-derived, unique) — displaying
+      // anything else invites typing a name that mints a duplicate room.
+      const handle = (c: { channelId: string; kind: string }) =>
+        c.kind === 'dm'
+          ? `@${c.channelId.replace(/^tui:dm:/, '')}  (/dm ${c.channelId.replace(/^tui:dm:/, '')})`
+          : `#${c.channelId.replace(/^tui:/, '')}`;
+      const lines = deps.registry.list().map(
+        (c) =>
+          `  ${c.channelId === active ? '▸' : ' '} ${handle(c)}  (${
+            // A DM is workspace-level — showing its (reminders-home) project would imply binding.
+            c.kind === 'dm' ? 'dm' : `${c.kind}, project '${c.project}'`
+          }, members: ${c.members.join(', ') || '—'})`,
+      );
+      ctx.note(lines.length ? `Rooms:\n${lines.join('\n')}` : 'No rooms yet.');
+      return true;
+    },
+  };
+
+  return [
+    exitCommand,
+    tasksCommand,
+    asCommand,
+    debugCommand,
+    roomCommand,
+    dmCommand,
+    roomsCommand,
+  ];
 }
 
 /** Run the first command that accepts `text`; return `false` if none did (caller falls through to chat). */
-export function runCommand(commands: Command[], text: string, ctx: CommandContext): boolean {
+export function runCommand(
+  commands: Command[],
+  text: string,
+  ctx: CommandContext,
+): boolean {
   for (const cmd of commands) if (cmd.run(text, ctx)) return true;
   return false;
 }

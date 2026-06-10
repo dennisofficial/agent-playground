@@ -2,7 +2,16 @@ import type { ConductorEventsBus } from '@harness/conductor/conductor-events.bus
 import type { ConductorStatus } from '@harness/domain/conductor-events';
 import type { DOMElement } from 'ink';
 import { memo, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Box, measureElement, Spinner, Text, TextInput, useApp, useInput, useWindowSize } from '../ink';
+import {
+  Box,
+  measureElement,
+  Spinner,
+  Text,
+  TextInput,
+  useApp,
+  useInput,
+  useWindowSize,
+} from '../ink';
 import type { TuiChatSurface } from '../tui-chat-surface';
 import { type Command, type CommandContext, runCommand } from './commands';
 import { MessageView } from './components';
@@ -30,11 +39,28 @@ export function App({ deps }: { deps: AppDeps }) {
 
   // The transcript: a flat keyed store. We own the screen (alternate buffer), so EVERY item is
   // retained; we render a LINE-scrolled window of them. Nothing is flushed to native scrollback.
-  const [items, dispatch] = useReducer(storeReducer, [{ id: 'banner', kind: 'note', text: deps.banner }]);
+  const [items, dispatch] = useReducer(storeReducer, [
+    { id: 'banner', kind: 'note', text: deps.banner },
+  ]);
   const [status, setStatus] = useState<ConductorStatus>(deps.bus.status);
 
   const [showDebug, setShowDebug] = useState(false); // default off = "pure Slack" view
-  const visible = useMemo(() => items.filter((it) => showDebug || !isDebug(it)), [items, showDebug]);
+  // The focused room: chat rows from other rooms are retained but hidden (Slack's focused-channel
+  // model). Rows without a channelId (notes, errors, debug) show everywhere.
+  const [activeChannel, setActiveChannel] = useState(
+    deps.surface.activeChannel,
+  );
+  const visible = useMemo(
+    () =>
+      items.filter(
+        (it) =>
+          (showDebug || !isDebug(it)) &&
+          (!('channelId' in it) ||
+            !it.channelId ||
+            it.channelId === activeChannel),
+      ),
+    [items, showDebug, activeChannel],
+  );
 
   // LINE-accurate scroll. Per-ITEM heights measure correctly (even items taller than the viewport),
   // so we sum them for the true content height `C` and scroll by line `offset` via marginTop on the
@@ -72,7 +98,13 @@ export function App({ deps }: { deps: AppDeps }) {
   useEffect(() => {
     const eventsSub = deps.bus.events$.subscribe((e) => {
       if (e.kind === 'reaction') {
-        dispatch({ t: 'react', id: e.id, targetId: e.targetId, by: e.botName, emoji: e.emoji });
+        dispatch({
+          t: 'react',
+          id: e.id,
+          targetId: e.targetId,
+          by: e.botName,
+          emoji: e.emoji,
+        });
       } else {
         dispatch({ t: 'add', item: renderEvent(e) });
       }
@@ -113,12 +145,18 @@ export function App({ deps }: { deps: AppDeps }) {
     const text = value.trim();
     if (!text) return;
     const cmdCtx: CommandContext = {
-      note: (t) => dispatch({ t: 'add', item: { id: localId(), kind: 'note', text: t } }),
+      note: (t) =>
+        dispatch({ t: 'add', item: { id: localId(), kind: 'note', text: t } }),
       exit: exitApp,
       setDebug: (show) => {
         const next = show ?? !showDebug;
         setShowDebug(next);
         return next;
+      },
+      setActiveChannel: (channelId) => {
+        deps.surface.setActiveChannel(channelId);
+        setActiveChannel(channelId);
+        setFollow(true);
       },
     };
     if (runCommand(deps.commands, text, cmdCtx)) {
@@ -131,7 +169,9 @@ export function App({ deps }: { deps: AppDeps }) {
   }
 
   const ctxLabel =
-    ctx.input !== undefined ? `ctx ${ctx.input.toLocaleString()} in · ${(ctx.output ?? 0).toLocaleString()} out` : '';
+    ctx.input !== undefined
+      ? `ctx ${ctx.input.toLocaleString()} in · ${(ctx.output ?? 0).toLocaleString()} out`
+      : '';
   const hiddenDebug = items.length - visible.length;
   const footer = [
     ctxLabel,
@@ -166,12 +206,18 @@ export function App({ deps }: { deps: AppDeps }) {
 
       {thinking.length > 0 && (
         <Box flexShrink={0}>
-          <Spinner label={`${thinking.join(', ')} ${thinking.length === 1 ? 'is' : 'are'} thinking…`} />
+          <Spinner
+            label={`${thinking.join(', ')} ${thinking.length === 1 ? 'is' : 'are'} thinking…`}
+          />
         </Box>
       )}
       <Box flexShrink={0}>
-        <Text color="cyan">{`${who} ❯ `}</Text>
-        <TextInput key={inputKey} placeholder="message   ·   /as <name>   ·   /debug   ·   /tasks   ·   /exit" onSubmit={handleSubmit} />
+        <Text color="cyan">{`${who} @ ${activeChannel.replace(/^tui:/, '')} ❯ `}</Text>
+        <TextInput
+          key={inputKey}
+          placeholder="message   ·   /room <name>   ·   /dm <bot>   ·   /rooms   ·   /as   ·   /debug   ·   /exit"
+          onSubmit={handleSubmit}
+        />
       </Box>
       {footer && (
         <Box flexShrink={0}>

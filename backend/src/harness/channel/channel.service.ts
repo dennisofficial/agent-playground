@@ -9,120 +9,159 @@ import type { ChannelMsg } from './channel.types';
 export const DEFAULT_SURFACE_ID = 'tui:main';
 const DEFAULT_HYDRATE_LIMIT = 500;
 
+/** One room's in-memory log. `seq` is monotonic PER ROOM — each room is its own cursor space. */
+interface RoomLog {
+  msgs: ChannelMsg[];
+  nextSeq: number;
+  /** The lowest seq held in memory (== nextSeq when the log is empty). */
+  floor: number;
+}
+
 /**
- * The channel, with durable history. The in-memory log stays the SYNCHRONOUS source of truth —
- * `append()` never blocks a turn, because the bot-graph's llm node reads `since(cursor)` at the top
- * of every step (mid-thought collaboration) and the gate reads `historyBefore` windows. Postgres is
- * write-behind durability: every append/update is queued onto a serialized persist chain (ordering
- * holds; failures are logged, never thrown into a turn), and boot re-hydrates the tail of the log +
- * the seq counter so cursors and history survive restarts.
+ * The conversation logs — one per room — with durable history. The in-memory logs stay the
+ * SYNCHRONOUS source of truth: `append()` never blocks a turn, because the bot-graph's llm node
+ * reads `since(cursor, channelId)` at the top of every step (mid-thought collaboration) and the
+ * gate reads `historyBefore` windows. Postgres is write-behind durability: every append/update is
+ * queued onto a serialized persist chain (ordering holds; failures are logged, never thrown into a
+ * turn), and boot re-hydrates the tail of every room's log + its seq counter so cursors and history
+ * survive restarts.
  *
- * Hydration is a TAIL (the newest `CHANNEL_HYDRATE_LIMIT` rows), so a durable cursor can point
- * BELOW the in-memory window — `floorSeq` exposes the window's lower edge and `backfillTo()` loads
- * the gap on demand. The conductor reconciles cursors against the floor at bootstrap so no message
- * between a bot's cursor and the window is ever silently skipped.
+ * Hydration is a TAIL per room (the newest `CHANNEL_HYDRATE_LIMIT` rows), so a durable cursor can
+ * point BELOW the in-memory window — `floorSeqOf` exposes a room's lower edge and `backfillTo()`
+ * loads the gap on demand. The conductor reconciles cursors against the floors at bootstrap so no
+ * message between a bot's cursor and the window is ever silently skipped.
  *
- * One surface per process this pass (`HARNESS_SURFACE_ID`); multi-surface arrives with the Slack
- * adapter.
+ * `surfaceId` is this process's DEFAULT room (`HARNESS_SURFACE_ID`) — the channelId every read/write
+ * falls back to when none is given. Which rooms exist, their kind/project/membership, lives in the
+ * ChannelRegistryService; this service only owns the logs.
  */
 @Injectable()
 export class ChannelService implements OnModuleInit {
   private readonly logger = new Logger(ChannelService.name);
-  private log: ChannelMsg[] = [];
+  private rooms = new Map<string, RoomLog>();
   private subs = new Set<() => void>();
-  private nextSeq = 0;
-  /** The lowest seq held in memory (== nextSeq when the log is empty). */
-  private floor = 0;
   private readonly write = createMutex();
   private readonly hydrateLimit: number;
 
   readonly surfaceId: string;
 
   constructor(
-    @InjectRepository(ChannelMessage) private readonly repo: Repository<ChannelMessage>,
+    @InjectRepository(ChannelMessage)
+    private readonly repo: Repository<ChannelMessage>,
     env: EnvService,
   ) {
     this.surfaceId = env.get('HARNESS_SURFACE_ID') ?? DEFAULT_SURFACE_ID;
-    this.hydrateLimit = env.get('CHANNEL_HYDRATE_LIMIT') ?? DEFAULT_HYDRATE_LIMIT;
+    this.hydrateLimit =
+      env.get('CHANNEL_HYDRATE_LIMIT') ?? DEFAULT_HYDRATE_LIMIT;
   }
 
-  /** Boot hydration: seq counter + the tail of the log. Runs before any conductor bootstrap hook. */
+  /** Boot hydration: every room's tail + seq counter. Runs before any conductor bootstrap hook. */
   async onModuleInit(): Promise<void> {
-    const rows = await this.repo.find({
-      where: { surface_id: this.surfaceId },
-      order: { seq: 'DESC' },
-      take: this.hydrateLimit,
-    });
-    rows.reverse();
-    this.log = rows.map(toChannelMsg);
-    const max = await this.repo
-      .createQueryBuilder('m')
-      .select('MAX(m.seq)', 'max')
-      .where('m.surface_id = :surface', { surface: this.surfaceId })
-      .getRawOne<{ max: string | null }>();
-    this.nextSeq = max?.max != null ? Number(max.max) + 1 : 0;
-    this.floor = this.log.length ? this.log[0].seq : this.nextSeq;
-    if (this.log.length) {
+    // Newest `hydrateLimit` rows PER ROOM, one round-trip (rn=1 is the newest row of each room).
+    // Raw query (window function), so rows are plain snake_case records, not entities.
+    const rows: ChannelMessage[] = await this.repo.query(
+      `SELECT * FROM (
+         SELECT *, ROW_NUMBER() OVER (PARTITION BY surface_id ORDER BY seq DESC) AS rn
+         FROM channel_messages
+       ) t WHERE rn <= $1 ORDER BY surface_id, seq ASC`,
+      [this.hydrateLimit],
+    );
+    for (const r of rows) {
+      const room = this.room(r.surface_id);
+      room.msgs.push(toChannelMsg(r));
+      room.nextSeq = Math.max(room.nextSeq, Number(r.seq) + 1);
+    }
+    for (const [id, room] of this.rooms) {
+      room.floor = room.msgs.length ? room.msgs[0].seq : room.nextSeq;
       this.logger.log(
-        `Hydrated ${this.log.length} channel message(s) for '${this.surfaceId}' (seq ${this.floor}…${this.nextSeq - 1})`,
+        `Hydrated ${room.msgs.length} message(s) for '${id}' (seq ${room.floor}…${room.nextSeq - 1})`,
       );
     }
   }
 
-  /** The lowest seq currently in memory. Cursors below this need `backfillTo` before `since` is complete. */
+  /** Every room that currently holds (or held) messages. The registry, not this, defines rooms. */
+  channelIds(): string[] {
+    return [...this.rooms.keys()];
+  }
+
+  /** A room's lowest in-memory seq. Cursors below it need `backfillTo` before `since` is complete. */
+  floorSeqOf(channelId: string = this.surfaceId): number {
+    return this.room(channelId).floor;
+  }
+
+  /** Back-compat: the default room's floor. */
   get floorSeq(): number {
-    return this.floor;
+    return this.floorSeqOf();
   }
 
   /**
-   * Load older persisted messages down to `seq` (inclusive) into the in-memory log, so `since()`
-   * over a cursor below the hydration window returns the TRUE delta instead of silently skipping
-   * the gap. Called by the conductor at bootstrap with the lowest bot cursor.
+   * Load a room's older persisted messages down to `seq` (inclusive) into the in-memory log, so
+   * `since()` over a cursor below the hydration window returns the TRUE delta instead of silently
+   * skipping the gap. Called by the conductor at bootstrap with the lowest bot cursor per room.
    */
-  async backfillTo(seq: number): Promise<void> {
-    if (seq >= this.floor) return;
+  async backfillTo(
+    seq: number,
+    channelId: string = this.surfaceId,
+  ): Promise<void> {
+    const room = this.room(channelId);
+    if (seq >= room.floor) return;
     const rows = await this.repo
       .createQueryBuilder('m')
-      .where('m.surface_id = :surface', { surface: this.surfaceId })
-      .andWhere('m.seq >= :from AND m.seq < :to', { from: String(seq), to: String(this.floor) })
+      .where('m.surface_id = :surface', { surface: channelId })
+      .andWhere('m.seq >= :from AND m.seq < :to', {
+        from: String(seq),
+        to: String(room.floor),
+      })
       .orderBy('m.seq', 'ASC')
       .getMany();
     if (rows.length) {
-      this.log = [...rows.map(toChannelMsg), ...this.log];
-      this.logger.log(`Backfilled ${rows.length} channel message(s) (seq ${seq}…${this.floor - 1})`);
+      room.msgs = [...rows.map(toChannelMsg), ...room.msgs];
+      this.logger.log(
+        `Backfilled ${rows.length} message(s) for '${channelId}' (seq ${seq}…${room.floor - 1})`,
+      );
     }
-    this.floor = Math.min(this.floor, seq);
+    room.floor = Math.min(room.floor, seq);
   }
 
-  /** Append a message (or update one re-emitted with the same id). Synchronous, never blocks. */
-  append(msg: Omit<ChannelMsg, 'seq'>): ChannelMsg {
-    const existing = this.log.findIndex((m) => m.id === msg.id);
+  /** Append a message (or update one re-emitted with the same id). Synchronous, never blocks.
+   * `channelId` defaults to this process's default room; identity is (channelId, id). */
+  append(
+    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+  ): ChannelMsg {
+    const channelId = msg.channelId ?? this.surfaceId;
+    const room = this.room(channelId);
+    const existing = room.msgs.findIndex((m) => m.id === msg.id);
     if (existing >= 0) {
-      this.log[existing] = { ...this.log[existing], ...msg };
-      const updated = this.log[existing];
+      room.msgs[existing] = { ...room.msgs[existing], ...msg, channelId };
+      const updated = room.msgs[existing];
       this.persist(updated);
       this.notify();
       return updated;
     }
-    const full: ChannelMsg = { ...msg, seq: this.nextSeq++ };
-    this.log.push(full);
+    const full: ChannelMsg = { ...msg, channelId, seq: room.nextSeq++ };
+    room.msgs.push(full);
     this.persist(full);
     this.notify();
     return full;
   }
 
-  /** Messages at or after a cursor seq (what a bot hasn't consumed yet). */
-  since(cursor: number): ChannelMsg[] {
-    return this.log.filter((m) => m.seq >= cursor);
+  /** A room's messages at or after a cursor seq (what a bot hasn't consumed there yet). */
+  since(cursor: number, channelId: string = this.surfaceId): ChannelMsg[] {
+    return this.room(channelId).msgs.filter((m) => m.seq >= cursor);
   }
 
-  /** The next seq that will be assigned — the high-water cursor. */
+  /** The next seq a room will assign — its high-water cursor. */
+  lengthOf(channelId: string = this.surfaceId): number {
+    return this.room(channelId).nextSeq;
+  }
+
+  /** Back-compat: the default room's high-water cursor. */
   get length(): number {
-    return this.nextSeq;
+    return this.lengthOf();
   }
 
-  snapshot(): ChannelMsg[] {
-    return [...this.log];
+  snapshot(channelId: string = this.surfaceId): ChannelMsg[] {
+    return [...this.room(channelId).msgs];
   }
 
   subscribe(cb: () => void): () => void {
@@ -135,6 +174,15 @@ export class ChannelService implements OnModuleInit {
     return this.write(async () => {});
   }
 
+  private room(channelId: string): RoomLog {
+    let room = this.rooms.get(channelId);
+    if (!room) {
+      room = { msgs: [], nextSeq: 0, floor: 0 };
+      this.rooms.set(channelId, room);
+    }
+    return room;
+  }
+
   private persist(msg: ChannelMsg): void {
     // Serialized write-behind: ordering holds, and a failed write never surfaces into a turn.
     void this.write(() =>
@@ -142,15 +190,17 @@ export class ChannelService implements OnModuleInit {
         {
           id: msg.id,
           seq: String(msg.seq),
-          surface_id: this.surfaceId,
+          surface_id: msg.channelId,
           author: msg.author,
           author_id: msg.authorId,
           author_bot_id: msg.authorBotId ?? null,
           text: msg.text,
         },
-        ['id'],
+        ['surface_id', 'id'],
       ),
-    ).catch((err) => this.logger.error(`Failed to persist channel message ${msg.id}: ${err}`));
+    ).catch((err) =>
+      this.logger.error(`Failed to persist channel message ${msg.id}: ${err}`),
+    );
   }
 
   private notify(): void {
@@ -161,6 +211,7 @@ export class ChannelService implements OnModuleInit {
 const toChannelMsg = (r: ChannelMessage): ChannelMsg => ({
   seq: Number(r.seq),
   id: r.id,
+  channelId: r.surface_id,
   author: r.author,
   authorId: r.author_id,
   authorBotId: r.author_bot_id ?? undefined,

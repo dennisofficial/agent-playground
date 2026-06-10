@@ -17,6 +17,13 @@ import { SamEmployee } from './roster/sam.employee';
 @CreateModule({
   imports: [DiscoveryModule],
   services: [EmployeeRegistry, PersonaService],
-  providers: [AlexEmployee, RileyEmployee, MayaEmployee, JamesEmployee, NoraEmployee, SamEmployee],
+  providers: [
+    AlexEmployee,
+    RileyEmployee,
+    MayaEmployee,
+    JamesEmployee,
+    NoraEmployee,
+    SamEmployee,
+  ],
 })
 export class EmployeesModule {}

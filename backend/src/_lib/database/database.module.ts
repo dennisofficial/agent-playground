@@ -6,7 +6,9 @@ import { CustomNamingStrategy } from './custom-naming.strategy';
 
 /** SSL: off in dev (`disable`), verify-full in prod by default; overridable via POSTGRES_SSL_MODE. */
 function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
-  const mode = env.get('POSTGRES_SSL_MODE') ?? (env.get('NODE_ENV') === 'production' ? 'verify-full' : 'disable');
+  const mode =
+    env.get('POSTGRES_SSL_MODE') ??
+    (env.get('NODE_ENV') === 'production' ? 'verify-full' : 'disable');
   if (mode === 'disable') return false;
   return { rejectUnauthorized: mode === 'verify-full' };
 }

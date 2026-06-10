@@ -42,7 +42,10 @@ export class MemoryWriteService {
   /** Serializes all durable-memory writes (adds/updates/deletes) so concurrent reconciles can't race. */
   readonly withLock = createMutex();
 
-  private judgeChain?: Runnable<Record<string, string>, z.infer<typeof JudgeSchema>>;
+  private judgeChain?: Runnable<
+    Record<string, string>,
+    z.infer<typeof JudgeSchema>
+  >;
 
   constructor(
     private readonly semantic: SemanticMemory,
@@ -51,9 +54,17 @@ export class MemoryWriteService {
   ) {}
 
   private judge() {
-    return (this.judgeChain ??= RunnableSequence.from<Record<string, string>, z.infer<typeof JudgeSchema>>([
-      new PromptTemplate({ template: JUDGE_PROMPT, inputVariables: ['existing', 'candidate'] }),
-      this.models.buildExtractModel().withStructuredOutput(JudgeSchema, { name: 'dedup_judge' }),
+    return (this.judgeChain ??= RunnableSequence.from<
+      Record<string, string>,
+      z.infer<typeof JudgeSchema>
+    >([
+      new PromptTemplate({
+        template: JUDGE_PROMPT,
+        inputVariables: ['existing', 'candidate'],
+      }),
+      this.models
+        .buildExtractModel()
+        .withStructuredOutput(JudgeSchema, { name: 'dedup_judge' }),
     ]).withConfig({ runName: 'Dedup Judge' }));
   }
 
@@ -61,7 +72,10 @@ export class MemoryWriteService {
    * Same underlying fact, even if worded differently? Used only for gray-band near-duplicates, so it
    * fires rarely. On any failure it returns false — a recoverable duplicate beats a wrong merge.
    */
-  dedupJudge = async (existing: string, candidate: string): Promise<boolean> => {
+  dedupJudge = async (
+    existing: string,
+    candidate: string,
+  ): Promise<boolean> => {
     this.metrics.recordJudgeCall();
     try {
       const { same } = await this.judge().invoke({ existing, candidate });
@@ -76,8 +90,12 @@ export class MemoryWriteService {
    * `SemanticMemory.remember` directly. Self-records the session write metric (insert vs dedup-merge)
    * so every caller is counted without touching call sites.
    */
-  async rememberDeduped(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: number }> {
-    const res = await this.withLock(() => this.semantic.remember(input, { judge: this.dedupJudge }));
+  async rememberDeduped(
+    input: RememberInput,
+  ): Promise<{ action: 'inserted' | 'updated'; id: number }> {
+    const res = await this.withLock(() =>
+      this.semantic.remember(input, { judge: this.dedupJudge }),
+    );
     this.metrics.recordWrite(res.action);
     return res;
   }

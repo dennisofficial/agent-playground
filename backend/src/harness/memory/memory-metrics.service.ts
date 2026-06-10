@@ -40,12 +40,28 @@ export interface MemoryMetrics {
 }
 
 const DECISIONS: Decision[] = ['respond', 'acknowledge', 'ignore'];
-const zeroMem = (): MemTally => ({ attempts: 0, inserted: 0, deduped: 0, updated: 0, deleted: 0 });
-const zeroTask = (): TaskTally => ({ attempts: 0, added: 0, completed: 0, dropped: 0 });
+const zeroMem = (): MemTally => ({
+  attempts: 0,
+  inserted: 0,
+  deduped: 0,
+  updated: 0,
+  deleted: 0,
+});
+const zeroTask = (): TaskTally => ({
+  attempts: 0,
+  added: 0,
+  completed: 0,
+  dropped: 0,
+});
 const byPath = <T>(make: () => T): Record<Decision, T> =>
   Object.fromEntries(DECISIONS.map((d) => [d, make()])) as Record<Decision, T>;
-const cloneByPath = <T extends object>(src: Record<Decision, T>): Record<Decision, T> =>
-  Object.fromEntries(DECISIONS.map((d) => [d, { ...src[d] }])) as Record<Decision, T>;
+const cloneByPath = <T extends object>(
+  src: Record<Decision, T>,
+): Record<Decision, T> =>
+  Object.fromEntries(DECISIONS.map((d) => [d, { ...src[d] }])) as Record<
+    Decision,
+    T
+  >;
 
 @Injectable()
 export class MemoryMetricsService {

@@ -3,6 +3,7 @@ import { tool } from '@langchain/core/tools';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { z } from 'zod';
+import type { ChannelRegistryService } from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { PersonaService } from '../employees/persona.service';
@@ -25,8 +26,14 @@ class FakeChannel {
   readonly surfaceId = 'tui:test';
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
-  append(msg: Omit<ChannelMsg, 'seq'>): ChannelMsg {
-    const full = { ...msg, seq: this.nextSeq++ };
+  append(
+    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+  ): ChannelMsg {
+    const full = {
+      ...msg,
+      channelId: msg.channelId ?? this.surfaceId,
+      seq: this.nextSeq++,
+    };
     this.log.push(full);
     return full;
   }
@@ -34,6 +41,9 @@ class FakeChannel {
     return this.log.filter((m) => m.seq >= cursor);
   }
   get length(): number {
+    return this.nextSeq;
+  }
+  lengthOf(): number {
     return this.nextSeq;
   }
   snapshot(): ChannelMsg[] {
@@ -44,21 +54,46 @@ class FakeChannel {
   }
 }
 
-const ALEX = { id: 'alex', name: 'Alex', role: 'backend engineer', sortOrder: 10, roleContext: 'ctx', engine: 'claude' as const };
+const ALEX = {
+  id: 'alex',
+  name: 'Alex',
+  role: 'backend engineer',
+  sortOrder: 10,
+  roleContext: 'ctx',
+  engine: 'claude' as const,
+};
 
 const flat = (c: BaseMessage['content']): string =>
-  typeof c === 'string' ? c : c.map((p) => (typeof p === 'object' && 'text' in p ? (p as { text: string }).text : '')).join('');
+  typeof c === 'string'
+    ? c
+    : c
+        .map((p) =>
+          typeof p === 'object' && 'text' in p
+            ? (p as { text: string }).text
+            : '',
+        )
+        .join('');
 
 describe('bot graph — mid-thought message injection', () => {
   it('folds a message that lands during a tool call into the very next model step', async () => {
     const channel = new FakeChannel();
     // The conversation so far: Dennis asks Alex to loop on tools.
-    channel.append({ id: 'u-0', author: 'Dennis', authorId: 'dennis', text: 'Alex, keep running tool calls until I tell you to stop.' });
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Alex, keep running tool calls until I tell you to stop.',
+    });
 
     // A tool whose EXECUTION is when the human's next message lands — mid-turn, between llm steps.
     const pokeTool = tool(
       async () => {
-        channel.append({ id: 'u-1', author: 'Dennis', authorId: 'dennis', text: 'You can stop' });
+        channel.append({
+          id: 'u-1',
+          author: 'Dennis',
+          authorId: 'dennis',
+          text: 'You can stop',
+        });
         return 'poked';
       },
       { name: 'poke', description: 'no-op probe', schema: z.object({}) },
@@ -73,20 +108,31 @@ describe('bot graph — mid-thought message injection', () => {
       async invoke(convo: BaseMessage[]) {
         invocations.push(convo);
         return invocations.length === 1
-          ? new AIMessage({ content: '', tool_calls: [{ name: 'poke', args: {}, id: 'call_1', type: 'tool_call' }] })
+          ? new AIMessage({
+              content: '',
+              tool_calls: [
+                { name: 'poke', args: {}, id: 'call_1', type: 'tool_call' },
+              ],
+            })
           : new AIMessage({ content: 'Stopped! I saw your message mid-turn.' });
       },
     };
 
     const factory = new BotGraphFactory(
       channel as unknown as ChannelService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [pokeTool],
         terminalToolNames: () => new Set<string>(),
       } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       { fetchContext: async () => '' } as unknown as FetchService,
-      { reconcileMemory: async () => {}, reconcileTasks: async () => {} } as unknown as ReconcileService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
       new MemorySaver() as unknown as PostgresSaver,
@@ -94,7 +140,10 @@ describe('bot graph — mid-thought message injection', () => {
 
     const graph = factory.getBotGraph(ALEX);
     const config = { configurable: { thread_id: 'alex:test:root' } };
-    const stream = await graph.stream({ cursor: 0, forced: false }, { ...config, streamMode: 'updates' as const });
+    const stream = await graph.stream(
+      { cursor: 0, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
     for await (const _ of stream) {
       /* drain */
     }
@@ -105,14 +154,20 @@ describe('bot graph — mid-thought message injection', () => {
     expect(step1).toContain('keep running tool calls');
     expect(step1).not.toContain('You can stop');
     // Step 2 — the SAME turn, right after the tool ran — must already see the mid-turn message.
-    const step2Tail = invocations[1].filter((m) => m.getType() === 'human').map((m) => flat(m.content));
-    expect(step2Tail.some((t) => t.includes('Dennis: You can stop'))).toBe(true);
+    const step2Tail = invocations[1]
+      .filter((m) => m.getType() === 'human')
+      .map((m) => flat(m.content));
+    expect(step2Tail.some((t) => t.includes('Dennis: You can stop'))).toBe(
+      true,
+    );
 
     // And the checkpoint commits the injection atomically: both human messages are durable history,
     // and the cursor has advanced past everything consumed.
     const final = await graph.getState(config);
     expect(final.values.cursor).toBe(2);
-    const history = (final.values.messages as BaseMessage[]).filter((m) => m.getType() === 'human').map((m) => flat(m.content));
+    const history = (final.values.messages as BaseMessage[])
+      .filter((m) => m.getType() === 'human')
+      .map((m) => flat(m.content));
     expect(history).toEqual([
       'Dennis: Alex, keep running tool calls until I tell you to stop.',
       'Dennis: You can stop',
@@ -121,12 +176,23 @@ describe('bot graph — mid-thought message injection', () => {
 
   it('does NOT inject mid-turn messages the bot authored itself (own messages are skipped)', async () => {
     const channel = new FakeChannel();
-    channel.append({ id: 'u-0', author: 'Dennis', authorId: 'dennis', text: 'Alex, run one tool.' });
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Alex, run one tool.',
+    });
 
     const pokeTool = tool(
       async () => {
         // The bot's OWN reply landing on the channel mid-turn must not be re-consumed as input.
-        channel.append({ id: 'alex:0', author: 'Alex', authorId: 'alex', authorBotId: 'alex', text: 'working on it' });
+        channel.append({
+          id: 'alex:0',
+          author: 'Alex',
+          authorId: 'alex',
+          authorBotId: 'alex',
+          text: 'working on it',
+        });
         return 'poked';
       },
       { name: 'poke', description: 'no-op probe', schema: z.object({}) },
@@ -140,17 +206,31 @@ describe('bot graph — mid-thought message injection', () => {
       async invoke(convo: BaseMessage[]) {
         invocations.push(convo);
         return invocations.length === 1
-          ? new AIMessage({ content: '', tool_calls: [{ name: 'poke', args: {}, id: 'call_1', type: 'tool_call' }] })
+          ? new AIMessage({
+              content: '',
+              tool_calls: [
+                { name: 'poke', args: {}, id: 'call_1', type: 'tool_call' },
+              ],
+            })
           : new AIMessage({ content: 'done' });
       },
     };
 
     const factory = new BotGraphFactory(
       channel as unknown as ChannelService,
-      { toStructuredTools: () => [pokeTool], terminalToolNames: () => new Set<string>() } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
+      {
+        toStructuredTools: () => [pokeTool],
+        terminalToolNames: () => new Set<string>(),
+      } as unknown as ToolRegistry,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       { fetchContext: async () => '' } as unknown as FetchService,
-      { reconcileMemory: async () => {}, reconcileTasks: async () => {} } as unknown as ReconcileService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
       new MemorySaver() as unknown as PostgresSaver,
@@ -158,7 +238,10 @@ describe('bot graph — mid-thought message injection', () => {
 
     const graph = factory.getBotGraph(ALEX);
     const config = { configurable: { thread_id: 'alex:test2:root' } };
-    const stream = await graph.stream({ cursor: 0, forced: false }, { ...config, streamMode: 'updates' as const });
+    const stream = await graph.stream(
+      { cursor: 0, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
     for await (const _ of stream) {
       /* drain */
     }

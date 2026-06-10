@@ -81,7 +81,11 @@ describe('SemanticMemory (pgvector, live Postgres)', () => {
 
   it('dedup-merges a near-duplicate (cosine 0.97 ≥ 0.92), not a second row', async () => {
     const first = await mem.remember({ fact: 'A', tier: 'project', id: ID });
-    const second = await mem.remember({ fact: 'A reworded', tier: 'project', id: ID });
+    const second = await mem.remember({
+      fact: 'A reworded',
+      tier: 'project',
+      id: ID,
+    });
     expect(second.action).toBe('updated');
     expect(second.id).toBe(first.id);
     expect(await repo.count()).toBe(1);
@@ -103,7 +107,11 @@ describe('SemanticMemory (pgvector, live Postgres)', () => {
 
   it('recall respects scope — another project is not visible', async () => {
     await mem.remember({ fact: 'A', tier: 'project', id: ID });
-    await mem.remember({ fact: 'A', tier: 'project', id: { ...ID, project: 'other' } });
+    await mem.remember({
+      fact: 'A',
+      tier: 'project',
+      id: { ...ID, project: 'other' },
+    });
     const hits = await mem.recall('query about A', ID, 5);
     expect(hits.length).toBe(1); // only project:local, not project:other
   });

@@ -1,5 +1,8 @@
 import type { Type } from '@nestjs/common';
-import type { EffortLevel, WorkerEngineName } from '../engines/worker-engine.port';
+import type {
+  EffortLevel,
+  WorkerEngineName,
+} from '../engines/worker-engine.port';
 import type { McpServerConfig, SkillSource } from '../skills/skill.types';
 import type { IHarnessTool } from '../tools/tool.types';
 

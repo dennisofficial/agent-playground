@@ -2,7 +2,7 @@ import { PromptTemplate } from '@langchain/core/prompts';
 import { Runnable, RunnableSequence } from '@langchain/core/runnables';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { Identity } from '../domain/identity';
+import { Identity, recallProjects } from '../domain/identity';
 import { titleCase } from '../domain/text';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
@@ -28,15 +28,21 @@ const RECONCILE_RECALL_LIMIT = 25;
 // reconcile wants to SEE marginal neighbors so it can spot a fact this turn contradicts/supersedes.
 const RECONCILE_FLOOR = 0.15;
 
-
-
 const MemorySchema = z.object({
-  reasoning: z.string().describe('one short sentence on what changed in memory, if anything'),
+  reasoning: z
+    .string()
+    .describe('one short sentence on what changed in memory, if anything'),
   add: z
     .array(
       z.object({
         fact: z.string(),
         tier: z.enum(['team', 'project', 'bot', 'private']),
+        project: z
+          .string()
+          .optional()
+          .describe(
+            'ONLY for tier "project" in a DM: which project the fact belongs to (one of the projects listed in the note). A DM is not bound to a project; an un-named or unknown project keeps the fact private to the pair.',
+          ),
         authorId: z.string().describe('id of the HUMAN who asserted it'),
         supersedes: z
           .number()
@@ -50,21 +56,37 @@ const MemorySchema = z.object({
   update: z
     .array(
       z.object({
-        id: z.number().describe('the #id of the existing fact (from the list above) that changed'),
+        id: z
+          .number()
+          .describe(
+            'the #id of the existing fact (from the list above) that changed',
+          ),
         newFact: z
           .string()
-          .describe('the corrected fact, stated minimally — one bare atomic claim, no elaboration'),
+          .describe(
+            'the corrected fact, stated minimally — one bare atomic claim, no elaboration',
+          ),
       }),
     )
     .describe('existing facts (by #id) that CHANGED; [] if none'),
   delete: z
-    .array(z.object({ id: z.number().describe('the #id of the existing fact (from the list above) to remove') }))
-    .describe('existing facts (by #id) contradicted/no longer true; [] if none'),
+    .array(
+      z.object({
+        id: z
+          .number()
+          .describe(
+            'the #id of the existing fact (from the list above) to remove',
+          ),
+      }),
+    )
+    .describe(
+      'existing facts (by #id) contradicted/no longer true; [] if none',
+    ),
 });
 type MemoryResult = z.infer<typeof MemorySchema>;
 
-const MEMORY_PROMPT = `You are {botName}, the team's {botRole}, reconciling your MEMORY after a turn in the
-#dev channel. People and their ids: {people}.
+const MEMORY_PROMPT = `You are {botName}, the team's {botRole}, reconciling your MEMORY after a turn in
+{room}. People and their ids: {people}.
 
 What you currently know (existing facts, each with its #id):
 {currentFacts}
@@ -84,14 +106,16 @@ by the #id shown above — never invent an id:
   preferences that hold across every project; private = personal/sensitive; bot = only you. Set "authorId"
   = the human who said it. Do NOT re-add something already above — even if worded differently. If the new
   fact CONTRADICTS or replaces an existing one, set "supersedes" to that fact's #id (so the stale one is
-  overwritten, not kept alongside it).
+  overwritten, not kept alongside it).{tierNote}
 - update: an existing fact (by #id) whose wording/value CHANGED — give "id" and "newFact".
 - delete: an existing fact (by #id) now contradicted or no longer true — give "id".
 
 Return empty arrays when nothing changed.`;
 
 const TaskSchema = z.object({
-  reasoning: z.string().describe('one short sentence on what changed on the plates, if anything'),
+  reasoning: z
+    .string()
+    .describe('one short sentence on what changed on the plates, if anything'),
   add: z
     .array(
       z.object({
@@ -101,6 +125,12 @@ const TaskSchema = z.object({
           .describe(
             'id of who is RESPONSIBLE — the teammate who committed ("I\'ll…" → themselves) or who it was handed to',
           ),
+        project: z
+          .string()
+          .optional()
+          .describe(
+            'ONLY in a DM: which project this reminder belongs to (one of the projects listed in the note). Omit for a general reminder.',
+          ),
       }),
     )
     .describe(
@@ -108,15 +138,17 @@ const TaskSchema = z.object({
     ),
   complete: z
     .array(z.object({ id: z.number() }))
-    .describe('open reminders (by #id above) this turn shows are now DONE; [] if none'),
+    .describe(
+      'open reminders (by #id above) this turn shows are now DONE; [] if none',
+    ),
   drop: z
     .array(z.object({ id: z.number() }))
     .describe('open reminders (by #id above) no longer relevant; [] if none'),
 });
 type TaskResult = z.infer<typeof TaskSchema>;
 
-const TASK_PROMPT = `You are {botName}, keeping the team's personal REMINDERS straight after a turn in the
-#dev channel. People and their ids: {people}.
+const TASK_PROMPT = `You are {botName}, keeping the team's personal REMINDERS straight after a turn in
+{room}. People and their ids: {people}.
 
 Open reminders right now (with #ids — yours, and ones you raised for others):
 {openTasks}
@@ -127,7 +159,7 @@ This turn:
 A reminder is a concrete commitment to FUTURE work, captured so it isn't lost in a long, summarized work
 session — ESPECIALLY a deferred one ("got it, I'll do that after I finish this", "I'll send the spec
 later", "once the API's up I'll wire the hooks"). Decide (be conservative — most turns add nothing):
-- add: a NEW such commitment made THIS turn. Set "owner" to whoever is responsible — {botName} for "I'll
+{projectNote}- add: a NEW such commitment made THIS turn. Set "owner" to whoever is responsible — {botName} for "I'll
   …", or the named teammate for a handoff ("Riley, you'll wire the UI" → owner riley). Do NOT re-add work
   already a reminder above, and do NOT capture chit-chat, finished replies, or vague non-commitments.
 - complete: an open reminder (by #id above) this turn shows is finished.
@@ -159,32 +191,64 @@ export class ReconcileService {
 
   /** The real ids the model may name (present humans + roster bots), lowercased. */
   private knownIds(id: Identity): Set<string> {
-    return new Set([...id.participants, ...this.employees.list().map((b) => b.id)].map((s) => s.toLowerCase()));
+    return new Set(
+      [...id.participants, ...this.employees.list().map((b) => b.id)].map((s) =>
+        s.toLowerCase(),
+      ),
+    );
   }
 
   /** Coerce a model-supplied id to a real one, or undefined — the model sometimes invents "<unknown>". */
-  private realId(raw: string | undefined, known: Set<string>): string | undefined {
+  private realId(
+    raw: string | undefined,
+    known: Set<string>,
+  ): string | undefined {
     const v = raw?.trim().toLowerCase();
     return v && known.has(v) ? v : undefined;
   }
 
   private memory() {
-    return (this.memoryChain ??= RunnableSequence.from<Record<string, string>, MemoryResult>([
+    return (this.memoryChain ??= RunnableSequence.from<
+      Record<string, string>,
+      MemoryResult
+    >([
       new PromptTemplate({
         template: MEMORY_PROMPT,
-        inputVariables: ['botName', 'botRole', 'people', 'currentFacts', 'transcript'],
+        inputVariables: [
+          'botName',
+          'botRole',
+          'room',
+          'tierNote',
+          'people',
+          'currentFacts',
+          'transcript',
+        ],
       }),
-      this.models.buildExtractModel().withStructuredOutput(MemorySchema, { name: 'reconcile_memory' }),
+      this.models
+        .buildExtractModel()
+        .withStructuredOutput(MemorySchema, { name: 'reconcile_memory' }),
     ]).withConfig({ runName: 'Reconcile Memory' }));
   }
 
   private task() {
-    return (this.taskChain ??= RunnableSequence.from<Record<string, string>, TaskResult>([
+    return (this.taskChain ??= RunnableSequence.from<
+      Record<string, string>,
+      TaskResult
+    >([
       new PromptTemplate({
         template: TASK_PROMPT,
-        inputVariables: ['botName', 'people', 'openTasks', 'transcript'],
+        inputVariables: [
+          'botName',
+          'room',
+          'projectNote',
+          'people',
+          'openTasks',
+          'transcript',
+        ],
       }),
-      this.models.buildExtractModel().withStructuredOutput(TaskSchema, { name: 'reconcile_tasks' }),
+      this.models
+        .buildExtractModel()
+        .withStructuredOutput(TaskSchema, { name: 'reconcile_tasks' }),
     ]).withConfig({ runName: 'Reconcile Tasks' }));
   }
 
@@ -202,13 +266,33 @@ export class ReconcileService {
     try {
       // Show a wide slice of the accessible store so the "is this a duplicate / does this supersede
       // something" judgment isn't blind to most of memory.
-      const current = await this.semantic.recall(transcript, id, RECONCILE_RECALL_LIMIT, RECONCILE_FLOOR);
+      const current = await this.semantic.recall(
+        transcript,
+        id,
+        RECONCILE_RECALL_LIMIT,
+        RECONCILE_FLOOR,
+      );
       const shownIds = new Set(current.map((f) => f.id));
       const result = await this.memory().invoke({
         botName: bot.name,
         botRole: bot.role,
+        room: id.isChannel
+          ? `the team channel '${id.surface}'`
+          : `a PRIVATE 1:1 DM with ${titleCase(id.speaker)}`,
+        // The write-side leak guard, mirrored into the reconcile pass: DM confidences default to the
+        // pair tier so they never surface in group chat. A DM is project-less — a project fact
+        // there must NAME one of the projects this pair shares.
+        tierNote: id.isChannel
+          ? ''
+          : '\n  NOTE — this turn happened in a PRIVATE 1:1 DM: default to "private" for anything this person told' +
+            ' you about themselves or in confidence; use project/team ONLY for clearly work-wide facts they would' +
+            ' state openly in the team channel. A DM is not tied to one project — for tier "project" you MUST' +
+            ` also set "project" to the project the fact is about (your shared projects: ${recallProjects(id).join(', ') || '(none)'});` +
+            ' without it the fact stays private to the two of you.',
         people: this.peopleHint(id),
-        currentFacts: current.length ? current.map((f) => `- [#${f.id}] ${f.fact}`).join('\n') : '(none)',
+        currentFacts: current.length
+          ? current.map((f) => `- [#${f.id}] ${f.fact}`).join('\n')
+          : '(none)',
         transcript,
       });
       // Write-application: each mutation is serialized; the model.invoke above stays OUTSIDE the
@@ -232,27 +316,43 @@ export class ReconcileService {
           continue;
         }
         const speaker = this.realId(a.authorId, ids) ?? id.speaker;
-        const r = await this.writes.rememberDeduped({ fact: a.fact, tier: a.tier, id: { ...id, speaker } });
+        const r = await this.writes.rememberDeduped({
+          fact: a.fact,
+          tier: a.tier,
+          id: { ...id, speaker },
+          project: a.project,
+        });
         if (r.action === 'inserted') inserted++;
         else deduped++;
       }
       for (const u of result.update) {
         if (shownIds.has(u.id) && u.newFact?.trim()) {
-          const r = await this.writes.withLock(() => this.semantic.updateFactById(u.id, u.newFact, id));
+          const r = await this.writes.withLock(() =>
+            this.semantic.updateFactById(u.id, u.newFact, id),
+          );
           if (r) updated++;
         }
       }
       for (const d of result.delete) {
         if (shownIds.has(d.id)) {
-          const r = await this.writes.withLock(() => this.semantic.forgetFactById(d.id, id));
+          const r = await this.writes.withLock(() =>
+            this.semantic.forgetFactById(d.id, id),
+          );
           if (r) deleted++;
         }
       }
       // Record EVERY pass (even all-zero) so ignore/acknowledge attempts form the denominator for
       // "do silent reconciles ever write?" The debug line fires only when something changed.
-      this.metrics.recordMemoryReconcile(decision, { inserted, deduped, updated, deleted });
+      this.metrics.recordMemoryReconcile(decision, {
+        inserted,
+        deduped,
+        updated,
+        deleted,
+      });
       if (inserted || deduped || updated || deleted) {
-        this.logger.debug(`memory ${bot.name} [${decision}] +${inserted} ≈${deduped} ✎${updated} -${deleted}`);
+        this.logger.debug(
+          `memory ${bot.name} [${decision}] +${inserted} ≈${deduped} ✎${updated} -${deleted}`,
+        );
       }
     } catch {
       /* fire-and-forget: reconciliation must never break a turn */
@@ -272,12 +372,33 @@ export class ReconcileService {
     decision: Decision = 'respond',
   ): Promise<void> {
     try {
-      const open = await this.tasks.remindersForBot(id.project, bot.id);
+      // A DM spans every project the pair shares — its plate (and where complete/drop act) does too.
+      const projects = recallProjects(id);
+      const open = (
+        await Promise.all(
+          projects.map((p) => this.tasks.remindersForBot(p, bot.id)),
+        )
+      ).flat();
       const shownIds = new Set(open.map((t) => t.id));
+      const projectById = new Map(open.map((t) => [t.id, t.project]));
       const result = await this.task().invoke({
         botName: bot.name,
+        room: id.isChannel
+          ? `the team channel '${id.surface}'`
+          : `a private 1:1 DM with ${titleCase(id.speaker)}`,
+        projectNote: id.isChannel
+          ? ''
+          : `In this DM a reminder may belong to a specific project — for a new one, set "project" to one of:` +
+            ` ${projects.join(', ')} (omit it for a general reminder).\n`,
         people: this.peopleHint(id),
-        openTasks: open.length ? open.map((t) => `- [#${t.id}] ${t.description} (→ ${t.owner})`).join('\n') : '(none)',
+        openTasks: open.length
+          ? open
+              .map(
+                (t) =>
+                  `- [#${t.id}] ${t.description} (→ ${t.owner})${projects.length > 1 ? ` [${t.project}]` : ''}`,
+              )
+              .join('\n')
+          : '(none)',
         transcript,
       });
       const ids = this.knownIds(id);
@@ -288,8 +409,10 @@ export class ReconcileService {
       let dropped = 0;
       for (const a of result.add) {
         if (a.description?.trim()) {
+          // A named project must be one this conversation may see; else the turn's home project.
+          const named = a.project?.trim().toLowerCase();
           const t = await this.tasks.addTask({
-            project: id.project,
+            project: named && projects.includes(named) ? named : id.project,
             description: a.description,
             owner: this.realId(a.owner, ids) ?? bot.id, // default to the committing bot's own plate
             createdBy: bot.id,
@@ -299,14 +422,27 @@ export class ReconcileService {
         }
       }
       for (const c of result.complete) {
-        if (shownIds.has(c.id) && (await this.tasks.completeTask(id.project, c.id))) completed++;
+        if (
+          shownIds.has(c.id) &&
+          (await this.tasks.completeTask(
+            projectById.get(c.id) ?? id.project,
+            c.id,
+          ))
+        )
+          completed++;
       }
       for (const d of result.drop) {
-        if (shownIds.has(d.id) && (await this.tasks.dropTask(id.project, d.id))) dropped++;
+        if (
+          shownIds.has(d.id) &&
+          (await this.tasks.dropTask(projectById.get(d.id) ?? id.project, d.id))
+        )
+          dropped++;
       }
       this.metrics.recordTaskReconcile(decision, { added, completed, dropped });
       if (added || completed || dropped) {
-        this.logger.debug(`reminders ${bot.name} [${decision}] +${added} ✓${completed} -${dropped}`);
+        this.logger.debug(
+          `reminders ${bot.name} [${decision}] +${added} ✓${completed} -${dropped}`,
+        );
       }
     } catch {
       /* fire-and-forget */

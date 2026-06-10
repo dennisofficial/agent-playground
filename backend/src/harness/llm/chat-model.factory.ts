@@ -34,7 +34,11 @@ export class ChatModelFactory {
    * structured tool call (one-line reasoning + action + optional emoji) — still tiny.
    */
   buildGateModel(): ChatAnthropic {
-    return new ChatAnthropic({ model: this.env.get('GATE_MODEL') ?? DEFAULT_SMALL_MODEL, maxTokens: 256, temperature: 0 });
+    return new ChatAnthropic({
+      model: this.env.get('GATE_MODEL') ?? DEFAULT_SMALL_MODEL,
+      maxTokens: 256,
+      temperature: 0,
+    });
   }
 
   /**
@@ -42,7 +46,11 @@ export class ChatModelFactory {
    * turn. Roomier than the gate: returns a structured call with facts[] / tasks[] arrays.
    */
   buildExtractModel(): ChatAnthropic {
-    return new ChatAnthropic({ model: this.env.get('EXTRACT_MODEL') ?? DEFAULT_SMALL_MODEL, maxTokens: 512, temperature: 0 });
+    return new ChatAnthropic({
+      model: this.env.get('EXTRACT_MODEL') ?? DEFAULT_SMALL_MODEL,
+      maxTokens: 512,
+      temperature: 0,
+    });
   }
 }
 
@@ -55,7 +63,12 @@ export class ChatModelFactory {
 export const CHAT_PRICE_PER_MTOK = { input: 3.0, output: 15.0 } as const;
 const CACHE_READ_MULT = 0.1;
 const CACHE_WRITE_MULT = 2.0; // 1-hour TTL writes cost 2× base (a 5-min-TTL write would be 1.25×)
-export const chatCostUsd = (u: { input: number; output: number; cacheRead?: number; cacheWrite?: number }): number => {
+export const chatCostUsd = (u: {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}): number => {
   const cacheRead = u.cacheRead ?? 0;
   const cacheWrite = u.cacheWrite ?? 0;
   const fresh = Math.max(0, u.input - cacheRead - cacheWrite);
@@ -73,5 +86,10 @@ export const chatCostUsd = (u: { input: number; output: number; cacheRead?: numb
  * pricing: $1.00/1M input, $5.00/1M output (verified against the Anthropic model catalog, 2026-06).
  */
 export const GATE_PRICE_PER_MTOK = { input: 1.0, output: 5.0 } as const;
-export const gateCostUsd = (inputTokens: number, outputTokens: number): number =>
-  (inputTokens * GATE_PRICE_PER_MTOK.input + outputTokens * GATE_PRICE_PER_MTOK.output) / 1_000_000;
+export const gateCostUsd = (
+  inputTokens: number,
+  outputTokens: number,
+): number =>
+  (inputTokens * GATE_PRICE_PER_MTOK.input +
+    outputTokens * GATE_PRICE_PER_MTOK.output) /
+  1_000_000;

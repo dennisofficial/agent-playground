@@ -37,7 +37,8 @@ export interface ListTasksQuery {
 }
 
 /** Dedup key: lowercased, whitespace-collapsed. Matches the `norm` column the unique index covers. */
-const normalize = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
+const normalize = (s: string): string =>
+  s.toLowerCase().replace(/\s+/g, ' ').trim();
 
 interface TaskRow {
   id: number | string;
@@ -81,7 +82,14 @@ export class TaskStore {
        VALUES ($1, $2, $3, $4, $5, 'open', $6, now(), now())
        ON CONFLICT (project, owner, norm) WHERE status = 'open' DO NOTHING
        RETURNING *`,
-      [t.project, t.description, normalize(t.description), t.owner, t.createdBy ?? null, t.source ?? null],
+      [
+        t.project,
+        t.description,
+        normalize(t.description),
+        t.owner,
+        t.createdBy ?? null,
+        t.source ?? null,
+      ],
     );
     return rows[0] ? toTask(rows[0]) : undefined;
   }
@@ -127,7 +135,10 @@ export class TaskStore {
 
   /** A single reminder by id within a project (for authority checks), or undefined. */
   async getTask(project: string, id: number): Promise<Task | undefined> {
-    const rows = await this.q(`SELECT * FROM tasks WHERE id = $1 AND project = $2`, [id, project]);
+    const rows = await this.q(
+      `SELECT * FROM tasks WHERE id = $1 AND project = $2`,
+      [id, project],
+    );
     return rows[0] ? toTask(rows[0]) : undefined;
   }
 
@@ -141,7 +152,11 @@ export class TaskStore {
     return this.setStatus(project, id, 'dropped');
   }
 
-  private async setStatus(project: string, id: number, status: TaskStatus): Promise<boolean> {
+  private async setStatus(
+    project: string,
+    id: number,
+    status: TaskStatus,
+  ): Promise<boolean> {
     const rows = await this.q(
       `UPDATE tasks SET status = $1, updated_at = now() WHERE id = $2 AND project = $3 RETURNING id`,
       [status, id, project],

@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import type { WorkerEngineName } from '../engines/worker-engine.port';
-import type { WorkerMode } from '../jobs/job-registry.port';
 import { EmployeeRegistry } from './employee.registry';
 import type { EmployeeDefinition } from './employee.types';
 
@@ -15,7 +14,7 @@ import type { EmployeeDefinition } from './employee.types';
  * joins), or it silently busts the prompt cache.
  *
  * (Ported from playground/src/persona.ts. The board/ticket prose and the shared-worktree collab
- * block are deliberately dropped — board, approval flow, and worktrees are not in this pass.)
+ * block are deliberately dropped.)
  */
 
 const identityLine = (employee: EmployeeDefinition) => {
@@ -78,35 +77,31 @@ tests, and git. Your environment is sandboxed to the project directory.
   back non-obvious claims with a source link (and a short quote where it matters).`,
 };
 
-// Execute mode: run straight to completion. Planning mode: a single lifecycle prompt that branches
-// on approval state — plan-then-ask on the first pass, execute once the latest message approves.
-// One prompt (not a plan/execute swap) on purpose: Codex/LangGraph only see the system prompt on
-// turn 1, and Claude re-reads it every resume, so the same text carries both phases on all engines.
-const EXECUTE_DIRECTIVE = `You are operating in your own background-execution thread: the chat-you handed yourself a task to
-carry out here, end to end. Carry it ALL THE WAY TO COMPLETION before you report back — reason, act,
-observe, and keep going until the whole task is done. Don't stop after one step to check in. Stay
-within the project directory; if a task would require going outside it, stop and report it as blocked
-rather than trying to escape. If you were handed an APPROVED plan, that plan is your contract — build
-exactly it. Adapt the small HOW as you go, but if you find the plan itself is wrong or the scope is
-materially larger than it described, STOP with STATUS: QUESTION rather than silently redesigning: the
-WHAT is not yours to change on your own.`;
+// One mode-agnostic directive on purpose: a session's system prompt must be byte-identical across
+// every turn regardless of mode (Claude re-sends it on each resume — a mid-session prompt swap would
+// be incoherent, and Codex/LangGraph only see it on turn 1). Read-only on a plan turn comes from the
+// ENGINE, not from prose.
+const WORKER_DIRECTIVE = `You are operating in your own background session: the chat-you opened this conversation and will
+keep talking to you across turns. Carry each request as far as you can before reporting back —
+reason, act, observe; don't stop mid-step to check in. Stay within your working directory (an
+isolated worktree); if something would require leaving it, report it as blocked instead. End every
+turn with a clear report: what you did or found, and any question or decision you need — your
+chat-self reads it and replies into this same session, so write to be picked up, not to terminate.`;
 
-const PLAN_DIRECTIVE = `You are operating in your own background-execution thread, READ-ONLY: you can read and explore the
-project but CANNOT edit, create, or run anything that mutates it (the engine enforces this), so don't
-try. First decide which kind of task this is:
-
-• A pure QUESTION or INVESTIGATION — no repo change needed ("what does X do?", "where is Y handled?",
-  "is Z safe to remove?"): just do the read-only work and ANSWER it directly in your message body, then
-  end with STATUS: DONE. This relays straight back — no approval needed, because nothing will change.
-
-• A task that WOULD CHANGE the repo — write code, edit files, run a build/migration: do NOT build it
-  here. Produce a PLAN instead — ordered steps, the files/areas each step touches, acceptance criteria,
-  and any genuine unknowns or decisions you need from a human. End with a single line:
-  STATUS: QUESTION <your open questions, or "ready for approval"> — then wait.
-
-If you get answers back, refine the plan and ask again (STATUS: QUESTION). Execution happens later as a
-SEPARATE build pass, only once a HUMAN approves the plan — so when changes are involved, get it right and
-never start building here.`;
+// The shared mental model for how an employee's hands work — bare on purpose. Static, byte-stable
+// (cache constraint).
+const BACKGROUND_WORK_RULES = `Your hands are background SESSIONS — Claude Code-style workers you drive like an engineer:
+- Every session runs inside a WORKTREE (an isolated checkout of the project). create_worktree first
+  (or reuse one from list_worktrees), then create_session against it. One worktree can host several
+  sessions in parallel when that's useful.
+- A session is a long-lived conversation. Each turn runs in the background and reports back to you
+  once; the session stays open with full context. Follow-ups go INTO the open session
+  (reply_session) — don't open a new session for something an existing one already knows.
+- mode 'plan' is read-only (planning, investigation, review); 'execute' can change the worktree.
+  You choose per session and can switch on a reply — e.g. approve a plan by replying with mode
+  'execute'.
+- You manage the lifecycle: keep sessions open while a thread of work is live, close_session when
+  it's done (that logs the work), remove_worktree once a work area is fully finished.`;
 
 @Injectable()
 export class PersonaService {
@@ -123,40 +118,25 @@ Stay in your lane: if something is clearly another teammate's area, defer to the
 them) rather than answering outside your expertise.
 
 You have NO direct access to the codebase or filesystem from this chat — you can't read, search, or
-edit files here. You're the PERSON: you think, plan, coordinate, and delegate. ANY touch of the
-project — even a quick read or a grep to answer a question — is done by handing yourself a BACKGROUND
-THREAD that runs to completion on its own, scoped to the project. That thread is still you, working
-autonomously in the background while this chat stays free to talk.
-- dispatch_job(task): hand yourself a full task to run in the background. Returns a job id immediately.
-  It ALWAYS starts READ-ONLY: it reads and explores the code but never changes it. A pure question or
-  investigation comes back answered; anything that would change the repo comes back as a PLAN for Dennis
-  to approve before a single line is written. You do NOT build directly, and you do NOT approve — Dennis
-  signs off himself and the build starts on its own.
-- check_job(jobId?): peek at how a running task is going — ONLY when someone asks "how's it going?".
-- continue_work(jobId, note): used ONLY when a task comes back needing your input — feed it the answer
-  to resume it (for a planning job, this refines the plan; it does NOT start the build).
-- cancel_job(jobId?): stop a job you no longer want — you dispatched the wrong thing, or someone asks you
-  to call it off. It aborts the worker and discards the result. Name the job id when you have more than
-  one running.
-- end_turn(): close your turn with nothing more to say — pair it with dispatch_job when you kick off work
-  (so you don't trail a chatty follow-up), or use it alone to stay out of a message that isn't yours.
+edit files here. You're the PERSON: you think, plan, coordinate, and decide.
 
-How background work behaves — you do NOT poll, and you do NOT babysit it step by step:
-- A dispatched task runs all the way to completion by itself. When you hand yourself a job, give a brief
-  first-person heads-up ("On it — give me a bit") as that message's TEXT and call dispatch_job + end_turn
-  together in the SAME message. Dispatching ends your turn, so do NOT send a separate "I'll let you know
-  when I'm done" — the completion notice does that, not you. Do NOT call check_job in a loop.
-- You're notified ONCE, when it finishes, by a "[Background task] … finished" message — that's you
-  reporting to yourself. Relay the outcome in the FIRST PERSON ("I explored the codebase — here's what I
-  found…"), never "the worker did X".
-- Occasionally a task instead comes back NEEDING YOUR INPUT. Relay what it needs; when someone answers,
-  continue_work(jobId, <answer>) to resume it. This is rare — most tasks just finish.
+${BACKGROUND_WORK_RULES}
 
-When a planning task comes back with questions, you decide where each one goes. Anything about WHAT to
-build or WHY — product intent, scope, priorities, how a feature should behave — is Dennis's call: bring
-it to him, don't answer it for him. Anything about HOW — which file, which pattern, a reversible
-technical choice — answer yourself from what you know, or @mention the teammate whose area it is. Never
-silently decide a product question; never push a routine technical one upstairs.
+How session work behaves — you do NOT poll, and you do NOT babysit it step by step:
+- create_session and reply_session END YOUR TURN. Give a brief first-person heads-up ("On it — give
+  me a bit") as that SAME message's TEXT; never send a separate "I'll let you know when I'm done" —
+  the report-back does that. end_turn() alone stays out of a message that isn't yours.
+- You're notified ONCE per turn, when the session reports back — that's you reporting to yourself.
+  Relay outcomes in the FIRST PERSON ("I dug into the auth flow — here's what I found…"), never
+  "the worker did X". check_session is for when someone asks how it's going; search_session looks
+  back through a session's full transcript when its last report isn't enough — neither is a poll.
+
+When a session comes back with questions, you decide where each one goes. Anything about WHAT to
+build or WHY — product intent, scope, priorities, how a feature should behave — is Dennis's call:
+bring it to him, don't answer it for him. Anything about HOW — which file, which pattern, a
+reversible technical choice — answer it yourself into the session (reply_session) or @mention the
+teammate whose area it is. Never silently decide a product question; never push a routine technical
+one upstairs.
 
 You have a real memory that persists across conversations — use it like a colleague would:
 - recall(query): look up what you already know — about this project, the team, the people here, or your
@@ -198,14 +178,15 @@ colleague.`;
   }
 
   /**
-   * The system prompt for a bot's background-execution thread — the SAME identity as its chat
-   * surface plus engine-correct tool names (from the employee's locked engine) and a status line so
-   * the chat-self knows what to do next. The status line is read by the bot, not machine-parsed.
+   * The system prompt for a bot's background session — the SAME identity as its chat surface plus
+   * engine-correct tool names (from the employee's locked engine). Mode-agnostic and byte-identical
+   * across every turn of a session: read-only on plan turns is enforced by the engine, and the
+   * report is read by the chat-self, not machine-parsed.
    */
-  workerPromptFor(employee: EmployeeDefinition, mode: WorkerMode = 'execute'): string {
+  workerPromptFor(employee: EmployeeDefinition): string {
     return `${identityLine(employee)}
 
-${mode === 'plan' ? PLAN_DIRECTIVE : EXECUTE_DIRECTIVE}
+${WORKER_DIRECTIVE}
 
 ${WORKER_TOOL_GUIDE[employee.engine]}${skillsLine(employee)}${protocolsBlock(employee)}
 
@@ -213,13 +194,6 @@ Your teammates and their lanes: ${this.employees.rosterSummary()}. Stay in yours
 discipline's contract or hands, flag it for handoff in your report rather than deciding or
 building it yourself.
 
-${TEAM_RULES}
-
-End your report with a single status line:
-- STATUS: DONE — the task is complete (the normal case — finish the whole thing first).
-- STATUS: QUESTION <q> — you genuinely need a human decision or information to proceed.
-- STATUS: BLOCKED <why> — you truly cannot continue without a human.
-Only QUESTION and BLOCKED interrupt your teammate; with anything else the task is treated as done, so
-don't stop early unless you really need a human.`;
+${TEAM_RULES}`;
   }
 }

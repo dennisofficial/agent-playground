@@ -20,7 +20,10 @@ describe('MemoryModule (NestJS DI, live Postgres)', () => {
   beforeAll(async () => {
     app = await Test.createTestingModule({
       imports: [
-        EnvModule.forRoot({ envService: EnvService, validationSchema: envConfigValidation }),
+        EnvModule.forRoot({
+          envService: EnvService,
+          validationSchema: envConfigValidation,
+        }),
         DatabaseModule,
         MemoryModule,
       ],
@@ -40,7 +43,11 @@ describe('MemoryModule (NestJS DI, live Postgres)', () => {
     // The DI-provided TaskStore writes through the real connection (no embedding).
     const tasks = app.get(TaskStore);
     await tasks['repo'].query('TRUNCATE tasks RESTART IDENTITY');
-    const created = await tasks.addTask({ project: 'di', description: 'di wired', owner: 'alex' });
+    const created = await tasks.addTask({
+      project: 'di',
+      description: 'di wired',
+      owner: 'alex',
+    });
     expect(created?.description).toBe('di wired');
   });
 });

@@ -27,7 +27,11 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
  * Requires `DatabaseModule` (the @Global TypeORM connection) to be imported by the hosting app.
  */
 @CreateModule({
-  imports: [TypeOrmModule.forFeature([Fact, Task, Worklog]), LlmModule, EmployeesModule],
+  imports: [
+    TypeOrmModule.forFeature([Fact, Task, Worklog]),
+    LlmModule,
+    EmployeesModule,
+  ],
   services: [
     MemoryMetricsService,
     MemoryWriteService,
@@ -36,7 +40,8 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
     {
       provide: SemanticMemory,
       inject: [getRepositoryToken(Fact)],
-      useFactory: (facts: Repository<Fact>) => new SemanticMemory(facts, new OpenAIEmbeddingProvider()),
+      useFactory: (facts: Repository<Fact>) =>
+        new SemanticMemory(facts, new OpenAIEmbeddingProvider()),
     },
     {
       provide: TaskStore,

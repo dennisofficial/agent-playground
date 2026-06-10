@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { BehaviorSubject, Observable, ReplaySubject } from 'rxjs';
-import type { ConductorEvent, ConductorStatus } from '../domain/conductor-events';
+import type {
+  ConductorEvent,
+  ConductorStatus,
+} from '../domain/conductor-events';
 
 const INITIAL_STATUS: ConductorStatus = {
   busy: false,
@@ -28,8 +31,12 @@ const EVENT_REPLAY_BUFFER = 1_000;
  */
 @Injectable()
 export class ConductorEventsBus {
-  private readonly eventsSubject = new ReplaySubject<ConductorEvent>(EVENT_REPLAY_BUFFER);
-  private readonly statusSubject = new BehaviorSubject<ConductorStatus>(INITIAL_STATUS);
+  private readonly eventsSubject = new ReplaySubject<ConductorEvent>(
+    EVENT_REPLAY_BUFFER,
+  );
+  private readonly statusSubject = new BehaviorSubject<ConductorStatus>(
+    INITIAL_STATUS,
+  );
 
   get events$(): Observable<ConductorEvent> {
     return this.eventsSubject.asObservable();

@@ -1,5 +1,6 @@
 import { setupLogger } from '@core/setup-logger';
 import { EnvService } from '@core/config/env/env.service';
+import { ChannelRegistryService } from '@harness/channel/channel-registry.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
 import { ConductorService } from '@harness/conductor/conductor.service';
 import { EmployeeRegistry } from '@harness/employees/employee.registry';
@@ -23,29 +24,41 @@ import { sessionDump } from './ui/transcript';
  */
 async function bootstrap() {
   const logger = setupLogger();
-  const app = await NestFactory.createApplicationContext(TuiModule, { logger, abortOnError: false });
+  const app = await NestFactory.createApplicationContext(TuiModule, {
+    logger,
+    abortOnError: false,
+  });
   app.enableShutdownHooks();
 
   await loadInk();
 
   const employees = app.get(EmployeeRegistry);
+  const surface = app.get<TuiChatSurface>(CHAT_SURFACE);
   const deps: AppDeps = {
     bus: app.get(ConductorEventsBus),
-    surface: app.get<TuiChatSurface>(CHAT_SURFACE),
+    surface,
     commands: buildCommands({
       conductor: app.get(ConductorService),
       tasks: app.get(TaskStore),
+      registry: app.get(ChannelRegistryService),
+      employees,
+      surface,
       project: app.get(EnvService).get('ZERO_PROJECT'),
     }),
     banner:
-      `#dev — ${employees.list().map((b) => `${b.name} (${b.role})`).join(' · ')}\n` +
-      '/as <name> · @Name to address a bot · /debug logs · ↑/↓/wheel + PgUp/PgDn scroll · /exit',
+      `#dev — ${employees
+        .list()
+        .map((b) => `${b.name} (${b.role})`)
+        .join(' · ')}\n` +
+      '/as <name> · @Name to address a bot · /room <name> + /dm <bot> to move rooms · /rooms · /debug logs · ↑/↓/wheel + PgUp/PgDn scroll · /exit',
   };
 
   // Ink owns the terminal from here — silence Nest logging so nothing tears the live frame.
   app.useLogger(false);
   const interactive = process.stdout.isTTY;
-  const instance = render(createElement(App, { deps }), { alternateScreen: interactive });
+  const instance = render(createElement(App, { deps }), {
+    alternateScreen: interactive,
+  });
 
   await instance.waitUntilExit();
   // Graceful teardown: aborts in-flight workers, flushes channel/cursor write-behinds (see

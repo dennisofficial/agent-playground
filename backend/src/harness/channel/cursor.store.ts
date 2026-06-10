@@ -28,12 +28,19 @@ export class CursorStore implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     const rows = await this.repo.find();
-    for (const r of rows) this.cache.set(this.key(r.bot_id, r.surface_id), Number(r.delivered_up_to));
+    for (const r of rows)
+      this.cache.set(
+        this.key(r.bot_id, r.surface_id),
+        Number(r.delivered_up_to),
+      );
     if (rows.length) this.logger.log(`Hydrated ${rows.length} bot cursor(s)`);
     // Cursors are keyed by surface id, so renaming HARNESS_SURFACE_ID between runs orphans every
     // stored cursor (cache miss → 0) and the bots would re-gate the whole hydrated history. There
     // is no migration path yet — make the drift LOUD instead of silently replaying.
-    if (rows.length && !rows.some((r) => r.surface_id === this.activeSurfaceId)) {
+    if (
+      rows.length &&
+      !rows.some((r) => r.surface_id === this.activeSurfaceId)
+    ) {
       this.logger.warn(
         `bot_cursors holds ${rows.length} cursor(s) but NONE for the active surface '${this.activeSurfaceId}' — ` +
           `did HARNESS_SURFACE_ID change? Stored surfaces: ${[...new Set(rows.map((r) => r.surface_id))].join(', ')}. ` +
@@ -57,10 +64,18 @@ export class CursorStore implements OnModuleInit {
     this.cache.set(this.key(botId, surfaceId), deliveredUpTo);
     void this.write(() =>
       this.repo.upsert(
-        { bot_id: botId, surface_id: surfaceId, delivered_up_to: String(deliveredUpTo) },
+        {
+          bot_id: botId,
+          surface_id: surfaceId,
+          delivered_up_to: String(deliveredUpTo),
+        },
         ['bot_id', 'surface_id'],
       ),
-    ).catch((err) => this.logger.error(`Failed to persist cursor ${botId}@${surfaceId}: ${err}`));
+    ).catch((err) =>
+      this.logger.error(
+        `Failed to persist cursor ${botId}@${surfaceId}: ${err}`,
+      ),
+    );
   }
 
   /** Await all queued writes (shutdown / tests). */

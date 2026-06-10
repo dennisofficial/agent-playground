@@ -6,6 +6,7 @@ import {
   Identity,
   projectLabel,
   projectScope,
+  recallProjects,
   recallScopes,
   scopeForTier,
   Tier,
@@ -38,6 +39,9 @@ export interface RememberInput {
   fact: string;
   tier: Tier;
   id: Identity;
+  /** For a 'project'-tier write from a DM: which project the fact belongs to. Must be one the
+   * pair shares (see `scopeForTier`) — un-named/unknown falls back to the pair scope. */
+  project?: string;
 }
 
 export interface RememberOpts {
@@ -96,7 +100,10 @@ export class SemanticMemory {
     private readonly embedder: EmbeddingProvider,
   ) {}
 
-  private async query<T = RawFactRow>(sql: string, params: unknown[]): Promise<T[]> {
+  private async query<T = RawFactRow>(
+    sql: string,
+    params: unknown[],
+  ): Promise<T[]> {
     return rawRows<T>(await this.facts.manager.query(sql, params));
   }
 
@@ -116,9 +123,13 @@ export class SemanticMemory {
     opts: RememberOpts = {},
   ): Promise<{ action: 'inserted' | 'updated'; id: number }> {
     const qv = toPgVector(await this.embedder.embed(input.fact));
-    const scope = scopeForTier(input.tier, input.id);
+    const scope = scopeForTier(input.tier, input.id, input.project);
 
-    const candidates = await this.query<{ id: number | string; fact: string; sim: number | string }>(
+    const candidates = await this.query<{
+      id: number | string;
+      fact: string;
+      sim: number | string;
+    }>(
       `SELECT id, fact, 1 - (embedding <=> $1::vector) AS sim
        FROM facts
        WHERE scope = $2 AND deleted_at IS NULL AND 1 - (embedding <=> $1::vector) >= $3
@@ -127,11 +138,13 @@ export class SemanticMemory {
     );
 
     const top = candidates[0];
-    if (top && Number(top.sim) >= DEDUP_THRESHOLD) return this.mergeInto(Number(top.id), input.fact, qv);
+    if (top && Number(top.sim) >= DEDUP_THRESHOLD)
+      return this.mergeInto(Number(top.id), input.fact, qv);
 
     if (opts.judge) {
       for (const c of candidates) {
-        if (await opts.judge(c.fact, input.fact)) return this.mergeInto(Number(c.id), input.fact, qv);
+        if (await opts.judge(c.fact, input.fact))
+          return this.mergeInto(Number(c.id), input.fact, qv);
       }
     }
 
@@ -139,7 +152,15 @@ export class SemanticMemory {
       `INSERT INTO facts (fact, embedding, scope, asserted_by, source_surface, confidence, embed_model, created_at, updated_at)
        VALUES ($1, $2::vector, $3, $4, $5, $6, $7, now(), now())
        RETURNING id`,
-      [input.fact, qv, scope, input.id.speaker, input.id.surface, 1.0, this.embedder.model],
+      [
+        input.fact,
+        qv,
+        scope,
+        input.id.speaker,
+        input.id.surface,
+        1.0,
+        this.embedder.model,
+      ],
     );
     return { action: 'inserted', id: Number(inserted[0].id) };
   }
@@ -193,12 +214,14 @@ export class SemanticMemory {
   ): Promise<OtherProjectFact[]> {
     const floor = opts.floor ?? OTHER_PROJECT_FLOOR;
     const limit = opts.limit ?? 3;
-    const self = projectScope(id.project);
+    // "Other" = not recallable this turn — a DM already recalls every shared project directly, so
+    // those must not double-surface here as labeled cross-project rows.
+    const self = recallProjects(id).map(projectScope);
     const qv = opts.precomputed ?? (await this.embed(query));
     const rows = await this.query(
       `SELECT ${SELECT_COLS}, 1 - (embedding <=> $1::vector) AS sim
        FROM facts
-       WHERE scope LIKE 'project:%' AND scope != $2 AND deleted_at IS NULL
+       WHERE scope LIKE 'project:%' AND scope <> ALL($2::text[]) AND deleted_at IS NULL
          AND 1 - (embedding <=> $1::vector) >= $3
        ORDER BY embedding <=> $1::vector ASC
        LIMIT $4`,
@@ -214,14 +237,20 @@ export class SemanticMemory {
   /** Re-rank a distance-ordered window by (cosine + recency tiebreak) and take `limit`. */
   private rankByRecency(rows: RawFactRow[], limit: number): RawFactRow[] {
     return rows
-      .map((r) => ({ r, score: Number(r.sim) + recencyBonus(toIso(r.updated_at)) }))
+      .map((r) => ({
+        r,
+        score: Number(r.sim) + recencyBonus(toIso(r.updated_at)),
+      }))
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map(({ r }) => r);
   }
 
   /** A live fact by row id, ONLY if in a scope this identity may access — the id-op guard. */
-  private async liveFactById(rowId: number, id: Identity): Promise<RawFactRow | undefined> {
+  private async liveFactById(
+    rowId: number,
+    id: Identity,
+  ): Promise<RawFactRow | undefined> {
     const scopes = recallScopes(id);
     if (scopes.length === 0) return undefined;
     const rows = await this.query(
@@ -232,7 +261,11 @@ export class SemanticMemory {
   }
 
   /** Overwrite a fact by row id (scope-checked). Returns the updated fact, or null. */
-  async updateFactById(rowId: number, newFact: string, id: Identity): Promise<StoredFact | null> {
+  async updateFactById(
+    rowId: number,
+    newFact: string,
+    id: Identity,
+  ): Promise<StoredFact | null> {
     const row = await this.liveFactById(rowId, id);
     if (!row) return null;
     const qv = toPgVector(await this.embedder.embed(newFact));
@@ -245,10 +278,15 @@ export class SemanticMemory {
   }
 
   /** Soft-delete a fact by row id (scope-checked). Returns it, or null. */
-  async forgetFactById(rowId: number, id: Identity): Promise<StoredFact | null> {
+  async forgetFactById(
+    rowId: number,
+    id: Identity,
+  ): Promise<StoredFact | null> {
     const row = await this.liveFactById(rowId, id);
     if (!row) return null;
-    await this.query(`UPDATE facts SET deleted_at = now() WHERE id = $1`, [rowId]);
+    await this.query(`UPDATE facts SET deleted_at = now() WHERE id = $1`, [
+      rowId,
+    ]);
     return toStoredFact(row);
   }
 }

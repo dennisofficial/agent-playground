@@ -1,4 +1,8 @@
-import { type BaseMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
+import {
+  type BaseMessage,
+  HumanMessage,
+  SystemMessage,
+} from '@langchain/core/messages';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { Inject, Injectable } from '@nestjs/common';
 import { createAgent } from 'langchain';
@@ -16,8 +20,9 @@ import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
 export class LanggraphEngine implements WorkerEngine {
   readonly name = 'langgraph' as const;
 
-  // Two memoized agents, keyed by the planning flag. A job never switches mode mid-life (plan jobs
-  // stay planning=true across resumes; execute jobs are planning=false).
+  // Two memoized agents, keyed by the planning flag. They share the checkpointer, so a session can
+  // switch mode between turns (plan one turn, execute the next) and the other-mode agent resumes
+  // the same thread — only the bound toolset differs.
   private agents = new Map<boolean, ReturnType<typeof createAgent>>();
   private threadCounter = 0;
 
@@ -29,9 +34,9 @@ export class LanggraphEngine implements WorkerEngine {
   private getAgent(planning: boolean) {
     let a = this.agents.get(planning);
     if (!a) {
-      // A PLAN pass gets a READ-ONLY tool set (no write_file/str_replace/bash) so a langgraph plan
-      // job physically cannot mutate the repo — matching the engine-enforced read-only of the
-      // claude/codex planning passes.
+      // A plan turn gets a READ-ONLY tool set (no write_file/str_replace/bash) so a langgraph plan
+      // turn physically cannot mutate the worktree — matching the engine-enforced read-only of the
+      // claude/codex plan turns.
       a = createAgent({
         model: this.models.buildModel(),
         tools: planning ? planningTools : workerTools,
@@ -42,8 +47,17 @@ export class LanggraphEngine implements WorkerEngine {
     return a;
   }
 
-  async run({ task, systemPrompt, sessionId, planning, onEvent, signal }: RunWorkerArgs) {
-    const threadId = sessionId ?? `lg-${(++this.threadCounter).toString().padStart(3, '0')}-${Date.now()}`;
+  async run({
+    task,
+    systemPrompt,
+    sessionId,
+    mode,
+    onEvent,
+    signal,
+  }: RunWorkerArgs) {
+    const threadId =
+      sessionId ??
+      `lg-${(++this.threadCounter).toString().padStart(3, '0')}-${Date.now()}`;
     // createAgent takes no per-invoke system prompt, so seed it as a leading SystemMessage on the
     // first turn only (resumes already carry it in the checkpointed history).
     const messages: BaseMessage[] = sessionId
@@ -52,7 +66,13 @@ export class LanggraphEngine implements WorkerEngine {
           // Cache the worker's system prefix. Workers loop many times, so without a breakpoint the
           // persona is re-sent uncached on every iteration. ttl:'1h' survives long single tool calls.
           new SystemMessage({
-            content: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+            content: [
+              {
+                type: 'text',
+                text: systemPrompt,
+                cache_control: { type: 'ephemeral', ttl: '1h' },
+              },
+            ],
           }),
           new HumanMessage(task),
         ];
@@ -60,11 +80,18 @@ export class LanggraphEngine implements WorkerEngine {
     let lastText = '';
     // streamMode 'updates' yields complete messages per node step (not token chunks), which maps
     // cleanly onto WorkerEvents. The update keys are node names; we don't depend on them.
-    const stream = await this.getAgent(planning ?? false).stream(
+    const stream = await this.getAgent(mode === 'plan').stream(
       { messages },
-      { configurable: { thread_id: threadId }, streamMode: 'updates', recursionLimit: 50, signal },
+      {
+        configurable: { thread_id: threadId },
+        streamMode: 'updates',
+        recursionLimit: 50,
+        signal,
+      },
     );
-    for await (const update of stream as AsyncIterable<Record<string, { messages?: BaseMessage[] }>>) {
+    for await (const update of stream as AsyncIterable<
+      Record<string, { messages?: BaseMessage[] }>
+    >) {
       for (const payload of Object.values(update)) {
         for (const m of payload?.messages ?? []) {
           if (m.getType() !== 'ai') continue;
@@ -73,7 +100,8 @@ export class LanggraphEngine implements WorkerEngine {
             onEvent({ kind: 'text', text });
             lastText = text;
           }
-          for (const c of (m as { tool_calls?: { name: string }[] }).tool_calls ?? []) {
+          for (const c of (m as { tool_calls?: { name: string }[] })
+            .tool_calls ?? []) {
             onEvent({ kind: 'tool', name: c.name });
           }
         }

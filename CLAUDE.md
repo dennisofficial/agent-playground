@@ -22,21 +22,22 @@ One Nest module per domain, all composed by `harness.module.ts` (import that one
 | `employees/` | `@AIEmployee()` decorator + DiscoveryService auto-discovery. One class per teammate in `roster/` (persona, engine, tool allowlist); `EmployeeRegistry` validates at boot; `PersonaService` assembles prompts |
 | `tools/` | `@HarnessTool()` decorator classes → `ToolRegistry`. Employee allowlists are **class references** (the class is the DI token), never name strings. `terminal: true` on a tool ends the turn |
 | `engines/` | `claude`/`codex`/`langgraph` behind the `WorkerEngine` port. ESM-only SDKs arrive via `_lib/esm` DI tokens |
-| `jobs/` | In-memory `JobRegistry` behind the async `JOB_REGISTRY` port (Postgres/BullMQ can swap in); `WorkerService` runs engine sessions (plan/read-only jobs only this pass), jailed to `WORKER_ROOT` |
+| `sessions/` | Employee-managed background sessions (long-lived interactive engine conversations — the bots' "Claude Code"). In-memory `SessionRegistry` behind `SESSION_REGISTRY`; `SessionRunnerService` runs one turn at a time inside the session's worktree; every turn-end relays to the owner, who replies (`reply_session`, mode-switchable per turn — 'plan' = engine-native read-only, 'execute' = writes) or closes (`close_session` → worklog) |
+| `worktrees/` | Employee-managed git worktrees (`WorktreeService`) — isolated full-repo checkouts at `<repoRoot>/.worktrees/<id>-<slug>` cut off the repo at `WORKER_ROOT`; git is the durable store (re-adopted on boot), mutating git ops mutex-serialized; every session requires one |
 | `memory/` | Postgres semantic memory (pgvector facts + dedup judge), reminders (`TaskStore`), worklog, fetch/reconcile passes, and the LangGraph **Postgres checkpointer** (`CHECKPOINTER` token) |
 | `gate/` | Respond/acknowledge/ignore: hard addressing rules + soft Haiku classifier |
 | `surface/` | `CHAT_SURFACE` port (group-chat semantics: post/react/inbound$). Hosting app binds an adapter via a `@Global` module (see `tui/tui-surface.module.ts`); `SurfaceBridge` wires it to the conductor. No binding → headless |
 | `skills/` | Typed scaffold only (`SkillSource` git/local + MCP config slots); loader is a no-op |
 | `llm/` | `ChatModelFactory` (chat/gate/extract model builders, env-driven) + cost helpers |
 
-Deliberately NOT ported yet (playground-only): plan→approve→execute flow, ticket board, worktree isolation, `/standup`-style commands.
+Deliberately NOT ported (playground-only): ticket board, `/standup`-style commands. The playground's plan→approve→execute flow is SUPERSEDED in the backend by per-turn session modes (the employee approves a plan by replying with mode 'execute').
 
 ### Conventions that matter here
 
 - Decorated classes (employees, tools) must be **plain class providers** — discovery can't see `useFactory` providers. Registries fail boot loudly on misconfiguration.
 - `roleContext`/`personality` must be **byte-stable string constants** (prompt-cache `cache_control` breakpoints — no interpolation or getters).
 - ESM-only deps (`@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, `ink`, `@inkjs/ui`) load via preserved dynamic `import()` (`module: nodenext`); everything LangChain is dual-published and statically imported. The TUI's Ink shim is `src/tui/ink.ts` — `await loadInk()` before rendering, and never destructure its exports in CJS.
-- Tests: `*.spec.ts` unit, `*.int.test.ts` integration (live Postgres via `docker compose up -d postgres`), `*.ai.test.ts` real-LLM (only `pnpm test:ai`). Migrations: `pnpm db:migrate` (hand-written, in `backend/migrations/`).
+- Tests: `*.spec.ts` unit, `*.int.test.ts` integration (live Postgres via `docker compose up -d postgres`), `*.ai.test.ts` real-LLM (only `pnpm test:ai`). Migrations: NEVER hand-write — rebuild `shared/` first (the CLI loads entities from `dist/`), then `pnpm db:migration:generate <Name>` against the live Postgres, prune generator noise (it tries to drop the pgvector HNSW index and recreate partial indexes), then `pnpm db:migrate`.
 
 ## Playground (`playground/src/`) — reference implementation
 

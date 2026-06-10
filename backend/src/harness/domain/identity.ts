@@ -15,11 +15,14 @@ export const DEFAULT_PROJECT = 'local';
 export const teamScope = (teamId: string) => `team:${teamId}`;
 export const projectScope = (projectId: string) => `project:${projectId}`;
 export const botScope = (botId: string) => `bot:${botId}`;
-export const pairScope = (botId: string, humanId: string) => `pair:${botId}:${humanId}`;
+export const pairScope = (botId: string, humanId: string) =>
+  `pair:${botId}:${humanId}`;
 
 /** The project id embedded in a `project:<id>` scope, else undefined. */
 export function projectLabel(scope: string): string | undefined {
-  return scope.startsWith('project:') ? scope.slice('project:'.length) : undefined;
+  return scope.startsWith('project:')
+    ? scope.slice('project:'.length)
+    : undefined;
 }
 
 export interface Identity {
@@ -27,8 +30,14 @@ export interface Identity {
   selfAgent: string;
   /** The stable team/org id — the team tier, shared across all projects. */
   team: string;
-  /** The active project/workspace id — the project tier, set per turn. */
+  /** The active project/workspace id — the WRITE target for project facts in a channel, and the
+   * home for this turn's reminders. In a DM this is only the default home (a DM is workspace-level,
+   * not project-bound); project writes there must NAME their project (see `scopeForTier`). */
   project: string;
+  /** The project scopes RECALLABLE this turn. A channel recalls its own project (`[project]`, the
+   * default); a DM recalls every project the bot SHARES with the present humans — a DM is about
+   * anything you both work on. */
+  projects?: string[];
   /** Human ids present in the conversation. */
   participants: string[];
   /** The human id speaking this turn — used for the pair scope and `asserted_by`. */
@@ -51,8 +60,12 @@ export const CLI_IDENTITY: Identity = {
 };
 
 /** Pull identity out of a run's config (set by the conductor / surface adapter), falling back to the stub. */
-export function getIdentity(config?: { configurable?: Record<string, unknown> }): Identity {
-  return (config?.configurable?.identity as Identity | undefined) ?? CLI_IDENTITY;
+export function getIdentity(config?: {
+  configurable?: Record<string, unknown>;
+}): Identity {
+  return (
+    (config?.configurable?.identity as Identity | undefined) ?? CLI_IDENTITY
+  );
 }
 
 /**
@@ -62,16 +75,41 @@ export function getIdentity(config?: { configurable?: Record<string, unknown> })
  * labeled cross-project path (`recallOtherProjects`).
  */
 export function recallScopes(id: Identity): string[] {
-  const scopes = [projectScope(id.project), teamScope(id.team), botScope(id.selfAgent)];
+  const scopes = [
+    ...recallProjects(id).map(projectScope),
+    teamScope(id.team),
+    botScope(id.selfAgent),
+  ];
   if (!id.isChannel) {
     for (const h of id.participants) scopes.push(pairScope(id.selfAgent, h));
   }
   return scopes;
 }
 
-/** The scope key a new fact is stored under, by tier. `private` = 1:1 with the current speaker. */
-export function scopeForTier(tier: Tier, id: Identity): string {
-  if (tier === 'project') return projectScope(id.project);
+/** The project ids recallable this turn (see `Identity.projects`). */
+export function recallProjects(id: Identity): string[] {
+  return id.projects?.length ? [...new Set(id.projects)] : [id.project];
+}
+
+/**
+ * The scope key a new fact is stored under, by tier. `private` = 1:1 with the current speaker.
+ *
+ * Project tier: a channel writes to ITS project (`namedProject` ignored — a room can't write into
+ * another room's project). A DM is project-less, so a project fact there must NAME a project the
+ * pair actually shares; un-named or unknown falls back to the PAIR scope — the leak-safe default
+ * (a misjudged "project" fact stays 1:1 instead of surfacing in some group chat).
+ */
+export function scopeForTier(
+  tier: Tier,
+  id: Identity,
+  namedProject?: string,
+): string {
+  if (tier === 'project') {
+    if (id.isChannel) return projectScope(id.project);
+    const named = namedProject?.trim().toLowerCase();
+    if (named && recallProjects(id).includes(named)) return projectScope(named);
+    return pairScope(id.selfAgent, id.speaker);
+  }
   if (tier === 'team') return teamScope(id.team);
   if (tier === 'bot') return botScope(id.selfAgent);
   return pairScope(id.selfAgent, id.speaker);

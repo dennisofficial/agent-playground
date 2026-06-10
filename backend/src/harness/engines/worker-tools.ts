@@ -9,7 +9,14 @@ import { activeRoot, bashDenyReason, resolveInCwd } from './guard';
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
-const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'coverage', '.turbo']);
+const IGNORED_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  '.next',
+  'coverage',
+  '.turbo',
+]);
 
 export const bash = tool(
   async ({ command }) => {
@@ -34,7 +41,9 @@ export const bash = tool(
     name: 'bash',
     description:
       'Run a shell command inside the project directory. Use for builds, tests, git, and inspecting the tree. Cannot escape the project root or run destructive system commands.',
-    schema: z.object({ command: z.string().describe('The shell command to run.') }),
+    schema: z.object({
+      command: z.string().describe('The shell command to run.'),
+    }),
   },
 );
 
@@ -48,14 +57,22 @@ export const read_file = tool(
   },
   {
     name: 'read_file',
-    description: 'Read a UTF-8 text file by path, relative to the project directory.',
-    schema: z.object({ path: z.string().describe('File path relative to the project root.') }),
+    description:
+      'Read a UTF-8 text file by path, relative to the project directory.',
+    schema: z.object({
+      path: z.string().describe('File path relative to the project root.'),
+    }),
   },
 );
 
 // ---- read-only tools (safe for the chat layer) ----
 
-async function buildTree(dir: string, prefix: string, depth: number, out: string[]): Promise<void> {
+async function buildTree(
+  dir: string,
+  prefix: string,
+  depth: number,
+  out: string[],
+): Promise<void> {
   if (depth < 0) return;
   const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
     a.name.localeCompare(b.name),
@@ -93,8 +110,13 @@ export const list_dir = tool(
       path: z
         .string()
         .optional()
-        .describe('Directory relative to the project root. Defaults to the root.'),
-      depth: z.number().optional().describe('How many levels deep to recurse. Defaults to 2.'),
+        .describe(
+          'Directory relative to the project root. Defaults to the root.',
+        ),
+      depth: z
+        .number()
+        .optional()
+        .describe('How many levels deep to recurse. Defaults to 2.'),
     }),
   },
 );
@@ -133,7 +155,9 @@ export const grep = tool(
       path: z
         .string()
         .optional()
-        .describe('Directory or file to search, relative to the root. Defaults to the root.'),
+        .describe(
+          'Directory or file to search, relative to the root. Defaults to the root.',
+        ),
     }),
   },
 );
@@ -197,7 +221,9 @@ export const glob = tool(
       path: z
         .string()
         .optional()
-        .describe('Directory to anchor the search in, relative to the root. Defaults to the root.'),
+        .describe(
+          'Directory to anchor the search in, relative to the root. Defaults to the root.',
+        ),
     }),
   },
 );
@@ -228,7 +254,8 @@ export const write_file = tool(
 export const str_replace = tool(
   async ({ path, old_str, new_str }) => {
     try {
-      if (old_str === '') return `str_replace failed: old_str must not be empty.`;
+      if (old_str === '')
+        return `str_replace failed: old_str must not be empty.`;
       const target = resolveInCwd(path);
       const content = await readFile(target, 'utf8');
       // split/join does exact-string (not regex) matching and avoids String.replace's
@@ -250,7 +277,9 @@ export const str_replace = tool(
       'Surgically replace an exact string in an existing file. old_str must appear exactly once (matched verbatim, including whitespace and indentation). Prefer this over write_file when editing — send only the lines that change.',
     schema: z.object({
       path: z.string().describe('File path relative to the project root.'),
-      old_str: z.string().describe('Exact text to find. Must match exactly once, verbatim.'),
+      old_str: z
+        .string()
+        .describe('Exact text to find. Must match exactly once, verbatim.'),
       new_str: z.string().describe('Replacement text.'),
     }),
   },
@@ -282,10 +311,13 @@ export const web_fetch = tool(
         signal: AbortSignal.timeout(10_000),
         headers: { 'user-agent': 'agent-playground/0.1' },
       });
-      if (!res.ok) return `web_fetch failed: HTTP ${res.status} ${res.statusText} for ${url}`;
+      if (!res.ok)
+        return `web_fetch failed: HTTP ${res.status} ${res.statusText} for ${url}`;
       const contentType = res.headers.get('content-type') ?? '';
       const body = await res.text();
-      const text = contentType.includes('html') ? htmlToText(body) : body.trim();
+      const text = contentType.includes('html')
+        ? htmlToText(body)
+        : body.trim();
       const MAX = 20_000;
       if (text.length > MAX)
         return `${text.slice(0, MAX)}\n…[truncated ${text.length - MAX} more chars]`;
@@ -300,7 +332,9 @@ export const web_fetch = tool(
     name: 'web_fetch',
     description:
       'Fetch a URL and return its readable text content (HTML is stripped to plain text; other content types are returned as-is). Use to pull external documentation or resources. 10s timeout.',
-    schema: z.object({ url: z.string().describe('The http/https URL to fetch.') }),
+    schema: z.object({
+      url: z.string().describe('The http/https URL to fetch.'),
+    }),
   },
 );
 
@@ -313,4 +347,11 @@ export const readOnlyTools = [read_file, list_dir, grep];
 export const planningTools = [read_file, list_dir, grep, glob, web_fetch];
 
 /** Worker tools — read-only set plus the mutating/extra tools (write, edit, glob, fetch, shell). */
-export const workerTools = [...readOnlyTools, write_file, str_replace, glob, web_fetch, bash];
+export const workerTools = [
+  ...readOnlyTools,
+  write_file,
+  str_replace,
+  glob,
+  web_fetch,
+  bash,
+];

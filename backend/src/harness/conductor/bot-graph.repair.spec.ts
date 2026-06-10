@@ -1,6 +1,11 @@
-import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  HumanMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
+import type { ChannelRegistryService } from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { PersonaService } from '../employees/persona.service';
@@ -25,8 +30,14 @@ class FakeChannel {
   readonly surfaceId = 'tui:test';
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
-  append(msg: Omit<ChannelMsg, 'seq'>): ChannelMsg {
-    const full = { ...msg, seq: this.nextSeq++ };
+  append(
+    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+  ): ChannelMsg {
+    const full = {
+      ...msg,
+      channelId: msg.channelId ?? this.surfaceId,
+      seq: this.nextSeq++,
+    };
     this.log.push(full);
     return full;
   }
@@ -34,6 +45,9 @@ class FakeChannel {
     return this.log.filter((m) => m.seq >= cursor);
   }
   get length(): number {
+    return this.nextSeq;
+  }
+  lengthOf(): number {
     return this.nextSeq;
   }
   snapshot(): ChannelMsg[] {
@@ -44,12 +58,24 @@ class FakeChannel {
   }
 }
 
-const ALEX = { id: 'alex', name: 'Alex', role: 'backend engineer', sortOrder: 10, roleContext: 'ctx', engine: 'claude' as const };
+const ALEX = {
+  id: 'alex',
+  name: 'Alex',
+  role: 'backend engineer',
+  sortOrder: 10,
+  roleContext: 'ctx',
+  engine: 'claude' as const,
+};
 
 describe('bot graph — poisoned-history self-healing', () => {
   it('splices synthetic tool_results after a dangling tool_use so the next turn succeeds', async () => {
     const channel = new FakeChannel();
-    channel.append({ id: 'u-0', author: 'Dennis', authorId: 'dennis', text: 'Alex, keep running recall until I say stop.' });
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Alex, keep running recall until I say stop.',
+    });
 
     const invocations: BaseMessage[][] = [];
     const fakeModel = {
@@ -64,10 +90,19 @@ describe('bot graph — poisoned-history self-healing', () => {
 
     const factory = new BotGraphFactory(
       channel as unknown as ChannelService,
-      { toStructuredTools: () => [], terminalToolNames: () => new Set<string>() } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
+      {
+        toStructuredTools: () => [],
+        terminalToolNames: () => new Set<string>(),
+      } as unknown as ToolRegistry,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       { fetchContext: async () => '' } as unknown as FetchService,
-      { reconcileMemory: async () => {}, reconcileTasks: async () => {} } as unknown as ReconcileService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
       new MemorySaver() as unknown as PostgresSaver,
@@ -83,15 +118,30 @@ describe('bot graph — poisoned-history self-healing', () => {
         new HumanMessage('Dennis: Alex, keep running recall until I say stop.'),
         new AIMessage({
           content: 'On it — running recall now.',
-          tool_calls: [{ name: 'recall', args: { query: 'project' }, id: 'toolu_dangling_01', type: 'tool_call' }],
+          tool_calls: [
+            {
+              name: 'recall',
+              args: { query: 'project' },
+              id: 'toolu_dangling_01',
+              type: 'tool_call',
+            },
+          ],
         }),
       ],
       cursor: 1,
     });
 
     // A new message arrives; without the repair this turn would 400 forever (the live bug).
-    channel.append({ id: 'u-1', author: 'Dennis', authorId: 'dennis', text: 'Stop' });
-    const stream = await graph.stream({ cursor: 1, forced: false }, { ...config, streamMode: 'updates' as const });
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Stop',
+    });
+    const stream = await graph.stream(
+      { cursor: 1, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
     for await (const _ of stream) {
       /* drain */
     }
@@ -99,25 +149,41 @@ describe('bot graph — poisoned-history self-healing', () => {
     expect(invocations).toHaveLength(1);
     const convo = invocations[0];
     // Find the dangling AI message in what was actually SENT to the model…
-    const aiIdx = convo.findIndex((m) => m.getType() === 'ai' && ((m as AIMessage).tool_calls?.length ?? 0) > 0);
+    const aiIdx = convo.findIndex(
+      (m) =>
+        m.getType() === 'ai' && ((m as AIMessage).tool_calls?.length ?? 0) > 0,
+    );
     expect(aiIdx).toBeGreaterThan(-1);
     // …and assert a tool_result for its id sits IMMEDIATELY after (Anthropic's hard requirement).
     const next = convo[aiIdx + 1];
     expect(next.getType()).toBe('tool');
-    expect((next as { tool_call_id?: string }).tool_call_id).toBe('toolu_dangling_01');
+    expect((next as { tool_call_id?: string }).tool_call_id).toBe(
+      'toolu_dangling_01',
+    );
 
     // The turn completed: the reply landed and the cursor advanced past 'Stop'.
     const final = await graph.getState(config);
     expect(final.values.cursor).toBe(2);
-    const lastAi = (final.values.messages as BaseMessage[]).filter((m) => m.getType() === 'ai').at(-1);
+    const lastAi = (final.values.messages as BaseMessage[])
+      .filter((m) => m.getType() === 'ai')
+      .at(-1);
     expect(lastAi && String(lastAi.content)).toContain('Recovered');
     // The repair is read-time only — the synthetic tool_result is NOT persisted into the checkpoint.
-    expect((final.values.messages as BaseMessage[]).some((m) => m.getType() === 'tool')).toBe(false);
+    expect(
+      (final.values.messages as BaseMessage[]).some(
+        (m) => m.getType() === 'tool',
+      ),
+    ).toBe(false);
   });
 
   it('leaves a healthy history (tool_use followed by its result) untouched', async () => {
     const channel = new FakeChannel();
-    channel.append({ id: 'u-0', author: 'Dennis', authorId: 'dennis', text: 'hi Alex' });
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'hi Alex',
+    });
 
     const invocations: BaseMessage[][] = [];
     const fakeModel = {
@@ -132,10 +198,19 @@ describe('bot graph — poisoned-history self-healing', () => {
 
     const factory = new BotGraphFactory(
       channel as unknown as ChannelService,
-      { toStructuredTools: () => [], terminalToolNames: () => new Set<string>() } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
+      {
+        toStructuredTools: () => [],
+        terminalToolNames: () => new Set<string>(),
+      } as unknown as ToolRegistry,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       { fetchContext: async () => '' } as unknown as FetchService,
-      { reconcileMemory: async () => {}, reconcileTasks: async () => {} } as unknown as ReconcileService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
       new MemorySaver() as unknown as PostgresSaver,
@@ -147,13 +222,25 @@ describe('bot graph — poisoned-history self-healing', () => {
     await graph.updateState(config, {
       messages: [
         new HumanMessage('Dennis: earlier message'),
-        new AIMessage({ content: '', tool_calls: [{ name: 'recall', args: {}, id: 'toolu_ok_01', type: 'tool_call' }] }),
-        new ToolMessage({ tool_call_id: 'toolu_ok_01', name: 'recall', content: 'facts…' }),
+        new AIMessage({
+          content: '',
+          tool_calls: [
+            { name: 'recall', args: {}, id: 'toolu_ok_01', type: 'tool_call' },
+          ],
+        }),
+        new ToolMessage({
+          tool_call_id: 'toolu_ok_01',
+          name: 'recall',
+          content: 'facts…',
+        }),
       ],
       cursor: 0,
     });
 
-    const stream = await graph.stream({ cursor: 0, forced: false }, { ...config, streamMode: 'updates' as const });
+    const stream = await graph.stream(
+      { cursor: 0, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
     for await (const _ of stream) {
       /* drain */
     }

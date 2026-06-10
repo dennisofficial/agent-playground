@@ -8,10 +8,14 @@ import { ChannelService } from './channel/channel.service';
 import { EngineRegistry } from './engines/engine.registry';
 import { GateService } from './gate/gate.service';
 import { HarnessModule } from './harness.module';
-import { JOB_REGISTRY, type JobRegistry } from './jobs/job-registry.port';
-import { WorkerService } from './jobs/worker.service';
+import {
+  SESSION_REGISTRY,
+  type SessionRegistry,
+} from './sessions/session-registry.port';
+import { SessionRunnerService } from './sessions/session-runner.service';
 import { ToolRegistry } from './tools/tool.registry';
 import { DEFAULT_CHAT_TOOLSET } from './tools/default-toolset';
+import { WorktreeService } from './worktrees/worktree.service';
 
 /**
  * Proves the whole composition root assembles: every domain module's DI graph resolves against live
@@ -22,7 +26,10 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
   it('boots, discovers tools, and resolves all engines', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
-        EnvModule.forRoot({ envService: EnvService, validationSchema: envConfigValidation }),
+        EnvModule.forRoot({
+          envService: EnvService,
+          validationSchema: envConfigValidation,
+        }),
         DatabaseModule,
         EsmModule,
         HarnessModule,
@@ -35,21 +42,28 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
     expect(bound.map((t) => t.name).sort()).toEqual(
       [
         'add_task',
-        'cancel_job',
-        'check_job',
+        'check_session',
+        'close_session',
         'complete_task',
-        'continue_work',
-        'dispatch_job',
+        'create_session',
+        'create_worktree',
         'end_turn',
         'forget',
+        'list_sessions',
         'list_tasks',
+        'list_worktrees',
         'recall',
         'recent_work',
         'remember',
+        'remove_worktree',
+        'reply_session',
+        'search_session',
         'update_memory',
       ].sort(),
     );
-    expect(tools.terminalToolNames(DEFAULT_CHAT_TOOLSET)).toEqual(new Set(['dispatch_job', 'end_turn']));
+    expect(tools.terminalToolNames(DEFAULT_CHAT_TOOLSET)).toEqual(
+      new Set(['create_session', 'reply_session', 'end_turn']),
+    );
 
     const engines = moduleRef.get(EngineRegistry);
     expect(engines.get('claude').name).toBe('claude');
@@ -58,8 +72,9 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
 
     expect(moduleRef.get(GateService)).toBeDefined();
     expect(moduleRef.get(ChannelService)).toBeDefined();
-    expect(moduleRef.get(WorkerService)).toBeDefined();
-    expect(moduleRef.get<JobRegistry>(JOB_REGISTRY)).toBeDefined();
+    expect(moduleRef.get(SessionRunnerService)).toBeDefined();
+    expect(moduleRef.get(WorktreeService)).toBeDefined();
+    expect(moduleRef.get<SessionRegistry>(SESSION_REGISTRY)).toBeDefined();
 
     await moduleRef.close();
   });

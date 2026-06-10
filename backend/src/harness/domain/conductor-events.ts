@@ -16,6 +16,8 @@ export type ConductorEvent =
   | {
       id: string;
       kind: 'message';
+      /** Channel/thread coordinate the message lives on — what the SurfaceBridge routes post() by. */
+      channelId: string;
       /** Who authored it — a bot id, or the human speaker's id. */
       authorId: string;
       authorName: string;
@@ -26,10 +28,18 @@ export type ConductorEvent =
       usage?: MessageUsage;
       ts: string;
     }
-  | { id: string; kind: 'tool'; botId: string; botName: string; toolName: string }
+  | {
+      id: string;
+      kind: 'tool';
+      botId: string;
+      botName: string;
+      toolName: string;
+    }
   | {
       id: string;
       kind: 'reaction';
+      /** Channel/thread coordinate of the target message — what the SurfaceBridge routes react() by. */
+      channelId: string;
       botId: string;
       botName: string;
       emoji: string;

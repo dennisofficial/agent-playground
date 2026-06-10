@@ -11,22 +11,38 @@ export type StoreAction =
   // Fold a reaction onto its target message by id; if the id isn't found, append a standalone reaction row.
   | { t: 'react'; id: string; targetId: string; by: string; emoji: string };
 
-export function storeReducer(items: RenderItem[], action: StoreAction): RenderItem[] {
+export function storeReducer(
+  items: RenderItem[],
+  action: StoreAction,
+): RenderItem[] {
   switch (action.t) {
     case 'add':
       return [...items, action.item];
     case 'react': {
       const idx = items.findIndex(
-        (it) => it.id === action.targetId && (it.kind === 'user' || it.kind === 'assistant'),
+        (it) =>
+          it.id === action.targetId &&
+          (it.kind === 'user' || it.kind === 'assistant'),
       );
       const target = idx === -1 ? undefined : items[idx];
       if (!target || (target.kind !== 'user' && target.kind !== 'assistant')) {
-        return [...items, { id: action.id, kind: 'reaction', by: action.by, emoji: action.emoji }];
+        return [
+          ...items,
+          {
+            id: action.id,
+            kind: 'reaction',
+            by: action.by,
+            emoji: action.emoji,
+          },
+        ];
       }
       const next = items.slice();
       next[idx] = {
         ...target,
-        reactions: [...(target.reactions ?? []), { by: action.by, emoji: action.emoji }],
+        reactions: [
+          ...(target.reactions ?? []),
+          { by: action.by, emoji: action.emoji },
+        ],
       };
       return next;
     }

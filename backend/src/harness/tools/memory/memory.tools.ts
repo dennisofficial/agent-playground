@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { Tier } from '../../domain/identity';
 import { MemoryWriteService } from '../../memory/memory-write.service';
 import { SemanticMemory, type StoredFact } from '../../memory/semantic-memory';
 import { HarnessTool } from '../harness-tool.decorator';
@@ -23,7 +22,13 @@ const rememberSchema = z.object({
     .enum(['team', 'project', 'bot', 'private'])
     .optional()
     .describe(
-      "Who should know it: 'project' (default — a fact about THIS project: its repo, stack, goals, or a decision), 'team' (roles, who does what, the boss's standing preferences — shared across every project), 'bot' (just you, across all your chats), or 'private' (1:1 with this person — personal or sensitive).",
+      "Who should know it: 'project' (default in a channel — a fact about THIS project: its repo, stack, goals, or a decision), 'team' (roles, who does what, the boss's standing preferences — shared across every project), 'bot' (just you, across all your chats), or 'private' (1:1 with this person — personal or sensitive; the default in a DM).",
+    ),
+  project: z
+    .string()
+    .optional()
+    .describe(
+      "ONLY for tier 'project' in a DM: which project the fact belongs to (a DM isn't bound to one). Must be a project you share with this person — otherwise the fact is kept private to the two of you.",
     ),
 });
 
@@ -36,15 +41,29 @@ export class RememberTool implements IHarnessTool<typeof rememberSchema> {
 
   constructor(private readonly writes: MemoryWriteService) {}
 
-  async execute({ fact, tier }: z.infer<typeof rememberSchema>, ctx: HarnessToolContext): Promise<string> {
-    const t = (tier ?? 'project') as Tier;
-    const res = await this.writes.rememberDeduped({ fact, tier: t, id: ctx.identity });
+  async execute(
+    { fact, tier, project }: z.infer<typeof rememberSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    // Write-side leak guard: facts learned in a 1:1 DM default to the pair scope — the read-side
+    // guard (recallScopes) only filters recall; a DM confidence stored at project scope would
+    // surface in group chat. A project fact from a DM must NAME a shared project (scopeForTier
+    // validates and falls back to pair).
+    const t = tier ?? (ctx.identity.isChannel ? 'project' : 'private');
+    const res = await this.writes.rememberDeduped({
+      fact,
+      tier: t,
+      id: ctx.identity,
+      project,
+    });
     return `${res.action === 'updated' ? 'Updated what I knew' : 'Remembered'} (${t}).`;
   }
 }
 
 const recallSchema = z.object({
-  query: z.string().describe('What you want to remember about, in natural language.'),
+  query: z
+    .string()
+    .describe('What you want to remember about, in natural language.'),
 });
 
 @HarnessTool()
@@ -56,7 +75,10 @@ export class RecallTool implements IHarnessTool<typeof recallSchema> {
 
   constructor(private readonly semantic: SemanticMemory) {}
 
-  async execute({ query }: z.infer<typeof recallSchema>, ctx: HarnessToolContext): Promise<string> {
+  async execute(
+    { query }: z.infer<typeof recallSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
     const facts = await this.semantic.recall(query, ctx.identity);
     if (facts.length === 0) return 'Nothing saved that matches.';
     return `What I know that's relevant:\n${facts.map(fmt).join('\n')}`;
@@ -64,10 +86,14 @@ export class RecallTool implements IHarnessTool<typeof recallSchema> {
 }
 
 const updateSchema = z.object({
-  id: z.number().describe('The #id of the fact to correct (the [#N] from recall).'),
+  id: z
+    .number()
+    .describe('The #id of the fact to correct (the [#N] from recall).'),
   newFact: z
     .string()
-    .describe('The corrected fact, stated minimally — one bare atomic claim, no elaboration or consequences.'),
+    .describe(
+      'The corrected fact, stated minimally — one bare atomic claim, no elaboration or consequences.',
+    ),
 });
 
 @HarnessTool()
@@ -82,14 +108,23 @@ export class UpdateMemoryTool implements IHarnessTool<typeof updateSchema> {
     private readonly writes: MemoryWriteService,
   ) {}
 
-  async execute({ id: factId, newFact }: z.infer<typeof updateSchema>, ctx: HarnessToolContext): Promise<string> {
-    const updated = await this.writes.withLock(() => this.semantic.updateFactById(factId, newFact, ctx.identity));
-    return updated ? `Updated #${factId}.` : `No live fact #${factId} to update.`;
+  async execute(
+    { id: factId, newFact }: z.infer<typeof updateSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const updated = await this.writes.withLock(() =>
+      this.semantic.updateFactById(factId, newFact, ctx.identity),
+    );
+    return updated
+      ? `Updated #${factId}.`
+      : `No live fact #${factId} to update.`;
   }
 }
 
 const forgetSchema = z.object({
-  id: z.number().describe('The #id of the fact to forget (the [#N] from recall).'),
+  id: z
+    .number()
+    .describe('The #id of the fact to forget (the [#N] from recall).'),
 });
 
 @HarnessTool()
@@ -104,8 +139,13 @@ export class ForgetTool implements IHarnessTool<typeof forgetSchema> {
     private readonly writes: MemoryWriteService,
   ) {}
 
-  async execute({ id: factId }: z.infer<typeof forgetSchema>, ctx: HarnessToolContext): Promise<string> {
-    const gone = await this.writes.withLock(() => this.semantic.forgetFactById(factId, ctx.identity));
+  async execute(
+    { id: factId }: z.infer<typeof forgetSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const gone = await this.writes.withLock(() =>
+      this.semantic.forgetFactById(factId, ctx.identity),
+    );
     return gone ? `Forgot #${factId}.` : `No live fact #${factId} to forget.`;
   }
 }

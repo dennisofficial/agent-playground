@@ -30,5 +30,16 @@ export interface LoadedSkill {
  * SDK and Codex SDK both accept; wiring into the engines is a later pass.
  */
 export type McpServerConfig =
-  | { name: string; transport: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
-  | { name: string; transport: 'http'; url: string; headers?: Record<string, string> };
+  | {
+      name: string;
+      transport: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  | {
+      name: string;
+      transport: 'http';
+      url: string;
+      headers?: Record<string, string>;
+    };

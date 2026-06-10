@@ -43,5 +43,9 @@ export interface ChatSurface {
   /** Deliver a bot message to the surface. */
   post(msg: OutboundChatMessage): Promise<void>;
   /** Add a bot's emoji reaction to a surface message. */
-  react(targetMessageId: string, emoji: string, asBot: { id: string; name: string }): Promise<void>;
+  react(
+    targetMessageId: string,
+    emoji: string,
+    asBot: { id: string; name: string },
+  ): Promise<void>;
 }

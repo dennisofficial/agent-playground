@@ -1,11 +1,18 @@
 import type { EnvService } from '@core/config/env/env.service';
+import type {
+  ChannelInfo,
+  ChannelRegistryService,
+} from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { CursorStore } from '../channel/cursor.store';
 import type { ConductorEvent } from '../domain/conductor-events';
 import type { EmployeeRegistry } from '../employees/employee.registry';
-import type { Job, JobRegistry } from '../jobs/job-registry.port';
-import type { WorkerService } from '../jobs/worker.service';
+import type {
+  Session,
+  SessionRegistry,
+} from '../sessions/session-registry.port';
+import type { SessionRunnerService } from '../sessions/session-runner.service';
 import type { BotGraphFactory } from './bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorService } from './conductor.service';
@@ -16,8 +23,14 @@ class FakeChannel {
   private log: ChannelMsg[] = [];
   private subs = new Set<() => void>();
   private nextSeq = 0;
-  append(msg: Omit<ChannelMsg, 'seq'>): ChannelMsg {
-    const full = { ...msg, seq: this.nextSeq++ };
+  append(
+    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+  ): ChannelMsg {
+    const full = {
+      ...msg,
+      channelId: msg.channelId ?? this.surfaceId,
+      seq: this.nextSeq++,
+    };
     this.log.push(full);
     for (const cb of this.subs) cb();
     return full;
@@ -27,6 +40,15 @@ class FakeChannel {
   }
   get length(): number {
     return this.nextSeq;
+  }
+  lengthOf(): number {
+    return this.nextSeq;
+  }
+  floorSeqOf(): number {
+    return 0;
+  }
+  channelIds(): string[] {
+    return [];
   }
   get floorSeq(): number {
     return 0;
@@ -60,11 +82,55 @@ class FakeCursors {
   }
 }
 
-const ALEX = { id: 'alex', name: 'Alex', role: 'backend engineer', sortOrder: 10, roleContext: 'x', engine: 'claude' as const, scrumMaster: true };
+const ALEX = {
+  id: 'alex',
+  name: 'Alex',
+  role: 'backend engineer',
+  sortOrder: 10,
+  roleContext: 'x',
+  engine: 'claude' as const,
+  scrumMaster: true,
+};
+
+/** Minimal in-memory registry double (same contract as ChannelRegistryService). */
+class FakeRegistry {
+  private map = new Map<string, ChannelInfo>();
+  ensure(info: Partial<ChannelInfo> & { channelId: string }): ChannelInfo {
+    const existing = this.map.get(info.channelId);
+    if (existing) return existing;
+    const full: ChannelInfo = {
+      channelId: info.channelId,
+      kind: info.kind ?? 'channel',
+      project: info.project ?? 'local',
+      members: info.members ?? [],
+      displayName: info.displayName ?? info.channelId,
+    };
+    this.map.set(full.channelId, full);
+    return full;
+  }
+  addMembers(channelId: string, ids: string[]): void {
+    const info = this.map.get(channelId);
+    if (!info) return;
+    info.members = [...new Set([...info.members, ...ids])];
+  }
+  get(channelId: string): ChannelInfo | undefined {
+    return this.map.get(channelId);
+  }
+  list(): ChannelInfo[] {
+    return [...this.map.values()];
+  }
+  flush(): Promise<void> {
+    return Promise.resolve();
+  }
+}
 
 interface FakeGraphBehavior {
   /** Called per stream; returns deltas to yield and the cursor getState should report. */
-  run: (input: { cursor: number; forced: boolean }) => { deltas: object[]; cursorAfter: number; throw?: Error };
+  run: (input: { cursor: number; forced: boolean }) => {
+    deltas: object[];
+    cursorAfter: number;
+    throw?: Error;
+  };
 }
 
 async function buildConductor(behavior: FakeGraphBehavior) {
@@ -95,30 +161,37 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     fallbackOwner: () => ALEX,
   } as unknown as EmployeeRegistry;
 
-  const jobUpdateCbs: Array<(j: Job) => void> = [];
-  const jobs = {
+  const sessionUpdateCbs: Array<(s: Session) => void> = [];
+  const sessions = {
     list: async () => [],
-    onUpdate: (cb: (j: Job) => void) => {
-      jobUpdateCbs.push(cb);
+    onUpdate: (cb: (s: Session) => void) => {
+      sessionUpdateCbs.push(cb);
       return () => {};
     },
-  } as unknown as JobRegistry;
+  } as unknown as SessionRegistry;
 
-  const worker = { abortAll: () => {} } as unknown as WorkerService;
+  const runner = { abortAll: () => {} } as unknown as SessionRunnerService;
   const env = { get: () => undefined } as unknown as EnvService;
 
   const conductor = new ConductorService(
     channel as unknown as ChannelService,
+    new FakeRegistry() as unknown as ChannelRegistryService,
     cursors as unknown as CursorStore,
     employees,
     graphs,
-    jobs,
-    worker,
+    sessions,
+    runner,
     bus,
     env,
   );
   await conductor.onApplicationBootstrap();
-  return { conductor, channel, cursors, events, fireJobUpdate: (j: Job) => jobUpdateCbs.forEach((cb) => cb(j)) };
+  return {
+    conductor,
+    channel,
+    cursors,
+    events,
+    fireSessionUpdate: (s: Session) => sessionUpdateCbs.forEach((cb) => cb(s)),
+  };
 }
 
 describe('ConductorService scheduling', () => {
@@ -149,49 +222,86 @@ describe('ConductorService scheduling', () => {
     expect(cursors.get('alex', 'tui:test')).toBe(channel.length); // batch dropped to high-water mark
     const errors = events.filter((e) => e.kind === 'error');
     expect(errors.length).toBeGreaterThanOrEqual(4); // 3 turn errors + the gave-up notice
-    expect((errors.at(-1) as { message: string }).message).toContain('gave up after 3 failed attempts');
+    expect((errors.at(-1) as { message: string }).message).toContain(
+      'gave up after 3 failed attempts',
+    );
   });
 
-  it('relays a finished job through its owner gate-bypassed (forced seed)', async () => {
+  it("relays a session's turn-end through its owner gate-bypassed (forced seed)", async () => {
     const forcedInputs: boolean[] = [];
-    const { conductor, channel, fireJobUpdate } = await buildConductor({
+    const { conductor, channel, fireSessionUpdate } = await buildConductor({
       run: ({ forced }) => {
         forcedInputs.push(forced);
         return { deltas: [], cursorAfter: channel.length };
       },
     });
-    fireJobUpdate({
-      id: 'job-001',
+    fireSessionUpdate({
+      id: 'sess-001',
       task: 'investigate',
-      status: 'done',
+      worktreeId: 'wt-001',
+      status: 'idle',
       notifyThread: 'tui:test',
       ownerBot: 'alex',
       project: 'local',
       engine: 'claude',
       mode: 'plan',
       turns: 1,
-      version: 0,
-      lastReport: 'all done',
+      lastReport: 'here is what I found',
     });
     await conductor.whenIdle();
     expect(forcedInputs).toEqual([true]); // the relay ran as a forced (gate-bypassed) turn
+  });
+
+  it('never relays running or closed session updates', async () => {
+    const { conductor, channel, fireSessionUpdate } = await buildConductor({
+      run: () => {
+        throw new Error('no turn should run');
+      },
+    });
+    const base = {
+      id: 'sess-002',
+      task: 't',
+      worktreeId: 'wt-001',
+      notifyThread: 'tui:test',
+      ownerBot: 'alex',
+      project: 'local',
+      engine: 'claude' as const,
+      mode: 'plan' as const,
+      turns: 0,
+    };
+    fireSessionUpdate({ ...base, status: 'running' });
+    fireSessionUpdate({ ...base, status: 'closed' });
+    await conductor.whenIdle();
+    expect(channel.snapshot()).toHaveLength(0); // nothing ran, nothing posted
   });
 
   it('emits gate observability and folds reactions onto the gated message', async () => {
     const { conductor, events } = await buildConductor({
       run: () => ({
         deltas: [
-          { decision: 'respond', reasoning: 'mine to answer', gateUsage: { input: 100, output: 10 }, reaction: '👀', reactionTargetId: 'u-0' },
+          {
+            decision: 'respond',
+            reasoning: 'mine to answer',
+            gateUsage: { input: 100, output: 10 },
+            reaction: '👀',
+            reactionTargetId: 'u-0',
+          },
         ],
         cursorAfter: 1,
       }),
     });
     conductor.submitFrom('dennis', 'Dennis', 'alex, can you look?');
     await conductor.whenIdle();
-    const gate = events.find((e) => e.kind === 'gate') as Extract<ConductorEvent, { kind: 'gate' }>;
+    const gate = events.find((e) => e.kind === 'gate') as Extract<
+      ConductorEvent,
+      { kind: 'gate' }
+    >;
     expect(gate.action).toBe('respond');
     expect(gate.reasoning).toBe('mine to answer');
-    const reaction = events.find((e) => e.kind === 'reaction') as Extract<ConductorEvent, { kind: 'reaction' }>;
+    const reaction = events.find((e) => e.kind === 'reaction') as Extract<
+      ConductorEvent,
+      { kind: 'reaction' }
+    >;
     expect(reaction.emoji).toBe('👀');
     expect(reaction.targetId).toBe('u-0');
   });

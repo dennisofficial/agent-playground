@@ -15,7 +15,10 @@ class EchoTool implements IHarnessTool<typeof echoSchema> {
   readonly name = 'echo';
   readonly description = 'Echoes the input back.';
   readonly schema = echoSchema;
-  async execute(args: z.infer<typeof echoSchema>, ctx: HarnessToolContext): Promise<string> {
+  async execute(
+    args: z.infer<typeof echoSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
     return `${ctx.identity.selfAgent}: ${args.text}`;
   }
 }
@@ -64,7 +67,9 @@ class TestSam implements EmployeeDefinition {
   readonly engine = 'codex' as const;
 }
 
-async function buildModule(extraProviders: any[] = [TestAlex, TestSam, EchoTool, EndTurnTool]) {
+async function buildModule(
+  extraProviders: any[] = [TestAlex, TestSam, EchoTool, EndTurnTool],
+) {
   const moduleRef = await Test.createTestingModule({
     imports: [DiscoveryModule],
     providers: [EmployeeRegistry, ToolRegistry, ...extraProviders],
@@ -80,9 +85,13 @@ describe('harness decorator discovery', () => {
     expect(registry.list().map((e) => e.id)).toEqual(['alex', 'sam']);
     expect(registry.byId('sam')?.engine).toBe('codex');
     expect(registry.fallbackOwner().id).toBe('alex');
-    expect(registry.addressedBots('Alex, can you take a look?').map((e) => e.id)).toEqual(['alex']);
+    expect(
+      registry.addressedBots('Alex, can you take a look?').map((e) => e.id),
+    ).toEqual(['alex']);
     expect(registry.isBroadcast('@here standup time')).toBe(true);
-    expect(registry.rosterSummary()).toBe('Alex — backend engineer; Sam — scrum master');
+    expect(registry.rosterSummary()).toBe(
+      'Alex — backend engineer; Sam — scrum master',
+    );
   });
 
   it('resolves a class-reference allowlist into bound LangChain tools', async () => {
@@ -90,7 +99,9 @@ describe('harness decorator discovery', () => {
     const tools = moduleRef.get(ToolRegistry);
     const bound = tools.toStructuredTools([EchoTool, EndTurnTool]);
     expect(bound.map((t) => t.name)).toEqual(['echo', 'end_turn']);
-    expect(tools.terminalToolNames([EchoTool, EndTurnTool])).toEqual(new Set(['end_turn']));
+    expect(tools.terminalToolNames([EchoTool, EndTurnTool])).toEqual(
+      new Set(['end_turn']),
+    );
 
     const result = await (bound[0] as any).invoke(
       { text: 'hi' },
@@ -102,7 +113,9 @@ describe('harness decorator discovery', () => {
   it('throws loudly when an allowlist references an unregistered tool class', async () => {
     const moduleRef = await buildModule();
     const tools = moduleRef.get(ToolRegistry);
-    expect(() => tools.toStructuredTools([UnregisteredTool])).toThrow(/UnregisteredTool is not registered/);
+    expect(() => tools.toStructuredTools([UnregisteredTool])).toThrow(
+      /UnregisteredTool is not registered/,
+    );
   });
 
   it('fails boot on duplicate employee ids', async () => {
@@ -115,12 +128,14 @@ describe('harness decorator discovery', () => {
       readonly roleContext = 'x';
       readonly engine = 'claude' as const;
     }
-    await expect(buildModule([TestAlex, TestSam, DupAlex, EchoTool, EndTurnTool])).rejects.toThrow(
-      /Duplicate employee id 'alex'/,
-    );
+    await expect(
+      buildModule([TestAlex, TestSam, DupAlex, EchoTool, EndTurnTool]),
+    ).rejects.toThrow(/Duplicate employee id 'alex'/);
   });
 
   it('fails boot unless exactly one employee is scrum master', async () => {
-    await expect(buildModule([TestSam, EchoTool, EndTurnTool])).rejects.toThrow(/Exactly one employee/);
+    await expect(buildModule([TestSam, EchoTool, EndTurnTool])).rejects.toThrow(
+      /Exactly one employee/,
+    );
   });
 });

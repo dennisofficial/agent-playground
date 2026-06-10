@@ -1,12 +1,20 @@
 /**
  * The worker-engine seam. The chat agent / conductor / UI are unchanged; only the *execution* of a
- * dispatched job goes through a `WorkerEngine`, so the custom LangGraph worker, the Claude Agent
+ * session turn goes through a `WorkerEngine`, so the custom LangGraph worker, the Claude Agent
  * SDK, and the Codex SDK are interchangeable behind one interface.
  * (Ported from playground/src/engines/types.ts.)
  */
 
 /** The interchangeable worker backends. */
 export type WorkerEngineName = 'claude' | 'codex' | 'langgraph';
+
+/**
+ * The mode of one session turn. 'plan' = the engine's native read-only planning posture (agents
+ * plan deeper when the engine itself enforces look-don't-touch); 'execute' = write-capable within
+ * the session's worktree. Chosen per turn by the owning employee — approving a plan is simply the
+ * next turn arriving with mode 'execute'.
+ */
+export type WorkerMode = 'plan' | 'execute';
 
 /**
  * Reasoning-effort level for a worker run. Mirrors the Claude Agent SDK's `effort` option (the seam
@@ -17,7 +25,8 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /**
  * A normalized progress event, emitted by every engine regardless of its native event shape. This
- * is what feeds the per-job progress buffer that `check_job` reads — decoupled from any one SDK.
+ * is what feeds the per-session transcript that `check_session`/`search_session` read — decoupled
+ * from any one SDK.
  */
 export type WorkerEvent =
   | { kind: 'text'; text: string }
@@ -37,9 +46,10 @@ export interface RunWorkerArgs {
   model?: string;
   /** Reasoning effort for this run (Claude only). Unset → the model's default. */
   effort?: EffortLevel;
-  /** True for a PLAN pass: the engine restricts the worker to read-only (no file writes / mutating
-   * shell), so "plan first, don't touch anything" is structurally enforced, not just requested. */
-  planning?: boolean;
+  /** This turn's mode. REQUIRED (no default): a missing mode must never silently grant writes.
+   * 'plan' restricts the worker to read-only at the engine seam, so "look, don't touch" is
+   * structurally enforced, not just requested. */
+  mode: WorkerMode;
   /** Called for each progress event as the worker runs. */
   onEvent: (e: WorkerEvent) => void;
   /** Aborts the run when signalled — the engine wires it to its native cancellation. Kept
@@ -49,6 +59,7 @@ export interface RunWorkerArgs {
 
 export interface WorkerEngine {
   readonly name: WorkerEngineName;
-  /** Run a task to completion. Returns the final summary and the engine's session id (for resume). */
+  /** Run one turn to completion (the engine loops internally until it has a report). Returns the
+   * final report and the engine's session id — the resume handle for the session's next turn. */
   run(args: RunWorkerArgs): Promise<{ result: string; sessionId?: string }>;
 }

@@ -22,7 +22,7 @@ export class SamEmployee implements EmployeeDefinition {
   readonly skills = [];
   readonly protocols = [
     'When a request needs hands-on technical or codebase investigation, route it to the owning engineer — @mention Alex (backend), Riley (frontend), or Maya (design) and ask them to investigate — instead of dispatching it yourself.',
-    'Only dispatch your own background jobs to PLAN work: scope it and surface unknowns. If you are about to dispatch a standalone technical investigation, stop — that is the owning discipline\'s job.',
+    "Only dispatch your own background jobs to PLAN work: scope it and surface unknowns. If you are about to dispatch a standalone technical investigation, stop — that is the owning discipline's job.",
   ];
   readonly roleContext = `
 As the scrum master, you know the following about your role and how the team works:

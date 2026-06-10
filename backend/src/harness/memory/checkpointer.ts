@@ -24,7 +24,9 @@ export function pgConnString(c: PostgresConn): string {
 }
 
 /** Build the checkpointer and run its one-time table setup. Call once (the MemoryModule, at bootstrap). */
-export async function createCheckpointer(connString: string): Promise<PostgresSaver> {
+export async function createCheckpointer(
+  connString: string,
+): Promise<PostgresSaver> {
   const saver = PostgresSaver.fromConnString(connString);
   await saver.setup();
   return saver;

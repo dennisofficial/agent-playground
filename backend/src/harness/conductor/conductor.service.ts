@@ -1,16 +1,34 @@
 import { EnvService } from '@core/config/env/env.service';
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { GraphRecursionError } from '@langchain/langgraph';
-import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+} from '@nestjs/common';
+import {
+  ChannelRegistryService,
+  type ChannelInfo,
+} from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
 import { CursorStore } from '../channel/cursor.store';
 import type { ConductorEvent, MessageUsage } from '../domain/conductor-events';
-import { DEFAULT_PROJECT, DEFAULT_TEAM, type Identity } from '../domain/identity';
+import {
+  DEFAULT_PROJECT,
+  DEFAULT_TEAM,
+  type Identity,
+} from '../domain/identity';
 import { flattenContent, titleCase } from '../domain/text';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
-import { JOB_REGISTRY, type Job, type JobRegistry } from '../jobs/job-registry.port';
-import { WorkerService } from '../jobs/worker.service';
+import {
+  SESSION_REGISTRY,
+  type Session,
+  type SessionRegistry,
+} from '../sessions/session-registry.port';
+import { SessionRunnerService } from '../sessions/session-runner.service';
 import { type BotStateDelta, BotGraphFactory } from './bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
 
@@ -36,7 +54,12 @@ interface ToolCall {
 
 /** A short HH:MM:SS stamp for the transcript — handy for eyeballing the async/parallel flow. */
 const clock = (): string =>
-  new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  new Date().toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 
 // ── Autonomy loop caps — UNCAPPED per Dennis (2026-06-09) ───────────────────────────────────────────
 // Running the team unthrottled while it's developed/observed attended. When unattended operation needs
@@ -59,29 +82,38 @@ const MAX_TURN_RETRIES = 3;
 const SHUTDOWN_IDLE_TIMEOUT_MS = 10_000;
 
 @Injectable()
-export class ConductorService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class ConductorService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(ConductorService.name);
 
-  private members = new Set<string>(['dennis']);
-  /** Bots currently processing (covers gate → consume, so a re-poke can't double-schedule). */
+  /** Bots currently processing (covers gate → consume, so a re-poke can't double-schedule). A bot
+   * is one "person": it works ONE turn at a time, across all its rooms. */
   private runningBots = new Set<string>();
-  /** Bot response-turns since the last human message (loop breaker; uncapped today). */
-  private botBurst = 0;
-  private relayQueue: Job[] = [];
-  /** Per-bot consecutive no-progress failures at a stuck cursor — the error retry-cap loop breaker. */
+  /** Bot response-turns since the last human message, PER ROOM (loop breaker; uncapped today) —
+   * one room's bot cascade must not throttle another's. */
+  private botBurst = new Map<string, number>();
+  private relayQueue: Session[] = [];
+  /** Consecutive no-progress failures at a stuck cursor, keyed `${botId}|${channelId}` — the error
+   * retry-cap loop breaker, scoped so one room's poison message can't skip another room's batch. */
   private failures = new Map<string, { cursor: number; count: number }>();
   private idleResolvers: (() => void)[] = [];
   private emitSeq = 0; // unique id per emitted message/row
+  /** Per-boot tag baked into MINTED channel-message ids. Ids persist now, and `emitSeq` restarts at
+   * 0 every boot — an untagged `u-0`/`alex:0` would collide with a hydrated row from the previous
+   * run and silently update it in place instead of appending. */
+  private readonly mintTag = Date.now().toString(36);
   private stopping = false;
   private unsubscribers: Array<() => void> = [];
 
   constructor(
     private readonly channel: ChannelService,
+    private readonly registry: ChannelRegistryService,
     private readonly cursors: CursorStore,
     private readonly employees: EmployeeRegistry,
     private readonly graphs: BotGraphFactory,
-    @Inject(JOB_REGISTRY) private readonly jobs: JobRegistry,
-    private readonly worker: WorkerService,
+    @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
+    private readonly runner: SessionRunnerService,
     private readonly bus: ConductorEventsBus,
     private readonly env: EnvService,
   ) {}
@@ -89,28 +121,57 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
   /** Constructor stays pure; subscriptions + the first schedule happen here (after channel/cursor
    * hydration, which runs in onModuleInit — module init completes before any bootstrap hook). */
   async onApplicationBootstrap(): Promise<void> {
-    // Reconcile durable cursors with the channel's hydration window BEFORE any scheduling. The
-    // channel hydrates only a tail; a bot whose cursor sits below the window would otherwise have
-    // the gap silently skipped by `since()`. A bot with NO stored cursor (brand-new teammate)
-    // starts from the window floor — it joins the conversation at the present instead of replaying
-    // (and re-billing) the entire archived history.
-    const surfaceId = this.channel.surfaceId;
-    const known: number[] = [];
-    for (const bot of this.employees.list()) {
-      if (this.cursors.has(bot.id, surfaceId)) known.push(this.cursors.get(bot.id, surfaceId));
-      else this.cursors.set(bot.id, surfaceId, this.channel.floorSeq);
+    // The process's default room registers itself (full roster + the default human). Rooms whose
+    // logs survived a restart but whose registry rows are missing re-register with channel defaults
+    // — a noisy default beats a silently dead room.
+    this.registry.ensure({
+      channelId: this.channel.surfaceId,
+      kind: 'channel',
+      project: this.env.get('ZERO_PROJECT') ?? DEFAULT_PROJECT,
+      members: [...this.employees.list().map((b) => b.id), 'dennis'],
+      displayName: this.channel.surfaceId,
+    });
+    for (const channelId of this.channel.channelIds()) {
+      this.registry.ensure({
+        channelId,
+        members: [...this.employees.list().map((b) => b.id), 'dennis'],
+      });
     }
-    if (known.length) await this.channel.backfillTo(Math.min(...known));
+
+    // Reconcile durable cursors with each room's hydration window BEFORE any scheduling. A room
+    // hydrates only a tail; a bot whose cursor sits below the window would otherwise have the gap
+    // silently skipped by `since()`. A bot with NO stored cursor (brand-new teammate, or a bot just
+    // added to a room) starts from the window floor — it joins the conversation at the present
+    // instead of replaying (and re-billing) the entire archived history.
+    for (const info of this.registry.list()) {
+      const known: number[] = [];
+      for (const bot of this.botsIn(info)) {
+        if (this.cursors.has(bot.id, info.channelId))
+          known.push(this.cursors.get(bot.id, info.channelId));
+        else
+          this.cursors.set(
+            bot.id,
+            info.channelId,
+            this.channel.floorSeqOf(info.channelId),
+          );
+      }
+      if (known.length)
+        await this.channel.backfillTo(Math.min(...known), info.channelId);
+    }
 
     this.unsubscribers.push(this.channel.subscribe(() => this.schedule()));
     this.unsubscribers.push(
-      this.jobs.onUpdate((job) => {
-        void this.jobs
+      this.sessions.onUpdate((session) => {
+        void this.sessions
           .list({ status: 'running' })
           .then((running) => this.bus.patchStatus({ running: running.length }))
-          .catch((err) => this.logger.warn(`running-jobs count refresh failed: ${err}`));
-        if (job.status === 'done' || job.status === 'awaiting' || job.status === 'failed') {
-          this.relayQueue.push(job);
+          .catch((err) =>
+            this.logger.warn(`running-sessions count refresh failed: ${err}`),
+          );
+        // Every turn-end relays to the owner ('idle' = reported back, 'failed' = the turn errored).
+        // 'running' (a turn started) and 'closed' (the owner already decided) never relay.
+        if (session.status === 'idle' || session.status === 'failed') {
+          this.relayQueue.push(session);
           this.schedule();
         }
       }),
@@ -120,8 +181,11 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
 
   async onApplicationShutdown(): Promise<void> {
     this.stopping = true;
-    this.worker.abortAll();
-    await Promise.race([this.whenIdle(), new Promise((r) => setTimeout(r, SHUTDOWN_IDLE_TIMEOUT_MS))]);
+    this.runner.abortAll();
+    await Promise.race([
+      this.whenIdle(),
+      new Promise((r) => setTimeout(r, SHUTDOWN_IDLE_TIMEOUT_MS)),
+    ]);
     for (const unsub of this.unsubscribers) unsub();
     await this.channel.flush().catch(() => {});
     await this.cursors.flush().catch(() => {});
@@ -136,26 +200,52 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
   /** Append the current speaker's message to the channel and return immediately — NEVER waits on a
    * bot. (The TUI's input path; the SurfaceBridge uses `submitFrom` with the surface's author.) */
   submitUser(text: string): void {
-    this.submitFrom(this.bus.status.speaker, titleCase(this.bus.status.speaker), text);
+    this.submitFrom(
+      this.bus.status.speaker,
+      titleCase(this.bus.status.speaker),
+      text,
+    );
   }
 
-  /** Append a human message from a known author (the ChatSurface inbound path). */
-  submitFrom(authorId: string, authorName: string, text: string): void {
-    this.members.add(authorId);
-    this.botBurst = 0; // a human spoke → reset the bot-cascade budget
-    const id = `u-${this.emitSeq++}`;
-    this.channel.append({ id, author: authorName, authorId, text });
+  /** Append a human message from a known author (the ChatSurface inbound path). `opts.id` is the
+   * surface-native message id (a Slack ts) — kept so reactions/edits target the surface's own
+   * coordinate; minted only when the caller has none. */
+  submitFrom(
+    authorId: string,
+    authorName: string,
+    text: string,
+    opts: { id?: string; channelId?: string } = {},
+  ): void {
+    const channelId = opts.channelId ?? this.channel.surfaceId;
+    // Lazy room registration (the Slack-DM pattern: first message creates the room) + the speaker
+    // joins the room they spoke in.
+    this.registry.ensure({
+      channelId,
+      members: [...this.employees.list().map((b) => b.id), authorId],
+    });
+    this.registry.addMembers(channelId, [authorId]);
+    this.botBurst.set(channelId, 0); // a human spoke → reset this room's bot-cascade budget
+    const id = opts.id ?? `u-${this.mintTag}-${this.emitSeq++}`;
+    this.channel.append({ id, channelId, author: authorName, authorId, text });
     // Surface the human's own message through the SAME event stream, keyed by the channel id — so
     // the UI renders it from one uniform path and a bot's reaction can fold onto it.
-    this.emit({ id, kind: 'message', authorId, authorName, fromHuman: true, text, ts: clock() });
+    this.emit({
+      id,
+      kind: 'message',
+      channelId,
+      authorId,
+      authorName,
+      fromHuman: true,
+      text,
+      ts: clock(),
+    });
     // channel.subscribe → schedule() already fired; nothing to await.
   }
 
-  /** Switch who's talking in the channel (the TUI's "/as <name>"), adding them to the members set. */
+  /** Switch who's talking (the TUI's "/as <name>"). They join each room on their first message. */
   setSpeaker(name: string): void {
     const id = name.trim().toLowerCase().replace(/\s+/g, '-');
     if (!id) return;
-    this.members.add(id);
     this.bus.patchStatus({ speaker: id });
   }
 
@@ -164,7 +254,9 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
   }
 
   private refreshThinking(): void {
-    const names = [...this.runningBots].map((id) => this.employees.byId(id)?.name ?? id);
+    const names = [...this.runningBots].map(
+      (id) => this.employees.byId(id)?.name ?? id,
+    );
     this.bus.patchStatus({ thinking: names, busy: this.runningBots.size > 0 });
   }
 
@@ -180,22 +272,28 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
       this.maybeResolveIdle();
       return;
     }
-    // Job relays first (gate-bypassed, run through the owner bot when it's free).
+    // Session relays first (gate-bypassed, run through the owner bot when it's free).
     for (let i = 0; i < this.relayQueue.length; ) {
-      const job = this.relayQueue[i];
-      const owner = this.employees.byId(job.ownerBot)?.id ?? this.employees.fallbackOwner().id;
+      const session = this.relayQueue[i];
+      const owner =
+        this.employees.byId(session.ownerBot)?.id ??
+        this.employees.fallbackOwner().id;
       if (this.runningBots.has(owner)) {
         i++;
         continue;
       }
       this.relayQueue.splice(i, 1);
-      this.claim(owner, () => this.runJobRelay(job));
+      this.claim(owner, () => this.runSessionRelay(session));
     }
-    // Channel deliveries: each idle bot with undelivered non-own work.
-    for (const bot of this.employees.list()) {
-      if (this.runningBots.has(bot.id)) continue;
-      if (!this.hasWork(bot)) continue;
-      this.claim(bot.id, () => this.runBotGraph(bot));
+    // Room deliveries: each idle member bot with undelivered non-own work, per room.
+    for (const info of this.registry.list()) {
+      for (const bot of this.botsIn(info)) {
+        if (this.runningBots.has(bot.id)) continue;
+        if (!this.hasWork(bot, info.channelId)) continue;
+        this.claim(bot.id, () =>
+          this.runBotGraph(bot, { channelId: info.channelId }),
+        );
+      }
     }
     this.maybeResolveIdle();
   }
@@ -211,11 +309,16 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
     });
   }
 
-  /** True if the channel holds a non-own message this bot hasn't consumed yet. */
-  private hasWork(bot: EmployeeDefinition): boolean {
+  /** True if a room holds a non-own message this bot hasn't consumed yet. */
+  private hasWork(bot: EmployeeDefinition, channelId: string): boolean {
     return this.channel
-      .since(this.cursors.get(bot.id, this.channel.surfaceId))
+      .since(this.cursors.get(bot.id, channelId), channelId)
       .some((m) => m.authorBotId !== bot.id);
+  }
+
+  /** The roster members of a room (its bots — humans in `members` are identity participants). */
+  private botsIn(info: ChannelInfo): EmployeeDefinition[] {
+    return this.employees.list().filter((b) => info.members.includes(b.id));
   }
 
   // ── Turn execution ─────────────────────────────────────────────────────────────────────────────
@@ -226,18 +329,21 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
    * message back to the CHANNEL (so teammates see it mid-turn) and emitting domain ConductorEvents.
    * After the turn it reads the authoritative cursor back from the checkpoint and persists it.
    *
-   * `seed` forces a gate-bypassed respond on a synthetic message (job relays); `surface` overrides
-   * the identity surface (a job's notify thread).
+   * `seed` forces a gate-bypassed respond on a synthetic message (session relays); `channelId` is the
+   * room the turn runs in (defaults to the process's default room).
    */
-  private async runBotGraph(bot: EmployeeDefinition, opts: { seed?: string; surface?: string } = {}): Promise<void> {
-    // Scope the LangGraph thread by project so a project's durable conversation history never
-    // replays into another project. Matches the planned {botId}:{channelId}:{thread_ts} convention.
-    const project = this.projectForSurface(opts.surface);
-    const thread = `${bot.id}:${project}:root`;
-    const identity = this.identityFor(bot.id, opts.surface ?? thread, project);
-    const surfaceId = this.channel.surfaceId;
-    const cursorBefore = this.cursors.get(bot.id, surfaceId);
-    const capped = this.botBurst >= MAX_BOT_BURST;
+  private async runBotGraph(
+    bot: EmployeeDefinition,
+    opts: { seed?: string; channelId?: string } = {},
+  ): Promise<void> {
+    // Scope the LangGraph thread by ROOM so one room's durable conversation history never replays
+    // into another — the {botId}:{channelId}:{thread_ts ?? 'root'} convention from ARCHITECTURE.md.
+    const channelId = opts.channelId ?? this.channel.surfaceId;
+    const info = this.registry.ensure({ channelId });
+    const thread = `${bot.id}:${channelId}:root`;
+    const identity = this.identityFor(bot.id, info);
+    const cursorBefore = this.cursors.get(bot.id, channelId);
+    const capped = (this.botBurst.get(channelId) ?? 0) >= MAX_BOT_BURST;
     let responded = false;
 
     const commit = (msg: BaseMessage) => {
@@ -246,7 +352,10 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
           usage_metadata?: {
             input_tokens?: number;
             output_tokens?: number;
-            input_token_details?: { cache_read?: number; cache_creation?: number };
+            input_token_details?: {
+              cache_read?: number;
+              cache_creation?: number;
+            };
           };
         }
       ).usage_metadata;
@@ -260,35 +369,66 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
         : undefined;
       // Footer ctx tracks EVERY billed step — including tool-only ones, which carry usage but no
       // text and so emit no `message` event.
-      if (usage) this.bus.patchStatus({ ctx: { input: usage.input, output: usage.output } });
+      if (usage)
+        this.bus.patchStatus({
+          ctx: { input: usage.input, output: usage.output },
+        });
 
       const text = flattenContent(msg.content).trim();
       if (text) {
-        // The reply goes back onto the shared channel so teammates + job relays see it, and the
+        // The reply goes back onto the room's shared log so teammates + session relays see it, and the
         // `message` event carries the SAME id so the channel message and its render row line up.
-        const id = `${bot.id}:${this.emitSeq++}`;
-        this.channel.append({ id, author: bot.name, authorId: bot.id, authorBotId: bot.id, text });
-        this.emit({ id, kind: 'message', authorId: bot.id, authorName: bot.name, fromHuman: false, text, usage, ts: clock() });
+        const id = `${bot.id}:${this.mintTag}:${this.emitSeq++}`;
+        this.channel.append({
+          id,
+          channelId,
+          author: bot.name,
+          authorId: bot.id,
+          authorBotId: bot.id,
+          text,
+        });
+        this.emit({
+          id,
+          kind: 'message',
+          channelId,
+          authorId: bot.id,
+          authorName: bot.name,
+          fromHuman: false,
+          text,
+          usage,
+          ts: clock(),
+        });
       }
       const calls = (msg as { tool_calls?: ToolCall[] }).tool_calls ?? [];
       for (const c of calls) {
-        this.emit({ id: `${bot.id}:${this.emitSeq++}`, kind: 'tool', botId: bot.id, botName: bot.name, toolName: c.name });
+        this.emit({
+          id: `${bot.id}:${this.emitSeq++}`,
+          kind: 'tool',
+          botId: bot.id,
+          botName: bot.name,
+          toolName: c.name,
+        });
       }
     };
 
     // Input overwrites the persisted cursor with the durable per-bot cursor — the conductor owns the
     // cursor's coordinate space; the graph only borrows it for within-run threading.
-    const input: Record<string, unknown> = { cursor: cursorBefore, forced: !!opts.seed };
+    const input: Record<string, unknown> = {
+      cursor: cursorBefore,
+      forced: !!opts.seed,
+    };
     if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
 
     let failed = false;
     try {
       const stream = await this.graphs.getBotGraph(bot).stream(input, {
-        configurable: { thread_id: thread, identity, capped },
+        configurable: { thread_id: thread, identity, capped, channelId },
         streamMode: 'updates',
         recursionLimit: MAX_TURN_STEPS,
       });
-      for await (const update of stream as AsyncIterable<Record<string, BotStateDelta>>) {
+      for await (const update of stream as AsyncIterable<
+        Record<string, BotStateDelta>
+      >) {
         for (const delta of Object.values(update)) {
           // Observability: the soft gate's verdict + rationale, emitted BEFORE the reply/reaction it
           // explains. The only trace of an `ignore`, which otherwise leaves no mark.
@@ -305,14 +445,30 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
           }
           if (delta.decision === 'respond' && !responded) {
             responded = true;
-            this.botBurst++; // a real reply counts toward the loop breaker
+            this.botBurst.set(
+              channelId,
+              (this.botBurst.get(channelId) ?? 0) + 1,
+            ); // a real reply counts toward this room's loop breaker
           }
           // Surface whatever reactions the graph decided — the conductor only renders; the brain decides.
-          if (delta.reaction) this.react(bot, delta.reaction, delta.reactionTargetId);
-          if (delta.decision === 'acknowledge') this.react(bot, delta.ackEmoji ?? '👍', delta.reactionTargetId);
+          if (delta.reaction)
+            this.react(bot, channelId, delta.reaction, delta.reactionTargetId);
+          if (delta.decision === 'acknowledge')
+            this.react(
+              bot,
+              channelId,
+              delta.ackEmoji ?? '👍',
+              delta.reactionTargetId,
+            );
           // Observability: the fetch node's pre-LLM recall — what the bot walked in knowing this turn.
           if (delta.recalled) {
-            this.emit({ id: `m-${this.emitSeq++}`, kind: 'recall', botId: bot.id, botName: bot.name, text: delta.recalled });
+            this.emit({
+              id: `m-${this.emitSeq++}`,
+              kind: 'recall',
+              botId: bot.id,
+              botName: bot.name,
+              text: delta.recalled,
+            });
           }
           for (const msg of delta.messages ?? []) {
             if (msg.getType() === 'ai') commit(msg); // skip injected Human messages (already in channel/UI)
@@ -323,7 +479,7 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
       // The per-turn step cap is an expected ceiling on a long reactive loop, not a crash — turn it
       // into a clean first-person "pausing" message instead of a raw error, and end here.
       if (err instanceof GraphRecursionError) {
-        this.handleStepCap(bot, { seed: !!opts.seed });
+        this.handleStepCap(bot, channelId, { seed: !!opts.seed });
         return;
       }
       this.emitError(err);
@@ -338,9 +494,14 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
     // falsy-zero trap the old `??` fallback had.)
     let cursorAfter = cursorBefore;
     try {
-      const final = await this.graphs.getBotGraph(bot).getState({ configurable: { thread_id: thread } });
+      const final = await this.graphs
+        .getBotGraph(bot)
+        .getState({ configurable: { thread_id: thread } });
       const committed = final.values.cursor as number | undefined;
-      cursorAfter = Math.max(cursorBefore, typeof committed === 'number' ? committed : cursorBefore);
+      cursorAfter = Math.max(
+        cursorBefore,
+        typeof committed === 'number' ? committed : cursorBefore,
+      );
     } catch {
       /* keep cursorBefore — a getState failure must not advance the cursor past unconsumed messages */
     }
@@ -349,57 +510,69 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
     // be re-scheduled forever — hasWork stays true, so gate + fetch re-bill every lap. For such
     // no-progress failures on a normal channel turn, count consecutive attempts at this cursor;
     // after MAX_TURN_RETRIES, drop the wedged batch and surface it, so one poison message can't
-    // loop a bot. Seed turns (job relays) are excluded: they're spliced from the queue before
+    // loop a bot. Seed turns (session relays) are excluded: they're spliced from the queue before
     // running, so a failure isn't re-scheduled and can't loop.
     // NOTE: unlike the playground (in-memory cursors reset on restart, giving skipped messages a
     // second chance), this skip is DURABLE — the dropped batch stays dropped across restarts. The
     // error event above is the only record of it; that's a conscious trade for durable cursors.
     if (failed && cursorAfter <= cursorBefore && !opts.seed) {
-      const prior = this.failures.get(bot.id);
+      const failKey = `${bot.id}|${channelId}`;
+      const prior = this.failures.get(failKey);
       const attempts = prior?.cursor === cursorBefore ? prior.count + 1 : 1;
       if (attempts >= MAX_TURN_RETRIES) {
-        const dropTo = this.channel.length;
-        this.failures.delete(bot.id);
-        this.cursors.set(bot.id, surfaceId, dropTo);
+        const dropTo = this.channel.lengthOf(channelId);
+        this.failures.delete(failKey);
+        this.cursors.set(bot.id, channelId, dropTo);
         this.emitError(
           `${bot.name}: gave up after ${attempts} failed attempts; skipped ${dropTo - cursorBefore} unread message(s) to break the loop (see the error above).`,
         );
         return;
       }
-      this.failures.set(bot.id, { cursor: cursorBefore, count: attempts });
+      this.failures.set(failKey, { cursor: cursorBefore, count: attempts });
       // Leave the cursor unadvanced so the next schedule retries the batch.
       return;
     } else if (cursorAfter > cursorBefore) {
-      this.failures.delete(bot.id); // real forward progress resets the streak
+      this.failures.delete(`${bot.id}|${channelId}`); // real forward progress resets the streak
     }
-    this.cursors.set(bot.id, surfaceId, cursorAfter);
+    this.cursors.set(bot.id, channelId, cursorAfter);
     // Memory + tasks are reconciled INSIDE the graph (the bot's brain), not here — the conductor is
     // just the event loop: schedule, stream, emit, advance the cursor.
   }
 
-  /** Relay a finished job through its owner bot (gate-bypassed seed); its reply enters the channel.
-   * `job.notifyThread` scopes the relay turn's IDENTITY (memory provenance) only — it does not
-   * route delivery. With one ChannelService per process there is nothing to route to yet; when the
-   * Slack adapter brings multiple surfaces, this is the seam that must resolve notifyThread to a
-   * real destination instead of posting to the single channel. */
-  private async runJobRelay(job: Job): Promise<void> {
-    if (job.status !== 'done' && job.status !== 'awaiting' && job.status !== 'failed') return;
-    const bot = this.employees.byId(job.ownerBot) ?? this.employees.fallbackOwner();
+  /** Relay a session's turn-end through its owner bot (gate-bypassed seed); its reply enters the
+   * room the session was opened from — `session.notifyThread` carries that channel coordinate (it's
+   * set from `identity.surface` at creation). An unknown coordinate falls back to the default room. */
+  private async runSessionRelay(session: Session): Promise<void> {
+    if (session.status !== 'idle' && session.status !== 'failed') return;
+    const bot =
+      this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
 
     const prompt =
-      job.status === 'failed'
-        ? `[Background task] ${job.id} ("${job.task}") failed: ${job.error ?? '(unknown)'}. Let the team know in your own words — briefly, first person.`
-        : job.status === 'awaiting'
-          ? job.mode === 'plan'
-            ? `[Background planning] ${job.id} ("${job.task}") came back with a PLAN + open questions:\n${job.lastReport ?? '(no report)'}\n\nThis is your own planning work. Relay the plan and its questions to the team (first person). Triage each question: anything about WHAT to build or WHY is Dennis's call — surface it to him; anything technical/reversible, answer yourself or @mention the right teammate. To refine the plan with an answer, continue_work("${job.id}", <answer>). You do NOT approve or start the build yourself — Dennis signs off himself, so hand the plan to him for review; don't promise to build it.`
-            : `[Background task] ${job.id} ("${job.task}") needs your input:\n${job.lastReport ?? '(no report)'}\n\nThis is your own background work. Relay what it needs (first person); when answered, continue_work("${job.id}", <answer>) to resume it.`
-          : `[Background task] ${job.id} ("${job.task}") finished:\n${job.lastReport ?? '(no report)'}\n\nThis is your own work — relay the outcome to the team in the first person, briefly. The task is done; don't check it again.`;
-    await this.runBotGraph(bot, { seed: prompt, surface: job.notifyThread });
+      session.status === 'failed'
+        ? `[Session ${session.id} — "${session.task}"] this turn FAILED: ${session.error ?? '(unknown)'}. The session is still open. Let the team know briefly, first person; reply_session("${session.id}", <message>) to retry or redirect it, or close_session("${session.id}") to drop it.`
+        : `[Session ${session.id} — "${session.task}"] reported back:\n${session.lastReport ?? '(no report)'}\n\nThis is your own background session — it's still open with full context. Decide what's next:\n- reply_session("${session.id}", <message>) to continue it — answer its question, ask a follow-up, or approve its plan into execution (mode: "execute").\n- Relay the outcome to the team in the first person when it's worth sharing.\n- close_session("${session.id}") when this thread of work is finished.\nAnything about WHAT to build or WHY is Dennis's call — surface it to him; technical HOW is yours (answer it, or @mention the teammate whose area it is).`;
+    const channelId = this.registry.get(session.notifyThread)
+      ? session.notifyThread
+      : this.channel.surfaceId;
+    await this.runBotGraph(bot, { seed: prompt, channelId });
   }
 
   /** Emit a reaction from a bot ON a target message, so the surface folds it into that message. */
-  private react(bot: EmployeeDefinition, emoji: string, targetId?: string): void {
-    this.emit({ id: `r-${this.emitSeq++}`, kind: 'reaction', botId: bot.id, botName: bot.name, emoji, targetId: targetId ?? '' });
+  private react(
+    bot: EmployeeDefinition,
+    channelId: string,
+    emoji: string,
+    targetId?: string,
+  ): void {
+    this.emit({
+      id: `r-${this.emitSeq++}`,
+      kind: 'reaction',
+      channelId,
+      botId: bot.id,
+      botName: bot.name,
+      emoji,
+      targetId: targetId ?? '',
+    });
   }
 
   /**
@@ -408,38 +581,61 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
    * normal channel turn we also advance the cursor to the high-water mark so the bot doesn't
    * immediately re-fire and re-hit the cap; seed turns aren't re-scheduled, so theirs stays put.
    */
-  private handleStepCap(bot: EmployeeDefinition, opts: { seed?: boolean }): void {
-    const id = `${bot.id}:${this.emitSeq++}`;
+  private handleStepCap(
+    bot: EmployeeDefinition,
+    channelId: string,
+    opts: { seed?: boolean },
+  ): void {
+    const id = `${bot.id}:${this.mintTag}:${this.emitSeq++}`;
     const text =
       `Oh — I hit my per-turn step cap, so I've gotta pause this loop here. ` +
       `Ping me and I'll pick it right back up.`;
-    this.channel.append({ id, author: bot.name, authorId: bot.id, authorBotId: bot.id, text });
-    this.emit({ id, kind: 'message', authorId: bot.id, authorName: bot.name, fromHuman: false, text, ts: clock() });
-    if (!opts.seed) this.cursors.set(bot.id, this.channel.surfaceId, this.channel.length);
-    this.failures.delete(bot.id); // a step cap isn't a failure — don't count it toward the retry streak
+    this.channel.append({
+      id,
+      channelId,
+      author: bot.name,
+      authorId: bot.id,
+      authorBotId: bot.id,
+      text,
+    });
+    this.emit({
+      id,
+      kind: 'message',
+      channelId,
+      authorId: bot.id,
+      authorName: bot.name,
+      fromHuman: false,
+      text,
+      ts: clock(),
+    });
+    if (!opts.seed)
+      this.cursors.set(bot.id, channelId, this.channel.lengthOf(channelId));
+    this.failures.delete(`${bot.id}|${channelId}`); // a step cap isn't a failure — don't count it toward the retry streak
   }
 
   // ── Memory + identity ────────────────────────────────────────────────────────────────────────────
 
-  private identityFor(botId: string, surface: string, project: string): Identity {
+  /** A turn's identity comes from the room: its project (memory scope), its human members (the
+   * participants — pair scopes in a DM), and its kind (isChannel guards 1:1 fact recall).
+   *
+   * A DM is WORKSPACE-level, not project-bound: it recalls every project the bot shares with the
+   * present humans (real rooms both are in), `project` falls back to the default (only the
+   * reminders home — project WRITES from a DM must name their project), and the DM row's own
+   * `project` column is ignored. */
+  private identityFor(botId: string, info: ChannelInfo): Identity {
+    const botIds = new Set(this.employees.list().map((b) => b.id));
+    const humans = info.members.filter((m) => !botIds.has(m));
+    const isDm = info.kind === 'dm';
     return {
       selfAgent: botId,
       team: this.env.get('HARNESS_TEAM_ID') ?? DEFAULT_TEAM,
-      project,
-      participants: [...this.members],
+      project: isDm ? DEFAULT_PROJECT : info.project,
+      projects: isDm ? this.registry.projectsShared([botId, ...humans]) : [info.project],
+      participants: humans,
       speaker: this.bus.status.speaker,
-      surface,
-      isChannel: true,
+      surface: info.channelId,
+      isChannel: !isDm,
     };
-  }
-
-  /**
-   * The active project for a turn — the seam the future Slack adapter fills with a
-   * channelId→project lookup (callers never change). v0: one conversation → one project.
-   * `ZERO_PROJECT` overrides it as a manual cross-project test affordance.
-   */
-  private projectForSurface(_surface?: string): string {
-    return this.env.get('ZERO_PROJECT') ?? DEFAULT_PROJECT;
   }
 
   private emitError(err: unknown): void {
@@ -451,11 +647,19 @@ export class ConductorService implements OnApplicationBootstrap, OnApplicationSh
   // ── Quiescence ───────────────────────────────────────────────────────────────────────────────────
 
   private anyUndelivered(): boolean {
-    return this.employees.list().some((b) => this.hasWork(b));
+    return this.registry
+      .list()
+      .some((info) =>
+        this.botsIn(info).some((b) => this.hasWork(b, info.channelId)),
+      );
   }
 
   private isQuiescent(): boolean {
-    return this.runningBots.size === 0 && this.relayQueue.length === 0 && (this.stopping || !this.anyUndelivered());
+    return (
+      this.runningBots.size === 0 &&
+      this.relayQueue.length === 0 &&
+      (this.stopping || !this.anyUndelivered())
+    );
   }
 
   private maybeResolveIdle(): void {

@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Fact } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
-import { Identity, projectScope, recallScopes } from '../domain/identity';
+import {
+  Identity,
+  projectScope,
+  recallProjects,
+  recallScopes,
+} from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
@@ -38,11 +43,12 @@ export class FetchService {
     return rows.length > 0;
   }
 
-  /** Programmatic empty-skip for the cross-project block: does ANY OTHER project hold a live fact? */
+  /** Programmatic empty-skip for the cross-project block: does ANY OTHER project hold a live fact?
+   * "Other" = not recallable this turn (a DM recalls every shared project directly). */
   private async hasOtherProjectFacts(id: Identity): Promise<boolean> {
     const rows: unknown[] = await this.facts.manager.query(
-      `SELECT 1 FROM facts WHERE scope LIKE 'project:%' AND scope != $1 AND deleted_at IS NULL LIMIT 1`,
-      [projectScope(id.project)],
+      `SELECT 1 FROM facts WHERE scope LIKE 'project:%' AND scope <> ALL($1::text[]) AND deleted_at IS NULL LIMIT 1`,
+      [recallProjects(id).map(projectScope)],
     );
     return rows.length > 0;
   }
@@ -54,7 +60,11 @@ export class FetchService {
    * (the scrum master sees the whole team's). Returns '' when there's nothing — the caller MUST
    * still write that empty string into state so a stale recall from a prior turn never lingers.
    */
-  async fetchContext(bot: EmployeeDefinition, query: string, id: Identity): Promise<string> {
+  async fetchContext(
+    bot: EmployeeDefinition,
+    query: string,
+    id: Identity,
+  ): Promise<string> {
     const parts: string[] = [];
 
     // The two programmatic empty-skips are independent — run them in parallel. Cross-project recall
@@ -76,17 +86,34 @@ export class FetchService {
       }
     }
 
-    const [facts, others, plate] = await Promise.all([
-      qv && hasOwn ? this.semantic.recall(query, id, undefined, undefined, qv).catch(() => []) : [],
-      qv && hasOther ? this.semantic.recallOtherProjects(query, id, { precomputed: qv }).catch(() => []) : [],
+    // Reminders span every recallable project (one in a channel; the shared set in a DM).
+    const projects = recallProjects(id);
+    const [facts, others, plates] = await Promise.all([
+      qv && hasOwn
+        ? this.semantic
+            .recall(query, id, undefined, undefined, qv)
+            .catch(() => [])
+        : [],
+      qv && hasOther
+        ? this.semantic
+            .recallOtherProjects(query, id, { precomputed: qv })
+            .catch(() => [])
+        : [],
       // Reminders: this bot's own plate — except the scrum master, who sees the whole team's.
-      bot.scrumMaster
-        ? this.tasks.openTasks(id.project)
-        : this.tasks.listTasks({ project: id.project, status: 'open', owner: bot.id }),
+      Promise.all(
+        projects.map((project) =>
+          bot.scrumMaster
+            ? this.tasks.openTasks(project)
+            : this.tasks.listTasks({ project, status: 'open', owner: bot.id }),
+        ),
+      ),
     ]);
+    const plate = plates.flat();
 
     if (facts.length > 0) {
-      parts.push(`What you already know:\n${facts.map((f) => `- ${f.fact}`).join('\n')}`);
+      parts.push(
+        `What you already know:\n${facts.map((f) => `- ${f.fact}`).join('\n')}`,
+      );
     }
     if (others.length > 0) {
       parts.push(
@@ -97,7 +124,10 @@ export class FetchService {
       const shown = plate.slice(0, REMINDER_CAP);
       const more = plate.length - shown.length;
       const lines = shown
-        .map((t) => `- [#${t.id}] ${t.description}${bot.scrumMaster ? ` (→ ${t.owner})` : ''}`)
+        .map(
+          (t) =>
+            `- [#${t.id}] ${t.description}${bot.scrumMaster ? ` (→ ${t.owner})` : ''}${projects.length > 1 ? ` [${t.project}]` : ''}`,
+        )
         .join('\n');
       parts.push(
         `${bot.scrumMaster ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`,

@@ -20,7 +20,10 @@ describe('conductor end-to-end (real LLM)', () => {
     process.env.HARNESS_SURFACE_ID = `tui:ai-test-${Date.now()}`;
     const moduleRef = await Test.createTestingModule({
       imports: [
-        EnvModule.forRoot({ envService: EnvService, validationSchema: envConfigValidation }),
+        EnvModule.forRoot({
+          envService: EnvService,
+          validationSchema: envConfigValidation,
+        }),
         DatabaseModule,
         EsmModule,
         HarnessModule,
@@ -34,8 +37,14 @@ describe('conductor end-to-end (real LLM)', () => {
     const channel = app.get(ChannelService);
     const cursors = app.get(CursorStore);
 
-    const botReply = firstValueFrom(bus.events$.pipe(filter((e) => e.kind === 'message' && !e.fromHuman)));
-    conductor.submitFrom('dennis', 'Dennis', '@Alex just say hi back in one short sentence — no tools.');
+    const botReply = firstValueFrom(
+      bus.events$.pipe(filter((e) => e.kind === 'message' && !e.fromHuman)),
+    );
+    conductor.submitFrom(
+      'dennis',
+      'Dennis',
+      '@Alex just say hi back in one short sentence — no tools.',
+    );
     await conductor.whenIdle();
 
     const reply = (await botReply) as { authorId: string; text: string };

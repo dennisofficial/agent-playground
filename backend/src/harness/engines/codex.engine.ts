@@ -13,10 +13,14 @@ import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
 function gitCommonDir(cwd: string): string | undefined {
   try {
     return (
-      execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-        cwd,
-        encoding: 'utf8',
-      }).trim() || undefined
+      execFileSync(
+        'git',
+        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+        {
+          cwd,
+          encoding: 'utf8',
+        },
+      ).trim() || undefined
     );
   } catch {
     return undefined;
@@ -31,7 +35,8 @@ export class CodexEngine implements WorkerEngine {
   private client?: Codex;
 
   constructor(
-    @Inject(OPENAI_CODEX_SDK) private readonly sdk: typeof import('@openai/codex-sdk'),
+    @Inject(OPENAI_CODEX_SDK)
+    private readonly sdk: typeof import('@openai/codex-sdk'),
     private readonly env: EnvService,
   ) {}
 
@@ -39,30 +44,46 @@ export class CodexEngine implements WorkerEngine {
     return (this.client ??= new this.sdk.Codex());
   }
 
-  private threadOptions(cwd: string, opts: { model?: string; planning?: boolean } = {}): ThreadOptions {
+  private threadOptions(
+    cwd: string,
+    opts: { model?: string; planning?: boolean } = {},
+  ): ThreadOptions {
     const model = opts.model ?? this.env.get('CODEX_MODEL');
-    // Grant write access to the shared git dir (it's outside cwd) so an EXECUTE worker can commit /
-    // push / merge. Not needed in the read-only PLAN pass.
+    // Grant write access to the shared git dir (it's outside cwd — doubly so in a linked worktree,
+    // whose `.git` is a FILE pointing into the main repo) so an execute turn can commit/push/merge.
+    // Not needed on a read-only plan turn.
     const gitDir = opts.planning ? undefined : gitCommonDir(cwd);
     return {
       workingDirectory: cwd,
-      // Confine writes/shell to the project; run autonomously (no interactive approval surface).
-      // A PLAN pass is read-only so it physically cannot mutate the project before approval.
+      // Confine writes/shell to the worktree; run autonomously (no interactive approval surface).
+      // Codex's read-only sandbox IS its native plan posture — per turn, so a session can plan on
+      // one turn and execute on the next.
       sandboxMode: opts.planning ? 'read-only' : 'workspace-write',
       approvalPolicy: 'never',
       skipGitRepoCheck: true,
       // Live web search is the whole point of using Codex for research, and a model-side tool
-      // separate from the shell sandbox — safe to leave on even in the read-only PLAN pass.
+      // separate from the shell sandbox — safe to leave on even in a read-only plan turn.
       webSearchMode: 'live',
       ...(gitDir ? { additionalDirectories: [gitDir] } : {}),
       ...(model ? { model } : {}),
     };
   }
 
-  async run({ task, cwd, systemPrompt, sessionId, model, planning, onEvent, signal }: RunWorkerArgs) {
+  async run({
+    task,
+    cwd,
+    systemPrompt,
+    sessionId,
+    model,
+    mode,
+    onEvent,
+    signal,
+  }: RunWorkerArgs) {
     const client = this.getCodex();
-    const opts = this.threadOptions(cwd, { model, planning });
-    const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
+    const opts = this.threadOptions(cwd, { model, planning: mode === 'plan' });
+    const thread = sessionId
+      ? client.resumeThread(sessionId, opts)
+      : client.startThread(opts);
 
     // Codex has no systemPrompt option, so seed our worker persona as a preamble on the first turn.
     const input = sessionId ? task : `${systemPrompt}\n\n---\n\nTask: ${task}`;
@@ -92,7 +113,9 @@ export class CodexEngine implements WorkerEngine {
               onEvent({
                 kind: 'tool',
                 name: 'edit',
-                detail: item.changes.map((c) => `${c.kind} ${c.path}`).join(', '),
+                detail: item.changes
+                  .map((c) => `${c.kind} ${c.path}`)
+                  .join(', '),
               });
               break;
             case 'mcp_tool_call':
@@ -116,6 +139,9 @@ export class CodexEngine implements WorkerEngine {
 
     const summary = result || '(no summary)';
     onEvent({ kind: 'result', text: summary });
-    return { result: summary, sessionId: resolvedSession ?? thread.id ?? undefined };
+    return {
+      result: summary,
+      sessionId: resolvedSession ?? thread.id ?? undefined,
+    };
   }
 }

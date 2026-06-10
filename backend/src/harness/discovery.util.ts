@@ -17,7 +17,8 @@ export function collectDecorated<T>(
   const found: Array<{ instance: T; metatype: Type }> = [];
   for (const wrapper of discovery.getProviders()) {
     const metatype = wrapper.metatype as Type | undefined;
-    if (!metatype || typeof metatype !== 'function' || !wrapper.instance) continue;
+    if (!metatype || typeof metatype !== 'function' || !wrapper.instance)
+      continue;
     if (!Reflect.getMetadata(metadataKey, metatype)) continue;
     if (seen.has(metatype)) continue; // the same class can appear in several module scopes — one entry
     seen.add(metatype);

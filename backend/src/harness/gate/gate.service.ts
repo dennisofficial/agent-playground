@@ -1,6 +1,10 @@
 import type { AIMessage } from '@langchain/core/messages';
 import { PromptTemplate } from '@langchain/core/prompts';
-import { Runnable, RunnableLambda, RunnableSequence } from '@langchain/core/runnables';
+import {
+  Runnable,
+  RunnableLambda,
+  RunnableSequence,
+} from '@langchain/core/runnables';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { EmployeeRegistry } from '../employees/employee.registry';
@@ -21,10 +25,18 @@ export interface GateDecision {
 const RESPOND: GateDecision = { action: 'respond' };
 const IGNORE: GateDecision = { action: 'ignore' };
 
+/** The room a gated message lives in — drives hard rules (DM → always respond) + prompt context. */
+export interface GateChannelContext {
+  kind: 'channel' | 'dm' | 'group-dm';
+  name: string;
+}
+
 interface GateInput {
   botName: string;
   botRole: string;
   roster: string;
+  /** Where this conversation is happening ("the shared #project-a channel" / a group DM). */
+  room: string;
   /** The conversation BEFORE the message under judgment ("Name: text" per line, oldest first). */
   history: string;
   /** Who sent the message under judgment. */
@@ -35,16 +47,23 @@ interface GateInput {
 }
 
 const Decision = z.object({
-  reasoning: z.string().describe('one short sentence — whose conversation is this, and is it yours to answer?'),
+  reasoning: z
+    .string()
+    .describe(
+      'one short sentence — whose conversation is this, and is it yours to answer?',
+    ),
   action: z.enum(['respond', 'acknowledge', 'ignore']),
-  emoji: z.string().optional().describe('a single emoji — ONLY when action is "acknowledge"'),
+  emoji: z
+    .string()
+    .optional()
+    .describe('a single emoji — ONLY when action is "acknowledge"'),
 });
 type DecisionT = z.infer<typeof Decision>;
 
 // NOTE: no few-shot worked examples on purpose. They reused the real teammates' names, and on Haiku
 // that bled into the model's self-identity — it would reason "as James" while gating FOR Alex.
 // Identity comes only from {botName}/{botRole} at the top. Re-add examples only with neutral names.
-const PROMPT = `You are {botName}, the {botRole} on a small team, in the shared #dev channel.
+const PROMPT = `You are {botName}, the {botRole} on a small team, in {room}.
 Team: {roster}.
 
 You share this channel with teammates and the boss. You are ONE of several people who could reply — the
@@ -98,45 +117,82 @@ export class GateService {
     return (this.chain ??= RunnableSequence.from<GateInput, GateDecision>([
       new PromptTemplate<GateInput>({
         template: PROMPT,
-        inputVariables: ['botName', 'botRole', 'roster', 'history', 'author', 'teammateNote', 'text'],
+        inputVariables: [
+          'botName',
+          'botRole',
+          'roster',
+          'room',
+          'history',
+          'author',
+          'teammateNote',
+          'text',
+        ],
       }),
       // includeRaw keeps the raw AIMessage so we can read its usage_metadata (exact token counts).
-      this.models.buildGateModel().withStructuredOutput(Decision, { name: 'gate_decision', includeRaw: true }),
-      RunnableLambda.from<{ raw: AIMessage; parsed: DecisionT }, GateDecision>(({ raw, parsed }) => {
-        const u = raw.usage_metadata;
-        const usage = u ? { input: u.input_tokens, output: u.output_tokens } : undefined;
-        const base =
-          parsed.action === 'acknowledge'
-            ? { action: 'acknowledge' as const, emoji: cleanEmoji(parsed.emoji) }
-            : { action: parsed.action };
-        return { ...base, reasoning: parsed.reasoning, usage };
+      this.models.buildGateModel().withStructuredOutput(Decision, {
+        name: 'gate_decision',
+        includeRaw: true,
       }),
+      RunnableLambda.from<{ raw: AIMessage; parsed: DecisionT }, GateDecision>(
+        ({ raw, parsed }) => {
+          const u = raw.usage_metadata;
+          const usage = u
+            ? { input: u.input_tokens, output: u.output_tokens }
+            : undefined;
+          const base =
+            parsed.action === 'acknowledge'
+              ? {
+                  action: 'acknowledge' as const,
+                  emoji: cleanEmoji(parsed.emoji),
+                }
+              : { action: parsed.action };
+          return { ...base, reasoning: parsed.reasoning, usage };
+        },
+      ),
     ]).withConfig({ runName: 'Response Gate' }));
   }
 
   /**
    * Hard rules first:
    *  - your own message → ignore;
-   *  - an explicit `@you` from ANYONE → respond (a direct hail);
-   *  - `@here`/`@channel`/`@everyone` → respond (a broadcast everyone takes the floor on);
-   *  - someone ELSE named/@'d (not you), no broadcast → ignore (their thread);
-   *  - otherwise → the soft chain reads the conversation and decides.
+   *  - a 1:1 DM → respond (everything said there is addressed to you; an emoji-only acknowledge
+   *    feels wrong 1:1, so the soft gate never runs);
+   *  - an explicit `@you` or a broadcast (`@here`/`@channel`/`@everyone`) ANYWHERE in the
+   *    unconsumed batch → respond. The batch matters: a busy bot consumes several messages in one
+   *    turn, and a hail must not be swallowed because a teammate's reply landed after it;
+   *  - someone ELSE named/@'d (not you) in the LATEST message, no broadcast → ignore (their thread);
+   *  - otherwise → the soft chain reads the conversation and decides on the latest message.
    */
   async gate(
     bot: EmployeeDefinition,
     text: string,
-    opts: { authorBotId?: string; authorName?: string; history?: string } = {},
+    opts: {
+      authorBotId?: string;
+      authorName?: string;
+      history?: string;
+      channel?: GateChannelContext;
+      /** The bot's full unconsumed batch (oldest first), when it consumed more than `text`. */
+      batch?: { text: string; authorBotId?: string }[];
+    } = {},
   ): Promise<GateDecision> {
     if (opts.authorBotId === bot.id) return IGNORE; // never react to your own message
+    if (opts.channel?.kind === 'dm') return RESPOND; // a 1:1 is always yours to answer
 
     const fromBot = !!opts.authorBotId;
-    const mentioned = this.employees.mentionedBots(text); // explicit @handles only
-    const addressed = this.employees.addressedBots(text); // @handles OR bare names
-    const meMentioned = mentioned.some((b) => b.id === bot.id);
+    const batch = (
+      opts.batch?.length
+        ? opts.batch
+        : [{ text, authorBotId: opts.authorBotId }]
+    ).filter((m) => m.authorBotId !== bot.id);
+    const meMentioned = batch.some((m) =>
+      this.employees.mentionedBots(m.text).some((b) => b.id === bot.id),
+    ); // explicit @handles only
+    const anyBroadcast = batch.some((m) => this.employees.isBroadcast(m.text));
+    const addressed = this.employees.addressedBots(text); // @handles OR bare names — latest only
     const meAddressed = addressed.some((b) => b.id === bot.id);
 
     if (meMentioned) return RESPOND;
-    if (this.employees.isBroadcast(text)) return RESPOND;
+    if (anyBroadcast) return RESPOND;
     if (addressed.length > 0 && !meAddressed) return IGNORE;
 
     try {
@@ -144,6 +200,10 @@ export class GateService {
         botName: bot.name,
         botRole: bot.role,
         roster: this.employees.rosterSummary(),
+        room:
+          opts.channel?.kind === 'group-dm'
+            ? `a small group DM ("${opts.channel.name}")`
+            : `the shared #${opts.channel?.name ?? 'dev'} channel`,
         history: opts.history ?? '(no earlier messages)',
         author: opts.authorName ?? (fromBot ? 'a teammate' : 'the boss'),
         teammateNote: fromBot ? ' (a teammate)' : ' (the boss)',

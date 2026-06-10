@@ -15,7 +15,9 @@ export class SkillLoaderService {
   /** Resolve an employee's declared skill sources to local skill directories. Stub: resolves none. */
   async resolve(sources: ReadonlyArray<SkillSource>): Promise<LoadedSkill[]> {
     if (sources.length > 0) {
-      this.logger.warn(`Skill loading not implemented yet — ignoring ${sources.length} declared skill source(s)`);
+      this.logger.warn(
+        `Skill loading not implemented yet — ignoring ${sources.length} declared skill source(s)`,
+      );
     }
     return [];
   }
