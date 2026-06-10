@@ -29,6 +29,12 @@ export const env = createEnv({
   },
   server: {
     BUILD_ID: z.string().default('dev'),
+    // The backend admin API base, as seen from the Next SERVER (reads/mutations are proxied
+    // server-side; the browser never calls the backend directly).
+    BACKEND_URL: z.url().default('http://localhost:4000'),
+    // The admin bearer — server-only by construction (t3-env boundary). Unset → the admin UI
+    // renders its setup card; it can never reach the client bundle.
+    ADMIN_API_TOKEN: z.string().optional(),
   },
   client: {
     NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv).default(EAppEnv.LOCAL),
@@ -38,6 +44,8 @@ export const env = createEnv({
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     BUILD_ID: process.env.BUILD_ID,
+    BACKEND_URL: process.env.BACKEND_URL,
+    ADMIN_API_TOKEN: process.env.ADMIN_API_TOKEN,
     NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
     NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL,
   },

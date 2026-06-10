@@ -61,10 +61,12 @@ export class SurfaceBridge
             surfaceId: e.channelId,
           }).catch((err) => this.logger.error(`surface.post failed: ${err}`));
         } else if (e.kind === 'reaction') {
-          void this.surface!.react(e.targetId, e.emoji, {
-            id: e.botId,
-            name: e.botName,
-          }).catch((err) => this.logger.error(`surface.react failed: ${err}`));
+          void this.surface!.react(
+            e.targetId,
+            e.emoji,
+            { id: e.botId, name: e.botName },
+            e.channelId,
+          ).catch((err) => this.logger.error(`surface.react failed: ${err}`));
         }
       }),
     );

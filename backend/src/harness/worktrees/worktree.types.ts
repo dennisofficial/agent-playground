@@ -19,8 +19,11 @@ export interface Worktree {
   checkout: string;
   /** The employee that created it ('' when adopted and the branch doesn't carry an owner). */
   ownerBot: string;
-  /** The project the work belongs to ('' when adopted). */
+  /** The project the work belongs to ('' when adopted from WORKER_ROOT). */
   project: string;
+  /** The repo this checkout belongs to (WORKER_ROOT's repo, or a registered project's clone).
+   * Remote ops verify this repo IS the project's registered repo before touching the network. */
+  repoRoot: string;
   /** The shared integration branch this worktree publishes to / pulls from (multi-employee feature
    * work). Recorded durably in git branch config, so it survives restarts and re-attaches. */
   sharedBranch?: string;
@@ -47,4 +50,8 @@ export interface IntegrationResult {
   /** Publish only: the checkout had uncommitted changes — those were NOT published (only commits
    * publish). */
   dirty?: boolean;
+  /** Publish only, present when the project has a registered GitHub repo: the origin sync outcome.
+   * `pushed: false` + detail reports a partial result WITHOUT touching `integrated` — the local
+   * publish is never lost to a remote failure. */
+  remote?: { pushed: boolean; detail?: string };
 }

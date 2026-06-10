@@ -68,6 +68,18 @@ export interface IEnvConfig {
   // Directory worker engines are jailed to. No code default on purpose: dispatching a job without
   // it fails loudly rather than letting a worker loose in an arbitrary cwd.
   WORKER_ROOT?: string;
+  // Root for per-project repo clones (code default: ~/.agent-playground/repos)
+  REPOS_ROOT?: string;
+  // 32-byte key (base64 or hex) encrypting stored GitHub tokens at rest. Unset → token writes
+  // refuse loudly; local-only flows are unaffected.
+  SECRETS_ENCRYPTION_KEY?: string;
+  // Bearer token gating the admin REST endpoints (projects/tokens). Unset → admin API disabled.
+  ADMIN_API_TOKEN?: string;
+
+  // Slack surface (slack-app only; optional so api/tui boot without them — slack-app/main.ts
+  // asserts both at boot)
+  SLACK_BOT_TOKEN?: string; // xoxb- — Web API (chat.postMessage, reactions.add, users.info)
+  SLACK_APP_TOKEN?: string; // xapp- — Socket Mode connection (connections:write)
 
   // LangSmith tracing (optional — LangChain reads these from env automatically)
   LANGSMITH_TRACING?: string;
@@ -126,6 +138,13 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   GATE_MODEL: Joi.string().optional(),
   EXTRACT_MODEL: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
+  REPOS_ROOT: Joi.string().optional(),
+  SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
+  ADMIN_API_TOKEN: Joi.string().optional(),
+
+  // Slack surface
+  SLACK_BOT_TOKEN: Joi.string().optional(),
+  SLACK_APP_TOKEN: Joi.string().optional(),
 
   // LangSmith tracing
   LANGSMITH_TRACING: Joi.string().optional(),

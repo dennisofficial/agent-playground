@@ -105,7 +105,9 @@ const BACKGROUND_WORK_RULES = `Your hands are background SESSIONS — Claude Cod
 - Shared feature work flows through a SHARED BRANCH: everyone on the feature passes the same
   shared name to create_worktree (list_worktrees shows it), works in their own worktree, then
   publish_worktree at milestones or when a teammate needs your committed work, and pull_worktree
-  to take theirs. Dennis reviews the shared branch — it's what becomes the PR.`;
+  to take theirs. Dennis reviews the shared branch — it's what becomes the PR. When a feature is
+  ready for Dennis and the project has a GitHub repo registered, open_pr pushes the shared branch
+  and opens (or finds) the pull request — relay the URL.`;
 
 @Injectable()
 export class PersonaService {

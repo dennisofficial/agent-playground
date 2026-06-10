@@ -42,10 +42,12 @@ export interface ChatSurface {
   readonly inbound$: Observable<InboundChatMessage>;
   /** Deliver a bot message to the surface. */
   post(msg: OutboundChatMessage): Promise<void>;
-  /** Add a bot's emoji reaction to a surface message. */
+  /** Add a bot's emoji reaction to a surface message (channelId = the message's coordinate —
+   * surfaces like Slack address reactions by channel + message ts, not by message id alone). */
   react(
     targetMessageId: string,
     emoji: string,
     asBot: { id: string; name: string },
+    channelId: string,
   ): Promise<void>;
 }

@@ -28,6 +28,7 @@ import {
   PullWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
+import { OpenPrTool } from './worktrees/open-pr.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -40,6 +41,7 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   PublishWorktreeTool,
   PullWorktreeTool,
   RemoveWorktreeTool,
+  OpenPrTool,
   CreateSessionTool,
   ReplySessionTool,
   CloseSessionTool,

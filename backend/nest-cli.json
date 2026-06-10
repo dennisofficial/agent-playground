@@ -27,6 +27,15 @@
       "compilerOptions": {
         "tsConfigPath": "src/tui/tsconfig.json"
       }
+    },
+    "slack-app": {
+      "type": "application",
+      "root": "src/slack-app",
+      "entryFile": "slack-app/main",
+      "sourceRoot": "src/slack-app",
+      "compilerOptions": {
+        "tsConfigPath": "src/slack-app/tsconfig.json"
+      }
     }
   }
 }

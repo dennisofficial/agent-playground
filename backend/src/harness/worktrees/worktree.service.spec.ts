@@ -4,6 +4,9 @@ import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import type { GithubTokenStore } from '../projects/github-token-store';
+import type { ProjectStore } from '../projects/project-store';
+import type { ProjectRecord } from '../projects/project.types';
 import { WorktreeService } from './worktree.service';
 
 const execFileAsync = promisify(execFile);
@@ -35,11 +38,41 @@ async function makeRepo(): Promise<string> {
   return repo;
 }
 
-function makeService(workerRoot: string): WorktreeService {
+const record = (projectId: string, gitUrl: string): ProjectRecord => ({
+  projectId,
+  displayName: projectId,
+  gitUrl,
+  defaultBranch: 'main',
+  tokenName: null,
+  createdAt: '',
+  updatedAt: '',
+});
+
+/** A MUTABLE in-memory registry double — tests register/repoint projects mid-flight. */
+function fakeRegistry(initial: ProjectRecord[] = []) {
+  const map = new Map(initial.map((r) => [r.projectId, r]));
+  const projects = {
+    get: async (id: string) => map.get(id),
+    list: async () => [...map.values()],
+  } as unknown as ProjectStore;
+  return { projects, map };
+}
+
+const NO_TOKENS = { resolve: async () => undefined } as unknown as GithubTokenStore;
+
+function makeService(
+  workerRoot: string,
+  opts: { registry?: ProjectStore; reposRoot?: string } = {},
+): WorktreeService {
   const env = {
-    get: (k: string) => (k === 'WORKER_ROOT' ? workerRoot : undefined),
+    get: (k: string) =>
+      k === 'WORKER_ROOT' ? workerRoot : k === 'REPOS_ROOT' ? opts.reposRoot : undefined,
   } as unknown as EnvService;
-  return new WorktreeService(env);
+  return new WorktreeService(
+    env,
+    opts.registry ?? fakeRegistry().projects,
+    NO_TOKENS,
+  );
 }
 
 describe('WorktreeService (real git, temp repo)', () => {
@@ -351,5 +384,162 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
         project: 'local',
       }),
     ).rejects.toThrow(/already publishes to shared\/feat/);
+  });
+});
+
+describe('WorktreeService per-project repos + origin sync (real git, file:// remotes)', () => {
+  let workerRoot: string;
+  let reposRoot: string;
+  let originDir: string; // bare repo standing in for GitHub
+  let registry: ReturnType<typeof fakeRegistry>;
+  let service: WorktreeService;
+  const ORIGIN_URL = () => `file://${originDir}`;
+
+  beforeEach(async () => {
+    workerRoot = await makeRepo();
+    reposRoot = await realpath(await mkdtemp(join(tmpdir(), 'wt-repos-')));
+    const seed = await makeRepo();
+    originDir = join(await realpath(await mkdtemp(join(tmpdir(), 'wt-origin-'))), 'origin.git');
+    await git(seed, 'clone', '--bare', seed, originDir);
+    await rm(seed, { recursive: true, force: true });
+    registry = fakeRegistry([record('proj', ORIGIN_URL())]);
+    service = makeService(workerRoot, { registry: registry.projects, reposRoot });
+  });
+
+  afterEach(async () => {
+    for (const dir of [workerRoot, reposRoot, join(originDir, '..')]) {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('clones a registered project on first use and cuts worktrees inside the clone', async () => {
+    const { worktree } = await service.create({
+      name: 'feature',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'proj',
+    });
+    expect(worktree.repoRoot).toBe(join(reposRoot, 'proj'));
+    expect(worktree.checkout.startsWith(join(reposRoot, 'proj', '.worktrees'))).toBe(true);
+    expect(worktree.path).toBe(worktree.checkout); // subdir '' — cwd is the clone root
+    expect(await git(join(reposRoot, 'proj'), 'remote', 'get-url', 'origin')).toBe(ORIGIN_URL());
+    // A second create reuses the clone (no re-clone), still under the mutex.
+    const second = await service.create({ name: 'b', shared: 'feat', ownerBot: 'riley', project: 'proj' });
+    expect(second.worktree.repoRoot).toBe(worktree.repoRoot);
+  });
+
+  it('publish syncs the shared branch to origin; unregistered projects stay local-only', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'proj',
+    });
+    await commit(worktree.checkout, 'a.txt', 'work\n');
+    const res = await service.publish(worktree.id);
+    expect(res.integrated).toBe(true);
+    expect(res.remote).toEqual({ pushed: true });
+    expect(await git(originDir, 'rev-parse', 'shared/feat')).toBe(
+      await git(worktree.checkout, 'rev-parse', 'HEAD'),
+    );
+
+    // Unregistered project ('' / not in registry) → no remote key at all (local behavior intact).
+    const local = await service.create({ name: 'l', shared: 'x', ownerBot: 'alex', project: 'local' });
+    await commit(local.worktree.checkout, 'l.txt', 'local\n');
+    const localRes = await service.publish(local.worktree.id);
+    expect(localRes.integrated).toBe(true);
+    expect(localRes.remote).toBeUndefined();
+  });
+
+  it('a remote-push failure reports remote.pushed=false WITHOUT losing the local publish', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'proj',
+    });
+    await commit(worktree.checkout, 'a.txt', 'work\n');
+    await rm(originDir, { recursive: true, force: true }); // origin gone → push fails
+    const res = await service.publish(worktree.id);
+    expect(res.integrated).toBe(true); // local publish intact
+    expect(res.remote?.pushed).toBe(false);
+    expect(res.remote?.detail).toBeTruthy();
+    expect(await git(worktree.repoRoot, 'rev-parse', 'shared/feat')).toBeTruthy();
+  });
+
+  it('identity guard: a worktree created before its project was registered never pushes to the new origin', async () => {
+    // 'late' is unregistered at create time → worktree lives in WORKER_ROOT's repo.
+    const { worktree } = await service.create({
+      name: 'early',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'late',
+    });
+    expect(worktree.repoRoot).not.toBe(join(reposRoot, 'late'));
+    await commit(worktree.checkout, 'e.txt', 'pre-registration work\n');
+    // Now the project gets registered with a repo + (implicitly) a token.
+    registry.map.set('late', record('late', ORIGIN_URL()));
+
+    const res = await service.publish(worktree.id);
+    expect(res.integrated).toBe(true); // local publish still works
+    expect(res.remote?.pushed).toBe(false);
+    expect(res.remote?.detail).toMatch(/recreate the worktree/i);
+    await expect(service.pushSharedToOrigin(worktree.id)).rejects.toThrow(/recreate the worktree/i);
+    // And nothing reached the origin.
+    await expect(git(originDir, 'rev-parse', 'shared/feat')).rejects.toThrow();
+  });
+
+  it('pushSharedToOrigin is idempotent and refuses unregistered projects', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'proj',
+    });
+    await commit(worktree.checkout, 'a.txt', 'work\n');
+    await service.publish(worktree.id);
+    await expect(service.pushSharedToOrigin(worktree.id)).resolves.toEqual({
+      sharedBranch: 'shared/feat',
+      gitUrl: ORIGIN_URL(),
+    });
+    await expect(service.pushSharedToOrigin(worktree.id)).resolves.toBeDefined(); // up-to-date push ok
+
+    const local = await service.create({ name: 'l', shared: 'x', ownerBot: 'alex', project: 'local' });
+    await expect(service.pushSharedToOrigin(local.worktree.id)).rejects.toThrow(
+      /no registered GitHub repo/,
+    );
+  });
+
+  it('repairs origin-URL drift on managed clones only; WORKER_ROOT origin is never rewritten', async () => {
+    await service.create({ name: 'a', ownerBot: 'alex', project: 'proj' }); // materialize the clone
+    // The project gets repointed at a second origin via the admin API.
+    const origin2 = join(await realpath(await mkdtemp(join(tmpdir(), 'wt-origin2-'))), 'origin.git');
+    await git(join(reposRoot, 'proj'), 'clone', '--bare', join(reposRoot, 'proj'), origin2);
+    registry.map.set('proj', record('proj', `file://${origin2}`));
+
+    await service.create({ name: 'b', ownerBot: 'alex', project: 'proj' });
+    expect(await git(join(reposRoot, 'proj'), 'remote', 'get-url', 'origin')).toBe(
+      `file://${origin2}`,
+    );
+
+    // WORKER_ROOT (unregistered path) has no origin and must stay that way.
+    await service.create({ name: 'w', ownerBot: 'alex', project: 'local' });
+    await expect(git(workerRoot, 'remote', 'get-url', 'origin')).rejects.toThrow();
+    await rm(join(origin2, '..'), { recursive: true, force: true });
+  });
+
+  it('boot adoption scans WORKER_ROOT and every existing project clone with the right project ids', async () => {
+    const a = await service.create({ name: 'cloned', shared: 'feat', ownerBot: 'alex', project: 'proj' });
+    const b = await service.create({ name: 'rooted', ownerBot: 'riley', project: 'local' });
+
+    const fresh = makeService(workerRoot, { registry: registry.projects, reposRoot });
+    await fresh.onApplicationBootstrap();
+    const adoptedA = fresh.get(a.worktree.id);
+    const adoptedB = fresh.get(b.worktree.id);
+    expect(adoptedA?.project).toBe('proj');
+    expect(adoptedA?.repoRoot).toBe(join(reposRoot, 'proj'));
+    expect(adoptedA?.sharedBranch).toBe('shared/feat');
+    expect(adoptedB?.project).toBe('');
+    expect(adoptedB?.repoRoot).not.toBe(join(reposRoot, 'proj'));
   });
 });

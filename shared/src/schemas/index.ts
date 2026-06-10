@@ -7,6 +7,8 @@ export * from './bot-cursor.entity';
 export * from './channel-message.entity';
 export * from './channel.entity';
 export * from './fact.entity';
+export * from './github-token.entity';
+export * from './project.entity';
 export * from './task.entity';
 export * from './worklog.entity';
 
@@ -14,8 +16,19 @@ import { BotCursor } from './bot-cursor.entity';
 import { ChannelMessage } from './channel-message.entity';
 import { Channel } from './channel.entity';
 import { Fact } from './fact.entity';
+import { GithubToken } from './github-token.entity';
+import { Project } from './project.entity';
 import { Task } from './task.entity';
 import { Worklog } from './worklog.entity';
 
 /** Every harness entity — pass to the TypeORM DataSource / `TypeOrmModule.forRoot({ entities })`. */
-export const ENTITIES = [Fact, Task, Worklog, ChannelMessage, BotCursor, Channel];
+export const ENTITIES = [
+  Fact,
+  Task,
+  Worklog,
+  ChannelMessage,
+  BotCursor,
+  Channel,
+  Project,
+  GithubToken,
+];

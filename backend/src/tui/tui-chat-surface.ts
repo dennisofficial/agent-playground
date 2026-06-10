@@ -70,6 +70,7 @@ export class TuiChatSurface implements ChatSurface {
     _targetMessageId: string,
     _emoji: string,
     _asBot: { id: string; name: string },
+    _channelId: string,
   ): Promise<void> {
     // No-op: reactions render from the events bus.
   }

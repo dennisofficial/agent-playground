@@ -4,6 +4,7 @@ import { ChannelModule } from '../channel/channel.module';
 import { ConductorEventsModule } from '../conductor/conductor-events.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { MemoryModule } from '../memory/memory.module';
+import { ProjectsModule } from '../projects/projects.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
 import {
@@ -35,6 +36,7 @@ import {
   PullWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
+import { OpenPrTool } from './worktrees/open-pr.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -49,6 +51,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     ConductorEventsModule,
     EmployeesModule,
     MemoryModule,
+    ProjectsModule,
     SessionsModule,
     WorktreesModule,
   ],
@@ -63,6 +66,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     PublishWorktreeTool,
     PullWorktreeTool,
     RemoveWorktreeTool,
+    OpenPrTool,
     // sessions
     CreateSessionTool,
     ReplySessionTool,
