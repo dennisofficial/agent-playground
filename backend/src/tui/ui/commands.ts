@@ -161,7 +161,10 @@ export function buildCommands(deps: CommandDeps): Command[] {
         );
         return true;
       }
-      const channelId = `tui:dm:${botId}`;
+      // Two-party id — a DM belongs to a (bot, human) PAIR, so a bot's send_message to a human and
+      // that human's /dm land in the SAME room (and another human's DM with the same bot doesn't).
+      const speaker = deps.conductor.speaker;
+      const channelId = `tui:dm:${botId}:${speaker}`;
       if (!deps.registry.get(channelId)) {
         // A DM is WORKSPACE-level, not project-bound — the row's project is only the reminders
         // home; recall spans every project the pair shares (see ConductorService.identityFor).
@@ -169,8 +172,8 @@ export function buildCommands(deps: CommandDeps): Command[] {
           channelId,
           kind: 'dm',
           project: deps.project ?? DEFAULT_PROJECT,
-          members: [botId],
-          displayName: `dm:${bot.name}`,
+          members: [botId, speaker],
+          displayName: `dm:${botId}:${speaker}`,
         });
         ctx.note(`Opened a DM with ${bot.name}.`);
       } else {
@@ -191,7 +194,7 @@ export function buildCommands(deps: CommandDeps): Command[] {
       // anything else invites typing a name that mints a duplicate room.
       const handle = (c: { channelId: string; kind: string }) =>
         c.kind === 'dm'
-          ? `@${c.channelId.replace(/^tui:dm:/, '')}  (/dm ${c.channelId.replace(/^tui:dm:/, '')})`
+          ? `@${c.channelId.replace(/^tui:dm:/, '')}  (/dm ${c.channelId.replace(/^tui:dm:/, '').split(':')[0]})`
           : `#${c.channelId.replace(/^tui:/, '')}`;
       const lines = deps.registry.list().map(
         (c) =>

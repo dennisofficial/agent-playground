@@ -21,12 +21,30 @@ export interface Worktree {
   ownerBot: string;
   /** The project the work belongs to ('' when adopted). */
   project: string;
+  /** The shared integration branch this worktree publishes to / pulls from (multi-employee feature
+   * work). Recorded durably in git branch config, so it survives restarts and re-attaches. */
+  sharedBranch?: string;
 }
 
 export interface NewWorktree {
   name: string;
   /** Check out this existing branch instead of cutting a fresh `agent/<owner>/…` one from HEAD. */
   branch?: string;
+  /** Join (or start) a shared integration branch for the feature; slugified into `shared/<slug>`.
+   * The personal branch is cut FROM it, so everyone on the feature starts from the same base. */
+  shared?: string;
   ownerBot: string;
   project: string;
+}
+
+/** The outcome of a publish/pull against a worktree's shared integration branch. */
+export interface IntegrationResult {
+  integrated: boolean;
+  sharedBranch: string;
+  /** Conflicted paths when integrated=false — the merge is left IN PROGRESS in the checkout so a
+   * session's next turn can resolve and commit it. */
+  files?: string[];
+  /** Publish only: the checkout had uncommitted changes — those were NOT published (only commits
+   * publish). */
+  dirty?: boolean;
 }

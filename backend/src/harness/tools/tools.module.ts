@@ -1,5 +1,7 @@
 import { DiscoveryModule } from '@nestjs/core';
 import { CreateModule } from '@workspace/nestjs-core';
+import { ChannelModule } from '../channel/channel.module';
+import { ConductorEventsModule } from '../conductor/conductor-events.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
@@ -10,6 +12,7 @@ import {
   RememberTool,
   UpdateMemoryTool,
 } from './memory/memory.tools';
+import { ListRoomsTool, SendMessageTool } from './rooms/room.tools';
 import {
   CheckSessionTool,
   CloseSessionTool,
@@ -28,6 +31,8 @@ import { EndTurnTool } from './turn/end-turn.tool';
 import {
   CreateWorktreeTool,
   ListWorktreesTool,
+  PublishWorktreeTool,
+  PullWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
 import { RecentWorkTool } from './worklog/recent-work.tool';
@@ -40,6 +45,8 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
 @CreateModule({
   imports: [
     DiscoveryModule,
+    ChannelModule,
+    ConductorEventsModule,
     EmployeesModule,
     MemoryModule,
     SessionsModule,
@@ -47,9 +54,14 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
   ],
   services: [
     ToolRegistry,
+    // rooms (cross-room relay)
+    ListRoomsTool,
+    SendMessageTool,
     // worktrees
     CreateWorktreeTool,
     ListWorktreesTool,
+    PublishWorktreeTool,
+    PullWorktreeTool,
     RemoveWorktreeTool,
     // sessions
     CreateSessionTool,

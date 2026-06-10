@@ -13,6 +13,13 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** Write + commit one file in a checkout (worktrees inherit the repo's user config). */
+async function commit(checkout: string, file: string, content: string): Promise<void> {
+  await writeFile(join(checkout, file), content);
+  await git(checkout, 'add', file);
+  await git(checkout, 'commit', '-m', `edit ${file}`);
+}
+
 /** A throwaway real git repo — worktree behavior is git behavior, so the spec runs against git. */
 async function makeRepo(): Promise<string> {
   // realpath: macOS tmpdir is symlinked (/var → /private/var) and git reports resolved paths.
@@ -147,5 +154,202 @@ describe('WorktreeService (real git, temp repo)', () => {
     await expect(bare.create({ name: 'x', ownerBot: 'a', project: 'p' })).rejects.toThrow(
       /WORKER_ROOT/,
     );
+  });
+});
+
+describe('WorktreeService shared integration branches (real git, temp repo)', () => {
+  let repo: string;
+  let service: WorktreeService;
+
+  beforeEach(async () => {
+    repo = await makeRepo();
+    service = makeService(repo);
+  });
+
+  afterEach(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  it('starts a shared branch at pre-create HEAD, cuts the personal branch from it, and records the association', async () => {
+    const head = await git(repo, 'rev-parse', 'HEAD');
+    const { worktree } = await service.create({
+      name: 'payment work',
+      shared: 'Payment Flow!',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    expect(worktree.sharedBranch).toBe('shared/payment-flow');
+    expect(worktree.branch).toBe('agent/alex/wt-001-payment-work');
+    expect(await git(repo, 'rev-parse', 'shared/payment-flow')).toBe(head);
+    expect(worktree.baseRef).toBe(head);
+    expect(await git(repo, 'config', '--get', `branch.${worktree.branch}.agent-shared`)).toBe(
+      'shared/payment-flow',
+    );
+  });
+
+  it('a second creator joins the SAME shared branch and bases on its tip, not the new HEAD', async () => {
+    const { worktree: a } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    const sharedTip = await git(repo, 'rev-parse', 'shared/feat');
+    await commit(repo, 'unrelated.md', 'trunk moved on\n'); // main HEAD advances past the shared base
+    const { worktree: b } = await service.create({
+      name: 'b',
+      shared: 'shared/feat', // full branch name back in must not double-prefix
+      ownerBot: 'riley',
+      project: 'local',
+    });
+    expect(b.sharedBranch).toBe('shared/feat');
+    expect(b.baseRef).toBe(sharedTip);
+    expect(a.sharedBranch).toBe('shared/feat');
+  });
+
+  it('refuses to check the shared branch itself out', async () => {
+    await expect(
+      service.create({ name: 'x', branch: 'shared/feat', ownerBot: 'alex', project: 'local' }),
+    ).rejects.toThrow(/never checked out/i);
+  });
+
+  it('publishes committed work fast-forward onto the shared branch', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    await commit(worktree.checkout, 'a.txt', 'from alex\n');
+    const res = await service.publish(worktree.id);
+    expect(res).toEqual({ integrated: true, sharedBranch: 'shared/feat', dirty: false });
+    expect(await git(repo, 'rev-parse', 'shared/feat')).toBe(
+      await git(worktree.checkout, 'rev-parse', 'HEAD'),
+    );
+  });
+
+  it('merges a teammate-advanced shared branch in, then publishes both (disjoint files)', async () => {
+    const { worktree: a } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    const { worktree: b } = await service.create({
+      name: 'b',
+      shared: 'feat',
+      ownerBot: 'riley',
+      project: 'local',
+    });
+    await commit(b.checkout, 'riley.txt', 'riley work\n');
+    await service.publish(b.id);
+    await commit(a.checkout, 'alex.txt', 'alex work\n');
+    const res = await service.publish(a.id);
+    expect(res.integrated).toBe(true);
+    const tree = await git(repo, 'ls-tree', '--name-only', 'shared/feat');
+    expect(tree).toContain('riley.txt');
+    expect(tree).toContain('alex.txt');
+  });
+
+  it('reports a conflict, leaves the merge IN PROGRESS, and refuses further publishes until resolved', async () => {
+    const { worktree: a } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    const { worktree: b } = await service.create({
+      name: 'b',
+      shared: 'feat',
+      ownerBot: 'riley',
+      project: 'local',
+    });
+    await commit(b.checkout, 'README.md', 'riley version\n');
+    await service.publish(b.id);
+    await commit(a.checkout, 'README.md', 'alex version\n');
+    const res = await service.publish(a.id);
+    expect(res.integrated).toBe(false);
+    expect(res.files).toEqual(['README.md']);
+    // The merge is genuinely in progress in A's checkout (a session turn resolves it)…
+    expect(await git(a.checkout, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toBeTruthy();
+    // …and publishing again before resolving is refused with the resolve-first message.
+    await expect(service.publish(a.id)).rejects.toThrow(/merge is already in progress/i);
+    await expect(service.pull(a.id)).rejects.toThrow(/merge is already in progress/i);
+  });
+
+  it('pull takes a teammate’s published work into the checkout', async () => {
+    const { worktree: a } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    const { worktree: b } = await service.create({
+      name: 'b',
+      shared: 'feat',
+      ownerBot: 'riley',
+      project: 'local',
+    });
+    await commit(b.checkout, 'riley.txt', 'riley work\n');
+    await service.publish(b.id);
+    const res = await service.pull(a.id);
+    expect(res).toEqual({ integrated: true, sharedBranch: 'shared/feat' });
+    expect(await git(a.checkout, 'ls-tree', '--name-only', 'HEAD')).toContain('riley.txt');
+    // Pulling again is a clean no-op ("Already up to date").
+    expect((await service.pull(a.id)).integrated).toBe(true);
+  });
+
+  it('refuses publish/pull on a worktree without a shared branch', async () => {
+    const { worktree } = await service.create({ name: 'solo', ownerBot: 'alex', project: 'local' });
+    await expect(service.publish(worktree.id)).rejects.toThrow(/not on a shared branch/i);
+    await expect(service.pull(worktree.id)).rejects.toThrow(/not on a shared branch/i);
+  });
+
+  it('flags a dirty checkout on publish and does NOT publish the uncommitted content', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    await commit(worktree.checkout, 'a.txt', 'committed\n');
+    await writeFile(join(worktree.checkout, 'scratch.txt'), 'uncommitted\n');
+    const res = await service.publish(worktree.id);
+    expect(res.integrated).toBe(true);
+    expect(res.dirty).toBe(true);
+    expect(await git(repo, 'ls-tree', '--name-only', 'shared/feat')).not.toContain('scratch.txt');
+  });
+
+  it('boot adoption and branch re-attach both restore the shared association from branch config', async () => {
+    const { worktree } = await service.create({
+      name: 'survivor',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+
+    const fresh = makeService(repo);
+    await fresh.onApplicationBootstrap();
+    expect(fresh.get(worktree.id)?.sharedBranch).toBe('shared/feat');
+
+    await fresh.remove(worktree.id);
+    const { worktree: reattached } = await fresh.create({
+      name: 'survivor again',
+      branch: worktree.branch, // no `shared` passed — config is the truth
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    expect(reattached.sharedBranch).toBe('shared/feat');
+    // …and a DIFFERENT shared name on re-attach is a hard mismatch.
+    await fresh.remove(reattached.id);
+    await expect(
+      fresh.create({
+        name: 'x',
+        branch: worktree.branch,
+        shared: 'other',
+        ownerBot: 'alex',
+        project: 'local',
+      }),
+    ).rejects.toThrow(/already publishes to shared\/feat/);
   });
 });

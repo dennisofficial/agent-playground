@@ -249,6 +249,11 @@ export class ConductorService
     this.bus.patchStatus({ speaker: id });
   }
 
+  /** The human currently speaking (the TUI's `/as` identity) — e.g. for addressing their DMs. */
+  get speaker(): string {
+    return this.bus.status.speaker;
+  }
+
   private emit(event: ConductorEvent): void {
     this.bus.emit(event);
   }
@@ -630,7 +635,9 @@ export class ConductorService
       selfAgent: botId,
       team: this.env.get('HARNESS_TEAM_ID') ?? DEFAULT_TEAM,
       project: isDm ? DEFAULT_PROJECT : info.project,
-      projects: isDm ? this.registry.projectsShared([botId, ...humans]) : [info.project],
+      projects: isDm
+        ? this.registry.projectsShared([botId, ...humans])
+        : [info.project],
       participants: humans,
       speaker: this.bus.status.speaker,
       surface: info.channelId,

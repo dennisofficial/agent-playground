@@ -26,6 +26,12 @@ const createWorktreeSchema = z.object({
     .describe(
       'Check out this existing branch instead of cutting a fresh one from the base.',
     ),
+  shared: z
+    .string()
+    .optional()
+    .describe(
+      'Join (or start) a shared integration branch for multi-employee feature work — everyone on the feature passes the SAME name; your personal branch is cut from it.',
+    ),
 });
 
 @HarnessTool()
@@ -40,7 +46,7 @@ export class CreateWorktreeTool
   constructor(private readonly worktrees: WorktreeService) {}
 
   async execute(
-    { name, branch }: z.infer<typeof createWorktreeSchema>,
+    { name, branch, shared }: z.infer<typeof createWorktreeSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
@@ -48,10 +54,14 @@ export class CreateWorktreeTool
       const { worktree, warning } = await this.worktrees.create({
         name,
         branch,
+        shared,
         ownerBot: id.selfAgent,
         project: id.project,
       });
-      return `Created ${worktree.id} on branch ${worktree.branch}.${warning ? ` ${warning}` : ''}`;
+      const sharedNote = worktree.sharedBranch
+        ? ` Publishing to shared branch ${worktree.sharedBranch}.`
+        : '';
+      return `Created ${worktree.id} on branch ${worktree.branch}.${sharedNote}${warning ? ` ${warning}` : ''}`;
     } catch (err) {
       return `Couldn't create the worktree: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -85,7 +95,7 @@ export class ListWorktreesTool
         const sessions = open.length
           ? open.map((s) => `${s.id} (${s.status})`).join(', ')
           : 'none';
-        return `- ${w.id} "${w.name}" — branch ${w.branch}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}`;
+        return `- ${w.id} "${w.name}" — branch ${w.branch}${w.sharedBranch ? `, shared: ${w.sharedBranch}` : ''}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}`;
       }),
     );
     return lines.join('\n');
@@ -129,6 +139,111 @@ export class RemoveWorktreeTool
       return `Removed ${worktreeId}. Branch ${wt.branch} survives with its commits.`;
     } catch (err) {
       return `Couldn't remove ${worktreeId}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+}
+
+/**
+ * Guard shared by publish/pull: a merge mutates files in the checkout, so it must not run under a
+ * live engine turn. Only 'running' blocks — 'idle'/'failed' sessions hold context but execute
+ * nothing. (TOCTOU window: a reply could start a turn between this check and the merge — same
+ * accepted v0 exposure as remove_worktree's open-session check.)
+ */
+async function midTurnRefusal(
+  sessions: SessionRegistry,
+  worktreeId: string,
+  verb: string,
+): Promise<string | undefined> {
+  const running = (await sessions.list({ worktreeId })).filter(
+    (s) => s.status === 'running',
+  );
+  return running.length
+    ? `Can't ${verb} while a session is mid-turn in ${worktreeId} (${running
+        .map((s) => s.id)
+        .join(', ')}) — a merge would mutate files under it. Wait for the report or close it.`
+    : undefined;
+}
+
+const conflictReply = (
+  worktreeId: string,
+  verb: string,
+  res: { sharedBranch: string; files?: string[] },
+): string =>
+  `Merge conflict with ${res.sharedBranch} in: ${(res.files ?? []).join(', ') || '(unknown files)'}. The merge is left IN PROGRESS in ${worktreeId} — reply into a session there (mode 'execute') to resolve and commit it, then ${verb} again.`;
+
+const publishWorktreeSchema = z.object({
+  worktreeId: z
+    .string()
+    .describe('The worktree whose committed work to publish.'),
+});
+
+@HarnessTool()
+export class PublishWorktreeTool
+  implements IHarnessTool<typeof publishWorktreeSchema>
+{
+  readonly name = 'publish_worktree';
+  readonly description =
+    "Publish a worktree's COMMITTED work onto its shared integration branch so teammates and Dennis can take it. Fast-forwards when possible, otherwise merges teammates' work in first. Only commits publish — have a session commit first. Refused while a session in the worktree is mid-turn.";
+  readonly schema = publishWorktreeSchema;
+
+  constructor(
+    private readonly worktrees: WorktreeService,
+    @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
+  ) {}
+
+  async execute({
+    worktreeId,
+  }: z.infer<typeof publishWorktreeSchema>): Promise<string> {
+    const wt = this.worktrees.get(worktreeId);
+    if (!wt) return `No worktree "${worktreeId}".`;
+    const refusal = await midTurnRefusal(this.sessions, worktreeId, 'publish');
+    if (refusal) return refusal;
+    try {
+      const res = await this.worktrees.publish(worktreeId);
+      if (!res.integrated) return conflictReply(worktreeId, 'publish', res);
+      const dirtyNote = res.dirty
+        ? ' Note: the worktree has uncommitted changes — those were NOT published (only commits publish).'
+        : '';
+      return `Published ${wt.branch} → ${res.sharedBranch}.${dirtyNote}`;
+    } catch (err) {
+      return `Couldn't publish ${worktreeId}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+}
+
+const pullWorktreeSchema = z.object({
+  worktreeId: z
+    .string()
+    .describe('The worktree to merge the shared branch into.'),
+});
+
+@HarnessTool()
+export class PullWorktreeTool
+  implements IHarnessTool<typeof pullWorktreeSchema>
+{
+  readonly name = 'pull_worktree';
+  readonly description =
+    "Merge the shared integration branch into a worktree — take teammates' published work. Refused while a session in the worktree is mid-turn.";
+  readonly schema = pullWorktreeSchema;
+
+  constructor(
+    private readonly worktrees: WorktreeService,
+    @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
+  ) {}
+
+  async execute({
+    worktreeId,
+  }: z.infer<typeof pullWorktreeSchema>): Promise<string> {
+    const wt = this.worktrees.get(worktreeId);
+    if (!wt) return `No worktree "${worktreeId}".`;
+    const refusal = await midTurnRefusal(this.sessions, worktreeId, 'pull');
+    if (refusal) return refusal;
+    try {
+      const res = await this.worktrees.pull(worktreeId);
+      if (!res.integrated) return conflictReply(worktreeId, 'pull', res);
+      return `Pulled ${res.sharedBranch} into ${wt.branch}.`;
+    } catch (err) {
+      return `Couldn't pull into ${worktreeId}: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }

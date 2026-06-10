@@ -7,16 +7,18 @@ import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { ToolsModule } from '../tools/tools.module';
 import { BotGraphFactory } from './bot-graph.factory';
-import { ConductorEventsBus } from './conductor-events.bus';
+import { ConductorEventsModule } from './conductor-events.module';
 import { ConductorService } from './conductor.service';
 
 /**
  * The orchestration core: per-bot turn graphs (BotGraphFactory), the event loop (ConductorService),
- * and the presentation seam (ConductorEventsBus). UI-agnostic — surfaces subscribe to the bus.
+ * and the presentation seam (ConductorEventsBus, via ConductorEventsModule so tools can emit
+ * without a module cycle). UI-agnostic — surfaces subscribe to the bus.
  */
 @CreateModule({
   imports: [
     ChannelModule,
+    ConductorEventsModule,
     EmployeesModule,
     GateModule,
     LlmModule,
@@ -24,6 +26,7 @@ import { ConductorService } from './conductor.service';
     SessionsModule,
     ToolsModule,
   ],
-  services: [ConductorEventsBus, BotGraphFactory, ConductorService],
+  services: [BotGraphFactory, ConductorService],
+  exports: [ConductorEventsModule],
 })
 export class ConductorModule {}

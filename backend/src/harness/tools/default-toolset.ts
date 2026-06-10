@@ -5,6 +5,7 @@ import {
   RememberTool,
   UpdateMemoryTool,
 } from './memory/memory.tools';
+import { ListRoomsTool, SendMessageTool } from './rooms/room.tools';
 import {
   CheckSessionTool,
   CloseSessionTool,
@@ -23,6 +24,8 @@ import { EndTurnTool } from './turn/end-turn.tool';
 import {
   CreateWorktreeTool,
   ListWorktreesTool,
+  PublishWorktreeTool,
+  PullWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
 import { RecentWorkTool } from './worklog/recent-work.tool';
@@ -34,6 +37,8 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
 export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   CreateWorktreeTool,
   ListWorktreesTool,
+  PublishWorktreeTool,
+  PullWorktreeTool,
   RemoveWorktreeTool,
   CreateSessionTool,
   ReplySessionTool,
@@ -50,4 +55,6 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   ListTasksTool,
   AddTaskTool,
   CompleteTaskTool,
+  ListRoomsTool,
+  SendMessageTool,
 ];
