@@ -16,6 +16,16 @@
         "types": "./src/index.ts",
         "default": "./dist/index.js"
       }
+    },
+    "./schemas": {
+      "import": {
+        "types": "./src/schemas/index.ts",
+        "default": "./dist/schemas.mjs"
+      },
+      "require": {
+        "types": "./src/schemas/index.ts",
+        "default": "./dist/schemas.js"
+      }
     }
   },
   "files": [
@@ -39,7 +49,9 @@
     "nodemon": "^3.1.14",
     "prettier": "^3.8.3",
     "prettier-plugin-organize-imports": "^4.3.0",
+    "reflect-metadata": "^0.2.2",
     "tsup": "^8.5.1",
+    "typeorm": "^0.3.30",
     "typescript": "^6.0.3"
   }
 }

@@ -34,9 +34,18 @@ export interface IEnvConfig {
   BACKEND_HOST: string;
   FRONTEND_HOST: string; // admin web origin — credentialed CORS in api/main.ts
 
+  // Postgres (TypeORM + pgvector)
+  POSTGRES_HOST: string;
+  POSTGRES_PORT: number;
+  POSTGRES_USER: string;
+  POSTGRES_PASSWORD: string;
+  POSTGRES_DB: string;
+  POSTGRES_SSL_MODE?: string; // disable | require | verify-full (defaults by NODE_ENV)
+  POSTGRES_POOL_MAX?: number;
+
   // LLM providers
   ANTHROPIC_API_KEY: string;
-  OPENAI_API_KEY?: string; // required once semantic memory (fact embeddings) is on
+  OPENAI_API_KEY: string; // required — semantic-memory fact embeddings (text-embedding-3-small)
 
   // LLM knobs (harness reads these; defaults applied in code, so all optional)
   CHAT_MODEL?: string;
@@ -73,9 +82,18 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   BACKEND_HOST: Joi.string().uri().optional().default('http://localhost:4000'),
   FRONTEND_HOST: Joi.string().uri().optional().default('http://localhost:3000'),
 
+  // Postgres (TypeORM + pgvector)
+  POSTGRES_HOST: Joi.string().required(),
+  POSTGRES_PORT: Joi.number().port().optional().default(5432),
+  POSTGRES_USER: Joi.string().required(),
+  POSTGRES_PASSWORD: Joi.string().required(),
+  POSTGRES_DB: Joi.string().required(),
+  POSTGRES_SSL_MODE: Joi.string().valid('disable', 'require', 'verify-full').optional(),
+  POSTGRES_POOL_MAX: Joi.number().integer().min(1).optional(),
+
   // LLM providers
   ANTHROPIC_API_KEY: Joi.string().required(),
-  OPENAI_API_KEY: Joi.string().optional(),
+  OPENAI_API_KEY: Joi.string().required(),
 
   // LLM knobs
   CHAT_MODEL: Joi.string().optional(),

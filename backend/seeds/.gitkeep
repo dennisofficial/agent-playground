@@ -1,0 +1,2 @@
+# Idempotent TypeORM seeds (default-export a `Seeder` from `@workspace/nestjs-core`).
+# Run alphabetically via `pnpm db:seed` (dev-only). None yet — employees are code, not seeded.
