@@ -52,9 +52,10 @@ describe('SlackDirectoryService.resolveUser', () => {
 describe('SlackDirectoryService.ensureChannelRegistered', () => {
   it('registers the room with the channel-name slug as project and roster + author as members', async () => {
     const { service, registry } = makeService();
-    await service.ensureChannelRegistered('C042', 'dennis');
+    await service.ensureChannelRegistered('C042', 'T1', 'dennis');
     expect(registry.ensure).toHaveBeenCalledWith({
-      channelId: 'slack:C042',
+      channelId: 'slack:T1:C042',
+      teamId: 'T1',
       kind: 'channel',
       project: 'mls-studio',
       members: ['alex', 'sam', 'dennis'],
@@ -64,8 +65,8 @@ describe('SlackDirectoryService.ensureChannelRegistered', () => {
 
   it('is a no-op for already-known rooms (first-write-wins respected) and caches the check', async () => {
     const { service, web, registry } = makeService({ existingRoom: true });
-    await service.ensureChannelRegistered('C042', 'dennis');
-    await service.ensureChannelRegistered('C042', 'dennis');
+    await service.ensureChannelRegistered('C042', 'T1', 'dennis');
+    await service.ensureChannelRegistered('C042', 'T1', 'dennis');
     expect(registry.ensure).not.toHaveBeenCalled();
     expect(web.conversations.info).not.toHaveBeenCalled();
     expect(registry.get).toHaveBeenCalledTimes(1); // second call short-circuits on the local cache

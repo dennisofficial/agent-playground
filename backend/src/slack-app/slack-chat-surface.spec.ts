@@ -30,7 +30,9 @@ function makeFakes(
     displayNameOf: vi.fn((id: string) => (id === 'U123' ? 'Dennis' : undefined)),
     ensureChannelRegistered: vi.fn(async () => {}),
   };
-  const identities = { clientFor: vi.fn(async (botId: string) => puppets[botId]) };
+  const identities = {
+    clientFor: vi.fn(async (_teamId: string, botId: string) => puppets[botId]),
+  };
   const bus = { patchStatus: vi.fn() };
   const env = { get: (k: string) => envValues[k] };
   const surface = new SlackChatSurface(
@@ -94,9 +96,9 @@ describe('SlackChatSurface inbound', () => {
       authorId: 'dennis',
       authorName: 'Dennis',
       text: 'Dennis ship it & relax',
-      surfaceId: 'slack:C042',
+      surfaceId: 'slack:T1:C042',
     });
-    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith('C042', 'dennis');
+    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith('C042', 'T1', 'dennis');
     expect(order).toEqual(['register', 'speaker']);
     expect(bus.patchStatus).toHaveBeenCalledWith({ speaker: 'dennis' });
   });
@@ -118,7 +120,7 @@ describe('SlackChatSurface outbound', () => {
       authorBotId: 'alex',
       authorName: 'Alex',
       text: 'done!',
-      surfaceId: 'slack:C042',
+      surfaceId: 'slack:T1:C042',
     });
     expect(web.chat.postMessage).toHaveBeenCalledWith({
       channel: 'C042',
@@ -144,10 +146,10 @@ describe('SlackChatSurface outbound', () => {
       authorBotId: 'alex',
       authorName: 'Alex',
       text: 'done!',
-      surfaceId: 'slack:C042',
+      surfaceId: 'slack:T1:C042',
     });
 
-    await surface.react('alex:k2:1', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042');
+    await surface.react('alex:k2:1', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
     expect(web.reactions.add).toHaveBeenCalledWith({
       channel: 'C042',
       timestamp: '1712.0001', // the ts chat.postMessage returned
@@ -158,7 +160,7 @@ describe('SlackChatSurface outbound', () => {
   it('react() treats a raw Slack ts as the target directly, and skips unknown minted ids', async () => {
     const { surface, web } = makeFakes();
 
-    await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:C042');
+    await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
     expect(web.reactions.add).toHaveBeenCalledWith({
       channel: 'C042',
       timestamp: '1712345678.000100',
@@ -166,7 +168,7 @@ describe('SlackChatSurface outbound', () => {
     });
 
     web.reactions.add.mockClear();
-    await surface.react('alex:pre-restart:9', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042');
+    await surface.react('alex:pre-restart:9', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
     expect(web.reactions.add).not.toHaveBeenCalled();
   });
 
@@ -180,7 +182,7 @@ describe('SlackChatSurface outbound', () => {
       authorBotId: 'alex',
       authorName: 'Alex',
       text: 'hi',
-      surfaceId: 'slack:C042',
+      surfaceId: 'slack:T1:C042',
     });
     expect(web.chat.postMessage).toHaveBeenCalledWith({
       channel: 'C042',
@@ -196,7 +198,7 @@ describe('SlackChatSurface outbound', () => {
       authorBotId: 'sam',
       authorName: 'Sam',
       text: 'yo',
-      surfaceId: 'slack:C042',
+      surfaceId: 'slack:T1:C042',
     });
     expect(plain.web.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -213,7 +215,7 @@ describe('SlackChatSurface outbound', () => {
       }),
     );
     await expect(
-      surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042'),
+      surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042'),
     ).resolves.toBeUndefined();
   });
 });
@@ -227,7 +229,7 @@ describe('SlackChatSurface puppet identities', () => {
     authorBotId: 'alex',
     authorName: 'Alex',
     text: 'done!',
-    surfaceId: 'slack:C042',
+    surfaceId: 'slack:T1:C042',
   };
 
   it('posts via the puppet WITHOUT username/icon overrides; main app untouched', async () => {
@@ -244,7 +246,7 @@ describe('SlackChatSurface puppet identities', () => {
     const sam = makePuppet();
     const both = makeFakes({}, { alex, sam });
     await both.surface.post(msg);
-    await both.surface.react('alex:k2:1', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042');
+    await both.surface.react('alex:k2:1', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
     expect(sam.reactions.add).toHaveBeenCalledWith({
       channel: 'C042',
       timestamp: '1712.0009',
@@ -281,7 +283,7 @@ describe('SlackChatSurface puppet identities', () => {
       .mockRejectedValueOnce(slackError('no_permission'))
       .mockResolvedValueOnce({ ok: true });
     const { surface, web } = makeFakes({}, { sam });
-    await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:C042');
+    await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
     expect(sam.conversations.join).toHaveBeenCalledWith({ channel: 'C042' });
     expect(sam.reactions.add).toHaveBeenCalledTimes(2);
     expect(web.reactions.add).not.toHaveBeenCalled();
@@ -292,7 +294,7 @@ describe('SlackChatSurface puppet identities', () => {
     sam.reactions.add.mockRejectedValue(slackError('already_reacted'));
     const { surface, web } = makeFakes({}, { sam });
     await expect(
-      surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042'),
+      surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042'),
     ).resolves.toBeUndefined();
     expect(web.reactions.add).not.toHaveBeenCalled();
   });

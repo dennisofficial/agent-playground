@@ -73,7 +73,7 @@ function build(opts: {
       added.push(t);
       return task(99, t.description, t.owner);
     },
-    completeTask: async (_p: string, id: number) => {
+    completeTask: async (_team: string, _p: string, id: number) => {
       completed.push(id);
       return true;
     },

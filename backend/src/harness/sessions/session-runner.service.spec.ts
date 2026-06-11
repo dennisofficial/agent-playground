@@ -203,6 +203,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     expect((await sessions.get(session.id))?.status).toBe('closed');
     expect(worklogged).toEqual([
       {
+        team: 'local',
         ownerBot: 'alex',
         project: 'local',
         task: 'find the thing',

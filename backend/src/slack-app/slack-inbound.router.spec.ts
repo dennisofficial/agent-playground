@@ -25,6 +25,7 @@ describe('SlackInboundRouter', () => {
     await router.route(eventItem({ type: 'message', text: 'hi' }));
     expect(surface.handleMessageEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'message', text: 'hi' }),
+      'T1',
     );
   });
 

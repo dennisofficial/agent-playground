@@ -10,9 +10,10 @@ import {
 import { JarvisService } from './jarvis.service';
 
 function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> } = {}) {
-  const ready$ = new Subject<void>();
+  const ready$ = new Subject<string>();
   const readiness = {
-    isReady: opts.ready ?? false,
+    isReady: vi.fn(() => opts.ready ?? false),
+    ensureChecked: vi.fn(),
     ready$,
     refresh: vi.fn(async () => true),
   };
@@ -20,7 +21,7 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
     Object.entries(opts.projects ?? {}).map(([id, gitUrl]) => [id, { projectId: id, gitUrl }]),
   );
   const projects = {
-    get: vi.fn(async (id: string) => projectRows.get(id)),
+    get: vi.fn(async (_teamId: string, id: string) => projectRows.get(id)),
     create: vi.fn(async (input: { projectId: string; gitUrl: string }) => {
       if (projectRows.has(input.projectId)) throw new ProjectConflictError(input.projectId);
       projectRows.set(input.projectId, { projectId: input.projectId, gitUrl: input.gitUrl });
@@ -44,7 +45,7 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
   };
   const registry = {
     get: vi.fn((channelId: string) =>
-      channelId.startsWith('slack:C')
+      channelId.startsWith('slack:')
         ? {
             channelId,
             kind: 'channel',
@@ -173,7 +174,7 @@ describe('Jarvis while pending keys', () => {
   it('greets on its own channel join (registered via the inviter)', async () => {
     const { jarvis, web, directory } = makeJarvis({ ready: false });
     expect(await jarvis.maybeHandle(joined('UBOT'))).toBe(true);
-    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith('C042', 'u123');
+    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith('C042', 'T1', 'u123');
     expect(web.chat.postMessage).toHaveBeenCalled();
     // Someone ELSE joining is not Jarvis's business.
     expect(await jarvis.maybeHandle(joined('UOTHER'))).toBe(false);
@@ -233,9 +234,10 @@ describe('Jarvis keys modal', () => {
         respond,
       ),
     );
-    expect(providerKeys.put).toHaveBeenCalledWith('anthropic', 'sk-ant-api03-valid-key');
-    expect(providerKeys.put).toHaveBeenCalledWith('openai', 'sk-proj-valid-key');
+    expect(providerKeys.put).toHaveBeenCalledWith('T1', 'anthropic', 'sk-ant-api03-valid-key');
+    expect(providerKeys.put).toHaveBeenCalledWith('T1', 'openai', 'sk-proj-valid-key');
     expect(githubTokens.put).toHaveBeenCalledWith(
+      'T1',
       'onboarding',
       'ghp_0123456789abcdefghij',
       true,
@@ -251,7 +253,7 @@ describe('Jarvis keys modal', () => {
     const { jarvis, web, ready$ } = makeJarvis({ ready: false });
     await jarvis.maybeHandle(message('hello')); // greets C042 → tracked
     web.chat.postMessage.mockClear();
-    ready$.next();
+    ready$.next('T1');
     await new Promise((r) => setTimeout(r, 0));
     expect(web.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ channel: 'C042', text: expect.stringContaining('online') }),
@@ -284,6 +286,7 @@ describe('Jarvis when ready', () => {
       await jarvis.maybeHandle(message('<https://github.com/acme/mls-studio>')),
     ).toBe(true);
     expect(projects.create).toHaveBeenCalledWith({
+      teamId: 'T1',
       projectId: 'mls-studio',
       displayName: 'mls-studio',
       gitUrl: 'https://github.com/acme/mls-studio',
@@ -305,9 +308,14 @@ describe('Jarvis when ready', () => {
     // a channel that just got its row between the check and create.
     const conflicting = await (
       jarvis as unknown as {
-        linkRepo: (c: string, s: string, u: string) => Promise<boolean>;
+        linkRepo: (
+          teamId: string,
+          c: string,
+          s: string,
+          u: string,
+        ) => Promise<boolean>;
       }
-    ).linkRepo('C042', 'mls-studio', 'https://github.com/other/repo');
+    ).linkRepo('T1', 'C042', 'mls-studio', 'https://github.com/other/repo');
     expect(conflicting).toBe(true);
     expect(web.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining('acme/mls') }),

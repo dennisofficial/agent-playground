@@ -448,10 +448,10 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
       team: 'local',
       project: 'proj',
     });
-    expect(worktree.repoRoot).toBe(join(reposRoot, 'proj'));
-    expect(worktree.checkout.startsWith(join(reposRoot, 'proj', '.worktrees'))).toBe(true);
+    expect(worktree.repoRoot).toBe(join(reposRoot, 'local', 'proj'));
+    expect(worktree.checkout.startsWith(join(reposRoot, 'local', 'proj', '.worktrees'))).toBe(true);
     expect(worktree.path).toBe(worktree.checkout); // subdir '' — cwd is the clone root
-    expect(await git(join(reposRoot, 'proj'), 'remote', 'get-url', 'origin')).toBe(ORIGIN_URL());
+    expect(await git(join(reposRoot, 'local', 'proj'), 'remote', 'get-url', 'origin')).toBe(ORIGIN_URL());
     // A second create reuses the clone (no re-clone), still under the mutex.
     const second = await service.create({ name: 'b', shared: 'feat', ownerBot: 'riley', team: 'local', project: 'proj' });
     expect(second.worktree.repoRoot).toBe(worktree.repoRoot);
@@ -549,11 +549,11 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     await service.create({ name: 'a', ownerBot: 'alex', team: 'local', project: 'proj' }); // materialize the clone
     // The project gets repointed at a second origin via the admin API.
     const origin2 = join(await realpath(await mkdtemp(join(tmpdir(), 'wt-origin2-'))), 'origin.git');
-    await git(join(reposRoot, 'proj'), 'clone', '--bare', join(reposRoot, 'proj'), origin2);
+    await git(join(reposRoot, 'local', 'proj'), 'clone', '--bare', join(reposRoot, 'local', 'proj'), origin2);
     registry.map.set('proj', record('proj', `file://${origin2}`));
 
     await service.create({ name: 'b', ownerBot: 'alex', team: 'local', project: 'proj' });
-    expect(await git(join(reposRoot, 'proj'), 'remote', 'get-url', 'origin')).toBe(
+    expect(await git(join(reposRoot, 'local', 'proj'), 'remote', 'get-url', 'origin')).toBe(
       `file://${origin2}`,
     );
 
@@ -668,10 +668,10 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     const adoptedA = fresh.get(a.worktree.id);
     const adoptedB = fresh.get(b.worktree.id);
     expect(adoptedA?.project).toBe('proj');
-    expect(adoptedA?.repoRoot).toBe(join(reposRoot, 'proj'));
+    expect(adoptedA?.repoRoot).toBe(join(reposRoot, 'local', 'proj'));
     expect(adoptedA?.sharedBranch).toBe('shared/feat');
     expect(adoptedB?.project).toBe('');
-    expect(adoptedB?.repoRoot).not.toBe(join(reposRoot, 'proj'));
+    expect(adoptedB?.repoRoot).not.toBe(join(reposRoot, 'local', 'proj'));
   });
 });
 
