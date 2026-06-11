@@ -7,11 +7,18 @@ import { TimestampedEntity } from './classes/base.entity';
  * Open-dedup is per (project, owner, norm) — enforced by a unique partial index on open rows.
  */
 @Entity({ name: 'tasks' })
-@Index(['project', 'status', 'owner'])
-@Index(['project', 'owner', 'norm'], { unique: true, where: "status = 'open'" })
+@Index(['team_id', 'project', 'status', 'owner'])
+@Index(['team_id', 'project', 'owner', 'norm'], {
+  unique: true,
+  where: "status = 'open'",
+})
 export class Task extends TimestampedEntity {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  /** The tenant (Slack team id) this reminder belongs to. */
+  @Column({ type: 'text' })
+  team_id!: string;
 
   @Column({ type: 'text' })
   project!: string;

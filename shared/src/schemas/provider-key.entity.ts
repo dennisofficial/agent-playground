@@ -10,6 +10,11 @@ import { TimestampedEntity } from './classes/base.entity';
  */
 @Entity({ name: 'provider_keys' })
 export class ProviderKey extends TimestampedEntity {
+  /** The tenant (Slack team id) these keys belong to — part of the PK; each workspace brings its
+   * own Anthropic/OpenAI keys (billing separation is per key). */
+  @PrimaryColumn({ type: 'text' })
+  team_id!: string;
+
   @PrimaryColumn({ type: 'text' })
   provider!: string;
 

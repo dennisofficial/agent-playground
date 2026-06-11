@@ -10,6 +10,7 @@ import { TimestampedEntity } from './classes/base.entity';
  */
 @Entity({ name: 'facts' })
 @Index(['scope'])
+@Index(['team_id', 'scope'])
 export class Fact extends TimestampedEntity {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -20,6 +21,12 @@ export class Fact extends TimestampedEntity {
   // pgvector. TypeORM 0.3.30 has native `vector` support; dimension + HNSW index are set in the migration.
   @Column({ type: 'vector', length: 1536 })
   embedding!: string;
+
+  /** The tenant (Slack team id) this fact belongs to. NULL = the SHARED/global tier: recalled in
+   * every workspace for its `scope`. Per-tenant recall filters `(team_id = :tid OR team_id IS NULL)`;
+   * "promotion" sets a tenant fact's team_id to NULL. */
+  @Column({ type: 'text', nullable: true })
+  team_id!: string | null;
 
   @Column({ type: 'text' })
   scope!: string;

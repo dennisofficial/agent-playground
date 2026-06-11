@@ -10,6 +10,11 @@ import { TimestampedEntity } from './classes/base.entity';
  */
 @Entity({ name: 'projects' })
 export class Project extends TimestampedEntity {
+  /** The tenant (Slack team id) this project belongs to — part of the PK so two workspaces can
+   * each register a project with the same slug. */
+  @PrimaryColumn({ type: 'text' })
+  team_id!: string;
+
   /** The project slug rooms use (`ChannelInfo.project` / `Identity.project`). */
   @PrimaryColumn({ type: 'text' })
   project_id!: string;

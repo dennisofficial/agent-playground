@@ -2,7 +2,7 @@ import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { TimestampedEntity } from './classes/base.entity';
 
 /**
- * A per-employee Slack "puppet app" bot token for THIS workspace (tenant DB ⇒ workspace-scoped).
+ * A per-employee Slack "puppet app" bot token, scoped to a workspace by `team_id`.
  * The puppet apps post/react as real bot users (proper reactions, mentions, profiles, app icons);
  * the main app stays the single event listener. The VALUE is AES-256-GCM encrypted at rest
  * (`v1:<iv>:<tag>:<ct>`, SECRETS_ENCRYPTION_KEY) and WRITE-ONLY through the admin API — read
@@ -11,6 +11,11 @@ import { TimestampedEntity } from './classes/base.entity';
  */
 @Entity({ name: 'slack_identities' })
 export class SlackIdentity extends TimestampedEntity {
+  /** The tenant (Slack team id) this puppet token is for — part of the PK; an 'alex' token in
+   * workspace A is a different app/token from 'alex' in workspace B. */
+  @PrimaryColumn({ type: 'text' })
+  team_id!: string;
+
   /** The roster employee id ('alex') — NOT a Slack id. */
   @PrimaryColumn({ type: 'text' })
   bot_id!: string;
