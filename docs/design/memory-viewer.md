@@ -2,9 +2,9 @@
 
 ## Purpose
 
-The memory viewer is a read-only admin page at `/admin/memory` where Dennis can inspect what each AI agent knows. Think of it as "looking inside an agent's brain" — browsing the facts they hold, grouped in a way that makes sense, with full visibility into what's active vs. what's been forgotten.
+The memory viewer is a read-only ops panel at `/admin/memory` where Dennis can inspect what each AI agent knows across **all teams and workspaces**. Think of it as "looking inside an agent's brain" — browsing the facts they hold, grouped in a way that makes sense, with full visibility into what's active vs. what's been forgotten.
 
-This is a personal tool for Dennis, not a public-facing UI. No editing, no deletion, no writing — read-only only.
+This is a multi-tenant ops view, not a single-tenant or public-facing UI. Dennis can select any workspace and see the agents and facts within it. No editing, no deletion, no writing — read-only only.
 
 ---
 
@@ -18,13 +18,25 @@ Each agent holds facts at different scopes. A fact is something the agent was to
 
 ## Information Architecture
 
-### Primary Navigation — By Agent
+The viewer has three levels of navigation, each scoped inside the one above it:
 
-A sidebar or dropdown lists all agents: Sam, Alex, Riley, Maya, James, Nora. Selecting an agent loads their facts.
+1. **Workspace/Team selector** (top level) — pick which workspace you're inspecting
+2. **Agent selector** (second level) — scoped to the selected workspace
+3. **Tier tabs** (third level) — scoped to the selected agent
+
+### Top-Level Navigation — Workspace/Team Picker
+
+A dropdown or selector at the top of the page lists all available workspaces/teams (name + slug). Selecting a workspace loads that context and resets the agent selection to the default.
+
+Default selection: the first workspace alphabetically, or the last-viewed workspace if stored in local state.
+
+### Second-Level Navigation — By Agent
+
+Within a selected workspace, a sidebar or dropdown lists all agents in that workspace (e.g. Sam, Alex, Riley, Maya, James, Nora). Selecting an agent loads their facts.
 
 Default selection: the first agent alphabetically, or the last-viewed agent if stored in local state.
 
-### Secondary Navigation — By Tier (Tabs)
+### Third-Level Navigation — By Tier (Tabs)
 
 Within a selected agent, facts are grouped into four tabs:
 
@@ -93,13 +105,22 @@ Each fact renders as a row in a list. Keep it scannable — this is a list view,
 
 ## API Contract (Hint for Alex + Riley)
 
-The frontend needs one endpoint:
+The frontend needs two endpoints:
+
+```
+GET /tenants
+```
+
+Returns the list of all workspaces/teams Dennis can see. Response: array of objects, each with:
+- `id`
+- `name`
+- `slug`
 
 ```
 GET /tenants/:teamId/memory/facts?botId=&tier=&includeDeleted=
 ```
 
-Response: array of fact objects, each with:
+Returns facts for a specific tenant. Response: array of fact objects, each with:
 - `id`
 - `content` — the fact text
 - `tier` — `project` | `team` | `bot` | `private` (parsed server-side from scope)
@@ -111,8 +132,6 @@ Response: array of fact objects, each with:
 - `createdAt` — timestamp
 
 The server parses scope strings into these fields — the client never sees a raw scope string.
-
-`teamId` is read from `NEXT_PUBLIC_TEAM_ID` env var on the frontend (single-tenant, no dropdown needed).
 
 ---
 
