@@ -141,7 +141,7 @@ describe('channel-render — buildTimeContext', () => {
     const fresh = [msg({ createdAt: freshTs })];
     const ctx = buildTimeContext(fresh, prevTs, GAP);
     expect(ctx).toContain('Current time:');
-    expect(ctx).toMatch(/3 hours later|since the previous message/);
+    expect(ctx).toContain('[3 hours since the previous message in this conversation]');
   });
 
   it('omits the gap note when the leading gap is below the threshold', () => {

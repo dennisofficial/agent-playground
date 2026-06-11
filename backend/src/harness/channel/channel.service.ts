@@ -195,6 +195,11 @@ export class ChannelService implements OnModuleInit {
 
   private persist(msg: ChannelMsg): void {
     // Serialized write-behind: ordering holds, and a failed write never surfaces into a turn.
+    // Note: `created_at` is NOT included in the upsert payload — it is DB-authoritative via the
+    // `DEFAULT now()` column (set once on INSERT, never touched on UPDATE because of `update:false`
+    // on the `@CreateDateColumn`). The in-memory `createdAt` (stamped by `Date.now()` in `append`)
+    // and the persisted `created_at` can therefore diverge by the write-behind queue latency, which
+    // is immaterial at the hour-scale granularity used for time-dividers. Intentional design choice.
     void this.write(() =>
       this.repo.upsert(
         {

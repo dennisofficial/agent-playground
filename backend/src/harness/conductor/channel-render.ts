@@ -15,9 +15,9 @@ import type { ChannelMsg } from '../channel/channel.types';
  */
 
 /** One item the LLM history renderer produces — a real message or a time-gap marker. */
-export type RenderItem =
+export type LlmRenderItem =
   | { kind: 'message'; msg: ChannelMsg }
-  | { kind: 'time-divider'; gapMs: number; label: string };
+  | { kind: 'time-divider'; label: string };
 
 /** Default gap threshold (1 hour in ms). Override with `HARNESS_TIMESTAMP_GAP_MS`. */
 export const GAP_THRESHOLD_DEFAULT_MS = 3_600_000;
@@ -48,17 +48,25 @@ export function formatStamp(ms: number): string {
   });
 }
 
+/** Format a gap as a bare quantity, e.g. "30 minutes", "3 hours", "2 days".
+ * Guards against negative values (clock skew / out-of-order stamps) by clamping to 0.
+ * Internal helper; use `formatGap` for divider labels or call directly for prose notes. */
+function formatDuration(ms: number): string {
+  const safe = Math.max(0, ms);
+  const minutes = Math.round(safe / 60_000);
+  if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+  const hours = Math.round(safe / 3_600_000);
+  if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''}`;
+  const days = Math.round(safe / 86_400_000);
+  return `${days} day${days !== 1 ? 's' : ''}`;
+}
+
 /**
- * Describe a gap duration in natural language, e.g. "3 hours later", "2 days later".
- * Used in divider labels and the leading-gap note.
+ * Describe a gap duration for a divider label, e.g. "3 hours later", "2 days later".
+ * Guards against negative gaps (clock skew) via the underlying `formatDuration`.
  */
-export function formatGap(ms: number): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} later`;
-  const hours = Math.round(ms / 3_600_000);
-  if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} later`;
-  const days = Math.round(ms / 86_400_000);
-  return `${days} day${days !== 1 ? 's' : ''} later`;
+export function formatGap(gapMs: number): string {
+  return `${formatDuration(gapMs)} later`;
 }
 
 /**
@@ -71,8 +79,8 @@ export function formatGap(ms: number): string {
 export function withDividers(
   msgs: ChannelMsg[],
   gapThresholdMs: number,
-): RenderItem[] {
-  const items: RenderItem[] = [];
+): LlmRenderItem[] {
+  const items: LlmRenderItem[] = [];
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
     if (i > 0) {
@@ -86,7 +94,6 @@ export function withDividers(
       ) {
         items.push({
           kind: 'time-divider',
-          gapMs: gap,
           label: `——— ${formatGap(gap)} (${formatStamp(m.createdAt)}) ———`,
         });
       }
@@ -125,7 +132,7 @@ export function buildTimeContext(
       gap >= gapThresholdMs ||
       !sameCalendarDay(prevCreatedAt, fresh[0].createdAt)
     ) {
-      lines.push(`[${formatGap(gap)} since the previous message in this conversation]`);
+      lines.push(`[${formatDuration(gap)} since the previous message in this conversation]`);
     }
   }
 

@@ -157,7 +157,7 @@ describe('bot graph — time context injection', () => {
       createdAt: now - 5 * HOUR,
     });
 
-    // Two fresh messages with a 3h gap between them (both > cursor=0 so they're fresh).
+    // Two fresh messages with a 2h gap between them (both > cursor=0 so they're fresh).
     // For this test we advance the cursor manually via a prior "consume" run.
     const { factory, invocations } = buildFactory(channel, HOUR);
     const graph = factory.getBotGraph(ALEX);
@@ -167,7 +167,7 @@ describe('bot graph — time context injection', () => {
     await graph.invoke({ cursor: 0, forced: false }, cfg);
     invocations.length = 0; // clear to isolate turn 2
 
-    // Now add two fresh messages with a 3h gap between them.
+    // Now add two fresh messages with a 2h gap between them.
     channel.append({
       id: 'u-1',
       author: 'Dennis',
@@ -192,8 +192,8 @@ describe('bot graph — time context injection', () => {
       .filter((m) => m.getType() === 'human')
       .map((m) => flat(m.content));
 
-    // The time-divider label should appear in one of the HumanMessages.
-    const hasDivider = humanTexts.some((t) => t.includes('———'));
+    // The time-divider label should appear in one of the HumanMessages with the exact gap text.
+    const hasDivider = humanTexts.some((t) => t.includes('——— 2 hours later'));
     expect(hasDivider).toBe(true);
 
     // The actual message content is still present (plain Author: text form).

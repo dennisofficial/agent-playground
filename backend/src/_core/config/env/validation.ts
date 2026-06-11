@@ -141,7 +141,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   HARNESS_SURFACE_ID: Joi.string().optional(),
   HARNESS_TEAM_ID: Joi.string().optional(),
   CHANNEL_HYDRATE_LIMIT: Joi.number().integer().min(1).optional(),
-  HARNESS_TIMESTAMP_GAP_MS: Joi.number().integer().min(0).optional(),
+  HARNESS_TIMESTAMP_GAP_MS: Joi.number().integer().min(1).optional(),
   GATE_MODEL: Joi.string().optional(),
   EXTRACT_MODEL: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
