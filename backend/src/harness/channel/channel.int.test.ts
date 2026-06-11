@@ -178,6 +178,7 @@ describe('channel persistence (live Postgres)', () => {
     const room = registry.get(SURFACE);
     expect(room).toEqual({
       channelId: SURFACE,
+      teamId: 'local',
       kind: 'dm',
       project: 'project-a',
       members: ['alex', 'dennis'],
