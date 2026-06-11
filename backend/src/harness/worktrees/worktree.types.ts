@@ -19,6 +19,8 @@ export interface Worktree {
   checkout: string;
   /** The employee that created it ('' when adopted and the branch doesn't carry an owner). */
   ownerBot: string;
+  /** The tenant (Slack team id) the work belongs to (DEFAULT_TEAM for WORKER_ROOT / dev). */
+  team: string;
   /** The project the work belongs to ('' when adopted from WORKER_ROOT). */
   project: string;
   /** The repo this checkout belongs to (WORKER_ROOT's repo, or a registered project's clone).
@@ -37,6 +39,7 @@ export interface NewWorktree {
    * The personal branch is cut FROM it, so everyone on the feature starts from the same base. */
   shared?: string;
   ownerBot: string;
+  team: string;
   project: string;
 }
 

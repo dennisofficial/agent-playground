@@ -48,7 +48,9 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
     if (!rec) {
       return `No registered GitHub repo matches ${worktreeId} (project "${wt.project || '(none)'}") — Dennis can register it via the admin API; until then the shared branch stays local.`;
     }
-    const auth = await this.tokens.resolve(rec.tokenName).catch(() => undefined);
+    const auth = await this.tokens
+      .resolve(rec.teamId, rec.tokenName)
+      .catch(() => undefined);
     if (!auth) {
       return rec.tokenName
         ? `The project's GitHub token "${rec.tokenName}" isn't in the token store — Dennis can add it via the admin API.`

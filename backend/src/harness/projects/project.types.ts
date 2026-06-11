@@ -1,5 +1,7 @@
 /** A registered project: binds a project id (the slug rooms carry) to a GitHub repo. */
 export interface ProjectRecord {
+  /** The tenant (Slack team id) this project belongs to. */
+  teamId: string;
   projectId: string;
   displayName: string;
   /** HTTPS GitHub URL (validated at the API edge). */
@@ -13,6 +15,7 @@ export interface ProjectRecord {
 }
 
 export interface NewProject {
+  teamId: string;
   projectId: string;
   displayName: string;
   gitUrl: string;

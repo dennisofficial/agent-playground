@@ -56,6 +56,7 @@ export class CreateWorktreeTool
         branch,
         shared,
         ownerBot: id.selfAgent,
+        team: id.team,
         project: id.project,
       });
       const sharedNote = worktree.sharedBranch

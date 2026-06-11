@@ -40,37 +40,44 @@ export class SlackIdentityStore {
   }
 
   /** Upsert an employee's puppet token (rotation = same call). */
-  async put(botId: string, plaintextToken: string): Promise<SlackIdentityMeta> {
+  async put(
+    teamId: string,
+    botId: string,
+    plaintextToken: string,
+  ): Promise<SlackIdentityMeta> {
     const ciphertext = this.cipher.encrypt(plaintextToken); // throws actionably when key unset
     const rows = await this.q(
-      `INSERT INTO slack_identities (bot_id, token_ciphertext)
-       VALUES ($1, $2)
-       ON CONFLICT (bot_id) DO UPDATE SET token_ciphertext = EXCLUDED.token_ciphertext, updated_at = now()
+      `INSERT INTO slack_identities (team_id, bot_id, token_ciphertext)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (team_id, bot_id) DO UPDATE SET token_ciphertext = EXCLUDED.token_ciphertext, updated_at = now()
        RETURNING bot_id, created_at, updated_at`,
-      [botId, ciphertext],
+      [teamId, botId, ciphertext],
     );
     return toMeta(rows[0]);
   }
 
-  /** Bot ids + metadata only — token_ciphertext is never selected here. */
-  async listMeta(): Promise<SlackIdentityMeta[]> {
+  /** A workspace's bot ids + metadata only — token_ciphertext is never selected here. */
+  async listMeta(teamId: string): Promise<SlackIdentityMeta[]> {
     const rows = await this.q(
-      `SELECT bot_id, created_at, updated_at FROM slack_identities ORDER BY bot_id`,
-      [],
+      `SELECT bot_id, created_at, updated_at FROM slack_identities WHERE team_id = $1 ORDER BY bot_id`,
+      [teamId],
     );
     return rows.map(toMeta);
   }
 
-  async delete(botId: string): Promise<void> {
-    await this.q(`DELETE FROM slack_identities WHERE bot_id = $1`, [botId]);
+  async delete(teamId: string, botId: string): Promise<void> {
+    await this.q(
+      `DELETE FROM slack_identities WHERE team_id = $1 AND bot_id = $2`,
+      [teamId, botId],
+    );
   }
 
-  /** THE decrypt path. Returns undefined when the employee has no puppet token. */
-  async resolve(botId: string): Promise<string | undefined> {
+  /** THE decrypt path. Returns undefined when the employee has no puppet token in this workspace. */
+  async resolve(teamId: string, botId: string): Promise<string | undefined> {
     const rows = rawRows<{ token_ciphertext: string }>(
       await this.repo.manager.query(
-        `SELECT token_ciphertext FROM slack_identities WHERE bot_id = $1`,
-        [botId],
+        `SELECT token_ciphertext FROM slack_identities WHERE team_id = $1 AND bot_id = $2`,
+        [teamId, botId],
       ),
     );
     if (!rows[0]) return undefined;

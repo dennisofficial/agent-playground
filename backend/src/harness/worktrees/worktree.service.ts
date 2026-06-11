@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { createMutex } from '../domain/async';
+import { DEFAULT_TEAM } from '../domain/identity';
 import { gitAuthEnv, sameGitUrl } from '../projects/git-auth';
 import { GithubTokenStore } from '../projects/github-token-store';
 import { ProjectStore } from '../projects/project-store';
@@ -125,7 +126,9 @@ export class WorktreeService implements OnApplicationBootstrap {
 
   /** The decrypted token for a project (named override → default), or undefined (tokenless). */
   private async tokenFor(rec: ProjectRecord): Promise<string | undefined> {
-    return (await this.tokens.resolve(rec.tokenName).catch(() => undefined))?.token;
+    return (
+      await this.tokens.resolve(rec.teamId, rec.tokenName).catch(() => undefined)
+    )?.token;
   }
 
   /**
@@ -140,12 +143,14 @@ export class WorktreeService implements OnApplicationBootstrap {
     const wt = this.worktrees.get(worktreeId);
     if (!wt) return undefined;
     if (wt.project) {
-      const rec = await this.projects.get(wt.project).catch(() => undefined);
+      const rec = await this.projects
+        .get(wt.team, wt.project)
+        .catch(() => undefined);
       if (rec) return rec;
     }
     const origin = await this.git(['remote', 'get-url', 'origin'], wt.repoRoot).catch(() => '');
     if (!origin) return undefined;
-    const rec = (await this.projects.list().catch(() => [])).find((r) =>
+    const rec = (await this.projects.list(wt.team).catch(() => [])).find((r) =>
       sameGitUrl(origin, r.gitUrl),
     );
     if (rec && wt.project !== rec.projectId) {
@@ -181,15 +186,17 @@ export class WorktreeService implements OnApplicationBootstrap {
     });
   }
 
-  /** A registered project's managed clone, created on first use. */
+  /** A registered project's managed clone, created on first use. Per-tenant path: repos live under
+   * `<REPOS_ROOT>/<teamId>/<projectId>` so two workspaces' same-slug projects never collide. */
   private cloneLayout(rec: ProjectRecord): Promise<RepoLayout> {
-    return this.cachedLayout(`proj:${rec.projectId}`, async () => {
-      const root = join(this.reposRoot(), rec.projectId);
+    return this.cachedLayout(`proj:${rec.teamId}:${rec.projectId}`, async () => {
+      const root = join(this.reposRoot(), rec.teamId, rec.projectId);
+      const teamRoot = join(this.reposRoot(), rec.teamId);
       if (!(await exists(join(root, '.git')))) {
-        await mkdir(this.reposRoot(), { recursive: true });
+        await mkdir(teamRoot, { recursive: true });
         const auth = gitAuthEnv(rec.gitUrl, await this.tokenFor(rec));
-        this.logger.log(`cloning ${rec.gitUrl} → ${root} (project ${rec.projectId})`);
-        await this.git(['clone', rec.gitUrl, root], this.reposRoot(), auth);
+        this.logger.log(`cloning ${rec.gitUrl} → ${root} (team ${rec.teamId}, project ${rec.projectId})`);
+        await this.git(['clone', rec.gitUrl, root], teamRoot, auth);
         // Keep worktree checkouts out of `git status` noise without touching the repo's own files.
         await appendFile(join(root, '.git', 'info', 'exclude'), '\n.worktrees/\n').catch(() => {});
       }
@@ -203,8 +210,11 @@ export class WorktreeService implements OnApplicationBootstrap {
    * repair: a PATCHed git_url must take effect, not silently keep pushing to the old repo — repair
    * applies ONLY to managed clones, never WORKER_ROOT). Unregistered / '' → WORKER_ROOT.
    */
-  private async resolveLayout(project: string): Promise<RepoLayout> {
-    const rec = project ? await this.projects.get(project) : undefined;
+  private async resolveLayout(
+    team: string,
+    project: string,
+  ): Promise<RepoLayout> {
+    const rec = project ? await this.projects.get(team, project) : undefined;
     if (!rec) return this.workerRootLayout();
     const layout = await this.cloneLayout(rec);
     const origin = await this.git(['remote', 'get-url', 'origin'], layout.repoRoot).catch(() => '');
@@ -310,7 +320,10 @@ export class WorktreeService implements OnApplicationBootstrap {
           'Shared branches are never checked out — pass `shared` instead of `branch` to join one.',
         );
       }
-      const { repoRoot, subdir, worktreesDir } = await this.resolveLayout(input.project);
+      const { repoRoot, subdir, worktreesDir } = await this.resolveLayout(
+        input.team,
+        input.project,
+      );
       const id = this.nextId();
       const slug = slugify(input.name);
       const checkout = join(worktreesDir, `${id}-${slug}`);
@@ -319,7 +332,10 @@ export class WorktreeService implements OnApplicationBootstrap {
       // A project registered AFTER worktrees were cut for it on WORKER_ROOT: those old trees stay
       // on the old repo (their shared branches don't span repos) — surface it once, at create.
       const strays = [...this.worktrees.values()].filter(
-        (w) => w.project === input.project && w.repoRoot !== repoRoot,
+        (w) =>
+          w.team === input.team &&
+          w.project === input.project &&
+          w.repoRoot !== repoRoot,
       );
       if (strays.length) {
         warning =
@@ -382,6 +398,7 @@ export class WorktreeService implements OnApplicationBootstrap {
         path: withSubdir(checkout, subdir),
         checkout,
         ownerBot: input.ownerBot,
+        team: input.team,
         project: input.project,
         repoRoot,
         ...(shared ? { sharedBranch: shared } : {}),
@@ -646,14 +663,26 @@ export class WorktreeService implements OnApplicationBootstrap {
   async adoptWorktrees(): Promise<void> {
     await this.gitOps(async () => {
       if (this.env.get('WORKER_ROOT')) {
-        await this.adoptFromRepo(await this.workerRootLayout(), '');
+        // WORKER_ROOT is the dev single-repo — its adopted trees belong to the default team.
+        await this.adoptFromRepo(await this.workerRootLayout(), DEFAULT_TEAM, '');
       } else {
         this.logger.warn('WORKER_ROOT not set — skipping local-repo adoption.');
       }
-      for (const rec of await this.projects.list().catch(() => [])) {
-        if (await exists(join(this.reposRoot(), rec.projectId, '.git'))) {
-          await this.adoptFromRepo(await this.cloneLayout(rec), rec.projectId).catch((err) =>
-            this.logger.warn(`adoption failed for project ${rec.projectId}: ${err}`),
+      // Cross-tenant: re-adopt every workspace's managed clones.
+      for (const rec of await this.projects.listAll().catch(() => [])) {
+        if (
+          await exists(
+            join(this.reposRoot(), rec.teamId, rec.projectId, '.git'),
+          )
+        ) {
+          await this.adoptFromRepo(
+            await this.cloneLayout(rec),
+            rec.teamId,
+            rec.projectId,
+          ).catch((err) =>
+            this.logger.warn(
+              `adoption failed for project ${rec.teamId}/${rec.projectId}: ${err}`,
+            ),
           );
         }
       }
@@ -669,26 +698,36 @@ export class WorktreeService implements OnApplicationBootstrap {
   private async recoverAdoptedProjects(): Promise<void> {
     const orphans = [...this.worktrees.values()].filter((w) => !w.project);
     if (!orphans.length) return;
-    const recs = await this.projects.list().catch(() => []);
+    const recs = await this.projects.listAll().catch(() => []);
     if (!recs.length) return;
-    const byRepo = new Map<string, string>();
+    const byRepo = new Map<string, { project: string; team: string }>();
     for (const wt of orphans) {
-      let project = byRepo.get(wt.repoRoot);
-      if (project === undefined) {
+      let hit = byRepo.get(wt.repoRoot);
+      if (hit === undefined) {
         const origin = await this.git(['remote', 'get-url', 'origin'], wt.repoRoot).catch(
           () => '',
         );
-        project = (origin && recs.find((r) => sameGitUrl(origin, r.gitUrl))?.projectId) || '';
-        byRepo.set(wt.repoRoot, project);
+        const rec = origin
+          ? recs.find((r) => sameGitUrl(origin, r.gitUrl))
+          : undefined;
+        hit = { project: rec?.projectId ?? '', team: rec?.teamId ?? wt.team };
+        byRepo.set(wt.repoRoot, hit);
       }
-      if (project) {
-        wt.project = project;
-        this.logger.log(`adoption: ${wt.id} recovered project ${project} from origin`);
+      if (hit.project) {
+        wt.project = hit.project;
+        wt.team = hit.team;
+        this.logger.log(
+          `adoption: ${wt.id} recovered project ${hit.team}/${hit.project} from origin`,
+        );
       }
     }
   }
 
-  private async adoptFromRepo(layout: RepoLayout, project: string): Promise<void> {
+  private async adoptFromRepo(
+    layout: RepoLayout,
+    team: string,
+    project: string,
+  ): Promise<void> {
     const { repoRoot, subdir, worktreesDir } = layout;
     await this.git(['worktree', 'prune'], repoRoot).catch(() => {});
     const out = await this.git(['worktree', 'list', '--porcelain'], repoRoot).catch(() => '');
@@ -725,6 +764,7 @@ export class WorktreeService implements OnApplicationBootstrap {
         path: withSubdir(checkout, subdir),
         checkout,
         ownerBot: owner,
+        team,
         project,
         repoRoot,
         ...(shared ? { sharedBranch: shared } : {}),
