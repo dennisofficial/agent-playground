@@ -9,6 +9,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
+import { TEAM_RULES } from '../employees/persona.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 
 /** The three-tier response gate: reply, react ("got it" without noise), or stay silent. */
@@ -44,6 +45,8 @@ interface GateInput {
   teammateNote: string;
   /** The message under judgment. */
   text: string;
+  /** Per-employee standing protocols, formatted as a bullet list (empty string when none). */
+  protocols: string;
 }
 
 const Decision = z.object({
@@ -65,6 +68,10 @@ type DecisionT = z.infer<typeof Decision>;
 // Identity comes only from {botName}/{botRole} at the top. Re-add examples only with neutral names.
 const PROMPT = `You are {botName}, the {botRole} on a small team, in {room}.
 Team: {roster}.
+
+${TEAM_RULES}
+
+{protocols}
 
 You share this channel with teammates and the boss. You are ONE of several people who could reply — the
 others can answer too. Decide ONLY whether YOU should speak up about the latest message, given the
@@ -126,6 +133,7 @@ export class GateService {
           'author',
           'teammateNote',
           'text',
+          'protocols',
         ],
       }),
       // includeRaw keeps the raw AIMessage so we can read its usage_metadata (exact token counts).
@@ -208,6 +216,9 @@ export class GateService {
         author: opts.authorName ?? (fromBot ? 'a teammate' : 'the boss'),
         teammateNote: fromBot ? ' (a teammate)' : ' (the boss)',
         text,
+        protocols: bot.protocols?.length
+          ? `Your standing protocols:\n${bot.protocols.map((p) => `- ${p}`).join('\n')}`
+          : '',
       });
     } catch {
       return IGNORE; // a gate failure must never crash the channel — default to quiet

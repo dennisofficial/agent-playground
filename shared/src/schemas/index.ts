@@ -3,12 +3,15 @@
 // NOTE: the board (tickets/plans/comments) is intentionally NOT here — it's being redesigned and will
 // land in its own pass.
 export * from './classes/base.entity';
+export * from './control';
 export * from './bot-cursor.entity';
 export * from './channel-message.entity';
 export * from './channel.entity';
 export * from './fact.entity';
 export * from './github-token.entity';
 export * from './project.entity';
+export * from './provider-key.entity';
+export * from './slack-identity.entity';
 export * from './task.entity';
 export * from './worklog.entity';
 
@@ -18,6 +21,8 @@ import { Channel } from './channel.entity';
 import { Fact } from './fact.entity';
 import { GithubToken } from './github-token.entity';
 import { Project } from './project.entity';
+import { ProviderKey } from './provider-key.entity';
+import { SlackIdentity } from './slack-identity.entity';
 import { Task } from './task.entity';
 import { Worklog } from './worklog.entity';
 
@@ -31,4 +36,6 @@ export const ENTITIES = [
   Channel,
   Project,
   GithubToken,
+  ProviderKey,
+  SlackIdentity,
 ];

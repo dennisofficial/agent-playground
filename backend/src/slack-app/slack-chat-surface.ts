@@ -5,56 +5,45 @@ import type {
   InboundChatMessage,
   OutboundChatMessage,
 } from '@harness/surface/chat-surface.port';
-import {
-  Inject,
-  Injectable,
-  Logger,
-  OnApplicationShutdown,
-} from '@nestjs/common';
-import type { SocketModeClient } from '@slack/socket-mode';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { WebClient } from '@slack/web-api';
 import { Observable, Subject } from 'rxjs';
 import { SlackDirectoryService } from './slack-directory.service';
+import { SlackIdentityRegistry } from './slack-identity.registry';
+import type { SlackInboundEvent } from './slack-inbound.types';
 import {
   emojiToSlackName,
   extractMentionIds,
   translateInbound,
+  translateOutbound,
 } from './slack-text';
-import { SLACK_SOCKET_MODE_CLIENT, SLACK_WEB_CLIENT } from './slack.tokens';
+import { SLACK_WEB_CLIENT } from './slack.tokens';
 
 const SURFACE_PREFIX = 'slack:';
 /** Bot-on-bot reactions target harness-minted message ids — remember where we posted each one. */
 const POSTED_ID_LRU_MAX = 2_000;
 const POST_RETRIES = 3;
 
-/** The shape SocketModeClient hands events_api listeners (`socket.on('message', …)`). */
-interface SlackEventEnvelope {
-  ack: () => Promise<void>;
-  event: {
-    type: string;
-    subtype?: string;
-    bot_id?: string;
-    user?: string;
-    text?: string;
-    channel?: string;
-    ts?: string;
-    thread_ts?: string;
-  };
-}
+/** Slack's membership-failure codes differ per method: puppets hit these in channels they
+ * haven't joined → `conversations.join` + one retry, then fall back to the main app. */
+const POST_MEMBERSHIP_ERRORS = ['not_in_channel', 'channel_not_found'];
+const REACT_MEMBERSHIP_ERRORS = ['no_permission', 'not_in_channel', 'channel_not_found'];
 
 /**
- * The Slack Socket Mode ChatSurface — the real group chat. One Slack app posts for every employee
- * via `chat.postMessage` `username` overrides (`chat:write.customize`); inbound channel messages
- * become harness messages after mention translation and room registration. v1 scope: top-level
- * channel messages only (thread replies dropped), no Slack DMs (non-`slack:` rooms skipped on
- * post), single-human speaker attribution (`patchStatus({ speaker })` before each emit).
+ * The Slack ChatSurface — the real group chat. One Slack app posts for every employee via
+ * `chat.postMessage` `username` overrides (`chat:write.customize`); inbound channel messages
+ * become harness messages after mention translation and room registration. Transport-agnostic
+ * since the inbound refactor: the SlackInboundRouter feeds `handleMessageEvent` from whichever
+ * transport is live (Socket Mode in dev, the gateway listener on tenant stacks); acking is the
+ * transport's job. v1 scope: top-level channel messages only (thread replies dropped), no Slack
+ * DMs (non-`slack:` rooms skipped on post), single-human speaker attribution (`patchStatus({
+ * speaker })` before each emit).
  */
 @Injectable()
-export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
+export class SlackChatSurface implements ChatSurface {
   readonly name = 'slack';
   private readonly logger = new Logger(SlackChatSurface.name);
   private readonly subject = new Subject<InboundChatMessage>();
-  private selfBotUserId?: string;
   /** Harness-minted message id → where it landed in Slack (insertion-ordered, LRU-bounded). */
   private readonly postedIds = new Map<string, { channel: string; ts: string }>();
 
@@ -63,10 +52,13 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
    * (raw GitHub today, the deployed web app later) without touching roster code. */
   private readonly avatarBase?: string;
 
+  /** Channels where a puppet's join+retry already failed (private, uninvited) — warn once. */
+  private readonly membershipFallbacks = new Set<string>();
+
   constructor(
     @Inject(SLACK_WEB_CLIENT) private readonly web: WebClient,
-    @Inject(SLACK_SOCKET_MODE_CLIENT) private readonly socket: SocketModeClient,
     private readonly directory: SlackDirectoryService,
+    private readonly identities: SlackIdentityRegistry,
     private readonly bus: ConductorEventsBus,
     env: EnvService,
   ) {
@@ -81,45 +73,17 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
     return this.subject.asObservable();
   }
 
-  /** Called from main.ts AFTER Nest bootstrap, so the SurfaceBridge is already subscribed to
-   * `inbound$` before the first event can arrive. Returns the bot's identity for the boot banner. */
-  async connect(): Promise<{ botName: string }> {
-    const auth = await this.web.auth.test();
-    this.selfBotUserId = auth.user_id;
-    this.socket.on('message', (envelope: SlackEventEnvelope) => {
-      void this.handleMessageEvent(envelope);
-    });
-    for (const state of ['connected', 'disconnected', 'reconnecting'] as const) {
-      this.socket.on(state, () => this.logger.log(`Socket Mode: ${state}`));
-    }
-    await this.socket.start();
-    return { botName: auth.user ?? 'unknown' };
-  }
-
-  async onApplicationShutdown(): Promise<void> {
-    try {
-      await this.socket.disconnect();
-    } catch {
-      // already down — nothing to tear down
-    }
-  }
-
-  /** Inbound pipeline. Ack FIRST (Slack redelivers unacked envelopes), then filter:
-   * own/bot messages (the echo-loop guard — our own chat.postMessage posts come back as message
-   * events), non-plain subtypes, and thread replies (v1). */
-  private async handleMessageEvent(envelope: SlackEventEnvelope): Promise<void> {
-    const { ack, event } = envelope;
-    try {
-      await ack();
-    } catch (err) {
-      this.logger.warn(`ack failed: ${err}`);
-    }
+  /** Inbound pipeline (router-called; the transport has already acked). Filters: own/bot messages
+   * (the echo-loop guard — our own chat.postMessage posts come back as message events), non-plain
+   * subtypes, and thread replies (v1). */
+  async handleMessageEvent(event: SlackInboundEvent): Promise<void> {
+    const selfBotUserId = this.directory.selfUserId;
     try {
       if (!event || event.type !== 'message') return;
       if (event.bot_id || event.subtype === 'bot_message') return;
       if (event.subtype) return; // message_changed, channel_join, …
       if (!event.user || !event.channel || !event.ts) return;
-      if (this.selfBotUserId && event.user === this.selfBotUserId) return;
+      if (selfBotUserId && event.user === selfBotUserId) return;
       if (event.thread_ts && event.thread_ts !== event.ts) {
         this.logger.debug(`dropping thread reply in ${event.channel} (v1)`);
         return;
@@ -128,11 +92,11 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
       const author = await this.directory.resolveUser(event.user);
       // Pre-resolve mentioned users so the sync translator's cache lookups hit.
       for (const id of extractMentionIds(event.text ?? '')) {
-        if (id !== this.selfBotUserId) await this.directory.resolveUser(id);
+        if (id !== selfBotUserId) await this.directory.resolveUser(id);
       }
       const text = translateInbound(event.text ?? '', {
         resolveUser: (id) => this.directory.displayNameOf(id),
-        selfBotUserId: this.selfBotUserId,
+        selfBotUserId,
       }).trim();
       if (!text) return;
 
@@ -153,20 +117,30 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
     }
   }
 
-  /** Deliver a bot message. Non-Slack rooms (e.g. bot-minted `tui:dm:*`) are skipped — the message
-   * is already durable in the channel log; Slack DMs are a v2 item. */
+  /** Deliver a bot message. An employee with a puppet token posts as their OWN bot user (no
+   * username/icon overrides — the app identity IS the employee); everyone else (Jarvis, employees
+   * without tokens) rides the main app + `username` override, exactly the pre-puppet behavior.
+   * Non-Slack rooms (e.g. bot-minted `tui:dm:*`) are skipped — the message is already durable in
+   * the channel log; Slack DMs are a v2 item. */
   async post(msg: OutboundChatMessage): Promise<void> {
     if (!msg.surfaceId.startsWith(SURFACE_PREFIX)) {
       this.logger.debug(`skipping post to non-slack room ${msg.surfaceId}`);
       return;
     }
     const channel = msg.surfaceId.slice(SURFACE_PREFIX.length);
+    const text = translateOutbound(msg.text); // LLMs emit Markdown; Slack renders mrkdwn
+    const puppet = await this.identities.clientFor(msg.authorBotId);
     let lastErr: unknown;
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
-        const res = await this.web.chat.postMessage({
+        let res = puppet
+          ? await this.tryWithJoin(puppet, channel, msg.authorBotId, POST_MEMBERSHIP_ERRORS, () =>
+              puppet.chat.postMessage({ channel, text }),
+            )
+          : undefined;
+        res ??= await this.web.chat.postMessage({
           channel,
-          text: msg.text,
+          text,
           username: msg.authorName,
           ...(this.avatarBase
             ? { icon_url: `${this.avatarBase}/${msg.authorBotId}.png` }
@@ -183,11 +157,12 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
   }
 
   /** React on a surface message: a raw Slack ts (human messages ride their native id), or a
-   * harness-minted bot-message id resolved through the posted-id LRU. */
+   * harness-minted bot-message id resolved through the posted-id LRU. An employee with a puppet
+   * token reacts as their own bot user (the hover names THEM); otherwise the main app reacts. */
   async react(
     targetMessageId: string,
     emoji: string,
-    _asBot: { id: string; name: string },
+    asBot: { id: string; name: string },
     channelId: string,
   ): Promise<void> {
     if (!channelId.startsWith(SURFACE_PREFIX)) return;
@@ -199,16 +174,51 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
       this.logger.debug(`no Slack ts for reaction target ${targetMessageId}`);
       return;
     }
+    const args = { channel, timestamp, name: emojiToSlackName(emoji) };
     try {
-      await this.web.reactions.add({
-        channel,
-        timestamp,
-        name: emojiToSlackName(emoji),
-      });
+      const puppet = await this.identities.clientFor(asBot.id);
+      const reacted = puppet
+        ? await this.tryWithJoin(puppet, channel, asBot.id, REACT_MEMBERSHIP_ERRORS, () =>
+            puppet.reactions.add(args),
+          )
+        : undefined;
+      if (!reacted) await this.web.reactions.add(args);
     } catch (err) {
-      // One Slack app reacts for every employee — two bots acking with the same emoji is fine.
-      if (isSlackError(err, 'already_reacted')) return;
+      // Same-emoji collisions stay fine: per-identity duplicates (or two fallback bots) no-op.
+      if (isSlackError(err, ['already_reacted'])) return;
       throw err;
+    }
+  }
+
+  /** Run a puppet call; on a membership failure, `conversations.join` (public channels — the
+   * `channels:join` scope) and retry ONCE. Returns undefined when the join/retry also fails
+   * (private channel, puppet not invited) — callers fall back to the main-app identity. Anything
+   * that is NOT a membership failure (network, already_reacted, …) propagates to the caller's
+   * own handling. */
+  private async tryWithJoin<T>(
+    client: WebClient,
+    channel: string,
+    botId: string,
+    membershipCodes: string[],
+    call: () => Promise<T>,
+  ): Promise<T | undefined> {
+    try {
+      return await call();
+    } catch (err) {
+      if (!isSlackError(err, membershipCodes)) throw err;
+      try {
+        await client.conversations.join({ channel });
+        return await call();
+      } catch {
+        const key = `${botId}|${channel}`;
+        if (!this.membershipFallbacks.has(key)) {
+          this.membershipFallbacks.add(key);
+          this.logger.warn(
+            `puppet '${botId}' can't act in ${channel} (private channel? invite the bot) — falling back to the main app identity`,
+          );
+        }
+        return undefined;
+      }
     }
   }
 
@@ -221,12 +231,10 @@ export class SlackChatSurface implements ChatSurface, OnApplicationShutdown {
   }
 }
 
-function isSlackError(err: unknown, code: string): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as { data?: { error?: string } }).data?.error === code
-  );
+function isSlackError(err: unknown, codes: string[]): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const code = (err as { data?: { error?: string } }).data?.error;
+  return code !== undefined && codes.includes(code);
 }
 
 function sleep(ms: number): Promise<void> {

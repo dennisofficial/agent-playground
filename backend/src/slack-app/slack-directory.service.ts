@@ -24,12 +24,31 @@ export class SlackDirectoryService {
   private readonly logger = new Logger(SlackDirectoryService.name);
   private readonly users = new Map<string, ResolvedSlackUser>();
   private readonly registeredChannels = new Set<string>();
+  private _selfUserId?: string;
 
   constructor(
     @Inject(SLACK_WEB_CLIENT) private readonly web: WebClient,
     private readonly registry: ChannelRegistryService,
     private readonly employees: EmployeeRegistry,
   ) {}
+
+  /** The app's own bot user id (`auth.test`), resolved at boot by whichever transport is live.
+   * Shared by the surface (echo-loop guard, self-mention translation), the router, and Jarvis. */
+  get selfUserId(): string | undefined {
+    return this._selfUserId;
+  }
+
+  setSelfUserId(userId: string | undefined): void {
+    this._selfUserId = userId;
+  }
+
+  /** auth.test → remember our own bot user id; returns the identity for the boot banner. Called
+   * by the socket transport at connect and by gateway-mode bootstrap (which never connects). */
+  async resolveSelf(): Promise<{ botName: string }> {
+    const auth = await this.web.auth.test();
+    this._selfUserId = auth.user_id;
+    return { botName: auth.user ?? 'unknown' };
+  }
 
   /** users.info with a permanent in-memory cache (tiny team; refreshed only on process restart). */
   async resolveUser(slackUserId: string): Promise<ResolvedSlackUser> {
@@ -64,7 +83,7 @@ export class SlackDirectoryService {
    * the conductor's bootstrap) is left untouched. */
   async ensureChannelRegistered(
     slackChannelId: string,
-    authorId: string,
+    authorId?: string,
   ): Promise<void> {
     if (this.registeredChannels.has(slackChannelId)) return;
     const channelId = `slack:${slackChannelId}`;
@@ -83,7 +102,10 @@ export class SlackDirectoryService {
       channelId,
       kind: 'channel',
       project: slugify(name),
-      members: [...this.employees.list().map((b) => b.id), authorId],
+      members: [
+        ...this.employees.list().map((b) => b.id),
+        ...(authorId ? [authorId] : []), // a bot self-join has no human author yet
+      ],
       displayName: `#${name}`,
     });
     this.registeredChannels.add(slackChannelId);

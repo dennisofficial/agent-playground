@@ -58,6 +58,116 @@ export function translateInbound(
   return out;
 }
 
+/**
+ * Harness Markdown → Slack mrkdwn for outbound posts. The LLMs emit standard Markdown
+ * (`**bold**`, `[label](url)`, `# headers`, tables); Slack renders mrkdwn (`*bold*`,
+ * `<url|label>`, no headers, NO tables) and shows everything else literally. Two passes, both
+ * code-fence-aware: ① structures mrkdwn can't express at all (tables → aligned monospace blocks,
+ * horizontal rules → a divider line); ② inline syntax. Code contents are never rewritten — the
+ * only code-segment change is stripping fence language tags, which mrkdwn renders as text.
+ */
+export function translateOutbound(text: string): string {
+  const stage1 = mapSegments(text, (prose) => convertTables(convertRules(prose)), (c) => c);
+  return mapSegments(stage1, translateProse, stripFenceLang);
+}
+
+/** Capture-group split: fenced blocks + inline code land at odd indices, prose at even. */
+function mapSegments(
+  text: string,
+  proseFn: (s: string) => string,
+  codeFn: (s: string) => string,
+): string {
+  const parts = text.split(/(```[\s\S]*?```|`[^`\n]*`)/);
+  return parts.map((part, i) => (i % 2 === 1 ? codeFn(part) : proseFn(part))).join('');
+}
+
+/** ```lang fences: mrkdwn has no syntax highlighting and renders the tag as literal first-line
+ * text — drop it. */
+function stripFenceLang(code: string): string {
+  return code.replace(/^```[^\n`]+\n/, '```\n');
+}
+
+/** `---` / `***` / `___` rules → a divider line (mrkdwn has no hr). */
+function convertRules(seg: string): string {
+  return seg.replace(/^[ \t]*([-*_])\1{2,}[ \t]*$/gm, '──────────');
+}
+
+// ── Markdown tables → aligned monospace blocks (mrkdwn has no tables at all) ────────────────────
+
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_SEPARATOR = /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/;
+
+function convertTables(seg: string): string {
+  const lines = seg.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; ) {
+    if (TABLE_ROW.test(lines[i]) && TABLE_SEPARATOR.test(lines[i + 1] ?? '')) {
+      const rows = [parseTableRow(lines[i])];
+      let j = i + 2;
+      while (j < lines.length && TABLE_ROW.test(lines[j])) {
+        rows.push(parseTableRow(lines[j]));
+        j++;
+      }
+      out.push(renderTable(rows));
+      i = j;
+    } else {
+      out.push(lines[i]);
+      i++;
+    }
+  }
+  return out.join('\n');
+}
+
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim());
+}
+
+function renderTable(rows: string[][]): string {
+  const cols = Math.max(...rows.map((r) => r.length));
+  const widths = Array.from({ length: cols }, (_, c) =>
+    Math.max(...rows.map((r) => (r[c] ?? '').length)),
+  );
+  const fmt = (r: string[]): string =>
+    widths.map((w, c) => (r[c] ?? '').padEnd(w)).join(' | ').trimEnd();
+  const divider = widths.map((w) => '-'.repeat(w)).join('-+-');
+  const body = [fmt(rows[0]), divider, ...rows.slice(1).map(fmt)];
+  return '```\n' + body.join('\n') + '\n```';
+}
+
+function translateProse(seg: string): string {
+  return (
+    seg
+      // Images BEFORE links (the ![ syntax contains the link syntax). A real URL becomes a plain
+      // link (Slack unfurls images); a relative/fake path keeps just the alt text — mrkdwn can't
+      // render either, and the persona rules tell bots not to emit these at all.
+      .replace(
+        /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
+        (_m, alt: string, url: string) => (alt ? `<${url}|${alt}>` : url),
+      )
+      .replace(/!\[([^\]]*)\]\([^\s)]*\)/g, '$1')
+      // [label](url) → <url|label>
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<$2|$1>')
+      // Bullets BEFORE italic — a leading '* ' must not look like an emphasis opener.
+      .replace(/^(\s*)[*-]\s+/gm, '$1• ')
+      // Italic FIRST among the star rules: it can't match a ** pair or a bare # header line,
+      // but running it later would re-eat the *x* those rules produce. Content must start and
+      // end non-space and contain no '*' (`2 * 3 * 4` is math, not emphasis).
+      .replace(/(?<![\w*])\*([^\s*](?:[^*\n]*[^\s*])?)\*(?![\w*])/g, '_$1_')
+      // ATX headers → a bold line (mrkdwn has no headers)
+      .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
+      // Bold: **x** / __x__ → *x*
+      .replace(/\*\*([^*]+)\*\*/g, '*$1*')
+      .replace(/__([^_]+)__/g, '*$1*')
+      // Strikethrough: ~~x~~ → ~x~
+      .replace(/~~([^~]+)~~/g, '~$1~')
+  );
+}
+
 /** Unicode emoji → Slack shortcode names for `reactions.add` (the gate/ack path emits unicode,
  * e.g. '👍'). Already-bare shortcode strings pass through; unknown emoji fall back to thumbsup. */
 const EMOJI_TO_SLACK: Record<string, string> = {

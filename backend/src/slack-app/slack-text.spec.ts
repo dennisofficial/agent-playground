@@ -1,4 +1,4 @@
-import { emojiToSlackName, translateInbound } from './slack-text';
+import { emojiToSlackName, translateInbound, translateOutbound } from './slack-text';
 
 const deps = (overrides?: {
   users?: Record<string, string>;
@@ -69,5 +69,75 @@ describe('emojiToSlackName', () => {
   it('falls back to thumbsup for unknown emoji', () => {
     expect(emojiToSlackName('🦖')).toBe('thumbsup');
     expect(emojiToSlackName('')).toBe('thumbsup');
+  });
+});
+
+describe('translateOutbound (Markdown → mrkdwn)', () => {
+  it('converts bold, italic, strikethrough, links, and headers', () => {
+    expect(translateOutbound('**done** and __shipped__')).toBe('*done* and *shipped*');
+    expect(translateOutbound('this is *emphasis* only')).toBe('this is _emphasis_ only');
+    expect(translateOutbound('~~dropped~~ it')).toBe('~dropped~ it');
+    expect(translateOutbound('see [the PR](https://github.com/a/b/pull/1)')).toBe(
+      'see <https://github.com/a/b/pull/1|the PR>',
+    );
+    expect(translateOutbound('# Standup notes\nbody')).toBe('*Standup notes*\nbody');
+  });
+
+  it('rewrites Markdown bullets to • without eating emphasis', () => {
+    expect(translateOutbound('- first\n* second\n  - nested')).toBe(
+      '• first\n• second\n  • nested',
+    );
+    expect(translateOutbound('* item with *emphasis* inside')).toBe(
+      '• item with _emphasis_ inside',
+    );
+  });
+
+  it('never rewrites code contents (only the fence language tag is dropped)', () => {
+    expect(translateOutbound('run `npm i **not bold**` now')).toBe(
+      'run `npm i **not bold**` now',
+    );
+    expect(
+      translateOutbound('before **bold**\n```ts\nconst a = b ** c; // [x](y)\n```\nafter'),
+    ).toBe('before *bold*\n```\nconst a = b ** c; // [x](y)\n```\nafter');
+  });
+
+  it('leaves plain text, multiplication, and existing mrkdwn alone', () => {
+    expect(translateOutbound('2 * 3 * 4 = 24')).toBe('2 * 3 * 4 = 24');
+    expect(translateOutbound('already _italic_ and ~struck~')).toBe(
+      'already _italic_ and ~struck~',
+    );
+  });
+
+  it('strips fence language tags (mrkdwn renders them as literal first-line text)', () => {
+    expect(translateOutbound('```javascript\nconst a = 1;\n```')).toBe(
+      '```\nconst a = 1;\n```',
+    );
+    expect(translateOutbound('```\nplain\n```')).toBe('```\nplain\n```');
+  });
+
+  it('turns horizontal rules into a divider line', () => {
+    expect(translateOutbound('above\n---\nbelow')).toBe('above\n──────────\nbelow');
+    expect(translateOutbound('***')).toBe('──────────');
+    // Not a rule: a frontmatter-less em-dash aside or a 2-char line.
+    expect(translateOutbound('a -- b')).toBe('a -- b');
+  });
+
+  it('renders Markdown tables as aligned monospace blocks', () => {
+    const table = '| Col A | B |\n|-------|---|\n| Row 1 | ✅ |\n| Longer row | x |';
+    expect(translateOutbound(table)).toBe(
+      '```\nCol A      | B\n-----------+--\nRow 1      | ✅\nLonger row | x\n```',
+    );
+    // Pipes without a separator row are not a table.
+    expect(translateOutbound('a | b')).toBe('a | b');
+  });
+
+  it('converts image syntax: real URLs become links, fake paths keep the alt text', () => {
+    expect(translateOutbound('see ![diagram](https://cdn.x/d.png)')).toBe(
+      'see <https://cdn.x/d.png|diagram>',
+    );
+    expect(translateOutbound('![](https://cdn.x/d.png)')).toBe('https://cdn.x/d.png');
+    expect(translateOutbound('an image placeholder: ![alt text](image.png)')).toBe(
+      'an image placeholder: alt text',
+    );
   });
 });

@@ -23,6 +23,7 @@ import {
 import { flattenContent, titleCase } from '../domain/text';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
+import { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -116,6 +117,7 @@ export class ConductorService
     private readonly runner: SessionRunnerService,
     private readonly bus: ConductorEventsBus,
     private readonly env: EnvService,
+    private readonly readiness: LlmReadinessService,
   ) {}
 
   /** Constructor stays pure; subscriptions + the first schedule happen here (after channel/cursor
@@ -160,6 +162,10 @@ export class ConductorService
     }
 
     this.unsubscribers.push(this.channel.subscribe(() => this.schedule()));
+    // Pending-keys mode: when provider keys land at runtime, release the gate and deliver
+    // whatever accumulated while keyless.
+    const readySub = this.readiness.ready$.subscribe(() => this.schedule());
+    this.unsubscribers.push(() => readySub.unsubscribe());
     this.unsubscribers.push(
       this.sessions.onUpdate((session) => {
         void this.sessions
@@ -274,6 +280,13 @@ export class ConductorService
    */
   private schedule(): void {
     if (this.stopping) {
+      this.maybeResolveIdle();
+      return;
+    }
+    // Pending-keys gate: NOTHING that reaches the bot graph may start keyless — getBotGraph()
+    // constructs the Anthropic model at graph build time, so any keyless entry throws. Covers
+    // both session relays and room deliveries; ready$ → schedule() releases the backlog.
+    if (!this.readiness.isReady) {
       this.maybeResolveIdle();
       return;
     }

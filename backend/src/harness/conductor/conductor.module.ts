@@ -2,6 +2,7 @@ import { CreateModule } from '@workspace/nestjs-core';
 import { ChannelModule } from '../channel/channel.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { GateModule } from '../gate/gate.module';
+import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
@@ -22,6 +23,7 @@ import { ConductorService } from './conductor.service';
     ConductorEventsModule,
     EmployeesModule,
     GateModule,
+    LlmKeysModule,
     LlmModule,
     MemoryModule,
     SessionsModule,

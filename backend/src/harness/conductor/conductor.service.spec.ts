@@ -1,4 +1,5 @@
 import type { EnvService } from '@core/config/env/env.service';
+import { Subject } from 'rxjs';
 import type {
   ChannelInfo,
   ChannelRegistryService,
@@ -8,6 +9,7 @@ import type { ChannelMsg } from '../channel/channel.types';
 import type { CursorStore } from '../channel/cursor.store';
 import type { ConductorEvent } from '../domain/conductor-events';
 import type { EmployeeRegistry } from '../employees/employee.registry';
+import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import type {
   Session,
   SessionRegistry,
@@ -172,6 +174,11 @@ async function buildConductor(behavior: FakeGraphBehavior) {
 
   const runner = { abortAll: () => {} } as unknown as SessionRunnerService;
   const env = { get: () => undefined } as unknown as EnvService;
+  // Always-ready in conductor specs; pending-keys gating is covered by the readiness spec.
+  const readiness = {
+    isReady: true,
+    ready$: new Subject<void>(),
+  } as unknown as LlmReadinessService;
 
   const conductor = new ConductorService(
     channel as unknown as ChannelService,
@@ -183,6 +190,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     runner,
     bus,
     env,
+    readiness,
   );
   await conductor.onApplicationBootstrap();
   return {

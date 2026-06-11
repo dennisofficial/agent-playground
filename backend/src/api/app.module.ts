@@ -2,9 +2,13 @@ import { EnvService } from '@core/config/env/env.service';
 import { envConfigValidation } from '@core/config/env/validation';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { DatabaseModule } from '../_lib/database/database.module';
+import { LlmKeysModule } from '../harness/llm-keys/llm-keys.module';
 import { ProjectsModule } from '../harness/projects/projects.module';
+import { SlackIdentitiesModule } from '../harness/slack-identities/slack-identities.module';
 import { AdminTokenGuard } from './admin/admin-token.guard';
+import { LlmKeysController } from './admin/llm-keys.controller';
 import { ProjectsController } from './admin/projects.controller';
+import { SlackIdentitiesController } from './admin/slack-identities.controller';
 import { TokensController } from './admin/tokens.controller';
 import { ApiController } from './api.controller';
 import { ApiService } from './api.service';
@@ -24,8 +28,16 @@ import { ApiService } from './api.service';
     }),
     DatabaseModule,
     ProjectsModule,
+    LlmKeysModule,
+    SlackIdentitiesModule,
   ],
-  controllers: [ApiController, ProjectsController, TokensController],
+  controllers: [
+    ApiController,
+    ProjectsController,
+    TokensController,
+    LlmKeysController,
+    SlackIdentitiesController,
+  ],
   providers: [ApiService, AdminTokenGuard],
 })
 export class AppModule {}

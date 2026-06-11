@@ -1,5 +1,7 @@
+import { RunnableLambda } from '@langchain/core/runnables';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { EmployeeRegistry } from '../employees/employee.registry';
+import { TEAM_RULES } from '../employees/persona.service';
 import { GateService } from './gate.service';
 
 /**
@@ -49,6 +51,68 @@ describe('GateService hard rules — channel context', () => {
     const d = await gate.gate(ALEX, 'my own reply', {
       authorBotId: 'alex',
       channel: { kind: 'dm', name: 'dennis ↔ alex' },
+    });
+    expect(d.action).toBe('ignore');
+  });
+});
+
+describe('GateService soft gate — prompt enrichment', () => {
+  it('includes protocols and team rules when invoking the soft model', async () => {
+    const captured: string[] = [];
+    const employees = {
+      mentionedBots: () => [],
+      addressedBots: () => [],
+      isBroadcast: () => false,
+      rosterSummary: () => 'Alex (backend engineer)',
+    } as unknown as EmployeeRegistry;
+    const models = {
+      buildGateModel: () => ({
+        withStructuredOutput: () =>
+          RunnableLambda.from((promptValue: { toString(): string }) => {
+            captured.push(promptValue.toString());
+            return {
+              raw: { usage_metadata: null },
+              parsed: { action: 'respond', reasoning: 'mocked' },
+            };
+          }),
+      }),
+    } as unknown as ChatModelFactory;
+    const gate = new GateService(employees, models);
+
+    await gate.gate(
+      { ...ALEX, protocols: ['Work only in your lane', 'Always write tests'] },
+      'what do you think about this approach?',
+      { authorName: 'Dennis', channel: { kind: 'channel', name: 'dev' } },
+    );
+
+    expect(captured).toHaveLength(1);
+    const prompt = captured[0];
+    expect(prompt).toContain('Work only in your lane');
+    expect(prompt).toContain('Always write tests');
+    expect(prompt).toContain(TEAM_RULES.slice(0, 60)); // first 60 chars confirm it's inlined
+  });
+
+  it('soft gate still works when the employee has no protocols', async () => {
+    const employees = {
+      mentionedBots: () => [],
+      addressedBots: () => [],
+      isBroadcast: () => false,
+      rosterSummary: () => 'Alex (backend engineer)',
+    } as unknown as EmployeeRegistry;
+    const models = {
+      buildGateModel: () => ({
+        withStructuredOutput: () =>
+          RunnableLambda.from(() => ({
+            raw: { usage_metadata: null },
+            parsed: { action: 'ignore', reasoning: 'mocked' },
+          })),
+      }),
+    } as unknown as ChatModelFactory;
+    const gate = new GateService(employees, models);
+
+    const d = await gate.gate(ALEX, 'hey', {
+      authorName: 'Dennis',
+      channel: { kind: 'channel', name: 'dev' },
     });
     expect(d.action).toBe('ignore');
   });

@@ -1,23 +1,27 @@
 import { firstValueFrom } from 'rxjs';
 import { SlackChatSurface } from './slack-chat-surface';
+import type { SlackInboundEvent } from './slack-inbound.types';
 
-type Handler = (envelope: unknown) => void;
-
-function makeFakes(envValues: Record<string, string | undefined> = {}) {
-  const handlers = new Map<string, Handler>();
-  const socket = {
-    on: vi.fn((event: string, h: Handler) => handlers.set(event, h)),
-    start: vi.fn(async () => {}),
-    disconnect: vi.fn(async () => {}),
+function makePuppet() {
+  return {
+    chat: { postMessage: vi.fn(async () => ({ ok: true, ts: '1712.0009' })) },
+    reactions: { add: vi.fn(async () => ({ ok: true })) },
+    conversations: { join: vi.fn(async () => ({ ok: true })) },
   };
+}
+
+function makeFakes(
+  envValues: Record<string, string | undefined> = {},
+  puppets: Record<string, ReturnType<typeof makePuppet>> = {},
+) {
   const web = {
-    auth: { test: vi.fn(async () => ({ user_id: 'UBOT', user: 'teambot' })) },
     chat: {
       postMessage: vi.fn(async () => ({ ok: true, ts: '1712.0001' })),
     },
     reactions: { add: vi.fn(async () => ({ ok: true })) },
   };
   const directory = {
+    selfUserId: 'UBOT',
     resolveUser: vi.fn(async (id: string) =>
       id === 'U123'
         ? { authorId: 'dennis', authorName: 'Dennis' }
@@ -26,23 +30,19 @@ function makeFakes(envValues: Record<string, string | undefined> = {}) {
     displayNameOf: vi.fn((id: string) => (id === 'U123' ? 'Dennis' : undefined)),
     ensureChannelRegistered: vi.fn(async () => {}),
   };
+  const identities = { clientFor: vi.fn(async (botId: string) => puppets[botId]) };
   const bus = { patchStatus: vi.fn() };
   const env = { get: (k: string) => envValues[k] };
   const surface = new SlackChatSurface(
     web as never,
-    socket as never,
     directory as never,
+    identities as never,
     bus as never,
     env as never,
   );
-  const inject = async (event: Record<string, unknown>) => {
-    const handler = handlers.get('message');
-    if (!handler) throw new Error('connect() not called');
-    await handler({ ack: vi.fn(async () => {}), event });
-    // handleMessageEvent is fire-and-forget from the socket listener — let it settle.
-    await new Promise((r) => setTimeout(r, 0));
-  };
-  return { surface, web, socket, directory, bus, inject };
+  const inject = (event: Record<string, unknown>) =>
+    surface.handleMessageEvent(event as SlackInboundEvent);
+  return { surface, web, directory, identities, bus, inject };
 }
 
 const human = (overrides: Record<string, unknown> = {}) => ({
@@ -59,7 +59,6 @@ describe('SlackChatSurface inbound', () => {
     const { surface, inject } = makeFakes();
     const seen: unknown[] = [];
     surface.inbound$.subscribe((m) => seen.push(m));
-    await surface.connect();
 
     await inject(human({ user: 'UBOT' })); // our own chat.postMessage echo
     await inject(human({ bot_id: 'B999' })); // any bot
@@ -71,7 +70,6 @@ describe('SlackChatSurface inbound', () => {
     const { surface, inject } = makeFakes();
     const seen: unknown[] = [];
     surface.inbound$.subscribe((m) => seen.push(m));
-    await surface.connect();
 
     await inject(human({ subtype: 'message_changed' }));
     await inject(human({ thread_ts: '1712345678.000001' }));
@@ -80,7 +78,6 @@ describe('SlackChatSurface inbound', () => {
 
   it('emits a translated message AFTER room registration, with speaker patched', async () => {
     const { surface, directory, bus, inject } = makeFakes();
-    await surface.connect();
     const next = firstValueFrom(surface.inbound$);
 
     const order: string[] = [];
@@ -106,17 +103,15 @@ describe('SlackChatSurface inbound', () => {
 
   it('translates a mention of the app itself into @here', async () => {
     const { surface, inject } = makeFakes();
-    await surface.connect();
     const next = firstValueFrom(surface.inbound$);
     await inject(human({ text: '<@UBOT> everyone check in' }));
-    expect((await next as { text: string }).text).toBe('@here everyone check in');
+    expect(((await next) as { text: string }).text).toBe('@here everyone check in');
   });
 });
 
 describe('SlackChatSurface outbound', () => {
   it('posts with the employee username and skips non-slack rooms', async () => {
     const { surface, web } = makeFakes();
-    await surface.connect();
 
     await surface.post({
       id: 'alex:k2:1',
@@ -144,7 +139,6 @@ describe('SlackChatSurface outbound', () => {
 
   it('react() resolves harness-minted ids through the posted-id LRU and translates emoji', async () => {
     const { surface, web } = makeFakes();
-    await surface.connect();
     await surface.post({
       id: 'alex:k2:1',
       authorBotId: 'alex',
@@ -163,7 +157,6 @@ describe('SlackChatSurface outbound', () => {
 
   it('react() treats a raw Slack ts as the target directly, and skips unknown minted ids', async () => {
     const { surface, web } = makeFakes();
-    await surface.connect();
 
     await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:C042');
     expect(web.reactions.add).toHaveBeenCalledWith({
@@ -182,7 +175,6 @@ describe('SlackChatSurface outbound', () => {
       AVATAR_BASE_URL: 'https://cdn.example/avatars/',
       AVATAR_STYLE: 'realistic',
     });
-    await surface.connect();
     await surface.post({
       id: 'alex:k2:1',
       authorBotId: 'alex',
@@ -199,7 +191,6 @@ describe('SlackChatSurface outbound', () => {
 
     // Default style is illustrated.
     const plain = makeFakes({ AVATAR_BASE_URL: 'https://cdn.example/avatars' });
-    await plain.surface.connect();
     await plain.surface.post({
       id: 'sam:k2:1',
       authorBotId: 'sam',
@@ -216,7 +207,6 @@ describe('SlackChatSurface outbound', () => {
 
   it('react() swallows already_reacted (one Slack app reacts for every employee)', async () => {
     const { surface, web } = makeFakes();
-    await surface.connect();
     web.reactions.add.mockRejectedValueOnce(
       Object.assign(new Error('An API error occurred'), {
         data: { error: 'already_reacted' },
@@ -225,5 +215,85 @@ describe('SlackChatSurface outbound', () => {
     await expect(
       surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042'),
     ).resolves.toBeUndefined();
+  });
+});
+
+const slackError = (code: string) =>
+  Object.assign(new Error('An API error occurred'), { data: { error: code } });
+
+describe('SlackChatSurface puppet identities', () => {
+  const msg = {
+    id: 'alex:k2:1',
+    authorBotId: 'alex',
+    authorName: 'Alex',
+    text: 'done!',
+    surfaceId: 'slack:C042',
+  };
+
+  it('posts via the puppet WITHOUT username/icon overrides; main app untouched', async () => {
+    const alex = makePuppet();
+    const { surface, web } = makeFakes(
+      { AVATAR_BASE_URL: 'https://cdn.example/avatars' },
+      { alex },
+    );
+    await surface.post(msg);
+    expect(alex.chat.postMessage).toHaveBeenCalledWith({ channel: 'C042', text: 'done!' });
+    expect(web.chat.postMessage).not.toHaveBeenCalled();
+
+    // The puppet's ts feeds the posted-id LRU, so reactions still resolve minted ids.
+    const sam = makePuppet();
+    const both = makeFakes({}, { alex, sam });
+    await both.surface.post(msg);
+    await both.surface.react('alex:k2:1', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042');
+    expect(sam.reactions.add).toHaveBeenCalledWith({
+      channel: 'C042',
+      timestamp: '1712.0009',
+      name: 'thumbsup',
+    });
+  });
+
+  it('joins the channel and retries once on a membership failure', async () => {
+    const alex = makePuppet();
+    alex.chat.postMessage
+      .mockRejectedValueOnce(slackError('not_in_channel'))
+      .mockResolvedValueOnce({ ok: true, ts: '1712.0009' });
+    const { surface, web } = makeFakes({}, { alex });
+    await surface.post(msg);
+    expect(alex.conversations.join).toHaveBeenCalledWith({ channel: 'C042' });
+    expect(alex.chat.postMessage).toHaveBeenCalledTimes(2);
+    expect(web.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the main-app identity when the join also fails (private channel)', async () => {
+    const alex = makePuppet();
+    alex.chat.postMessage.mockRejectedValue(slackError('not_in_channel'));
+    alex.conversations.join.mockRejectedValue(slackError('method_not_supported_for_channel_type'));
+    const { surface, web } = makeFakes({}, { alex });
+    await surface.post(msg);
+    expect(web.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'C042', text: 'done!', username: 'Alex' }),
+    );
+  });
+
+  it('reacts via the puppet, handling its method-specific membership code (no_permission)', async () => {
+    const sam = makePuppet();
+    sam.reactions.add
+      .mockRejectedValueOnce(slackError('no_permission'))
+      .mockResolvedValueOnce({ ok: true });
+    const { surface, web } = makeFakes({}, { sam });
+    await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:C042');
+    expect(sam.conversations.join).toHaveBeenCalledWith({ channel: 'C042' });
+    expect(sam.reactions.add).toHaveBeenCalledTimes(2);
+    expect(web.reactions.add).not.toHaveBeenCalled();
+  });
+
+  it("swallows a puppet's already_reacted without falling back (no double identity)", async () => {
+    const sam = makePuppet();
+    sam.reactions.add.mockRejectedValue(slackError('already_reacted'));
+    const { surface, web } = makeFakes({}, { sam });
+    await expect(
+      surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:C042'),
+    ).resolves.toBeUndefined();
+    expect(web.reactions.add).not.toHaveBeenCalled();
   });
 });

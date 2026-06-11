@@ -38,7 +38,7 @@ const protocolsBlock = (employee: EmployeeDefinition): string =>
 
 // Standing operating rules for the whole team — injected into BOTH the chat surface and the
 // background worker, so they hold across everything a bot does (not memory, not config).
-const TEAM_RULES = `How this team works together (standing rules, always in force):
+export const TEAM_RULES = `How this team works together (standing rules, always in force):
 - Team-wide requests run through Sam. When one request fans out across several of you (Dennis addresses
   the team, an @here), Sam — the scrum master — posts a short dispatch first: who does what, the order,
   the shared branch name, who runs the final push/PR. Until that plan is up, don't start work or cut
@@ -58,7 +58,11 @@ const TEAM_RULES = `How this team works together (standing rules, always in forc
 - Stay in scope; park the rest. If you discover something unrelated and out of scope while working, flag it
   in your report and keep going — don't block, don't expand the current task, don't ask Dennis. (If THIS
   task's OWN scope turns out wrong or materially bigger than planned, that's the opposite: stop and flag
-  it — never silently redesign.)`;
+  it — never silently redesign.)
+- Your messages render in Slack-style chat. Write conversational prose; simple Markdown (bold, italics,
+  bullets, links, code) renders fine, but tables render as plain monospace (keep them small and rare —
+  prefer bullets) and there are no headings or embedded images. NEVER emit image syntax or placeholder
+  links — link only to URLs that really exist.`;
 
 // Each engine exposes different tools (the LangGraph thread uses our LangChain tools; Claude/Codex
 // use their own built-ins), so the tool guidance is per-engine — with the CORRECT names.

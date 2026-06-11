@@ -7,12 +7,14 @@
   "scripts": {
     "env:inject": "dotenvx run -f .env.local.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict",
     "dev:env": "cross-env NODE_ENV=development NODE_OPTIONS=--enable-source-maps pnpm env:inject",
-    "build": "nest build api && nest build tui && nest build slack-app",
+    "build": "nest build api && nest build tui && nest build slack-app && nest build gateway",
     "api:dev": "pnpm dev:env -- nest start api --watch",
     "api:prod": "node dist/api/main",
     "tui:dev": "pnpm dev:env -- nest start tui",
     "slack:dev": "pnpm dev:env -- nest start slack-app",
     "slack:prod": "node dist/slack-app/main",
+    "gateway:dev": "pnpm dev:env -- nest start gateway --watch",
+    "gateway:prod": "node dist/gateway/main",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" --fix",
@@ -28,7 +30,11 @@
     "db:migration:create": "ts-node --project tsconfig.cli.json cli/migration-create.ts",
     "db:schema:drop": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs schema:drop -d cli/data-source.ts",
     "db:seed": "cross-env NODE_ENV=development pnpm env:inject -- ts-node --project tsconfig.cli.json cli/seed-runner.ts",
-    "db:recreate": "pnpm run db:schema:drop && pnpm run db:migrate && pnpm run db:seed"
+    "db:recreate": "pnpm run db:schema:drop && pnpm run db:migrate && pnpm run db:seed",
+    "db:control:migrate": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:run -d cli/control-data-source.ts",
+    "db:control:migration:generate": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/migration-generate.ts --control",
+    "db:migrate:ambient": "cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:run -d cli/data-source.ts",
+    "tenant:provision": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json TS_NODE_TRANSPILE_ONLY=1 TS_NODE_BASEURL=. node -r ts-node/register -r tsconfig-paths/register cli/provision-tenant.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.168",
