@@ -1,6 +1,5 @@
 import type { GithubApiService } from '../../projects/github-api.service';
 import type { GithubTokenStore } from '../../projects/github-token-store';
-import type { ProjectStore } from '../../projects/project-store';
 import type { ProjectRecord } from '../../projects/project.types';
 import type { WorktreeService } from '../../worktrees/worktree.service';
 import type { Worktree } from '../../worktrees/worktree.types';
@@ -38,13 +37,14 @@ function build(opts: {
   const calls: string[] = [];
   const worktrees = {
     get: () => opts.worktree,
+    // The tool resolves the project THROUGH the worktree service (origin-URL recovery included).
+    projectRecordFor: async () => opts.record,
     pushSharedToOrigin: async () => {
       calls.push('push');
       if (opts.pushError) throw new Error(opts.pushError);
       return { sharedBranch: opts.worktree?.sharedBranch ?? '', gitUrl: opts.record?.gitUrl ?? '' };
     },
   } as unknown as WorktreeService;
-  const projects = { get: async () => opts.record } as unknown as ProjectStore;
   const tokens = { resolve: async () => opts.token } as unknown as GithubTokenStore;
   const prArgs: unknown[] = [];
   const github = {
@@ -54,7 +54,7 @@ function build(opts: {
       return { url: 'https://github.com/dennis/proj/pull/9', number: 9, existing: false };
     },
   } as unknown as GithubApiService;
-  return { tool: new OpenPrTool(worktrees, projects, tokens, github), calls, prArgs };
+  return { tool: new OpenPrTool(worktrees, tokens, github), calls, prArgs };
 }
 
 describe('open_pr tool', () => {
@@ -103,7 +103,7 @@ describe('open_pr tool', () => {
     ).toContain('not on a shared branch');
     expect(
       await build({ worktree: WT }).tool.execute({ worktreeId: 'wt-001', title: 'T' }),
-    ).toContain('no registered GitHub repo');
+    ).toContain('No registered GitHub repo matches');
     expect(
       await build({ worktree: WT, record: REC }).tool.execute({ worktreeId: 'wt-001', title: 'T' }),
     ).toContain('No default GitHub token');

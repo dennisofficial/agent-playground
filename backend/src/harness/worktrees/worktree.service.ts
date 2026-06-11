@@ -128,6 +128,33 @@ export class WorktreeService implements OnApplicationBootstrap {
     return (await this.tokens.resolve(rec.tokenName).catch(() => undefined))?.token;
   }
 
+  /**
+   * The project record a worktree's remote ops run against. `wt.project` when it resolves; else
+   * RECOVERED from git, the durable store: a repo whose origin IS a registered project's repo
+   * belongs to that project (`sameGitUrl`, the originGuard's own identity rule). Recovery
+   * backfills `wt.project`, so a tree re-adopted from WORKER_ROOT with no project after a restart
+   * — or created before its project was registered — heals on first use instead of failing as
+   * "(none)". Registry records are read fresh (an admin-API edit takes effect immediately).
+   */
+  async projectRecordFor(worktreeId: string): Promise<ProjectRecord | undefined> {
+    const wt = this.worktrees.get(worktreeId);
+    if (!wt) return undefined;
+    if (wt.project) {
+      const rec = await this.projects.get(wt.project).catch(() => undefined);
+      if (rec) return rec;
+    }
+    const origin = await this.git(['remote', 'get-url', 'origin'], wt.repoRoot).catch(() => '');
+    if (!origin) return undefined;
+    const rec = (await this.projects.list().catch(() => [])).find((r) =>
+      sameGitUrl(origin, r.gitUrl),
+    );
+    if (rec && wt.project !== rec.projectId) {
+      this.logger.log(`${wt.id}: recovered project ${rec.projectId} from origin ${origin}`);
+      wt.project = rec.projectId;
+    }
+    return rec;
+  }
+
   private cachedLayout(key: string, build: () => Promise<RepoLayout>): Promise<RepoLayout> {
     let p = this.layouts.get(key);
     if (!p) {
@@ -339,6 +366,13 @@ export class WorktreeService implements OnApplicationBootstrap {
         await this.git(['config', `branch.${branch}.${SHARED_CONFIG_KEY}`, shared], repoRoot);
       }
       await this.setWorktreeIdentity(checkout, repoRoot, input.ownerBot);
+      // A repo with submodules needs them populated before the worktree builds (a fresh checkout
+      // gets empty submodule dirs). Best-effort: a failure must never fail the create.
+      if (await exists(join(checkout, '.gitmodules'))) {
+        await this.git(['submodule', 'update', '--init', '--recursive'], checkout).catch((err) =>
+          this.logger.warn(`${id}: submodule init failed: ${err}`),
+        );
+      }
 
       const worktree: Worktree = {
         id,
@@ -371,6 +405,9 @@ export class WorktreeService implements OnApplicationBootstrap {
       const wt = this.requireShared(id);
       const shared = wt.sharedBranch!;
       await this.refuseMidMerge(wt.checkout);
+      // Take origin's shared state in FIRST, so a branch advanced on GitHub merges into this
+      // publish instead of rejecting the origin push at the end.
+      await this.fetchSharedFromOrigin(wt, shared);
       const dirty = !!(
         await this.git(['status', '--porcelain'], wt.checkout).catch(() => '')
       ).trim();
@@ -404,20 +441,37 @@ export class WorktreeService implements OnApplicationBootstrap {
       // Origin sync — computed AFTER the local result is fixed, so a remote failure can never
       // lose or obscure it.
       if (local.integrated) {
-        const remote = await this.syncSharedToOrigin(wt, shared);
-        if (remote) local = { ...local, remote };
+        local = { ...local, remote: await this.syncSharedToOrigin(wt, shared) };
       }
       return local;
     });
   }
 
-  /** Merge the shared integration branch into a worktree — take teammates' published work. Same
-   * conflict shape as publish ("Already up to date" is a success). Local-only v0 (no origin fetch). */
+  /** Best-effort authenticated fast-forward of the local shared ref from origin. True when the
+   * fetch landed (or was already current); false when no registered repo matches, the identity
+   * guard refuses, or the fetch fails (origin missing the branch, local ahead, divergence). */
+  private async fetchSharedFromOrigin(wt: Worktree, shared: string): Promise<boolean> {
+    const rec = await this.projectRecordFor(wt.id);
+    if (!rec || (await this.originGuard(wt, rec))) return false;
+    return this.git(
+      ['fetch', 'origin', `${shared}:${shared}`],
+      wt.repoRoot,
+      gitAuthEnv(rec.gitUrl, await this.tokenFor(rec)),
+    ).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  /** Merge the shared integration branch into a worktree — take teammates' published work,
+   * syncing the shared ref from origin first when the project has a registered repo. Same
+   * conflict shape as publish ("Already up to date" is a success). */
   async pull(id: string): Promise<IntegrationResult> {
     return this.gitOps(async () => {
       const wt = this.requireShared(id);
       const shared = wt.sharedBranch!;
       await this.refuseMidMerge(wt.checkout);
+      const originFetched = await this.fetchSharedFromOrigin(wt, shared);
       try {
         await this.git(['merge', '--no-edit', shared], wt.checkout);
       } catch (err) {
@@ -426,11 +480,12 @@ export class WorktreeService implements OnApplicationBootstrap {
             integrated: false,
             sharedBranch: shared,
             files: await this.conflictedFiles(wt.checkout),
+            originFetched,
           };
         }
         throw err;
       }
-      return { integrated: true, sharedBranch: shared };
+      return { integrated: true, sharedBranch: shared, originFetched };
     });
   }
 
@@ -443,10 +498,11 @@ export class WorktreeService implements OnApplicationBootstrap {
     return this.gitOps(async () => {
       const wt = this.requireShared(id);
       const shared = wt.sharedBranch!;
-      const rec = wt.project ? await this.projects.get(wt.project) : undefined;
+      const rec = await this.projectRecordFor(id);
       if (!rec) {
+        const origin = await this.git(['remote', 'get-url', 'origin'], wt.repoRoot).catch(() => '');
         throw new Error(
-          `Project "${wt.project || '(none)'}" has no registered GitHub repo — Dennis can register it via the admin API.`,
+          `No registered GitHub repo matches this worktree (project "${wt.project || '(none)'}", repo origin ${origin || '(none)'}) — Dennis can register it via the admin API.`,
         );
       }
       const guard = await this.originGuard(wt, rec);
@@ -460,15 +516,21 @@ export class WorktreeService implements OnApplicationBootstrap {
     });
   }
 
-  /** Publish's origin sync: undefined when the project is unregistered (local-only is correct),
-   * else the push outcome — never a throw. Runs inside the publish mutex. */
+  /** Publish's origin sync: ALWAYS the push outcome, never a throw — a shared branch that didn't
+   * reach GitHub must say so (`pushed: false` + detail), not look like a clean publish. Runs
+   * inside the publish mutex. */
   private async syncSharedToOrigin(
     wt: Worktree,
     shared: string,
-  ): Promise<IntegrationResult['remote'] | undefined> {
-    // Fresh registry read every time — an admin-API edit takes effect immediately.
-    const rec = wt.project ? await this.projects.get(wt.project).catch(() => undefined) : undefined;
-    if (!rec) return undefined;
+  ): Promise<NonNullable<IntegrationResult['remote']>> {
+    const rec = await this.projectRecordFor(wt.id);
+    if (!rec) {
+      const origin = await this.git(['remote', 'get-url', 'origin'], wt.repoRoot).catch(() => '');
+      return {
+        pushed: false,
+        detail: `no registered GitHub repo matches this worktree (repo origin ${origin || '(none)'}) — the shared branch is LOCAL ONLY until Dennis registers it via the admin API`,
+      };
+    }
     const guard = await this.originGuard(wt, rec);
     if (guard) return { pushed: false, detail: guard };
     try {
@@ -534,6 +596,35 @@ export class WorktreeService implements OnApplicationBootstrap {
     return this.worktrees.get(id);
   }
 
+  /**
+   * Git-derived shared-branch status for list_worktrees: is this worktree's branch merged into the
+   * shared branch (i.e. has it published), and how many shared commits origin doesn't have yet.
+   * `aheadOfOrigin` is undefined when origin's ref is unknown locally (never pushed/fetched).
+   * Read-only — safe outside the mutex.
+   */
+  async sharedStatus(
+    id: string,
+  ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined> {
+    const wt = this.worktrees.get(id);
+    if (!wt?.sharedBranch) return undefined;
+    const shared = wt.sharedBranch;
+    const published = await this.git(
+      ['merge-base', '--is-ancestor', wt.branch, shared],
+      wt.repoRoot,
+    ).then(
+      () => true,
+      () => false,
+    );
+    const ahead = await this.git(
+      ['rev-list', '--count', `origin/${shared}..${shared}`],
+      wt.repoRoot,
+    ).then(
+      (s) => Number(s),
+      () => undefined,
+    );
+    return { published, ...(ahead !== undefined ? { aheadOfOrigin: ahead } : {}) };
+  }
+
   list(filter?: { ownerBot?: string }): Worktree[] {
     const all = [...this.worktrees.values()];
     return filter?.ownerBot ? all.filter((w) => w.ownerBot === filter.ownerBot) : all;
@@ -566,7 +657,35 @@ export class WorktreeService implements OnApplicationBootstrap {
           );
         }
       }
+      await this.recoverAdoptedProjects();
     });
+  }
+
+  /**
+   * Heal project associations the WORKER_ROOT pass adopts as '' (a restart used to demote every
+   * such worktree to "(none)" until Dennis "re-registered" a repo that was registered all along):
+   * a repo whose origin IS a registered project's repo belongs to that project.
+   */
+  private async recoverAdoptedProjects(): Promise<void> {
+    const orphans = [...this.worktrees.values()].filter((w) => !w.project);
+    if (!orphans.length) return;
+    const recs = await this.projects.list().catch(() => []);
+    if (!recs.length) return;
+    const byRepo = new Map<string, string>();
+    for (const wt of orphans) {
+      let project = byRepo.get(wt.repoRoot);
+      if (project === undefined) {
+        const origin = await this.git(['remote', 'get-url', 'origin'], wt.repoRoot).catch(
+          () => '',
+        );
+        project = (origin && recs.find((r) => sameGitUrl(origin, r.gitUrl))?.projectId) || '';
+        byRepo.set(wt.repoRoot, project);
+      }
+      if (project) {
+        wt.project = project;
+        this.logger.log(`adoption: ${wt.id} recovered project ${project} from origin`);
+      }
+    }
   }
 
   private async adoptFromRepo(layout: RepoLayout, project: string): Promise<void> {

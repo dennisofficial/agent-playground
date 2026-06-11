@@ -95,7 +95,21 @@ export class ListWorktreesTool
         const sessions = open.length
           ? open.map((s) => `${s.id} (${s.status})`).join(', ')
           : 'none';
-        return `- ${w.id} "${w.name}" — branch ${w.branch}${w.sharedBranch ? `, shared: ${w.sharedBranch}` : ''}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}`;
+        // Shared-branch publish state, so "who has published" is readable here instead of being
+        // reconstructed from teammates' chat self-reports.
+        let sharedNote = '';
+        if (w.sharedBranch) {
+          const st = await this.worktrees.sharedStatus(w.id).catch(() => undefined);
+          const pub = st ? (st.published ? 'published' : 'NOT published') : 'state unknown';
+          const origin =
+            st?.aheadOfOrigin === undefined
+              ? 'GitHub state unknown'
+              : st.aheadOfOrigin > 0
+                ? `${st.aheadOfOrigin} shared commit(s) not on GitHub`
+                : 'GitHub in sync';
+          sharedNote = `, shared: ${w.sharedBranch} (${pub}; ${origin})`;
+        }
+        return `- ${w.id} "${w.name}" — branch ${w.branch}${sharedNote}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}`;
       }),
     );
     return lines.join('\n');
@@ -183,7 +197,7 @@ export class PublishWorktreeTool
 {
   readonly name = 'publish_worktree';
   readonly description =
-    "Publish a worktree's COMMITTED work onto its shared integration branch so teammates and Dennis can take it. Fast-forwards when possible, otherwise merges teammates' work in first. Only commits publish — have a session commit first. Refused while a session in the worktree is mid-turn.";
+    "Publish a worktree's COMMITTED work onto its shared integration branch so teammates and Dennis can take it. Fast-forwards when possible, otherwise merges teammates' work in first; when the project has a registered GitHub repo the shared branch is pushed to GitHub too (the result says whether that happened). Only commits publish — have a session commit first. Refused while a session in the worktree is mid-turn.";
   readonly schema = publishWorktreeSchema;
 
   constructor(
@@ -204,7 +218,12 @@ export class PublishWorktreeTool
       const dirtyNote = res.dirty
         ? ' Note: the worktree has uncommitted changes — those were NOT published (only commits publish).'
         : '';
-      return `Published ${wt.branch} → ${res.sharedBranch}.${dirtyNote}`;
+      // The remote outcome is always stated — a publish that didn't reach GitHub must never read
+      // as done (that's how Dennis ends up reviewing a stale PR).
+      const remoteNote = res.remote?.pushed
+        ? ` Pushed to GitHub — the PR (if open) is up to date.`
+        : ` NOT on GitHub: ${res.remote?.detail ?? 'origin sync did not run'}.`;
+      return `Published ${wt.branch} → ${res.sharedBranch}.${remoteNote}${dirtyNote}`;
     } catch (err) {
       return `Couldn't publish ${worktreeId}: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -241,7 +260,7 @@ export class PullWorktreeTool
     try {
       const res = await this.worktrees.pull(worktreeId);
       if (!res.integrated) return conflictReply(worktreeId, 'pull', res);
-      return `Pulled ${res.sharedBranch} into ${wt.branch}.`;
+      return `Pulled ${res.sharedBranch} into ${wt.branch}.${res.originFetched ? ' (Shared branch synced from GitHub first.)' : ' (Local shared branch only — origin was not synced.)'}`;
     } catch (err) {
       return `Couldn't pull into ${worktreeId}: ${err instanceof Error ? err.message : String(err)}`;
     }

@@ -13,7 +13,9 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
+import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
+import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
 
 /**
@@ -105,6 +107,8 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
+      { list: () => [] } as unknown as WorktreeService,
+      { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
     );
 
@@ -213,6 +217,8 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
+      { list: () => [] } as unknown as WorktreeService,
+      { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
     );
 

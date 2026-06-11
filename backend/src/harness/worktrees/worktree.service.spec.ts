@@ -256,7 +256,13 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
     });
     await commit(worktree.checkout, 'a.txt', 'from alex\n');
     const res = await service.publish(worktree.id);
-    expect(res).toEqual({ integrated: true, sharedBranch: 'shared/feat', dirty: false });
+    // The remote outcome is ALWAYS reported now — a local-only publish must say so, not look clean.
+    expect(res).toEqual({
+      integrated: true,
+      sharedBranch: 'shared/feat',
+      dirty: false,
+      remote: { pushed: false, detail: expect.stringMatching(/LOCAL ONLY/) },
+    });
     expect(await git(repo, 'rev-parse', 'shared/feat')).toBe(
       await git(worktree.checkout, 'rev-parse', 'HEAD'),
     );
@@ -327,7 +333,8 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
     await commit(b.checkout, 'riley.txt', 'riley work\n');
     await service.publish(b.id);
     const res = await service.pull(a.id);
-    expect(res).toEqual({ integrated: true, sharedBranch: 'shared/feat' });
+    // No registered repo here → the merge is local-only, and pull says so.
+    expect(res).toEqual({ integrated: true, sharedBranch: 'shared/feat', originFetched: false });
     expect(await git(a.checkout, 'ls-tree', '--name-only', 'HEAD')).toContain('riley.txt');
     // Pulling again is a clean no-op ("Already up to date").
     expect((await service.pull(a.id)).integrated).toBe(true);
@@ -444,12 +451,14 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
       await git(worktree.checkout, 'rev-parse', 'HEAD'),
     );
 
-    // Unregistered project ('' / not in registry) → no remote key at all (local behavior intact).
+    // Unregistered project ('' / not in registry, and WORKER_ROOT has no origin) → the publish
+    // still lands locally, but the result says EXPLICITLY that GitHub never saw it.
     const local = await service.create({ name: 'l', shared: 'x', ownerBot: 'alex', project: 'local' });
     await commit(local.worktree.checkout, 'l.txt', 'local\n');
     const localRes = await service.publish(local.worktree.id);
     expect(localRes.integrated).toBe(true);
-    expect(localRes.remote).toBeUndefined();
+    expect(localRes.remote?.pushed).toBe(false);
+    expect(localRes.remote?.detail).toMatch(/LOCAL ONLY/);
   });
 
   it('a remote-push failure reports remote.pushed=false WITHOUT losing the local publish', async () => {
@@ -507,7 +516,7 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
 
     const local = await service.create({ name: 'l', shared: 'x', ownerBot: 'alex', project: 'local' });
     await expect(service.pushSharedToOrigin(local.worktree.id)).rejects.toThrow(
-      /no registered GitHub repo/,
+      /No registered GitHub repo matches/,
     );
   });
 
@@ -527,6 +536,98 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     await service.create({ name: 'w', ownerBot: 'alex', project: 'local' });
     await expect(git(workerRoot, 'remote', 'get-url', 'origin')).rejects.toThrow();
     await rm(join(origin2, '..'), { recursive: true, force: true });
+  });
+
+  it('boot adoption RECOVERS the project for WORKER_ROOT trees whose origin IS a registered repo (the restart bug)', async () => {
+    // The production failure shape: worktrees cut from WORKER_ROOT whose repo origin is the
+    // registered GitHub repo. A restart used to re-adopt them with project '' and every push
+    // failed as `Project "(none)"` until Dennis "re-registered" a repo that was fine all along.
+    await git(workerRoot, 'remote', 'add', 'origin', ORIGIN_URL());
+    const { worktree } = await service.create({
+      name: 'team intros',
+      shared: 'team-intros',
+      ownerBot: 'alex',
+      project: 'local',
+    });
+    await commit(worktree.checkout, 'alex.md', 'hi\n');
+
+    const fresh = makeService(workerRoot, { registry: registry.projects, reposRoot });
+    await fresh.onApplicationBootstrap();
+    expect(fresh.get(worktree.id)?.project).toBe('proj'); // recovered, not ''
+    // …and the whole push path works end-to-end after the restart, no re-registration needed.
+    const res = await fresh.publish(worktree.id);
+    expect(res.integrated).toBe(true);
+    expect(res.remote).toEqual({ pushed: true });
+    expect(await git(originDir, 'rev-parse', 'shared/team-intros')).toBeTruthy();
+  });
+
+  it('projectRecordFor falls back to the origin-URL match and backfills wt.project', async () => {
+    await git(workerRoot, 'remote', 'add', 'origin', ORIGIN_URL());
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: '', // no association at all
+    });
+    expect((await service.projectRecordFor(worktree.id))?.projectId).toBe('proj');
+    expect(service.get(worktree.id)?.project).toBe('proj'); // healed in place
+    expect(await service.projectRecordFor('wt-999')).toBeUndefined();
+  });
+
+  it('pull and publish sync the shared ref from origin first (a GitHub-advanced branch reaches the worktree)', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'proj',
+    });
+    await commit(worktree.checkout, 'a.txt', 'mine\n');
+    await service.publish(worktree.id); // shared/feat now exists on origin
+    // A teammate on ANOTHER machine advances origin's shared/feat behind our back.
+    const elsewhere = await realpath(await mkdtemp(join(tmpdir(), 'wt-elsewhere-')));
+    await git(elsewhere, 'clone', originDir, 'c');
+    const oc = join(elsewhere, 'c');
+    await git(oc, 'config', 'user.email', 'o@test');
+    await git(oc, 'config', 'user.name', 'o');
+    await git(oc, 'checkout', 'shared/feat');
+    await commit(oc, 'remote.txt', 'remote work\n');
+    await git(oc, 'push', 'origin', 'shared/feat');
+
+    const pulled = await service.pull(worktree.id);
+    expect(pulled.integrated).toBe(true);
+    expect(pulled.originFetched).toBe(true);
+    expect(await git(worktree.checkout, 'ls-tree', '--name-only', 'HEAD')).toContain('remote.txt');
+
+    // Publish after another remote advance: fetched + merged in, not rejected at the push.
+    await commit(oc, 'remote2.txt', 'more remote work\n');
+    await git(oc, 'push', 'origin', 'shared/feat');
+    await commit(worktree.checkout, 'b.txt', 'more mine\n');
+    const res = await service.publish(worktree.id);
+    expect(res.integrated).toBe(true);
+    expect(res.remote).toEqual({ pushed: true });
+    await git(oc, 'fetch', 'origin');
+    const tree = await git(oc, 'ls-tree', '--name-only', 'origin/shared/feat');
+    expect(tree).toContain('remote2.txt');
+    expect(tree).toContain('b.txt');
+    await rm(elsewhere, { recursive: true, force: true });
+  });
+
+  it('sharedStatus reports published state and commits origin is missing', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      shared: 'feat',
+      ownerBot: 'alex',
+      project: 'proj',
+    });
+    expect(await service.sharedStatus('wt-999')).toBeUndefined();
+    await commit(worktree.checkout, 'a.txt', 'x\n');
+    // Committed but not published, origin never saw the branch.
+    let st = await service.sharedStatus(worktree.id);
+    expect(st?.published).toBe(false);
+    expect(st?.aheadOfOrigin).toBeUndefined();
+    await service.publish(worktree.id);
+    st = await service.sharedStatus(worktree.id);
+    expect(st).toEqual({ published: true, aheadOfOrigin: 0 });
   });
 
   it('boot adoption scans WORKER_ROOT and every existing project clone with the right project ids', async () => {

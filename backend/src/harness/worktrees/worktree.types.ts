@@ -50,8 +50,12 @@ export interface IntegrationResult {
   /** Publish only: the checkout had uncommitted changes — those were NOT published (only commits
    * publish). */
   dirty?: boolean;
-  /** Publish only, present when the project has a registered GitHub repo: the origin sync outcome.
-   * `pushed: false` + detail reports a partial result WITHOUT touching `integrated` — the local
-   * publish is never lost to a remote failure. */
+  /** Publish only, always present when the local publish integrated: the origin sync outcome.
+   * `pushed: false` + detail reports a partial result (no registered repo, identity-guard refusal,
+   * or push failure) WITHOUT touching `integrated` — the local publish is never lost to a remote
+   * failure, but a shared branch that didn't reach GitHub always says so. */
   remote?: { pushed: boolean; detail?: string };
+  /** Pull only: whether the shared ref was first fast-forwarded from origin (false = local-only
+   * merge: no registered repo, or the fetch didn't land). */
+  originFetched?: boolean;
 }

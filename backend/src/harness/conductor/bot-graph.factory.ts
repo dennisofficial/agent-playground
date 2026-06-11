@@ -29,8 +29,13 @@ import { ChatModelFactory } from '../llm/chat-model.factory';
 import { FetchService } from '../memory/fetch.service';
 import { CHECKPOINTER } from '../memory/memory.module';
 import { ReconcileService } from '../memory/reconcile.service';
+import {
+  SESSION_REGISTRY,
+  type SessionRegistry,
+} from '../sessions/session-registry.port';
 import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
 import { ToolRegistry } from '../tools/tool.registry';
+import { WorktreeService } from '../worktrees/worktree.service';
 
 /**
  * A bot's TURN, as an explicit LangGraph state machine. One graph per bot, persisted on thread
@@ -130,7 +135,8 @@ const BotState = Annotation.Root({
     default: () => [],
   }),
   /** Ephemeral pre-LLM memory context (the `fetch` node's output). Re-injected each llm call like
-   * the persona, NEVER written into `messages`. Always overwritten by `fetch` (to '' when empty). */
+   * the persona, NEVER written into `messages`. Overwritten on EVERY path — by `fetch` (respond)
+   * and reset by `consume` (ack/ignore) — so a stale recall never survives in the checkpoint. */
   recalled: Annotation<string>({
     reducer: (_: string, b: string) => b ?? '',
     default: () => '',
@@ -242,6 +248,8 @@ export class BotGraphFactory {
     private readonly reconcile: ReconcileService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
+    private readonly worktrees: WorktreeService,
+    @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     @Inject(CHECKPOINTER) private readonly checkpointer: PostgresSaver,
   ) {}
 
@@ -274,6 +282,49 @@ export class BotGraphFactory {
       (config.configurable?.channelId as string | undefined) ??
       this.channel.surfaceId
     );
+  }
+
+  /**
+   * The bot's live WORK state — its worktrees and open sessions — appended to the `recalled` block
+   * each respond turn, the same way reminders are. Registry reads only (no git subprocesses): this
+   * runs on every respond, so it must stay cheap; on-demand git truth lives in list_worktrees.
+   * Surfacing this in-context is what lets a bot notice "project: NONE" or a forgotten session
+   * without spending turns spelunking with tools.
+   */
+  private async workContext(bot: EmployeeDefinition): Promise<string> {
+    const CAP = 10;
+    const parts: string[] = [];
+    const trees = this.worktrees.list({ ownerBot: bot.id });
+    if (trees.length) {
+      const lines = trees
+        .slice(0, CAP)
+        .map(
+          (w) =>
+            `- ${w.id} "${w.name}" — branch ${w.branch}${w.sharedBranch ? `, shared: ${w.sharedBranch}` : ''}, project: ${w.project || 'NONE (GitHub pushes will fail — flag it if a push is needed)'}`,
+        )
+        .join('\n');
+      const more = trees.length - CAP;
+      parts.push(
+        `Your worktrees:\n${lines}${more > 0 ? `\n…and ${more} more (list_worktrees)` : ''}`,
+      );
+    }
+    const open = (await this.sessions.list({ ownerBot: bot.id })).filter(
+      (s) => s.status !== 'closed',
+    );
+    if (open.length) {
+      const lines = open
+        .slice(0, CAP)
+        .map(
+          (s) =>
+            `- ${s.id} (${s.status}) in ${s.worktreeId} — "${s.task.length > 80 ? `${s.task.slice(0, 80)}…` : s.task}"`,
+        )
+        .join('\n');
+      const more = open.length - CAP;
+      parts.push(
+        `Your open sessions:\n${lines}${more > 0 ? `\n…and ${more} more (list_sessions)` : ''}`,
+      );
+    }
+    return parts.join('\n\n');
   }
 
   private build(bot: EmployeeDefinition) {
@@ -346,12 +397,13 @@ export class BotGraphFactory {
         : '';
       const query = [priorTail, freshText].filter((s) => s.trim()).join('\n');
       // Always set recalled (to '' when empty) so a stale recall from a prior turn never lingers.
+      // Memory/tasks and the live work state (worktrees + sessions) are independent reads.
+      const [memory, work] = await Promise.all([
+        this.fetchService.fetchContext(bot, query, getIdentity(config)),
+        this.workContext(bot).catch(() => ''), // degrade like retrieval — never fail the turn
+      ]);
       return {
-        recalled: await this.fetchService.fetchContext(
-          bot,
-          query,
-          getIdentity(config),
-        ),
+        recalled: [memory, work].filter((s) => s.trim()).join('\n\n'),
       };
     };
 
@@ -494,7 +546,9 @@ export class BotGraphFactory {
       const newCursor = pending.length
         ? pending[pending.length - 1].seq + 1
         : channel.lengthOf(this.channelIdOf(config));
-      return { messages: pending.map(asInput), cursor: newCursor };
+      // recalled is reset here too — this path skips `fetch`, and an un-cleared value would ride
+      // the checkpoint as a stale recall (deleted reminder ids included) until the next respond.
+      return { messages: pending.map(asInput), cursor: newCursor, recalled: '' };
     };
 
     const route = (state: BotStateType): 'fetch' | 'consume' =>

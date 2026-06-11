@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { parseGithubRepo } from '../../projects/git-auth';
 import { GithubApiService } from '../../projects/github-api.service';
 import { GithubTokenStore } from '../../projects/github-token-store';
-import { ProjectStore } from '../../projects/project-store';
 import { WorktreeService } from '../../worktrees/worktree.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { IHarnessTool } from '../tool.types';
@@ -24,12 +23,11 @@ const openPrSchema = z.object({
 export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
   readonly name = 'open_pr';
   readonly description =
-    "When a feature's shared branch is ready for Dennis and the project has a registered GitHub repo, push it and open (or find) the pull request — returns the PR URL to relay. Publish your committed work first.";
+    "When a feature's shared branch is ready for Dennis, open (or find) its pull request on the project's registered GitHub repo — returns the PR URL to relay. Call it ONCE per feature: publish_worktree already keeps the shared branch synced to GitHub, so later publishes update the open PR by themselves.";
   readonly schema = openPrSchema;
 
   constructor(
     private readonly worktrees: WorktreeService,
-    private readonly projects: ProjectStore,
     private readonly tokens: GithubTokenStore,
     private readonly github: GithubApiService,
   ) {}
@@ -44,9 +42,11 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
     if (!wt.sharedBranch) {
       return `${worktreeId} is not on a shared branch — create it with the \`shared\` option; the PR is opened from the shared branch.`;
     }
-    const rec = wt.project ? await this.projects.get(wt.project) : undefined;
+    // Resolves through the worktree's repo origin too, so a project association lost across a
+    // restart (or a tree created pre-registration) recovers instead of failing as "(none)".
+    const rec = await this.worktrees.projectRecordFor(worktreeId);
     if (!rec) {
-      return `Project "${wt.project || '(none)'}" has no registered GitHub repo — Dennis can register it via the admin API; until then the shared branch stays local.`;
+      return `No registered GitHub repo matches ${worktreeId} (project "${wt.project || '(none)'}") — Dennis can register it via the admin API; until then the shared branch stays local.`;
     }
     const auth = await this.tokens.resolve(rec.tokenName).catch(() => undefined);
     if (!auth) {

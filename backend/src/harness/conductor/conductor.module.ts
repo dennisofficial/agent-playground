@@ -6,6 +6,7 @@ import { LlmModule } from '../llm/llm.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { ToolsModule } from '../tools/tools.module';
+import { WorktreesModule } from '../worktrees/worktrees.module';
 import { BotGraphFactory } from './bot-graph.factory';
 import { ConductorEventsModule } from './conductor-events.module';
 import { ConductorService } from './conductor.service';
@@ -25,6 +26,7 @@ import { ConductorService } from './conductor.service';
     MemoryModule,
     SessionsModule,
     ToolsModule,
+    WorktreesModule,
   ],
   services: [BotGraphFactory, ConductorService],
   exports: [ConductorEventsModule],
