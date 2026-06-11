@@ -8,6 +8,7 @@ import { rawRows, toIso } from './sql';
  * Ported from playground/src/memory/worklog.ts.
  */
 export interface WorkEntry {
+  team: string;
   ownerBot: string;
   project: string;
   task: string;
@@ -16,6 +17,7 @@ export interface WorkEntry {
 }
 
 export interface RecentWorkQuery {
+  team: string;
   project: string;
   ownerBot?: string;
   since?: string;
@@ -23,6 +25,7 @@ export interface RecentWorkQuery {
 }
 
 interface WorklogRow {
+  team_id: string;
   owner_bot: string;
   project: string;
   task: string;
@@ -40,15 +43,15 @@ export class WorklogStore {
   /** Record a completed unit of work. Called when a background job finishes. */
   async logWork(e: Omit<WorkEntry, 'completedAt'>): Promise<void> {
     await this.q(
-      `INSERT INTO worklog (owner_bot, project, task, summary, completed_at) VALUES ($1, $2, $3, $4, now())`,
-      [e.ownerBot, e.project, e.task, e.summary],
+      `INSERT INTO worklog (team_id, owner_bot, project, task, summary, completed_at) VALUES ($1, $2, $3, $4, $5, now())`,
+      [e.team, e.ownerBot, e.project, e.task, e.summary],
     );
   }
 
-  /** Recent completed work, newest first, scoped to a project (and optionally one bot / time window). */
+  /** Recent completed work, newest first, scoped to a workspace+project (and optionally bot / window). */
   async recentWork(query: RecentWorkQuery): Promise<WorkEntry[]> {
-    const where = ['project = $1'];
-    const args: unknown[] = [query.project];
+    const where = ['team_id = $1', 'project = $2'];
+    const args: unknown[] = [query.team, query.project];
     if (query.ownerBot) {
       args.push(query.ownerBot);
       where.push(`owner_bot = $${args.length}`);
@@ -59,11 +62,12 @@ export class WorklogStore {
     }
     args.push(query.limit ?? 10);
     const rows = await this.q(
-      `SELECT owner_bot, project, task, summary, completed_at FROM worklog
+      `SELECT team_id, owner_bot, project, task, summary, completed_at FROM worklog
        WHERE ${where.join(' AND ')} ORDER BY completed_at DESC LIMIT $${args.length}`,
       args,
     );
     return rows.map((r) => ({
+      team: r.team_id,
       ownerBot: r.owner_bot,
       project: r.project,
       task: r.task,

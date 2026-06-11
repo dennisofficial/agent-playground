@@ -1,88 +1,55 @@
-import {
-  Injectable,
-  Logger,
-  OnApplicationShutdown,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Subject } from 'rxjs';
-import { LLM_PROVIDERS, PROVIDER_ENV_KEY, type LlmProvider } from './llm-key.types';
-import { ProviderKeyStore } from './provider-key.store';
-
-/** How often a pending process re-checks the store. This is the cross-process seam: keys written
- * by the api process (admin REST) become visible to the harness process within one tick. */
-const PENDING_POLL_MS = 15_000;
+import { TenantCredentialService } from './tenant-credential.service';
 
 /**
- * Pending-keys boot mode. The harness boots key-less ('pending_keys') and the conductor refuses to
- * schedule LLM turns until BOTH provider keys are available — from env (dev: env always wins) or
- * from the encrypted store (tenants: keys arrive at runtime via Jarvis/admin API). On the
- * pending→ready edge, missing keys are resolved ONCE and written into `process.env`, which is what
- * every consumer reads lazily (ChatAnthropic per call, OpenAIEmbeddings on first embed, the
- * claude/codex SDKs at session spawn) — legitimate precisely because tenant = process.
+ * Per-tenant pending-keys readiness. In the single-process model each workspace boots independently
+ * key-less and goes "ready" when BOTH its provider keys are resolvable (store, or env as a dev
+ * fallback). The conductor gates a room's scheduling on `isReady(teamId)`; keys are NEVER written to
+ * `process.env` (one process serves many workspaces) — they flow per-turn via CredentialContext.
+ *
+ * `isReady` is a synchronous cached-set check (the scheduler calls it per room); `ensureChecked`
+ * kicks an async re-check for an unknown workspace and `ready$` emits the teamId on the pending→ready
+ * edge so the conductor can release that workspace's backlog. Jarvis calls `refresh` right after a
+ * key-modal submission for an instant flip.
  */
 @Injectable()
-export class LlmReadinessService implements OnModuleInit, OnApplicationShutdown {
+export class LlmReadinessService {
   private readonly logger = new Logger(LlmReadinessService.name);
-  private state: 'pending_keys' | 'ready' = 'pending_keys';
-  private timer?: NodeJS.Timeout;
+  private readonly readyTeams = new Set<string>();
+  private readonly checking = new Set<string>();
 
-  /** Fires exactly once, on the pending→ready edge. Subscribers (the conductor) re-schedule. */
-  readonly ready$ = new Subject<void>();
+  /** Emits a teamId on its pending→ready edge. Subscribers (conductor, Jarvis) react. */
+  readonly ready$ = new Subject<string>();
 
-  constructor(private readonly store: ProviderKeyStore) {}
+  constructor(private readonly creds: TenantCredentialService) {}
 
-  get isReady(): boolean {
-    return this.state === 'ready';
-  }
-
-  async onModuleInit(): Promise<void> {
-    const ready = await this.refresh();
-    if (!ready) {
-      this.logger.warn(
-        'Harness is KEYLESS (pending-keys mode) — bot turns are gated until both provider keys ' +
-          `land (${LLM_PROVIDERS.map((p) => PROVIDER_ENV_KEY[p]).join(', ')} via env, or the ` +
-          'encrypted provider_keys store via the admin API / Jarvis). Polling every 15s.',
-      );
-      this.timer = setInterval(() => void this.refresh(), PENDING_POLL_MS);
-      this.timer.unref?.();
-    }
-  }
-
-  onApplicationShutdown(): void {
-    if (this.timer) clearInterval(this.timer);
+  /** Synchronous: has this workspace been observed ready? (The scheduler's per-room gate.) */
+  isReady(teamId: string): boolean {
+    return this.readyTeams.has(teamId);
   }
 
   /**
-   * Re-evaluate key availability; returns the (possibly new) readiness. Safe to call from anywhere
-   * (the pending poll, Jarvis right after a modal submission, tests). Per provider: env wins; the
-   * store fills the gaps — mixed sources are fine.
+   * Re-evaluate a workspace's key availability; flips the cached set and emits `ready$` on the edge.
+   * Safe to call from anywhere (Jarvis after a modal submit, tests). Returns the readiness.
    */
-  async refresh(): Promise<boolean> {
-    if (this.state === 'ready') return true;
-    const missing = LLM_PROVIDERS.filter((p) => !process.env[PROVIDER_ENV_KEY[p]]);
-    if (missing.length > 0) {
-      const resolved = new Map<LlmProvider, string>();
-      for (const provider of missing) {
-        try {
-          const key = await this.store.resolve(provider);
-          if (!key) return false;
-          resolved.set(provider, key);
-        } catch (err) {
-          // Stored rows but an unusable cipher (SECRETS_ENCRYPTION_KEY unset/wrong) — stay pending.
-          this.logger.warn(`provider_keys resolve(${provider}) failed: ${err}`);
-          return false;
-        }
-      }
-      // All gaps covered — only now mutate the process env (no partial key sets).
-      for (const [provider, key] of resolved) {
-        process.env[PROVIDER_ENV_KEY[provider]] = key;
-      }
+  async refresh(teamId: string): Promise<boolean> {
+    if (this.readyTeams.has(teamId)) return true;
+    const ready = await this.creds.isReady(teamId);
+    if (ready) {
+      this.readyTeams.add(teamId);
+      this.logger.log(`Workspace ${teamId}: provider keys in place — engines live.`);
+      this.ready$.next(teamId);
     }
-    this.state = 'ready';
-    if (this.timer) clearInterval(this.timer);
-    this.timer = undefined;
-    this.logger.log('Provider keys are in place — engines are live.');
-    this.ready$.next();
-    return true;
+    return ready;
+  }
+
+  /** Fire-and-forget readiness probe for a workspace of unknown state (debounced) — for the scheduler. */
+  ensureChecked(teamId: string): void {
+    if (this.readyTeams.has(teamId) || this.checking.has(teamId)) return;
+    this.checking.add(teamId);
+    void this.refresh(teamId)
+      .catch((err) => this.logger.warn(`readiness refresh(${teamId}) failed: ${err}`))
+      .finally(() => this.checking.delete(teamId));
   }
 }

@@ -236,7 +236,8 @@ const repairDanglingToolCalls = (history: BaseMessage[]): BaseMessage[] => {
 
 @Injectable()
 export class BotGraphFactory {
-  // One compiled graph per bot, lazy + memoized (buildModel needs ANTHROPIC_API_KEY at first use).
+  // One compiled graph per bot, lazy + memoized. Tenant-agnostic: the model is built per-invocation
+  // inside the llm node (from the turn's credential context), so one graph serves every workspace.
   private graphs = new Map<string, ReturnType<BotGraphFactory['build']>>();
 
   constructor(
@@ -335,7 +336,6 @@ export class BotGraphFactory {
     // can't-fail tools should be terminal: the conductor surfaces only assistant text, never
     // tool-result content, so a swallowed failure from a fallible terminal tool would be invisible.
     const TERMINAL = this.toolRegistry.terminalToolNames(allowlist);
-    const model = this.models.buildModel().bindTools(tools);
 
     /** Peek the channel (read-only — never touches messages/cursor) and pick respond/ack/ignore. */
     const gateNode = async (
@@ -458,6 +458,9 @@ export class BotGraphFactory {
           : []),
         ...injected,
       ];
+      // Built per-invocation (not at graph-build) so it reads the CURRENT turn's tenant key from
+      // the credential context — one compiled graph per bot serves every workspace.
+      const model = this.models.buildModel().bindTools(tools);
       const ai = await model.invoke(convo, config);
       return { messages: [...injected, ai], cursor: newCursor };
     };

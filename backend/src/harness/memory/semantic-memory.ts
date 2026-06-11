@@ -132,9 +132,9 @@ export class SemanticMemory {
     }>(
       `SELECT id, fact, 1 - (embedding <=> $1::vector) AS sim
        FROM facts
-       WHERE scope = $2 AND deleted_at IS NULL AND 1 - (embedding <=> $1::vector) >= $3
+       WHERE scope = $2 AND team_id = $4 AND deleted_at IS NULL AND 1 - (embedding <=> $1::vector) >= $3
        ORDER BY embedding <=> $1::vector ASC`,
-      [qv, scope, GRAY_FLOOR],
+      [qv, scope, GRAY_FLOOR, input.id.team],
     );
 
     const top = candidates[0];
@@ -149,13 +149,14 @@ export class SemanticMemory {
     }
 
     const inserted = await this.query<{ id: number | string }>(
-      `INSERT INTO facts (fact, embedding, scope, asserted_by, source_surface, confidence, embed_model, created_at, updated_at)
-       VALUES ($1, $2::vector, $3, $4, $5, $6, $7, now(), now())
+      `INSERT INTO facts (fact, embedding, scope, team_id, asserted_by, source_surface, confidence, embed_model, created_at, updated_at)
+       VALUES ($1, $2::vector, $3, $4, $5, $6, $7, $8, now(), now())
        RETURNING id`,
       [
         input.fact,
         qv,
         scope,
+        input.id.team,
         input.id.speaker,
         input.id.surface,
         1.0,
@@ -195,10 +196,11 @@ export class SemanticMemory {
     const rows = await this.query(
       `SELECT ${SELECT_COLS}, 1 - (embedding <=> $1::vector) AS sim
        FROM facts
-       WHERE scope = ANY($2) AND deleted_at IS NULL AND 1 - (embedding <=> $1::vector) >= $3
+       WHERE scope = ANY($2) AND (team_id = $5 OR team_id IS NULL)
+         AND deleted_at IS NULL AND 1 - (embedding <=> $1::vector) >= $3
        ORDER BY embedding <=> $1::vector ASC
        LIMIT $4`,
-      [qv, scopes, floor, limit + 20],
+      [qv, scopes, floor, limit + 20, id.team],
     );
     return this.rankByRecency(rows, limit).map(toStoredFact);
   }
@@ -221,11 +223,12 @@ export class SemanticMemory {
     const rows = await this.query(
       `SELECT ${SELECT_COLS}, 1 - (embedding <=> $1::vector) AS sim
        FROM facts
-       WHERE scope LIKE 'project:%' AND scope <> ALL($2::text[]) AND deleted_at IS NULL
+       WHERE scope LIKE 'project:%' AND scope <> ALL($2::text[])
+         AND (team_id = $5 OR team_id IS NULL) AND deleted_at IS NULL
          AND 1 - (embedding <=> $1::vector) >= $3
        ORDER BY embedding <=> $1::vector ASC
        LIMIT $4`,
-      [qv, self, floor, limit + 20],
+      [qv, self, floor, limit + 20, id.team],
     );
     return this.rankByRecency(rows, limit).map((r) => ({
       fact: toStoredFact(r),
@@ -254,8 +257,9 @@ export class SemanticMemory {
     const scopes = recallScopes(id);
     if (scopes.length === 0) return undefined;
     const rows = await this.query(
-      `SELECT ${SELECT_COLS} FROM facts WHERE id = $1 AND deleted_at IS NULL AND scope = ANY($2)`,
-      [rowId, scopes],
+      `SELECT ${SELECT_COLS} FROM facts
+       WHERE id = $1 AND deleted_at IS NULL AND scope = ANY($2) AND (team_id = $3 OR team_id IS NULL)`,
+      [rowId, scopes, id.team],
     );
     return rows[0];
   }

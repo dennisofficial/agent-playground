@@ -23,7 +23,9 @@ import {
 import { flattenContent, titleCase } from '../domain/text';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
+import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmReadinessService } from '../llm-keys/llm-readiness.service';
+import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -88,8 +90,9 @@ export class ConductorService
 {
   private readonly logger = new Logger(ConductorService.name);
 
-  /** Bots currently processing (covers gate → consume, so a re-poke can't double-schedule). A bot
-   * is one "person": it works ONE turn at a time, across all its rooms. */
+  /** Bots currently processing (covers gate → consume, so a re-poke can't double-schedule), keyed
+   * `${teamId}|${botId}` (see botKey): one "person" works ONE turn at a time across all its rooms
+   * WITHIN a workspace, but the same employee in another workspace runs concurrently. */
   private runningBots = new Set<string>();
   /** Bot response-turns since the last human message, PER ROOM (loop breaker; uncapped today) —
    * one room's bot cascade must not throttle another's. */
@@ -118,7 +121,15 @@ export class ConductorService
     private readonly bus: ConductorEventsBus,
     private readonly env: EnvService,
     private readonly readiness: LlmReadinessService,
+    private readonly creds: TenantCredentialService,
+    private readonly credCtx: CredentialContext,
   ) {}
+
+  /** runningBots is keyed per (tenant, bot): a bot works ONE turn at a time within a workspace, but
+   * the SAME employee in another workspace runs concurrently (tenants don't head-of-line-block). */
+  private botKey(teamId: string, botId: string): string {
+    return `${teamId}|${botId}`;
+  }
 
   /** Constructor stays pure; subscriptions + the first schedule happen here (after channel/cursor
    * hydration, which runs in onModuleInit — module init completes before any bootstrap hook). */
@@ -128,6 +139,7 @@ export class ConductorService
     // — a noisy default beats a silently dead room.
     this.registry.ensure({
       channelId: this.channel.surfaceId,
+      teamId: this.env.get('HARNESS_TEAM_ID') ?? DEFAULT_TEAM,
       kind: 'channel',
       project: this.env.get('ZERO_PROJECT') ?? DEFAULT_PROJECT,
       members: [...this.employees.list().map((b) => b.id), 'dennis'],
@@ -265,9 +277,16 @@ export class ConductorService
   }
 
   private refreshThinking(): void {
-    const names = [...this.runningBots].map(
-      (id) => this.employees.byId(id)?.name ?? id,
-    );
+    // runningBots keys are `${teamId}|${botId}` — render the bot's display name (deduped across
+    // workspaces; the status line is a single presence indicator, not per-tenant).
+    const names = [
+      ...new Set(
+        [...this.runningBots].map((key) => {
+          const botId = key.slice(key.indexOf('|') + 1);
+          return this.employees.byId(botId)?.name ?? botId;
+        }),
+      ),
+    ];
     this.bus.patchStatus({ thinking: names, busy: this.runningBots.size > 0 });
   }
 
@@ -283,32 +302,40 @@ export class ConductorService
       this.maybeResolveIdle();
       return;
     }
-    // Pending-keys gate: NOTHING that reaches the bot graph may start keyless — getBotGraph()
-    // constructs the Anthropic model at graph build time, so any keyless entry throws. Covers
-    // both session relays and room deliveries; ready$ → schedule() releases the backlog.
-    if (!this.readiness.isReady) {
-      this.maybeResolveIdle();
-      return;
-    }
+    // Pending-keys gate is now PER WORKSPACE: a room/relay only starts when its tenant's keys are
+    // ready (getBotGraph builds the Anthropic model from the turn's CredentialContext, so a keyless
+    // tenant would throw). `ensureChecked` kicks an async readiness probe; ready$ → schedule()
+    // releases that workspace's backlog. Other workspaces keep running meanwhile.
     // Session relays first (gate-bypassed, run through the owner bot when it's free).
     for (let i = 0; i < this.relayQueue.length; ) {
       const session = this.relayQueue[i];
+      const team = this.registry.teamIdOf(session.notifyThread);
+      if (!this.readiness.isReady(team)) {
+        this.readiness.ensureChecked(team);
+        i++;
+        continue;
+      }
       const owner =
         this.employees.byId(session.ownerBot)?.id ??
         this.employees.fallbackOwner().id;
-      if (this.runningBots.has(owner)) {
+      if (this.runningBots.has(this.botKey(team, owner))) {
         i++;
         continue;
       }
       this.relayQueue.splice(i, 1);
-      this.claim(owner, () => this.runSessionRelay(session));
+      this.claim(this.botKey(team, owner), () => this.runSessionRelay(session));
     }
     // Room deliveries: each idle member bot with undelivered non-own work, per room.
     for (const info of this.registry.list()) {
+      if (!this.readiness.isReady(info.teamId)) {
+        this.readiness.ensureChecked(info.teamId);
+        continue;
+      }
       for (const bot of this.botsIn(info)) {
-        if (this.runningBots.has(bot.id)) continue;
+        const key = this.botKey(info.teamId, bot.id);
+        if (this.runningBots.has(key)) continue;
         if (!this.hasWork(bot, info.channelId)) continue;
-        this.claim(bot.id, () =>
+        this.claim(key, () =>
           this.runBotGraph(bot, { channelId: info.channelId }),
         );
       }
@@ -316,12 +343,13 @@ export class ConductorService
     this.maybeResolveIdle();
   }
 
-  /** Mark a bot busy (before any async work), run `task`, then release + re-schedule. */
-  private claim(botId: string, task: () => Promise<void>): void {
-    this.runningBots.add(botId);
+  /** Mark a bot busy (before any async work), run `task`, then release + re-schedule. `key` is the
+   * per-(tenant,bot) botKey. */
+  private claim(key: string, task: () => Promise<void>): void {
+    this.runningBots.add(key);
     this.refreshThinking();
     void task().finally(() => {
-      this.runningBots.delete(botId);
+      this.runningBots.delete(key);
       this.refreshThinking();
       this.schedule();
     });
@@ -358,6 +386,20 @@ export class ConductorService
     // into another — the {botId}:{channelId}:{thread_ts ?? 'root'} convention from ARCHITECTURE.md.
     const channelId = opts.channelId ?? this.channel.surfaceId;
     const info = this.registry.ensure({ channelId });
+    // Resolve this workspace's LLM keys and run the WHOLE turn inside the credential context, so the
+    // model/embedding builders (gate, llm node, reconcile) all pick up the right tenant's key.
+    const keys = await this.creds.resolve(info.teamId);
+    return this.credCtx.run({ teamId: info.teamId, keys }, () =>
+      this.runBotGraphInner(bot, info, channelId, opts),
+    );
+  }
+
+  private async runBotGraphInner(
+    bot: EmployeeDefinition,
+    info: ChannelInfo,
+    channelId: string,
+    opts: { seed?: string; channelId?: string },
+  ): Promise<void> {
     const thread = `${bot.id}:${channelId}:root`;
     const identity = this.identityFor(bot.id, info);
     const cursorBefore = this.cursors.get(bot.id, channelId);
@@ -646,7 +688,7 @@ export class ConductorService
     const isDm = info.kind === 'dm';
     return {
       selfAgent: botId,
-      team: this.env.get('HARNESS_TEAM_ID') ?? DEFAULT_TEAM,
+      team: info.teamId,
       project: isDm ? DEFAULT_PROJECT : info.project,
       projects: isDm
         ? this.registry.projectsShared([botId, ...humans])

@@ -32,6 +32,8 @@ export interface Session {
   notifyThread: string;
   /** Which bot owns this session — scopes the session tools and routes turn-end relays to it. */
   ownerBot: string;
+  /** The tenant (Slack team id) — resolves the engine's LLM key and scopes the worklog. */
+  team: string;
   /** The project/workspace this work belongs to — scopes the work log (isolation). */
   project: string;
   /** Which worker engine runs this session (claude / codex / langgraph). */
@@ -53,6 +55,7 @@ export interface NewSession {
   notifyThread: string;
   engine: WorkerEngineName;
   ownerBot: string;
+  team: string;
   project: string;
   // REQUIRED (no default): a missing mode must never silently create a write-capable session.
   mode: WorkerMode;

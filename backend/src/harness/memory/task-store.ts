@@ -22,6 +22,7 @@ export interface Task {
 }
 
 export interface NewTask {
+  team: string;
   project: string;
   description: string;
   owner: string;
@@ -30,6 +31,7 @@ export interface NewTask {
 }
 
 export interface ListTasksQuery {
+  team: string;
   project: string;
   status?: TaskStatus;
   owner?: string;
@@ -78,11 +80,12 @@ export class TaskStore {
    */
   async addTask(t: NewTask): Promise<Task | undefined> {
     const rows = await this.q(
-      `INSERT INTO tasks (project, description, norm, owner, created_by, status, source, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, 'open', $6, now(), now())
-       ON CONFLICT (project, owner, norm) WHERE status = 'open' DO NOTHING
+      `INSERT INTO tasks (team_id, project, description, norm, owner, created_by, status, source, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, now(), now())
+       ON CONFLICT (team_id, project, owner, norm) WHERE status = 'open' DO NOTHING
        RETURNING *`,
       [
+        t.team,
         t.project,
         t.description,
         normalize(t.description),
@@ -96,8 +99,8 @@ export class TaskStore {
 
   /** Reminders for a workspace, newest first, optionally filtered by status / owner. */
   async listTasks(query: ListTasksQuery): Promise<Task[]> {
-    const where = ['project = $1'];
-    const args: unknown[] = [query.project];
+    const where = ['team_id = $1', 'project = $2'];
+    const args: unknown[] = [query.team, query.project];
     if (query.status) {
       args.push(query.status);
       where.push(`status = $${args.length}`);
@@ -115,51 +118,60 @@ export class TaskStore {
   }
 
   /** All open reminders for a workspace (oldest first) — the scrum-master / standup whole-board view. */
-  async openTasks(project: string): Promise<Task[]> {
+  async openTasks(team: string, project: string): Promise<Task[]> {
     const rows = await this.q(
-      `SELECT * FROM tasks WHERE project = $1 AND status = 'open' ORDER BY created_at ASC`,
-      [project],
+      `SELECT * FROM tasks WHERE team_id = $1 AND project = $2 AND status = 'open' ORDER BY created_at ASC`,
+      [team, project],
     );
     return rows.map(toTask);
   }
 
   /** Open reminders relevant to one bot's turn: on its plate OR raised by it. Oldest first. */
-  async remindersForBot(project: string, botId: string): Promise<Task[]> {
+  async remindersForBot(
+    team: string,
+    project: string,
+    botId: string,
+  ): Promise<Task[]> {
     const rows = await this.q(
-      `SELECT * FROM tasks WHERE project = $1 AND status = 'open' AND (owner = $2 OR created_by = $2)
+      `SELECT * FROM tasks WHERE team_id = $1 AND project = $2 AND status = 'open' AND (owner = $3 OR created_by = $3)
        ORDER BY created_at ASC`,
-      [project, botId],
+      [team, project, botId],
     );
     return rows.map(toTask);
   }
 
-  /** A single reminder by id within a project (for authority checks), or undefined. */
-  async getTask(project: string, id: number): Promise<Task | undefined> {
+  /** A single reminder by id within a workspace+project (for authority checks), or undefined. */
+  async getTask(
+    team: string,
+    project: string,
+    id: number,
+  ): Promise<Task | undefined> {
     const rows = await this.q(
-      `SELECT * FROM tasks WHERE id = $1 AND project = $2`,
-      [id, project],
+      `SELECT * FROM tasks WHERE id = $1 AND team_id = $2 AND project = $3`,
+      [id, team, project],
     );
     return rows[0] ? toTask(rows[0]) : undefined;
   }
 
-  /** Mark a task done. Project-enforced so an id can't close another workspace's task. */
-  completeTask(project: string, id: number): Promise<boolean> {
-    return this.setStatus(project, id, 'done');
+  /** Mark a task done. Workspace+project-enforced so an id can't close another's task. */
+  completeTask(team: string, project: string, id: number): Promise<boolean> {
+    return this.setStatus(team, project, id, 'done');
   }
 
-  /** Drop a task (no longer relevant). Project-enforced. */
-  dropTask(project: string, id: number): Promise<boolean> {
-    return this.setStatus(project, id, 'dropped');
+  /** Drop a task (no longer relevant). Workspace+project-enforced. */
+  dropTask(team: string, project: string, id: number): Promise<boolean> {
+    return this.setStatus(team, project, id, 'dropped');
   }
 
   private async setStatus(
+    team: string,
     project: string,
     id: number,
     status: TaskStatus,
   ): Promise<boolean> {
     const rows = await this.q(
-      `UPDATE tasks SET status = $1, updated_at = now() WHERE id = $2 AND project = $3 RETURNING id`,
-      [status, id, project],
+      `UPDATE tasks SET status = $1, updated_at = now() WHERE id = $2 AND team_id = $3 AND project = $4 RETURNING id`,
+      [status, id, team, project],
     );
     return rows.length > 0;
   }

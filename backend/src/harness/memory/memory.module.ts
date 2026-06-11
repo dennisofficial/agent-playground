@@ -5,6 +5,7 @@ import { CreateModule } from '@workspace/nestjs-core';
 import { Fact, Task, Worklog } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
+import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmModule } from '../llm/llm.module';
 import { createCheckpointer, pgConnString } from './checkpointer';
 import { OpenAIEmbeddingProvider } from './embedding';
@@ -39,9 +40,12 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
     ReconcileService,
     {
       provide: SemanticMemory,
-      inject: [getRepositoryToken(Fact)],
-      useFactory: (facts: Repository<Fact>) =>
-        new SemanticMemory(facts, new OpenAIEmbeddingProvider()),
+      inject: [getRepositoryToken(Fact), CredentialContext],
+      useFactory: (facts: Repository<Fact>, creds: CredentialContext) =>
+        new SemanticMemory(
+          facts,
+          new OpenAIEmbeddingProvider(() => creds.openaiKey()),
+        ),
     },
     {
       provide: TaskStore,

@@ -1,6 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { Injectable } from '@nestjs/common';
+import { CredentialContext } from '../llm-keys/credential-context';
 
 const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_SMALL_MODEL = 'claude-haiku-4-5-20251001';
@@ -8,18 +9,31 @@ const DEFAULT_SMALL_MODEL = 'claude-haiku-4-5-20251001';
 /**
  * Reusable Anthropic model builders, shared by the chat agents, the gate, and the reconcile passes.
  * (Ported from playground/src/model.ts, env reads moved onto EnvService.) Callers build lazily (on
- * first use), not at module top-level — ChatAnthropic's constructor throws if ANTHROPIC_API_KEY is
- * missing, and a top-level crash would beat the TUI's error rendering to the screen.
+ * first use), not at module top-level — ChatAnthropic's constructor throws if no key is resolvable,
+ * and a top-level crash would beat the TUI's error rendering to the screen.
+ *
+ * Single-process multi-tenant: the API key comes from the per-turn CredentialContext (the active
+ * workspace's key), NOT process.env — so one builder serves every workspace. Outside a turn scope
+ * the context falls back to process.env (dev/TUI). `apiKey: undefined` is omitted so ChatAnthropic
+ * still throws its actionable "missing key" error rather than receiving an empty string.
  */
 @Injectable()
 export class ChatModelFactory {
-  constructor(private readonly env: EnvService) {}
+  constructor(
+    private readonly env: EnvService,
+    private readonly creds: CredentialContext,
+  ) {}
+
+  private apiKey(): string | undefined {
+    return this.creds.anthropicKey();
+  }
 
   /** The main chat model (one model for v0; per-role / multi-LLM config comes later). */
   buildModel(): ChatAnthropic {
     const temperature = this.env.get('CHAT_TEMPERATURE') ?? 1;
     const maxTokens = Math.max(1, this.env.get('CHAT_MAX_TOKENS') ?? 2048);
     return new ChatAnthropic({
+      apiKey: this.apiKey(),
       model: this.env.get('CHAT_MODEL') ?? DEFAULT_CHAT_MODEL,
       betas: ['extended-cache-ttl-2025-04-11'], // honor `ttl: '1h'` cache_control; without it 1h silently falls back to 5m
       thinking: { type: 'adaptive', display: 'summarized' },
@@ -35,6 +49,7 @@ export class ChatModelFactory {
    */
   buildGateModel(): ChatAnthropic {
     return new ChatAnthropic({
+      apiKey: this.apiKey(),
       model: this.env.get('GATE_MODEL') ?? DEFAULT_SMALL_MODEL,
       maxTokens: 256,
       temperature: 0,
@@ -47,6 +62,7 @@ export class ChatModelFactory {
    */
   buildExtractModel(): ChatAnthropic {
     return new ChatAnthropic({
+      apiKey: this.apiKey(),
       model: this.env.get('EXTRACT_MODEL') ?? DEFAULT_SMALL_MODEL,
       maxTokens: 512,
       temperature: 0,

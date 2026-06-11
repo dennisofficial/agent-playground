@@ -103,8 +103,13 @@ export class FetchService {
       Promise.all(
         projects.map((project) =>
           bot.scrumMaster
-            ? this.tasks.openTasks(project)
-            : this.tasks.listTasks({ project, status: 'open', owner: bot.id }),
+            ? this.tasks.openTasks(id.team, project)
+            : this.tasks.listTasks({
+                team: id.team,
+                project,
+                status: 'open',
+                owner: bot.id,
+              }),
         ),
       ),
     ]);

@@ -388,8 +388,8 @@ export class ReconcileService {
         await Promise.all(
           projects.map((p) =>
             bot.scrumMaster
-              ? this.tasks.openTasks(p)
-              : this.tasks.remindersForBot(p, bot.id),
+              ? this.tasks.openTasks(id.team, p)
+              : this.tasks.remindersForBot(id.team, p, bot.id),
           ),
         )
       ).flat();
@@ -438,6 +438,7 @@ export class ReconcileService {
           // A named project must be one this conversation may see; else the turn's home project.
           const named = a.project?.trim().toLowerCase();
           const t = await this.tasks.addTask({
+            team: id.team,
             project: named && projects.includes(named) ? named : id.project,
             description: a.description,
             owner,
@@ -451,6 +452,7 @@ export class ReconcileService {
         if (
           shownIds.has(c.id) &&
           (await this.tasks.completeTask(
+            id.team,
             projectById.get(c.id) ?? id.project,
             c.id,
           ))
@@ -460,7 +462,11 @@ export class ReconcileService {
       for (const d of result.drop) {
         if (
           shownIds.has(d.id) &&
-          (await this.tasks.dropTask(projectById.get(d.id) ?? id.project, d.id))
+          (await this.tasks.dropTask(
+            id.team,
+            projectById.get(d.id) ?? id.project,
+            d.id,
+          ))
         )
           dropped++;
       }

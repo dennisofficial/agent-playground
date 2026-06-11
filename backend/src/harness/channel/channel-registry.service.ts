@@ -2,13 +2,15 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Channel } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
-import { DEFAULT_PROJECT } from '../domain/identity';
+import { DEFAULT_PROJECT, DEFAULT_TEAM } from '../domain/identity';
 import { createMutex } from '../domain/async';
 
 export type ChannelKind = 'channel' | 'dm' | 'group-dm';
 
 export interface ChannelInfo {
   channelId: string;
+  /** The tenant (Slack team id) that owns this room — the memory `team:` tier + credential scope. */
+  teamId: string;
   kind: ChannelKind;
   /** The project/workspace this room maps to — the memory `project:` tier for turns in it. */
   project: string;
@@ -39,6 +41,7 @@ export class ChannelRegistryService implements OnModuleInit {
     for (const r of rows) {
       this.channels.set(r.channel_id, {
         channelId: r.channel_id,
+        teamId: r.team_id ?? DEFAULT_TEAM,
         kind: r.kind as ChannelKind,
         project: r.project,
         members: r.members,
@@ -63,6 +66,7 @@ export class ChannelRegistryService implements OnModuleInit {
     if (existing) return existing;
     const full: ChannelInfo = {
       channelId: info.channelId,
+      teamId: info.teamId ?? DEFAULT_TEAM,
       kind: info.kind ?? 'channel',
       project: info.project ?? DEFAULT_PROJECT,
       members: info.members ?? [],
@@ -71,7 +75,7 @@ export class ChannelRegistryService implements OnModuleInit {
     this.channels.set(full.channelId, full);
     this.persist(full);
     this.logger.log(
-      `Registered channel '${full.channelId}' (${full.kind}, project '${full.project}')`,
+      `Registered channel '${full.channelId}' (team '${full.teamId}', ${full.kind}, project '${full.project}')`,
     );
     return full;
   }
@@ -94,6 +98,11 @@ export class ChannelRegistryService implements OnModuleInit {
   /** The project a turn in this room belongs to (memory scoping). Unknown room → default project. */
   projectOf(channelId: string): string {
     return this.channels.get(channelId)?.project ?? DEFAULT_PROJECT;
+  }
+
+  /** The tenant (Slack team id) that owns this room. Unknown room → default team (dev/TUI). */
+  teamIdOf(channelId: string): string {
+    return this.channels.get(channelId)?.teamId ?? DEFAULT_TEAM;
   }
 
   /** Group-chat semantics for identity: DMs are NOT channels (pair-scope memory surfaces). */
@@ -123,6 +132,7 @@ export class ChannelRegistryService implements OnModuleInit {
       this.repo.upsert(
         {
           channel_id: info.channelId,
+          team_id: info.teamId,
           kind: info.kind,
           project: info.project,
           members: info.members,

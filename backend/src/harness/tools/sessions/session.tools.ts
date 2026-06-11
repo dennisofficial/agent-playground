@@ -74,6 +74,7 @@ export class CreateSessionTool
       notifyThread: id.surface,
       engine: engineName,
       ownerBot: id.selfAgent,
+      team: id.team,
       project: id.project,
       mode,
     });

@@ -4,6 +4,8 @@ import { withActiveRoot } from '../engines/guard';
 import type { WorkerEvent, WorkerMode } from '../engines/worker-engine.port';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { PersonaService } from '../employees/persona.service';
+import { CredentialContext } from '../llm-keys/credential-context';
+import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import { WorklogStore } from '../memory/worklog-store';
 import { WorktreeService } from '../worktrees/worktree.service';
 import {
@@ -51,6 +53,8 @@ export class SessionRunnerService {
     private readonly persona: PersonaService,
     private readonly worklog: WorklogStore,
     private readonly worktrees: WorktreeService,
+    private readonly creds: TenantCredentialService,
+    private readonly credCtx: CredentialContext,
   ) {}
 
   /**
@@ -86,29 +90,37 @@ export class SessionRunnerService {
       this.logger.log(
         `${sessionId} turn ${session.turns + 1} — ${session.mode} on ${model ?? `${session.engine} default`}${effort ? ` (effort:${effort})` : ''} (${bot.name}, ${worktree.id})`,
       );
+      // Resolve THIS workspace's keys: passed into the claude/codex subprocess env (apiKey) AND
+      // stashed in the credential context for the in-process langgraph engine's model builder.
+      const keys = await this.creds.resolve(session.team);
+      const engineKey =
+        session.engine === 'codex' ? keys.openai : keys.anthropic;
       // Jail the in-process langgraph tools to the worktree for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
       const { result, sessionId: engineSessionId } = await withActiveRoot(
         worktree.path,
         () =>
-          this.engines.get(session.engine).run({
-            task: message,
-            cwd: worktree.path,
-            systemPrompt: this.persona.workerPromptFor(bot),
-            sessionId: session.engineSessionId,
-            model,
-            effort,
-            mode: session.mode,
-            onEvent: (e) =>
-              void this.sessions
-                .appendProgress(sessionId, e)
-                .catch((err) =>
-                  this.logger.warn(
-                    `appendProgress(${sessionId}) failed: ${err}`,
+          this.credCtx.run({ teamId: session.team, keys }, () =>
+            this.engines.get(session.engine).run({
+              task: message,
+              cwd: worktree.path,
+              systemPrompt: this.persona.workerPromptFor(bot),
+              sessionId: session.engineSessionId,
+              model,
+              effort,
+              mode: session.mode,
+              apiKey: engineKey,
+              onEvent: (e) =>
+                void this.sessions
+                  .appendProgress(sessionId, e)
+                  .catch((err) =>
+                    this.logger.warn(
+                      `appendProgress(${sessionId}) failed: ${err}`,
+                    ),
                   ),
-                ),
-            signal: ac.signal,
-          }),
+              signal: ac.signal,
+            }),
+          ),
       );
       // Closed while we were finishing up: discard the result, don't go idle or relay. The abort
       // flag alone isn't enough — closeSession writes 'closed' BEFORE calling abort(), so an engine
@@ -200,6 +212,7 @@ export class SessionRunnerService {
       // Durable record so standups / "what did you do" have a real answer.
       await this.worklog
         .logWork({
+          team: session.team,
           ownerBot: session.ownerBot,
           project: session.project,
           task: session.task,

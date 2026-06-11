@@ -49,7 +49,7 @@ export class ListTasksTool implements IHarnessTool<typeof listSchema> {
     const tasks = (
       await Promise.all(
         projects.map((project) =>
-          this.tasks.listTasks({ project, status: 'open', owner }),
+          this.tasks.listTasks({ team: id.team, project, status: 'open', owner }),
         ),
       )
     ).flat();
@@ -103,6 +103,7 @@ export class AddTaskTool implements IHarnessTool<typeof addSchema> {
     const target =
       named && recallProjects(id).includes(named) ? named : id.project;
     const t = await this.tasks.addTask({
+      team: id.team,
       project: target,
       description,
       owner: onPlate,
@@ -142,7 +143,7 @@ export class CompleteTaskTool implements IHarnessTool<typeof completeSchema> {
     // Look the id up across every recallable project (a DM's plate spans the shared set).
     let task: Task | undefined;
     for (const project of recallProjects(id)) {
-      const t = await this.tasks.getTask(project, taskId);
+      const t = await this.tasks.getTask(id.team, project, taskId);
       if (t) {
         task = t;
         break;
@@ -157,7 +158,7 @@ export class CompleteTaskTool implements IHarnessTool<typeof completeSchema> {
     ) {
       return `Reminder #${taskId} is on ${task.owner}'s plate — only they or the scrum master can close it.`;
     }
-    await this.tasks.completeTask(task.project, taskId);
+    await this.tasks.completeTask(id.team, task.project, taskId);
     return task.owner === id.selfAgent
       ? `Marked reminder #${taskId} done.`
       : `Cleared reminder #${taskId} off ${task.owner}'s plate.`;

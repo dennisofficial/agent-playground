@@ -98,6 +98,7 @@ export class ClaudeEngine implements WorkerEngine {
     model,
     effort,
     mode,
+    apiKey,
     onEvent,
     signal,
   }: RunWorkerArgs) {
@@ -129,6 +130,9 @@ export class ClaudeEngine implements WorkerEngine {
       // settingSources stays [] (no config FILES are read).
       settings: { attribution: { commit: '', pr: '' } },
       abortController,
+      // Per-tenant key into the SDK subprocess env (NOT the shared process.env) — each workspace
+      // funds its own runs. Unset → the subprocess inherits the ambient env (dev/TUI).
+      ...(apiKey ? { env: { ...process.env, ANTHROPIC_API_KEY: apiKey } } : {}),
       ...(sessionId ? { resume: sessionId } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(effort ? { effort } : {}),

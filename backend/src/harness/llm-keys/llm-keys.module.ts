@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { SecretCipher } from '../projects/secret-cipher';
 import { LlmReadinessService } from './llm-readiness.service';
 import { ProviderKeyStore } from './provider-key.store';
+import { TenantCredentialService } from './tenant-credential.service';
 
 /**
  * Tenant LLM keys + pending-keys readiness — a SLIM module (the ProjectsModule pattern) composable
@@ -23,6 +24,7 @@ import { ProviderKeyStore } from './provider-key.store';
       useFactory: (keys: Repository<ProviderKey>, cipher: SecretCipher) =>
         new ProviderKeyStore(keys, cipher),
     },
+    TenantCredentialService,
     LlmReadinessService,
   ],
 })

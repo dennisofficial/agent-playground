@@ -32,7 +32,8 @@ function gitCommonDir(cwd: string): string | undefined {
 @Injectable()
 export class CodexEngine implements WorkerEngine {
   readonly name = 'codex' as const;
-  private client?: Codex;
+  // One client per API key (single-process multi-tenant: each workspace funds its own runs).
+  private readonly clients = new Map<string, Codex>();
 
   constructor(
     @Inject(OPENAI_CODEX_SDK)
@@ -40,8 +41,14 @@ export class CodexEngine implements WorkerEngine {
     private readonly env: EnvService,
   ) {}
 
-  private getCodex(): Codex {
-    return (this.client ??= new this.sdk.Codex());
+  private getCodex(apiKey?: string): Codex {
+    const cacheKey = apiKey ?? 'default';
+    let client = this.clients.get(cacheKey);
+    if (!client) {
+      client = apiKey ? new this.sdk.Codex({ apiKey }) : new this.sdk.Codex();
+      this.clients.set(cacheKey, client);
+    }
+    return client;
   }
 
   private threadOptions(
@@ -76,10 +83,11 @@ export class CodexEngine implements WorkerEngine {
     sessionId,
     model,
     mode,
+    apiKey,
     onEvent,
     signal,
   }: RunWorkerArgs) {
-    const client = this.getCodex();
+    const client = this.getCodex(apiKey);
     const opts = this.threadOptions(cwd, { model, planning: mode === 'plan' });
     const thread = sessionId
       ? client.resumeThread(sessionId, opts)

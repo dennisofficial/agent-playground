@@ -50,6 +50,10 @@ export interface RunWorkerArgs {
    * 'plan' restricts the worker to read-only at the engine seam, so "look, don't touch" is
    * structurally enforced, not just requested. */
   mode: WorkerMode;
+  /** The owning workspace's LLM API key for this run (single-process multi-tenant: each tenant
+   * funds its own engine runs). Passed into the engine's subprocess env, NOT the shared process.env.
+   * Unset → the engine falls back to its own env (dev/TUI). */
+  apiKey?: string;
   /** Called for each progress event as the worker runs. */
   onEvent: (e: WorkerEvent) => void;
   /** Aborts the run when signalled — the engine wires it to its native cancellation. Kept

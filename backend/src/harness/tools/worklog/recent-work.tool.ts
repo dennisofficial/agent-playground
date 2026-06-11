@@ -27,6 +27,7 @@ export class RecentWorkTool implements IHarnessTool<typeof recentWorkSchema> {
   ): Promise<string> {
     const id = ctx.identity;
     const entries = await this.worklog.recentWork({
+      team: id.team,
       project: id.project,
       ownerBot: scope === 'team' ? undefined : id.selfAgent,
       limit: 10,

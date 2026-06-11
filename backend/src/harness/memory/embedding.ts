@@ -14,17 +14,36 @@ export interface EmbeddingProvider {
 export const EMBED_MODEL = 'text-embedding-3-small';
 export const EMBED_DIM = 1536;
 
-/** OpenAI adapter. Lazy: the constructor throws without OPENAI_API_KEY, so importing must not build it. */
+/**
+ * OpenAI adapter. Single-process multi-tenant: the API key comes from a per-turn getter (the active
+ * workspace's key, via CredentialContext) rather than process.env, so one provider instance serves
+ * every workspace. Clients are cached per key string (rebuilt only on key change/rotation). Lazy by
+ * construction — no client is built until the first embed, and a missing key throws actionably then.
+ */
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly model = EMBED_MODEL;
-  private embedder?: OpenAIEmbeddings;
+  private readonly clients = new Map<string, OpenAIEmbeddings>();
 
-  private get client(): OpenAIEmbeddings {
-    return (this.embedder ??= new OpenAIEmbeddings({ model: EMBED_MODEL }));
+  /** @param apiKey resolves the active turn's OpenAI key (CredentialContext.openaiKey). */
+  constructor(private readonly apiKey: () => string | undefined) {}
+
+  private client(): OpenAIEmbeddings {
+    const key = this.apiKey();
+    if (!key) {
+      throw new Error(
+        'No OpenAI key for the active workspace (store + OPENAI_API_KEY env both empty) — embeddings unavailable.',
+      );
+    }
+    let c = this.clients.get(key);
+    if (!c) {
+      c = new OpenAIEmbeddings({ model: EMBED_MODEL, apiKey: key });
+      this.clients.set(key, c);
+    }
+    return c;
   }
 
   embed(text: string): Promise<number[]> {
-    return this.client.embedQuery(text);
+    return this.client().embedQuery(text);
   }
 }
 
