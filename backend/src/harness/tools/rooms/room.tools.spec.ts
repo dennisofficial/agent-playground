@@ -65,6 +65,7 @@ const room = (
   members: string[],
 ): ChannelInfo => ({
   channelId,
+  teamId: 'local',
   kind,
   project: 'local',
   members,

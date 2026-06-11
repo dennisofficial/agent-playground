@@ -1,94 +1,53 @@
-import type { LlmProvider } from './llm-key.types';
 import { LlmReadinessService } from './llm-readiness.service';
-import type { ProviderKeyStore } from './provider-key.store';
+import type { TenantCredentialService } from './tenant-credential.service';
 
-const fakeStore = (keys: Partial<Record<LlmProvider, string | Error>>) =>
+/** Fake credential service whose per-team readiness is controllable. */
+const fakeCreds = (ready: Record<string, boolean>) =>
   ({
-    resolve: vi.fn(async (provider: LlmProvider) => {
-      const v = keys[provider];
-      if (v instanceof Error) throw v;
-      return v;
-    }),
-  }) as unknown as ProviderKeyStore;
+    isReady: vi.fn(async (teamId: string) => !!ready[teamId]),
+  }) as unknown as TenantCredentialService;
 
-describe('LlmReadinessService', () => {
-  const ENV_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const;
-  let saved: Record<string, string | undefined>;
-  let service: LlmReadinessService | undefined;
+describe('LlmReadinessService (per-tenant)', () => {
+  it('is not ready until a refresh finds the workspace keys', async () => {
+    const ready: Record<string, boolean> = { T1: false };
+    const svc = new LlmReadinessService(fakeCreds(ready));
+    expect(svc.isReady('T1')).toBe(false);
+    expect(await svc.refresh('T1')).toBe(false);
+    expect(svc.isReady('T1')).toBe(false);
 
-  beforeEach(() => {
-    saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-    for (const k of ENV_KEYS) delete process.env[k];
+    ready.T1 = true;
+    expect(await svc.refresh('T1')).toBe(true);
+    expect(svc.isReady('T1')).toBe(true);
   });
 
-  afterEach(() => {
-    service?.onApplicationShutdown(); // clear the pending poll
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
+  it('fires ready$ with the teamId exactly once, on the pending→ready edge', async () => {
+    const ready: Record<string, boolean> = { T1: true };
+    const svc = new LlmReadinessService(fakeCreds(ready));
+    const edges: string[] = [];
+    svc.ready$.subscribe((t) => edges.push(t));
+
+    expect(await svc.refresh('T1')).toBe(true);
+    expect(await svc.refresh('T1')).toBe(true); // idempotent — no second edge
+    expect(edges).toEqual(['T1']);
   });
 
-  it('is ready at boot when both env keys are present (store untouched)', async () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-env';
-    process.env.OPENAI_API_KEY = 'sk-env';
-    const store = fakeStore({});
-    service = new LlmReadinessService(store);
-    await service.onModuleInit();
-    expect(service.isReady).toBe(true);
-    expect(store.resolve).not.toHaveBeenCalled();
+  it('isolates workspaces — T1 ready does not make T2 ready', async () => {
+    const svc = new LlmReadinessService(fakeCreds({ T1: true, T2: false }));
+    expect(await svc.refresh('T1')).toBe(true);
+    expect(svc.isReady('T1')).toBe(true);
+    expect(svc.isReady('T2')).toBe(false);
+    expect(await svc.refresh('T2')).toBe(false);
   });
 
-  it('resolves stored keys into process.env when env is empty', async () => {
-    service = new LlmReadinessService(
-      fakeStore({ anthropic: 'sk-ant-stored', openai: 'sk-stored' }),
-    );
-    await service.onModuleInit();
-    expect(service.isReady).toBe(true);
-    expect(process.env.ANTHROPIC_API_KEY).toBe('sk-ant-stored');
-    expect(process.env.OPENAI_API_KEY).toBe('sk-stored');
-  });
+  it('ensureChecked probes an unknown workspace and flips it ready', async () => {
+    const ready: Record<string, boolean> = { T1: true };
+    const svc = new LlmReadinessService(fakeCreds(ready));
+    const edges: string[] = [];
+    svc.ready$.subscribe((t) => edges.push(t));
 
-  it('mixes sources — env wins per provider, the store fills only the gaps', async () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-env';
-    const store = fakeStore({ anthropic: 'sk-ant-stored', openai: 'sk-stored' });
-    service = new LlmReadinessService(store);
-    await service.onModuleInit();
-    expect(service.isReady).toBe(true);
-    expect(process.env.ANTHROPIC_API_KEY).toBe('sk-ant-env'); // never overwritten
-    expect(process.env.OPENAI_API_KEY).toBe('sk-stored');
-    expect(store.resolve).toHaveBeenCalledTimes(1);
-    expect(store.resolve).toHaveBeenCalledWith('openai');
-  });
-
-  it('stays pending while any provider is missing, and sets NO partial env', async () => {
-    service = new LlmReadinessService(fakeStore({ anthropic: 'sk-ant-stored' }));
-    await service.onModuleInit();
-    expect(service.isReady).toBe(false);
-    expect(process.env.ANTHROPIC_API_KEY).toBeUndefined(); // no partial key sets
-  });
-
-  it('fires ready$ exactly once, on the pending→ready edge', async () => {
-    const keys: Partial<Record<LlmProvider, string>> = {};
-    service = new LlmReadinessService(fakeStore(keys));
-    const edges: number[] = [];
-    service.ready$.subscribe(() => edges.push(1));
-    await service.onModuleInit();
-    expect(service.isReady).toBe(false);
-
-    keys.anthropic = 'sk-ant-stored';
-    expect(await service.refresh()).toBe(false);
-    keys.openai = 'sk-stored';
-    expect(await service.refresh()).toBe(true);
-    expect(await service.refresh()).toBe(true); // idempotent — no second edge
-    expect(edges).toHaveLength(1);
-  });
-
-  it('stays pending (no throw) when resolve fails — e.g. cipher key unset', async () => {
-    service = new LlmReadinessService(
-      fakeStore({ anthropic: new Error('SECRETS_ENCRYPTION_KEY is not set'), openai: 'sk' }),
-    );
-    await service.onModuleInit();
-    expect(service.isReady).toBe(false);
+    svc.ensureChecked('T1');
+    await new Promise((r) => setTimeout(r, 0)); // let the async probe settle
+    expect(svc.isReady('T1')).toBe(true);
+    expect(edges).toEqual(['T1']);
   });
 });

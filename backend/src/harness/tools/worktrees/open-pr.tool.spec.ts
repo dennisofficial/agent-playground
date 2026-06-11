@@ -13,12 +13,14 @@ const WT: Worktree = {
   path: '/repos/proj/.worktrees/wt-001-feature',
   checkout: '/repos/proj/.worktrees/wt-001-feature',
   ownerBot: 'alex',
+  team: 'local',
   project: 'proj',
   repoRoot: '/repos/proj',
   sharedBranch: 'shared/feat',
 };
 
 const REC: ProjectRecord = {
+  teamId: 'local',
   projectId: 'proj',
   displayName: 'Proj',
   gitUrl: 'https://github.com/dennis/proj',

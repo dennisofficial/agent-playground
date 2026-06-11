@@ -44,6 +44,7 @@ describe('MemoryModule (NestJS DI, live Postgres)', () => {
     const tasks = app.get(TaskStore);
     await tasks['repo'].query('TRUNCATE tasks RESTART IDENTITY');
     const created = await tasks.addTask({
+      team: 'di',
       project: 'di',
       description: 'di wired',
       owner: 'alex',

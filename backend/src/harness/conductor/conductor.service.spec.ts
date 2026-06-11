@@ -9,7 +9,9 @@ import type { ChannelMsg } from '../channel/channel.types';
 import type { CursorStore } from '../channel/cursor.store';
 import type { ConductorEvent } from '../domain/conductor-events';
 import type { EmployeeRegistry } from '../employees/employee.registry';
+import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
+import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type {
   Session,
   SessionRegistry,
@@ -102,6 +104,7 @@ class FakeRegistry {
     if (existing) return existing;
     const full: ChannelInfo = {
       channelId: info.channelId,
+      teamId: info.teamId ?? 'local',
       kind: info.kind ?? 'channel',
       project: info.project ?? 'local',
       members: info.members ?? [],
@@ -109,6 +112,9 @@ class FakeRegistry {
     };
     this.map.set(full.channelId, full);
     return full;
+  }
+  teamIdOf(channelId: string): string {
+    return this.map.get(channelId)?.teamId ?? 'local';
   }
   addMembers(channelId: string, ids: string[]): void {
     const info = this.map.get(channelId);
@@ -176,9 +182,18 @@ async function buildConductor(behavior: FakeGraphBehavior) {
   const env = { get: () => undefined } as unknown as EnvService;
   // Always-ready in conductor specs; pending-keys gating is covered by the readiness spec.
   const readiness = {
-    isReady: true,
-    ready$: new Subject<void>(),
+    isReady: () => true,
+    ensureChecked: () => {},
+    ready$: new Subject<string>(),
   } as unknown as LlmReadinessService;
+  // Credential plumbing: resolve returns no keys, run executes the turn body inline.
+  const creds = {
+    resolve: async () => ({}),
+    isReady: async () => true,
+  } as unknown as TenantCredentialService;
+  const credCtx = {
+    run: (_c: unknown, fn: () => unknown) => fn(),
+  } as unknown as CredentialContext;
 
   const conductor = new ConductorService(
     channel as unknown as ChannelService,
@@ -191,6 +206,8 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     bus,
     env,
     readiness,
+    creds,
+    credCtx,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -250,6 +267,7 @@ describe('ConductorService scheduling', () => {
       status: 'idle',
       notifyThread: 'tui:test',
       ownerBot: 'alex',
+      team: 'local',
       project: 'local',
       engine: 'claude',
       mode: 'plan',
@@ -272,6 +290,7 @@ describe('ConductorService scheduling', () => {
       worktreeId: 'wt-001',
       notifyThread: 'tui:test',
       ownerBot: 'alex',
+      team: 'local',
       project: 'local',
       engine: 'claude' as const,
       mode: 'plan' as const,

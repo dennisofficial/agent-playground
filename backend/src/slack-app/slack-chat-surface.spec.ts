@@ -41,7 +41,7 @@ function makeFakes(
     env as never,
   );
   const inject = (event: Record<string, unknown>) =>
-    surface.handleMessageEvent(event as SlackInboundEvent);
+    surface.handleMessageEvent(event as SlackInboundEvent, 'T1');
   return { surface, web, directory, identities, bus, inject };
 }
 

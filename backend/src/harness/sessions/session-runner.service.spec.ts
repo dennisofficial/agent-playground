@@ -5,6 +5,8 @@ import type {
 } from '../engines/worker-engine.port';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { PersonaService } from '../employees/persona.service';
+import type { CredentialContext } from '../llm-keys/credential-context';
+import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type { WorklogStore } from '../memory/worklog-store';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { InMemorySessionRegistry } from './in-memory-session.registry';
@@ -52,6 +54,12 @@ function buildRunner(engine: WorkerEngine, opts: { worktree?: typeof WT | undefi
   const worktrees = {
     get: () => opts.worktree,
   } as unknown as WorktreeService;
+  const creds = {
+    resolve: async () => ({}),
+  } as unknown as TenantCredentialService;
+  const credCtx = {
+    run: (_c: unknown, fn: () => unknown) => fn(),
+  } as unknown as CredentialContext;
   const runner = new SessionRunnerService(
     sessions,
     engines,
@@ -59,6 +67,8 @@ function buildRunner(engine: WorkerEngine, opts: { worktree?: typeof WT | undefi
     persona,
     worklog,
     worktrees,
+    creds,
+    credCtx,
   );
   return { runner, sessions, worklogged };
 }
@@ -69,6 +79,7 @@ const newSession = {
   notifyThread: 'tui:main',
   engine: 'claude' as const,
   ownerBot: 'alex',
+  team: 'local',
   project: 'local',
   mode: 'plan' as const,
 };
