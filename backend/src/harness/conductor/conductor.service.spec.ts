@@ -24,12 +24,15 @@ class FakeChannel {
   private subs = new Set<() => void>();
   private nextSeq = 0;
   append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'> & {
+      channelId?: string;
+    },
   ): ChannelMsg {
     const full = {
       ...msg,
       channelId: msg.channelId ?? this.surfaceId,
       seq: this.nextSeq++,
+      createdAt: Date.now(),
     };
     this.log.push(full);
     for (const cb of this.subs) cb();

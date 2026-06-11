@@ -25,8 +25,15 @@ class FakeChannel {
   readonly surfaceId = 'tui:test';
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
-  append(msg: Omit<ChannelMsg, 'seq' | 'channelId'>): ChannelMsg {
-    const full = { ...msg, channelId: this.surfaceId, seq: this.nextSeq++ };
+  append(
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'>,
+  ): ChannelMsg {
+    const full = {
+      ...msg,
+      channelId: this.surfaceId,
+      seq: this.nextSeq++,
+      createdAt: Date.now(),
+    };
     this.log.push(full);
     return full;
   }
