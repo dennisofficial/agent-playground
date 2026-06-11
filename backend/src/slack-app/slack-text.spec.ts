@@ -68,6 +68,7 @@ describe('emojiToSlackName', () => {
     expect(emojiToSlackName('✅')).toBe('white_check_mark');
     expect(emojiToSlackName('🎉')).toBe('tada');
     expect(emojiToSlackName('🚀')).toBe('rocket');
+    expect(emojiToSlackName('💭')).toBe('thought_balloon'); // the "composing" marker
   });
 
   it('is variation-selector-insensitive in both directions', () => {

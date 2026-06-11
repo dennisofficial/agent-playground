@@ -248,6 +248,47 @@ export class SlackChatSurface implements ChatSurface {
     }
   }
 
+  /** Remove a reaction this bot added (clears the transient "composing" 💭). Mirrors `react`'s
+   * puppet-first/ears-fallback resolution — Slack only lets an identity remove its OWN reaction,
+   * so the resolution order MUST match the add. A missing reaction (`no_reaction`) is a no-op. */
+  async unreact(
+    targetMessageId: string,
+    emoji: string,
+    asBot: { id: string; name: string },
+    channelId: string,
+  ): Promise<void> {
+    const parsed = parseSlackSurface(channelId);
+    if (!parsed) return;
+    const posted = this.postedIds.get(targetMessageId);
+    const channel = posted?.channel ?? parsed.channel;
+    const timestamp = posted?.ts ?? targetMessageId;
+    if (!/^\d+\.\d+$/.test(timestamp)) {
+      this.logger.debug(`no Slack ts for reaction target ${targetMessageId}`);
+      return;
+    }
+    const args = { channel, timestamp, name: emojiToSlackName(emoji) };
+    try {
+      const puppet = await this.identities.clientFor(parsed.teamId, asBot.id);
+      const removed = puppet
+        ? await this.tryWithJoin(
+            puppet,
+            channel,
+            asBot.id,
+            REACT_MEMBERSHIP_ERRORS,
+            () => puppet.reactions.remove(args),
+          )
+        : undefined;
+      if (!removed) {
+        const ears = await this.clients.clientFor(parsed.teamId);
+        await ears?.reactions.remove(args);
+      }
+    } catch (err) {
+      // Nothing to remove (never added, or added by the other identity) — fine, leave it be.
+      if (isSlackError(err, ['no_reaction'])) return;
+      throw err;
+    }
+  }
+
   /** Run a puppet call; on a membership failure, `conversations.join` (public channels — the
    * `channels:join` scope) and retry ONCE. Returns undefined when the join/retry also fails
    * (private channel, puppet not invited) — callers fall back to the main-app identity. Anything

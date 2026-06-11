@@ -198,6 +198,7 @@ const EMOJI_TO_SLACK: Record<string, string> = {
   '🙂': 'slightly_smiling_face',
   '😅': 'sweat_smile',
   '🤔': 'thinking_face',
+  '💭': 'thought_balloon',
   '😮': 'open_mouth',
   '😢': 'cry',
   '😭': 'sob',

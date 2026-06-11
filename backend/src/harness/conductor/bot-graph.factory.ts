@@ -369,9 +369,10 @@ export class BotGraphFactory {
       return {
         decision: d.action,
         ackEmoji: d.emoji,
-        // Fire the "seen, working" 👀 the moment we commit to responding — surfaced before
-        // fetch/LLM/tools run. Only on a real gated respond; the forced path returned above.
-        reaction: d.action === 'respond' ? '👀' : undefined,
+        // Fire the transient "composing" 💭 the moment we commit to responding — surfaced before
+        // fetch/LLM/tools run, and REMOVED by the conductor when the turn ends (so present =
+        // composing now, gone = replied). Only on a real gated respond; the forced path returned above.
+        reaction: d.action === 'respond' ? '💭' : undefined,
         reactionTargetId: latest.id,
         reasoning: d.reasoning,
         gateUsage: d.usage,
