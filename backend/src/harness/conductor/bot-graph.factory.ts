@@ -551,7 +551,11 @@ export class BotGraphFactory {
         : channel.lengthOf(this.channelIdOf(config));
       // recalled is reset here too — this path skips `fetch`, and an un-cleared value would ride
       // the checkpoint as a stale recall (deleted reminder ids included) until the next respond.
-      return { messages: pending.map(asInput), cursor: newCursor, recalled: '' };
+      return {
+        messages: pending.map(asInput),
+        cursor: newCursor,
+        recalled: '',
+      };
     };
 
     const route = (state: BotStateType): 'fetch' | 'consume' =>

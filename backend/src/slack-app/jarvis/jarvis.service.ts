@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import type { Subscription } from 'rxjs';
 import { SlackDirectoryService } from '../slack-directory.service';
+import { SlackIdentityRegistry } from '../slack-identity.registry';
 import { TenantSlackClients } from '../tenant-slack-clients';
 import type {
   SlackInbound,
@@ -90,6 +91,7 @@ export class JarvisService
     private readonly providerKeys: ProviderKeyStore,
     private readonly githubTokens: GithubTokenStore,
     private readonly projects: ProjectStore,
+    private readonly identities: SlackIdentityRegistry,
   ) {}
 
   onModuleInit(): void {
@@ -130,11 +132,23 @@ export class JarvisService
     event: SlackInboundEvent,
     teamId: string,
   ): Promise<boolean> {
-    if (
-      !event.channel ||
-      event.user !== (await this.directory.selfUserIdFor(teamId))
-    )
-      return false;
+    if (!event.channel) return false;
+    if (event.user !== (await this.directory.selfUserIdFor(teamId))) {
+      // Not Jarvis — check if it's a known puppet bot.
+      // Slack only delivers member_joined_channel to apps already in the channel, so if we
+      // received this event, Jarvis is already present and the channel is already set up.
+      const botId = await this.identities.botIdForSlackUser(
+        teamId,
+        event.user ?? '',
+      );
+      if (botId) {
+        this.logger.log(
+          `puppet ${botId} joined ${event.channel} in workspace ${teamId}`,
+        );
+        return true; // consume — prevents routing to the conductor
+      }
+      return false; // human join — let it pass through
+    }
     const channel = event.channel;
     const inviter =
       typeof event.inviter === 'string' && event.inviter
@@ -144,7 +158,11 @@ export class JarvisService
 
     if (!this.readiness.isReady(teamId)) {
       this.greetedPending.add(this.k(teamId, channel));
-      await this.postBlocks(teamId, channel, setupButtonBlocks(GREETING_PENDING));
+      await this.postBlocks(
+        teamId,
+        channel,
+        setupButtonBlocks(GREETING_PENDING),
+      );
     } else if (!(await this.projectOf(teamId, channel))) {
       await this.post(teamId, channel, REPO_PROMPT, 'repo-prompt');
     }
@@ -158,13 +176,18 @@ export class JarvisService
   ): Promise<boolean> {
     if (event.bot_id || event.subtype) return false;
     if (!event.user || !event.channel || !event.ts) return false;
-    if (event.user === (await this.directory.selfUserIdFor(teamId))) return false;
+    if (event.user === (await this.directory.selfUserIdFor(teamId)))
+      return false;
     if (event.thread_ts && event.thread_ts !== event.ts) return false;
     const channel = event.channel;
     const text = event.text ?? '';
 
     const author = await this.directory.resolveUser(teamId, event.user);
-    await this.directory.ensureChannelRegistered(channel, teamId, author.authorId);
+    await this.directory.ensureChannelRegistered(
+      channel,
+      teamId,
+      author.authorId,
+    );
 
     if (!this.readiness.isReady(teamId)) {
       // Consume EVERYTHING while keyless — see the class doc.
@@ -174,7 +197,11 @@ export class JarvisService
       }
       if (!this.greetedPending.has(this.k(teamId, channel))) {
         this.greetedPending.add(this.k(teamId, channel));
-        await this.postBlocks(teamId, channel, setupButtonBlocks(GREETING_PENDING));
+        await this.postBlocks(
+          teamId,
+          channel,
+          setupButtonBlocks(GREETING_PENDING),
+        );
       } else {
         await this.postBlocks(
           teamId,
@@ -243,7 +270,8 @@ export class JarvisService
     ) {
       await item.respond();
       const originChannel = payload.channel?.id ?? '';
-      const hasGithubToken = (await this.githubTokens.listMeta(teamId)).length > 0;
+      const hasGithubToken =
+        (await this.githubTokens.listMeta(teamId)).length > 0;
       const web = await this.clients.clientFor(teamId);
       await web?.views.open({
         trigger_id: payload.trigger_id ?? '',
@@ -294,7 +322,12 @@ export class JarvisService
       await this.providerKeys.put(teamId, 'anthropic', anthropic);
       await this.providerKeys.put(teamId, 'openai', openai);
       if (github)
-        await this.githubTokens.put(teamId, TOKEN_NAME_ONBOARDING, github, true);
+        await this.githubTokens.put(
+          teamId,
+          TOKEN_NAME_ONBOARDING,
+          github,
+          true,
+        );
     } catch (err) {
       // Cipher unset/misconfigured — surface it inside the modal, keys never land half-stored.
       this.logger.error(`key storage failed: ${err}`);
@@ -387,7 +420,8 @@ export class JarvisService
     const k = `${teamId}|${channel}`;
     const last = this.lastPrompt.get(k);
     const now = Date.now();
-    if (last && last.key === key && now - last.at < REPOST_WINDOW_MS) return true;
+    if (last && last.key === key && now - last.at < REPOST_WINDOW_MS)
+      return true;
     this.lastPrompt.set(k, { key, at: now });
     return false;
   }

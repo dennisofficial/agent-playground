@@ -42,13 +42,19 @@ export class SlackSocketTransport implements OnApplicationShutdown {
    * `inbound$` before the first event can arrive. Returns the bot's identity for the boot banner. */
   async connect(): Promise<{ botName?: string }> {
     if (!this.socket) {
-      throw new Error('Socket Mode client is not provided — is SLACK_APP_TOKEN set?');
+      throw new Error(
+        'Socket Mode client is not provided — is SLACK_APP_TOKEN set?',
+      );
     }
     const identity = await this.directory.bootIdentity();
     this.socket.on('slack_event', (envelope: SlackSocketEnvelope) => {
       void this.handleEnvelope(envelope);
     });
-    for (const state of ['connected', 'disconnected', 'reconnecting'] as const) {
+    for (const state of [
+      'connected',
+      'disconnected',
+      'reconnecting',
+    ] as const) {
       this.socket.on(state, () => this.logger.log(`Socket Mode: ${state}`));
     }
     await this.socket.start();
@@ -81,7 +87,9 @@ export class SlackSocketTransport implements OnApplicationShutdown {
 
   /** Idempotent ack: the first call wins (with or without a payload), later calls no-op. Ack
    * failures are logged, never thrown — an unacked envelope just redelivers. */
-  private respondOnce(envelope: SlackSocketEnvelope): (body?: unknown) => Promise<void> {
+  private respondOnce(
+    envelope: SlackSocketEnvelope,
+  ): (body?: unknown) => Promise<void> {
     let sent = false;
     return async (body?: unknown) => {
       if (sent) return;

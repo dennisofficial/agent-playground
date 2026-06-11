@@ -22,16 +22,16 @@ export interface EmployeeDefinition {
   readonly role: string;
   /**
    * Roster position. Discovery order is non-deterministic, so ordering is explicit: lower sorts
-   * first. Groups the build team (backend → frontend → design) ahead of marketing + scrum, and the
+   * first. Groups the build team (backend → frontend → design) ahead of marketing + the lead, and the
    * lowest-ordered employee is the fallback owner when a bot lookup misses.
    */
   readonly sortOrder: number;
   /**
-   * Scrum-master clearance: board-wide authority (sees every teammate's reminders; can pause +
-   * escalate out-of-scope work). Exactly one employee should carry this. Read programmatically —
-   * never inferred from the `role` string.
+   * Team-lead clearance: triage, dispatch/staffing, team task board ownership, and cross-owner
+   * authority (sees every teammate's reminders; can assign + clear work across the team). Exactly
+   * one employee carries this. Read programmatically — never inferred from the `role` string.
    */
-  readonly scrumMaster?: boolean;
+  readonly teamLead?: boolean;
   /**
    * The deep role knowledge folded into this employee's chat system prompt. MUST be a static,
    * byte-stable string: the chat prompt runs on every LLM step under a `cache_control: ephemeral`

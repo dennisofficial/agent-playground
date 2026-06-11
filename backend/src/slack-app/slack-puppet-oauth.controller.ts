@@ -61,16 +61,26 @@ export class SlackPuppetOauthController {
       });
       const teamId = oauth.team?.id;
       const token = oauth.access_token;
-      if (!teamId || !token) throw new Error('oauth.v2.access returned no team/token');
-      await this.identities.put(teamId, botId, token);
-      this.logger.log(`puppet '${botId}' installed in workspace ${teamId}`);
+      if (!teamId || !token)
+        throw new Error('oauth.v2.access returned no team/token');
+      // Capture the bot's Slack user ID so JarvisService can recognise puppet-join events.
+      const auth = await new WebClient(token).auth.test();
+      await this.identities.put(teamId, botId, token, {
+        slackBotUserId: auth.user_id,
+      });
+      this.logger.log(
+        `puppet '${botId}' installed in workspace ${teamId} (bot user: ${auth.user_id})`,
+      );
       return page(
         'Installed 🎉',
         `${botId} can now post and react in this workspace.`,
       );
     } catch (err) {
       this.logger.error(`puppet oauth (${botId}) failed: ${err}`);
-      return page('Install failed', 'The token exchange failed — check the server logs.');
+      return page(
+        'Install failed',
+        'The token exchange failed — check the server logs.',
+      );
     }
   }
 

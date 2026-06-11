@@ -33,7 +33,10 @@ const WT = {
   project: 'local',
 };
 
-function buildRunner(engine: WorkerEngine, opts: { worktree?: typeof WT | undefined } = { worktree: WT }) {
+function buildRunner(
+  engine: WorkerEngine,
+  opts: { worktree?: typeof WT | undefined } = { worktree: WT },
+) {
   const sessions = new InMemorySessionRegistry();
   const engines = { get: () => engine } as unknown as EngineRegistry;
   const employees = {
@@ -140,7 +143,11 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     expect((await sessions.get(session.id))?.status).toBe('idle');
 
     // Approving the plan = replying with mode 'execute'.
-    const res = await runner.replySession(session.id, 'plan approved — build it', 'execute');
+    const res = await runner.replySession(
+      session.id,
+      'plan approved — build it',
+      'execute',
+    );
     expect(res.ok).toBe(true);
     await new Promise((r) => setTimeout(r, 20));
     const after = await sessions.get(session.id);
@@ -155,7 +162,11 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
       name: 'claude',
       run({ signal }: RunWorkerArgs) {
         return new Promise((_resolve, reject) => {
-          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          signal?.addEventListener(
+            'abort',
+            () => reject(new Error('aborted')),
+            { once: true },
+          );
         });
       },
     };
@@ -175,7 +186,11 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
       name: 'claude',
       run({ signal }: RunWorkerArgs) {
         return new Promise((_resolve, reject) => {
-          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          signal?.addEventListener(
+            'abort',
+            () => reject(new Error('aborted')),
+            { once: true },
+          );
         });
       },
     };
@@ -226,7 +241,9 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     const session = await sessions.create(newSession);
     await runner.runSessionTurn(session.id, session.task);
     expect((await sessions.get(session.id))?.status).toBe('failed');
-    expect((await sessions.get(session.id))?.error).toContain('engine exploded');
+    expect((await sessions.get(session.id))?.error).toContain(
+      'engine exploded',
+    );
 
     const res = await runner.replySession(session.id, 'try again');
     expect(res.ok).toBe(true);
@@ -251,7 +268,8 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     const fake: WorkerEngine = {
       name: 'claude',
       async run({ onEvent }: RunWorkerArgs) {
-        for (let i = 1; i <= 45; i++) onEvent({ kind: 'text', text: `step ${i}` });
+        for (let i = 1; i <= 45; i++)
+          onEvent({ kind: 'text', text: `step ${i}` });
         onEvent({ kind: 'tool', name: 'Bash', detail: 'pnpm test' });
         return { result: 'done', sessionId: 'e1' };
       },

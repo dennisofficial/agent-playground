@@ -13,7 +13,9 @@ function makeTransport() {
     bootIdentity: vi.fn(async () => ({ botName: 'teambot' })),
   };
   const router = {
-    route: vi.fn(async (_item: { respond: (b?: unknown) => Promise<void> }) => {}),
+    route: vi.fn(
+      async (_item: { respond: (b?: unknown) => Promise<void> }) => {},
+    ),
   };
   const transport = new SlackSocketTransport(
     socket as never,
@@ -51,10 +53,17 @@ describe('SlackSocketTransport', () => {
       order.push('route');
     });
 
-    await inject({ type: 'events_api', body: { event: { type: 'message' } }, ack });
+    await inject({
+      type: 'events_api',
+      body: { event: { type: 'message' } },
+      ack,
+    });
     expect(order).toEqual(['ack', 'route']);
     expect(router.route).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'event', body: { event: { type: 'message' } } }),
+      expect.objectContaining({
+        kind: 'event',
+        body: { event: { type: 'message' } },
+      }),
     );
   });
 
@@ -62,13 +71,25 @@ describe('SlackSocketTransport', () => {
     const { transport, router, inject } = makeTransport();
     await transport.connect();
     const ack = vi.fn(async () => {});
-    router.route.mockImplementation(async (item: { respond: (b?: unknown) => Promise<void> }) => {
-      await item.respond({ response_action: 'errors', errors: { key: 'bad' } });
-    });
+    router.route.mockImplementation(
+      async (item: { respond: (b?: unknown) => Promise<void> }) => {
+        await item.respond({
+          response_action: 'errors',
+          errors: { key: 'bad' },
+        });
+      },
+    );
 
-    await inject({ type: 'interactive', body: { type: 'view_submission' }, ack });
+    await inject({
+      type: 'interactive',
+      body: { type: 'view_submission' },
+      ack,
+    });
     expect(ack).toHaveBeenCalledTimes(1); // handler's payload won; safety net no-oped
-    expect(ack).toHaveBeenCalledWith({ response_action: 'errors', errors: { key: 'bad' } });
+    expect(ack).toHaveBeenCalledWith({
+      response_action: 'errors',
+      errors: { key: 'bad' },
+    });
   });
 
   it('acks unconsumed interactivity after routing (the safety net)', async () => {
@@ -97,7 +118,11 @@ describe('SlackSocketTransport', () => {
     const ack = vi.fn(async () => {
       throw new Error('socket closed');
     });
-    await inject({ type: 'events_api', body: { event: { type: 'message' } }, ack });
+    await inject({
+      type: 'events_api',
+      body: { event: { type: 'message' } },
+      ack,
+    });
     expect(router.route).toHaveBeenCalled(); // routing proceeded despite the failed ack
   });
 });

@@ -17,3 +17,5 @@ dist
 # Cloud / build local dirs (gcloud ADC, docker context)
 /.gcloud/
 /.docker/
+# Slack app credentials captured at app-creation time (apps.manifest.create) — NEVER commit
+backend/slack-manifests/.app-credentials.json

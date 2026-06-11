@@ -57,7 +57,7 @@ export class FetchService {
    * Build the `recalled` context block for `bot`, given this turn's incoming text as the retrieval
    * query. Facts: embedding top-k over the current project + team, plus a small, strongly-relevant
    * set from OTHER projects rendered LABELED with their project. Tasks: the open plate for this bot
-   * (the scrum master sees the whole team's). Returns '' when there's nothing — the caller MUST
+   * (the team lead sees the whole team's). Returns '' when there's nothing — the caller MUST
    * still write that empty string into state so a stale recall from a prior turn never lingers.
    */
   async fetchContext(
@@ -99,10 +99,10 @@ export class FetchService {
             .recallOtherProjects(query, id, { precomputed: qv })
             .catch(() => [])
         : [],
-      // Reminders: this bot's own plate — except the scrum master, who sees the whole team's.
+      // Reminders: this bot's own plate — except the team lead, who sees the whole team's.
       Promise.all(
         projects.map((project) =>
-          bot.scrumMaster
+          bot.teamLead
             ? this.tasks.openTasks(id.team, project)
             : this.tasks.listTasks({
                 team: id.team,
@@ -131,11 +131,11 @@ export class FetchService {
       const lines = shown
         .map(
           (t) =>
-            `- [#${t.id}] ${t.description}${bot.scrumMaster ? ` (→ ${t.owner})` : ''}${projects.length > 1 ? ` [${t.project}]` : ''}`,
+            `- [#${t.id}] ${t.description}${bot.teamLead ? ` (→ ${t.owner})` : ''}${projects.length > 1 ? ` [${t.project}]` : ''}`,
         )
         .join('\n');
       parts.push(
-        `${bot.scrumMaster ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`,
+        `${bot.teamLead ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`,
       );
     }
 

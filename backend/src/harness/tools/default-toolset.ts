@@ -15,6 +15,12 @@ import {
   SearchSessionTool,
 } from './sessions/session.tools';
 import {
+  AddBoardTaskTool,
+  ClaimBoardTaskTool,
+  ListBoardTool,
+  UpdateBoardTaskTool,
+} from './tasks/board.tools';
+import {
   AddTaskTool,
   CompleteTaskTool,
   ListTasksTool,
@@ -57,6 +63,10 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   ListTasksTool,
   AddTaskTool,
   CompleteTaskTool,
+  ListBoardTool,
+  AddBoardTaskTool,
+  ClaimBoardTaskTool,
+  UpdateBoardTaskTool,
   ListRoomsTool,
   SendMessageTool,
 ];

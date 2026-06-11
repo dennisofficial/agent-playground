@@ -107,7 +107,9 @@ export class GithubTokenStore {
   async delete(teamId: string, name: string): Promise<void> {
     const refs = await this.projects.countReferencingToken(teamId, name);
     if (refs > 0) {
-      throw new Error(`Token "${name}" is referenced by ${refs} project(s) — repoint them first.`);
+      throw new Error(
+        `Token "${name}" is referenced by ${refs} project(s) — repoint them first.`,
+      );
     }
     await this.q(`DELETE FROM github_tokens WHERE team_id = $1 AND name = $2`, [
       teamId,
@@ -132,6 +134,9 @@ export class GithubTokenStore {
       ),
     );
     if (!rows[0]) return undefined;
-    return { name: rows[0].name, token: this.cipher.decrypt(rows[0].token_ciphertext) };
+    return {
+      name: rows[0].name,
+      token: this.cipher.decrypt(rows[0].token_ciphertext),
+    };
   }
 }

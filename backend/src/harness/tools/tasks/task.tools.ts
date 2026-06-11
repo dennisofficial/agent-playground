@@ -8,7 +8,7 @@ import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 /**
  * Personal reminders (the "plate"). Per-employee reminders so a commitment in passing isn't
  * forgotten in a long session. The reconcile pass captures these automatically; these tools let a
- * bot read its plate and close things out. A teammate sees only their own plate; the SCRUM MASTER
+ * bot read its plate and close things out. A teammate sees only their own plate; the TEAM LEAD
  * sees everyone's (gated here, not in the table). (Ported from playground/src/memory/tools.ts.)
  */
 
@@ -20,7 +20,7 @@ const listSchema = z.object({
     .enum(['mine', 'team'])
     .optional()
     .describe(
-      "'mine' (default) for your own plate; 'team' for everyone's — scrum master only, ignored for everyone else.",
+      "'mine' (default) for your own plate; 'team' for everyone's — team lead only, ignored for everyone else.",
     ),
 });
 
@@ -28,7 +28,7 @@ const listSchema = z.object({
 export class ListTasksTool implements IHarnessTool<typeof listSchema> {
   readonly name = 'list_tasks';
   readonly description =
-    "Your open reminders — the things you committed to do but haven't yet. Use it when picking up work or when someone asks what's on your plate. (Scrum master only: 'team' to see everyone's plates.)";
+    "Your open reminders — the things you committed to do but haven't yet. Use it when picking up work or when someone asks what's on your plate. (Team lead only: 'team' to see everyone's plates.)";
   readonly schema = listSchema;
 
   constructor(
@@ -41,15 +41,20 @@ export class ListTasksTool implements IHarnessTool<typeof listSchema> {
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
-    const isScrumMaster = !!this.employees.byId(id.selfAgent)?.scrumMaster;
-    // 'team' (all plates) is scrum-master only; everyone else always sees just their own plate.
-    const owner = scope === 'team' && isScrumMaster ? undefined : id.selfAgent;
+    const isTeamLead = !!this.employees.byId(id.selfAgent)?.teamLead;
+    // 'team' (all plates) is team-lead only; everyone else always sees just their own plate.
+    const owner = scope === 'team' && isTeamLead ? undefined : id.selfAgent;
     // The plate spans every recallable project (one in a channel; the shared set in a DM).
     const projects = recallProjects(id);
     const tasks = (
       await Promise.all(
         projects.map((project) =>
-          this.tasks.listTasks({ team: id.team, project, status: 'open', owner }),
+          this.tasks.listTasks({
+            team: id.team,
+            project,
+            status: 'open',
+            owner,
+          }),
         ),
       )
     ).flat();
@@ -127,7 +132,7 @@ const completeSchema = z.object({
 export class CompleteTaskTool implements IHarnessTool<typeof completeSchema> {
   readonly name = 'complete_task';
   readonly description =
-    "Mark a reminder done once it's actually finished — pass the reminder id (the #N from list_tasks). Normally one of your own; as scrum master you can also clear a stale or misassigned reminder off any teammate's plate.";
+    "Mark a reminder done once it's actually finished — pass the reminder id (the #N from list_tasks). Normally one of your own; as team lead you can also clear a stale or misassigned reminder off any teammate's plate.";
   readonly schema = completeSchema;
 
   constructor(
@@ -151,12 +156,12 @@ export class CompleteTaskTool implements IHarnessTool<typeof completeSchema> {
     }
     if (!task || task.status !== 'open')
       return `No open reminder #${taskId} found.`;
-    // Authority: only the plate's owner, or the scrum master, may close it.
+    // Authority: only the plate's owner, or the team lead, may close it.
     if (
       task.owner !== id.selfAgent &&
-      !this.employees.byId(id.selfAgent)?.scrumMaster
+      !this.employees.byId(id.selfAgent)?.teamLead
     ) {
-      return `Reminder #${taskId} is on ${task.owner}'s plate — only they or the scrum master can close it.`;
+      return `Reminder #${taskId} is on ${task.owner}'s plate — only they or the team lead can close it.`;
     }
     await this.tasks.completeTask(id.team, task.project, taskId);
     return task.owner === id.selfAgent

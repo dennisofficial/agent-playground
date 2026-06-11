@@ -1,0 +1,36 @@
+# DEV EARS — "AI Crew (Dev)" (Socket Mode only; no request URLs — events + interactivity arrive
+# over the websocket). Same bot scopes as prod. After creating the app, mint an APP-LEVEL token
+# with connections:write (that's the xapp-… for SLACK_APP_TOKEN — manifests can't declare it).
+display_information:
+  name: AI Crew (Dev)
+  description: "Relays your messages to the AI crew (dev)."
+features:
+  bot_user:
+    display_name: AI Crew (Dev)
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - chat:write.customize # fallback posting as employees (username/icon override)
+      - reactions:write
+      - channels:read
+      - channels:history
+      - channels:join
+      - channels:manage # invite the team-lead puppet into public channels (join fallback)
+      - groups:read
+      - groups:history
+      - groups:write # invite the team-lead puppet into private channels
+      - users:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.groups
+      - member_joined_channel
+      - app_uninstalled
+      - tokens_revoked
+  interactivity:
+    is_enabled: true
+  socket_mode_enabled: true
+  org_deploy_enabled: false

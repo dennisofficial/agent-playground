@@ -54,11 +54,9 @@ export class SlackInteractivityController {
       responded = true;
       res.status(200).json(responseBody ?? {});
     };
-    await this.router
-      .route({ kind: 'interactivity', payload, respond })
-      .then(
-        () => respond(),
-        () => respond(),
-      );
+    await this.router.route({ kind: 'interactivity', payload, respond }).then(
+      () => respond(),
+      () => respond(),
+    );
   }
 }

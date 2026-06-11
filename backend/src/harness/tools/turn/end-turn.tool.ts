@@ -15,7 +15,7 @@ export class EndTurnTool implements IHarnessTool<typeof endTurnSchema> {
   readonly description =
     'End your turn right now with no further reply. Use it alone when a message in the channel ' +
     "simply isn't yours to answer. (create_session / reply_session already end the turn themselves — " +
-    'give a brief first-person heads-up as that message\'s TEXT, never a separate "I\'ll let you ' +
+    "give a brief first-person heads-up as that message's TEXT, never a separate \"I'll let you " +
     'know when I\'m done" after.)';
   readonly schema = endTurnSchema;
   readonly terminal = true;

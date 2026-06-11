@@ -117,7 +117,7 @@ export class TaskStore {
     return rows.map(toTask);
   }
 
-  /** All open reminders for a workspace (oldest first) — the scrum-master / standup whole-board view. */
+  /** All open reminders for a workspace (oldest first) — the team-lead / standup whole-board view. */
   async openTasks(team: string, project: string): Promise<Task[]> {
     const rows = await this.q(
       `SELECT * FROM tasks WHERE team_id = $1 AND project = $2 AND status = 'open' ORDER BY created_at ASC`,

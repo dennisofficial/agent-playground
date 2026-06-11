@@ -6,7 +6,8 @@ const GITHUB_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+?(\.git)?$/;
 
 export class CreateProjectDto {
   @Matches(PROJECT_ID, {
-    message: 'projectId must be lowercase alphanumeric (dot/dash/underscore allowed)',
+    message:
+      'projectId must be lowercase alphanumeric (dot/dash/underscore allowed)',
   })
   projectId!: string;
 
@@ -14,7 +15,9 @@ export class CreateProjectDto {
   @IsNotEmpty()
   displayName!: string;
 
-  @Matches(GITHUB_URL, { message: 'gitUrl must be an https://github.com/<owner>/<repo> URL' })
+  @Matches(GITHUB_URL, {
+    message: 'gitUrl must be an https://github.com/<owner>/<repo> URL',
+  })
   gitUrl!: string;
 
   @IsOptional()
@@ -34,7 +37,9 @@ export class UpdateProjectDto {
   displayName?: string;
 
   @IsOptional()
-  @Matches(GITHUB_URL, { message: 'gitUrl must be an https://github.com/<owner>/<repo> URL' })
+  @Matches(GITHUB_URL, {
+    message: 'gitUrl must be an https://github.com/<owner>/<repo> URL',
+  })
   gitUrl?: string;
 
   @IsOptional()

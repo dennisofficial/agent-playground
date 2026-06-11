@@ -8,7 +8,10 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
-import { isLlmProvider, type LlmProvider } from '../../harness/llm-keys/llm-key.types';
+import {
+  isLlmProvider,
+  type LlmProvider,
+} from '../../harness/llm-keys/llm-key.types';
 import { ProviderKeyStore } from '../../harness/llm-keys/provider-key.store';
 import { SecretCipher } from '../../harness/projects/secret-cipher';
 import { AdminTokenGuard } from './admin-token.guard';

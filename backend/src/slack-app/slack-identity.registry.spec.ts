@@ -50,7 +50,9 @@ describe('SlackIdentityRegistry', () => {
   });
 
   it('degrades resolve failures (cipher unset) to undefined and retries later', async () => {
-    const store = fakeStore({ alex: new Error('SECRETS_ENCRYPTION_KEY is not set') });
+    const store = fakeStore({
+      alex: new Error('SECRETS_ENCRYPTION_KEY is not set'),
+    });
     const registry = new SlackIdentityRegistry(store);
     await expect(registry.clientFor('T1', 'alex')).resolves.toBeUndefined();
     vi.advanceTimersByTime(60_000 + 1);

@@ -99,6 +99,9 @@ export interface IEnvConfig {
   // Per-employee puppet apps' OAuth creds, JSON: {"alex":{"clientId":"…","clientSecret":"…"}, …}.
   // Used only by the puppet install callback (<base>/slack/puppet/oauth, botId in `state`).
   SLACK_PUPPET_OAUTH?: string;
+  // Dev-only (CLI seed, not the app): puppet bot tokens re-seeded into slack_identities on
+  // `db:seed`, JSON: {"teamId":"T0…","tokens":{"alex":"xoxb-…", …}}. Lives in .env.personal.
+  SLACK_PUPPET_SEED?: string;
   CONTROL_POSTGRES_DB?: string; // control-plane DB name (default 'agent_control'; server coords from POSTGRES_*)
   TENANT_ENV_ROOT?: string; // where per-tenant env overlays are written (provisioner)
   TENANT_PORT_BASE?: number; // first inbound port allocated to tenant stacks (default 4200)
@@ -180,6 +183,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SLACK_CLIENT_SECRET: Joi.string().optional(),
   SLACK_SIGNING_SECRET: Joi.string().optional(),
   SLACK_PUPPET_OAUTH: Joi.string().optional(),
+  SLACK_PUPPET_SEED: Joi.string().optional(),
   GATEWAY_SHARED_SECRET: Joi.string().optional(),
   GATEWAY_PUBLIC_URL: Joi.string().uri().optional(),
   GATEWAY_PORT: Joi.number().port().optional(),

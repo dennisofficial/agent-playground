@@ -65,7 +65,8 @@ describe('ProjectsModule stores (live Postgres)', () => {
 
   it('creates, lists, gets, and patches projects; duplicate ids conflict', async () => {
     const rec = await projects.create({
-      teamId: T, projectId: `${P}-app`,
+      teamId: T,
+      projectId: `${P}-app`,
       displayName: 'The App',
       gitUrl: 'https://github.com/dennis/app',
     });
@@ -73,7 +74,12 @@ describe('ProjectsModule stores (live Postgres)', () => {
     expect(rec.tokenName).toBeNull();
 
     await expect(
-      projects.create({ teamId: T, projectId: `${P}-app`, displayName: 'dup', gitUrl: 'https://github.com/x/y' }),
+      projects.create({
+        teamId: T,
+        projectId: `${P}-app`,
+        displayName: 'dup',
+        gitUrl: 'https://github.com/x/y',
+      }),
     ).rejects.toThrow(/already exists/);
 
     const patched = await projects.update(T, `${P}-app`, {
@@ -85,7 +91,9 @@ describe('ProjectsModule stores (live Postgres)', () => {
     expect(patched?.gitUrl).toBe('https://github.com/dennis/app'); // untouched
 
     expect((await projects.get(T, `${P}-app`))?.displayName).toBe('The App v2');
-    expect((await projects.list(T)).some((p) => p.projectId === `${P}-app`)).toBe(true);
+    expect(
+      (await projects.list(T)).some((p) => p.projectId === `${P}-app`),
+    ).toBe(true);
   });
 
   it('stores tokens encrypted at rest, write-only; the first token in an empty store becomes default', async () => {
@@ -96,9 +104,10 @@ describe('ProjectsModule stores (live Postgres)', () => {
 
     // Encrypted at rest: the raw row never contains the plaintext.
     const ds = moduleRef.get(DataSource);
-    const raw = (await ds.query(`SELECT token_ciphertext FROM github_tokens WHERE name = $1`, [
-      `${P}-tok-a`,
-    ])) as Array<{ token_ciphertext: string }>;
+    const raw = (await ds.query(
+      `SELECT token_ciphertext FROM github_tokens WHERE name = $1`,
+      [`${P}-tok-a`],
+    )) as Array<{ token_ciphertext: string }>;
     expect(raw[0].token_ciphertext).not.toContain('ghp_plaintext_a');
     expect(raw[0].token_ciphertext.startsWith('v1:')).toBe(true);
 
@@ -109,7 +118,9 @@ describe('ProjectsModule stores (live Postgres)', () => {
     expect(JSON.stringify(metas)).not.toContain('v1:');
 
     // resolve() is the single decrypt path.
-    expect((await tokens.resolve(T, `${P}-tok-a`))?.token).toBe('ghp_plaintext_a');
+    expect((await tokens.resolve(T, `${P}-tok-a`))?.token).toBe(
+      'ghp_plaintext_a',
+    );
   });
 
   it('swaps the default atomically and resolves named vs default correctly', async () => {
@@ -125,25 +136,34 @@ describe('ProjectsModule stores (live Postgres)', () => {
 
     await tokens.setDefault(T, `${P}-tok-a`);
     expect((await tokens.resolve(T))?.name).toBe(`${P}-tok-a`);
-    await expect(tokens.setDefault(T, `${P}-nope`)).rejects.toThrow(/No token named/);
+    await expect(tokens.setDefault(T, `${P}-nope`)).rejects.toThrow(
+      /No token named/,
+    );
   });
 
   it('refuses deleting a token a project references; deletes freely otherwise', async () => {
     await projects.create({
-      teamId: T, projectId: `${P}-app2`,
+      teamId: T,
+      projectId: `${P}-app2`,
       displayName: 'App 2',
       gitUrl: 'https://github.com/dennis/app2',
       tokenName: `${P}-tok-b`,
     });
-    await expect(tokens.delete(T, `${P}-tok-b`)).rejects.toThrow(/referenced by 1 project/);
+    await expect(tokens.delete(T, `${P}-tok-b`)).rejects.toThrow(
+      /referenced by 1 project/,
+    );
     await projects.update(T, `${P}-app2`, { tokenName: null });
     await expect(tokens.delete(T, `${P}-tok-b`)).resolves.toBeUndefined();
-    expect((await tokens.listMeta(T)).some((m) => m.name === `${P}-tok-b`)).toBe(false);
+    expect(
+      (await tokens.listMeta(T)).some((m) => m.name === `${P}-tok-b`),
+    ).toBe(false);
   });
 
   it('updates a token value in place via put (upsert keeps default flag)', async () => {
     await tokens.put(T, `${P}-tok-a`, 'ghp_rotated');
     expect((await tokens.resolve(T, `${P}-tok-a`))?.token).toBe('ghp_rotated');
-    expect((await tokens.listMeta(T)).filter((m) => m.isDefault)).toHaveLength(1);
+    expect((await tokens.listMeta(T)).filter((m) => m.isDefault)).toHaveLength(
+      1,
+    );
   });
 });

@@ -49,7 +49,8 @@ export class SlackOauthController {
       });
       const teamId = oauth.team?.id;
       const botToken = oauth.access_token;
-      if (!teamId || !botToken) throw new Error('oauth.v2.access returned no team/token');
+      if (!teamId || !botToken)
+        throw new Error('oauth.v2.access returned no team/token');
 
       await this.tenants.upsertFromOauth({
         teamId,
@@ -64,7 +65,10 @@ export class SlackOauthController {
       );
     } catch (err) {
       this.logger.error(`oauth exchange failed: ${err}`);
-      return page('Installation failed', 'The token exchange failed — check the server logs.');
+      return page(
+        'Installation failed',
+        'The token exchange failed — check the server logs.',
+      );
     }
   }
 

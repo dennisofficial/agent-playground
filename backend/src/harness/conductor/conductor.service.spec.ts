@@ -93,7 +93,7 @@ const ALEX = {
   sortOrder: 10,
   roleContext: 'x',
   engine: 'claude' as const,
-  scrumMaster: true,
+  teamLead: true,
 };
 
 /** Minimal in-memory registry double (same contract as ChannelRegistryService). */

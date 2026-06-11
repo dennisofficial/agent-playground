@@ -4,7 +4,10 @@ function makeService(overrides?: { existingRoom?: boolean }) {
   const web = {
     users: {
       info: vi.fn(async ({ user }: { user: string }) => ({
-        user: { profile: { display_name: 'Dennis', real_name: 'Dennis L' }, name: user },
+        user: {
+          profile: { display_name: 'Dennis', real_name: 'Dennis L' },
+          name: user,
+        },
       })),
     },
     conversations: {

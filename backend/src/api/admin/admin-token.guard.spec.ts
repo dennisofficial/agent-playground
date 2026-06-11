@@ -28,12 +28,20 @@ describe('AdminTokenGuard', () => {
   it('rejects missing, malformed, and wrong bearers with 401', () => {
     const g = guard('correct-token');
     expect(() => g.canActivate(ctx())).toThrow(UnauthorizedException);
-    expect(() => g.canActivate(ctx('correct-token'))).toThrow(UnauthorizedException); // no Bearer prefix
-    expect(() => g.canActivate(ctx('Bearer wrong'))).toThrow(UnauthorizedException);
-    expect(() => g.canActivate(ctx('Bearer correct-token-x'))).toThrow(UnauthorizedException);
+    expect(() => g.canActivate(ctx('correct-token'))).toThrow(
+      UnauthorizedException,
+    ); // no Bearer prefix
+    expect(() => g.canActivate(ctx('Bearer wrong'))).toThrow(
+      UnauthorizedException,
+    );
+    expect(() => g.canActivate(ctx('Bearer correct-token-x'))).toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('passes on the exact bearer', () => {
-    expect(guard('correct-token').canActivate(ctx('Bearer correct-token'))).toBe(true);
+    expect(
+      guard('correct-token').canActivate(ctx('Bearer correct-token')),
+    ).toBe(true);
   });
 });

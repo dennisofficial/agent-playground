@@ -12,7 +12,9 @@ describe('gitAuthEnv', () => {
   it('returns {} for non-github URLs (file:// fixtures, ssh) and missing tokens', () => {
     expect(gitAuthEnv('file:///tmp/origin.git', 'TOKEN')).toEqual({});
     expect(gitAuthEnv('git@github.com:dennis/repo.git', 'TOKEN')).toEqual({});
-    expect(gitAuthEnv('https://github.com/dennis/repo.git', undefined)).toEqual({});
+    expect(gitAuthEnv('https://github.com/dennis/repo.git', undefined)).toEqual(
+      {},
+    );
   });
 });
 
@@ -22,8 +24,14 @@ describe('parseGithubRepo', () => {
       owner: 'dennis',
       repo: 'my-app',
     });
-    expect(parseGithubRepo('https://github.com/org/repo')).toEqual({ owner: 'org', repo: 'repo' });
-    expect(parseGithubRepo('https://github.com/org/repo/')).toEqual({ owner: 'org', repo: 'repo' });
+    expect(parseGithubRepo('https://github.com/org/repo')).toEqual({
+      owner: 'org',
+      repo: 'repo',
+    });
+    expect(parseGithubRepo('https://github.com/org/repo/')).toEqual({
+      owner: 'org',
+      repo: 'repo',
+    });
   });
 
   it('rejects non-github and malformed URLs', () => {
@@ -33,15 +41,23 @@ describe('parseGithubRepo', () => {
       'https://gitlab.com/o/r',
       'https://github.com/only-owner',
     ]) {
-      expect(() => parseGithubRepo(bad)).toThrow(/Not an HTTPS GitHub repo URL/);
+      expect(() => parseGithubRepo(bad)).toThrow(
+        /Not an HTTPS GitHub repo URL/,
+      );
     }
   });
 });
 
 describe('sameGitUrl', () => {
   it('treats .git and trailing-slash variants as the same repo', () => {
-    expect(sameGitUrl('https://github.com/o/r.git', 'https://github.com/o/r')).toBe(true);
-    expect(sameGitUrl('https://github.com/o/r/', 'https://github.com/o/r')).toBe(true);
-    expect(sameGitUrl('https://github.com/o/r', 'https://github.com/o/other')).toBe(false);
+    expect(
+      sameGitUrl('https://github.com/o/r.git', 'https://github.com/o/r'),
+    ).toBe(true);
+    expect(
+      sameGitUrl('https://github.com/o/r/', 'https://github.com/o/r'),
+    ).toBe(true);
+    expect(
+      sameGitUrl('https://github.com/o/r', 'https://github.com/o/other'),
+    ).toBe(false);
   });
 });

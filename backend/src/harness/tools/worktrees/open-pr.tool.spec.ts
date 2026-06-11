@@ -44,16 +44,25 @@ function build(opts: {
     pushSharedToOrigin: async () => {
       calls.push('push');
       if (opts.pushError) throw new Error(opts.pushError);
-      return { sharedBranch: opts.worktree?.sharedBranch ?? '', gitUrl: opts.record?.gitUrl ?? '' };
+      return {
+        sharedBranch: opts.worktree?.sharedBranch ?? '',
+        gitUrl: opts.record?.gitUrl ?? '',
+      };
     },
   } as unknown as WorktreeService;
-  const tokens = { resolve: async () => opts.token } as unknown as GithubTokenStore;
+  const tokens = {
+    resolve: async () => opts.token,
+  } as unknown as GithubTokenStore;
   const prArgs: unknown[] = [];
   const github = {
     openPullRequest: async (_tok: string, args: unknown) => {
       calls.push('pr');
       prArgs.push(args);
-      return { url: 'https://github.com/dennis/proj/pull/9', number: 9, existing: false };
+      return {
+        url: 'https://github.com/dennis/proj/pull/9',
+        number: 9,
+        existing: false,
+      };
     },
   } as unknown as GithubApiService;
   return { tool: new OpenPrTool(worktrees, tokens, github), calls, prArgs };
@@ -63,9 +72,19 @@ describe('open_pr tool', () => {
   const TOKEN = { name: 'default', token: 'SECRET' };
 
   it('pushes the shared branch first, then opens the PR against the project base branch', async () => {
-    const { tool, calls, prArgs } = build({ worktree: WT, record: REC, token: TOKEN });
-    const out = await tool.execute({ worktreeId: 'wt-001', title: 'Feature', body: 'desc' });
-    expect(out).toBe('Opened PR for shared/feat: https://github.com/dennis/proj/pull/9');
+    const { tool, calls, prArgs } = build({
+      worktree: WT,
+      record: REC,
+      token: TOKEN,
+    });
+    const out = await tool.execute({
+      worktreeId: 'wt-001',
+      title: 'Feature',
+      body: 'desc',
+    });
+    expect(out).toBe(
+      'Opened PR for shared/feat: https://github.com/dennis/proj/pull/9',
+    );
     expect(calls).toEqual(['push', 'pr']); // push BEFORE pr
     expect(prArgs[0]).toEqual({
       owner: 'dennis',
@@ -90,27 +109,40 @@ describe('open_pr tool', () => {
       existing: true,
     });
     const out = await tool.execute({ worktreeId: 'wt-001', title: 'T' });
-    expect(out).toBe('A PR for shared/feat already exists: https://github.com/dennis/proj/pull/3');
+    expect(out).toBe(
+      'A PR for shared/feat already exists: https://github.com/dennis/proj/pull/3',
+    );
   });
 
   it('refuses: missing worktree, non-shared worktree, unregistered project, missing token', async () => {
-    expect(await build({}).tool.execute({ worktreeId: 'wt-x', title: 'T' })).toContain(
-      'No worktree',
-    );
     expect(
-      await build({ worktree: { ...WT, sharedBranch: undefined } }).tool.execute({
+      await build({}).tool.execute({ worktreeId: 'wt-x', title: 'T' }),
+    ).toContain('No worktree');
+    expect(
+      await build({
+        worktree: { ...WT, sharedBranch: undefined },
+      }).tool.execute({
         worktreeId: 'wt-001',
         title: 'T',
       }),
     ).toContain('not on a shared branch');
     expect(
-      await build({ worktree: WT }).tool.execute({ worktreeId: 'wt-001', title: 'T' }),
+      await build({ worktree: WT }).tool.execute({
+        worktreeId: 'wt-001',
+        title: 'T',
+      }),
     ).toContain('No registered GitHub repo matches');
     expect(
-      await build({ worktree: WT, record: REC }).tool.execute({ worktreeId: 'wt-001', title: 'T' }),
+      await build({ worktree: WT, record: REC }).tool.execute({
+        worktreeId: 'wt-001',
+        title: 'T',
+      }),
     ).toContain('No default GitHub token');
     expect(
-      await build({ worktree: WT, record: { ...REC, tokenName: 'special' } }).tool.execute({
+      await build({
+        worktree: WT,
+        record: { ...REC, tokenName: 'special' },
+      }).tool.execute({
         worktreeId: 'wt-001',
         title: 'T',
       }),
@@ -122,7 +154,8 @@ describe('open_pr tool', () => {
       worktree: WT,
       record: REC,
       token: TOKEN,
-      pushError: "This worktree's repo origin isn't the project's registered repo — recreate the worktree to work against it.",
+      pushError:
+        "This worktree's repo origin isn't the project's registered repo — recreate the worktree to work against it.",
     });
     const out = await tool.execute({ worktreeId: 'wt-001', title: 'T' });
     expect(out).toContain("Couldn't open the PR");

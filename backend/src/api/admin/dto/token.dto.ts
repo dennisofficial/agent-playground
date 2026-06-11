@@ -1,8 +1,15 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
+import {
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 
 export class PutTokenDto {
   @Matches(/^[a-z0-9][a-z0-9._-]*$/, {
-    message: 'name must be lowercase alphanumeric (dot/dash/underscore allowed)',
+    message:
+      'name must be lowercase alphanumeric (dot/dash/underscore allowed)',
   })
   name!: string;
 

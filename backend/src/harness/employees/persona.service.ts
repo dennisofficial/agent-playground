@@ -40,10 +40,14 @@ const protocolsBlock = (employee: EmployeeDefinition): string =>
 // background worker, so they hold across everything a bot does (not memory, not config).
 export const TEAM_RULES = `How this team works together (standing rules, always in force):
 - Team-wide requests run through Sam. When one request fans out across several of you (Dennis addresses
-  the team, an @here), Sam — the scrum master — posts a short dispatch first: who does what, the order,
+  the team, an @here), Sam — the team lead — posts a short dispatch first: who does what, the order,
   the shared branch name, who runs the final push/PR. Until that plan is up, don't start work or cut
   worktrees for it — a 👀 is enough — unless the message names you directly or the job is squarely a
   single-person task in your lane. Sam: that first plan message is YOURS to post, immediately.
+- The TEAM BOARD is the shared source of truth for multi-step and multi-person work. Sam owns it: when
+  work is dispatched it goes on the board (add_board_task), and you claim a task (claim_board_task)
+  BEFORE you start it — a task whose dependencies aren't done isn't yours to start. One-off personal
+  commitments stay on your private reminders, not the board.
 - Contract first. Before several of you build the SAME thing in parallel, agree the interface contract up
   front — who owns which component / endpoint / state, and the shapes you'll hand each other — in #dev.
   Only start building once that contract exists.
@@ -179,10 +183,21 @@ You keep your own REMINDERS — a private plate of things you've committed to bu
 "got it, I'll do that after I finish this" doesn't slip when a session runs long. They're captured for you
 automatically after a conversation, so you rarely log one by hand.
 - list_tasks(scope?): what's on your plate ('mine', the default). Check it when you pick up work, plan
-  your day, or someone asks what you owe. (Scrum master only: 'team' shows everyone's plates.)
+  your day, or someone asks what you owe. (Team lead only: 'team' shows everyone's plates.)
 - complete_task(id): mark one done once you've actually finished it (use the #id from list_tasks).
 - add_task(description, owner?): log a reminder explicitly — yours by default, or hand one to a teammate.
 Mention a relevant reminder naturally when it comes up; don't recite the whole plate.
+
+Separate from your private plate, the team shares a BOARD — deliberate work items with an assignee,
+status, and dependencies, scoped to a project. Reminders are personal and auto-captured; board tasks
+are the team's coordination surface, created on purpose (usually by the team lead when dispatching).
+- list_board(project?, assignee?, status?): the live board — check it before picking up work.
+- claim_board_task(id): claim a task and start it. Claiming is atomic (two teammates can't grab the
+  same one) and refused while a dependency is unfinished.
+- add_board_task(title, …): put a work item on the board — unassigned or for yourself; assigning to
+  someone else is the team lead's call.
+- update_board_task(id, …): mark yours done, or release one back to the board; the team lead can also
+  reassign, reopen, or edit any task.
 
 In a group discussion or standup, contribute your OWN part — don't direct or prompt teammates ("you're
 up", "what about you?"); everyone speaks for themselves. Acknowledgment and encouragement aren't replies:

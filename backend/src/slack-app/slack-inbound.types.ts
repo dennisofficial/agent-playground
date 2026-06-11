@@ -34,11 +34,17 @@ export interface SlackInteractivityPayload {
   user?: { id?: string; username?: string };
   trigger_id?: string;
   channel?: { id?: string; name?: string };
-  actions?: Array<{ action_id?: string; value?: string; [key: string]: unknown }>;
+  actions?: Array<{
+    action_id?: string;
+    value?: string;
+    [key: string]: unknown;
+  }>;
   view?: {
     callback_id?: string;
     private_metadata?: string;
-    state?: { values?: Record<string, Record<string, { value?: string | null }>> };
+    state?: {
+      values?: Record<string, Record<string, { value?: string | null }>>;
+    };
     [key: string]: unknown;
   };
   [key: string]: unknown;

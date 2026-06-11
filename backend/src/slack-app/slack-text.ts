@@ -67,7 +67,11 @@ export function translateInbound(
  * only code-segment change is stripping fence language tags, which mrkdwn renders as text.
  */
 export function translateOutbound(text: string): string {
-  const stage1 = mapSegments(text, (prose) => convertTables(convertRules(prose)), (c) => c);
+  const stage1 = mapSegments(
+    text,
+    (prose) => convertTables(convertRules(prose)),
+    (c) => c,
+  );
   return mapSegments(stage1, translateProse, stripFenceLang);
 }
 
@@ -78,7 +82,9 @@ function mapSegments(
   codeFn: (s: string) => string,
 ): string {
   const parts = text.split(/(```[\s\S]*?```|`[^`\n]*`)/);
-  return parts.map((part, i) => (i % 2 === 1 ? codeFn(part) : proseFn(part))).join('');
+  return parts
+    .map((part, i) => (i % 2 === 1 ? codeFn(part) : proseFn(part)))
+    .join('');
 }
 
 /** ```lang fences: mrkdwn has no syntax highlighting and renders the tag as literal first-line
@@ -133,7 +139,10 @@ function renderTable(rows: string[][]): string {
     Math.max(...rows.map((r) => (r[c] ?? '').length)),
   );
   const fmt = (r: string[]): string =>
-    widths.map((w, c) => (r[c] ?? '').padEnd(w)).join(' | ').trimEnd();
+    widths
+      .map((w, c) => (r[c] ?? '').padEnd(w))
+      .join(' | ')
+      .trimEnd();
   const divider = widths.map((w) => '-'.repeat(w)).join('-+-');
   const body = [fmt(rows[0]), divider, ...rows.slice(1).map(fmt)];
   return '```\n' + body.join('\n') + '\n```';

@@ -41,14 +41,17 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
     const bound = tools.toStructuredTools(DEFAULT_CHAT_TOOLSET);
     expect(bound.map((t) => t.name).sort()).toEqual(
       [
+        'add_board_task',
         'add_task',
         'check_session',
+        'claim_board_task',
         'close_session',
         'complete_task',
         'create_session',
         'create_worktree',
         'end_turn',
         'forget',
+        'list_board',
         'list_rooms',
         'list_sessions',
         'list_tasks',
@@ -63,6 +66,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'reply_session',
         'search_session',
         'send_message',
+        'update_board_task',
         'update_memory',
       ].sort(),
     );

@@ -102,7 +102,11 @@ describe('SlackChatSurface inbound', () => {
       text: 'Dennis ship it & relax',
       surfaceId: 'slack:T1:C042',
     });
-    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith('C042', 'T1', 'dennis');
+    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith(
+      'C042',
+      'T1',
+      'dennis',
+    );
     expect(order).toEqual(['register', 'speaker']);
     expect(bus.patchStatus).toHaveBeenCalledWith({ speaker: 'dennis' });
   });
@@ -111,7 +115,9 @@ describe('SlackChatSurface inbound', () => {
     const { surface, inject } = makeFakes();
     const next = firstValueFrom(surface.inbound$);
     await inject(human({ text: '<@UBOT> everyone check in' }));
-    expect(((await next) as { text: string }).text).toBe('@here everyone check in');
+    expect(((await next) as { text: string }).text).toBe(
+      '@here everyone check in',
+    );
   });
 });
 
@@ -153,7 +159,12 @@ describe('SlackChatSurface outbound', () => {
       surfaceId: 'slack:T1:C042',
     });
 
-    await surface.react('alex:k2:1', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
+    await surface.react(
+      'alex:k2:1',
+      '👍',
+      { id: 'sam', name: 'Sam' },
+      'slack:T1:C042',
+    );
     expect(web.reactions.add).toHaveBeenCalledWith({
       channel: 'C042',
       timestamp: '1712.0001', // the ts chat.postMessage returned
@@ -164,7 +175,12 @@ describe('SlackChatSurface outbound', () => {
   it('react() treats a raw Slack ts as the target directly, and skips unknown minted ids', async () => {
     const { surface, web } = makeFakes();
 
-    await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
+    await surface.react(
+      '1712345678.000100',
+      '✅',
+      { id: 'sam', name: 'Sam' },
+      'slack:T1:C042',
+    );
     expect(web.reactions.add).toHaveBeenCalledWith({
       channel: 'C042',
       timestamp: '1712345678.000100',
@@ -172,7 +188,12 @@ describe('SlackChatSurface outbound', () => {
     });
 
     web.reactions.add.mockClear();
-    await surface.react('alex:pre-restart:9', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
+    await surface.react(
+      'alex:pre-restart:9',
+      '👍',
+      { id: 'sam', name: 'Sam' },
+      'slack:T1:C042',
+    );
     expect(web.reactions.add).not.toHaveBeenCalled();
   });
 
@@ -219,7 +240,12 @@ describe('SlackChatSurface outbound', () => {
       }),
     );
     await expect(
-      surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042'),
+      surface.react(
+        '1712345678.000100',
+        '👍',
+        { id: 'sam', name: 'Sam' },
+        'slack:T1:C042',
+      ),
     ).resolves.toBeUndefined();
   });
 });
@@ -243,14 +269,22 @@ describe('SlackChatSurface puppet identities', () => {
       { alex },
     );
     await surface.post(msg);
-    expect(alex.chat.postMessage).toHaveBeenCalledWith({ channel: 'C042', text: 'done!' });
+    expect(alex.chat.postMessage).toHaveBeenCalledWith({
+      channel: 'C042',
+      text: 'done!',
+    });
     expect(web.chat.postMessage).not.toHaveBeenCalled();
 
     // The puppet's ts feeds the posted-id LRU, so reactions still resolve minted ids.
     const sam = makePuppet();
     const both = makeFakes({}, { alex, sam });
     await both.surface.post(msg);
-    await both.surface.react('alex:k2:1', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
+    await both.surface.react(
+      'alex:k2:1',
+      '👍',
+      { id: 'sam', name: 'Sam' },
+      'slack:T1:C042',
+    );
     expect(sam.reactions.add).toHaveBeenCalledWith({
       channel: 'C042',
       timestamp: '1712.0009',
@@ -273,11 +307,17 @@ describe('SlackChatSurface puppet identities', () => {
   it('falls back to the main-app identity when the join also fails (private channel)', async () => {
     const alex = makePuppet();
     alex.chat.postMessage.mockRejectedValue(slackError('not_in_channel'));
-    alex.conversations.join.mockRejectedValue(slackError('method_not_supported_for_channel_type'));
+    alex.conversations.join.mockRejectedValue(
+      slackError('method_not_supported_for_channel_type'),
+    );
     const { surface, web } = makeFakes({}, { alex });
     await surface.post(msg);
     expect(web.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: 'C042', text: 'done!', username: 'Alex' }),
+      expect.objectContaining({
+        channel: 'C042',
+        text: 'done!',
+        username: 'Alex',
+      }),
     );
   });
 
@@ -287,7 +327,12 @@ describe('SlackChatSurface puppet identities', () => {
       .mockRejectedValueOnce(slackError('no_permission'))
       .mockResolvedValueOnce({ ok: true });
     const { surface, web } = makeFakes({}, { sam });
-    await surface.react('1712345678.000100', '✅', { id: 'sam', name: 'Sam' }, 'slack:T1:C042');
+    await surface.react(
+      '1712345678.000100',
+      '✅',
+      { id: 'sam', name: 'Sam' },
+      'slack:T1:C042',
+    );
     expect(sam.conversations.join).toHaveBeenCalledWith({ channel: 'C042' });
     expect(sam.reactions.add).toHaveBeenCalledTimes(2);
     expect(web.reactions.add).not.toHaveBeenCalled();
@@ -298,7 +343,12 @@ describe('SlackChatSurface puppet identities', () => {
     sam.reactions.add.mockRejectedValue(slackError('already_reacted'));
     const { surface, web } = makeFakes({}, { sam });
     await expect(
-      surface.react('1712345678.000100', '👍', { id: 'sam', name: 'Sam' }, 'slack:T1:C042'),
+      surface.react(
+        '1712345678.000100',
+        '👍',
+        { id: 'sam', name: 'Sam' },
+        'slack:T1:C042',
+      ),
     ).resolves.toBeUndefined();
     expect(web.reactions.add).not.toHaveBeenCalled();
   });

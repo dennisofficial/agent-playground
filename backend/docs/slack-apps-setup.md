@@ -10,7 +10,7 @@ workspace via **unlisted distribution**.
 |---|---|---|---|
 | **AI Crew (Dev)** | 1 | **Socket Mode ONLY** | Local-dev ears (event listener). Local quick-edit/test only. |
 | **AI Crew** (prod) | 1 | **Events API / HTTP ONLY** | Deployed-prod ears: the one event listener + fallback poster. |
-| **Puppet: Alex/Maya/Nora/James/Sam/Riley** | 6 | HTTP, no events | Each posts + reacts as that employee (real bot user, name + avatar). |
+| **Puppet: Alex/Maya/Nora/James/Sam/Riley** | 6 | HTTP, no events | Each posts + reacts as that employee (real bot user, name + avatar). **Sam is the team lead** — his puppet is effectively required per workspace (lead presence, below). |
 
 - **Ears = two separate apps** (dev Socket Mode, prod Events API) — same code, different credentials.
   `main.ts` branches on `SLACK_APP_TOKEN`: set → Socket Mode (dev); unset → Events API (prod).
@@ -31,86 +31,32 @@ workspace via **unlisted distribution**.
 
 ## Manifests
 
-> Replace `https://YOUR_HOST` with the deployed base URL. The dev ears app has NO request URLs
-> (Socket Mode delivers events/interactivity over the websocket).
+The manifest files live in **`backend/slack-manifests/`** — paste one into api.slack.com/apps →
+"From a manifest" (they're the source of truth; don't restate YAML here):
 
-### Prod ears — `AI Crew` (Events API)
+| File | App |
+|---|---|
+| `ears.prod.yaml` | `AI Crew` — prod ears (Events API; request URLs point at `https://YOUR_HOST`) |
+| `ears.dev.yaml` | `AI Crew (Dev)` — dev ears (Socket Mode; no request URLs) |
+| `puppet.alex.yaml` … `puppet.riley.yaml` | the 6 employee puppets (`alex`, `riley`, `maya`, `james`, `nora`, `sam`) |
 
-```yaml
-display_information:
-  name: AI Crew
-features:
-  bot_user:
-    display_name: AI Crew
-    always_online: true
-oauth_config:
-  redirect_urls:
-    - https://YOUR_HOST/slack/oauth
-  scopes:
-    bot:
-      - chat:write
-      - chat:write.customize   # fallback posting as employees (username/icon override)
-      - reactions:write
-      - channels:read
-      - channels:history
-      - channels:join
-      - groups:read
-      - groups:history
-      - users:read
-settings:
-  event_subscriptions:
-    request_url: https://YOUR_HOST/slack/events
-    bot_events:
-      - message.channels
-      - message.groups
-      - member_joined_channel
-      - app_uninstalled
-      - tokens_revoked
-  interactivity:
-    is_enabled: true
-    request_url: https://YOUR_HOST/slack/interactivity
-  socket_mode_enabled: false
-  org_deploy_enabled: false
-```
-
-### Dev ears — `AI Crew (Dev)` (Socket Mode)
-
-Same `bot` scopes as prod. Differences: `socket_mode_enabled: true`, NO request URLs, and you must
-mint an **app-level token** (`connections:write`) — that's the `xapp-…` you put in `SLACK_APP_TOKEN`.
-Subscribe to the same `bot_events`; enable Interactivity (delivered over the socket, no URL).
-
-### Puppet (template — one per employee)
-
-```yaml
-display_information:
-  name: Alex            # → Maya / Nora / James / Sam / Riley
-features:
-  bot_user:
-    display_name: Alex  # this is the name + (with an app icon) the avatar shown on posts/reactions
-    always_online: true
-oauth_config:
-  redirect_urls:
-    - https://YOUR_HOST/slack/oauth   # only used if you wire the puppet-OAuth callback (see below)
-  scopes:
-    bot:
-      - chat:write
-      - reactions:write
-      - channels:join     # auto-join public channels on first post; private channels must invite the bot
-settings:
-  socket_mode_enabled: false
-  org_deploy_enabled: false
-  # no event_subscriptions, no interactivity — puppets never listen
-```
-
-Set each puppet's **app icon** to that employee's avatar (`web/public/avatars/<style>/<botId>.png`) so
-posts/reactions carry the face.
+Notes:
+- **Replace `https://YOUR_HOST`** with the deployed base URL before creating each app.
+- Both ears apps carry `channels:manage` + `groups:write` (team-lead presence invites). If an ears
+  app predates those scopes, update it from the manifest and REINSTALL it per workspace.
+- The dev ears app additionally needs a manually-minted **app-level token** (`connections:write`) —
+  that's the `xapp-…` for `SLACK_APP_TOKEN`; manifests can't declare it.
+- Puppets never listen (no event subscriptions, no interactivity). Their redirect URL is the
+  one-click capture path `/slack/puppet/oauth` (bot id rides in the install link's `state`).
+- Set each puppet's **app icon** to that employee's avatar (`web/public/avatars/<style>/<botId>.png`)
+  so posts/reactions carry the face.
 
 ---
 
 ## Setup steps
 
 1. **Create the apps** (api.slack.com/apps → "From a manifest"): the prod ears, the dev ears, and the
-   6 puppets, using the manifests above.
+   6 puppets, using the files in `backend/slack-manifests/`.
 2. **Unlisted distribution** for the prod ears + 6 puppets: each app → *Manage Distribution* →
    complete the checklist → "Activate Public Distribution". Keep them unlisted (don't submit to the
    Marketplace); you just share the install link privately.
@@ -143,6 +89,36 @@ your dev workspace carry its real `team_id`; LLM keys fall back to `ANTHROPIC_AP
 env, so you don't need the keys modal locally. Puppets are optional in dev — add their tokens under
 the dev workspace's `team_id` the same way if you want real per-employee identity.
 
+Puppet identities survive a DB recreate via the seed: put the tokens in `.env.personal` as
+`SLACK_PUPPET_SEED={"teamId":"T0…","tokens":{"alex":"xoxb-…", …}}` and `pnpm db:recreate`
+(drop → migrate → seed) restores `slack_identities` automatically — each token is re-verified via
+`auth.test`, so user ids stay correct. `pnpm puppet:register` remains the one-off manual path.
+
+---
+
+## Team Lead presence
+
+The team lead's (Sam's) puppet is kept in **every group chat** the harness serves — DMs are exempt.
+Enforcement is an attempt-based ladder in `LeadPresenceService` (hooked from the inbound router on
+every event, fire-and-forget):
+
+1. **Public channels** — Sam's puppet joins itself (`conversations.join`; the puppet manifest's
+   `channels:join` already covers it).
+2. **Private channels** (or a failed join) — the EARS app, which is necessarily a member (it
+   received the event), invites Sam (`conversations.invite`; needs the ears scopes `groups:write`
+   + `channels:manage` above).
+3. **Neither possible** (no Sam puppet token for the workspace, missing scopes) — ONE deterministic
+   nag per channel, posted as Jarvis, asking to `/invite @Sam`. Manual `/invite` clears the state
+   via `member_joined_channel`.
+
+> **Adding the new ears scopes requires REINSTALLING the ears app in every existing workspace**
+> (re-run its OAuth install link). Until then `conversations.invite` fails `missing_scope` and the
+> nag fallback carries the behavior — ship order doesn't matter.
+
+Sam's bot **user id** is resolved per workspace from `slack_identities.slack_bot_user_id`
+(populated by the puppet OAuth callback; manually-PUT tokens are backfilled lazily via the
+puppet's `auth.test`).
+
 ---
 
 ## Status
@@ -154,5 +130,28 @@ Both earlier gaps are now BUILT:
 - **Puppet OAuth callback** — `/slack/puppet/oauth` (bot id in `state`, creds from
   `SLACK_PUPPET_OAUTH`) captures each install's token into `slack_identities` automatically.
 
-Remaining: Dennis's real-workspace smoke; create + distribute the apps per the manifests above; set
-`SLACK_PUPPET_OAUTH` on the box.
+**Apps CREATED 2026-06-11** via `apps.manifest.create` (base URL `https://crew.dltechnologies.co`).
+Client ids/secrets + signing secrets + a ready-to-paste `SLACK_PUPPET_OAUTH` value live in
+`backend/slack-manifests/.app-credentials.json` (gitignored, mode 600 — never commit).
+
+| App | App ID |
+|---|---|
+| AI Crew (prod ears) | A0B9X639K4M |
+| AI Crew (Dev) (dev ears) | A0BA0HLKJEN |
+| Alex | A0B9K3T620P |
+| Riley | A0B9X626XGV |
+| Maya | A0B9K3S9P7H |
+| James | A0B9K3TAQPR |
+| Nora | A0BA2CW2389 |
+| Sam (team lead) | A0BA0HN8266 |
+
+Remaining (manual — no API for these):
+- **App icons**: puppets ← `assets/avatars/illustrated/<botId>.png`; both ears apps ← `assets/slack/app-icon.png`.
+- **Dev ears app-level token** (`connections:write`) → `SLACK_APP_TOKEN`; install it into the dev
+  workspace and grab `SLACK_BOT_TOKEN` from its OAuth & Permissions page.
+- **Activate unlisted distribution** for the prod ears + 6 puppets (Manage Distribution).
+- **Deploy env on the box**: `SLACK_SIGNING_SECRET` / `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`
+  (ears-prod entry), `SLACK_PUPPET_OAUTH` (precomputed in the credentials file),
+  `GATEWAY_PUBLIC_URL=https://crew.dltechnologies.co`.
+- **Verify the events URL** once `crew.dltechnologies.co` is live (Slack's challenge must pass
+  before events deliver), then Dennis's real-workspace smoke.

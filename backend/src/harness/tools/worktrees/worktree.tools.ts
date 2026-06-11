@@ -35,9 +35,9 @@ const createWorktreeSchema = z.object({
 });
 
 @HarnessTool()
-export class CreateWorktreeTool
-  implements IHarnessTool<typeof createWorktreeSchema>
-{
+export class CreateWorktreeTool implements IHarnessTool<
+  typeof createWorktreeSchema
+> {
   readonly name = 'create_worktree';
   readonly description =
     'Create an isolated git worktree off the project repo — the work area your sessions run in. Cuts a fresh branch from the base by default. Returns the worktree id to open sessions against. Note: a fresh checkout has no installed dependencies; a session can run installs itself if it needs them.';
@@ -72,9 +72,9 @@ export class CreateWorktreeTool
 const listWorktreesSchema = z.object({});
 
 @HarnessTool()
-export class ListWorktreesTool
-  implements IHarnessTool<typeof listWorktreesSchema>
-{
+export class ListWorktreesTool implements IHarnessTool<
+  typeof listWorktreesSchema
+> {
   readonly name = 'list_worktrees';
   readonly description =
     "The team's worktrees, with each one's branch and open sessions — check here before creating a new work area you might already have.";
@@ -100,8 +100,14 @@ export class ListWorktreesTool
         // reconstructed from teammates' chat self-reports.
         let sharedNote = '';
         if (w.sharedBranch) {
-          const st = await this.worktrees.sharedStatus(w.id).catch(() => undefined);
-          const pub = st ? (st.published ? 'published' : 'NOT published') : 'state unknown';
+          const st = await this.worktrees
+            .sharedStatus(w.id)
+            .catch(() => undefined);
+          const pub = st
+            ? st.published
+              ? 'published'
+              : 'NOT published'
+            : 'state unknown';
           const origin =
             st?.aheadOfOrigin === undefined
               ? 'GitHub state unknown'
@@ -122,9 +128,9 @@ const removeWorktreeSchema = z.object({
 });
 
 @HarnessTool()
-export class RemoveWorktreeTool
-  implements IHarnessTool<typeof removeWorktreeSchema>
-{
+export class RemoveWorktreeTool implements IHarnessTool<
+  typeof removeWorktreeSchema
+> {
   readonly name = 'remove_worktree';
   readonly description =
     'Remove a worktree whose work is fully finished. Refused while it still has open sessions — close them first. The branch (and its commits) survive.';
@@ -175,7 +181,9 @@ async function midTurnRefusal(
   return running.length
     ? `Can't ${verb} while a session is mid-turn in ${worktreeId} (${running
         .map((s) => s.id)
-        .join(', ')}) — a merge would mutate files under it. Wait for the report or close it.`
+        .join(
+          ', ',
+        )}) — a merge would mutate files under it. Wait for the report or close it.`
     : undefined;
 }
 
@@ -193,9 +201,9 @@ const publishWorktreeSchema = z.object({
 });
 
 @HarnessTool()
-export class PublishWorktreeTool
-  implements IHarnessTool<typeof publishWorktreeSchema>
-{
+export class PublishWorktreeTool implements IHarnessTool<
+  typeof publishWorktreeSchema
+> {
   readonly name = 'publish_worktree';
   readonly description =
     "Publish a worktree's COMMITTED work onto its shared integration branch so teammates and Dennis can take it. Fast-forwards when possible, otherwise merges teammates' work in first; when the project has a registered GitHub repo the shared branch is pushed to GitHub too (the result says whether that happened). Only commits publish — have a session commit first. Refused while a session in the worktree is mid-turn.";
@@ -238,9 +246,9 @@ const pullWorktreeSchema = z.object({
 });
 
 @HarnessTool()
-export class PullWorktreeTool
-  implements IHarnessTool<typeof pullWorktreeSchema>
-{
+export class PullWorktreeTool implements IHarnessTool<
+  typeof pullWorktreeSchema
+> {
   readonly name = 'pull_worktree';
   readonly description =
     "Merge the shared integration branch into a worktree — take teammates' published work. Refused while a session in the worktree is mid-turn.";

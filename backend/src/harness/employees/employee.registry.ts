@@ -80,13 +80,20 @@ export class EmployeeRegistry implements OnModuleInit {
         );
       }
     }
-    const scrumMasters = roster.filter((e) => e.scrumMaster);
-    if (scrumMasters.length !== 1) {
+    const leads = roster.filter((e) => e.teamLead);
+    if (leads.length !== 1) {
       throw new Error(
-        `Exactly one employee must carry scrumMaster (found ${scrumMasters.length})`,
+        `Exactly one employee must carry teamLead (found ${leads.length})`,
       );
     }
     this.roster = roster;
+  }
+
+  /** The one team lead (validated exactly-one at boot). */
+  teamLead(): EmployeeDefinition {
+    const lead = this.roster.find((e) => e.teamLead);
+    if (!lead) throw new Error('Empty roster — no team lead');
+    return lead;
   }
 
   list(): ReadonlyArray<EmployeeDefinition> {
@@ -142,7 +149,7 @@ export class EmployeeRegistry implements OnModuleInit {
     return /@(here|channel|everyone)\b/i.test(text);
   }
 
-  /** One-line roster summary for prompts ("Alex — backend engineer; Sam — scrum master"). */
+  /** One-line roster summary for prompts ("Alex — backend engineer; Sam — team lead"). */
   rosterSummary(): string {
     return this.roster.map((b) => `${b.name} — ${b.role}`).join('; ');
   }

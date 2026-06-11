@@ -42,21 +42,24 @@ describe('TaskStore + WorklogStore (live Postgres)', () => {
 
   it('adds a reminder and dedups an identical open one on the same plate', async () => {
     const a = await tasks.addTask({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       description: 'Wire the   hooks',
       owner: 'alex',
     });
     expect(a).toBeDefined();
     // Same plate + normalized description → no-op via the partial unique index.
     const dup = await tasks.addTask({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       description: 'wire the hooks',
       owner: 'alex',
     });
     expect(dup).toBeUndefined();
     // Different owner → not a dup.
     const other = await tasks.addTask({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       description: 'Wire the hooks',
       owner: 'riley',
     });
@@ -66,13 +69,15 @@ describe('TaskStore + WorklogStore (live Postgres)', () => {
 
   it('re-adding is allowed once the original is no longer open', async () => {
     const a = await tasks.addTask({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       description: 'task',
       owner: 'alex',
     });
     expect(await tasks.completeTask('T1', 'p', a!.id)).toBe(true);
     const again = await tasks.addTask({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       description: 'task',
       owner: 'alex',
     });
@@ -80,15 +85,22 @@ describe('TaskStore + WorklogStore (live Postgres)', () => {
   });
 
   it('remindersForBot returns owned + raised; project-scopes completion', async () => {
-    await tasks.addTask({ team: 'T1', project: 'p', description: 'mine', owner: 'alex' });
     await tasks.addTask({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
+      description: 'mine',
+      owner: 'alex',
+    });
+    await tasks.addTask({
+      team: 'T1',
+      project: 'p',
       description: 'handoff',
       owner: 'riley',
       createdBy: 'alex',
     });
     await tasks.addTask({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       description: 'theirs',
       owner: 'riley',
     });
@@ -105,26 +117,30 @@ describe('TaskStore + WorklogStore (live Postgres)', () => {
   it('logs and reads recent work, scoped + newest-first', async () => {
     await worklog.logWork({
       ownerBot: 'alex',
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       task: 't1',
       summary: 's1',
     });
     await worklog.logWork({
       ownerBot: 'riley',
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       task: 't2',
       summary: 's2',
     });
     await worklog.logWork({
       ownerBot: 'alex',
-      team: 'T1', project: 'q',
+      team: 'T1',
+      project: 'q',
       task: 't3',
       summary: 's3',
     });
     const recent = await worklog.recentWork({ team: 'T1', project: 'p' });
     expect(recent.map((w) => w.task)).toEqual(['t2', 't1']); // newest first, project p only
     const alexOnly = await worklog.recentWork({
-      team: 'T1', project: 'p',
+      team: 'T1',
+      project: 'p',
       ownerBot: 'alex',
     });
     expect(alexOnly.map((w) => w.task)).toEqual(['t1']);

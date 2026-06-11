@@ -34,7 +34,9 @@ export class ProjectsController {
     if (!tokenName) return;
     const known = await this.tokens.listMeta(teamId);
     if (!known.some((t) => t.name === tokenName)) {
-      throw new BadRequestException(`Unknown token "${tokenName}" — store it first (POST /tokens).`);
+      throw new BadRequestException(
+        `Unknown token "${tokenName}" — store it first (POST /tokens).`,
+      );
     }
   }
 
@@ -44,7 +46,8 @@ export class ProjectsController {
     try {
       return await this.projects.create({ ...dto, teamId });
     } catch (err) {
-      if (err instanceof ProjectConflictError) throw new ConflictException(err.message);
+      if (err instanceof ProjectConflictError)
+        throw new ConflictException(err.message);
       throw err;
     }
   }

@@ -47,7 +47,11 @@ function parseSlackSurface(
 /** Slack's membership-failure codes differ per method: puppets hit these in channels they
  * haven't joined → `conversations.join` + one retry, then fall back to the main app. */
 const POST_MEMBERSHIP_ERRORS = ['not_in_channel', 'channel_not_found'];
-const REACT_MEMBERSHIP_ERRORS = ['no_permission', 'not_in_channel', 'channel_not_found'];
+const REACT_MEMBERSHIP_ERRORS = [
+  'no_permission',
+  'not_in_channel',
+  'channel_not_found',
+];
 
 /**
  * The Slack ChatSurface — the real group chat. One Slack app posts for every employee via
@@ -65,7 +69,10 @@ export class SlackChatSurface implements ChatSurface {
   private readonly logger = new Logger(SlackChatSurface.name);
   private readonly subject = new Subject<InboundChatMessage>();
   /** Harness-minted message id → where it landed in Slack (insertion-ordered, LRU-bounded). */
-  private readonly postedIds = new Map<string, { channel: string; ts: string }>();
+  private readonly postedIds = new Map<
+    string,
+    { channel: string; ts: string }
+  >();
 
   /** `<AVATAR_BASE_URL>/<style>/<botId>.png`, or undefined → post without icons. The style
    * segment is the illustrated↔realistic feature toggle; hosting is swappable via the base URL
@@ -173,8 +180,12 @@ export class SlackChatSurface implements ChatSurface {
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
         let res = puppet
-          ? await this.tryWithJoin(puppet, channel, msg.authorBotId, POST_MEMBERSHIP_ERRORS, () =>
-              puppet.chat.postMessage({ channel, text }),
+          ? await this.tryWithJoin(
+              puppet,
+              channel,
+              msg.authorBotId,
+              POST_MEMBERSHIP_ERRORS,
+              () => puppet.chat.postMessage({ channel, text }),
             )
           : undefined;
         res ??= await ears?.chat.postMessage({
@@ -218,8 +229,12 @@ export class SlackChatSurface implements ChatSurface {
     try {
       const puppet = await this.identities.clientFor(parsed.teamId, asBot.id);
       const reacted = puppet
-        ? await this.tryWithJoin(puppet, channel, asBot.id, REACT_MEMBERSHIP_ERRORS, () =>
-            puppet.reactions.add(args),
+        ? await this.tryWithJoin(
+            puppet,
+            channel,
+            asBot.id,
+            REACT_MEMBERSHIP_ERRORS,
+            () => puppet.reactions.add(args),
           )
         : undefined;
       if (!reacted) {
@@ -265,7 +280,10 @@ export class SlackChatSurface implements ChatSurface {
     }
   }
 
-  private recordPostedId(id: string, ref: { channel: string; ts: string }): void {
+  private recordPostedId(
+    id: string,
+    ref: { channel: string; ts: string },
+  ): void {
     this.postedIds.set(id, ref);
     if (this.postedIds.size > POSTED_ID_LRU_MAX) {
       const oldest = this.postedIds.keys().next().value;

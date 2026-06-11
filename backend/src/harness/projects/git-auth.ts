@@ -27,8 +27,13 @@ export function gitAuthEnv(
 }
 
 /** Owner/repo from an HTTPS GitHub URL (`.git` suffix tolerated). Throws on anything else. */
-export function parseGithubRepo(gitUrl: string): { owner: string; repo: string } {
-  const m = gitUrl.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
+export function parseGithubRepo(gitUrl: string): {
+  owner: string;
+  repo: string;
+} {
+  const m = gitUrl.match(
+    /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/,
+  );
   if (!m) {
     throw new Error(`Not an HTTPS GitHub repo URL: ${gitUrl}`);
   }

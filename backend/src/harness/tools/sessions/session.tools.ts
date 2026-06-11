@@ -40,9 +40,9 @@ const createSessionSchema = z.object({
 });
 
 @HarnessTool()
-export class CreateSessionTool
-  implements IHarnessTool<typeof createSessionSchema>
-{
+export class CreateSessionTool implements IHarnessTool<
+  typeof createSessionSchema
+> {
   readonly name = 'create_session';
   readonly description =
     "Open a background session — a long-lived Claude Code-style worker — in a worktree and give it its first turn. Returns a session id; you're notified when the turn reports back, and the session STAYS OPEN for follow-ups (reply_session). Calling this ENDS YOUR TURN, so put any brief first-person heads-up in THIS message's text.";
@@ -107,9 +107,9 @@ const replySessionSchema = z.object({
 });
 
 @HarnessTool()
-export class ReplySessionTool
-  implements IHarnessTool<typeof replySessionSchema>
-{
+export class ReplySessionTool implements IHarnessTool<
+  typeof replySessionSchema
+> {
   readonly name = 'reply_session';
   readonly description =
     "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. Also how a plan gets approved: reply with mode 'execute'. Calling this ENDS YOUR TURN; you're notified when the turn reports back.";
@@ -148,9 +148,9 @@ const closeSessionSchema = z.object({
 });
 
 @HarnessTool()
-export class CloseSessionTool
-  implements IHarnessTool<typeof closeSessionSchema>
-{
+export class CloseSessionTool implements IHarnessTool<
+  typeof closeSessionSchema
+> {
   readonly name = 'close_session';
   readonly description =
     "Close a session you're done with (stops it if it's mid-turn and discards that turn's result). Its completed work is logged. The worktree stays until you remove_worktree it.";
@@ -183,9 +183,9 @@ const checkSessionSchema = z.object({
 });
 
 @HarnessTool()
-export class CheckSessionTool
-  implements IHarnessTool<typeof checkSessionSchema>
-{
+export class CheckSessionTool implements IHarnessTool<
+  typeof checkSessionSchema
+> {
   readonly name = 'check_session';
   readonly description =
     "Peek at one of your sessions — status, mode, and recent activity (or its last report once idle). Use it when someone asks how it's going; don't poll it in a loop.";
@@ -232,9 +232,9 @@ export class CheckSessionTool
 const listSessionsSchema = z.object({});
 
 @HarnessTool()
-export class ListSessionsTool
-  implements IHarnessTool<typeof listSessionsSchema>
-{
+export class ListSessionsTool implements IHarnessTool<
+  typeof listSessionsSchema
+> {
   readonly name = 'list_sessions';
   readonly description =
     'Your sessions, open ones first: id, status, mode, worktree, and opening task. Check it when you pick work back up — an open session may already have the context you need.';
@@ -277,13 +277,15 @@ const searchSessionSchema = z.object({
     .int()
     .min(1)
     .optional()
-    .describe('Without a query: which page of the transcript; 1 (default) = the most recent.'),
+    .describe(
+      'Without a query: which page of the transcript; 1 (default) = the most recent.',
+    ),
 });
 
 @HarnessTool()
-export class SearchSessionTool
-  implements IHarnessTool<typeof searchSessionSchema>
-{
+export class SearchSessionTool implements IHarnessTool<
+  typeof searchSessionSchema
+> {
   readonly name = 'search_session';
   readonly description =
     "Look through one of your sessions' FULL transcript — every step and tool call across all its turns — like scrolling back through a Claude Code transcript. Search with `query`, or page through with `page`. For when the last report isn't enough and you need what actually happened.";

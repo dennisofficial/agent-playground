@@ -58,7 +58,8 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
     }
     try {
       // Ensure origin actually has the branch (idempotent; also runs the repo identity guard).
-      const { sharedBranch } = await this.worktrees.pushSharedToOrigin(worktreeId);
+      const { sharedBranch } =
+        await this.worktrees.pushSharedToOrigin(worktreeId);
       const { owner, repo } = parseGithubRepo(rec.gitUrl);
       const pr = await this.github.openPullRequest(auth.token, {
         owner,

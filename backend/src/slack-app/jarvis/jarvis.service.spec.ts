@@ -9,7 +9,9 @@ import {
 } from './jarvis-blocks';
 import { JarvisService } from './jarvis.service';
 
-function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> } = {}) {
+function makeJarvis(
+  opts: { ready?: boolean; projects?: Record<string, string> } = {},
+) {
   const ready$ = new Subject<string>();
   const readiness = {
     isReady: vi.fn(() => opts.ready ?? false),
@@ -18,13 +20,20 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
     refresh: vi.fn(async () => true),
   };
   const projectRows = new Map(
-    Object.entries(opts.projects ?? {}).map(([id, gitUrl]) => [id, { projectId: id, gitUrl }]),
+    Object.entries(opts.projects ?? {}).map(([id, gitUrl]) => [
+      id,
+      { projectId: id, gitUrl },
+    ]),
   );
   const projects = {
     get: vi.fn(async (_teamId: string, id: string) => projectRows.get(id)),
     create: vi.fn(async (input: { projectId: string; gitUrl: string }) => {
-      if (projectRows.has(input.projectId)) throw new ProjectConflictError(input.projectId);
-      projectRows.set(input.projectId, { projectId: input.projectId, gitUrl: input.gitUrl });
+      if (projectRows.has(input.projectId))
+        throw new ProjectConflictError(input.projectId);
+      projectRows.set(input.projectId, {
+        projectId: input.projectId,
+        gitUrl: input.gitUrl,
+      });
     }),
   };
   const providerKeys = { put: vi.fn(async () => ({})) };
@@ -34,7 +43,10 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
   };
   const web = {
     chat: {
-      postMessage: vi.fn(async (_args: Record<string, unknown>) => ({ ok: true, ts: '1.1' })),
+      postMessage: vi.fn(async (_args: Record<string, unknown>) => ({
+        ok: true,
+        ts: '1.1',
+      })),
     },
     views: { open: vi.fn(async () => ({ ok: true })) },
   };
@@ -61,6 +73,9 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
         : undefined,
     ),
   };
+  const identities = {
+    botIdForSlackUser: vi.fn(async () => undefined as string | undefined),
+  };
   const jarvis = new JarvisService(
     clients as never,
     directory as never,
@@ -69,16 +84,37 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
     providerKeys as never,
     githubTokens as never,
     projects as never,
+    identities as never,
   );
   jarvis.onModuleInit();
-  return { jarvis, web, directory, registry, readiness, providerKeys, githubTokens, projects, ready$ };
+  return {
+    jarvis,
+    web,
+    directory,
+    registry,
+    readiness,
+    providerKeys,
+    githubTokens,
+    projects,
+    ready$,
+  };
 }
 
-const message = (text: string, overrides: Record<string, unknown> = {}): SlackInbound => ({
+const message = (
+  text: string,
+  overrides: Record<string, unknown> = {},
+): SlackInbound => ({
   kind: 'event',
   body: {
     team_id: 'T1',
-    event: { type: 'message', user: 'U123', text, channel: 'C042', ts: '1712.1', ...overrides },
+    event: {
+      type: 'message',
+      user: 'U123',
+      text,
+      channel: 'C042',
+      ts: '1712.1',
+      ...overrides,
+    },
   },
   respond: vi.fn(async () => {}),
 });
@@ -87,7 +123,12 @@ const joined = (user: string): SlackInbound => ({
   kind: 'event',
   body: {
     team_id: 'T1',
-    event: { type: 'member_joined_channel', user, channel: 'C042', inviter: 'U123' },
+    event: {
+      type: 'member_joined_channel',
+      user,
+      channel: 'C042',
+      inviter: 'U123',
+    },
   },
   respond: vi.fn(async () => {}),
 });
@@ -106,7 +147,9 @@ const keysSubmission = (
       state: {
         values: {
           [KEYS_MODAL_BLOCKS.anthropic.blockId]: {
-            [KEYS_MODAL_BLOCKS.anthropic.actionId]: { value: values.anthropic ?? '' },
+            [KEYS_MODAL_BLOCKS.anthropic.actionId]: {
+              value: values.anthropic ?? '',
+            },
           },
           [KEYS_MODAL_BLOCKS.openai.blockId]: {
             [KEYS_MODAL_BLOCKS.openai.actionId]: { value: values.openai ?? '' },
@@ -126,9 +169,9 @@ describe('extractGithubUrl', () => {
     expect(extractGithubUrl('repo is <https://github.com/acme/api>')).toBe(
       'https://github.com/acme/api',
     );
-    expect(extractGithubUrl('<https://github.com/acme/api|acme/api> please')).toBe(
-      'https://github.com/acme/api',
-    );
+    expect(
+      extractGithubUrl('<https://github.com/acme/api|acme/api> please'),
+    ).toBe('https://github.com/acme/api');
     expect(extractGithubUrl('use https://github.com/acme/api.git.')).toBe(
       'https://github.com/acme/api.git',
     );
@@ -160,26 +203,40 @@ describe('Jarvis while pending keys', () => {
   it('warns on key-looking text and never echoes or stores it', async () => {
     const { jarvis, web, providerKeys } = makeJarvis({ ready: false });
     const leaked = 'sk-ant-api03-abcdefghijklmnop';
-    expect(await jarvis.maybeHandle(message(`here you go ${leaked}`))).toBe(true);
+    expect(await jarvis.maybeHandle(message(`here you go ${leaked}`))).toBe(
+      true,
+    );
     expect(providerKeys.put).not.toHaveBeenCalled();
-    const posted = web.chat.postMessage.mock.calls.map((c) => JSON.stringify(c[0])).join();
+    const posted = web.chat.postMessage.mock.calls
+      .map((c) => JSON.stringify(c[0]))
+      .join();
     expect(posted).not.toContain(leaked);
     expect(posted).toContain('never paste keys in chat');
   });
 
   it('ignores bot/self/thread messages (the surface drops them anyway)', async () => {
     const { jarvis } = makeJarvis({ ready: false });
-    expect(await jarvis.maybeHandle(message('x', { bot_id: 'B9' }))).toBe(false);
-    expect(await jarvis.maybeHandle(message('x', { user: 'UBOT' }))).toBe(false);
+    expect(await jarvis.maybeHandle(message('x', { bot_id: 'B9' }))).toBe(
+      false,
+    );
+    expect(await jarvis.maybeHandle(message('x', { user: 'UBOT' }))).toBe(
+      false,
+    );
     expect(
-      await jarvis.maybeHandle(message('x', { thread_ts: '1700.0', ts: '1712.1' })),
+      await jarvis.maybeHandle(
+        message('x', { thread_ts: '1700.0', ts: '1712.1' }),
+      ),
     ).toBe(false);
   });
 
   it('greets on its own channel join (registered via the inviter)', async () => {
     const { jarvis, web, directory } = makeJarvis({ ready: false });
     expect(await jarvis.maybeHandle(joined('UBOT'))).toBe(true);
-    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith('C042', 'T1', 'u123');
+    expect(directory.ensureChannelRegistered).toHaveBeenCalledWith(
+      'C042',
+      'T1',
+      'u123',
+    );
     expect(web.chat.postMessage).toHaveBeenCalled();
     // Someone ELSE joining is not Jarvis's business.
     expect(await jarvis.maybeHandle(joined('UOTHER'))).toBe(false);
@@ -216,18 +273,23 @@ describe('Jarvis keys modal', () => {
   it('rejects malformed keys with inline modal errors (nothing stored)', async () => {
     const { jarvis, providerKeys } = makeJarvis({ ready: false });
     const respond = vi.fn(async () => {});
-    await jarvis.maybeHandle(keysSubmission({ anthropic: 'nope', openai: 'sk-okokokokok' }, respond));
+    await jarvis.maybeHandle(
+      keysSubmission({ anthropic: 'nope', openai: 'sk-okokokokok' }, respond),
+    );
     expect(respond).toHaveBeenCalledWith({
       response_action: 'errors',
       errors: expect.objectContaining({
-        [KEYS_MODAL_BLOCKS.anthropic.blockId]: expect.stringContaining('Anthropic'),
+        [KEYS_MODAL_BLOCKS.anthropic.blockId]:
+          expect.stringContaining('Anthropic'),
       }),
     });
     expect(providerKeys.put).not.toHaveBeenCalled();
   });
 
   it('stores valid keys (+ optional GitHub token), clears the modal, refreshes readiness, confirms', async () => {
-    const { jarvis, providerKeys, githubTokens, readiness, web } = makeJarvis({ ready: false });
+    const { jarvis, providerKeys, githubTokens, readiness, web } = makeJarvis({
+      ready: false,
+    });
     const respond = vi.fn(async () => {});
     await jarvis.maybeHandle(
       keysSubmission(
@@ -239,8 +301,16 @@ describe('Jarvis keys modal', () => {
         respond,
       ),
     );
-    expect(providerKeys.put).toHaveBeenCalledWith('T1', 'anthropic', 'sk-ant-api03-valid-key');
-    expect(providerKeys.put).toHaveBeenCalledWith('T1', 'openai', 'sk-proj-valid-key');
+    expect(providerKeys.put).toHaveBeenCalledWith(
+      'T1',
+      'anthropic',
+      'sk-ant-api03-valid-key',
+    );
+    expect(providerKeys.put).toHaveBeenCalledWith(
+      'T1',
+      'openai',
+      'sk-proj-valid-key',
+    );
     expect(githubTokens.put).toHaveBeenCalledWith(
       'T1',
       'onboarding',
@@ -261,7 +331,10 @@ describe('Jarvis keys modal', () => {
     ready$.next('T1');
     await new Promise((r) => setTimeout(r, 0));
     expect(web.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: 'C042', text: expect.stringContaining('online') }),
+      expect.objectContaining({
+        channel: 'C042',
+        text: expect.stringContaining('online'),
+      }),
     );
   });
 });
@@ -278,7 +351,9 @@ describe('Jarvis when ready', () => {
 
   it('consumes ALL messages in project-less channels until the repo is linked', async () => {
     const { jarvis, web, projects } = makeJarvis({ ready: true });
-    expect(await jarvis.maybeHandle(message('what is this channel?'))).toBe(true);
+    expect(await jarvis.maybeHandle(message('what is this channel?'))).toBe(
+      true,
+    );
     expect(web.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining('GitHub URL') }),
     );
@@ -297,7 +372,9 @@ describe('Jarvis when ready', () => {
       gitUrl: 'https://github.com/acme/mls-studio',
     });
     expect(web.chat.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining('acme/mls-studio') }),
+      expect.objectContaining({
+        text: expect.stringContaining('acme/mls-studio'),
+      }),
     );
     // Linked now — Jarvis steps aside.
     expect(await jarvis.maybeHandle(message('great, thanks'))).toBe(false);

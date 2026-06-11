@@ -89,12 +89,22 @@ describe('bot graph — consume path resets recalled', () => {
     const config = { configurable: { thread_id: 'alex:test:root' } };
 
     // Turn 1 (respond): fetch writes the recall block into durable state.
-    channel.append({ id: 'u-0', author: 'Dennis', authorId: 'dennis', text: 'Alex, open the PR.' });
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Alex, open the PR.',
+    });
     await graph.invoke({ cursor: 0, forced: false }, config);
     expect((await graph.getState(config)).values.recalled).toContain('[#31]');
 
     // Turn 2 (ignored chatter): consume must reset recalled — the #31 block must NOT survive.
-    channel.append({ id: 'u-1', author: 'Dennis', authorId: 'dennis', text: 'thanks all' });
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'thanks all',
+    });
     await graph.invoke({ cursor: 1, forced: false }, config);
     expect((await graph.getState(config)).values.recalled).toBe('');
   });

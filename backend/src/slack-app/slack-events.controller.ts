@@ -1,4 +1,11 @@
-import { Body, Controller, HttpCode, Logger, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  Logger,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { SlackInboundRouter } from './slack-inbound.router';
 import type { SlackEventsApiBody } from './slack-inbound.types';
 import { SlackSignatureGuard } from './slack-signature.guard';
@@ -38,7 +45,9 @@ export class SlackEventsController {
     if (eventType === 'app_uninstalled' || eventType === 'tokens_revoked') {
       void this.tenants
         .setStatus(teamId, 'suspended')
-        .then(() => this.logger.warn(`tenant ${teamId} suspended (${eventType})`))
+        .then(() =>
+          this.logger.warn(`tenant ${teamId} suspended (${eventType})`),
+        )
         .catch((err) => this.logger.error(`suspend ${teamId} failed: ${err}`));
       return {};
     }

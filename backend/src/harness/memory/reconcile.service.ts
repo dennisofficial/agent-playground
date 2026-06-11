@@ -365,9 +365,9 @@ export class ReconcileService {
 
   /**
    * Reconcile THIS bot's reminders against the turn: capture new forward commitments, complete
-   * finished ones, drop stale ones. Capture is SELF-OWNED for everyone but the scrum master (each
+   * finished ones, drop stale ones. Capture is SELF-OWNED for everyone but the team lead (each
    * bot reconciles every turn, so per-observer cross-owner capture would mint one copy per
-   * watcher); the scrum master sees and reconciles the whole team's plates. No process-wide lock:
+   * watcher); the team lead sees and reconciles the whole team's plates. No process-wide lock:
    * open-dedup is enforced at the DB by the (project, owner, norm) unique index — exact-text only,
    * which is WHY paraphrased re-captures must be cut off at the prompt/ownership layer. complete/
    * drop act ONLY on reminders actually shown this turn. Fire-and-forget — errors swallowed.
@@ -380,14 +380,14 @@ export class ReconcileService {
   ): Promise<void> {
     try {
       // A DM spans every project the pair shares — its plate (and where complete/drop act) does too.
-      // The scrum master reconciles against the TEAM's open plates (mirroring fetch): he's the one
+      // The team lead reconciles against the TEAM's open plates (mirroring fetch): he's the one
       // bot allowed to assign cross-owner, so he must see what already exists before adding, and
       // shownIds lets him clear teammates' stale items in the same pass.
       const projects = recallProjects(id);
       const open = (
         await Promise.all(
           projects.map((p) =>
-            bot.scrumMaster
+            bot.teamLead
               ? this.tasks.openTasks(id.team, p)
               : this.tasks.remindersForBot(id.team, p, bot.id),
           ),
@@ -405,9 +405,9 @@ export class ReconcileService {
           : `In this DM a reminder may belong to a specific project — for a new one, set "project" to one of:` +
             ` ${projects.join(', ')} (omit it for a general reminder).\n`,
         // Every bot reconciles every channel turn, so letting each capture a TEAMMATE's commitment
-        // mints the same reminder once per observer. Non-scrum bots capture their OWN commitments
-        // only; the scrum master is the one cross-owner assigner.
-        ownershipNote: bot.scrumMaster
+        // mints the same reminder once per observer. Non-lead bots capture their OWN commitments
+        // only; the team lead is the one cross-owner assigner.
+        ownershipNote: bot.teamLead
           ? `Set "owner" to whoever is responsible — you for your own commitments, or the teammate who committed or was handed the work. `
           : `Set "owner" ONLY to yourself (${bot.name}) — capture YOUR OWN commitments ("I'll …") and work handed TO YOU by name. A teammate's commitment is THEIRS to capture — never log a reminder for someone else. `,
         people: this.peopleHint(id),
@@ -430,11 +430,11 @@ export class ReconcileService {
       for (const a of result.add) {
         if (a.description?.trim()) {
           const owner = this.realId(a.owner, ids) ?? bot.id; // default to the committing bot's own plate
-          // The ownershipNote, enforced: a non-scrum bot SKIPS (never rewrites onto its own plate)
+          // The ownershipNote, enforced: a non-lead bot SKIPS (never rewrites onto its own plate)
           // a teammate-owned capture — six observers of one "I'll …" would otherwise mint six
           // copies the (project, owner, norm) index can't dedup. The owner reconciles their own
           // turn, so the commitment is still captured exactly once.
-          if (!bot.scrumMaster && owner !== bot.id) continue;
+          if (!bot.teamLead && owner !== bot.id) continue;
           // A named project must be one this conversation may see; else the turn's home project.
           const named = a.project?.trim().toLowerCase();
           const t = await this.tasks.addTask({

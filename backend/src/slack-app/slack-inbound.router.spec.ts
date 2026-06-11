@@ -1,5 +1,8 @@
 import { SlackInboundRouter } from './slack-inbound.router';
-import type { SlackInbound, SlackInboundInterceptor } from './slack-inbound.types';
+import type {
+  SlackInbound,
+  SlackInboundInterceptor,
+} from './slack-inbound.types';
 
 const eventItem = (event: Record<string, unknown>): SlackInbound => ({
   kind: 'event',
@@ -15,8 +18,13 @@ const interactivityItem = (): SlackInbound => ({
 
 function makeRouter(interceptor?: SlackInboundInterceptor) {
   const surface = { handleMessageEvent: vi.fn(async () => {}) };
-  const router = new SlackInboundRouter(surface as never, interceptor);
-  return { router, surface };
+  const presence = { observe: vi.fn(async () => {}) };
+  const router = new SlackInboundRouter(
+    surface as never,
+    presence as never,
+    interceptor,
+  );
+  return { router, surface, presence };
 }
 
 describe('SlackInboundRouter', () => {
@@ -60,6 +68,20 @@ describe('SlackInboundRouter', () => {
     expect(surface.handleMessageEvent).not.toHaveBeenCalled();
   });
 
+  it('lead presence observes every event — even ones the interceptor consumes — and a rejected observe never breaks routing', async () => {
+    const interceptor = { maybeHandle: vi.fn(async () => true) };
+    const { router, presence } = makeRouter(interceptor);
+    presence.observe.mockImplementation(async () => {
+      throw new Error('presence boom');
+    });
+    await router.route(eventItem({ type: 'member_joined_channel', user: 'U1' }));
+    expect(presence.observe).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'member_joined_channel' }),
+      'T1',
+    );
+    expect(interceptor.maybeHandle).toHaveBeenCalled(); // routing proceeded regardless
+  });
+
   it('contains handler errors (a poison item must not take down the transport)', async () => {
     const interceptor = {
       maybeHandle: vi.fn(async () => {
@@ -67,6 +89,8 @@ describe('SlackInboundRouter', () => {
       }),
     };
     const { router } = makeRouter(interceptor);
-    await expect(router.route(eventItem({ type: 'message' }))).resolves.toBeUndefined();
+    await expect(
+      router.route(eventItem({ type: 'message' })),
+    ).resolves.toBeUndefined();
   });
 });

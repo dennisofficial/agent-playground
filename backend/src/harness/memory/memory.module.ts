@@ -2,11 +2,12 @@ import { EnvService } from '@core/config/env/env.service';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
-import { Fact, Task, Worklog } from '@workspace/shared/schemas';
+import { Fact, Task, TeamTask, Worklog } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmModule } from '../llm/llm.module';
+import { BoardStore } from './board-store';
 import { createCheckpointer, pgConnString } from './checkpointer';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
@@ -22,14 +23,14 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
 
 /**
  * Long-term + working memory for the harness: the framework-light memory ports (semantic facts,
- * reminders, worklog) as injectable providers over TypeORM repositories, plus the env-derived
- * LangGraph checkpointer (per-bot chat threads in Postgres).
+ * reminders, the team board, worklog) as injectable providers over TypeORM repositories, plus the
+ * env-derived LangGraph checkpointer (per-bot chat threads in Postgres).
  *
  * Requires `DatabaseModule` (the @Global TypeORM connection) to be imported by the hosting app.
  */
 @CreateModule({
   imports: [
-    TypeOrmModule.forFeature([Fact, Task, Worklog]),
+    TypeOrmModule.forFeature([Fact, Task, TeamTask, Worklog]),
     LlmModule,
     EmployeesModule,
   ],
@@ -51,6 +52,11 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
       provide: TaskStore,
       inject: [getRepositoryToken(Task)],
       useFactory: (tasks: Repository<Task>) => new TaskStore(tasks),
+    },
+    {
+      provide: BoardStore,
+      inject: [getRepositoryToken(TeamTask)],
+      useFactory: (board: Repository<TeamTask>) => new BoardStore(board),
     },
     {
       provide: WorklogStore,

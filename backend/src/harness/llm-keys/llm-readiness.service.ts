@@ -38,7 +38,9 @@ export class LlmReadinessService {
     const ready = await this.creds.isReady(teamId);
     if (ready) {
       this.readyTeams.add(teamId);
-      this.logger.log(`Workspace ${teamId}: provider keys in place — engines live.`);
+      this.logger.log(
+        `Workspace ${teamId}: provider keys in place — engines live.`,
+      );
       this.ready$.next(teamId);
     }
     return ready;
@@ -49,7 +51,9 @@ export class LlmReadinessService {
     if (this.readyTeams.has(teamId) || this.checking.has(teamId)) return;
     this.checking.add(teamId);
     void this.refresh(teamId)
-      .catch((err) => this.logger.warn(`readiness refresh(${teamId}) failed: ${err}`))
+      .catch((err) =>
+        this.logger.warn(`readiness refresh(${teamId}) failed: ${err}`),
+      )
       .finally(() => this.checking.delete(teamId));
   }
 }

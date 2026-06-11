@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { LLM_PROVIDERS, PROVIDER_ENV_KEY, type LlmProvider } from './llm-key.types';
+import {
+  LLM_PROVIDERS,
+  PROVIDER_ENV_KEY,
+  type LlmProvider,
+} from './llm-key.types';
 import { ProviderKeyStore } from './provider-key.store';
 
 /** Resolved provider keys for one workspace (a provider is undefined when neither store nor env has it). */
@@ -19,7 +23,10 @@ const CACHE_TTL_MS = 60_000;
  */
 @Injectable()
 export class TenantCredentialService {
-  private readonly cache = new Map<string, { keys: TenantKeys; expires: number }>();
+  private readonly cache = new Map<
+    string,
+    { keys: TenantKeys; expires: number }
+  >();
 
   constructor(private readonly store: ProviderKeyStore) {}
 
@@ -30,7 +37,8 @@ export class TenantCredentialService {
     const keys: TenantKeys = {};
     for (const provider of LLM_PROVIDERS) {
       const stored = await this.store.resolve(teamId, provider);
-      keys[provider] = stored ?? process.env[PROVIDER_ENV_KEY[provider]] ?? undefined;
+      keys[provider] =
+        stored ?? process.env[PROVIDER_ENV_KEY[provider]] ?? undefined;
     }
     this.cache.set(teamId, { keys, expires: Date.now() + CACHE_TTL_MS });
     return keys;

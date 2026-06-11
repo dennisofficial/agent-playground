@@ -1,0 +1,23 @@
+# PUPPET — "Maya" (HTTP only; posts + reacts as Maya, never receives events).
+# One global app, distributed unlisted, installed into each workspace. Set the app icon to
+# web/public/avatars/<style>/maya.png so posts/reactions carry the face.
+# One-click token capture: put the bot id in the install link's state (…&state=maya) and the
+# /slack/puppet/oauth callback stores the per-workspace token automatically (SLACK_PUPPET_OAUTH).
+display_information:
+  name: Maya
+  description: "Product designer"
+features:
+  bot_user:
+    display_name: Maya
+    always_online: true
+oauth_config:
+  redirect_urls:
+    - https://crew.dltechnologies.co/slack/puppet/oauth
+  scopes:
+    bot:
+      - chat:write
+      - reactions:write
+      - channels:join # auto-join public channels on first post; private channels must invite the bot
+settings:
+  socket_mode_enabled: false
+  org_deploy_enabled: false

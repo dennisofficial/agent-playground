@@ -49,7 +49,9 @@ export class TokensController {
     try {
       await this.tokens.setDefault(teamId, name);
     } catch (err) {
-      throw new BadRequestException(err instanceof Error ? err.message : String(err));
+      throw new BadRequestException(
+        err instanceof Error ? err.message : String(err),
+      );
     }
     return { ok: true };
   }
@@ -59,7 +61,9 @@ export class TokensController {
     try {
       await this.tokens.delete(teamId, name);
     } catch (err) {
-      throw new BadRequestException(err instanceof Error ? err.message : String(err));
+      throw new BadRequestException(
+        err instanceof Error ? err.message : String(err),
+      );
     }
     return { ok: true };
   }

@@ -27,7 +27,10 @@ export class SlackSignatureGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest<RawBodyRequest>();
     const secret = this.env.get('SLACK_SIGNING_SECRET');
-    if (!secret) throw new UnauthorizedException('SLACK_SIGNING_SECRET is not configured.');
+    if (!secret)
+      throw new UnauthorizedException(
+        'SLACK_SIGNING_SECRET is not configured.',
+      );
 
     const ts = header(req, 'x-slack-request-timestamp');
     const signature = header(req, 'x-slack-signature');

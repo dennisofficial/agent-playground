@@ -1,10 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable } from '@nestjs/common';
-import {
-  createCipheriv,
-  createDecipheriv,
-  randomBytes,
-} from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 /**
  * AES-256-GCM at-rest encryption for stored secrets (GitHub tokens). Key from
@@ -49,7 +45,9 @@ export class SecretCipher {
   decrypt(ciphertext: string): string {
     const [version, iv, tag, ct] = ciphertext.split(':');
     if (version !== 'v1' || !iv || !tag || !ct) {
-      throw new Error('Unrecognized ciphertext format (expected v1:<iv>:<tag>:<ct>).');
+      throw new Error(
+        'Unrecognized ciphertext format (expected v1:<iv>:<tag>:<ct>).',
+      );
     }
     const decipher = createDecipheriv(
       'aes-256-gcm',

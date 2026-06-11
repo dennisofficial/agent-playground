@@ -60,10 +60,7 @@ export class SlackIdentitiesController {
   }
 
   @Delete(':botId')
-  async remove(
-    @Param('teamId') teamId: string,
-    @Param('botId') botId: string,
-  ) {
+  async remove(@Param('teamId') teamId: string, @Param('botId') botId: string) {
     await this.identities.delete(teamId, this.parseBotId(botId));
     return { ok: true };
   }

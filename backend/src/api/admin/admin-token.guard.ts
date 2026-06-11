@@ -26,9 +26,13 @@ export class AdminTokenGuard implements CanActivate {
         'Admin API disabled — set ADMIN_API_TOKEN to enable it.',
       );
     }
-    const req = context.switchToHttp().getRequest<{ headers: Record<string, unknown> }>();
+    const req = context
+      .switchToHttp()
+      .getRequest<{ headers: Record<string, unknown> }>();
     const header = String(req.headers['authorization'] ?? '');
-    const presented = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+    const presented = header.startsWith('Bearer ')
+      ? header.slice('Bearer '.length)
+      : '';
     const a = Buffer.from(presented);
     const b = Buffer.from(expected);
     if (a.length !== b.length || !timingSafeEqual(a, b)) {

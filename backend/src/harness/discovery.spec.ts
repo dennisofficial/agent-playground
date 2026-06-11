@@ -53,7 +53,7 @@ class TestAlex implements EmployeeDefinition {
   readonly sortOrder = 10;
   readonly roleContext = 'static role context';
   readonly engine = 'claude' as const;
-  readonly scrumMaster = true;
+  readonly teamLead = true;
   readonly tools = [EchoTool, EndTurnTool];
 }
 
@@ -61,7 +61,7 @@ class TestAlex implements EmployeeDefinition {
 class TestSam implements EmployeeDefinition {
   readonly id = 'sam';
   readonly name = 'Sam';
-  readonly role = 'scrum master';
+  readonly role = 'team lead';
   readonly sortOrder = 20;
   readonly roleContext = 'static role context';
   readonly engine = 'codex' as const;
@@ -90,7 +90,7 @@ describe('harness decorator discovery', () => {
     ).toEqual(['alex']);
     expect(registry.isBroadcast('@here standup time')).toBe(true);
     expect(registry.rosterSummary()).toBe(
-      'Alex — backend engineer; Sam — scrum master',
+      'Alex — backend engineer; Sam — team lead',
     );
   });
 
@@ -133,7 +133,7 @@ describe('harness decorator discovery', () => {
     ).rejects.toThrow(/Duplicate employee id 'alex'/);
   });
 
-  it('fails boot unless exactly one employee is scrum master', async () => {
+  it('fails boot unless exactly one employee is team lead', async () => {
     await expect(buildModule([TestSam, EchoTool, EndTurnTool])).rejects.toThrow(
       /Exactly one employee/,
     );

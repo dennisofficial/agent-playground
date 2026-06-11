@@ -105,7 +105,8 @@ export class ProjectStore {
     };
     if (patch.displayName !== undefined) add('display_name', patch.displayName);
     if (patch.gitUrl !== undefined) add('git_url', patch.gitUrl);
-    if (patch.defaultBranch !== undefined) add('default_branch', patch.defaultBranch);
+    if (patch.defaultBranch !== undefined)
+      add('default_branch', patch.defaultBranch);
     if (patch.tokenName !== undefined) add('token_name', patch.tokenName);
     if (sets.length === 0) return this.get(teamId, projectId);
     args.push(teamId, projectId);

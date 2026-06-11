@@ -57,9 +57,14 @@ export class SlackDirectoryService {
       const res = await web?.users.info({ user: slackUserId });
       const profile = res?.user?.profile;
       name =
-        profile?.display_name || profile?.real_name || res?.user?.name || slackUserId;
+        profile?.display_name ||
+        profile?.real_name ||
+        res?.user?.name ||
+        slackUserId;
     } catch (err) {
-      this.logger.warn(`users.info failed for ${teamId}/${slackUserId}: ${err}`);
+      this.logger.warn(
+        `users.info failed for ${teamId}/${slackUserId}: ${err}`,
+      );
     }
     const resolved: ResolvedSlackUser = {
       authorId: slugify(name),
@@ -99,7 +104,9 @@ export class SlackDirectoryService {
       const res = await web?.conversations.info({ channel: slackChannelId });
       name = res?.channel?.name ?? slackChannelId;
     } catch (err) {
-      this.logger.warn(`conversations.info failed for ${teamId}/${slackChannelId}: ${err}`);
+      this.logger.warn(
+        `conversations.info failed for ${teamId}/${slackChannelId}: ${err}`,
+      );
     }
     this.registry.ensure({
       channelId,

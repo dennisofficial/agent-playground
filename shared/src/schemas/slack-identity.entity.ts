@@ -22,4 +22,9 @@ export class SlackIdentity extends TimestampedEntity {
 
   @Column({ type: 'text' })
   token_ciphertext!: string;
+
+  /** The bot's Slack user ID (Uxxxxxx) from `auth.test()` — populated on puppet OAuth install.
+   * Used by JarvisService to recognise puppet-join events in `member_joined_channel`. */
+  @Column({ type: 'text', nullable: true })
+  slack_bot_user_id!: string | null;
 }

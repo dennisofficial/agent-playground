@@ -51,14 +51,18 @@ async function bootstrap() {
   if (socketMode) {
     // Dev: open the Socket Mode connection (one workspace, env token).
     const { botName } = await app.get(SlackSocketTransport).connect();
-    log.log(`Connected to Slack as @${botName ?? 'unknown'} — Socket Mode (dev).`);
+    log.log(
+      `Connected to Slack as @${botName ?? 'unknown'} — Socket Mode (dev).`,
+    );
   } else {
     // Prod: no socket. Per-workspace bot identities resolve lazily per team_id (the ears tokens
     // arrive via OAuth installs); nothing to resolve at boot.
-    log.log('Booted — Events API ingress (multi-tenant); awaiting workspace events.');
+    log.log(
+      'Booted — Events API ingress (multi-tenant); awaiting workspace events.',
+    );
   }
 
-  const port = Number(process.env.PORT ?? 4000);
+  const port = Number(process.env.PORT ?? 4001);
   await app.listen(port);
   log.log(`Slack ingress listening on :${port}.`);
 }

@@ -12,6 +12,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SocketModeClient } from '@slack/socket-mode';
 import { Tenant } from '@workspace/shared/schemas';
 import { JarvisService } from './jarvis/jarvis.service';
+import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import { SlackDirectoryService } from './slack-directory.service';
 import { SlackIdentityRegistry } from './slack-identity.registry';
@@ -58,6 +59,7 @@ import { TenantSlackClients } from './tenant-slack-clients';
     },
     SlackDirectoryService,
     SlackIdentityRegistry,
+    LeadPresenceService,
     SlackChatSurface,
     SlackInboundRouter,
     SlackSocketTransport,
@@ -65,6 +67,11 @@ import { TenantSlackClients } from './tenant-slack-clients';
     { provide: JARVIS_INTERCEPTOR, useExisting: JarvisService },
     { provide: CHAT_SURFACE, useExisting: SlackChatSurface },
   ],
-  exports: [CHAT_SURFACE, SlackChatSurface, SlackInboundRouter, SlackSocketTransport],
+  exports: [
+    CHAT_SURFACE,
+    SlackChatSurface,
+    SlackInboundRouter,
+    SlackSocketTransport,
+  ],
 })
 export class SlackSurfaceModule {}

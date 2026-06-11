@@ -29,12 +29,19 @@ const args = {
 describe('GithubApiService.openPullRequest', () => {
   it('creates a PR and sends the required headers', async () => {
     const { impl, calls } = fakeFetch([
-      { status: 201, body: { html_url: 'https://github.com/dennis/app/pull/7', number: 7 } },
+      {
+        status: 201,
+        body: { html_url: 'https://github.com/dennis/app/pull/7', number: 7 },
+      },
     ]);
     const api = new GithubApiService();
     api.fetchImpl = impl;
     const res = await api.openPullRequest('TOK', args);
-    expect(res).toEqual({ url: 'https://github.com/dennis/app/pull/7', number: 7, existing: false });
+    expect(res).toEqual({
+      url: 'https://github.com/dennis/app/pull/7',
+      number: 7,
+      existing: false,
+    });
     expect(calls[0].url).toBe('https://api.github.com/repos/dennis/app/pulls');
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer TOK');
@@ -53,25 +60,43 @@ describe('GithubApiService.openPullRequest', () => {
     const { impl, calls } = fakeFetch([
       {
         status: 422,
-        body: { errors: [{ message: 'A pull request already exists for dennis:shared/payment-flow.' }] },
+        body: {
+          errors: [
+            {
+              message:
+                'A pull request already exists for dennis:shared/payment-flow.',
+            },
+          ],
+        },
       },
-      { status: 200, body: [{ html_url: 'https://github.com/dennis/app/pull/3', number: 3 }] },
+      {
+        status: 200,
+        body: [{ html_url: 'https://github.com/dennis/app/pull/3', number: 3 }],
+      },
     ]);
     const api = new GithubApiService();
     api.fetchImpl = impl;
     const res = await api.openPullRequest('TOK', args);
-    expect(res).toEqual({ url: 'https://github.com/dennis/app/pull/3', number: 3, existing: true });
+    expect(res).toEqual({
+      url: 'https://github.com/dennis/app/pull/3',
+      number: 3,
+      existing: true,
+    });
     expect(calls[1].url).toContain('head=dennis%3Ashared%2Fpayment-flow');
     expect(calls[1].url).toContain('state=open');
   });
 
   it('surfaces other failures with status + GitHub message, never the token', async () => {
-    const { impl } = fakeFetch([{ status: 404, body: { message: 'Not Found' } }]);
+    const { impl } = fakeFetch([
+      { status: 404, body: { message: 'Not Found' } },
+    ]);
     const api = new GithubApiService();
     api.fetchImpl = impl;
     await expect(api.openPullRequest('SECRET_TOK', args)).rejects.toThrow(
       /GitHub refused the pull request \(404\): Not Found/,
     );
-    await expect(api.openPullRequest('SECRET_TOK', args)).rejects.not.toThrow(/SECRET_TOK/);
+    await expect(api.openPullRequest('SECRET_TOK', args)).rejects.not.toThrow(
+      /SECRET_TOK/,
+    );
   });
 });

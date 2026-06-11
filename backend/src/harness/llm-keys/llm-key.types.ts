@@ -7,7 +7,10 @@ export const isLlmProvider = (v: string): v is LlmProvider =>
   (LLM_PROVIDERS as readonly string[]).includes(v);
 
 /** The process.env key each provider's SDKs read (lazily, at first call/session spawn). */
-export const PROVIDER_ENV_KEY: Record<LlmProvider, 'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY'> = {
+export const PROVIDER_ENV_KEY: Record<
+  LlmProvider,
+  'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY'
+> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
 };

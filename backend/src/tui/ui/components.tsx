@@ -3,7 +3,8 @@ import { renderMarkdown } from './markdown';
 import { formatMessageUsage, type Reaction, type RenderItem } from './messages';
 
 /** Reactions folded onto a message — a single dim row, e.g. `↳ Maya 👍  Sam ✅`. */
-const fmtReactions = (rs: Reaction[]): string => `↳ ${rs.map((r) => `${r.by} ${r.emoji}`).join('  ')}`;
+const fmtReactions = (rs: Reaction[]): string =>
+  `↳ ${rs.map((r) => `${r.by} ${r.emoji}`).join('  ')}`;
 
 /** One transcript row, rendered by kind. Assistant text is terminal markdown.
  * (Ported from playground/src/ui/components.tsx; Ink arrives through the ESM shim.) */
@@ -21,7 +22,9 @@ export function MessageView({ item }: { item: RenderItem }) {
             {item.ts && <Text dimColor>{`  ${item.ts}`}</Text>}
           </Box>
           <Text>{item.text}</Text>
-          {item.reactions?.length ? <Text dimColor>{`   ${fmtReactions(item.reactions)}`}</Text> : null}
+          {item.reactions?.length ? (
+            <Text dimColor>{`   ${fmtReactions(item.reactions)}`}</Text>
+          ) : null}
         </Box>
       );
 
@@ -99,7 +102,9 @@ export function MessageView({ item }: { item: RenderItem }) {
     case 'workspace':
       return (
         <Box>
-          <Text dimColor>{`   ▪ ${item.by ? `${item.by} ` : ''}[${item.kind}] ${item.text}`}</Text>
+          <Text
+            dimColor
+          >{`   ▪ ${item.by ? `${item.by} ` : ''}[${item.kind}] ${item.text}`}</Text>
         </Box>
       );
 
@@ -113,8 +118,12 @@ export function MessageView({ item }: { item: RenderItem }) {
             {item.ts && <Text dimColor>{`  ${item.ts}`}</Text>}
           </Box>
           <Text>{renderMarkdown(item.text)}</Text>
-          {item.usage && <Text dimColor>{`   ${formatMessageUsage(item.usage)}`}</Text>}
-          {item.reactions?.length ? <Text dimColor>{`   ${fmtReactions(item.reactions)}`}</Text> : null}
+          {item.usage && (
+            <Text dimColor>{`   ${formatMessageUsage(item.usage)}`}</Text>
+          )}
+          {item.reactions?.length ? (
+            <Text dimColor>{`   ${fmtReactions(item.reactions)}`}</Text>
+          ) : null}
         </Box>
       );
   }

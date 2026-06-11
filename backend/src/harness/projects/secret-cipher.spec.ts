@@ -9,7 +9,10 @@ const withKey = (key: string | undefined) =>
 
 describe('SecretCipher', () => {
   it('roundtrips with a base64 key and a hex key', () => {
-    for (const key of [randomBytes(32).toString('base64'), randomBytes(32).toString('hex')]) {
+    for (const key of [
+      randomBytes(32).toString('base64'),
+      randomBytes(32).toString('hex'),
+    ]) {
       const cipher = withKey(key);
       const ct = cipher.encrypt('ghp_secret_token');
       expect(ct.startsWith('v1:')).toBe(true);
@@ -35,14 +38,18 @@ describe('SecretCipher', () => {
 
   it('refuses with actionable errors when the key is unset or the wrong size', () => {
     expect(withKey(undefined).isConfigured()).toBe(false);
-    expect(() => withKey(undefined).encrypt('x')).toThrow(/SECRETS_ENCRYPTION_KEY is not set/);
-    expect(() => withKey(randomBytes(16).toString('base64')).encrypt('x')).toThrow(
-      /exactly 32 bytes/,
+    expect(() => withKey(undefined).encrypt('x')).toThrow(
+      /SECRETS_ENCRYPTION_KEY is not set/,
     );
+    expect(() =>
+      withKey(randomBytes(16).toString('base64')).encrypt('x'),
+    ).toThrow(/exactly 32 bytes/);
   });
 
   it('rejects unrecognized ciphertext formats', () => {
     const cipher = withKey(randomBytes(32).toString('base64'));
-    expect(() => cipher.decrypt('not-a-ciphertext')).toThrow(/Unrecognized ciphertext/);
+    expect(() => cipher.decrypt('not-a-ciphertext')).toThrow(
+      /Unrecognized ciphertext/,
+    );
   });
 });

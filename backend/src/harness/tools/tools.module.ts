@@ -23,6 +23,12 @@ import {
   SearchSessionTool,
 } from './sessions/session.tools';
 import {
+  AddBoardTaskTool,
+  ClaimBoardTaskTool,
+  ListBoardTool,
+  UpdateBoardTaskTool,
+} from './tasks/board.tools';
+import {
   AddTaskTool,
   CompleteTaskTool,
   ListTasksTool,
@@ -86,6 +92,11 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     ListTasksTool,
     AddTaskTool,
     CompleteTaskTool,
+    // team board
+    ListBoardTool,
+    AddBoardTaskTool,
+    ClaimBoardTaskTool,
+    UpdateBoardTaskTool,
   ],
 })
 export class ToolsModule {}

@@ -61,18 +61,29 @@ export class TenantStore {
          status = 'active',
          updated_at = now()
        RETURNING ${SELECT}`,
-      [input.teamId, input.teamName, input.botTokenCiphertext, input.installedBy ?? null],
+      [
+        input.teamId,
+        input.teamName,
+        input.botTokenCiphertext,
+        input.installedBy ?? null,
+      ],
     );
     return toRecord(rows[0]);
   }
 
   async get(teamId: string): Promise<TenantRecord | undefined> {
-    const rows = await this.q(`SELECT ${SELECT} FROM tenants WHERE team_id = $1`, [teamId]);
+    const rows = await this.q(
+      `SELECT ${SELECT} FROM tenants WHERE team_id = $1`,
+      [teamId],
+    );
     return rows[0] ? toRecord(rows[0]) : undefined;
   }
 
   async list(): Promise<TenantRecord[]> {
-    const rows = await this.q(`SELECT ${SELECT} FROM tenants ORDER BY team_id`, []);
+    const rows = await this.q(
+      `SELECT ${SELECT} FROM tenants ORDER BY team_id`,
+      [],
+    );
     return rows.map(toRecord);
   }
 

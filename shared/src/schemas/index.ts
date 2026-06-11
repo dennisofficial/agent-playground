@@ -1,7 +1,5 @@
 // TypeORM entities (backend-only — imported via `@workspace/shared/schemas`, never the root barrel,
 // so the web bundle never pulls TypeORM decorators).
-// NOTE: the board (tickets/plans/comments) is intentionally NOT here — it's being redesigned and will
-// land in its own pass.
 export * from './classes/base.entity';
 export * from './bot-cursor.entity';
 export * from './channel-message.entity';
@@ -13,6 +11,7 @@ export * from './project.entity';
 export * from './provider-key.entity';
 export * from './slack-identity.entity';
 export * from './task.entity';
+export * from './team-task.entity';
 export * from './tenant.entity';
 export * from './worklog.entity';
 
@@ -26,6 +25,7 @@ import { Project } from './project.entity';
 import { ProviderKey } from './provider-key.entity';
 import { SlackIdentity } from './slack-identity.entity';
 import { Task } from './task.entity';
+import { TeamTask } from './team-task.entity';
 import { Tenant } from './tenant.entity';
 import { Worklog } from './worklog.entity';
 
@@ -34,6 +34,7 @@ import { Worklog } from './worklog.entity';
 export const ENTITIES = [
   Fact,
   Task,
+  TeamTask,
   Worklog,
   ChannelMessage,
   BotCursor,

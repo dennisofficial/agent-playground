@@ -1,5 +1,12 @@
 import type { EnvService } from '@core/config/env/env.service';
-import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ClaudeEngine } from './claude.engine';
@@ -26,8 +33,7 @@ describe('ClaudeEngine native plan mode (real LLM)', () => {
     const engine = new ClaudeEngine(sdk, env);
 
     const dir = await realpath(await mkdtemp(join(tmpdir(), 'plan-probe-')));
-    const calcBefore =
-      'export const add = (a: number, b: number) => a + b;\n';
+    const calcBefore = 'export const add = (a: number, b: number) => a + b;\n';
     await writeFile(join(dir, 'calc.ts'), calcBefore);
 
     const events: WorkerEvent[] = [];
@@ -41,7 +47,10 @@ describe('ClaudeEngine native plan mode (real LLM)', () => {
       });
 
       console.log('[plan-probe] result:', result.slice(0, 1500));
-      console.log('[plan-probe] dir after:', JSON.stringify(await readdir(dir)));
+      console.log(
+        '[plan-probe] dir after:',
+        JSON.stringify(await readdir(dir)),
+      );
 
       // The report is the substantive plan (captured at the ExitPlanMode denial), not a
       // "your plan has been recorded" closing summary.
@@ -49,9 +58,9 @@ describe('ClaudeEngine native plan mode (real LLM)', () => {
       expect(result.length).toBeGreaterThan(200);
       expect(sessionId).toBeTruthy();
       // Read-only exploration ran under native plan mode.
-      expect(
-        events.some((e) => e.kind === 'tool' && e.name === 'Read'),
-      ).toBe(true);
+      expect(events.some((e) => e.kind === 'tool' && e.name === 'Read')).toBe(
+        true,
+      );
       // Nothing executed: the worktree is byte-identical.
       expect(await readFile(join(dir, 'calc.ts'), 'utf8')).toBe(calcBefore);
     } finally {

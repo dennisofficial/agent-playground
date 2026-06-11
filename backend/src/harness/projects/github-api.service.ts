@@ -40,7 +40,10 @@ export class GithubApiService {
   }
 
   /** Create the PR, or return the already-open one for the same head (idempotent). */
-  async openPullRequest(token: string, args: OpenPullRequestArgs): Promise<PullRequestResult> {
+  async openPullRequest(
+    token: string,
+    args: OpenPullRequestArgs,
+  ): Promise<PullRequestResult> {
     const { owner, repo, head, base, title, body } = args;
     const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls`, {
       method: 'POST',
@@ -55,7 +58,10 @@ export class GithubApiService {
       message?: string;
       errors?: Array<{ message?: string }>;
     };
-    const detail = [errBody.message, ...(errBody.errors ?? []).map((e) => e.message)]
+    const detail = [
+      errBody.message,
+      ...(errBody.errors ?? []).map((e) => e.message),
+    ]
       .filter(Boolean)
       .join('; ');
     // 422 "A pull request already exists for <owner>:<head>" → find and return it.
@@ -65,10 +71,20 @@ export class GithubApiService {
         { headers: this.headers(token) },
       );
       if (list.ok) {
-        const prs = (await list.json()) as Array<{ html_url: string; number: number }>;
-        if (prs[0]) return { url: prs[0].html_url, number: prs[0].number, existing: true };
+        const prs = (await list.json()) as Array<{
+          html_url: string;
+          number: number;
+        }>;
+        if (prs[0])
+          return {
+            url: prs[0].html_url,
+            number: prs[0].number,
+            existing: true,
+          };
       }
     }
-    throw new Error(`GitHub refused the pull request (${res.status}): ${detail || 'no detail'}`);
+    throw new Error(
+      `GitHub refused the pull request (${res.status}): ${detail || 'no detail'}`,
+    );
   }
 }

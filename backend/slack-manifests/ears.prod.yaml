@@ -1,0 +1,39 @@
+# PROD EARS — "AI Crew" (Events API / HTTP only). The one event listener + fallback poster,
+# OAuth-distributed (unlisted) and installed into every workspace.
+display_information:
+  name: AI Crew
+  description: "Relays your messages to the AI crew."
+features:
+  bot_user:
+    display_name: AI Crew
+    always_online: true
+oauth_config:
+  redirect_urls:
+    - https://crew.dltechnologies.co/slack/oauth
+  scopes:
+    bot:
+      - chat:write
+      - chat:write.customize # fallback posting as employees (username/icon override)
+      - reactions:write
+      - channels:read
+      - channels:history
+      - channels:join
+      - channels:manage # invite the team-lead puppet into public channels (join fallback)
+      - groups:read
+      - groups:history
+      - groups:write # invite the team-lead puppet into private channels
+      - users:read
+settings:
+  event_subscriptions:
+    request_url: https://crew.dltechnologies.co/slack/events
+    bot_events:
+      - message.channels
+      - message.groups
+      - member_joined_channel
+      - app_uninstalled
+      - tokens_revoked
+  interactivity:
+    is_enabled: true
+    request_url: https://crew.dltechnologies.co/slack/interactivity
+  socket_mode_enabled: false
+  org_deploy_enabled: false

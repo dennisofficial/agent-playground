@@ -52,7 +52,8 @@ export const REPO_PROMPT =
   'This channel isn’t linked to a repository yet. Paste the GitHub URL ' +
   '(`https://github.com/owner/repo`) and I’ll wire it up — the channel name becomes the project.';
 
-export const KEYS_STORED = 'Keys stored securely — bringing the engines online…';
+export const KEYS_STORED =
+  'Keys stored securely — bringing the engines online…';
 
 export const ENGINES_ONLINE =
   'All keys are in — engines are online and the team is live. 🎉';
@@ -70,7 +71,10 @@ export const repoConflict = (existingUrl: string): string =>
 
 /** The keys modal. `private_metadata` carries the origin channel so the submission handler knows
  * where to confirm. */
-export const keysModalView = (originChannelId: string, githubTokenStored: boolean) => ({
+export const keysModalView = (
+  originChannelId: string,
+  githubTokenStored: boolean,
+) => ({
   type: 'modal' as const,
   callback_id: KEYS_MODAL_CALLBACK_ID,
   private_metadata: originChannelId,
