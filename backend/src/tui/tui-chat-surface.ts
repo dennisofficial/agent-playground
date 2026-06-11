@@ -1,6 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
 import { DEFAULT_SURFACE_ID } from '@harness/channel/channel.service';
+import { DEFAULT_TEAM } from '@harness/domain/identity';
 import { titleCase } from '@harness/domain/text';
 import type {
   ChatSurface,
@@ -23,6 +24,8 @@ export class TuiChatSurface implements ChatSurface {
   readonly name = 'tui';
   private readonly subject = new Subject<InboundChatMessage>();
   private readonly surfaceId: string;
+  /** The dev tenant — the TUI is single-workspace (HARNESS_TEAM_ID, else the default team). */
+  private readonly teamId: string;
   /** The room the terminal is currently "in" — `send()` posts here; `/room`//`/dm` switch it. */
   private activeChannelId?: string;
   private seq = 0;
@@ -35,6 +38,7 @@ export class TuiChatSurface implements ChatSurface {
     env: EnvService,
   ) {
     this.surfaceId = env.get('HARNESS_SURFACE_ID') ?? DEFAULT_SURFACE_ID;
+    this.teamId = env.get('HARNESS_TEAM_ID') ?? DEFAULT_TEAM;
   }
 
   get inbound$(): Observable<InboundChatMessage> {
@@ -57,6 +61,7 @@ export class TuiChatSurface implements ChatSurface {
       authorId: speaker,
       authorName: titleCase(speaker),
       text,
+      teamId: this.teamId,
       surfaceId: this.activeChannel,
       ts: new Date(),
     });

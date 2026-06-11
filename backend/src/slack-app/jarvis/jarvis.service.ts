@@ -1,4 +1,5 @@
 import { ChannelRegistryService } from '@harness/channel/channel-registry.service';
+import { DEFAULT_TEAM } from '@harness/domain/identity';
 import { LlmReadinessService } from '@harness/llm-keys/llm-readiness.service';
 import { ProviderKeyStore } from '@harness/llm-keys/provider-key.store';
 import { GithubTokenStore } from '@harness/projects/github-token-store';
@@ -94,8 +95,8 @@ export class JarvisService
   ) {}
 
   onModuleInit(): void {
-    this.readySub = this.readiness.ready$.subscribe(() => {
-      void this.announceEnginesOnline();
+    this.readySub = this.readiness.ready$.subscribe((teamId) => {
+      void this.announceEnginesOnline(teamId);
     });
   }
 
@@ -103,39 +104,56 @@ export class JarvisService
     this.readySub?.unsubscribe();
   }
 
+  /** Per-(team,channel) key for the greeting/throttle sets (a Slack channel id isn't unique across
+   * workspaces). */
+  private k(teamId: string, channel: string): string {
+    return `${teamId}|${channel}`;
+  }
+
   /** Router contract: true = consumed, never reaches the conductor or the channel log. */
   async maybeHandle(item: SlackInbound): Promise<boolean> {
-    if (item.kind === 'interactivity') return this.handleInteractivity(item);
+    if (item.kind === 'interactivity') {
+      const teamId = item.payload.team?.id ?? DEFAULT_TEAM;
+      return this.handleInteractivity(item, teamId);
+    }
     const event = item.body.event;
     if (!event) return false;
-    if (event.type === 'member_joined_channel') return this.handleJoined(event);
-    if (event.type === 'message') return this.handleMessage(event);
+    const teamId = item.body.team_id ?? DEFAULT_TEAM;
+    if (event.type === 'member_joined_channel')
+      return this.handleJoined(event, teamId);
+    if (event.type === 'message') return this.handleMessage(event, teamId);
     return false;
   }
 
   // ── Channel events ───────────────────────────────────────────────────────────────────────────
 
   /** The app invited to a channel — register the room and open the right setup conversation. */
-  private async handleJoined(event: SlackInboundEvent): Promise<boolean> {
+  private async handleJoined(
+    event: SlackInboundEvent,
+    teamId: string,
+  ): Promise<boolean> {
     if (!event.channel || event.user !== this.directory.selfUserId) return false;
     const channel = event.channel;
     const inviter =
       typeof event.inviter === 'string' && event.inviter
         ? (await this.directory.resolveUser(event.inviter)).authorId
         : undefined;
-    await this.directory.ensureChannelRegistered(channel, inviter);
+    await this.directory.ensureChannelRegistered(channel, teamId, inviter);
 
-    if (!this.readiness.isReady) {
-      this.greetedPending.add(channel);
+    if (!this.readiness.isReady(teamId)) {
+      this.greetedPending.add(this.k(teamId, channel));
       await this.postBlocks(channel, setupButtonBlocks(GREETING_PENDING));
-    } else if (!(await this.projectOf(channel))) {
+    } else if (!(await this.projectOf(teamId, channel))) {
       await this.post(channel, REPO_PROMPT, 'repo-prompt');
     }
     return true; // nobody downstream handles member_joined_channel
   }
 
   /** Plain top-level human messages only — everything else is the surface's (non-)business. */
-  private async handleMessage(event: SlackInboundEvent): Promise<boolean> {
+  private async handleMessage(
+    event: SlackInboundEvent,
+    teamId: string,
+  ): Promise<boolean> {
     if (event.bot_id || event.subtype) return false;
     if (!event.user || !event.channel || !event.ts) return false;
     if (event.user === this.directory.selfUserId) return false;
@@ -144,16 +162,16 @@ export class JarvisService
     const text = event.text ?? '';
 
     const author = await this.directory.resolveUser(event.user);
-    await this.directory.ensureChannelRegistered(channel, author.authorId);
+    await this.directory.ensureChannelRegistered(channel, teamId, author.authorId);
 
-    if (!this.readiness.isReady) {
+    if (!this.readiness.isReady(teamId)) {
       // Consume EVERYTHING while keyless — see the class doc.
       if (KEY_IN_CHAT.test(text)) {
         await this.post(channel, KEY_IN_CHAT_WARNING, 'key-warning');
         return true;
       }
-      if (!this.greetedPending.has(channel)) {
-        this.greetedPending.add(channel);
+      if (!this.greetedPending.has(this.k(teamId, channel))) {
+        this.greetedPending.add(this.k(teamId, channel));
         await this.postBlocks(channel, setupButtonBlocks(GREETING_PENDING));
       } else {
         await this.postBlocks(channel, setupButtonBlocks(NUDGE_PENDING), 'nudge');
@@ -162,26 +180,38 @@ export class JarvisService
     }
 
     // Ready: only project-less channels are Jarvis's business.
-    const slug = await this.projectlessSlugOf(channel);
+    const slug = await this.projectlessSlugOf(teamId, channel);
     if (!slug) return false;
     const gitUrl = extractGithubUrl(text);
     if (!gitUrl) {
       await this.post(channel, REPO_PROMPT, 'repo-prompt');
       return true;
     }
-    return this.linkRepo(channel, slug, gitUrl);
+    return this.linkRepo(teamId, channel, slug, gitUrl);
   }
 
-  private async linkRepo(channel: string, slug: string, gitUrl: string): Promise<boolean> {
+  private async linkRepo(
+    teamId: string,
+    channel: string,
+    slug: string,
+    gitUrl: string,
+  ): Promise<boolean> {
     const displayName =
-      this.registry.get(`slack:${channel}`)?.displayName.replace(/^#/, '') ?? slug;
+      this.registry
+        .get(`slack:${teamId}:${channel}`)
+        ?.displayName.replace(/^#/, '') ?? slug;
     try {
-      await this.projects.create({ projectId: slug, displayName, gitUrl });
+      await this.projects.create({
+        teamId,
+        projectId: slug,
+        displayName,
+        gitUrl,
+      });
       await this.post(channel, repoLinked(gitUrl));
     } catch (err) {
       if (!(err instanceof ProjectConflictError)) throw err;
       // Raced/duplicate submission — idempotent on the same URL, explicit on a different one.
-      const existing = await this.projects.get(slug);
+      const existing = await this.projects.get(teamId, slug);
       await this.post(
         channel,
         existing && existing.gitUrl !== gitUrl
@@ -196,6 +226,7 @@ export class JarvisService
 
   private async handleInteractivity(
     item: Extract<SlackInbound, { kind: 'interactivity' }>,
+    teamId: string,
   ): Promise<boolean> {
     const payload = item.payload;
     if (
@@ -204,7 +235,7 @@ export class JarvisService
     ) {
       await item.respond();
       const originChannel = payload.channel?.id ?? '';
-      const hasGithubToken = (await this.githubTokens.listMeta()).length > 0;
+      const hasGithubToken = (await this.githubTokens.listMeta(teamId)).length > 0;
       await this.web.views.open({
         trigger_id: payload.trigger_id ?? '',
         view: keysModalView(originChannel, hasGithubToken) as never,
@@ -215,7 +246,7 @@ export class JarvisService
       payload.type === 'view_submission' &&
       payload.view?.callback_id === KEYS_MODAL_CALLBACK_ID
     ) {
-      return this.handleKeysSubmission(item, payload);
+      return this.handleKeysSubmission(item, payload, teamId);
     }
     return false;
   }
@@ -223,6 +254,7 @@ export class JarvisService
   private async handleKeysSubmission(
     item: Extract<SlackInbound, { kind: 'interactivity' }>,
     payload: SlackInteractivityPayload,
+    teamId: string,
   ): Promise<boolean> {
     const values = payload.view?.state?.values ?? {};
     const input = (coord: { blockId: string; actionId: string }): string =>
@@ -250,9 +282,10 @@ export class JarvisService
     }
 
     try {
-      await this.providerKeys.put('anthropic', anthropic);
-      await this.providerKeys.put('openai', openai);
-      if (github) await this.githubTokens.put(TOKEN_NAME_ONBOARDING, github, true);
+      await this.providerKeys.put(teamId, 'anthropic', anthropic);
+      await this.providerKeys.put(teamId, 'openai', openai);
+      if (github)
+        await this.githubTokens.put(teamId, TOKEN_NAME_ONBOARDING, github, true);
     } catch (err) {
       // Cipher unset/misconfigured — surface it inside the modal, keys never land half-stored.
       this.logger.error(`key storage failed: ${err}`);
@@ -267,17 +300,20 @@ export class JarvisService
     }
 
     await item.respond(); // clear the modal
-    const wasPending = !this.readiness.isReady;
-    await this.readiness.refresh();
+    const wasPending = !this.readiness.isReady(teamId);
+    await this.readiness.refresh(teamId);
     const origin = payload.view?.private_metadata;
     if (origin && wasPending) await this.post(origin, KEYS_STORED);
     return true;
   }
 
-  private async announceEnginesOnline(): Promise<void> {
-    const channels = [...this.greetedPending];
-    this.greetedPending.clear();
-    for (const channel of channels) {
+  private async announceEnginesOnline(teamId: string): Promise<void> {
+    // ready$ fires for ONE workspace — announce only its greeted channels.
+    const prefix = `${teamId}|`;
+    const keys = [...this.greetedPending].filter((k) => k.startsWith(prefix));
+    for (const key of keys) {
+      this.greetedPending.delete(key);
+      const channel = key.slice(prefix.length);
       await this.post(channel, ENGINES_ONLINE).catch((err) =>
         this.logger.warn(`engines-online post to ${channel} failed: ${err}`),
       );
@@ -286,17 +322,20 @@ export class JarvisService
 
   // ── State derivation + posting ───────────────────────────────────────────────────────────────
 
-  private async projectOf(channel: string): Promise<boolean> {
-    const slug = this.registry.get(`slack:${channel}`)?.project;
+  private async projectOf(teamId: string, channel: string): Promise<boolean> {
+    const slug = this.registry.get(`slack:${teamId}:${channel}`)?.project;
     if (!slug) return false;
-    return !!(await this.projects.get(slug));
+    return !!(await this.projects.get(teamId, slug));
   }
 
   /** The channel's project slug IFF it has no projects row yet (Jarvis's ready-mode business). */
-  private async projectlessSlugOf(channel: string): Promise<string | undefined> {
-    const slug = this.registry.get(`slack:${channel}`)?.project;
+  private async projectlessSlugOf(
+    teamId: string,
+    channel: string,
+  ): Promise<string | undefined> {
+    const slug = this.registry.get(`slack:${teamId}:${channel}`)?.project;
     if (!slug) return undefined;
-    return (await this.projects.get(slug)) ? undefined : slug;
+    return (await this.projects.get(teamId, slug)) ? undefined : slug;
   }
 
   /** Post as Jarvis. `throttleKey` suppresses identical re-prompts within the repost window —

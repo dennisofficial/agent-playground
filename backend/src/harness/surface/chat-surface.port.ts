@@ -15,7 +15,9 @@ export interface InboundChatMessage {
   /** Display name. */
   authorName: string;
   text: string;
-  /** Channel/thread coordinate, e.g. 'tui:main' | 'slack:C042:1712.5678'. */
+  /** The tenant (Slack team id) this message belongs to — sets the room's team on lazy register. */
+  teamId: string;
+  /** Tenant-qualified channel/thread coordinate, e.g. 'tui:main' | 'slack:T04:C042'. */
   surfaceId: string;
   ts: Date;
 }

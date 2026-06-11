@@ -19,7 +19,7 @@ import { AdminTokenGuard } from './admin-token.guard';
 import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto';
 
 /** Admin CRUD for the project registry (which GitHub repo each project's code flows to). */
-@Controller('projects')
+@Controller('tenants/:teamId/projects')
 @UseGuards(AdminTokenGuard)
 export class ProjectsController {
   constructor(
@@ -27,19 +27,22 @@ export class ProjectsController {
     private readonly tokens: GithubTokenStore,
   ) {}
 
-  private async assertKnownToken(tokenName?: string | null): Promise<void> {
+  private async assertKnownToken(
+    teamId: string,
+    tokenName?: string | null,
+  ): Promise<void> {
     if (!tokenName) return;
-    const known = await this.tokens.listMeta();
+    const known = await this.tokens.listMeta(teamId);
     if (!known.some((t) => t.name === tokenName)) {
       throw new BadRequestException(`Unknown token "${tokenName}" — store it first (POST /tokens).`);
     }
   }
 
   @Post()
-  async create(@Body() dto: CreateProjectDto) {
-    await this.assertKnownToken(dto.tokenName);
+  async create(@Param('teamId') teamId: string, @Body() dto: CreateProjectDto) {
+    await this.assertKnownToken(teamId, dto.tokenName);
     try {
-      return await this.projects.create(dto);
+      return await this.projects.create({ ...dto, teamId });
     } catch (err) {
       if (err instanceof ProjectConflictError) throw new ConflictException(err.message);
       throw err;
@@ -47,21 +50,25 @@ export class ProjectsController {
   }
 
   @Get()
-  list() {
-    return this.projects.list();
+  list(@Param('teamId') teamId: string) {
+    return this.projects.list(teamId);
   }
 
   @Get(':id')
-  async get(@Param('id') id: string) {
-    const rec = await this.projects.get(id);
+  async get(@Param('teamId') teamId: string, @Param('id') id: string) {
+    const rec = await this.projects.get(teamId, id);
     if (!rec) throw new NotFoundException(`No project "${id}".`);
     return rec;
   }
 
   @Patch(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateProjectDto) {
-    await this.assertKnownToken(dto.tokenName);
-    const rec = await this.projects.update(id, dto);
+  async update(
+    @Param('teamId') teamId: string,
+    @Param('id') id: string,
+    @Body() dto: UpdateProjectDto,
+  ) {
+    await this.assertKnownToken(teamId, dto.tokenName);
+    const rec = await this.projects.update(teamId, id, dto);
     if (!rec) throw new NotFoundException(`No project "${id}".`);
     return rec;
   }

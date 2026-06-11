@@ -46,10 +46,12 @@ import { SLACK_SOCKET_MODE_CLIENT, SLACK_WEB_CLIENT } from './slack.tokens';
       // undefined in gateway mode — the stack owns no Slack connection; the transport provider
       // is @Optional about it and main.ts never calls connect() there.
       provide: SLACK_SOCKET_MODE_CLIENT,
-      useFactory: (env: EnvService) =>
-        env.get('SLACK_INBOUND') === 'gateway'
-          ? undefined
-          : new SocketModeClient({ appToken: env.get('SLACK_APP_TOKEN')! }),
+      useFactory: (env: EnvService) => {
+        // Socket Mode only in dev (SLACK_APP_TOKEN set). In prod (Events API ingress) there is no
+        // socket — the transport is @Optional about it and main.ts never calls connect().
+        const appToken = env.get('SLACK_APP_TOKEN');
+        return appToken ? new SocketModeClient({ appToken }) : undefined;
+      },
       inject: [EnvService],
     },
     SlackDirectoryService,

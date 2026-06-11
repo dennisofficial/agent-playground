@@ -60,7 +60,11 @@ export function buildCommands(deps: CommandDeps): Command[] {
       if (text !== '/tasks') return false;
       // listTasks is async now (Postgres); render when it lands — commands stay synchronous.
       void deps.tasks
-        .listTasks({ project: deps.project ?? DEFAULT_PROJECT, status: 'open' })
+        .listTasks({
+          team: deps.registry.teamIdOf(deps.surface.activeChannel),
+          project: deps.project ?? DEFAULT_PROJECT,
+          status: 'open',
+        })
         .then((tasks) =>
           ctx.note(
             tasks.length

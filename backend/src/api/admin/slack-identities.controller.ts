@@ -23,7 +23,7 @@ const BOT_ID = /^[a-z0-9][a-z0-9._-]*$/;
  * token landing here routes that employee's posts/reactions through their own bot user within
  * one registry TTL (≤60s for a fresh id, ≤10min for a rotation).
  */
-@Controller('slack-identities')
+@Controller('tenants/:teamId/slack-identities')
 @UseGuards(AdminTokenGuard)
 export class SlackIdentitiesController {
   constructor(
@@ -41,23 +41,30 @@ export class SlackIdentitiesController {
   }
 
   @Put(':botId')
-  async put(@Param('botId') botId: string, @Body() dto: PutSlackIdentityDto) {
+  async put(
+    @Param('teamId') teamId: string,
+    @Param('botId') botId: string,
+    @Body() dto: PutSlackIdentityDto,
+  ) {
     if (!this.cipher.isConfigured()) {
       throw new BadRequestException(
         'SECRETS_ENCRYPTION_KEY is not set — generate one with `openssl rand -base64 32` before storing tokens.',
       );
     }
-    return this.identities.put(this.parseBotId(botId), dto.token);
+    return this.identities.put(teamId, this.parseBotId(botId), dto.token);
   }
 
   @Get()
-  list() {
-    return this.identities.listMeta();
+  list(@Param('teamId') teamId: string) {
+    return this.identities.listMeta(teamId);
   }
 
   @Delete(':botId')
-  async remove(@Param('botId') botId: string) {
-    await this.identities.delete(this.parseBotId(botId));
+  async remove(
+    @Param('teamId') teamId: string,
+    @Param('botId') botId: string,
+  ) {
+    await this.identities.delete(teamId, this.parseBotId(botId));
     return { ok: true };
   }
 }

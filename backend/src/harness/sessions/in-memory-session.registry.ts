@@ -30,6 +30,7 @@ export class InMemorySessionRegistry implements SessionRegistry {
       status: 'running', // create_session fires the first turn immediately
       notifyThread: input.notifyThread,
       ownerBot: input.ownerBot,
+      team: input.team,
       project: input.project,
       engine: input.engine,
       mode: input.mode,

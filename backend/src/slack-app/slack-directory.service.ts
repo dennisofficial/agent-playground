@@ -83,12 +83,16 @@ export class SlackDirectoryService {
    * the conductor's bootstrap) is left untouched. */
   async ensureChannelRegistered(
     slackChannelId: string,
+    teamId: string,
     authorId?: string,
   ): Promise<void> {
-    if (this.registeredChannels.has(slackChannelId)) return;
-    const channelId = `slack:${slackChannelId}`;
+    // Slack channel ids are unique within a workspace but not guaranteed across workspaces, so the
+    // dedup key (and the registered coordinate) are tenant-qualified.
+    const key = `${teamId}:${slackChannelId}`;
+    if (this.registeredChannels.has(key)) return;
+    const channelId = `slack:${teamId}:${slackChannelId}`;
     if (this.registry.get(channelId)) {
-      this.registeredChannels.add(slackChannelId);
+      this.registeredChannels.add(key);
       return;
     }
     let name = slackChannelId;
@@ -100,6 +104,7 @@ export class SlackDirectoryService {
     }
     this.registry.ensure({
       channelId,
+      teamId,
       kind: 'channel',
       project: slugify(name),
       members: [
@@ -108,7 +113,7 @@ export class SlackDirectoryService {
       ],
       displayName: `#${name}`,
     });
-    this.registeredChannels.add(slackChannelId);
+    this.registeredChannels.add(key);
   }
 }
 

@@ -25,23 +25,27 @@ export class SlackIdentityRegistry {
 
   constructor(private readonly store: SlackIdentityStore) {}
 
-  async clientFor(botId: string): Promise<WebClient | undefined> {
-    const cached = this.cache.get(botId);
+  async clientFor(
+    teamId: string,
+    botId: string,
+  ): Promise<WebClient | undefined> {
+    const key = `${teamId}|${botId}`;
+    const cached = this.cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.client;
     try {
-      const token = await this.store.resolve(botId);
+      const token = await this.store.resolve(teamId, botId);
       const client = token
         ? new WebClient(token, { logLevel: LogLevel.WARN })
         : undefined;
-      this.cache.set(botId, {
+      this.cache.set(key, {
         client,
         expiresAt: Date.now() + (client ? HIT_TTL_MS : MISS_TTL_MS),
       });
       return client;
     } catch (err) {
       // Cipher unset/misconfigured or DB hiccup — degrade to the fallback identity, retry later.
-      this.logger.warn(`puppet token resolve(${botId}) failed: ${err}`);
-      this.cache.set(botId, { client: undefined, expiresAt: Date.now() + MISS_TTL_MS });
+      this.logger.warn(`puppet token resolve(${teamId}/${botId}) failed: ${err}`);
+      this.cache.set(key, { client: undefined, expiresAt: Date.now() + MISS_TTL_MS });
       return undefined;
     }
   }

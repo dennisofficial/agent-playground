@@ -1,3 +1,4 @@
+import { DEFAULT_TEAM } from '@harness/domain/identity';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { SlackChatSurface } from './slack-chat-surface';
 import {
@@ -28,7 +29,9 @@ export class SlackInboundRouter {
     try {
       if (this.interceptor && (await this.interceptor.maybeHandle(item))) return;
       if (item.kind === 'event' && item.body.event?.type === 'message') {
-        await this.surface.handleMessageEvent(item.body.event);
+        // team_id routes the message to its workspace; the Events API always carries it.
+        const teamId = item.body.team_id ?? DEFAULT_TEAM;
+        await this.surface.handleMessageEvent(item.body.event, teamId);
       }
     } catch (err) {
       this.logger.error(`inbound routing failed: ${err}`);

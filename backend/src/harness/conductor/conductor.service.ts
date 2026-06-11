@@ -232,13 +232,14 @@ export class ConductorService
     authorId: string,
     authorName: string,
     text: string,
-    opts: { id?: string; channelId?: string } = {},
+    opts: { id?: string; channelId?: string; teamId?: string } = {},
   ): void {
     const channelId = opts.channelId ?? this.channel.surfaceId;
     // Lazy room registration (the Slack-DM pattern: first message creates the room) + the speaker
-    // joins the room they spoke in.
+    // joins the room they spoke in. teamId stamps the room's tenant on first registration.
     this.registry.ensure({
       channelId,
+      ...(opts.teamId ? { teamId: opts.teamId } : {}),
       members: [...this.employees.list().map((b) => b.id), authorId],
     });
     this.registry.addMembers(channelId, [authorId]);

@@ -1,19 +1,20 @@
 import { Body, Controller, HttpCode, Logger, Post, UseGuards } from '@nestjs/common';
-import { ForwarderService } from './forwarder.service';
+import { SlackInboundRouter } from './slack-inbound.router';
+import type { SlackEventsApiBody } from './slack-inbound.types';
 import { SlackSignatureGuard } from './slack-signature.guard';
-import { TenantStore } from './tenants/tenant.store';
+import { TenantStore } from './tenant.store';
 
-interface EventsApiBody {
+interface EventsApiBody extends SlackEventsApiBody {
   type?: string; // url_verification | event_callback
   challenge?: string;
-  team_id?: string;
-  event?: { type?: string };
 }
 
 /**
- * The Events API receiver. Slack expects a 200 within 3 seconds and retries otherwise — so the
- * handler returns IMMEDIATELY and forwards async (the forwarder owns retries/drops; Slack-side
- * redelivery is deliberately not used, matching the no-backfill stance).
+ * The Events API receiver — the public Slack front door, now IN-PROCESS (single-process model: no
+ * HTTP hop to a per-tenant stack). Slack expects a 200 within 3s and retries otherwise, so the
+ * handler answers immediately and dispatches async to the SlackInboundRouter (which routes by the
+ * body's team_id). Uninstall/token-revoke suspend the workspace. One OAuth-distributed app feeds
+ * every workspace's events here; routing happens in the router/surface by team_id.
  */
 @Controller('slack/events')
 @UseGuards(SlackSignatureGuard)
@@ -21,7 +22,7 @@ export class SlackEventsController {
   private readonly logger = new Logger(SlackEventsController.name);
 
   constructor(
-    private readonly forwarder: ForwarderService,
+    private readonly router: SlackInboundRouter,
     private readonly tenants: TenantStore,
   ) {}
 
@@ -41,7 +42,8 @@ export class SlackEventsController {
         .catch((err) => this.logger.error(`suspend ${teamId} failed: ${err}`));
       return {};
     }
-    void this.forwarder.forwardEvent(teamId, body);
+    // Fire-and-forget into the router (Jarvis interceptor → surface); the 200 has already returned.
+    void this.router.route({ kind: 'event', body, respond: async () => {} });
     return {};
   }
 }

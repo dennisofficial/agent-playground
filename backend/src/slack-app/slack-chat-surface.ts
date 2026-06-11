@@ -24,6 +24,26 @@ const SURFACE_PREFIX = 'slack:';
 const POSTED_ID_LRU_MAX = 2_000;
 const POST_RETRIES = 3;
 
+/** Tenant-qualified Slack room coordinate: `slack:<teamId>:<channel>`. Slack channel ids aren't
+ * guaranteed unique across workspaces, so the team id is part of the coordinate. */
+const slackSurfaceId = (teamId: string, channel: string): string =>
+  `${SURFACE_PREFIX}${teamId}:${channel}`;
+
+/** Parse `slack:<teamId>:<channel>` → its parts, or undefined for a non-slack / DM coordinate
+ * (only real channels are posted to in v1). */
+function parseSlackSurface(
+  surfaceId: string,
+): { teamId: string; channel: string } | undefined {
+  if (!surfaceId.startsWith(SURFACE_PREFIX)) return undefined;
+  const rest = surfaceId.slice(SURFACE_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return undefined;
+  const teamId = rest.slice(0, sep);
+  const channel = rest.slice(sep + 1);
+  if (!channel || channel.startsWith('dm:')) return undefined; // Slack DMs are a v2 item
+  return { teamId, channel };
+}
+
 /** Slack's membership-failure codes differ per method: puppets hit these in channels they
  * haven't joined → `conversations.join` + one retry, then fall back to the main app. */
 const POST_MEMBERSHIP_ERRORS = ['not_in_channel', 'channel_not_found'];
@@ -76,7 +96,10 @@ export class SlackChatSurface implements ChatSurface {
   /** Inbound pipeline (router-called; the transport has already acked). Filters: own/bot messages
    * (the echo-loop guard — our own chat.postMessage posts come back as message events), non-plain
    * subtypes, and thread replies (v1). */
-  async handleMessageEvent(event: SlackInboundEvent): Promise<void> {
+  async handleMessageEvent(
+    event: SlackInboundEvent,
+    teamId: string,
+  ): Promise<void> {
     const selfBotUserId = this.directory.selfUserId;
     try {
       if (!event || event.type !== 'message') return;
@@ -101,7 +124,11 @@ export class SlackChatSurface implements ChatSurface {
       if (!text) return;
 
       // Room registration MUST precede the emit (first-write-wins project + roster membership).
-      await this.directory.ensureChannelRegistered(event.channel, author.authorId);
+      await this.directory.ensureChannelRegistered(
+        event.channel,
+        teamId,
+        author.authorId,
+      );
       // v1 single-human speaker attribution — same semantics as the TUI's `/as`.
       this.bus.patchStatus({ speaker: author.authorId });
       this.subject.next({
@@ -109,7 +136,8 @@ export class SlackChatSurface implements ChatSurface {
         authorId: author.authorId,
         authorName: author.authorName,
         text,
-        surfaceId: `${SURFACE_PREFIX}${event.channel}`,
+        teamId,
+        surfaceId: slackSurfaceId(teamId, event.channel),
         ts: new Date(Number(event.ts) * 1000),
       });
     } catch (err) {
@@ -123,13 +151,14 @@ export class SlackChatSurface implements ChatSurface {
    * Non-Slack rooms (e.g. bot-minted `tui:dm:*`) are skipped — the message is already durable in
    * the channel log; Slack DMs are a v2 item. */
   async post(msg: OutboundChatMessage): Promise<void> {
-    if (!msg.surfaceId.startsWith(SURFACE_PREFIX)) {
-      this.logger.debug(`skipping post to non-slack room ${msg.surfaceId}`);
+    const parsed = parseSlackSurface(msg.surfaceId);
+    if (!parsed) {
+      this.logger.debug(`skipping post to non-slack/DM room ${msg.surfaceId}`);
       return;
     }
-    const channel = msg.surfaceId.slice(SURFACE_PREFIX.length);
+    const { teamId, channel } = parsed;
     const text = translateOutbound(msg.text); // LLMs emit Markdown; Slack renders mrkdwn
-    const puppet = await this.identities.clientFor(msg.authorBotId);
+    const puppet = await this.identities.clientFor(teamId, msg.authorBotId);
     let lastErr: unknown;
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
@@ -165,9 +194,10 @@ export class SlackChatSurface implements ChatSurface {
     asBot: { id: string; name: string },
     channelId: string,
   ): Promise<void> {
-    if (!channelId.startsWith(SURFACE_PREFIX)) return;
+    const parsed = parseSlackSurface(channelId);
+    if (!parsed) return;
     const posted = this.postedIds.get(targetMessageId);
-    const channel = posted?.channel ?? channelId.slice(SURFACE_PREFIX.length);
+    const channel = posted?.channel ?? parsed.channel;
     const timestamp = posted?.ts ?? targetMessageId;
     if (!/^\d+\.\d+$/.test(timestamp)) {
       // A minted id we never posted (pre-restart message, or a room we skip) — nothing to target.
@@ -176,7 +206,7 @@ export class SlackChatSurface implements ChatSurface {
     }
     const args = { channel, timestamp, name: emojiToSlackName(emoji) };
     try {
-      const puppet = await this.identities.clientFor(asBot.id);
+      const puppet = await this.identities.clientFor(parsed.teamId, asBot.id);
       const reacted = puppet
         ? await this.tryWithJoin(puppet, channel, asBot.id, REACT_MEMBERSHIP_ERRORS, () =>
             puppet.reactions.add(args),

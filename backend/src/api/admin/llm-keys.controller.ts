@@ -20,7 +20,7 @@ import { PutLlmKeyDto } from './dto/llm-key.dto';
  * back. Jarvis's keys modal and the web admin are both clients of this same store; a key landing
  * here flips the harness process out of pending-keys mode within one readiness poll.
  */
-@Controller('llm-keys')
+@Controller('tenants/:teamId/llm-keys')
 @UseGuards(AdminTokenGuard)
 export class LlmKeysController {
   constructor(
@@ -38,23 +38,30 @@ export class LlmKeysController {
   }
 
   @Put(':provider')
-  async put(@Param('provider') provider: string, @Body() dto: PutLlmKeyDto) {
+  async put(
+    @Param('teamId') teamId: string,
+    @Param('provider') provider: string,
+    @Body() dto: PutLlmKeyDto,
+  ) {
     if (!this.cipher.isConfigured()) {
       throw new BadRequestException(
         'SECRETS_ENCRYPTION_KEY is not set — generate one with `openssl rand -base64 32` before storing keys.',
       );
     }
-    return this.keys.put(this.parseProvider(provider), dto.key);
+    return this.keys.put(teamId, this.parseProvider(provider), dto.key);
   }
 
   @Get()
-  list() {
-    return this.keys.listMeta();
+  list(@Param('teamId') teamId: string) {
+    return this.keys.listMeta(teamId);
   }
 
   @Delete(':provider')
-  async remove(@Param('provider') provider: string) {
-    await this.keys.delete(this.parseProvider(provider));
+  async remove(
+    @Param('teamId') teamId: string,
+    @Param('provider') provider: string,
+  ) {
+    await this.keys.delete(teamId, this.parseProvider(provider));
     return { ok: true };
   }
 }

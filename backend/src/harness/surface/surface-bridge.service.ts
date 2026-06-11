@@ -47,6 +47,7 @@ export class SurfaceBridge
         this.conductor.submitFrom(m.authorId, m.authorName, m.text, {
           id: m.id,
           channelId: m.surfaceId,
+          teamId: m.teamId,
         }),
       ),
     );

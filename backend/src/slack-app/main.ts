@@ -1,36 +1,35 @@
 import { setupLogger } from '@core/setup-logger';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { SlackAppModule } from './slack-app.module';
 import { SlackDirectoryService } from './slack-directory.service';
 import { SlackSocketTransport } from './slack-socket-transport';
 
 /**
- * Boot the harness headless with the Slack surface, on one of two inbound transports:
+ * THE server: boots the harness headless with the Slack surface AND the public Slack ingress
+ * (events / interactivity / oauth) on one HTTP listener. Single-process multi-tenant — one process
+ * serves every workspace; routing is by team_id inside the router/surface.
  *
- * - SLACK_INBOUND=socket (default): own Socket Mode connection — the single-workspace dev shape.
- *   Order matters: the Nest context fully bootstraps FIRST (SurfaceBridge subscribes inbound$
- *   during bootstrap), and only then does the socket open — no inbound event can arrive before
- *   the bridge is listening. The open websocket keeps the process alive.
- * - SLACK_INBOUND=gateway: no Slack connection at all — an HTTP listener on SLACK_INBOUND_PORT
- *   receives gateway-forwarded events/interactivity (tenant-stack shape; outbound still goes
- *   straight to Slack via the workspace's own bot token).
+ * Two inbound shapes share the same in-process router:
+ * - DEV (SLACK_APP_TOKEN set): also open a Socket Mode connection (single-workspace local app).
+ * - PROD (no SLACK_APP_TOKEN): the OAuth-distributed Events API app POSTs to the ingress
+ *   controllers; resolve our own bot identity explicitly (no socket connect).
  *
- * Shutdown hooks drain turns and flush write-behinds (ConductorService.onApplicationShutdown).
+ * `rawBody: true` is required for Slack signature verification. Shutdown hooks drain turns and
+ * flush write-behinds (ConductorService.onApplicationShutdown).
  */
 async function bootstrap() {
-  const mode = process.env.SLACK_INBOUND === 'gateway' ? 'gateway' : 'socket';
+  const socketMode = !!process.env.SLACK_APP_TOKEN;
 
   // Assert BEFORE the context exists — a half-booted harness is worse than a refused boot.
-  const required =
-    mode === 'socket'
-      ? (['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'] as const)
-      : (['SLACK_BOT_TOKEN', 'SLACK_INBOUND_PORT', 'GATEWAY_SHARED_SECRET'] as const);
+  const required = socketMode
+    ? (['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'] as const)
+    : (['SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET'] as const);
   for (const key of required) {
     if (!process.env[key]) {
       console.error(
-        `${key} is not set — the slack-app needs it in ${mode} mode. ` +
-          `Locally: fill it in .env.personal and run pnpm slack:dev.`,
+        `${key} is not set — the server needs it. Locally: fill it in .env.personal and run pnpm slack:dev.`,
       );
       process.exit(1);
     }
@@ -39,30 +38,27 @@ async function bootstrap() {
   const logger = setupLogger();
   const log = new Logger('SlackApp');
 
-  if (mode === 'gateway') {
-    const app = await NestFactory.create(SlackAppModule, {
-      logger,
-      abortOnError: false,
-    });
-    app.enableShutdownHooks();
-    // No socket connect in this mode — resolve our own bot identity explicitly (echo-loop guard,
-    // self-mention translation, Jarvis's self-join detection all read it).
-    const { botName } = await app.get(SlackDirectoryService).resolveSelf();
-    const port = Number(process.env.SLACK_INBOUND_PORT);
-    await app.listen(port);
-    log.log(
-      `Gateway-inbound mode as @${botName} — listening for forwarded Slack traffic on :${port}.`,
-    );
-    return;
-  }
-
-  const app = await NestFactory.createApplicationContext(SlackAppModule, {
+  // One HTTP app — hosts the ingress controllers. rawBody for signature verification.
+  const app = await NestFactory.create<NestExpressApplication>(SlackAppModule, {
     logger,
+    rawBody: true,
     abortOnError: false,
   });
   app.enableShutdownHooks();
-  const transport = app.get(SlackSocketTransport);
-  const { botName } = await transport.connect();
-  log.log(`Connected to Slack as @${botName} — Socket Mode, no public ingress.`);
+
+  if (socketMode) {
+    // Dev: open the Socket Mode connection (resolves our bot identity on connect).
+    const { botName } = await app.get(SlackSocketTransport).connect();
+    log.log(`Connected to Slack as @${botName} — Socket Mode (dev).`);
+  } else {
+    // Prod: no socket — resolve our own bot identity explicitly (echo-loop guard, self-mention
+    // translation, Jarvis self-join detection all read it).
+    const { botName } = await app.get(SlackDirectoryService).resolveSelf();
+    log.log(`Booted as @${botName} — Events API ingress (multi-tenant).`);
+  }
+
+  const port = Number(process.env.PORT ?? 4000);
+  await app.listen(port);
+  log.log(`Slack ingress listening on :${port}.`);
 }
 void bootstrap();
