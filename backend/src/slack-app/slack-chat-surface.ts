@@ -5,7 +5,7 @@ import type {
   InboundChatMessage,
   OutboundChatMessage,
 } from '@harness/surface/chat-surface.port';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { WebClient } from '@slack/web-api';
 import { Observable, Subject } from 'rxjs';
 import { SlackDirectoryService } from './slack-directory.service';
@@ -17,7 +17,7 @@ import {
   translateInbound,
   translateOutbound,
 } from './slack-text';
-import { SLACK_WEB_CLIENT } from './slack.tokens';
+import { TenantSlackClients } from './tenant-slack-clients';
 
 const SURFACE_PREFIX = 'slack:';
 /** Bot-on-bot reactions target harness-minted message ids — remember where we posted each one. */
@@ -76,7 +76,7 @@ export class SlackChatSurface implements ChatSurface {
   private readonly membershipFallbacks = new Set<string>();
 
   constructor(
-    @Inject(SLACK_WEB_CLIENT) private readonly web: WebClient,
+    private readonly clients: TenantSlackClients,
     private readonly directory: SlackDirectoryService,
     private readonly identities: SlackIdentityRegistry,
     private readonly bus: ConductorEventsBus,
@@ -100,7 +100,7 @@ export class SlackChatSurface implements ChatSurface {
     event: SlackInboundEvent,
     teamId: string,
   ): Promise<void> {
-    const selfBotUserId = this.directory.selfUserId;
+    const selfBotUserId = await this.directory.selfUserIdFor(teamId);
     try {
       if (!event || event.type !== 'message') return;
       if (event.bot_id || event.subtype === 'bot_message') return;
@@ -112,13 +112,13 @@ export class SlackChatSurface implements ChatSurface {
         return;
       }
 
-      const author = await this.directory.resolveUser(event.user);
+      const author = await this.directory.resolveUser(teamId, event.user);
       // Pre-resolve mentioned users so the sync translator's cache lookups hit.
       for (const id of extractMentionIds(event.text ?? '')) {
-        if (id !== selfBotUserId) await this.directory.resolveUser(id);
+        if (id !== selfBotUserId) await this.directory.resolveUser(teamId, id);
       }
       const text = translateInbound(event.text ?? '', {
-        resolveUser: (id) => this.directory.displayNameOf(id),
+        resolveUser: (id) => this.directory.displayNameOf(teamId, id),
         selfBotUserId,
       }).trim();
       if (!text) return;
@@ -159,6 +159,16 @@ export class SlackChatSurface implements ChatSurface {
     const { teamId, channel } = parsed;
     const text = translateOutbound(msg.text); // LLMs emit Markdown; Slack renders mrkdwn
     const puppet = await this.identities.clientFor(teamId, msg.authorBotId);
+    // The ears app (username/icon override) is the fallback — used when there's no puppet AND when a
+    // puppet's post fails membership (private channel). No puppet AND no ears token (workspace not
+    // installed yet) → nothing to post with.
+    const ears = await this.clients.clientFor(teamId);
+    if (!puppet && !ears) {
+      this.logger.warn(
+        `no Slack client for ${teamId}/${msg.authorBotId} — dropping post to ${channel}`,
+      );
+      return;
+    }
     let lastErr: unknown;
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
@@ -167,7 +177,7 @@ export class SlackChatSurface implements ChatSurface {
               puppet.chat.postMessage({ channel, text }),
             )
           : undefined;
-        res ??= await this.web.chat.postMessage({
+        res ??= await ears?.chat.postMessage({
           channel,
           text,
           username: msg.authorName,
@@ -175,7 +185,7 @@ export class SlackChatSurface implements ChatSurface {
             ? { icon_url: `${this.avatarBase}/${msg.authorBotId}.png` }
             : {}),
         });
-        if (res.ts) this.recordPostedId(msg.id, { channel, ts: res.ts });
+        if (res?.ts) this.recordPostedId(msg.id, { channel, ts: res.ts });
         return;
       } catch (err) {
         lastErr = err;
@@ -212,7 +222,10 @@ export class SlackChatSurface implements ChatSurface {
             puppet.reactions.add(args),
           )
         : undefined;
-      if (!reacted) await this.web.reactions.add(args);
+      if (!reacted) {
+        const ears = await this.clients.clientFor(parsed.teamId);
+        await ears?.reactions.add(args);
+      }
     } catch (err) {
       // Same-emoji collisions stay fine: per-identity duplicates (or two fallback bots) no-op.
       if (isSlackError(err, ['already_reacted'])) return;

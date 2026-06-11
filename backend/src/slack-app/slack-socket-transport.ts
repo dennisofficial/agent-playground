@@ -40,11 +40,11 @@ export class SlackSocketTransport implements OnApplicationShutdown {
 
   /** Called from main.ts AFTER Nest bootstrap, so the SurfaceBridge is already subscribed to
    * `inbound$` before the first event can arrive. Returns the bot's identity for the boot banner. */
-  async connect(): Promise<{ botName: string }> {
+  async connect(): Promise<{ botName?: string }> {
     if (!this.socket) {
       throw new Error('Socket Mode client is not provided — is SLACK_APP_TOKEN set?');
     }
-    const identity = await this.directory.resolveSelf();
+    const identity = await this.directory.bootIdentity();
     this.socket.on('slack_event', (envelope: SlackSocketEnvelope) => {
       void this.handleEnvelope(envelope);
     });

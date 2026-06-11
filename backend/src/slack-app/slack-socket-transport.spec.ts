@@ -10,7 +10,7 @@ function makeTransport() {
     disconnect: vi.fn(async () => {}),
   };
   const directory = {
-    resolveSelf: vi.fn(async () => ({ botName: 'teambot' })),
+    bootIdentity: vi.fn(async () => ({ botName: 'teambot' })),
   };
   const router = {
     route: vi.fn(async (_item: { respond: (b?: unknown) => Promise<void> }) => {}),
@@ -35,7 +35,7 @@ describe('SlackSocketTransport', () => {
     const { transport, socket, directory } = makeTransport();
     const { botName } = await transport.connect();
     expect(botName).toBe('teambot');
-    expect(directory.resolveSelf).toHaveBeenCalled();
+    expect(directory.bootIdentity).toHaveBeenCalled();
     expect(socket.on).toHaveBeenCalledWith('slack_event', expect.any(Function));
     expect(socket.start).toHaveBeenCalled();
   });

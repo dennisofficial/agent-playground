@@ -39,10 +39,15 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
     views: { open: vi.fn(async () => ({ ok: true })) },
   };
   const directory = {
-    selfUserId: 'UBOT',
-    resolveUser: vi.fn(async (id: string) => ({ authorId: id.toLowerCase(), authorName: id })),
+    selfUserIdFor: vi.fn(async () => 'UBOT'),
+    resolveUser: vi.fn(async (_teamId: string, id: string) => ({
+      authorId: id.toLowerCase(),
+      authorName: id,
+    })),
     ensureChannelRegistered: vi.fn(async () => {}),
   };
+  // The per-team ears client provider — returns the `web` mock (views.open / chat.postMessage).
+  const clients = { clientFor: vi.fn(async () => web) };
   const registry = {
     get: vi.fn((channelId: string) =>
       channelId.startsWith('slack:')
@@ -57,7 +62,7 @@ function makeJarvis(opts: { ready?: boolean; projects?: Record<string, string> }
     ),
   };
   const jarvis = new JarvisService(
-    web as never,
+    clients as never,
     directory as never,
     registry as never,
     readiness as never,

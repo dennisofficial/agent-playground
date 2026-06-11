@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { envConfigValidation } from '@core/config/env/validation';
 import { HarnessModule } from '@harness/harness.module';
 import { SecretCipher } from '@harness/projects/secret-cipher';
+import { SlackIdentitiesModule } from '@harness/slack-identities/slack-identities.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { Tenant } from '@workspace/shared/schemas';
@@ -10,6 +11,7 @@ import { EsmModule } from '../_lib/esm/esm.module';
 import { SlackEventsController } from './slack-events.controller';
 import { SlackInteractivityController } from './slack-interactivity.controller';
 import { SlackOauthController } from './slack-oauth.controller';
+import { SlackPuppetOauthController } from './slack-puppet-oauth.controller';
 import { SlackSignatureGuard } from './slack-signature.guard';
 import { SlackSurfaceModule } from './slack-surface.module';
 import { TenantStore } from './tenant.store';
@@ -34,12 +36,14 @@ import { TenantStore } from './tenant.store';
     EsmModule,
     HarnessModule,
     SlackSurfaceModule,
+    SlackIdentitiesModule,
     TypeOrmModule.forFeature([Tenant]),
   ],
   controllers: [
     SlackEventsController,
     SlackInteractivityController,
     SlackOauthController,
+    SlackPuppetOauthController,
   ],
   providers: [SlackSignatureGuard, SecretCipher, TenantStore],
 })

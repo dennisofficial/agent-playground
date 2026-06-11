@@ -21,22 +21,26 @@ function makeFakes(
     reactions: { add: vi.fn(async () => ({ ok: true })) },
   };
   const directory = {
-    selfUserId: 'UBOT',
-    resolveUser: vi.fn(async (id: string) =>
+    selfUserIdFor: vi.fn(async () => 'UBOT'),
+    resolveUser: vi.fn(async (_teamId: string, id: string) =>
       id === 'U123'
         ? { authorId: 'dennis', authorName: 'Dennis' }
         : { authorId: id.toLowerCase(), authorName: id },
     ),
-    displayNameOf: vi.fn((id: string) => (id === 'U123' ? 'Dennis' : undefined)),
+    displayNameOf: vi.fn((_teamId: string, id: string) =>
+      id === 'U123' ? 'Dennis' : undefined,
+    ),
     ensureChannelRegistered: vi.fn(async () => {}),
   };
   const identities = {
     clientFor: vi.fn(async (_teamId: string, botId: string) => puppets[botId]),
   };
+  // The per-team ears client provider — returns the workspace's WebClient (the `web` mock).
+  const clients = { clientFor: vi.fn(async () => web) };
   const bus = { patchStatus: vi.fn() };
   const env = { get: (k: string) => envValues[k] };
   const surface = new SlackChatSurface(
-    web as never,
+    clients as never,
     directory as never,
     identities as never,
     bus as never,

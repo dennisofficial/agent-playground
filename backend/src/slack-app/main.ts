@@ -3,7 +3,6 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { SlackAppModule } from './slack-app.module';
-import { SlackDirectoryService } from './slack-directory.service';
 import { SlackSocketTransport } from './slack-socket-transport';
 
 /**
@@ -22,10 +21,13 @@ import { SlackSocketTransport } from './slack-socket-transport';
 async function bootstrap() {
   const socketMode = !!process.env.SLACK_APP_TOKEN;
 
-  // Assert BEFORE the context exists — a half-booted harness is worse than a refused boot.
+  // Assert BEFORE the context exists — a half-booted harness is worse than a refused boot. Prod
+  // (Events API, OAuth-distributed) carries NO static bot token — per-workspace tokens arrive via
+  // installs — so only the signing secret is required to boot; SLACK_CLIENT_ID/SECRET are needed
+  // for the install flow itself.
   const required = socketMode
     ? (['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN'] as const)
-    : (['SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET'] as const);
+    : (['SLACK_SIGNING_SECRET'] as const);
   for (const key of required) {
     if (!process.env[key]) {
       console.error(
@@ -47,14 +49,13 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   if (socketMode) {
-    // Dev: open the Socket Mode connection (resolves our bot identity on connect).
+    // Dev: open the Socket Mode connection (one workspace, env token).
     const { botName } = await app.get(SlackSocketTransport).connect();
-    log.log(`Connected to Slack as @${botName} — Socket Mode (dev).`);
+    log.log(`Connected to Slack as @${botName ?? 'unknown'} — Socket Mode (dev).`);
   } else {
-    // Prod: no socket — resolve our own bot identity explicitly (echo-loop guard, self-mention
-    // translation, Jarvis self-join detection all read it).
-    const { botName } = await app.get(SlackDirectoryService).resolveSelf();
-    log.log(`Booted as @${botName} — Events API ingress (multi-tenant).`);
+    // Prod: no socket. Per-workspace bot identities resolve lazily per team_id (the ears tokens
+    // arrive via OAuth installs); nothing to resolve at boot.
+    log.log('Booted — Events API ingress (multi-tenant); awaiting workspace events.');
   }
 
   const port = Number(process.env.PORT ?? 4000);

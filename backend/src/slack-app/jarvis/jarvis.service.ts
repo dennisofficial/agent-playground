@@ -8,22 +8,20 @@ import {
   ProjectStore,
 } from '@harness/projects/project-store';
 import {
-  Inject,
   Injectable,
   Logger,
   OnApplicationShutdown,
   OnModuleInit,
 } from '@nestjs/common';
-import type { WebClient } from '@slack/web-api';
 import type { Subscription } from 'rxjs';
 import { SlackDirectoryService } from '../slack-directory.service';
+import { TenantSlackClients } from '../tenant-slack-clients';
 import type {
   SlackInbound,
   SlackInboundEvent,
   SlackInboundInterceptor,
   SlackInteractivityPayload,
 } from '../slack-inbound.types';
-import { SLACK_WEB_CLIENT } from '../slack.tokens';
 import { extractGithubUrl } from './github-url';
 import {
   ENGINES_ONLINE,
@@ -85,7 +83,7 @@ export class JarvisService
   private readySub?: Subscription;
 
   constructor(
-    @Inject(SLACK_WEB_CLIENT) private readonly web: WebClient,
+    private readonly clients: TenantSlackClients,
     private readonly directory: SlackDirectoryService,
     private readonly registry: ChannelRegistryService,
     private readonly readiness: LlmReadinessService,
@@ -132,19 +130,23 @@ export class JarvisService
     event: SlackInboundEvent,
     teamId: string,
   ): Promise<boolean> {
-    if (!event.channel || event.user !== this.directory.selfUserId) return false;
+    if (
+      !event.channel ||
+      event.user !== (await this.directory.selfUserIdFor(teamId))
+    )
+      return false;
     const channel = event.channel;
     const inviter =
       typeof event.inviter === 'string' && event.inviter
-        ? (await this.directory.resolveUser(event.inviter)).authorId
+        ? (await this.directory.resolveUser(teamId, event.inviter)).authorId
         : undefined;
     await this.directory.ensureChannelRegistered(channel, teamId, inviter);
 
     if (!this.readiness.isReady(teamId)) {
       this.greetedPending.add(this.k(teamId, channel));
-      await this.postBlocks(channel, setupButtonBlocks(GREETING_PENDING));
+      await this.postBlocks(teamId, channel, setupButtonBlocks(GREETING_PENDING));
     } else if (!(await this.projectOf(teamId, channel))) {
-      await this.post(channel, REPO_PROMPT, 'repo-prompt');
+      await this.post(teamId, channel, REPO_PROMPT, 'repo-prompt');
     }
     return true; // nobody downstream handles member_joined_channel
   }
@@ -156,25 +158,30 @@ export class JarvisService
   ): Promise<boolean> {
     if (event.bot_id || event.subtype) return false;
     if (!event.user || !event.channel || !event.ts) return false;
-    if (event.user === this.directory.selfUserId) return false;
+    if (event.user === (await this.directory.selfUserIdFor(teamId))) return false;
     if (event.thread_ts && event.thread_ts !== event.ts) return false;
     const channel = event.channel;
     const text = event.text ?? '';
 
-    const author = await this.directory.resolveUser(event.user);
+    const author = await this.directory.resolveUser(teamId, event.user);
     await this.directory.ensureChannelRegistered(channel, teamId, author.authorId);
 
     if (!this.readiness.isReady(teamId)) {
       // Consume EVERYTHING while keyless — see the class doc.
       if (KEY_IN_CHAT.test(text)) {
-        await this.post(channel, KEY_IN_CHAT_WARNING, 'key-warning');
+        await this.post(teamId, channel, KEY_IN_CHAT_WARNING, 'key-warning');
         return true;
       }
       if (!this.greetedPending.has(this.k(teamId, channel))) {
         this.greetedPending.add(this.k(teamId, channel));
-        await this.postBlocks(channel, setupButtonBlocks(GREETING_PENDING));
+        await this.postBlocks(teamId, channel, setupButtonBlocks(GREETING_PENDING));
       } else {
-        await this.postBlocks(channel, setupButtonBlocks(NUDGE_PENDING), 'nudge');
+        await this.postBlocks(
+          teamId,
+          channel,
+          setupButtonBlocks(NUDGE_PENDING),
+          'nudge',
+        );
       }
       return true;
     }
@@ -184,7 +191,7 @@ export class JarvisService
     if (!slug) return false;
     const gitUrl = extractGithubUrl(text);
     if (!gitUrl) {
-      await this.post(channel, REPO_PROMPT, 'repo-prompt');
+      await this.post(teamId, channel, REPO_PROMPT, 'repo-prompt');
       return true;
     }
     return this.linkRepo(teamId, channel, slug, gitUrl);
@@ -207,12 +214,13 @@ export class JarvisService
         displayName,
         gitUrl,
       });
-      await this.post(channel, repoLinked(gitUrl));
+      await this.post(teamId, channel, repoLinked(gitUrl));
     } catch (err) {
       if (!(err instanceof ProjectConflictError)) throw err;
       // Raced/duplicate submission — idempotent on the same URL, explicit on a different one.
       const existing = await this.projects.get(teamId, slug);
       await this.post(
+        teamId,
         channel,
         existing && existing.gitUrl !== gitUrl
           ? repoConflict(existing.gitUrl)
@@ -236,7 +244,8 @@ export class JarvisService
       await item.respond();
       const originChannel = payload.channel?.id ?? '';
       const hasGithubToken = (await this.githubTokens.listMeta(teamId)).length > 0;
-      await this.web.views.open({
+      const web = await this.clients.clientFor(teamId);
+      await web?.views.open({
         trigger_id: payload.trigger_id ?? '',
         view: keysModalView(originChannel, hasGithubToken) as never,
       });
@@ -303,7 +312,7 @@ export class JarvisService
     const wasPending = !this.readiness.isReady(teamId);
     await this.readiness.refresh(teamId);
     const origin = payload.view?.private_metadata;
-    if (origin && wasPending) await this.post(origin, KEYS_STORED);
+    if (origin && wasPending) await this.post(teamId, origin, KEYS_STORED);
     return true;
   }
 
@@ -314,7 +323,7 @@ export class JarvisService
     for (const key of keys) {
       this.greetedPending.delete(key);
       const channel = key.slice(prefix.length);
-      await this.post(channel, ENGINES_ONLINE).catch((err) =>
+      await this.post(teamId, channel, ENGINES_ONLINE).catch((err) =>
         this.logger.warn(`engines-online post to ${channel} failed: ${err}`),
       );
     }
@@ -338,11 +347,18 @@ export class JarvisService
     return (await this.projects.get(teamId, slug)) ? undefined : slug;
   }
 
-  /** Post as Jarvis. `throttleKey` suppresses identical re-prompts within the repost window —
-   * consumed messages always got a response recently enough to not read as swallowed. */
-  private async post(channel: string, text: string, throttleKey?: string): Promise<void> {
-    if (throttleKey && this.throttled(channel, throttleKey)) return;
-    await this.web.chat.postMessage({
+  /** Post as Jarvis, via the workspace's ears app. `throttleKey` suppresses identical re-prompts
+   * within the repost window — consumed messages always got a response recently enough to not read
+   * as swallowed. */
+  private async post(
+    teamId: string,
+    channel: string,
+    text: string,
+    throttleKey?: string,
+  ): Promise<void> {
+    if (throttleKey && this.throttled(teamId, channel, throttleKey)) return;
+    const web = await this.clients.clientFor(teamId);
+    await web?.chat.postMessage({
       channel,
       text,
       username: JARVIS_NAME,
@@ -351,12 +367,14 @@ export class JarvisService
   }
 
   private async postBlocks(
+    teamId: string,
     channel: string,
     msg: { text: string; blocks: unknown[] },
     throttleKey?: string,
   ): Promise<void> {
-    if (throttleKey && this.throttled(channel, throttleKey)) return;
-    await this.web.chat.postMessage({
+    if (throttleKey && this.throttled(teamId, channel, throttleKey)) return;
+    const web = await this.clients.clientFor(teamId);
+    await web?.chat.postMessage({
       channel,
       text: msg.text,
       blocks: msg.blocks as never,
@@ -365,11 +383,12 @@ export class JarvisService
     });
   }
 
-  private throttled(channel: string, key: string): boolean {
-    const last = this.lastPrompt.get(channel);
+  private throttled(teamId: string, channel: string, key: string): boolean {
+    const k = `${teamId}|${channel}`;
+    const last = this.lastPrompt.get(k);
     const now = Date.now();
     if (last && last.key === key && now - last.at < REPOST_WINDOW_MS) return true;
-    this.lastPrompt.set(channel, { key, at: now });
+    this.lastPrompt.set(k, { key, at: now });
     return false;
   }
 }

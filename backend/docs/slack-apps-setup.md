@@ -14,8 +14,15 @@ workspace via **unlisted distribution**.
 
 - **Ears = two separate apps** (dev Socket Mode, prod Events API) — same code, different credentials.
   `main.ts` branches on `SLACK_APP_TOKEN`: set → Socket Mode (dev); unset → Events API (prod).
+  **Both are OAuth-distributed**: the per-workspace bot token comes from the install (stored
+  encrypted in the `tenants` row); the harness resolves the right workspace's ears client per
+  `team_id` (`TenantSlackClients`). Dev's Socket-Mode app also has a `SLACK_BOT_TOKEN` env that
+  serves as the single-workspace fallback.
 - **Puppets are global** (one app per employee), distributed *unlisted*, installed into each
-  workspace. Bot ids: `alex`, `maya`, `nora`, `james`, `sam`, `riley`.
+  workspace. Bot ids: `alex`, `maya`, `nora`, `james`, `sam`, `riley`. **Puppets need NO
+  Socket-Mode variant — ever** (dev or prod): they only POST/REACT over HTTP and never receive
+  events. One puppet app per employee covers both; in dev you just install it into your dev
+  workspace and store its token under that workspace's `team_id`.
 - **Puppets are optional.** With no puppet token for an employee, the ears app posts on their behalf
   with a `username`/`icon_url` override (reactions then show as the ears app — that's the one thing
   puppets fix).
@@ -115,21 +122,20 @@ posts/reactions carry the face.
 4. **Install the ears into each workspace** via its OAuth link → the `/slack/oauth` callback stores
    that workspace's bot token in the `tenants` row (encrypted). The process starts serving that
    `team_id` immediately; invite it to channels and Jarvis takes over onboarding.
-5. **Install each puppet into each workspace**, then store its per-workspace token:
-   ```
-   PUT https://YOUR_HOST/tenants/<team_id>/slack-identities/alex
-   Authorization: Bearer <ADMIN_API_TOKEN>
-   { "token": "xoxb-<the puppet's bot token for THIS workspace>" }
-   ```
-   `SlackIdentityRegistry` picks it up within ~60s. Repeat for the 6 bot ids × each workspace.
-
-### Capturing each puppet's per-workspace token
-
-- **Your own workspace** (where the puppet app lives): grab the bot token straight from the puppet
-  app's *OAuth & Permissions* page after installing — no exchange needed.
-- **Other workspaces** (mom's / brother's, via unlisted distribution): installing yields an OAuth
-  `code` you must exchange for that workspace's token (`oauth.v2.access` with the puppet's
-  client id/secret), then PUT it. This is the clunky part — see the follow-up.
+5. **Install each puppet into each workspace.** Two ways to capture the per-workspace token:
+   - **One-click (recommended):** configure `SLACK_PUPPET_OAUTH` (JSON map of bot id →
+     `{clientId, clientSecret}`), set each puppet's redirect URL to
+     `https://YOUR_HOST/slack/puppet/oauth`, and put the bot id in the install link's `state`
+     (e.g. `…&state=alex`). The `/slack/puppet/oauth` callback exchanges the code and stores the
+     token in `slack_identities` under `(team_id, alex)` automatically.
+   - **Manual:** grab the token from the puppet app's *OAuth & Permissions* page (your own
+     workspace) or do the `oauth.v2.access` exchange yourself, then:
+     ```
+     PUT https://YOUR_HOST/tenants/<team_id>/slack-identities/alex
+     Authorization: Bearer <ADMIN_API_TOKEN>
+     { "token": "xoxb-<the puppet's bot token for THIS workspace>" }
+     ```
+   Either way, `SlackIdentityRegistry` picks it up within ~60s. Repeat for the 6 bot ids × workspace.
 
 ### Local dev
 Set `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` (the dev ears app) and run `pnpm slack:dev`. Messages from
@@ -139,12 +145,14 @@ the dev workspace's `team_id` the same way if you want real per-employee identit
 
 ---
 
-## Known gaps / optional follow-ups
+## Status
 
-- **Per-team ears WebClient (multi-workspace prod):** the ears `SLACK_WEB_CLIENT` is still built from
-  the single `SLACK_BOT_TOKEN` env. Correct for one workspace; for N workspaces its reads
-  (`conversations.info`/`users.info`) + fallback posts must use the per-workspace bot token from the
-  `tenants` row. **Needed before the prod ears serves more than one workspace.**
-- **Puppet OAuth callback:** a `/slack/puppet/:botId/oauth` route that exchanges the install code and
-  writes the token into `slack_identities` under `(team_id, botId)` would make puppet installs
-  one-click instead of the manual `oauth.v2.access` + admin PUT dance. Not built yet.
+Both earlier gaps are now BUILT:
+- **Per-team ears WebClient** — `TenantSlackClients` resolves the ears client + bot user id per
+  `team_id` from the `tenants` row (env-token fallback for dev). The directory, surface, and Jarvis
+  are all per-workspace; the prod ears serves N workspaces.
+- **Puppet OAuth callback** — `/slack/puppet/oauth` (bot id in `state`, creds from
+  `SLACK_PUPPET_OAUTH`) captures each install's token into `slack_identities` automatically.
+
+Remaining: Dennis's real-workspace smoke; create + distribute the apps per the manifests above; set
+`SLACK_PUPPET_OAUTH` on the box.

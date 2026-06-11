@@ -20,8 +20,13 @@ function makeService(overrides?: { existingRoom?: boolean }) {
   const employees = {
     list: vi.fn(() => [{ id: 'alex' }, { id: 'sam' }]),
   };
+  // The per-team ears client provider — returns the workspace's WebClient (the `web` mock here).
+  const clients = {
+    clientFor: vi.fn(async () => web),
+    selfUserIdFor: vi.fn(async () => 'UBOT'),
+  };
   const service = new SlackDirectoryService(
-    web as never,
+    clients as never,
     registry as never,
     employees as never,
   );
@@ -31,18 +36,18 @@ function makeService(overrides?: { existingRoom?: boolean }) {
 describe('SlackDirectoryService.resolveUser', () => {
   it('calls users.info once and serves repeats from cache', async () => {
     const { service, web } = makeService();
-    const first = await service.resolveUser('U123');
-    const second = await service.resolveUser('U123');
+    const first = await service.resolveUser('T1', 'U123');
+    const second = await service.resolveUser('T1', 'U123');
     expect(first).toEqual({ authorId: 'dennis', authorName: 'Dennis' });
     expect(second).toBe(first);
     expect(web.users.info).toHaveBeenCalledTimes(1);
-    expect(service.displayNameOf('U123')).toBe('Dennis');
+    expect(service.displayNameOf('T1', 'U123')).toBe('Dennis');
   });
 
   it('falls back to the raw id when the lookup fails', async () => {
     const { service, web } = makeService();
     web.users.info.mockRejectedValueOnce(new Error('ratelimited'));
-    expect(await service.resolveUser('U999')).toEqual({
+    expect(await service.resolveUser('T1', 'U999')).toEqual({
       authorId: 'u999',
       authorName: 'U999',
     });
