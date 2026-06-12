@@ -481,6 +481,9 @@ export class ConductorService
     if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
 
     let failed = false;
+    // The transient "composing" reaction (💭) this turn placed, if any — removed in `finally` once
+    // the turn ends (success, error, or step-cap), so present = composing now, gone = replied.
+    let composing: { emoji: string; targetId: string } | undefined;
     try {
       const stream = await this.graphs.getBotGraph(bot).stream(input, {
         configurable: { thread_id: thread, identity, capped, channelId },
@@ -512,8 +515,14 @@ export class ConductorService
             ); // a real reply counts toward this room's loop breaker
           }
           // Surface whatever reactions the graph decided — the conductor only renders; the brain decides.
-          if (delta.reaction)
+          if (delta.reaction) {
             this.react(bot, channelId, delta.reaction, delta.reactionTargetId);
+            // Remember it so we can clear it when the turn ends (the gate only sets this on respond).
+            composing = {
+              emoji: delta.reaction,
+              targetId: delta.reactionTargetId ?? '',
+            };
+          }
           if (delta.decision === 'acknowledge')
             this.react(
               bot,
@@ -545,6 +554,12 @@ export class ConductorService
       }
       this.emitError(err);
       failed = true;
+    } finally {
+      // Clear the "composing" 💭 now the turn is over — runs on success, error, AND the step-cap
+      // early-return above (the bot has stopped composing in every case). Forced/relay turns set
+      // no reaction, so `composing` stays undefined and nothing is removed.
+      if (composing?.targetId)
+        this.unreact(bot, channelId, composing.emoji, composing.targetId);
     }
 
     // The checkpoint is the cursor's source of truth; read it back, then persist it. MONOTONIC on
@@ -633,6 +648,25 @@ export class ConductorService
       botName: bot.name,
       emoji,
       targetId: targetId ?? '',
+    });
+  }
+
+  /** Remove a reaction this bot previously added — clears the transient "composing" 💭 at turn end. */
+  private unreact(
+    bot: EmployeeDefinition,
+    channelId: string,
+    emoji: string,
+    targetId: string,
+  ): void {
+    this.emit({
+      id: `r-${this.emitSeq++}`,
+      kind: 'reaction',
+      channelId,
+      botId: bot.id,
+      botName: bot.name,
+      emoji,
+      targetId,
+      remove: true,
     });
   }
 

@@ -62,12 +62,15 @@ export class SurfaceBridge
             surfaceId: e.channelId,
           }).catch((err) => this.logger.error(`surface.post failed: ${err}`));
         } else if (e.kind === 'reaction') {
-          void this.surface!.react(
-            e.targetId,
-            e.emoji,
-            { id: e.botId, name: e.botName },
-            e.channelId,
-          ).catch((err) => this.logger.error(`surface.react failed: ${err}`));
+          const asBot = { id: e.botId, name: e.botName };
+          const op = e.remove
+            ? this.surface!.unreact(e.targetId, e.emoji, asBot, e.channelId)
+            : this.surface!.react(e.targetId, e.emoji, asBot, e.channelId);
+          void op.catch((err) =>
+            this.logger.error(
+              `surface.${e.remove ? 'unreact' : 'react'} failed: ${err}`,
+            ),
+          );
         }
       }),
     );

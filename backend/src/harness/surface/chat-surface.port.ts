@@ -52,4 +52,12 @@ export interface ChatSurface {
     asBot: { id: string; name: string },
     channelId: string,
   ): Promise<void>;
+  /** Remove a bot's emoji reaction (same coordinate semantics as react). Used to clear the
+   * transient "composing" marker when a turn ends. */
+  unreact(
+    targetMessageId: string,
+    emoji: string,
+    asBot: { id: string; name: string },
+    channelId: string,
+  ): Promise<void>;
 }

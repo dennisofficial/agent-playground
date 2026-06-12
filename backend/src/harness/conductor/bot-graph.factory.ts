@@ -1,3 +1,4 @@
+import { EnvService } from '@core/config/env/env.service';
 import {
   AIMessage,
   type BaseMessage,
@@ -37,6 +38,11 @@ import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
 import { ToolRegistry } from '../tools/tool.registry';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
+import {
+  GAP_THRESHOLD_DEFAULT_MS,
+  buildTimeContext,
+  withDividers,
+} from './channel-render';
 
 /**
  * A bot's TURN, as an explicit LangGraph state machine. One graph per bot, persisted on thread
@@ -258,6 +264,8 @@ export class BotGraphFactory {
   // One compiled graph per bot, lazy + memoized. Tenant-agnostic: the model is built per-invocation
   // inside the llm node (from the turn's credential context), so one graph serves every workspace.
   private graphs = new Map<string, ReturnType<BotGraphFactory['build']>>();
+  /** Minimum gap (ms) between consecutive messages that earns a time-divider in LLM history. */
+  private readonly gapThresholdMs: number;
 
   constructor(
     private readonly channel: ChannelService,
@@ -272,7 +280,11 @@ export class BotGraphFactory {
     private readonly worktrees: WorktreeService,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     @Inject(CHECKPOINTER) private readonly checkpointer: PostgresSaver,
-  ) {}
+    env: EnvService,
+  ) {
+    this.gapThresholdMs =
+      env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
+  }
 
   getBotGraph(bot: EmployeeDefinition) {
     let g = this.graphs.get(bot.id);
@@ -389,9 +401,10 @@ export class BotGraphFactory {
       return {
         decision: d.action,
         ackEmoji: d.emoji,
-        // Fire the "seen, working" 👀 the moment we commit to responding — surfaced before
-        // fetch/LLM/tools run. Only on a real gated respond; the forced path returned above.
-        reaction: d.action === 'respond' ? '👀' : undefined,
+        // Fire the transient "composing" 💭 the moment we commit to responding — surfaced before
+        // fetch/LLM/tools run, and REMOVED by the conductor when the turn ends (so present =
+        // composing now, gone = replied). Only on a real gated respond; the forced path returned above.
+        reaction: d.action === 'respond' ? '💭' : undefined,
         reactionTargetId: latest.id,
         reasoning: d.reasoning,
         gateUsage: d.usage,
@@ -441,6 +454,7 @@ export class BotGraphFactory {
         .since(state.cursor, channelId)
         .filter((m) => m.authorBotId !== bot.id);
       const newCursor = channel.lengthOf(channelId); // own/gap messages are skipped but the cursor still moves past them
+      // `injected` goes into state.messages (the durable checkpoint) — plain, no dividers.
       const injected = fresh.map(asInput);
       // Message order is chosen for PROMPT CACHING (a prefix match — any byte change invalidates
       // everything after it; render order is tools → system → messages):
@@ -450,7 +464,9 @@ export class BotGraphFactory {
       //   3. recalled memory — VOLATILE (re-retrieved each turn), so it must come AFTER the history,
       //      never in the system block (it would bust the prefix every turn, and langchain-anthropic
       //      rejects a second SystemMessage). Re-injected each call, never persisted into `messages`.
-      //   4. this turn's new channel messages.
+      //   4. time context — VOLATILE (current time + gap note). Placed after recalled so it always
+      //      lands outside the cached prefix. Never persisted into `messages`.
+      //   5. this turn's new channel messages (with inline time-dividers for any within-batch gaps).
       const history = repairDanglingToolCalls(state.messages);
       const cachedHistory = history.length
         ? [
@@ -458,6 +474,23 @@ export class BotGraphFactory {
             withCacheBreakpoint(history[history.length - 1]),
           ]
         : history;
+      // Peek the last consumed message to detect a gap before the fresh batch.
+      const prevMsg = channel
+        .snapshot(channelId)
+        .filter((m) => m.seq < (fresh[0]?.seq ?? 0))
+        .slice(-1)[0];
+      const timeContext = buildTimeContext(
+        fresh,
+        prevMsg?.createdAt,
+        this.gapThresholdMs,
+      );
+      // Build the model-only view of the fresh batch: interleave time-dividers for within-batch gaps.
+      const freshForModel = withDividers(fresh, this.gapThresholdMs).map(
+        (item) =>
+          item.kind === 'time-divider'
+            ? new HumanMessage(item.label)
+            : asInput(item.msg),
+      );
       const convo = [
         new SystemMessage({
           content: [
@@ -476,7 +509,10 @@ export class BotGraphFactory {
               ),
             ]
           : []),
-        ...injected,
+        // Time context is always injected (at minimum: current time). Sits strictly AFTER the
+        // history cache breakpoint so it never invalidates the cached prefix.
+        new HumanMessage(`(${timeContext})`),
+        ...freshForModel,
       ];
       // Built per-invocation (not at graph-build) so it reads the CURRENT turn's tenant key from
       // the credential context — one compiled graph per bot serves every workspace.

@@ -45,6 +45,9 @@ export type ConductorEvent =
       emoji: string;
       /** The channel-message id this reaction is on, so the UI folds it INTO that message node. */
       targetId: string;
+      /** When true, REMOVE this reaction instead of adding it (clears the transient "composing"
+       * marker at turn end). Absent/false = add (back-compat). */
+      remove?: boolean;
     }
   // Observability: the response gate's verdict + rationale (why a bot spoke, reacted, or stayed
   // silent). Only soft-gate (LLM) calls carry `reasoning`/`usage`; hard rules omit them.

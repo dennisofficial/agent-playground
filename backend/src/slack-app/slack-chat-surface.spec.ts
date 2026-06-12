@@ -31,6 +31,9 @@ function makeFakes(
       id === 'U123' ? 'Dennis' : undefined,
     ),
     ensureChannelRegistered: vi.fn(async () => {}),
+    resolveMention: vi.fn(async (_teamId: string, handle: string) =>
+      handle === 'Dennis' || handle === 'dennis' ? 'U123' : undefined,
+    ),
   };
   const identities = {
     clientFor: vi.fn(async (_teamId: string, botId: string) => puppets[botId]),
@@ -122,6 +125,34 @@ describe('SlackChatSurface inbound', () => {
 });
 
 describe('SlackChatSurface outbound', () => {
+  it('resolves @handles to <@SLACK_ID> mrkdwn mentions before posting', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({
+      id: 'alex:k2:1',
+      authorBotId: 'alex',
+      authorName: 'Alex',
+      text: '@Dennis can you review?',
+      surfaceId: 'slack:T1:C042',
+    });
+    expect(web.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '<@U123> can you review?' }),
+    );
+  });
+
+  it('leaves unresolved @handles literal (graceful degradation)', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({
+      id: 'alex:k2:2',
+      authorBotId: 'alex',
+      authorName: 'Alex',
+      text: '@Unknown please help',
+      surfaceId: 'slack:T1:C042',
+    });
+    expect(web.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '@Unknown please help' }),
+    );
+  });
+
   it('posts with the employee username and skips non-slack rooms', async () => {
     const { surface, web } = makeFakes();
 
