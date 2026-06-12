@@ -10,6 +10,7 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
+import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -72,6 +73,11 @@ describe('bot graph — consume path resets recalled', () => {
       {
         gate: async () => ({ action: decisions.shift() ?? 'ignore' }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       {
         fetchContext: async () => 'On your plate:\n- [#31] call open_pr',
       } as unknown as FetchService,

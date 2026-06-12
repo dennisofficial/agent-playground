@@ -5,6 +5,7 @@ import { GateModule } from '../gate/gate.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
 import { MemoryModule } from '../memory/memory.module';
+import { RecursionGuardModule } from '../recursion-guard/recursion-guard.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { ToolsModule } from '../tools/tools.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
@@ -26,6 +27,7 @@ import { ConductorService } from './conductor.service';
     LlmKeysModule,
     LlmModule,
     MemoryModule,
+    RecursionGuardModule,
     SessionsModule,
     ToolsModule,
     WorktreesModule,

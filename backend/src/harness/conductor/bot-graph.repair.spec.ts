@@ -14,6 +14,7 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
+import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -104,6 +105,11 @@ describe('bot graph — poisoned-history self-healing', () => {
       {
         gate: async () => ({ action: 'respond' as const }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       { fetchContext: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
@@ -215,6 +221,11 @@ describe('bot graph — poisoned-history self-healing', () => {
       {
         gate: async () => ({ action: 'respond' as const }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       { fetchContext: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
