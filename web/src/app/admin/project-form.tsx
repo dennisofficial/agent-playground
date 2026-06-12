@@ -7,7 +7,7 @@ import { IDLE } from './action-state';
 const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
 
-export function ProjectForm({ tokenNames }: { tokenNames: string[] }) {
+export function ProjectForm({ tokenNames, teamId }: { tokenNames: string[]; teamId: string }) {
   const [state, action, pending] = useActionState(createProjectAction, IDLE);
   return (
     <form
@@ -15,6 +15,7 @@ export function ProjectForm({ tokenNames }: { tokenNames: string[] }) {
       className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
     >
       <h3 className="text-sm font-medium text-black dark:text-zinc-50">Register a project</h3>
+      <input type="hidden" name="teamId" value={teamId} />
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <input
           name="projectId"

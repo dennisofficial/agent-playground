@@ -1,6 +1,7 @@
 import { connection } from 'next/server';
 import { listProjects, listTokens } from '@/lib/admin-api';
 import { requireAdmin } from '@/lib/admin-auth';
+import { env } from '@/lib/env';
 import { logoutAction } from './actions';
 import { ProjectForm } from './project-form';
 import { ProjectRow } from './project-row';
@@ -11,17 +12,40 @@ import { TokenRow } from './token-row';
  * The admin surface for the project registry + GitHub token store. requireAdmin() reads cookies
  * (making the route request-bound — never prerendered) and bounces to /admin/login. All data
  * flows through the Next server; the browser never holds the admin bearer or token values.
+ *
+ * teamId is sourced from the ?team= query param, falling back to the ADMIN_TEAM_ID env var.
+ * The workspace switcher in the header lets you change it at any time via a plain HTML GET form.
  */
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ team?: string }>;
+}) {
   await connection(); // belt-and-braces: never prerender any branch of this page
   await requireAdmin();
 
-  let projects, tokens;
-  try {
-    [projects, tokens] = await Promise.all([listProjects(), listTokens()]);
-  } catch (err) {
+  const teamId = (await searchParams).team?.trim() || env.ADMIN_TEAM_ID;
+
+  if (!teamId) {
     return (
       <Shell>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Enter a Slack team ID in the workspace field above (e.g.{' '}
+          <code className="font-mono">T01234ABCDE</code>) to manage its projects and GitHub tokens.
+          You can also set <code className="font-mono">ADMIN_TEAM_ID</code> in{' '}
+          <code className="font-mono">web/.env.personal</code> to load a default workspace on every
+          visit.
+        </p>
+      </Shell>
+    );
+  }
+
+  let projects, tokens;
+  try {
+    [projects, tokens] = await Promise.all([listProjects(teamId), listTokens(teamId)]);
+  } catch (err) {
+    return (
+      <Shell teamId={teamId}>
         <section className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
           <h2 className="font-semibold">Backend admin API unreachable</h2>
           <p className="mt-2 font-mono text-xs">{err instanceof Error ? err.message : String(err)}</p>
@@ -43,7 +67,7 @@ export default async function AdminPage() {
 
   const tokenNames = tokens.map((t) => t.name);
   return (
-    <Shell>
+    <Shell teamId={teamId}>
       <section>
         <h2 className="text-base font-semibold text-black dark:text-zinc-50">GitHub tokens</h2>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
@@ -54,10 +78,10 @@ export default async function AdminPage() {
           {tokens.length === 0 ? (
             <p className="text-sm text-zinc-500">No tokens stored yet.</p>
           ) : (
-            tokens.map((t) => <TokenRow key={t.name} token={t} />)
+            tokens.map((t) => <TokenRow key={t.name} token={t} teamId={teamId} />)
           )}
         </div>
-        <TokenForm />
+        <TokenForm teamId={teamId} />
       </section>
 
       <section className="mt-12">
@@ -70,16 +94,39 @@ export default async function AdminPage() {
           {projects.length === 0 ? (
             <p className="text-sm text-zinc-500">No projects registered yet.</p>
           ) : (
-            projects.map((p) => <ProjectRow key={p.projectId} project={p} tokenNames={tokenNames} />)
+            projects.map((p) => (
+              <ProjectRow key={p.projectId} project={p} tokenNames={tokenNames} teamId={teamId} />
+            ))
           )}
         </div>
-        <ProjectForm tokenNames={tokenNames} />
+        <ProjectForm tokenNames={tokenNames} teamId={teamId} />
       </section>
     </Shell>
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+/** JS-free workspace switcher — a plain HTML GET form that navigates to /admin?team=<value>. */
+function WorkspaceSwitcher({ currentTeamId }: { currentTeamId?: string }) {
+  return (
+    <form method="get" action="/admin" className="flex items-center gap-2">
+      <input
+        name="team"
+        defaultValue={currentTeamId}
+        required
+        placeholder="Team ID"
+        className="w-36 rounded-md border border-zinc-300 bg-transparent px-3 py-1.5 text-sm font-mono text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50"
+      />
+      <button
+        type="submit"
+        className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+      >
+        Go
+      </button>
+    </form>
+  );
+}
+
+function Shell({ children, teamId }: { children: React.ReactNode; teamId?: string }) {
   return (
     <main className="flex flex-1 justify-center bg-zinc-50 px-6 py-12 font-sans dark:bg-black">
       <div className="w-full max-w-3xl">
@@ -92,14 +139,17 @@ function Shell({ children }: { children: React.ReactNode }) {
               GitHub workspaces for the AI employees
             </p>
           </div>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            >
-              Log out
-            </button>
-          </form>
+          <div className="flex items-center gap-3">
+            <WorkspaceSwitcher currentTeamId={teamId} />
+            <form action={logoutAction}>
+              <button
+                type="submit"
+                className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+              >
+                Log out
+              </button>
+            </form>
+          </div>
         </header>
         {children}
       </div>

@@ -8,7 +8,7 @@ const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
 
 /** Add a new token or rotate an existing one (same name overwrites the value). */
-export function TokenForm() {
+export function TokenForm({ teamId }: { teamId: string }) {
   const [state, action, pending] = useActionState(putTokenAction, IDLE);
   return (
     <form
@@ -16,6 +16,7 @@ export function TokenForm() {
       className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
     >
       <h3 className="text-sm font-medium text-black dark:text-zinc-50">Add / rotate a token</h3>
+      <input type="hidden" name="teamId" value={teamId} />
       <div className="mt-3 flex flex-col gap-3 sm:flex-row">
         <input name="name" required placeholder="name (e.g. personal)" className={`${inputCls} sm:w-48 font-mono`} />
         <input

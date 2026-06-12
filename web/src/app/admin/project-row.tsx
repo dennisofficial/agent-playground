@@ -11,9 +11,11 @@ const inputCls =
 export function ProjectRow({
   project,
   tokenNames,
+  teamId,
 }: {
   project: ProjectRecord;
   tokenNames: string[];
+  teamId: string;
 }) {
   const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState(updateProjectAction, IDLE);
@@ -44,6 +46,7 @@ export function ProjectRow({
 
       {open ? (
         <form action={action} className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-900">
+          <input type="hidden" name="teamId" value={teamId} />
           <input type="hidden" name="projectId" value={project.projectId} />
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <input

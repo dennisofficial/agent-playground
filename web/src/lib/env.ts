@@ -35,6 +35,9 @@ export const env = createEnv({
     // The admin bearer — server-only by construction (t3-env boundary). Unset → the admin UI
     // renders its setup card; it can never reach the client bundle.
     ADMIN_API_TOKEN: z.string().optional(),
+    // Optional default Slack team id for the admin UI. When set the admin page loads this
+    // workspace without requiring a ?team= query param. Can be overridden at any time via URL.
+    ADMIN_TEAM_ID: z.string().optional(),
   },
   client: {
     NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv).default(EAppEnv.LOCAL),
@@ -46,6 +49,7 @@ export const env = createEnv({
     BUILD_ID: process.env.BUILD_ID,
     BACKEND_URL: process.env.BACKEND_URL,
     ADMIN_API_TOKEN: process.env.ADMIN_API_TOKEN,
+    ADMIN_TEAM_ID: process.env.ADMIN_TEAM_ID,
     NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
     NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL,
   },
