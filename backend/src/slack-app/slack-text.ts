@@ -5,6 +5,14 @@
  * stays unit-testable.
  */
 
+/** Dependencies for the outbound Slack mention pass. Injected by the Slack surface (which owns
+ * the async Slack-user-id resolution); the TUI never passes deps and gets an unchanged no-op. */
+export interface OutboundTranslationDeps {
+  /** Sync handle → Slack user id — must be pre-resolved async by the caller. Returns undefined
+   * for unknown handles, leaving the literal `@handle` text unchanged (graceful degradation). */
+  resolveMention?: (handle: string) => string | undefined;
+}
+
 export interface InboundTranslationDeps {
   /** Slack user id → display name (undefined when unknown — the raw id is kept then). */
   resolveUser: (slackUserId: string) => string | undefined;
@@ -16,6 +24,23 @@ export interface InboundTranslationDeps {
  * before calling the sync `translateInbound`. */
 export function extractMentionIds(text: string): string[] {
   return [...text.matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)].map((m) => m[1]);
+}
+
+/** The @handles in outbound prose text that may map to Slack user ids — the outbound twin of
+ * `extractMentionIds`. Code spans and fenced blocks are excluded (uses the same segment splitter
+ * as `translateOutbound`). Broadcast keywords (@here/@channel/@everyone) are excluded — broadcasts
+ * are off for v1. Deduplicates the result. */
+export function extractHandles(text: string): string[] {
+  const found: string[] = [];
+  // Split by fenced blocks / inline code (odd indices) vs prose (even) — mirrors mapSegments.
+  text.split(/(```[\s\S]*?```|`[^`\n]*`)/).forEach((part, i) => {
+    if (i % 2 === 0) {
+      for (const m of part.matchAll(/(?<![\w@/:%])@([\w][\w.-]*)/g)) {
+        if (!/^(here|channel|everyone)$/i.test(m[1])) found.push(m[1]);
+      }
+    }
+  });
+  return [...new Set(found)];
 }
 
 /** Slack mrkdwn → plain harness text. Order matters: structured `<…>` tokens first, then entity
@@ -61,14 +86,36 @@ export function translateInbound(
 /**
  * Harness Markdown → Slack mrkdwn for outbound posts. The LLMs emit standard Markdown
  * (`**bold**`, `[label](url)`, `# headers`, tables); Slack renders mrkdwn (`*bold*`,
- * `<url|label>`, no headers, NO tables) and shows everything else literally. Two passes, both
- * code-fence-aware: ① structures mrkdwn can't express at all (tables → aligned monospace blocks,
- * horizontal rules → a divider line); ② inline syntax. Code contents are never rewritten — the
- * only code-segment change is stripping fence language tags, which mrkdwn renders as text.
+ * `<url|label>`, no headers, NO tables) and shows everything else literally. Three passes, all
+ * code-fence-aware: ① optional mention pass (if `deps.resolveMention` is provided) converts
+ * `@handle` → `<@SLACK_USER_ID>` before any other rewriting; ② structures mrkdwn can't express at
+ * all (tables → aligned monospace blocks, horizontal rules → a divider line); ③ inline syntax.
+ * Code contents are never rewritten — the only code-segment change is stripping fence language
+ * tags, which mrkdwn renders as text. The no-dep call is identical to the original behaviour.
  */
-export function translateOutbound(text: string): string {
+export function translateOutbound(
+  text: string,
+  deps?: OutboundTranslationDeps,
+): string {
+  // Mention pass: @handle → <@SLACK_USER_ID> in prose segments only (code-fence aware). Runs
+  // first so the emitted <@…> tokens are never re-written by the link/emphasis rules below.
+  const stage0 = deps?.resolveMention
+    ? mapSegments(
+        text,
+        (prose) =>
+          prose.replace(
+            /(?<![\w@/:%])@([\w][\w.-]*)/g,
+            (_m, handle: string) => {
+              if (/^(here|channel|everyone)$/i.test(handle)) return _m;
+              const id = deps.resolveMention!(handle);
+              return id ? `<@${id}>` : _m;
+            },
+          ),
+        (c) => c,
+      )
+    : text;
   const stage1 = mapSegments(
-    text,
+    stage0,
     (prose) => convertTables(convertRules(prose)),
     (c) => c,
   );

@@ -74,7 +74,9 @@ describe('SlackInboundRouter', () => {
     presence.observe.mockImplementation(async () => {
       throw new Error('presence boom');
     });
-    await router.route(eventItem({ type: 'member_joined_channel', user: 'U1' }));
+    await router.route(
+      eventItem({ type: 'member_joined_channel', user: 'U1' }),
+    );
     expect(presence.observe).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'member_joined_channel' }),
       'T1',
