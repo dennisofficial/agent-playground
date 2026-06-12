@@ -3,6 +3,7 @@ import { tool } from '@langchain/core/tools';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { z } from 'zod';
+import type { EnvService } from '@core/config/env/env.service';
 import type { ChannelRegistryService } from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
@@ -29,12 +30,15 @@ class FakeChannel {
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
   append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'> & {
+      channelId?: string;
+    },
   ): ChannelMsg {
     const full = {
       ...msg,
       channelId: msg.channelId ?? this.surfaceId,
       seq: this.nextSeq++,
+      createdAt: Date.now(),
     };
     this.log.push(full);
     return full;
@@ -140,6 +144,7 @@ describe('bot graph — mid-thought message injection', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);
@@ -240,6 +245,7 @@ describe('bot graph — mid-thought message injection', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);
