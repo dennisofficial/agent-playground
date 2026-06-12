@@ -125,6 +125,8 @@ export class SemanticMemory {
       .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', { floor: GRAY_FLOOR })
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .setParameter('qv', qv)
+      // entities[i] and raw[i] are aligned only because this is a single-table query —
+      // adding a JOIN would silently misalign sim scores.
       .getRawAndEntities();
 
     const candidates = cands.map((e, i) => ({
@@ -211,6 +213,8 @@ export class SemanticMemory {
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .limit(limit + 20)
       .setParameter('qv', qv)
+      // entities[i] and raw[i] are aligned only because this is a single-table query —
+      // adding a JOIN would silently misalign sim scores.
       .getRawAndEntities();
 
     const pairs = entities.map((e, i) => ({ entity: e, sim: Number(raw[i].sim) }));
@@ -243,6 +247,8 @@ export class SemanticMemory {
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .limit(limit + 20)
       .setParameter('qv', qv)
+      // entities[i] and raw[i] are aligned only because this is a single-table query —
+      // adding a JOIN would silently misalign sim scores.
       .getRawAndEntities();
 
     const pairs = entities.map((e, i) => ({ entity: e, sim: Number(raw[i].sim) }));
