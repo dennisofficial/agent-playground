@@ -26,7 +26,10 @@ export const PRICING: Record<string, ModelPricing> = {
     input: 3.0,
     output: 15.0,
     cacheRead: 0.3,
-    cacheWrite: 3.75,
+    // 1-hour TTL cache writes cost 2× base ($3.00 × 2 = $6.00/MTok). The chat path uses
+    // `ttl: '1h'` via the extended-cache-ttl-2025-04-11 beta (see bot-graph.factory.ts,
+    // langgraph.engine.ts). The 5-min rate would be $3.75 — do not use that here.
+    cacheWrite: 6.0,
   },
   'claude-haiku-4-5-20251001': {
     input: 1.0,

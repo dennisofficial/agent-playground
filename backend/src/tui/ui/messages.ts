@@ -92,8 +92,10 @@ const DEBUG_KINDS = new Set<RenderItem['kind']>([
 export const isDebug = (item: RenderItem): boolean =>
   DEBUG_KINDS.has(item.kind);
 
-/** Map a conductor domain event to a terminal render row. Presentation decisions live here. */
-export function renderEvent(e: ConductorEvent): RenderItem {
+/** Map a conductor domain event to a terminal render row. Presentation decisions live here.
+ * Returns `null` for events that have no TUI representation (e.g. `usage`, consumed by the
+ * SurfaceBridge for the Slack footer; the TUI already shows usage inline on the `assistant` row). */
+export function renderEvent(e: ConductorEvent): RenderItem | null {
   switch (e.kind) {
     case 'message':
       return e.fromHuman
@@ -151,9 +153,9 @@ export function renderEvent(e: ConductorEvent): RenderItem {
       return { id: e.id, kind: 'error', text: e.message };
     case 'usage':
       // Per-step usage events are consumed by the SurfaceBridge for the Slack footer; the TUI
-      // already renders per-message usage inline on the `assistant` row. Return a hidden worker
-      // node so the switch stays exhaustive without cluttering the transcript.
-      return { id: e.id, kind: 'worker', by: e.botId, text: '' };
+      // already renders per-message usage inline on the `assistant` row. Return null so the App
+      // skips adding any item to the store (avoids empty debug rows per billed step).
+      return null;
   }
 }
 

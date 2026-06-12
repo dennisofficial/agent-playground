@@ -106,7 +106,8 @@ export function App({ deps }: { deps: AppDeps }) {
           emoji: e.emoji,
         });
       } else {
-        dispatch({ t: 'add', item: renderEvent(e) });
+        const item = renderEvent(e);
+        if (item) dispatch({ t: 'add', item });
       }
     });
     const statusSub = deps.bus.status$.subscribe(setStatus);
