@@ -104,10 +104,10 @@ describe('ProjectsModule stores (live Postgres)', () => {
 
     // Encrypted at rest: the raw row never contains the plaintext.
     const ds = moduleRef.get(DataSource);
-    const raw = (await ds.query(
+    const raw = await ds.query(
       `SELECT token_ciphertext FROM github_tokens WHERE name = $1`,
       [`${P}-tok-a`],
-    )) as Array<{ token_ciphertext: string }>;
+    );
     expect(raw[0].token_ciphertext).not.toContain('ghp_plaintext_a');
     expect(raw[0].token_ciphertext.startsWith('v1:')).toBe(true);
 

@@ -1,5 +1,5 @@
 import {
-  type AIMessage,
+  AIMessage,
   type BaseMessage,
   HumanMessage,
   SystemMessage,
@@ -36,14 +36,16 @@ import {
 import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
 import { ToolRegistry } from '../tools/tool.registry';
 import { WorktreeService } from '../worktrees/worktree.service';
+import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 
 /**
  * A bot's TURN, as an explicit LangGraph state machine. One graph per bot, persisted on thread
  * `${bot.id}:${project}:root` (Postgres checkpointer). The conductor invokes it whenever the channel
  * has grown past the bot's cursor.
  *
- *   START → gate ─┬─ respond → fetch → llm ⇄ tools ─┐
- *                 └─ acknowledge / ignore → consume ─┴→ reconcile-memory ∥ reconcile-task → END
+ *   START → gate ─┬─ respond → guard ─┬─ fetch → llm ⇄ tools ─┐
+ *                 │                   └─ break ─────────────────┤
+ *                 └─ acknowledge / ignore → consume ─────────────┴→ reconcile-memory ∥ reconcile-task → END
  *
  * Memory is DETERMINISTIC, not agentic: `fetch` reads the relevant facts + open tasks IN before the
  * bot thinks, and the two parallel `reconcile` nodes write memory/tasks OUT after — on EVERY path.
@@ -80,6 +82,11 @@ export interface BotStateDelta {
   reasoning?: string;
   /** Debug only: token usage for this turn's gate call. Absent for hard rules. */
   gateUsage?: { input: number; output: number };
+  /** Set by the `guard` node when a no-progress loop is detected — routes to `break`. */
+  loopBreak?: boolean;
+  /** Debug only: the guard's one-line rationale. NOT named `reasoning` to avoid conflation with
+   * the gate event the conductor emits on `delta.reasoning`. Rides in the checkpoint only. */
+  guardReasoning?: string;
 }
 
 const BotState = Annotation.Root({
@@ -146,6 +153,18 @@ const BotState = Annotation.Root({
   turnStart: Annotation<number>({
     reducer: (_: number, b: number) => b ?? 0,
     default: () => 0,
+  }),
+  /** Set by the `guard` node when a no-progress loop is detected. Routes to `break` instead of
+   * `fetch`. Reset to false on every run (default) so a prior break doesn't poison the next turn. */
+  loopBreak: Annotation<boolean>({
+    reducer: (_: boolean, b: boolean) => b ?? false,
+    default: () => false,
+  }),
+  /** Debug only: the guard's one-line rationale for this turn. Absent when the guard skipped or
+   * when `loopBreak` is false. Rides in the checkpoint; never surfaced in the event stream. */
+  guardReasoning: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
+    default: () => undefined,
   }),
 });
 
@@ -245,6 +264,7 @@ export class BotGraphFactory {
     private readonly channelRegistry: ChannelRegistryService,
     private readonly toolRegistry: ToolRegistry,
     private readonly gateService: GateService,
+    private readonly recursionGuard: RecursionGuardService,
     private readonly fetchService: FetchService,
     private readonly reconcile: ReconcileService,
     private readonly models: ChatModelFactory,
@@ -467,6 +487,97 @@ export class BotGraphFactory {
 
     const toolsNode = new ToolNode(tools);
 
+    // ── Recursion guard constants ──────────────────────────────────────────────────────────────────
+    /** Minimum number of the bot's own AI messages in history before the guard is worth running. A
+     * shorter history can't show a meaningful repetition pattern — skip to avoid false positives. */
+    const GUARD_FLOOR = 6;
+    /** The first-person pause message emitted when a loop is confirmed. Used as both the break-node
+     * payload and the anti-spam sentinel (startsWith check so future rewording stays consistent). */
+    const PAUSE_TEXT =
+      "I think I'm going in circles here — pausing so I don't spin. Ping me when you want me to pick this back up.";
+    const PAUSE_SENTINEL = "I think I'm going in circles here";
+
+    /**
+     * GUARD NODE — decide whether the bot is stuck in a no-progress loop.
+     *
+     * Runs on the respond path between `gate` and `fetch`. Returns `{ loopBreak: true }` when a
+     * loop is detected; the conditional edge `afterGuard` routes to `break` instead of `fetch`.
+     * Returns `{}` (no change) on all fast-path skips, so the default `loopBreak: false` persists
+     * and the turn proceeds normally to `fetch → llm`.
+     *
+     * Fast-path skips (no Haiku call):
+     *   - forced turn (job relay — synthetic message, loop detection irrelevant)
+     *   - guard disabled via env
+     *   - triggering message is human-authored (loops are bot-origin phenomena)
+     *   - fewer than GUARD_FLOOR of the bot's own AI messages in history (not enough signal)
+     *   - last AI message is already the pause sentinel AND no human has spoken in the batch
+     *     (anti break-spam: don't re-fire until a human has weighed in)
+     */
+    const guardNode = async (
+      state: BotStateType,
+    ): Promise<Partial<BotStateType>> => {
+      if (state.forced) return {};
+      if (!this.recursionGuard.isEnabled()) return {};
+      // Only fire on bot-authored triggers — human messages don't form bot loops
+      const latest = state.pending[state.pending.length - 1];
+      if (!latest?.authorBotId) return {};
+      // Need enough history for a meaningful window
+      const ownMessages = state.messages.filter((m) => m.getType() === 'ai');
+      if (ownMessages.length < GUARD_FLOOR) return {};
+      // Anti break-spam: if we already fired the break and no human has spoken since, skip
+      const batchHasHuman = state.pending.some((m) => !m.authorBotId);
+      const lastAiText = flattenContent(
+        ownMessages[ownMessages.length - 1].content,
+      ).trim();
+      if (lastAiText.startsWith(PAUSE_SENTINEL) && !batchHasHuman) return {};
+      // Render the rolling window: the bot's own last N AI messages (text + tool-call note)
+      const N = this.recursionGuard.windowSize();
+      const windowText = ownMessages
+        .slice(-N)
+        .map((m) => {
+          const text = flattenContent(m.content).trim();
+          const calls = (m as AIMessage).tool_calls ?? [];
+          const toolNote = calls.length
+            ? ` [tools: ${calls.map((c) => c.name).join(', ')}]`
+            : '';
+          const line = `${bot.name}: ${text}${toolNote}`.trim();
+          return line !== `${bot.name}:` ? line : null;
+        })
+        .filter((s): s is string => s !== null)
+        .join('\n');
+      if (!windowText.trim()) return {};
+      const result = await this.recursionGuard.detect(bot, windowText);
+      return {
+        loopBreak: result.looping,
+        guardReasoning: result.reasoning,
+      };
+    };
+
+    /**
+     * BREAK NODE — end the turn cleanly when a loop is confirmed.
+     *
+     * Mirrors `consumeNode`: consumes the pending batch (records the triggering messages in
+     * history so the checkpoint stays honest), advances the cursor past them, appends a
+     * first-person pause AIMessage, and clears `recalled`. Routes to `reconcile → END`.
+     *
+     * The conductor's existing stream handler surfaces the pause AIMessage automatically
+     * (`if (msg.getType() === 'ai') commit(msg)`) — zero conductor changes required.
+     */
+    const breakNode = (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Partial<BotStateType> => {
+      const pending = state.pending;
+      const newCursor = pending.length
+        ? pending[pending.length - 1].seq + 1
+        : channel.lengthOf(this.channelIdOf(config));
+      return {
+        messages: [...pending.map(asInput), new AIMessage(PAUSE_TEXT)],
+        cursor: newCursor,
+        recalled: '',
+      };
+    };
+
     /** A compact note of a turn-ending action worth reconciling against (an opened or continued
      * session is a commitment being acted on), else undefined. Tool RESULTS stay hidden. */
     const toolActionNote = (m: AIMessage): string | undefined => {
@@ -558,8 +669,13 @@ export class BotGraphFactory {
       };
     };
 
-    const route = (state: BotStateType): 'fetch' | 'consume' =>
-      state.decision === 'respond' ? 'fetch' : 'consume';
+    // Respond path now flows through the guard node first; ack/ignore path stays on consume.
+    const route = (state: BotStateType): 'guard' | 'consume' =>
+      state.decision === 'respond' ? 'guard' : 'consume';
+
+    // After the guard decides: a confirmed loop routes to `break`, otherwise proceeds to `fetch`.
+    const afterGuard = (state: BotStateType): 'fetch' | 'break' =>
+      state.loopBreak ? 'break' : 'fetch';
 
     // When the llm loop is done, fan out to BOTH reconcile nodes (parallel, then join at END).
     const RECONCILE: ['reconcileMemory', 'reconcileTask'] = [
@@ -589,6 +705,8 @@ export class BotGraphFactory {
 
     return new StateGraph(BotState)
       .addNode('gate', gateNode)
+      .addNode('guard', guardNode)
+      .addNode('break', breakNode)
       .addNode('fetch', fetchNode)
       .addNode('llm', llmNode)
       .addNode('tools', toolsNode)
@@ -596,7 +714,8 @@ export class BotGraphFactory {
       .addNode('reconcileMemory', reconcileMemoryNode)
       .addNode('reconcileTask', reconcileTaskNode)
       .addEdge(START, 'gate')
-      .addConditionalEdges('gate', route, ['fetch', 'consume'])
+      .addConditionalEdges('gate', route, ['guard', 'consume'])
+      .addConditionalEdges('guard', afterGuard, ['fetch', 'break'])
       .addEdge('fetch', 'llm')
       .addConditionalEdges('llm', afterLlm, [
         'tools',
@@ -610,6 +729,8 @@ export class BotGraphFactory {
       ])
       .addEdge('consume', 'reconcileMemory')
       .addEdge('consume', 'reconcileTask')
+      .addEdge('break', 'reconcileMemory')
+      .addEdge('break', 'reconcileTask')
       .addEdge('reconcileMemory', END)
       .addEdge('reconcileTask', END)
       .compile({ checkpointer: this.checkpointer });

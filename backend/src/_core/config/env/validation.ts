@@ -68,6 +68,9 @@ export interface IEnvConfig {
   CHANNEL_HYDRATE_LIMIT?: number; // channel messages re-loaded into memory at boot (default 500)
   GATE_MODEL?: string; // soft-gate model (default in code: Haiku)
   EXTRACT_MODEL?: string; // reconcile extraction model (default in code: Haiku)
+  GUARD_MODEL?: string; // recursion-guard model (default in code: Haiku)
+  RECURSION_GUARD_ENABLED?: boolean; // false → disable the loop-detection guard (default: true)
+  RECURSION_GUARD_WINDOW?: number; // rolling-window size for the guard (default: 12)
   // Directory worker engines are jailed to. No code default on purpose: dispatching a job without
   // it fails loudly rather than letting a worker loose in an arbitrary cwd.
   WORKER_ROOT?: string;
@@ -167,6 +170,9 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   CHANNEL_HYDRATE_LIMIT: Joi.number().integer().min(1).optional(),
   GATE_MODEL: Joi.string().optional(),
   EXTRACT_MODEL: Joi.string().optional(),
+  GUARD_MODEL: Joi.string().optional(),
+  RECURSION_GUARD_ENABLED: Joi.boolean().optional(),
+  RECURSION_GUARD_WINDOW: Joi.number().integer().min(1).optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
