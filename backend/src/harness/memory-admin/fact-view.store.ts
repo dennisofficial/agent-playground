@@ -1,3 +1,4 @@
+import { type FactListResponse, type FactView } from '@workspace/shared';
 import { Fact } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
 import { parseScope, type Tier } from '../domain/identity';
@@ -24,25 +25,6 @@ export interface FactFilter {
   offset?: number;
   /** Sort by last-updated or created time, DESC. Default: 'updated'. */
   sort?: 'updated' | 'created';
-}
-
-export interface FactView {
-  id: number;
-  /** The fact text — `content` per the Memory Viewer API contract (spec field name). */
-  content: string;
-  tier: Tier;
-  /** Bot id parsed from scope; null for team/project-tier facts. */
-  botId: string | null;
-  /** Project id parsed from scope; null for non-project facts. */
-  projectId: string | null;
-  /** Human participant parsed from a pair scope; null for non-private facts. */
-  humanId: string | null;
-  confidence: number;
-  createdAt: string;
-  /** Included for client-side sort and last-updated display. */
-  updatedAt: string;
-  /** ISO timestamp when soft-deleted; null if the fact is active. */
-  deletedAt: string | null;
 }
 
 interface FactRawRow {
@@ -103,12 +85,7 @@ export class FactViewStore {
   async list(
     teamId: string,
     filter: FactFilter = {},
-  ): Promise<{
-    items: FactView[];
-    total: number;
-    limit: number;
-    offset: number;
-  }> {
+  ): Promise<FactListResponse> {
     const args: unknown[] = [teamId];
     const where: string[] = [];
 

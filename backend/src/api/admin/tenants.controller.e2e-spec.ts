@@ -3,14 +3,14 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TenantSummary } from '../../harness/tenants/tenant-view.store';
+import type { TenantView } from '@workspace/shared';
 import { TenantViewStore } from '../../harness/tenants/tenant-view.store';
 import { AdminTokenGuard } from './admin-token.guard';
 import { TenantsController } from './tenants.controller';
 
 const TOKEN = 'test-admin-token';
 
-const SAMPLE_TENANTS: TenantSummary[] = [
+const SAMPLE_TENANTS: TenantView[] = [
   { id: 'T001', name: 'Acme Corp', slug: 'T001' },
   { id: 'T002', name: 'Beta Inc', slug: 'T002' },
 ];
@@ -89,7 +89,7 @@ describe('TenantsController (e2e)', () => {
       .set('Authorization', `Bearer ${TOKEN}`)
       .expect(200);
 
-    const body = res.body as TenantSummary[];
+    const body = res.body as TenantView[];
     expect(Array.isArray(body)).toBe(true);
     expect(body).toHaveLength(2);
     expect(body[0]).toMatchObject({

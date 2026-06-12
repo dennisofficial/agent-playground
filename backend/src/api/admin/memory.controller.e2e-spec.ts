@@ -3,7 +3,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FactView } from '../../harness/memory-admin/fact-view.store';
+import type { FactView } from '@workspace/shared';
 import { FactViewStore } from '../../harness/memory-admin/fact-view.store';
 import { AdminTokenGuard } from './admin-token.guard';
 import { MemoryFactsController } from './memory.controller';

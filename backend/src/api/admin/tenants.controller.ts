@@ -1,4 +1,5 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
+import { type TenantView } from '@workspace/shared';
 import { TenantViewStore } from '../../harness/tenants/tenant-view.store';
 import { AdminTokenGuard } from './admin-token.guard';
 
@@ -13,7 +14,7 @@ export class TenantsController {
 
   /** All registered workspaces, sorted by display name. Returns `{ id, name, slug }[]`. */
   @Get()
-  list() {
+  list(): Promise<TenantView[]> {
     return this.store.list();
   }
 }

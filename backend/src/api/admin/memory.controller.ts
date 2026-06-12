@@ -6,6 +6,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { type FactListResponse, type FactView } from '@workspace/shared';
 import { FactViewStore } from '../../harness/memory-admin/fact-view.store';
 import { AdminTokenGuard } from './admin-token.guard';
 import { FactQueryDto } from './dto/fact-query.dto';
@@ -30,7 +31,10 @@ export class MemoryFactsController {
    * - show the per-tier live/forgotten count from `deletedAt` when `includeDeleted=true`
    */
   @Get()
-  list(@Param('teamId') teamId: string, @Query() query: FactQueryDto) {
+  list(
+    @Param('teamId') teamId: string,
+    @Query() query: FactQueryDto,
+  ): Promise<FactListResponse> {
     return this.store.list(teamId, query);
   }
 
@@ -39,7 +43,10 @@ export class MemoryFactsController {
    * Returns 404 when the id doesn't exist or doesn't belong to this tenant.
    */
   @Get(':id')
-  async get(@Param('teamId') teamId: string, @Param('id') id: string) {
+  async get(
+    @Param('teamId') teamId: string,
+    @Param('id') id: string,
+  ): Promise<FactView> {
     const rowId = Number(id);
     if (!Number.isInteger(rowId) || rowId <= 0) {
       throw new NotFoundException(`No fact with id "${id}".`);
