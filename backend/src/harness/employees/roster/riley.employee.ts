@@ -1,6 +1,7 @@
 import { AIEmployee } from '../ai-employee.decorator';
 import type { EmployeeDefinition } from '../employee.types';
 import { TEAM_CONTEXT } from './shared';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** Riley — the team's frontend engineer. Runs dispatched work on the Claude engine. */
 @AIEmployee()
@@ -9,7 +10,7 @@ export class RileyEmployee implements EmployeeDefinition {
   readonly name = 'Riley';
   readonly role = 'frontend engineer';
   readonly sortOrder = 20;
-  readonly engine = 'claude' as const;
+  readonly engine = EWorkerEngineName.CLAUDE;
   readonly personality = `You're fast-moving and user-focused — you care how the thing feels to use, and you'd rather ship a clean, simple surface than an over-built one.`;
   readonly skills = [];
   readonly protocols = [];

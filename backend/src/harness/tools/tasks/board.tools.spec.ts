@@ -160,6 +160,46 @@ describe('board tools authority', () => {
     ).resolves.toContain('claim_board_task');
   });
 
+  it("the approval seam: 'approved' is lead-only, and only from 'awaiting_approval'", async () => {
+    const { board, employees } = makeFakes();
+    const tool = new UpdateBoardTaskTool(board as never, employees as never);
+
+    // A teammate posts their OWN plan for approval…
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'in_progress' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('alex')),
+    ).resolves.toContain('posted for approval');
+    // …but cannot approve it, even their own.
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'awaiting_approval' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'approved' }, identity('alex')),
+    ).resolves.toContain("the team lead's call");
+
+    // The lead approves a posted plan…
+    await expect(
+      tool.execute({ id: 7, status: 'approved' }, identity('sam')),
+    ).resolves.toContain('APPROVED');
+    // …but not a plan that was never posted.
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'in_progress' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'approved' }, identity('sam')),
+    ).resolves.toContain("not 'awaiting_approval'");
+
+    // Posting someone ELSE's task for approval is refused (own-task rule).
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'in_progress' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('riley')),
+    ).resolves.toContain("alex's — only they or the team lead");
+  });
+
   it('the lead reassigns, reopens, and edits anything', async () => {
     const { board, employees } = makeFakes();
     const tool = new UpdateBoardTaskTool(board as never, employees as never);

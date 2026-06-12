@@ -35,6 +35,9 @@ export class InMemorySessionRegistry implements SessionRegistry {
       engine: input.engine,
       mode: input.mode,
       turns: 0,
+      ...(input.boardTaskId !== undefined
+        ? { boardTaskId: input.boardTaskId }
+        : {}),
     };
     this.sessions.set(id, session);
     this.transcripts.set(id, []);

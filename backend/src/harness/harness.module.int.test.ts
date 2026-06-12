@@ -16,6 +16,7 @@ import { SessionRunnerService } from './sessions/session-runner.service';
 import { ToolRegistry } from './tools/tool.registry';
 import { DEFAULT_CHAT_TOOLSET } from './tools/default-toolset';
 import { WorktreeService } from './worktrees/worktree.service';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * Proves the whole composition root assembles: every domain module's DI graph resolves against live
@@ -75,9 +76,9 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
     );
 
     const engines = moduleRef.get(EngineRegistry);
-    expect(engines.get('claude').name).toBe('claude');
-    expect(engines.get('codex').name).toBe('codex');
-    expect(engines.get('langgraph').name).toBe('langgraph');
+    expect(engines.get(EWorkerEngineName.CLAUDE).name).toBe('claude');
+    expect(engines.get(EWorkerEngineName.CODEX).name).toBe('codex');
+    expect(engines.get(EWorkerEngineName.LANGGRAPH).name).toBe('langgraph');
 
     expect(moduleRef.get(GateService)).toBeDefined();
     expect(moduleRef.get(ChannelService)).toBeDefined();

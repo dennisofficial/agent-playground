@@ -19,6 +19,7 @@ import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * Pins the recursion guard's four critical behaviours:
@@ -80,7 +81,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'ctx',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
 };
 
 const flat = (c: BaseMessage['content']): string =>

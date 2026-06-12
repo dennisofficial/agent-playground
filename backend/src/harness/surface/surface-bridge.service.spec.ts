@@ -20,6 +20,7 @@ function makeSurface() {
       return Promise.resolve();
     }),
     react: vi.fn((): Promise<void> => Promise.resolve()),
+    unreact: vi.fn((): Promise<void> => Promise.resolve()),
   };
   return { surface, posts };
 }

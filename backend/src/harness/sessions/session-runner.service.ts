@@ -1,13 +1,20 @@
+import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
-import type { WorkerEvent, WorkerMode } from '../engines/worker-engine.port';
+import {
+  EWorkerEngineName,
+  WorkerEvent,
+  WorkerMode,
+} from '../engines/worker-engine.port';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { PersonaService } from '../employees/persona.service';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
+import { BoardStore } from '../memory/board-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { WorktreeService } from '../worktrees/worktree.service';
+import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
   type SessionRegistry,
@@ -55,6 +62,8 @@ export class SessionRunnerService {
     private readonly worktrees: WorktreeService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly board: BoardStore,
+    private readonly env: EnvService,
   ) {}
 
   /**
@@ -94,33 +103,38 @@ export class SessionRunnerService {
       // stashed in the credential context for the in-process langgraph engine's model builder.
       const keys = await this.creds.resolve(session.team);
       const engineKey =
-        session.engine === 'codex' ? keys.openai : keys.anthropic;
+        session.engine === EWorkerEngineName.CODEX
+          ? keys.openai
+          : keys.anthropic;
       // Jail the in-process langgraph tools to the worktree for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
-      const { result, sessionId: engineSessionId } = await withActiveRoot(
-        worktree.path,
-        () =>
-          this.credCtx.run({ teamId: session.team, keys }, () =>
-            this.engines.get(session.engine).run({
-              task: message,
-              cwd: worktree.path,
-              systemPrompt: this.persona.workerPromptFor(bot),
-              sessionId: session.engineSessionId,
-              model,
-              effort,
-              mode: session.mode,
-              apiKey: engineKey,
-              onEvent: (e) =>
-                void this.sessions
-                  .appendProgress(sessionId, e)
-                  .catch((err) =>
-                    this.logger.warn(
-                      `appendProgress(${sessionId}) failed: ${err}`,
-                    ),
+      const {
+        result,
+        sessionId: engineSessionId,
+        questions,
+        planText,
+      } = await withActiveRoot(worktree.path, () =>
+        this.credCtx.run({ teamId: session.team, keys }, () =>
+          this.engines.get(session.engine).run({
+            task: message,
+            cwd: worktree.path,
+            systemPrompt: this.persona.workerPromptFor(bot),
+            sessionId: session.engineSessionId,
+            model,
+            effort,
+            mode: session.mode,
+            apiKey: engineKey,
+            onEvent: (e) =>
+              void this.sessions
+                .appendProgress(sessionId, e)
+                .catch((err) =>
+                  this.logger.warn(
+                    `appendProgress(${sessionId}) failed: ${err}`,
                   ),
-              signal: ac.signal,
-            }),
-          ),
+                ),
+            signal: ac.signal,
+          }),
+        ),
       );
       // Closed while we were finishing up: discard the result, don't go idle or relay. The abort
       // flag alone isn't enough — closeSession writes 'closed' BEFORE calling abort(), so an engine
@@ -131,10 +145,27 @@ export class SessionRunnerService {
       const live = await this.sessions.get(sessionId);
       if (!live || live.status !== 'running') return;
 
+      // A turn that ASKED is a questions-report — even if a (partial) plan was captured too: a
+      // plan with unanswered questions isn't approvable. A finished plan carries its planning Q&A
+      // appendix so every decision made along the way is visible at approval. `lastReportKind` is
+      // written on EVERY turn-end (undefined clears it) so a stale kind never survives.
+      const kind = questions?.length
+        ? ('questions' as const)
+        : planText
+          ? ('plan' as const)
+          : undefined;
+      const qa = live.qa ?? [];
+      const lastReport =
+        kind === 'questions'
+          ? renderQuestionsReport(questions!, planText)
+          : kind === 'plan' && qa.length
+            ? `${planText}\n\n${renderQaAppendix(qa)}`
+            : result || '(no report)';
       await this.sessions.update(sessionId, {
         status: 'idle',
         engineSessionId,
-        lastReport: result || '(no report)',
+        lastReport,
+        lastReportKind: kind,
         turns: session.turns + 1,
       });
     } catch (err) {
@@ -186,12 +217,52 @@ export class SessionRunnerService {
         reason: `${sessionId} is closed — open a new session for new work.`,
       };
     }
+    // The approval gate, BEFORE any mutation — a refused flip must not record Q&A or change status.
+    if (mode === 'execute') {
+      const refusal = await this.executeRefusal(
+        session.team,
+        session.boardTaskId,
+      );
+      if (refusal) return { ok: false, reason: refusal };
+    }
+    // An answer to a questions-report goes on the Q&A ledger — the only way to continue an asking
+    // session is through here, so every answer (Dennis-sourced or self-answered) gets recorded.
+    const qaPatch =
+      session.lastReportKind === 'questions' && session.lastReport
+        ? { qa: [...(session.qa ?? []), { q: session.lastReport, a: message }] }
+        : {};
     await this.sessions.update(sessionId, {
       status: 'running',
       ...(mode ? { mode } : {}),
+      ...qaPatch,
     });
     void this.runSessionTurn(sessionId, message);
     return { ok: true };
+  }
+
+  /**
+   * Why an execute turn on this work is not allowed yet — or null when it is. The
+   * EXECUTION_APPROVAL_MODE dial: 'all' = every execute turn needs a linked board task in
+   * 'approved' (or 'done'); 'linked' = only board-linked sessions are gated; 'off' = no mechanical
+   * gate. Unknown dial values fail closed to 'all'. Also used by create_session for execute-mode
+   * opens, so a fresh session can't bypass the gate.
+   */
+  async executeRefusal(
+    team: string,
+    boardTaskId: number | undefined,
+  ): Promise<string | null> {
+    const dial = this.env.get('EXECUTION_APPROVAL_MODE');
+    if (dial === 'off') return null;
+    if (boardTaskId === undefined) {
+      return dial === 'linked'
+        ? null
+        : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, post the plan as 'awaiting_approval', and wait for Dennis's approval at a planning sitting.`;
+    }
+    const task = await this.board.get(team, boardTaskId);
+    if (!task)
+      return `linked board task #${boardTaskId} no longer exists — fix the link before executing.`;
+    if (task.status === 'approved' || task.status === 'done') return null;
+    return `board task #${boardTaskId} is '${task.status}' — work executes only AFTER Dennis approves it. Post the finished plan (update_board_task #${boardTaskId} → 'awaiting_approval') and wait for the team lead to record Dennis's approval at a planning sitting.`;
   }
 
   /**

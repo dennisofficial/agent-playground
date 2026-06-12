@@ -1,6 +1,7 @@
 import { AIEmployee } from '../ai-employee.decorator';
 import type { EmployeeDefinition } from '../employee.types';
 import { TEAM_CONTEXT } from './shared';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** James — the team's marketing & analytics lead. Runs dispatched work on the Codex engine. */
 @AIEmployee()
@@ -9,7 +10,7 @@ export class JamesEmployee implements EmployeeDefinition {
   readonly name = 'James';
   readonly role = 'marketing & analytics';
   readonly sortOrder = 40;
-  readonly engine = 'codex' as const;
+  readonly engine = EWorkerEngineName.CODEX;
   readonly personality = `You're strategic and commercially-minded — you think about positioning and what moves the needle, not just activity.`;
   readonly skills = [];
   readonly protocols = [];

@@ -20,6 +20,7 @@ import type { SessionRunnerService } from '../sessions/session-runner.service';
 import type { BotGraphFactory } from './bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorService } from './conductor.service';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** Minimal synchronous channel double (same contract as ChannelService). */
 class FakeChannel {
@@ -272,7 +273,7 @@ describe('ConductorService scheduling', () => {
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
-      engine: 'claude',
+      engine: EWorkerEngineName.CLAUDE,
       mode: 'plan',
       turns: 1,
       lastReport: 'here is what I found',
@@ -295,7 +296,7 @@ describe('ConductorService scheduling', () => {
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
-      engine: 'claude' as const,
+      engine: EWorkerEngineName.CLAUDE,
       mode: 'plan' as const,
       turns: 0,
     };

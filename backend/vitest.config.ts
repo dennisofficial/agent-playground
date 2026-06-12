@@ -11,8 +11,11 @@ const alias = {
   '@harness': resolve(__dirname, 'src/harness'),
 };
 
-// Loads the encrypted test env (.env.test.enc) + local secret overlay before tests.
+// Loads the local secret overlay + the encrypted test env (authoritative) before tests,
+// and hard-refuses any POSTGRES_DB that isn't a dedicated *_test database.
 const setupFiles = ['vitest.setup.ts'];
+// Provisions + migrates the test database once per run (modes that touch Postgres).
+const globalSetup = ['vitest.global-setup.ts'];
 
 const base = {
   resolve: { alias },
@@ -55,6 +58,7 @@ export default defineConfig((env) => {
         environment: 'node',
         setupFiles,
         include: ['**/*.e2e-spec.ts'],
+        globalSetup,
         testTimeout: 30_000,
         pool: 'threads',
         poolOptions: { threads: { singleThread: true } },
@@ -77,15 +81,41 @@ export default defineConfig((env) => {
   }
 
   // Default — unit + integration + e2e, but NOT real-LLM ai tests. Run with: pnpm test
+  // Two projects: unit specs run fully parallel; the DB-touching int/e2e files run
+  // single-threaded — they share the one *_test database and TRUNCATE the same tables,
+  // so concurrently-running files corrupt each other's fixtures.
   return {
     ...base,
     test: {
-      globals: true,
-      environment: 'node',
-      setupFiles,
-      include: ['src/**/*.spec.ts', '**/*.int.test.ts', '**/*.e2e-spec.ts'],
-      exclude: ['**/*.ai.test.ts', ...configDefaults.exclude],
-      testTimeout: 30_000,
+      globalSetup,
+      projects: [
+        {
+          ...base,
+          test: {
+            name: 'unit',
+            globals: true,
+            environment: 'node',
+            setupFiles,
+            include: ['src/**/*.spec.ts'],
+            exclude: ['**/*.int.test.ts', '**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
+            testTimeout: 30_000,
+          },
+        },
+        {
+          ...base,
+          test: {
+            name: 'integration',
+            globals: true,
+            environment: 'node',
+            setupFiles,
+            include: ['**/*.int.test.ts', '**/*.e2e-spec.ts'],
+            exclude: ['**/*.ai.test.ts', ...configDefaults.exclude],
+            pool: 'threads',
+            poolOptions: { threads: { singleThread: true } },
+            testTimeout: 30_000,
+          },
+        },
+      ],
     },
   };
 });

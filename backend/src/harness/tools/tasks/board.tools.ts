@@ -147,10 +147,10 @@ export class ClaimBoardTaskTool implements IHarnessTool<typeof claimSchema> {
 const updateSchema = z.object({
   id: z.number().describe('The board task id (the #N from list_board).'),
   status: z
-    .enum(['open', 'in_progress', 'done'])
+    .enum(['open', 'in_progress', 'awaiting_approval', 'approved', 'done'])
     .optional()
     .describe(
-      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee).",
+      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee); 'awaiting_approval' posts your finished plan for Dennis's sign-off; 'approved' is TEAM LEAD ONLY, recorded only on Dennis's explicit approval.",
     ),
   assignee: z
     .string()
@@ -167,7 +167,7 @@ const updateSchema = z.object({
 export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
   readonly name = 'update_board_task';
   readonly description =
-    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), or — team lead only — reassign/reopen/edit anything. Teammates can only complete or release their OWN tasks.";
+    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), post your finished plan for sign-off ('awaiting_approval'), or — team lead only — reassign/reopen/edit anything and record Dennis's approval ('approved'). Teammates can only complete, release, or post-for-approval their OWN tasks.";
   readonly schema = updateSchema;
 
   constructor(
@@ -191,13 +191,21 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     const isLead = !!this.employees.byId(id.selfAgent)?.teamLead;
     const release = status === 'open';
 
+    // The approval seam: 'approved' is the record of DENNIS's decision, clerked by the lead.
+    if (status === 'approved') {
+      if (!isLead)
+        return `Marking a plan 'approved' is the team lead's call — and the lead records it only on Dennis's explicit approval. Post yours as 'awaiting_approval' and flag it for the next planning sitting.`;
+      if (task.status !== 'awaiting_approval')
+        return `Board task #${taskId} is '${task.status}', not 'awaiting_approval' — only a posted plan can be approved. Have the assignee post the plan first.`;
+    }
+
     if (!isLead) {
       if (
         assignee !== undefined ||
         title !== undefined ||
         description !== undefined
       )
-        return `Reassigning or editing board tasks is the team lead's call — you can complete ('done') or release ('open') your own.`;
+        return `Reassigning or editing board tasks is the team lead's call — you can complete ('done'), release ('open'), or post for approval ('awaiting_approval') your own.`;
       if (task.assignee !== id.selfAgent)
         return `Board task #${taskId} is ${task.assignee ? `${task.assignee}'s` : 'unassigned'} — only they or the team lead can change it.`;
       if (!status) return `Nothing to change on #${taskId}.`;
@@ -222,6 +230,10 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     if (!updated) return `No board task #${taskId} found.`;
     if (status === 'done')
       return `Board task #${taskId} done: ${updated.title}`;
+    if (status === 'awaiting_approval')
+      return `Board task #${taskId} posted for approval: ${updated.title} — it queues for Dennis's next planning sitting.`;
+    if (status === 'approved')
+      return `Board task #${taskId} APPROVED: ${updated.title} — ${updated.assignee ?? 'the assignee'} can flip its session to execute.`;
     if (release && !newAssignee)
       return `Board task #${taskId} released back to the board (unassigned, open).`;
     return `Updated board task #${taskId} (${fmtAssignee(updated)}, ${updated.status}).`;
@@ -240,10 +252,10 @@ const listSchema = z.object({
     .optional()
     .describe("Filter to one teammate's tasks (a roster id like 'alex')."),
   status: z
-    .enum(['open', 'in_progress', 'done'])
+    .enum(['open', 'in_progress', 'awaiting_approval', 'approved', 'done'])
     .optional()
     .describe(
-      'Filter by status; omit for open + in-progress (the live board).',
+      "Filter by status; omit for everything not done (the live board). 'awaiting_approval' lists the plans queued for Dennis's sign-off.",
     ),
 });
 

@@ -15,6 +15,7 @@ import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * Pins the consume-path `recalled` reset. The ack/ignore path skips `fetch`, so before the fix the
@@ -27,9 +28,7 @@ class FakeChannel {
   readonly surfaceId = 'tui:test';
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
-  append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'>,
-  ): ChannelMsg {
+  append(msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'>): ChannelMsg {
     const full = {
       ...msg,
       channelId: this.surfaceId,
@@ -56,7 +55,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'ctx',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
 };
 
 describe('bot graph — consume path resets recalled', () => {

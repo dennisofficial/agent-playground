@@ -1,8 +1,5 @@
 import type { Type } from '@nestjs/common';
-import type {
-  EffortLevel,
-  WorkerEngineName,
-} from '../engines/worker-engine.port';
+import { EffortLevel, EWorkerEngineName } from '../engines/worker-engine.port';
 import type { McpServerConfig, SkillSource } from '../skills/skill.types';
 import type { IHarnessTool } from '../tools/tool.types';
 
@@ -43,7 +40,7 @@ export interface EmployeeDefinition {
    * The engine this employee's dispatched background work runs on. An employee is LOCKED to its
    * engine — no per-dispatch override; switch engines by changing this field.
    */
-  readonly engine: WorkerEngineName;
+  readonly engine: EWorkerEngineName;
   /**
    * Per-phase model tiering (optional overrides; per-engine defaults in
    * `EmployeeRegistry.resolveWorkerModel` apply when unset). PLAN runs on a high-reasoning model,

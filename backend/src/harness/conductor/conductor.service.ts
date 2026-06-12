@@ -34,6 +34,7 @@ import {
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import { type BotStateDelta, BotGraphFactory } from './bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
+import { sessionRelayPrompt } from './session-relay-prompt';
 
 /**
  * The dispatcher: a thin event loop around the shared channel. The human appends to the channel and
@@ -628,20 +629,20 @@ export class ConductorService
 
   /** Relay a session's turn-end through its owner bot (gate-bypassed seed); its reply enters the
    * room the session was opened from — `session.notifyThread` carries that channel coordinate (it's
-   * set from `identity.surface` at creation). An unknown coordinate falls back to the default room. */
+   * set from `identity.surface` at creation). An unknown coordinate falls back to the default room.
+   * The seed text branches on what the turn produced (questions / plan / prose / failure) — see
+   * sessionRelayPrompt. */
   private async runSessionRelay(session: Session): Promise<void> {
     if (session.status !== 'idle' && session.status !== 'failed') return;
     const bot =
       this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-
-    const prompt =
-      session.status === 'failed'
-        ? `[Session ${session.id} — "${session.task}"] this turn FAILED: ${session.error ?? '(unknown)'}. The session is still open. Let the team know briefly, first person; reply_session("${session.id}", <message>) to retry or redirect it, or close_session("${session.id}") to drop it.`
-        : `[Session ${session.id} — "${session.task}"] reported back:\n${session.lastReport ?? '(no report)'}\n\nThis is your own background session — it's still open with full context. Decide what's next:\n- reply_session("${session.id}", <message>) to continue it — answer its question, ask a follow-up, or approve its plan into execution (mode: "execute").\n- Relay the outcome to the team in the first person when it's worth sharing.\n- close_session("${session.id}") when this thread of work is finished.\nRoute its questions: WHAT to build or WHY is Dennis's call — bring it to him with your recommendation. Technical HOW: answer it yourself if you already know (taught before, in memory, or the teammate whose area it is); otherwise bring Dennis the options + your recommendation, and remember() his ruling.`;
     const channelId = this.registry.get(session.notifyThread)
       ? session.notifyThread
       : this.channel.surfaceId;
-    await this.runBotGraph(bot, { seed: prompt, channelId });
+    await this.runBotGraph(bot, {
+      seed: sessionRelayPrompt(session),
+      channelId,
+    });
   }
 
   /** Emit a reaction from a bot ON a target message, so the surface folds it into that message. */

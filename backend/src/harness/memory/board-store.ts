@@ -8,8 +8,18 @@ import { rawRows, toIso } from './sql';
  * claim unassigned items. Claiming is ATOMIC at the DB (one conditional UPDATE — the DB plays the
  * role of a claim lock), and `blocked` is DERIVED from `depends_on` inside that same statement, so
  * completing a task never fans out writes to its dependents.
+ *
+ * Lifecycle (the approval layer rides on status): open → claim → in_progress (planning) →
+ * awaiting_approval (plan + its Q&A posted for Dennis) → approved (TEAM LEAD only, recorded on
+ * Dennis's explicit word at a planning sitting) → execution → done. claim() takes only 'open'
+ * tasks, and only 'done' satisfies a dependency — both unchanged by the approval states.
  */
-export type BoardStatus = 'open' | 'in_progress' | 'done';
+export type BoardStatus =
+  | 'open'
+  | 'in_progress'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'done';
 
 export interface BoardTask {
   id: number;

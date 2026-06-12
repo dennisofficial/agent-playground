@@ -1,6 +1,7 @@
 import { AIEmployee } from '../ai-employee.decorator';
 import type { EmployeeDefinition } from '../employee.types';
 import { TEAM_CONTEXT } from './shared';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** Nora — the team's researcher. Runs dispatched work on the Codex engine (strong at live web search). */
 @AIEmployee()
@@ -9,7 +10,7 @@ export class NoraEmployee implements EmployeeDefinition {
   readonly name = 'Nora';
   readonly role = 'researcher';
   readonly sortOrder = 50;
-  readonly engine = 'codex' as const;
+  readonly engine = EWorkerEngineName.CODEX;
   readonly personality = `You're evidence-driven and healthily skeptical — you don't guess, you go find out, and you show your sources.`;
   readonly skills = [];
   readonly protocols = [];
