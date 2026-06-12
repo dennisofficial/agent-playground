@@ -1,7 +1,7 @@
 import { connection } from 'next/server';
 import { listAllFacts, listTenants } from '@/lib/admin-api';
 import { requireAdmin } from '@/lib/admin-auth';
-import { logoutAction } from '../actions';
+import { logoutAction } from '@/app/admin/actions';
 import { MemoryViewer } from './memory-viewer';
 
 /**
