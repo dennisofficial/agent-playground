@@ -311,6 +311,8 @@ export class SemanticMemory {
       .where('id = :rowId', { rowId })
       .setParameter('qv', qv)
       .execute();
+    // Two round trips (update then re-fetch) rather than a single UPDATE…RETURNING; not atomic,
+    // but acceptable for this use case.
     const updated = await this.facts.findOne({ where: { id: rowId } });
     return updated ? factToStored(updated) : null;
   }
