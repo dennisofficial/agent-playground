@@ -9,6 +9,8 @@ import {
 import type { Subscription } from 'rxjs';
 import { ConductorEventsBus } from '../conductor/conductor-events.bus';
 import { ConductorService } from '../conductor/conductor.service';
+import type { AccumulatedUsage } from '../domain/conductor-events';
+import { calculateCost, CHAT_MODEL, GATE_MODEL } from '../llm/usage-format';
 import { CHAT_SURFACE, type ChatSurface } from './chat-surface.port';
 
 /**
@@ -19,6 +21,12 @@ import { CHAT_SURFACE, type ChatSurface } from './chat-surface.port';
  * The surface binding is OPTIONAL: a hosting app provides `{ provide: CHAT_SURFACE, useClass: … }`
  * (the TUI binds TuiChatSurface; the api will bind a Slack adapter). Without one — tests, headless
  * boots — the bridge is inert and the conductor still runs (its events bus is still observable).
+ *
+ * **Usage accumulation** (Option B — per-Slack-message aggregate):
+ * Gate costs (Haiku) and per-LLM-step chat costs (Sonnet) are accumulated in `usageByBot`, keyed
+ * by bot id. When a `message` event fires for a bot, the accumulated total rides along as `usage`
+ * on the `OutboundChatMessage` and the accumulator is reset. Gate costs from ignore/acknowledge
+ * turns are NOT discarded — they roll forward into the next real post from that bot.
  */
 @Injectable()
 export class SurfaceBridge
@@ -26,6 +34,9 @@ export class SurfaceBridge
 {
   private readonly logger = new Logger(SurfaceBridge.name);
   private subs: Subscription[] = [];
+
+  /** Per-bot aggregate usage, accumulating from the last post (or boot) until the next post. */
+  private usageByBot = new Map<string, AccumulatedUsage>();
 
   constructor(
     private readonly conductor: ConductorService,
@@ -53,13 +64,25 @@ export class SurfaceBridge
     );
     this.subs.push(
       this.bus.events$.subscribe((e) => {
-        if (e.kind === 'message' && !e.fromHuman) {
+        if (e.kind === 'gate' && e.usage) {
+          // Accumulate gate cost (Haiku model) for this bot, even on ignore/acknowledge — these
+          // costs roll into the next real post from that bot.
+          this.accumulateGate(e.botId, e.usage);
+        } else if (e.kind === 'usage' && e.role === 'chat') {
+          // Per-LLM-step chat usage (Sonnet model): tool-call-only steps produce no message event
+          // but are billed — accumulate them so the footer captures the full turn cost.
+          this.accumulateChat(e.botId, e.usage);
+        } else if (e.kind === 'message' && !e.fromHuman) {
+          // Read the accumulated total for this bot, attach it, reset, then post.
+          const usage = this.usageByBot.get(e.authorId);
+          this.usageByBot.delete(e.authorId);
           void this.surface!.post({
             id: e.id,
             authorBotId: e.authorId,
             authorName: e.authorName,
             text: e.text,
             surfaceId: e.channelId,
+            usage,
           }).catch((err) => this.logger.error(`surface.post failed: ${err}`));
         } else if (e.kind === 'reaction') {
           void this.surface!.react(
@@ -76,4 +99,51 @@ export class SurfaceBridge
   onApplicationShutdown(): void {
     for (const s of this.subs) s.unsubscribe();
   }
+
+  private accumulateGate(
+    botId: string,
+    gateUsage: { input: number; output: number },
+  ): void {
+    const cost = calculateCost(GATE_MODEL, {
+      input: gateUsage.input,
+      output: gateUsage.output,
+    });
+    const cur = this.usageByBot.get(botId) ?? zeroAccum();
+    this.usageByBot.set(botId, {
+      input: cur.input + gateUsage.input,
+      output: cur.output + gateUsage.output,
+      cacheRead: cur.cacheRead,
+      cacheWrite: cur.cacheWrite,
+      costUsd: cur.costUsd + cost,
+    });
+  }
+
+  private accumulateChat(
+    botId: string,
+    usage: {
+      input: number;
+      output: number;
+      cacheRead?: number;
+      cacheWrite?: number;
+    },
+  ): void {
+    const cost = calculateCost(CHAT_MODEL, {
+      input: usage.input,
+      output: usage.output,
+      cacheRead: usage.cacheRead,
+      cacheWrite: usage.cacheWrite,
+    });
+    const cur = this.usageByBot.get(botId) ?? zeroAccum();
+    this.usageByBot.set(botId, {
+      input: cur.input + usage.input,
+      output: cur.output + usage.output,
+      cacheRead: cur.cacheRead + (usage.cacheRead ?? 0),
+      cacheWrite: cur.cacheWrite + (usage.cacheWrite ?? 0),
+      costUsd: cur.costUsd + cost,
+    });
+  }
+}
+
+function zeroAccum(): AccumulatedUsage {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
 }

@@ -1,5 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
+import type { AccumulatedUsage } from '@harness/domain/conductor-events';
+import { formatUsageLine } from '@harness/llm/usage-format';
 import type {
   ChatSurface,
   InboundChatMessage,
@@ -156,7 +158,11 @@ export class SlackChatSurface implements ChatSurface {
    * username/icon overrides — the app identity IS the employee); everyone else (Jarvis, employees
    * without tokens) rides the main app + `username` override, exactly the pre-puppet behavior.
    * Non-Slack rooms (e.g. bot-minted `tui:dm:*`) are skipped — the message is already durable in
-   * the channel log; Slack DMs are a v2 item. */
+   * the channel log; Slack DMs are a v2 item.
+   *
+   * When `msg.usage` is present, the message is posted as Block Kit with a context footer showing
+   * the aggregate token usage and cost. Two-pass Block Kit: first tries the `markdown` block type;
+   * if Slack returns `invalid_blocks`, falls back to a `section` + `mrkdwn` block. */
   async post(msg: OutboundChatMessage): Promise<void> {
     const parsed = parseSlackSurface(msg.surfaceId);
     if (!parsed) {
@@ -176,26 +182,64 @@ export class SlackChatSurface implements ChatSurface {
       );
       return;
     }
+
+    const earsExtras: Record<string, unknown> = {
+      username: msg.authorName,
+      ...(this.avatarBase
+        ? { icon_url: `${this.avatarBase}/${msg.authorBotId}.png` }
+        : {}),
+    };
+
     let lastErr: unknown;
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
-        let res = puppet
-          ? await this.tryWithJoin(
-              puppet,
-              channel,
-              msg.authorBotId,
-              POST_MEMBERSHIP_ERRORS,
-              () => puppet.chat.postMessage({ channel, text }),
-            )
-          : undefined;
-        res ??= await ears?.chat.postMessage({
-          channel,
-          text,
-          username: msg.authorName,
-          ...(this.avatarBase
-            ? { icon_url: `${this.avatarBase}/${msg.authorBotId}.png` }
-            : {}),
-        });
+        let res: { ts?: string; ok?: boolean } | undefined;
+
+        if (puppet) {
+          res = await this.tryWithJoin(
+            puppet,
+            channel,
+            msg.authorBotId,
+            POST_MEMBERSHIP_ERRORS,
+            msg.usage
+              ? () =>
+                  this.postWithBlocksFallback(
+                    // Cast at the Slack boundary: the helper uses Record<string, unknown> internally;
+                    // the cast here is the single point where we cross into the SDK's union type.
+                    (args) =>
+                      puppet.chat.postMessage(
+                        args as unknown as Parameters<
+                          typeof puppet.chat.postMessage
+                        >[0],
+                      ),
+                    { channel, text },
+                    msg.text,
+                    msg.usage!,
+                  )
+              : () => puppet.chat.postMessage({ channel, text }),
+          );
+        }
+
+        if (!res && ears) {
+          res = msg.usage
+            ? await this.postWithBlocksFallback(
+                (args) =>
+                  ears.chat.postMessage(
+                    args as unknown as Parameters<
+                      typeof ears.chat.postMessage
+                    >[0],
+                  ),
+                { channel, text, ...earsExtras },
+                msg.text,
+                msg.usage,
+              )
+            : await ears.chat.postMessage({
+                channel,
+                text,
+                ...earsExtras,
+              });
+        }
+
         if (res?.ts) this.recordPostedId(msg.id, { channel, ts: res.ts });
         return;
       } catch (err) {
@@ -204,6 +248,47 @@ export class SlackChatSurface implements ChatSurface {
       }
     }
     throw lastErr;
+  }
+
+  /**
+   * Post with a Block Kit footer showing token usage. First tries the non-standard `markdown` block
+   * type (more Markdown-faithful); if Slack rejects it with `invalid_blocks`, falls back to a
+   * standard `section` + `mrkdwn` block. The `text` field is always populated as the notification
+   * fallback (push notifications, accessibility). `baseArgs` carries channel + username/icon as a
+   * plain record so the caller can freely spread extra fields without fighting SDK union types.
+   */
+  private async postWithBlocksFallback(
+    postFn: (
+      args: Record<string, unknown>,
+    ) => Promise<{ ts?: string; ok?: boolean }>,
+    baseArgs: Record<string, unknown>,
+    rawText: string,
+    usage: AccumulatedUsage,
+  ): Promise<{ ts?: string; ok?: boolean }> {
+    const footer = formatUsageLine(usage);
+    const translatedText = baseArgs.text as string; // already run through translateOutbound
+
+    try {
+      return await postFn({
+        ...baseArgs,
+        blocks: [
+          { type: 'markdown', text: rawText },
+          { type: 'divider' },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: footer }] },
+        ],
+      });
+    } catch (err) {
+      if (!isSlackError(err, ['invalid_blocks'])) throw err;
+      // Fall back to the universally-supported section + mrkdwn block.
+      return await postFn({
+        ...baseArgs,
+        blocks: [
+          { type: 'section', text: { type: 'mrkdwn', text: translatedText } },
+          { type: 'divider' },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: footer }] },
+        ],
+      });
+    }
   }
 
   /** React on a surface message: a raw Slack ts (human messages ride their native id), or a
