@@ -4,10 +4,10 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { listProjects, listTokens } from '@/lib/admin-api';
 import type { GithubTokenMeta, ProjectRecord } from '@/lib/admin-api';
-import { ProjectForm } from '../../admin/project-form';
-import { ProjectRow } from '../../admin/project-row';
-import { TokenForm } from '../../admin/token-form';
-import { TokenRow } from '../../admin/token-row';
+import { ProjectForm } from './_components/project-form';
+import { ProjectRow } from './_components/project-row';
+import { TokenForm } from './_components/token-form';
+import { TokenRow } from './_components/token-row';
 
 type Data = { projects: ProjectRecord[]; tokens: GithubTokenMeta[] };
 
