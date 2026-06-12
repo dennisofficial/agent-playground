@@ -140,6 +140,12 @@ function Shell({ children, teamId }: { children: React.ReactNode; teamId?: strin
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <a
+              href="/admin/memory"
+              className="text-sm text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+            >
+              Memory viewer
+            </a>
             <WorkspaceSwitcher currentTeamId={teamId} />
             <form action={logoutAction}>
               <button

@@ -99,6 +99,41 @@ export function recallProjects(id: Identity): string[] {
  * pair actually shares; un-named or unknown falls back to the PAIR scope — the leak-safe default
  * (a misjudged "project" fact stays 1:1 instead of surfacing in some group chat).
  */
+export interface ParsedScope {
+  tier: Tier;
+  /** Present when `tier === 'project'`. */
+  projectId?: string;
+  /** Present when `tier === 'bot'` or `tier === 'private'`. */
+  botId?: string;
+  /** Present when `tier === 'private'` (the human participant in the pair). */
+  humanId?: string;
+}
+
+/**
+ * Inverse of the scope constructors: parses a stored `scope` string back to its tier and
+ * sub-components. Unknown or malformed scopes fall back to `{ tier: 'team' }` — the safest
+ * choice (broadest share scope, no agent or project ids leaked from a garbage string).
+ */
+export function parseScope(scope: string): ParsedScope {
+  if (scope.startsWith('team:')) return { tier: 'team' };
+  if (scope.startsWith('project:'))
+    return { tier: 'project', projectId: scope.slice('project:'.length) };
+  if (scope.startsWith('bot:'))
+    return { tier: 'bot', botId: scope.slice('bot:'.length) };
+  if (scope.startsWith('pair:')) {
+    const rest = scope.slice('pair:'.length);
+    const colon = rest.indexOf(':');
+    if (colon >= 0)
+      return {
+        tier: 'private',
+        botId: rest.slice(0, colon),
+        humanId: rest.slice(colon + 1),
+      };
+    return { tier: 'private', botId: rest };
+  }
+  return { tier: 'team' };
+}
+
 export function scopeForTier(
   tier: Tier,
   id: Identity,
