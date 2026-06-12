@@ -2,6 +2,20 @@
 export type GateAction = 'respond' | 'acknowledge' | 'ignore';
 
 /**
+ * Per-bot aggregate token usage accumulated across ALL steps of a single Slack post — gate call(s),
+ * every LLM step in the turn (including tool-call-only steps), and prior ignore/ack turns whose gate
+ * costs rolled forward. Flushed and reset when the bot posts a message; displayed as a Block Kit
+ * footer on the Slack message.
+ */
+export interface AccumulatedUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number;
+}
+
+/**
  * The conductor's domain event stream — what a bot *said* or *did*, plus observability. This is the
  * seam between the orchestration core and any presentation surface: the terminal UI accumulates
  * these into render rows, a logger could write them, and the Slack adapter will post them. The core
@@ -71,7 +85,16 @@ export type ConductorEvent =
       by: string;
       note?: string;
     }
-  | { id: string; kind: 'error'; message: string };
+  | { id: string; kind: 'error'; message: string }
+  // Observability: per-step token usage for the chat LLM path (one event per billed AI step).
+  // Consumed by the SurfaceBridge to build the per-post aggregate footer; not rendered by the TUI.
+  | {
+      id: string;
+      kind: 'usage';
+      botId: string;
+      role: 'chat';
+      usage: MessageUsage;
+    };
 
 export interface ContextUsage {
   input?: number;

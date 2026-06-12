@@ -430,10 +430,21 @@ export class ConductorService
         : undefined;
       // Footer ctx tracks EVERY billed step — including tool-only ones, which carry usage but no
       // text and so emit no `message` event.
-      if (usage)
+      if (usage) {
         this.bus.patchStatus({
           ctx: { input: usage.input, output: usage.output },
         });
+        // Per-step usage event: emitted for EVERY billed step (text and tool-call-only), BEFORE the
+        // `message` event that triggers the Slack post — so the SurfaceBridge accumulator is always
+        // complete when it attaches the footer.
+        this.emit({
+          id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
+          kind: 'usage',
+          botId: bot.id,
+          role: 'chat',
+          usage,
+        });
+      }
 
       const text = flattenContent(msg.content).trim();
       if (text) {
