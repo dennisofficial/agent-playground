@@ -79,6 +79,13 @@ export interface IEnvConfig {
   // Bearer token gating the admin REST endpoints (projects/tokens). Unset → admin API disabled.
   ADMIN_API_TOKEN?: string;
 
+  // JWT auth for the admin portal (all optional — portal is disabled until secrets are set)
+  JWT_ACCESS_SECRET?: string;
+  JWT_REFRESH_SECRET?: string;
+  COOKIE_DOMAIN?: string;
+  ADMIN_SEED_EMAIL?: string;
+  ADMIN_SEED_PASSWORD?: string;
+
   // Slack surface (slack-app only; optional so api/tui boot without them — slack-app/main.ts
   // asserts both at boot)
   SLACK_BOT_TOKEN?: string; // xoxb- — Web API (chat.postMessage, reactions.add, users.info)
@@ -171,6 +178,13 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   REPOS_ROOT: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
+
+  // JWT auth for the admin portal
+  JWT_ACCESS_SECRET: Joi.string().optional(),
+  JWT_REFRESH_SECRET: Joi.string().optional(),
+  COOKIE_DOMAIN: Joi.string().optional(),
+  ADMIN_SEED_EMAIL: Joi.string().email().optional(),
+  ADMIN_SEED_PASSWORD: Joi.string().optional(),
 
   // Slack surface
   SLACK_BOT_TOKEN: Joi.string().optional(),

@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { GithubTokenStore } from '../../harness/projects/github-token-store';
 import { SecretCipher } from '../../harness/projects/secret-cipher';
-import { AdminTokenGuard } from './admin-token.guard';
+import { AdminAuthGuard } from '../auth/admin-auth.guard';
 import { PutTokenDto } from './dto/token.dto';
 
 /**
@@ -19,7 +19,7 @@ import { PutTokenDto } from './dto/token.dto';
  * (name/isDefault/timestamps) — a stored token can be rotated or deleted, never read back.
  */
 @Controller('tenants/:teamId/tokens')
-@UseGuards(AdminTokenGuard)
+@UseGuards(AdminAuthGuard)
 export class TokensController {
   constructor(
     private readonly tokens: GithubTokenStore,

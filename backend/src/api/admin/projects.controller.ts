@@ -15,12 +15,12 @@ import {
   ProjectStore,
 } from '../../harness/projects/project-store';
 import { GithubTokenStore } from '../../harness/projects/github-token-store';
-import { AdminTokenGuard } from './admin-token.guard';
+import { AdminAuthGuard } from '../auth/admin-auth.guard';
 import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto';
 
 /** Admin CRUD for the project registry (which GitHub repo each project's code flows to). */
 @Controller('tenants/:teamId/projects')
-@UseGuards(AdminTokenGuard)
+@UseGuards(AdminAuthGuard)
 export class ProjectsController {
   constructor(
     private readonly projects: ProjectStore,

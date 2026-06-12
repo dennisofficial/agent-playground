@@ -1,5 +1,6 @@
 // TypeORM entities (backend-only — imported via `@workspace/shared/schemas`, never the root barrel,
 // so the web bundle never pulls TypeORM decorators).
+export * from './admin-user.entity';
 export * from './classes/base.entity';
 export * from './bot-cursor.entity';
 export * from './channel-message.entity';
@@ -15,6 +16,7 @@ export * from './team-task.entity';
 export * from './tenant.entity';
 export * from './worklog.entity';
 
+import { AdminUser } from './admin-user.entity';
 import { BotCursor } from './bot-cursor.entity';
 import { ChannelMessage } from './channel-message.entity';
 import { Channel } from './channel.entity';
@@ -32,6 +34,7 @@ import { Worklog } from './worklog.entity';
 /** Every harness entity — pass to the TypeORM DataSource / `TypeOrmModule.forRoot({ entities })`.
  * Single DB: the `tenants` workspace registry lives here too (no separate control datasource). */
 export const ENTITIES = [
+  AdminUser,
   Fact,
   Task,
   TeamTask,
