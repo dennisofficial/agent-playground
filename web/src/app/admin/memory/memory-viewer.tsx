@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import type { FactView, TenantSummary } from '@/lib/admin-api';
+import type { FactView, TenantView } from '@/lib/admin-api';
 import { FactRow } from './fact-row';
 import { TIER_LABEL, TIER_ORDER, type Tier } from './tiers';
 
@@ -18,7 +18,7 @@ interface TierCounts {
 }
 
 interface MemoryViewerProps {
-  tenants: TenantSummary[];
+  tenants: TenantView[];
   selectedTeamId: string;
   facts: FactView[];
   truncated: boolean;

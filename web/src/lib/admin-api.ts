@@ -1,6 +1,9 @@
 import 'server-only';
 import { env } from './env';
-import type { Tier } from '@/app/admin/memory/tiers';
+import type { FactView, FactListResponse, TenantView, Tier } from '@workspace/shared';
+
+// Re-export shared types so consumers can import them from this module.
+export type { FactView, FactListResponse, TenantView, Tier };
 
 /**
  * Server-side client for the backend admin API. The bearer lives in server env and every call
@@ -10,47 +13,6 @@ import type { Tier } from '@/app/admin/memory/tiers';
  * Type mirrors of backend/src/harness/projects/project.types.ts — two small interfaces; mirroring
  * beats coupling the web build to backend sources (keep in sync by hand).
  */
-
-// ── Memory Viewer types ──────────────────────────────────────────────────────────────────────────
-// TODO: import FactView, FactListResponse, TenantView from @workspace/shared once Alex's migration
-// pass lands (see shared/src/dto/index.ts — currently an empty stub).
-
-/** A workspace/team as returned by `GET /tenants`. slug === id (Slack team id). */
-export interface TenantSummary {
-  id: string;
-  name: string;
-  slug: string;
-}
-
-/**
- * One semantic-memory fact as returned by `GET /tenants/:teamId/memory/facts`.
- * Shape confirmed against fact-view.store.ts + e2e tests. Note: `id` is a number (DB row id),
- * `content` is the fact text, and `isGlobal`/`scope`/`assertedBy` are never returned.
- */
-export interface FactView {
-  id: number;
-  content: string;
-  tier: Tier;
-  /** Bot id parsed from scope; null for team- and project-tier facts. */
-  botId: string | null;
-  /** Project id parsed from scope; null for non-project facts. */
-  projectId: string | null;
-  /** Human participant for pair-scope facts; null for non-private facts. */
-  humanId: string | null;
-  confidence: number;
-  createdAt: string;
-  updatedAt: string;
-  /** ISO timestamp when soft-deleted ("forgotten"); null if the fact is active. */
-  deletedAt: string | null;
-}
-
-/** Paginated fact list response. */
-export interface FactsPage {
-  items: FactView[];
-  total: number;
-  limit: number;
-  offset: number;
-}
 
 /** Query params for `listFacts` / `listAllFacts`. All optional. */
 export interface FactQuery {
@@ -145,10 +107,10 @@ export const deleteToken = (name: string) =>
 // ── Memory Viewer API ────────────────────────────────────────────────────────────────────────────
 
 /** All registered workspaces, sorted by display name. Powers the workspace picker. */
-export const listTenants = () => adminFetch<TenantSummary[]>('/tenants');
+export const listTenants = () => adminFetch<TenantView[]>('/tenants');
 
 /** Filtered, paginated list of facts for a tenant. */
-export function listFacts(teamId: string, query: FactQuery = {}): Promise<FactsPage> {
+export function listFacts(teamId: string, query: FactQuery = {}): Promise<FactListResponse> {
   const params = new URLSearchParams();
   if (query.tier !== undefined) params.set('tier', query.tier);
   if (query.projectId !== undefined) params.set('projectId', query.projectId);
@@ -164,7 +126,7 @@ export function listFacts(teamId: string, query: FactQuery = {}): Promise<FactsP
   if (query.sort !== undefined) params.set('sort', query.sort);
 
   const qs = params.toString();
-  return adminFetch<FactsPage>(
+  return adminFetch<FactListResponse>(
     `/tenants/${encodeURIComponent(teamId)}/memory/facts${qs ? `?${qs}` : ''}`,
   );
 }
