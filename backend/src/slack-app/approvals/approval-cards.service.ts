@@ -10,6 +10,7 @@ import { TicketNoteStore } from '@harness/memory/ticket-note-store';
 import { Injectable, Logger } from '@nestjs/common';
 import { parseSlackSurface } from '../slack-chat-surface';
 import { SlackDirectoryService } from '../slack-directory.service';
+import { SlackIdentityRegistry } from '../slack-identity.registry';
 import type {
   SlackInbound,
   SlackInboundInterceptor,
@@ -52,16 +53,26 @@ export class ApprovalCardsService
 {
   private readonly logger = new Logger(ApprovalCardsService.name);
 
+  /** `${AVATAR_BASE_URL}/${AVATAR_STYLE}` — the chat surface's username-override icon idiom. */
+  private readonly avatarBase?: string;
+
   constructor(
     private readonly clients: TenantSlackClients,
     private readonly tenants: TenantStore,
     private readonly directory: SlackDirectoryService,
+    private readonly identities: SlackIdentityRegistry,
     private readonly board: BoardStore,
     private readonly notes: TicketNoteStore,
     private readonly conductor: ConductorService,
     private readonly employees: EmployeeRegistry,
     private readonly env: EnvService,
-  ) {}
+  ) {
+    const base = this.env.get('AVATAR_BASE_URL');
+    if (base) {
+      const style = this.env.get('AVATAR_STYLE') ?? 'illustrated';
+      this.avatarBase = `${base.replace(/\/+$/, '')}/${style}`;
+    }
+  }
 
   // ── Outbound: post the card ─────────────────────────────────────────────────────────────────
 
@@ -73,23 +84,79 @@ export class ApprovalCardsService
       );
     const web = await this.clients.clientFor(parsed.teamId);
     if (!web) throw new Error(`no Slack client for workspace ${parsed.teamId}`);
+    // The card POSTS AS the proposing lead — username/icon override (the chat surface's idiom),
+    // but through the MAIN app on purpose: Slack routes block_actions to the app that posted the
+    // message, so a PUPPET-posted card would have dead buttons (puppets are post-only, no
+    // interactivity wiring).
+    const proposer = this.employees.byId(e.proposedBy);
     const card = await web.chat.postMessage({
       channel: parsed.channel,
       text: `Proposal — ticket #${e.taskId}: ${e.title} (verdict needed)`,
       blocks: proposalCardBlocks(e) as never,
+      username: proposer?.name ?? e.proposedBy,
+      ...(this.avatarBase
+        ? { icon_url: `${this.avatarBase}/${e.proposedBy}.png` }
+        : {}),
     });
     if (!card.ts) throw new Error('card post returned no ts');
-    // Full plans as thread replies — readable copy; the ticket holds the durable text.
+    // Full plans under the card — readable copy; the ticket holds the durable text.
     for (const plan of e.plans) {
-      const chunks = chunkPlan(plan.planMd);
-      for (let i = 0; i < chunks.length; i++) {
-        const header = i === 0 ? `*${plan.employee}'s plan*\n` : '';
-        await web.chat.postMessage({
-          channel: parsed.channel,
-          thread_ts: card.ts,
-          text: `${header}${chunks[i]}`,
-        });
+      await this.postPlanArtifact(
+        web,
+        parsed.teamId,
+        parsed.channel,
+        card.ts,
+        e.taskId,
+        plan,
+      );
+    }
+  }
+
+  /**
+   * One plan into the card's thread, best rendering first:
+   *  1. A FILE SNIPPET (`files.uploadV2`, .md) — Slack gives it a real markdown viewer, no chunk
+   *     caps. Uploaded by the plan author's own PUPPET when one exists, so the plan reads as
+   *     theirs; else by the main app. Needs the `files:write` scope on whichever app uploads —
+   *     missing scope falls through.
+   *  2. Fallback: the chunked plain-text thread replies (universal, no extra scope, ugly).
+   */
+  private async postPlanArtifact(
+    web: NonNullable<Awaited<ReturnType<TenantSlackClients['clientFor']>>>,
+    teamId: string,
+    channel: string,
+    cardTs: string,
+    taskId: number,
+    plan: { employee: string; planMd: string },
+  ): Promise<void> {
+    const upload = {
+      channel_id: channel,
+      thread_ts: cardTs,
+      filename: `ticket-${taskId}-${plan.employee}-plan.md`,
+      title: `${plan.employee}'s plan — ticket #${taskId}`,
+      content: plan.planMd,
+      initial_comment: `*${plan.employee}'s plan* for ticket #${taskId}`,
+    };
+    const puppet = await this.identities
+      .clientFor(teamId, plan.employee)
+      .catch(() => undefined);
+    for (const client of [puppet, web]) {
+      if (!client) continue;
+      try {
+        await client.filesUploadV2(upload);
+        return;
+      } catch (err) {
+        this.logger.warn(
+          `plan snippet upload (#${taskId}, ${plan.employee}, ${client === puppet ? 'puppet' : 'main app'}) failed — ${err instanceof Error ? err.message : String(err)}; falling back`,
+        );
       }
+    }
+    for (const [i, chunk] of chunkPlan(plan.planMd).entries()) {
+      const header = i === 0 ? `*${plan.employee}'s plan*\n` : '';
+      await web.chat.postMessage({
+        channel,
+        thread_ts: cardTs,
+        text: `${header}${chunk}`,
+      });
     }
   }
 
@@ -285,19 +352,22 @@ export class ApprovalCardsService
       })
       .catch((err) => this.logger.warn(`card repaint failed: ${err}`));
 
-    // The verdict re-enters the agent system as a Dennis-authored channel message — the same
-    // inbound seam as him typing it; the @mention wakes the lead through the normal gate.
-    const lead = this.employees.teamLead().name;
-    const text =
+    // SILENT wake-up for the proposing lead — the session-relay pattern, not a channel message.
+    // The card edit is the public record (everyone sees ✅/❌ on the card itself); the board and
+    // the ticket note are the durable ones. The lead just gets nudged with the facts and decides
+    // what, if anything, to say — usually nothing until the standup wraps.
+    const lead = this.employees.teamLead();
+    const verdictNote =
       v.verdict === 'approve'
-        ? `@${lead} — I approved the proposal for ticket #${v.taskId} (via the approval card).`
+        ? `${boss.authorName} APPROVED ticket #${v.taskId} via the approval card.`
         : v.verdict === 'deny'
-          ? `@${lead} — I denied the proposal for ticket #${v.taskId} (via the approval card); it's released back to the board.`
-          : `@${lead} — I'm requesting changes on the proposal for ticket #${v.taskId} (via the approval card): ${v.notesText || '(no notes given)'}`;
-    this.conductor.submitFrom(boss.authorId, boss.authorName, text, {
-      channelId: `slack:${v.teamId}:${v.channel}`,
-      teamId: v.teamId,
-    });
+          ? `${boss.authorName} DENIED ticket #${v.taskId} via the approval card — released back to the board (open, unassigned).`
+          : `${boss.authorName} requested CHANGES on ticket #${v.taskId} via the approval card: "${v.notesText || '(no notes given)'}".`;
+    this.conductor.injectSeed(
+      lead.id,
+      `slack:${v.teamId}:${v.channel}`,
+      `[Approval card] ${verdictNote} The board is already updated and the card shows the verdict — this is a silent heads-up, not a message in the channel. Decide what's next yourself: usually NOTHING needs saying right now (don't re-announce the verdict — everyone can see the card); route change-request notes to the owning teammate's session when there are any, and save the roll-up of verdicts and next steps for when the standup closes.`,
+    );
   }
 
   private parseMeta(raw: string | undefined): ApprovalActionMeta | undefined {

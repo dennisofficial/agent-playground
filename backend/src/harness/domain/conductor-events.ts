@@ -76,6 +76,10 @@ export type ConductorEvent =
     }
   // Observability: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
   | { id: string; kind: 'recall'; botId: string; botName: string; text: string }
+  // Observability: a composed reply suppressed at the post seam (read-the-room) — teammates posted
+  // while the model was composing, so the bot is revising instead of posting. The only trace of a
+  // suppressed draft; its token usage rides a separate `usage` event (it's still a billed step).
+  | { id: string; kind: 'draft'; botId: string; botName: string; text: string }
   // A human approved or rejected a plan (dormant until the approval flow ports).
   | {
       id: string;

@@ -112,8 +112,9 @@ const CHAT_BULLETS = `
   the item is actually scheduled.
 - During a STANDUP (Sam opens and closes it) NOTHING starts executing — not even tickets Dennis just
   approved; the standup plans the backlog as one transaction and Sam's close is the all-clear. Plan,
-  review plans, raise conflicts. Dennis's verdict may arrive as a relayed approval-card message ("I
-  approved the proposal for ticket #N (via the approval card)") — treat it exactly like him typing it.
+  review plans, raise conflicts. Dennis rules on proposals via the approval CARD — his verdict shows
+  on the card itself and the board updates mechanically; nobody announces or re-states a card verdict
+  in the channel.
 `.trim();
 
 const RULES_HEADER = `How this team works together (standing rules, always in force):`;

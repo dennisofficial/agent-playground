@@ -67,6 +67,8 @@ export type RenderItem =
   | { id: string; kind: 'note'; text: string }
   // Debug only: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
   | { id: string; kind: 'recall'; by: string; text: string }
+  // Debug only: a reply suppressed at the post seam (read-the-room) — the bot is revising.
+  | { id: string; kind: 'draft'; by: string; text: string }
   // A human's approve/reject decision on a plan (dormant until the approval flow ports).
   | {
       id: string;
@@ -83,6 +85,7 @@ export type RenderItem =
 const DEBUG_KINDS = new Set<RenderItem['kind']>([
   'gate',
   'recall',
+  'draft',
   'memory',
   'reminders',
   'workspace',
@@ -140,6 +143,8 @@ export function renderEvent(e: ConductorEvent): RenderItem | null {
     }
     case 'recall':
       return { id: e.id, kind: 'recall', by: e.botName, text: e.text };
+    case 'draft':
+      return { id: e.id, kind: 'draft', by: e.botName, text: e.text };
     case 'approval':
       return {
         id: e.id,

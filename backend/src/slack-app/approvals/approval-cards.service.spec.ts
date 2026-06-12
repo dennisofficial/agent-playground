@@ -12,8 +12,8 @@ import { ApprovalCardsService } from './approval-cards.service';
 /**
  * Both directions of the proposal port's Slack adapter, against a mock WebClient: the card post
  * (outbound) and the verdict ingestion (inbound) — boss check fail-closed, CAS-guarded board
- * transitions, the ticket note, the card repaint, and the synthesized Dennis message into
- * conductor.submitFrom.
+ * transitions, the ticket note, the card repaint, and the SILENT lead wake-up via
+ * conductor.injectSeed (the session-relay pattern — no synthesized channel message).
  */
 
 const EVENT: PlanProposalEvent = {
@@ -34,6 +34,10 @@ function makeService(opts: {
   tenantMissing?: boolean;
   envBoss?: string;
   transitionResult?: Record<string, unknown> | undefined;
+  /** The plan author's puppet client, when one exists (snippet uploads prefer it). */
+  puppet?: { filesUploadV2: ReturnType<typeof vi.fn> };
+  /** Make the MAIN app's snippet upload reject (e.g. missing files:write scope). */
+  uploadFails?: boolean;
 }) {
   const web = {
     chat: {
@@ -42,8 +46,16 @@ function makeService(opts: {
       update: vi.fn(() => Promise.resolve({ ok: true })),
     },
     views: { open: vi.fn(() => Promise.resolve({ ok: true })) },
+    filesUploadV2: vi.fn(() =>
+      opts.uploadFails
+        ? Promise.reject(new Error('missing_scope'))
+        : Promise.resolve({ ok: true }),
+    ),
   };
   const clients = { clientFor: vi.fn(() => Promise.resolve(web)) };
+  const identities = {
+    clientFor: vi.fn(() => Promise.resolve(opts.puppet)),
+  };
   const tenants = {
     get: vi.fn(() =>
       Promise.resolve(
@@ -74,21 +86,33 @@ function makeService(opts: {
     get: vi.fn(() => Promise.resolve({ id: 7, status: 'approved' })),
   };
   const notes = { add: vi.fn(() => Promise.resolve({ id: 1 })) };
-  const conductor = { submitFrom: vi.fn() };
-  const employees = { teamLead: () => ({ id: 'sam', name: 'Sam' }) };
-  const env = { get: () => opts.envBoss };
+  const conductor = { injectSeed: vi.fn() };
+  const employees = {
+    teamLead: () => ({ id: 'sam', name: 'Sam' }),
+    byId: (id: string) =>
+      id === 'sam' ? { id: 'sam', name: 'Sam' } : undefined,
+  };
+  const env = {
+    get: (k: string) =>
+      k === 'APPROVAL_BOSS_USER_ID' ? opts.envBoss : undefined,
+  };
   const service = new ApprovalCardsService(
     clients as never,
     tenants as never,
     directory as never,
+    identities as never,
     board as never,
     notes as never,
     conductor as never,
     employees as never,
     env as never,
   );
-  return { service, web, board, notes, conductor };
+  return { service, web, board, notes, conductor, identities };
 }
+
+/** A zero-arg vi.fn()'s `calls` is typed `[][]` — widen to read the runtime-recorded args. */
+const argsOf = (m: { mock: { calls: unknown[][] } }): unknown[][] =>
+  m.mock.calls;
 
 const click = (
   actionId: string,
@@ -114,19 +138,62 @@ const click = (
 });
 
 describe('ApprovalCardsService — outbound (present)', () => {
-  it('posts the card and threads each plan under it', async () => {
+  it('posts the card AS the proposing lead (username override, main app) and uploads each plan as a .md snippet in its thread', async () => {
     const { service, web } = makeService({ installedBy: 'U-BOSS' });
     await service.present(EVENT);
-    const calls = web.chat.postMessage.mock.calls.map(
+
+    // ONE chat message — the card, posing as Sam through the MAIN app (block_actions route to
+    // the posting app, so a puppet-posted card would have dead buttons).
+    const posts = argsOf(web.chat.postMessage).map(
       (c) => c[0] as Record<string, unknown>,
     );
-    expect(calls).toHaveLength(3); // card + 2 single-chunk plans
-    expect(calls[0]).toMatchObject({ channel: 'C42' });
-    expect(JSON.stringify(calls[0].blocks)).toContain('Wire the API');
-    expect(JSON.stringify(calls[0].blocks)).toContain(APPROVE_ACTION_ID);
-    expect(calls[1]).toMatchObject({ thread_ts: '111.222' });
-    expect(calls[1].text).toContain("*alex's plan*");
-    expect(calls[2].text).toContain("*riley's plan*");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ channel: 'C42', username: 'Sam' });
+    expect(JSON.stringify(posts[0].blocks)).toContain('Wire the API');
+    expect(JSON.stringify(posts[0].blocks)).toContain(APPROVE_ACTION_ID);
+
+    // Plans ride as markdown snippets in the card's thread.
+    const uploads = argsOf(web.filesUploadV2).map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+    expect(uploads).toHaveLength(2);
+    expect(uploads[0]).toMatchObject({
+      channel_id: 'C42',
+      thread_ts: '111.222',
+      filename: 'ticket-7-alex-plan.md',
+      content: 'alex plan body',
+    });
+    expect(uploads[1]).toMatchObject({ filename: 'ticket-7-riley-plan.md' });
+  });
+
+  it("uploads via the plan author's PUPPET when one exists — the plan reads as theirs", async () => {
+    const puppet = {
+      filesUploadV2: vi.fn(() => Promise.resolve({ ok: true })),
+    };
+    const { service, web, identities } = makeService({
+      installedBy: 'U-BOSS',
+      puppet,
+    });
+    await service.present(EVENT);
+    expect(identities.clientFor).toHaveBeenCalledWith('T1', 'alex');
+    expect(identities.clientFor).toHaveBeenCalledWith('T1', 'riley');
+    expect(puppet.filesUploadV2).toHaveBeenCalledTimes(2);
+    expect(web.filesUploadV2).not.toHaveBeenCalled();
+  });
+
+  it('falls back to chunked thread messages when snippet uploads fail (e.g. missing files:write)', async () => {
+    const { service, web } = makeService({
+      installedBy: 'U-BOSS',
+      uploadFails: true,
+    });
+    await service.present(EVENT);
+    const posts = argsOf(web.chat.postMessage).map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+    expect(posts).toHaveLength(3); // card + 2 fallback text plans
+    expect(posts[1]).toMatchObject({ thread_ts: '111.222' });
+    expect(posts[1].text).toContain("*alex's plan*");
+    expect(posts[2].text).toContain("*riley's plan*");
   });
 
   it('throws on a non-Slack surface (the tool degrades to chat-words)', async () => {
@@ -187,16 +254,19 @@ describe('ApprovalCardsService — verdicts', () => {
       'dennis',
       expect.stringContaining('Approved the proposal'),
     );
-    const update = web.chat.update.mock.calls[0][0] as Record<string, unknown>;
+    const update = argsOf(web.chat.update)[0][0] as Record<string, unknown>;
     expect(update).toMatchObject({ channel: 'C42', ts: '111.222' });
     const updatedBlocks = JSON.stringify(update.blocks);
     expect(updatedBlocks).toContain('✅ Approved by');
     expect(updatedBlocks).not.toContain('"actions"'); // buttons stripped
-    expect(conductor.submitFrom).toHaveBeenCalledWith(
-      'dennis',
-      'Dennis',
-      expect.stringContaining('@Sam — I approved the proposal for ticket #7'),
-      { channelId: 'slack:T1:C42', teamId: 'T1' },
+    // The lead is woken SILENTLY (session-relay pattern) — no synthesized channel message.
+    expect(conductor.injectSeed).toHaveBeenCalledWith(
+      'sam',
+      'slack:T1:C42',
+      expect.stringContaining('Dennis APPROVED ticket #7'),
+    );
+    expect(argsOf(conductor.injectSeed)[0][2] as string).toContain(
+      'silent heads-up',
     );
   });
 
@@ -215,11 +285,10 @@ describe('ApprovalCardsService — verdicts', () => {
         assignee: null,
       },
     );
-    expect(conductor.submitFrom).toHaveBeenCalledWith(
-      'dennis',
-      'Dennis',
-      expect.stringContaining('denied the proposal for ticket #7'),
-      expect.anything(),
+    expect(conductor.injectSeed).toHaveBeenCalledWith(
+      'sam',
+      'slack:T1:C42',
+      expect.stringContaining('DENIED ticket #7'),
     );
   });
 
@@ -229,13 +298,13 @@ describe('ApprovalCardsService — verdicts', () => {
       transitionResult: undefined,
     });
     await service.maybeHandle(click(APPROVE_ACTION_ID));
-    const ephemeral = web.chat.postEphemeral.mock.calls[0][0] as {
+    const ephemeral = argsOf(web.chat.postEphemeral)[0][0] as {
       text: string;
     };
     expect(ephemeral.text).toContain("already ruled on (now 'approved')");
     expect(notes.add).not.toHaveBeenCalled();
     expect(web.chat.update).not.toHaveBeenCalled();
-    expect(conductor.submitFrom).not.toHaveBeenCalled();
+    expect(conductor.injectSeed).not.toHaveBeenCalled();
   });
 
   it('request changes: opens the modal (no board write), and the submission applies the verdict with the notes', async () => {
@@ -245,7 +314,7 @@ describe('ApprovalCardsService — verdicts', () => {
     });
     await service.maybeHandle(click(REQUEST_CHANGES_ACTION_ID));
     expect(board.transition).not.toHaveBeenCalled();
-    const view = (web.views.open.mock.calls[0][0] as Record<string, unknown>)
+    const view = (argsOf(web.views.open)[0][0] as Record<string, unknown>)
       .view as Record<string, unknown>;
     expect(view.callback_id).toBe(REVISION_MODAL_CALLBACK_ID);
     const meta = JSON.parse(view.private_metadata as string) as Record<
@@ -279,11 +348,10 @@ describe('ApprovalCardsService — verdicts', () => {
         status: 'in_progress',
       },
     );
-    expect(conductor.submitFrom).toHaveBeenCalledWith(
-      'dennis',
-      'Dennis',
+    expect(conductor.injectSeed).toHaveBeenCalledWith(
+      'sam',
+      'slack:T1:C42',
       expect.stringContaining('use Postgres, not MySQL'),
-      expect.anything(),
     );
     expect(submission.respond).toHaveBeenCalled(); // modal closed
   });

@@ -336,4 +336,45 @@ describe('ConductorService scheduling', () => {
     expect(reaction.emoji).toBe('👀');
     expect(reaction.targetId).toBe('u-0');
   });
+
+  it('bills a suppressed read-the-room draft: full usage event (cache fields) + draft debug event', async () => {
+    const draftUsage = {
+      input: 1200,
+      output: 340,
+      cacheRead: 900,
+      cacheWrite: 120,
+    };
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          // The stale step: injected humans ride messages (none here), the suppressed reply rides
+          // the draft fields — never delta.messages, so commit() can't post it.
+          { draft: 'unposted duplicate answer', draftUsage, revisionPasses: 1 },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'status?');
+    await conductor.whenIdle();
+    // The suppressed step is billed through the SAME pipeline as tool-only steps: a `usage` event
+    // with the FULL MessageUsage (incl. cache fields) that the SurfaceBridge accumulates into the
+    // next real post's cost footer.
+    const usage = events.find((e) => e.kind === 'usage') as Extract<
+      ConductorEvent,
+      { kind: 'usage' }
+    >;
+    expect(usage.botId).toBe('alex');
+    expect(usage.role).toBe('chat');
+    expect(usage.usage).toEqual(draftUsage);
+    const draft = events.find((e) => e.kind === 'draft') as Extract<
+      ConductorEvent,
+      { kind: 'draft' }
+    >;
+    expect(draft.text).toBe('unposted duplicate answer');
+    expect(draft.botName).toBe('Alex');
+    // And nothing posted: no message event from the bot for this turn.
+    expect(events.some((e) => e.kind === 'message' && !e.fromHuman)).toBe(
+      false,
+    );
+  });
 });

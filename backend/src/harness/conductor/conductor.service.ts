@@ -99,6 +99,16 @@ export class ConductorService
    * one room's bot cascade must not throttle another's. */
   private botBurst = new Map<string, number>();
   private relayQueue: Session[] = [];
+
+  /** Pending SILENT wake-ups injected from outside the conductor (e.g. a Slack approval-card
+   * verdict waking the proposing lead). Same delivery semantics as session relays: gate-bypassed
+   * seed turn, run when the bot is free; the seed is visible only to that bot — what (if anything)
+   * to say in the channel is the bot's own call. */
+  private seedQueue: Array<{
+    botId: string;
+    channelId: string;
+    prompt: string;
+  }> = [];
   /** Consecutive no-progress failures at a stuck cursor, keyed `${botId}|${channelId}` — the error
    * retry-cap loop breaker, scoped so one room's poison message can't skip another room's batch. */
   private failures = new Map<string, { cursor: number; count: number }>();
@@ -226,6 +236,17 @@ export class ConductorService
     );
   }
 
+  /**
+   * SILENTLY wake one bot with a gate-bypassed seed turn — the session-relay mechanism, exposed
+   * for out-of-band events (e.g. an approval-card verdict waking the proposing lead). Nothing is
+   * appended to the channel log: only the woken bot sees the seed, and whether anything gets said
+   * in the room is its decision — exactly how a session report-back wakes its owner.
+   */
+  injectSeed(botId: string, channelId: string, prompt: string): void {
+    this.seedQueue.push({ botId, channelId, prompt });
+    this.schedule();
+  }
+
   /** Append a human message from a known author (the ChatSurface inbound path). `opts.id` is the
    * surface-native message id (a Slack ts) — kept so reactions/edits target the surface's own
    * coordinate; minted only when the caller has none. */
@@ -326,6 +347,32 @@ export class ConductorService
       }
       this.relayQueue.splice(i, 1);
       this.claim(this.botKey(team, owner), () => this.runSessionRelay(session));
+    }
+    // Injected silent wake-ups — same discipline as session relays.
+    for (let i = 0; i < this.seedQueue.length; ) {
+      const seed = this.seedQueue[i];
+      const team = this.registry.teamIdOf(seed.channelId);
+      if (!this.readiness.isReady(team)) {
+        this.readiness.ensureChecked(team);
+        i++;
+        continue;
+      }
+      const bot = this.employees.byId(seed.botId);
+      if (!bot) {
+        this.seedQueue.splice(i, 1); // unknown bot — drop rather than wedge the queue
+        continue;
+      }
+      if (this.runningBots.has(this.botKey(team, bot.id))) {
+        i++;
+        continue;
+      }
+      this.seedQueue.splice(i, 1);
+      const channelId = this.registry.get(seed.channelId)
+        ? seed.channelId
+        : this.channel.surfaceId;
+      this.claim(this.botKey(team, bot.id), () =>
+        this.runBotGraph(bot, { seed: seed.prompt, channelId }),
+      );
     }
     // Room deliveries: each idle member bot with undelivered non-own work, per room.
     for (const info of this.registry.list()) {
@@ -550,6 +597,33 @@ export class ConductorService
               botId: bot.id,
               botName: bot.name,
               text: delta.recalled,
+            });
+          }
+          // READ-THE-ROOM: a suppressed draft never appears in delta.messages, so `commit` can't
+          // bill it — emit its usage here (same pipeline as tool-only steps: ctx footer + the
+          // SurfaceBridge accumulator that builds the per-post cost footer), then the debug event.
+          if (delta.draftUsage) {
+            this.bus.patchStatus({
+              ctx: {
+                input: delta.draftUsage.input,
+                output: delta.draftUsage.output,
+              },
+            });
+            this.emit({
+              id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
+              kind: 'usage',
+              botId: bot.id,
+              role: 'chat',
+              usage: delta.draftUsage,
+            });
+          }
+          if (delta.draft) {
+            this.emit({
+              id: `d-${this.emitSeq++}`,
+              kind: 'draft',
+              botId: bot.id,
+              botName: bot.name,
+              text: delta.draft,
             });
           }
           for (const msg of delta.messages ?? []) {

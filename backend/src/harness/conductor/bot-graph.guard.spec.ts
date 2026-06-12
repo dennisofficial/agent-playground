@@ -485,6 +485,71 @@ describe('bot graph — recursion guard', () => {
     expect(detectCalls[0]).toContain('picked up the ticket again');
   });
 
+  it('(h) a CHECKPOINTED loopBreak=true from a prior turn never re-breaks — skips overwrite, not preserve', async () => {
+    const channel = new FakeChannel();
+    // The exact live failure: a prior turn broke (loopBreak: true persisted in the checkpoint),
+    // then Dennis pings directly. The skip must CLEAR the stale flag, not leave it routing to
+    // break with an hour-old verdict.
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: '@Alex are you back now?',
+    });
+
+    const invocations: BaseMessage[][] = [];
+    const detectCalls: unknown[] = [];
+    const guard = {
+      isEnabled: () => true,
+      windowSize: () => 12,
+      detect: (...args: unknown[]) => {
+        detectCalls.push(args);
+        return Promise.resolve({ looping: true });
+      },
+    } as unknown as RecursionGuardService;
+
+    const factory = buildFactory(
+      channel,
+      guard,
+      scriptedModel('yes — back now, picking the ticket up', invocations),
+    );
+    const graph = factory.getBotGraph(ALEX);
+    const config = {
+      configurable: { thread_id: 'alex:guard-stale-break:root' },
+    };
+    // Seed the poisoned checkpoint: pause-last history AND a persisted loopBreak verdict.
+    await graph.updateState(config, {
+      messages: [
+        ...priorAiHistory(8),
+        new AIMessage({
+          content:
+            "I think I'm going in circles here — pausing so I don't spin. Ping me when you want me to pick this back up.",
+        }),
+      ],
+      cursor: 0,
+      loopBreak: true,
+      guardReasoning: 'an hour-old verdict',
+    });
+
+    await drain(
+      await graph.stream(
+        { cursor: 0, forced: false },
+        { ...config, streamMode: 'updates' as const },
+      ),
+    );
+
+    expect(detectCalls).toHaveLength(0); // human trigger → no judging
+    expect(invocations).toHaveLength(1); // and a REAL turn ran — the stale break did not re-fire
+
+    const final = await graph.getState(config);
+    const { messages, loopBreak } = final.values as CheckpointValues & {
+      loopBreak?: boolean;
+    };
+    const lastMsg = messages[messages.length - 1];
+    expect(flat(lastMsg.content)).toBe('yes — back now, picking the ticket up');
+    expect(loopBreak).toBe(false); // the stale flag was cleared, not preserved
+  });
+
   it('(d) skips guard detection on a forced (job relay) turn', async () => {
     const channel = new FakeChannel();
 
