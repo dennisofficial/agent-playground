@@ -13,6 +13,7 @@ import { SlackIdentityRegistry } from './slack-identity.registry';
 import type { SlackInboundEvent } from './slack-inbound.types';
 import {
   emojiToSlackName,
+  extractHandles,
   extractMentionIds,
   translateInbound,
   translateOutbound,
@@ -164,7 +165,18 @@ export class SlackChatSurface implements ChatSurface {
       return;
     }
     const { teamId, channel } = parsed;
-    const text = translateOutbound(msg.text); // LLMs emit Markdown; Slack renders mrkdwn
+    // Pre-resolve @handles to Slack user ids — mirrors the inbound extractMentionIds pre-resolve
+    // pattern. The async resolution happens here; the sync translator gets a callback.
+    const handles = extractHandles(msg.text);
+    const mentionMap = new Map<string, string>();
+    for (const handle of handles) {
+      const slackId = await this.directory.resolveMention(teamId, handle);
+      if (slackId) mentionMap.set(handle, slackId);
+    }
+    const text = translateOutbound(msg.text, {
+      resolveMention:
+        mentionMap.size > 0 ? (h) => mentionMap.get(h) : undefined,
+    }); // LLMs emit Markdown; Slack renders mrkdwn; @handles become <@SLACK_USER_ID> when resolved
     const puppet = await this.identities.clientFor(teamId, msg.authorBotId);
     // The ears app (username/icon override) is the fallback — used when there's no puppet AND when a
     // puppet's post fails membership (private channel). No puppet AND no ears token (workspace not
