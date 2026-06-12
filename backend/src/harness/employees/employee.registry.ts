@@ -3,10 +3,7 @@ import { DiscoveryService } from '@nestjs/core';
 import { collectDecorated } from '../discovery.util';
 import { escapeRegExp } from '../domain/text';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
-import type {
-  EffortLevel,
-  WorkerMode,
-} from '../engines/worker-engine.port';
+import type { EffortLevel, WorkerMode } from '../engines/worker-engine.port';
 import { AI_EMPLOYEE_METADATA } from './ai-employee.decorator';
 import type { EmployeeDefinition } from './employee.types';
 

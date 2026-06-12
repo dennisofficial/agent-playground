@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
 import type { AccumulatedUsage } from '@harness/domain/conductor-events';
-import { formatUsageLine } from '@harness/llm/usage-format';
+import { CHAT_MODEL, formatUsageLine } from '@harness/llm/usage-format';
 import type {
   ChatSurface,
   InboundChatMessage,
@@ -278,7 +278,7 @@ export class SlackChatSurface implements ChatSurface {
     rawText: string,
     usage: AccumulatedUsage,
   ): Promise<{ ts?: string; ok?: boolean }> {
-    const footer = formatUsageLine(usage);
+    const footer = formatUsageLine(usage, CHAT_MODEL);
     const translatedText = baseArgs.text as string; // already run through translateOutbound
 
     try {

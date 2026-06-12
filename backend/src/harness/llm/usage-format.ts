@@ -71,13 +71,24 @@ export function calculateCost(model: string, usage: MessageUsage): number {
  * One-line usage footer for display, e.g.:
  * `in 1,234 · out 96 · cache read 640 · $0.0087`
  *
+ * When `model` is provided and `usage.callCount > 1`, the line is prefixed with the model name
+ * and call count so multi-step turns are visible at a glance, e.g.:
+ * `claude-sonnet-4-6 · 3 calls · in 1,234 · out 96 · $0.0087`
+ *
  * Cache fields are omitted when zero. Integers are comma-formatted. Cost is 4 decimal places.
  */
-export function formatUsageLine(usage: AccumulatedUsage): string {
-  const parts: string[] = [
+export function formatUsageLine(
+  usage: AccumulatedUsage,
+  model?: string,
+): string {
+  const parts: string[] = [];
+  if (model && usage.callCount > 1) {
+    parts.push(model, `${usage.callCount} calls`);
+  }
+  parts.push(
     `in ${usage.input.toLocaleString('en-US')}`,
     `out ${usage.output.toLocaleString('en-US')}`,
-  ];
+  );
   if (usage.cacheRead > 0)
     parts.push(`cache read ${usage.cacheRead.toLocaleString('en-US')}`);
   if (usage.cacheWrite > 0)

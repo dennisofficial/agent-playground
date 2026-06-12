@@ -10,7 +10,9 @@ import {
 } from './channel-render';
 
 /** Minimal ChannelMsg fixture. */
-const msg = (overrides: Partial<ChannelMsg> & { createdAt: number }): ChannelMsg => ({
+const msg = (
+  overrides: Partial<ChannelMsg> & { createdAt: number },
+): ChannelMsg => ({
   seq: 0,
   id: 'test',
   channelId: 'tui:test',
@@ -88,7 +90,9 @@ describe('channel-render — withDividers', () => {
     expect(items[0]).toMatchObject({ kind: 'message' });
     expect(items[1]).toMatchObject({ kind: 'time-divider' });
     expect(items[2]).toMatchObject({ kind: 'message' });
-    expect(items[1].kind === 'time-divider' && items[1].label).toMatch(/3 hours later/);
+    expect(items[1].kind === 'time-divider' && items[1].label).toMatch(
+      /3 hours later/,
+    );
   });
 
   it('inserts a time-divider at a calendar-day boundary regardless of gap size', () => {
@@ -141,7 +145,9 @@ describe('channel-render — buildTimeContext', () => {
     const fresh = [msg({ createdAt: freshTs })];
     const ctx = buildTimeContext(fresh, prevTs, GAP);
     expect(ctx).toContain('Current time:');
-    expect(ctx).toContain('[3 hours since the previous message in this conversation]');
+    expect(ctx).toContain(
+      '[3 hours since the previous message in this conversation]',
+    );
   });
 
   it('omits the gap note when the leading gap is below the threshold', () => {

@@ -176,5 +176,6 @@ export function formatMessageUsage(u: MessageUsage): string {
     cacheRead: u.cacheRead ?? 0,
     cacheWrite: u.cacheWrite ?? 0,
     costUsd: calculateCost(CHAT_MODEL, u),
+    callCount: 1,
   });
 }

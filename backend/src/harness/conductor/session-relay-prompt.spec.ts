@@ -36,7 +36,9 @@ describe('sessionRelayPrompt', () => {
     expect(out).toContain('Q1: which auth?');
     expect(out).toContain("Dennis's call");
     expect(out).toContain('WITH the question itself');
-    expect(out).toContain('restate the question in one line before your answer');
+    expect(out).toContain(
+      'restate the question in one line before your answer',
+    );
     expect(out).toContain('never reference a question by number alone in chat');
     expect(out).toContain('leave it OPEN until he answers');
     expect(out).toContain('ONE reply_session("sess-001"');
