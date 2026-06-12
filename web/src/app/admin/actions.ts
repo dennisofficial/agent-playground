@@ -61,7 +61,7 @@ export async function createProjectAction(
   formData: FormData,
 ): Promise<ActionState> {
   return guarded(async () => {
-    await createProject({
+    await createProject(str(formData, 'teamId'), {
       projectId: str(formData, 'projectId'),
       displayName: str(formData, 'displayName'),
       gitUrl: str(formData, 'gitUrl'),
@@ -76,7 +76,7 @@ export async function updateProjectAction(
   formData: FormData,
 ): Promise<ActionState> {
   return guarded(async () => {
-    await updateProject(str(formData, 'projectId'), {
+    await updateProject(str(formData, 'teamId'), str(formData, 'projectId'), {
       displayName: str(formData, 'displayName'),
       gitUrl: str(formData, 'gitUrl'),
       defaultBranch: str(formData, 'defaultBranch') || 'main',
@@ -93,7 +93,7 @@ export async function putTokenAction(
   formData: FormData,
 ): Promise<ActionState> {
   return guarded(async () => {
-    await putToken({
+    await putToken(str(formData, 'teamId'), {
       name: str(formData, 'name'),
       token: str(formData, 'token'), // passes straight through; never echoed into state
       ...(formData.get('default') ? { default: true } : {}),
@@ -105,12 +105,16 @@ export async function setDefaultTokenAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  return guarded(() => setDefaultToken(str(formData, 'name')).then(() => undefined));
+  return guarded(() =>
+    setDefaultToken(str(formData, 'teamId'), str(formData, 'name')).then(() => undefined),
+  );
 }
 
 export async function deleteTokenAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  return guarded(() => deleteToken(str(formData, 'name')).then(() => undefined));
+  return guarded(() =>
+    deleteToken(str(formData, 'teamId'), str(formData, 'name')).then(() => undefined),
+  );
 }

@@ -57,6 +57,7 @@ describe('channel persistence (live Postgres)', () => {
     let channel = moduleRef.get(ChannelService);
     let cursors = moduleRef.get(CursorStore);
 
+    const before = Date.now();
     const m0 = channel.append({
       id: 'u-0',
       author: 'Dennis',
@@ -70,8 +71,9 @@ describe('channel persistence (live Postgres)', () => {
       authorBotId: 'alex',
       text: 'hi…',
     });
+    const originalCreatedAt = m1.createdAt;
     // Streaming re-emit with the same id = in-place update, no new seq.
-    channel.append({
+    const m1Updated = channel.append({
       id: 'alex:0',
       author: 'Alex',
       authorId: 'alex',
@@ -82,6 +84,11 @@ describe('channel persistence (live Postgres)', () => {
     expect(m0.channelId).toBe(SURFACE); // append defaults the channel coordinate to the process surface
     expect(m1.seq).toBe(1);
     expect(channel.length).toBe(2);
+    // createdAt is stamped at append-time and is a real epoch ms.
+    expect(m0.createdAt).toBeGreaterThanOrEqual(before);
+    expect(m1.createdAt).toBeGreaterThanOrEqual(before);
+    // Streaming re-emit must preserve the original createdAt — never reset on update.
+    expect(m1Updated.createdAt).toBe(originalCreatedAt);
 
     cursors.set('alex', SURFACE, 2);
     await channel.flush();
@@ -103,6 +110,8 @@ describe('channel persistence (live Postgres)', () => {
     expect(channel.length).toBe(2); // seq counter continues, no collisions
     expect(cursors.get('alex', SURFACE)).toBe(2);
     expect(cursors.get('sam', SURFACE)).toBe(0); // unseen bot starts at 0
+    // createdAt round-trips: toChannelMsg maps the DB created_at back to epoch ms.
+    expect(log.every((m) => m.createdAt > 0)).toBe(true);
 
     // Appends keep working after hydration with the continued seq.
     const m2 = channel.append({

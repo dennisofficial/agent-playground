@@ -18,6 +18,19 @@ export interface PullRequestResult {
   existing: boolean;
 }
 
+/** A single open PR returned by `listOpenPullRequests`. */
+export interface PullRequestSummary {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  headBranch: string;
+  baseBranch: string;
+  draft: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 const API = 'https://api.github.com';
 
 /**
@@ -85,6 +98,48 @@ export class GithubApiService {
     }
     throw new Error(
       `GitHub refused the pull request (${res.status}): ${detail || 'no detail'}`,
+    );
+  }
+
+  /** List the open PRs on a repo (up to 50, newest first). */
+  async listOpenPullRequests(
+    token: string,
+    { owner, repo }: { owner: string; repo: string },
+  ): Promise<PullRequestSummary[]> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls?state=open&per_page=50&sort=created&direction=desc`,
+      { headers: this.headers(token) },
+    );
+    if (res.ok) {
+      const prs = (await res.json()) as Array<{
+        number: number;
+        title: string;
+        html_url: string;
+        user: { login: string };
+        head: { ref: string };
+        base: { ref: string };
+        draft: boolean;
+        created_at: string;
+        updated_at: string;
+      }>;
+      return prs.map((pr) => ({
+        number: pr.number,
+        title: pr.title,
+        url: pr.html_url,
+        author: pr.user.login,
+        headBranch: pr.head.ref,
+        baseBranch: pr.base.ref,
+        draft: pr.draft,
+        createdAt: pr.created_at,
+        updatedAt: pr.updated_at,
+      }));
+    }
+    const errBody = (await res.json().catch(() => ({}))) as {
+      message?: string;
+    };
+    const detail = errBody.message ?? 'no detail';
+    throw new Error(
+      `GitHub refused the pull request list (${res.status}): ${detail}`,
     );
   }
 }

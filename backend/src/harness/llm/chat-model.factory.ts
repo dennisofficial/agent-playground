@@ -68,6 +68,20 @@ export class ChatModelFactory {
       temperature: 0,
     });
   }
+
+  /**
+   * Cheap model for the recursion-guard rolling-window check — fires on every bot-authored trigger
+   * on the respond path. Returns a single boolean + one-line reasoning (tiny output). `GUARD_MODEL`
+   * env var overrides; defaults to the same Haiku as gate/extract.
+   */
+  buildGuardModel(): ChatAnthropic {
+    return new ChatAnthropic({
+      apiKey: this.apiKey(),
+      model: this.env.get('GUARD_MODEL') ?? DEFAULT_SMALL_MODEL,
+      maxTokens: 128,
+      temperature: 0,
+    });
+  }
 }
 
 /**

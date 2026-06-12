@@ -5,7 +5,7 @@ import type { GithubTokenMeta } from '@/lib/admin-api';
 import { deleteTokenAction, setDefaultTokenAction } from './actions';
 import { IDLE } from './action-state';
 
-export function TokenRow({ token }: { token: GithubTokenMeta }) {
+export function TokenRow({ token, teamId }: { token: GithubTokenMeta; teamId: string }) {
   const [setDefaultState, setDefault, settingDefault] = useActionState(setDefaultTokenAction, IDLE);
   const [deleteState, doDelete, deleting] = useActionState(deleteTokenAction, IDLE);
   const error = setDefaultState.error ?? deleteState.error;
@@ -24,6 +24,7 @@ export function TokenRow({ token }: { token: GithubTokenMeta }) {
         <div className="flex items-center gap-2">
           {!token.isDefault ? (
             <form action={setDefault}>
+              <input type="hidden" name="teamId" value={teamId} />
               <input type="hidden" name="name" value={token.name} />
               <button
                 type="submit"
@@ -41,6 +42,7 @@ export function TokenRow({ token }: { token: GithubTokenMeta }) {
                 e.preventDefault();
             }}
           >
+            <input type="hidden" name="teamId" value={teamId} />
             <input type="hidden" name="name" value={token.name} />
             <button
               type="submit"

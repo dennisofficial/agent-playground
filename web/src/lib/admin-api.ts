@@ -10,6 +10,9 @@ export type { FactView, FactListResponse, TenantView, Tier };
  * happens on the Next server (Server Components for reads, Server Actions for mutations) — the
  * browser never talks to the backend or sees the token.
  *
+ * All project and token endpoints are tenant-scoped: /tenants/:teamId/projects and
+ * /tenants/:teamId/tokens. Every function accepts teamId as its first argument.
+ *
  * Type mirrors of backend/src/harness/projects/project.types.ts — two small interfaces; mirroring
  * beats coupling the web build to backend sources (keep in sync by hand).
  */
@@ -69,17 +72,29 @@ async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const listProjects = () => adminFetch<ProjectRecord[]>('/projects');
+/** Builds the tenant-scoped base path for all project/token routes. */
+const tenantBase = (teamId: string) => `/tenants/${encodeURIComponent(teamId)}`;
 
-export const createProject = (dto: {
-  projectId: string;
-  displayName: string;
-  gitUrl: string;
-  defaultBranch?: string;
-  tokenName?: string;
-}) => adminFetch<ProjectRecord>('/projects', { method: 'POST', body: JSON.stringify(dto) });
+export const listProjects = (teamId: string) =>
+  adminFetch<ProjectRecord[]>(`${tenantBase(teamId)}/projects`);
+
+export const createProject = (
+  teamId: string,
+  dto: {
+    projectId: string;
+    displayName: string;
+    gitUrl: string;
+    defaultBranch?: string;
+    tokenName?: string;
+  },
+) =>
+  adminFetch<ProjectRecord>(`${tenantBase(teamId)}/projects`, {
+    method: 'POST',
+    body: JSON.stringify(dto),
+  });
 
 export const updateProject = (
+  teamId: string,
   id: string,
   dto: Partial<{
     displayName: string;
@@ -88,21 +103,31 @@ export const updateProject = (
     tokenName: string | null;
   }>,
 ) =>
-  adminFetch<ProjectRecord>(`/projects/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
+  adminFetch<ProjectRecord>(
+    `${tenantBase(teamId)}/projects/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: JSON.stringify(dto) },
+  );
+
+export const listTokens = (teamId: string) =>
+  adminFetch<GithubTokenMeta[]>(`${tenantBase(teamId)}/tokens`);
+
+export const putToken = (teamId: string, dto: { name: string; token: string; default?: boolean }) =>
+  adminFetch<GithubTokenMeta>(`${tenantBase(teamId)}/tokens`, {
+    method: 'POST',
     body: JSON.stringify(dto),
   });
 
-export const listTokens = () => adminFetch<GithubTokenMeta[]>('/tokens');
+export const setDefaultToken = (teamId: string, name: string) =>
+  adminFetch<{ ok: boolean }>(
+    `${tenantBase(teamId)}/tokens/${encodeURIComponent(name)}/default`,
+    { method: 'PUT' },
+  );
 
-export const putToken = (dto: { name: string; token: string; default?: boolean }) =>
-  adminFetch<GithubTokenMeta>('/tokens', { method: 'POST', body: JSON.stringify(dto) });
-
-export const setDefaultToken = (name: string) =>
-  adminFetch<{ ok: boolean }>(`/tokens/${encodeURIComponent(name)}/default`, { method: 'PUT' });
-
-export const deleteToken = (name: string) =>
-  adminFetch<{ ok: boolean }>(`/tokens/${encodeURIComponent(name)}`, { method: 'DELETE' });
+export const deleteToken = (teamId: string, name: string) =>
+  adminFetch<{ ok: boolean }>(
+    `${tenantBase(teamId)}/tokens/${encodeURIComponent(name)}`,
+    { method: 'DELETE' },
+  );
 
 // ── Memory Viewer API ────────────────────────────────────────────────────────────────────────────
 

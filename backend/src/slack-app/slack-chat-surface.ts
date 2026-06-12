@@ -13,6 +13,7 @@ import { SlackIdentityRegistry } from './slack-identity.registry';
 import type { SlackInboundEvent } from './slack-inbound.types';
 import {
   emojiToSlackName,
+  extractHandles,
   extractMentionIds,
   translateInbound,
   translateOutbound,
@@ -164,7 +165,18 @@ export class SlackChatSurface implements ChatSurface {
       return;
     }
     const { teamId, channel } = parsed;
-    const text = translateOutbound(msg.text); // LLMs emit Markdown; Slack renders mrkdwn
+    // Pre-resolve @handles to Slack user ids — mirrors the inbound extractMentionIds pre-resolve
+    // pattern. The async resolution happens here; the sync translator gets a callback.
+    const handles = extractHandles(msg.text);
+    const mentionMap = new Map<string, string>();
+    for (const handle of handles) {
+      const slackId = await this.directory.resolveMention(teamId, handle);
+      if (slackId) mentionMap.set(handle, slackId);
+    }
+    const text = translateOutbound(msg.text, {
+      resolveMention:
+        mentionMap.size > 0 ? (h) => mentionMap.get(h) : undefined,
+    }); // LLMs emit Markdown; Slack renders mrkdwn; @handles become <@SLACK_USER_ID> when resolved
     const puppet = await this.identities.clientFor(teamId, msg.authorBotId);
     // The ears app (username/icon override) is the fallback — used when there's no puppet AND when a
     // puppet's post fails membership (private channel). No puppet AND no ears token (workspace not
@@ -244,6 +256,47 @@ export class SlackChatSurface implements ChatSurface {
     } catch (err) {
       // Same-emoji collisions stay fine: per-identity duplicates (or two fallback bots) no-op.
       if (isSlackError(err, ['already_reacted'])) return;
+      throw err;
+    }
+  }
+
+  /** Remove a reaction this bot added (clears the transient "composing" 💭). Mirrors `react`'s
+   * puppet-first/ears-fallback resolution — Slack only lets an identity remove its OWN reaction,
+   * so the resolution order MUST match the add. A missing reaction (`no_reaction`) is a no-op. */
+  async unreact(
+    targetMessageId: string,
+    emoji: string,
+    asBot: { id: string; name: string },
+    channelId: string,
+  ): Promise<void> {
+    const parsed = parseSlackSurface(channelId);
+    if (!parsed) return;
+    const posted = this.postedIds.get(targetMessageId);
+    const channel = posted?.channel ?? parsed.channel;
+    const timestamp = posted?.ts ?? targetMessageId;
+    if (!/^\d+\.\d+$/.test(timestamp)) {
+      this.logger.debug(`no Slack ts for reaction target ${targetMessageId}`);
+      return;
+    }
+    const args = { channel, timestamp, name: emojiToSlackName(emoji) };
+    try {
+      const puppet = await this.identities.clientFor(parsed.teamId, asBot.id);
+      const removed = puppet
+        ? await this.tryWithJoin(
+            puppet,
+            channel,
+            asBot.id,
+            REACT_MEMBERSHIP_ERRORS,
+            () => puppet.reactions.remove(args),
+          )
+        : undefined;
+      if (!removed) {
+        const ears = await this.clients.clientFor(parsed.teamId);
+        await ears?.reactions.remove(args);
+      }
+    } catch (err) {
+      // Nothing to remove (never added, or added by the other identity) — fine, leave it be.
+      if (isSlackError(err, ['no_reaction'])) return;
       throw err;
     }
   }
