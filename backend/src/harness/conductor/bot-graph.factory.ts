@@ -156,9 +156,13 @@ const asInput = (m: ChannelMsg): HumanMessage =>
   new HumanMessage(`${m.author}: ${m.text}`);
 
 /**
- * A shallow copy of `m` with a cache breakpoint on its last content block — WITHOUT mutating the
- * original (it rides in checkpointed state, so a mutation would poison the durable history). Only
- * anchors on human/ai turns carrying cacheable text; other turns fall back to system-only caching.
+ * A shallow copy of `m` with a cache breakpoint on its last non-thinking content block — WITHOUT
+ * mutating the original (it rides in checkpointed state, so a mutation would poison the durable
+ * history). Only anchors on human/ai turns carrying cacheable text; other turns fall back to
+ * system-only caching. `thinking` and `redacted_thinking` blocks are intentionally skipped when
+ * searching for the anchor: Anthropic rejects `cache_control` on thinking blocks, and a
+ * thinking-only assistant turn (no trailing text block) returns `m` unchanged so that turn falls
+ * back to system-only caching rather than crashing the API call.
  */
 const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
   const kind = m.getType();
@@ -175,11 +179,20 @@ const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
       ? clone([{ type: 'text', text: m.content, cache_control: cc }])
       : m;
   }
-  const last = m.content.length - 1;
-  return last >= 0
-    ? clone(
-        m.content.map((b, i) => (i === last ? { ...b, cache_control: cc } : b)),
-      )
+  const isThinking = (b: unknown): boolean =>
+    typeof b === 'object' &&
+    b !== null &&
+    ((b as { type?: string }).type === 'thinking' ||
+      (b as { type?: string }).type === 'redacted_thinking');
+  let anchor = -1;
+  for (let i = m.content.length - 1; i >= 0; i--) {
+    if (!isThinking(m.content[i])) {
+      anchor = i;
+      break;
+    }
+  }
+  return anchor >= 0
+    ? clone(m.content.map((b, i) => (i === anchor ? { ...b, cache_control: cc } : b)))
     : m;
 };
 
