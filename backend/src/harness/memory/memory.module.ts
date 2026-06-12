@@ -1,6 +1,14 @@
 import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
-import { Fact, Task, TeamTask, Worklog } from '@workspace/shared/schemas';
+import {
+  Fact,
+  Task,
+  TeamSetting,
+  TeamTask,
+  TeamTaskNote,
+  TeamTaskPlan,
+  Worklog,
+} from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
@@ -11,9 +19,12 @@ import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
+import { PlanStore } from './plan-store';
 import { ReconcileService } from './reconcile.service';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
+import { TeamSettingsStore } from './team-settings-store';
+import { TicketNoteStore } from './ticket-note-store';
 import { WorklogStore } from './worklog-store';
 
 /**
@@ -25,7 +36,15 @@ import { WorklogStore } from './worklog-store';
  */
 @CreateModule({
   imports: [
-    TypeOrmModule.forFeature([Fact, Task, TeamTask, Worklog]),
+    TypeOrmModule.forFeature([
+      Fact,
+      Task,
+      TeamTask,
+      TeamTaskPlan,
+      TeamTaskNote,
+      TeamSetting,
+      Worklog,
+    ]),
     LlmModule,
     EmployeesModule,
   ],
@@ -60,6 +79,23 @@ import { WorklogStore } from './worklog-store';
       provide: WorklogStore,
       inject: [getRepositoryToken(Worklog)],
       useFactory: (worklog: Repository<Worklog>) => new WorklogStore(worklog),
+    },
+    {
+      provide: PlanStore,
+      inject: [getRepositoryToken(TeamTaskPlan)],
+      useFactory: (plans: Repository<TeamTaskPlan>) => new PlanStore(plans),
+    },
+    {
+      provide: TicketNoteStore,
+      inject: [getRepositoryToken(TeamTaskNote)],
+      useFactory: (notes: Repository<TeamTaskNote>) =>
+        new TicketNoteStore(notes),
+    },
+    {
+      provide: TeamSettingsStore,
+      inject: [getRepositoryToken(TeamSetting)],
+      useFactory: (settings: Repository<TeamSetting>) =>
+        new TeamSettingsStore(settings),
     },
   ],
 })

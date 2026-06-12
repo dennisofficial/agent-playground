@@ -77,6 +77,9 @@ export interface IEnvConfig {
   // 'linked' = only board-linked sessions are gated (unlinked ad-hoc work stays autonomous);
   // 'off' = no mechanical gate (prompt-governed only). Tone down as trust builds.
   EXECUTION_APPROVAL_MODE: 'all' | 'linked' | 'off';
+  // Slack user id allowed to rule on approval cards when the workspace has no OAuth installer
+  // (tenant.installed_by is null on env-token dev workspaces). installed_by wins when set.
+  APPROVAL_BOSS_USER_ID?: string;
   // Directory worker engines are jailed to. No code default on purpose: dispatching a job without
   // it fails loudly rather than letting a worker loose in an arbitrary cwd.
   WORKER_ROOT?: string;
@@ -184,6 +187,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
     .valid('all', 'linked', 'off')
     .optional()
     .default('all'),
+  APPROVAL_BOSS_USER_ID: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),

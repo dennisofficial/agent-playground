@@ -35,10 +35,18 @@ Collect answers for ALL questions, then send them in ONE reply_session("${sid}",
 
   if (session.lastReportKind === 'plan') {
     if (session.boardTaskId !== undefined) {
+      const attachLine =
+        session.planAttached === false
+          ? `The automatic attach to ticket #${session.boardTaskId} FAILED — park the full plan on the ticket yourself with add_note(${session.boardTaskId}, <the plan>) before anything else; the ticket is the durable copy.`
+          : `Your plan (with its Q&A) was automatically ATTACHED to ticket #${session.boardTaskId} — the ticket is the durable copy.`;
       return `[Session ${sid} — "${session.task}"] finished its PLAN (its planning Q&A is included below):
 ${report}
 
-This session is linked to board task #${session.boardTaskId}. Next: post the plan for approval — update_board_task(${session.boardTaskId}, status 'awaiting_approval') — and give the team a short first-person summary of the plan's substance and its Q&A. Do NOT reply with mode 'execute': execution unlocks only after Dennis approves at a planning sitting and the team lead records it ('approved') — an early flip is refused. reply_session in plan mode is fine for refining the plan.`;
+This session is linked to board task #${session.boardTaskId}. ${attachLine} Next:
+- Tell the team, first person and brief, that your plan on #${session.boardTaskId} is ready — @Sam reviews every attached plan before anything is proposed to Dennis.
+- Keep THIS session OPEN: if Sam sends revision notes, reply_session them in — the revised plan re-attaches on the next turn.
+- Once Sam approves your plan, close_session("${sid}") — the ticket carries the plan, and the execute session opens fresh from it after Dennis approves and the standup closes.
+Do NOT set any board status yourself and do NOT reply with mode 'execute' — the system refuses early flips.`;
     }
     return `[Session ${sid} — "${session.task}"] finished its PLAN:
 ${report}

@@ -1,3 +1,4 @@
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 import type { Identity } from '../../domain/identity';
 import { CreateSessionTool } from './session.tools';
 
@@ -37,8 +38,8 @@ function makeTool(opts: {
   };
   const worktrees = { get: () => ({ id: 'wt-001', path: '/tmp/wt' }) };
   const employees = {
-    byId: () => ({ id: 'alex', engine: 'claude' }),
-    fallbackOwner: () => ({ id: 'alex', engine: 'claude' }),
+    byId: () => ({ id: 'alex', engine: EWorkerEngineName.CLAUDE }),
+    fallbackOwner: () => ({ id: 'alex', engine: EWorkerEngineName.CLAUDE }),
   };
   const board = { get: vi.fn(() => Promise.resolve(opts.boardTask)) };
   const tool = new CreateSessionTool(

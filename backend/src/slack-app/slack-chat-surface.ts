@@ -33,8 +33,9 @@ const slackSurfaceId = (teamId: string, channel: string): string =>
   `${SURFACE_PREFIX}${teamId}:${channel}`;
 
 /** Parse `slack:<teamId>:<channel>` → its parts, or undefined for a non-slack / DM coordinate
- * (only real channels are posted to in v1). */
-function parseSlackSurface(
+ * (only real channels are posted to in v1). Exported for the approval cards (the proposal port's
+ * Slack adapter routes by the same coordinate). */
+export function parseSlackSurface(
   surfaceId: string,
 ): { teamId: string; channel: string } | undefined {
   if (!surfaceId.startsWith(SURFACE_PREFIX)) return undefined;

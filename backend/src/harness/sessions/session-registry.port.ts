@@ -56,6 +56,10 @@ export interface Session {
   /** The team-board task this session works, when linked. The approval guard's anchor: an execute
    * turn on a linked session is refused until the task is 'approved'. */
   boardTaskId?: number;
+  /** Whether the last turn's finished plan was durably attached to the linked board task (set on
+   * plan-kind turn-ends of linked sessions; false = the attach FAILED and the owner should park
+   * the plan on the ticket via add_note). Cleared on every other turn-end like lastReportKind. */
+  planAttached?: boolean;
   error?: string;
 }
 

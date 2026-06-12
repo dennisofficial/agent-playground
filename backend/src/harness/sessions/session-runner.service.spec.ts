@@ -10,6 +10,8 @@ import type { PersonaService } from '../employees/persona.service';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type { BoardStatus, BoardStore } from '../memory/board-store';
+import type { PlanStore } from '../memory/plan-store';
+import type { TeamSettingsStore } from '../memory/team-settings-store';
 import type { WorklogStore } from '../memory/worklog-store';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { InMemorySessionRegistry } from './in-memory-session.registry';
@@ -22,7 +24,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'x',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
 };
 
 const WT = {
@@ -44,6 +46,10 @@ function buildRunner(
     approvalMode?: 'all' | 'linked' | 'off';
     /** Board tasks visible to the guard, keyed by id. */
     boardTasks?: Record<number, { status: BoardStatus }>;
+    /** The team_settings standup flag (default closed). */
+    standupOpen?: boolean;
+    /** Make PlanStore.attach reject (the attach-failure path). */
+    attachFails?: boolean;
   } = {},
 ) {
   const worktree = 'worktree' in opts ? opts.worktree : WT;
@@ -82,6 +88,17 @@ function buildRunner(
   const env = {
     get: () => opts.approvalMode ?? 'off',
   } as unknown as EnvService;
+  const attached: Array<Record<string, unknown>> = [];
+  const plans = {
+    attach: (p: Record<string, unknown>) => {
+      if (opts.attachFails) return Promise.reject(new Error('db down'));
+      attached.push(p);
+      return Promise.resolve(p);
+    },
+  } as unknown as PlanStore;
+  const settings = {
+    isStandupOpen: () => Promise.resolve(opts.standupOpen ?? false),
+  } as unknown as TeamSettingsStore;
   const runner = new SessionRunnerService(
     sessions,
     engines,
@@ -93,8 +110,10 @@ function buildRunner(
     credCtx,
     board,
     env,
+    plans,
+    settings,
   );
-  return { runner, sessions, worklogged };
+  return { runner, sessions, worklogged, attached };
 }
 
 const newSession = {
@@ -514,5 +533,145 @@ describe('SessionRunnerService — the execute-approval gate', () => {
     expect((await runner.replySession(session.id, 'go', 'execute')).ok).toBe(
       true,
     );
+  });
+
+  it('an OPEN standup refuses every execute flip — even an approved linked task, even unlinked', async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      boardTasks: { 7: { status: 'approved' } },
+      standupOpen: true,
+    });
+    const linked = await idleSession(runner, sessions, 7);
+    const refused = await runner.replySession(linked.id, 'go', 'execute');
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain('standup is still OPEN');
+
+    const unlinkedRunner = buildRunner(echo, {
+      approvalMode: 'linked',
+      standupOpen: true,
+    });
+    const unlinked = await idleSession(
+      unlinkedRunner.runner,
+      unlinkedRunner.sessions,
+    );
+    const alsoRefused = await unlinkedRunner.runner.replySession(
+      unlinked.id,
+      'go',
+      'execute',
+    );
+    expect(alsoRefused.ok).toBe(false);
+    expect(alsoRefused.reason).toContain('standup');
+  });
+
+  it("dial 'off' ignores even an open standup (the documented kill-switch)", async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'off',
+      standupOpen: true,
+    });
+    const session = await idleSession(runner, sessions);
+    expect((await runner.replySession(session.id, 'go', 'execute')).ok).toBe(
+      true,
+    );
+  });
+
+  it('plan-mode replies are never standup-gated', async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      boardTasks: { 7: { status: 'in_progress' } },
+      standupOpen: true,
+    });
+    const session = await idleSession(runner, sessions, 7);
+    expect((await runner.replySession(session.id, 'refine', 'plan')).ok).toBe(
+      true,
+    );
+  });
+});
+
+describe('SessionRunnerService — plan auto-attach to the ticket', () => {
+  const planEngine = (planText: string): WorkerEngine => ({
+    name: EWorkerEngineName.CLAUDE,
+    run: () => Promise.resolve({ result: planText, sessionId: 'e1', planText }),
+  });
+
+  it('a plan turn on a LINKED session attaches the report (incl. Q&A) and marks planAttached', async () => {
+    let calls = 0;
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run() {
+        calls++;
+        return Promise.resolve(
+          calls === 1
+            ? {
+                result: 'asking',
+                sessionId: 'e1',
+                questions: [
+                  { question: 'Which auth?', options: [{ label: 'Cookie' }] },
+                ],
+              }
+            : { result: 'The plan.', sessionId: 'e1', planText: 'The plan.' },
+        );
+      },
+    };
+    const { runner, sessions, attached } = buildRunner(fake);
+    const session = await sessions.create({ ...newSession, boardTaskId: 7 });
+    await runner.runSessionTurn(session.id, session.task);
+    expect(attached).toHaveLength(0); // a questions-turn attaches nothing
+
+    await runner.replySession(session.id, 'Q1: option 1');
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(attached).toHaveLength(1);
+    expect(attached[0]).toMatchObject({
+      team: 'local',
+      taskId: 7,
+      employee: 'alex',
+      sessionId: session.id, // provenance = the harness session id
+    });
+    // The attached text is the full report — plan + the Q&A appendix.
+    expect(attached[0].planMd).toContain('The plan.');
+    expect(attached[0].planMd).toContain('Decisions made while planning');
+    expect((await sessions.get(session.id))?.planAttached).toBe(true);
+  });
+
+  it('an UNLINKED plan turn attaches nothing and leaves planAttached unset', async () => {
+    const { runner, sessions, attached } = buildRunner(planEngine('A plan.'));
+    const session = await sessions.create(newSession);
+    await runner.runSessionTurn(session.id, session.task);
+    expect(attached).toHaveLength(0);
+    expect((await sessions.get(session.id))?.planAttached).toBeUndefined();
+  });
+
+  it('an attach FAILURE still idles the session, with planAttached: false', async () => {
+    const { runner, sessions } = buildRunner(planEngine('A plan.'), {
+      attachFails: true,
+    });
+    const session = await sessions.create({ ...newSession, boardTaskId: 7 });
+    await runner.runSessionTurn(session.id, session.task);
+    const after = await sessions.get(session.id);
+    expect(after?.status).toBe('idle');
+    expect(after?.lastReport).toBe('A plan.');
+    expect(after?.planAttached).toBe(false);
+  });
+
+  it('a later non-plan turn clears planAttached (no stale flag survives)', async () => {
+    let calls = 0;
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run() {
+        calls++;
+        return Promise.resolve(
+          calls === 1
+            ? { result: 'The plan.', sessionId: 'e1', planText: 'The plan.' }
+            : { result: 'Just an update.', sessionId: 'e1' },
+        );
+      },
+    };
+    const { runner, sessions } = buildRunner(fake);
+    const session = await sessions.create({ ...newSession, boardTaskId: 7 });
+    await runner.runSessionTurn(session.id, session.task);
+    expect((await sessions.get(session.id))?.planAttached).toBe(true);
+    await runner.replySession(session.id, 'thanks, one more thing');
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await sessions.get(session.id))?.planAttached).toBeUndefined();
   });
 });

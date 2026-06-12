@@ -222,6 +222,11 @@ describe('bot graph — poisoned-history self-healing', () => {
       {
         gate: async () => ({ action: 'respond' as const }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       { fetchContext: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
@@ -232,6 +237,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);

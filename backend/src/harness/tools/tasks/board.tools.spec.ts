@@ -160,18 +160,18 @@ describe('board tools authority', () => {
     ).resolves.toContain('claim_board_task');
   });
 
-  it("the approval seam: 'approved' is lead-only, and only from 'awaiting_approval'", async () => {
+  it("the approval seam: 'awaiting_approval' and 'approved' are both lead-only", async () => {
     const { board, employees } = makeFakes();
     const tool = new UpdateBoardTaskTool(board as never, employees as never);
 
-    // A teammate posts their OWN plan for approval…
+    // A teammate can NOT post for approval — plans auto-attach; the lead proposes (propose_plan).
     board.get.mockResolvedValue(
       task({ assignee: 'alex', status: 'in_progress' }),
     );
     await expect(
       tool.execute({ id: 7, status: 'awaiting_approval' }, identity('alex')),
-    ).resolves.toContain('posted for approval');
-    // …but cannot approve it, even their own.
+    ).resolves.toContain('@Sam');
+    // …and cannot approve, even their own.
     board.get.mockResolvedValue(
       task({ assignee: 'alex', status: 'awaiting_approval' }),
     );
@@ -179,11 +179,11 @@ describe('board tools authority', () => {
       tool.execute({ id: 7, status: 'approved' }, identity('alex')),
     ).resolves.toContain("the team lead's call");
 
-    // The lead approves a posted plan…
+    // The lead approves a proposed ticket…
     await expect(
       tool.execute({ id: 7, status: 'approved' }, identity('sam')),
     ).resolves.toContain('APPROVED');
-    // …but not a plan that was never posted.
+    // …but not one that was never proposed.
     board.get.mockResolvedValue(
       task({ assignee: 'alex', status: 'in_progress' }),
     );
@@ -191,13 +191,10 @@ describe('board tools authority', () => {
       tool.execute({ id: 7, status: 'approved' }, identity('sam')),
     ).resolves.toContain("not 'awaiting_approval'");
 
-    // Posting someone ELSE's task for approval is refused (own-task rule).
-    board.get.mockResolvedValue(
-      task({ assignee: 'alex', status: 'in_progress' }),
-    );
+    // The lead's manual escape hatch still works.
     await expect(
-      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('riley')),
-    ).resolves.toContain("alex's — only they or the team lead");
+      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('sam')),
+    ).resolves.toContain('posted for approval');
   });
 
   it('the lead reassigns, reopens, and edits anything', async () => {

@@ -12,6 +12,8 @@ import { PersonaService } from '../employees/persona.service';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import { BoardStore } from '../memory/board-store';
+import { PlanStore } from '../memory/plan-store';
+import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
@@ -64,6 +66,8 @@ export class SessionRunnerService {
     private readonly credCtx: CredentialContext,
     private readonly board: BoardStore,
     private readonly env: EnvService,
+    private readonly plans: PlanStore,
+    private readonly settings: TeamSettingsStore,
   ) {}
 
   /**
@@ -161,11 +165,34 @@ export class SessionRunnerService {
           : kind === 'plan' && qa.length
             ? `${planText}\n\n${renderQaAppendix(qa)}`
             : result || '(no report)';
+      // A finished plan on a board-linked session AUTO-ATTACHES to its ticket (per employee,
+      // latest wins) — the ticket is the durable artifact (sessions die on restart) and what the
+      // lead reviews/proposes from. `planAttached` is reported on every turn-end like
+      // `lastReportKind` so the relay prompt can tell the owner the truth.
+      let planAttached: boolean | undefined;
+      if (kind === 'plan' && session.boardTaskId !== undefined) {
+        planAttached = await this.plans
+          .attach({
+            team: session.team,
+            taskId: session.boardTaskId,
+            employee: session.ownerBot,
+            planMd: lastReport,
+            sessionId,
+          })
+          .then(() => true)
+          .catch((err) => {
+            this.logger.warn(
+              `plan attach to #${session.boardTaskId} (${sessionId}) failed: ${err}`,
+            );
+            return false;
+          });
+      }
       await this.sessions.update(sessionId, {
         status: 'idle',
         engineSessionId,
         lastReport,
         lastReportKind: kind,
+        planAttached,
         turns: session.turns + 1,
       });
     } catch (err) {
@@ -241,11 +268,13 @@ export class SessionRunnerService {
   }
 
   /**
-   * Why an execute turn on this work is not allowed yet — or null when it is. The
+   * Why an execute turn on this work is not allowed yet — or null when it is. Two gates, both
+   * skipped only on dial 'off': (1) an OPEN STANDUP pauses every execute flip team-wide (approved
+   * or not — approval at the sitting isn't GO; the lead's close_standup is); (2) the
    * EXECUTION_APPROVAL_MODE dial: 'all' = every execute turn needs a linked board task in
-   * 'approved' (or 'done'); 'linked' = only board-linked sessions are gated; 'off' = no mechanical
-   * gate. Unknown dial values fail closed to 'all'. Also used by create_session for execute-mode
-   * opens, so a fresh session can't bypass the gate.
+   * 'approved' (or 'done'); 'linked' = only board-linked sessions are gated. Unknown dial values
+   * fail closed to 'all'. Also used by create_session for execute-mode opens, so a fresh session
+   * can't bypass the gate.
    */
   async executeRefusal(
     team: string,
@@ -253,16 +282,19 @@ export class SessionRunnerService {
   ): Promise<string | null> {
     const dial = this.env.get('EXECUTION_APPROVAL_MODE');
     if (dial === 'off') return null;
+    if (await this.settings.isStandupOpen(team)) {
+      return `the standup is still OPEN — approved or not, nothing starts executing until the team lead closes it (close_standup). Keep planning or wait for the all-clear in the channel.`;
+    }
     if (boardTaskId === undefined) {
       return dial === 'linked'
         ? null
-        : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, post the plan as 'awaiting_approval', and wait for Dennis's approval at a planning sitting.`;
+        : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
     }
     const task = await this.board.get(team, boardTaskId);
     if (!task)
       return `linked board task #${boardTaskId} no longer exists — fix the link before executing.`;
     if (task.status === 'approved' || task.status === 'done') return null;
-    return `board task #${boardTaskId} is '${task.status}' — work executes only AFTER Dennis approves it. Post the finished plan (update_board_task #${boardTaskId} → 'awaiting_approval') and wait for the team lead to record Dennis's approval at a planning sitting.`;
+    return `board task #${boardTaskId} is '${task.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; @Sam reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
   }
 
   /**

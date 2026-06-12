@@ -96,7 +96,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'x',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
   teamLead: true,
 };
 

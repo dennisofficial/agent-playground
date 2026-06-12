@@ -150,7 +150,7 @@ const updateSchema = z.object({
     .enum(['open', 'in_progress', 'awaiting_approval', 'approved', 'done'])
     .optional()
     .describe(
-      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee); 'awaiting_approval' posts your finished plan for Dennis's sign-off; 'approved' is TEAM LEAD ONLY, recorded only on Dennis's explicit approval.",
+      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY: proposing normally happens via propose_plan, and 'approved' records Dennis's explicit verdict.",
     ),
   assignee: z
     .string()
@@ -167,7 +167,7 @@ const updateSchema = z.object({
 export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
   readonly name = 'update_board_task';
   readonly description =
-    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), post your finished plan for sign-off ('awaiting_approval'), or — team lead only — reassign/reopen/edit anything and record Dennis's approval ('approved'). Teammates can only complete, release, or post-for-approval their OWN tasks.";
+    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), or — team lead only — reassign/reopen/edit anything, propose manually ('awaiting_approval'; normally propose_plan does this), and record Dennis's approval ('approved'). Teammates can only complete or release their OWN tasks.";
   readonly schema = updateSchema;
 
   constructor(
@@ -191,13 +191,16 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     const isLead = !!this.employees.byId(id.selfAgent)?.teamLead;
     const release = status === 'open';
 
-    // The approval seam: 'approved' is the record of DENNIS's decision, clerked by the lead.
+    // The approval seam: 'approved' is the record of DENNIS's decision, clerked by the lead, and
+    // 'awaiting_approval' is set by the lead's propose_plan (manual set = the lead's escape hatch).
     if (status === 'approved') {
       if (!isLead)
-        return `Marking a plan 'approved' is the team lead's call — and the lead records it only on Dennis's explicit approval. Post yours as 'awaiting_approval' and flag it for the next planning sitting.`;
+        return `Marking a plan 'approved' is the team lead's call — and the lead records it only on Dennis's explicit approval.`;
       if (task.status !== 'awaiting_approval')
-        return `Board task #${taskId} is '${task.status}', not 'awaiting_approval' — only a posted plan can be approved. Have the assignee post the plan first.`;
+        return `Board task #${taskId} is '${task.status}', not 'awaiting_approval' — only a proposed ticket can be approved (propose_plan proposes it).`;
     }
+    if (status === 'awaiting_approval' && !isLead)
+      return `Posting for approval isn't a status you set — your plan AUTO-ATTACHES to the ticket when your linked planning session finishes. Notify @Sam your plan on #${taskId} is ready for review; he proposes the ticket to Dennis (propose_plan) once every plan is lead-approved.`;
 
     if (!isLead) {
       if (
@@ -205,7 +208,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
         title !== undefined ||
         description !== undefined
       )
-        return `Reassigning or editing board tasks is the team lead's call — you can complete ('done'), release ('open'), or post for approval ('awaiting_approval') your own.`;
+        return `Reassigning or editing board tasks is the team lead's call — you can complete ('done') or release ('open') your own.`;
       if (task.assignee !== id.selfAgent)
         return `Board task #${taskId} is ${task.assignee ? `${task.assignee}'s` : 'unassigned'} — only they or the team lead can change it.`;
       if (!status) return `Nothing to change on #${taskId}.`;

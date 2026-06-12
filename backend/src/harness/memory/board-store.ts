@@ -151,6 +151,30 @@ export class BoardStore {
     return 'blocked';
   }
 
+  /**
+   * Atomic compare-and-set status transition — the claim() idiom (one conditional UPDATE, the DB
+   * is the lock). The verdict handler's guard against double clicks and stale approval cards: two
+   * concurrent verdicts on one task, exactly one wins; the loser reads the task to say why.
+   */
+  async transition(
+    team: string,
+    id: number,
+    from: BoardStatus,
+    patch: { status: BoardStatus; assignee?: string | null },
+  ): Promise<BoardTask | undefined> {
+    const sets = ['status = $4', 'updated_at = now()'];
+    const args: unknown[] = [id, team, from, patch.status];
+    if (patch.assignee !== undefined) {
+      args.push(patch.assignee);
+      sets.push(`assignee = $${args.length}`);
+    }
+    const rows = await this.q(
+      `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 AND status = $3 RETURNING *`,
+      args,
+    );
+    return rows[0] ? toBoardTask(rows[0]) : undefined;
+  }
+
   /** Guarded field update — AUTHORITY IS THE TOOL'S JOB; this only enforces team + existence. */
   async update(
     team: string,

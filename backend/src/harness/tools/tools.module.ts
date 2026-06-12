@@ -28,11 +28,14 @@ import {
   ListBoardTool,
   UpdateBoardTaskTool,
 } from './tasks/board.tools';
+import { ApprovePlanTool, ProposePlanTool } from './tasks/proposal.tools';
+import { CloseStandupTool, OpenStandupTool } from './tasks/standup.tools';
 import {
   AddTaskTool,
   CompleteTaskTool,
   ListTasksTool,
 } from './tasks/task.tools';
+import { AddNoteTool, GetTicketTool } from './tasks/ticket.tools';
 import { ToolRegistry } from './tool.registry';
 import { EndTurnTool } from './turn/end-turn.tool';
 import {
@@ -100,6 +103,14 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     AddBoardTaskTool,
     ClaimBoardTaskTool,
     UpdateBoardTaskTool,
+    // tickets (plans + notes)
+    GetTicketTool,
+    AddNoteTool,
+    // approval pipeline + standup (lead-only, Sam's roster array)
+    ApprovePlanTool,
+    ProposePlanTool,
+    OpenStandupTool,
+    CloseStandupTool,
   ],
 })
 export class ToolsModule {}

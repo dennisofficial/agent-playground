@@ -43,8 +43,10 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
     expect(bound.map((t) => t.name).sort()).toEqual(
       [
         'add_board_task',
+        'add_note',
         'add_task',
         'check_session',
+        'get_ticket',
         'claim_board_task',
         'close_session',
         'complete_task',
