@@ -50,6 +50,7 @@ export function ProjectForm({
       className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
     >
       <h3 className="text-sm font-medium text-black dark:text-zinc-50">Register a project</h3>
+      <input type="hidden" name="teamId" value={teamId} />
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <input
           name="projectId"

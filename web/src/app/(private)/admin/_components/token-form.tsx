@@ -41,6 +41,7 @@ export function TokenForm({ teamId, onSuccess }: { teamId: string; onSuccess: ()
       className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
     >
       <h3 className="text-sm font-medium text-black dark:text-zinc-50">Add / rotate a token</h3>
+      <input type="hidden" name="teamId" value={teamId} />
       <div className="mt-3 flex flex-col gap-3 sm:flex-row">
         <input
           name="name"

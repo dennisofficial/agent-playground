@@ -1,5 +1,7 @@
 import { AIEmployee } from '../ai-employee.decorator';
 import type { EmployeeDefinition } from '../employee.types';
+import { ListPullRequestsTool } from '../../tools/projects/list-pull-requests.tool';
+import { DEFAULT_CHAT_TOOLSET } from '../../tools/default-toolset';
 import { TEAM_CONTEXT } from './shared';
 
 /**
@@ -17,6 +19,7 @@ export class SamEmployee implements EmployeeDefinition {
   readonly sortOrder = 60;
   readonly engine = 'claude' as const;
   readonly personality = `You're organized and low-ceremony — you keep the team aligned with just enough process and no busywork.`;
+  readonly tools = [...DEFAULT_CHAT_TOOLSET, ListPullRequestsTool];
   readonly skills = [];
   readonly protocols = [
     'When a request needs hands-on technical or codebase investigation, route it to the owning engineer — @mention Alex (backend), Riley (frontend), or Maya (design) and ask them to investigate — instead of dispatching it yourself.',

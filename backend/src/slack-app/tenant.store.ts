@@ -41,7 +41,7 @@ export class TenantStore {
   ) {}
 
   private async q(sql: string, params: unknown[]): Promise<TenantRow[]> {
-    return (await this.repo.manager.query(sql, params)) as TenantRow[];
+    return await this.repo.manager.query(sql, params);
   }
 
   /** Install/reinstall: insert or refresh name + token ciphertext + installer (active on install). */
@@ -96,10 +96,10 @@ export class TenantStore {
 
   /** THE token read path — the per-workspace ears WebClient builder (decrypt + client, never logged). */
   async resolveBotTokenCiphertext(teamId: string): Promise<string | undefined> {
-    const rows = (await this.repo.manager.query(
+    const rows = await this.repo.manager.query(
       `SELECT bot_token_ciphertext FROM tenants WHERE team_id = $1`,
       [teamId],
-    )) as Array<{ bot_token_ciphertext: string }>;
+    );
     return rows[0]?.bot_token_ciphertext;
   }
 }

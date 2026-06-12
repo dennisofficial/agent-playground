@@ -66,8 +66,12 @@ export interface IEnvConfig {
   HARNESS_SURFACE_ID?: string; // the single chat surface this pass (default 'tui:main')
   HARNESS_TEAM_ID?: string; // team tier for memory scoping (default 'local')
   CHANNEL_HYDRATE_LIMIT?: number; // channel messages re-loaded into memory at boot (default 500)
+  HARNESS_TIMESTAMP_GAP_MS?: number; // time gap (ms) triggering a divider in LLM history (default 3600000 = 1h)
   GATE_MODEL?: string; // soft-gate model (default in code: Haiku)
   EXTRACT_MODEL?: string; // reconcile extraction model (default in code: Haiku)
+  GUARD_MODEL?: string; // recursion-guard model (default in code: Haiku)
+  RECURSION_GUARD_ENABLED?: boolean; // false → disable the loop-detection guard (default: true)
+  RECURSION_GUARD_WINDOW?: number; // rolling-window size for the guard (default: 12)
   // Directory worker engines are jailed to. No code default on purpose: dispatching a job without
   // it fails loudly rather than letting a worker loose in an arbitrary cwd.
   WORKER_ROOT?: string;
@@ -172,8 +176,12 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   HARNESS_SURFACE_ID: Joi.string().optional(),
   HARNESS_TEAM_ID: Joi.string().optional(),
   CHANNEL_HYDRATE_LIMIT: Joi.number().integer().min(1).optional(),
+  HARNESS_TIMESTAMP_GAP_MS: Joi.number().integer().min(1).optional(),
   GATE_MODEL: Joi.string().optional(),
   EXTRACT_MODEL: Joi.string().optional(),
+  GUARD_MODEL: Joi.string().optional(),
+  RECURSION_GUARD_ENABLED: Joi.boolean().optional(),
+  RECURSION_GUARD_WINDOW: Joi.number().integer().min(1).optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),

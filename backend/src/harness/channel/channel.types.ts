@@ -19,4 +19,8 @@ export interface ChannelMsg {
   /** Set when a bot authored it. */
   authorBotId?: string;
   text: string;
+  /** Wall-clock epoch ms when the message was first written. Stamped by `ChannelService.append` on
+   * new rows (never reset on streaming re-emits); populated from the DB `created_at` on hydration.
+   * Used by the LLM render layer to inject time-dividers and the per-turn "Current time" header. */
+  createdAt: number;
 }

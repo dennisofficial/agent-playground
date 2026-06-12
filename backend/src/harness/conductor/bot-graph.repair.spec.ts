@@ -5,6 +5,7 @@ import {
 } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
+import type { EnvService } from '@core/config/env/env.service';
 import type { ChannelRegistryService } from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
@@ -13,6 +14,7 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
+import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -33,12 +35,15 @@ class FakeChannel {
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
   append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'> & {
+      channelId?: string;
+    },
   ): ChannelMsg {
     const full = {
       ...msg,
       channelId: msg.channelId ?? this.surfaceId,
       seq: this.nextSeq++,
+      createdAt: Date.now(),
     };
     this.log.push(full);
     return full;
@@ -100,6 +105,11 @@ describe('bot graph — poisoned-history self-healing', () => {
       {
         gate: async () => ({ action: 'respond' as const }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       { fetchContext: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
@@ -110,6 +120,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);
@@ -210,6 +221,11 @@ describe('bot graph — poisoned-history self-healing', () => {
       {
         gate: async () => ({ action: 'respond' as const }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       { fetchContext: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
@@ -220,6 +236,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);

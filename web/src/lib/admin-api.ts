@@ -5,9 +5,12 @@ import { auth } from './auth';
  *   - withCredentials: true  (httpOnly access_token cookie sent automatically)
  *   - 401 → token refresh → retry  (via attachInterceptors in auth.ts)
  *
- * Routes are tenant-scoped: /tenants/:teamId/…
- * The teamId comes from the ?team= URL search param — callers read it from
- * useSearchParams() and pass it as the first argument to every function here.
+ * All project and token endpoints are tenant-scoped: /tenants/:teamId/projects and
+ * /tenants/:teamId/tokens. Every function accepts teamId as its first argument;
+ * callers read it from useSearchParams() and pass it in.
+ *
+ * Type mirrors of backend/src/harness/projects/project.types.ts — two small interfaces;
+ * mirroring beats coupling the web build to backend sources (keep in sync by hand).
  */
 
 export interface ProjectRecord {

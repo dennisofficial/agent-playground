@@ -1,6 +1,7 @@
 import { AIMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
+import type { EnvService } from '@core/config/env/env.service';
 import type { ChannelRegistryService } from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
@@ -9,6 +10,7 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
+import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -25,8 +27,15 @@ class FakeChannel {
   readonly surfaceId = 'tui:test';
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
-  append(msg: Omit<ChannelMsg, 'seq' | 'channelId'>): ChannelMsg {
-    const full = { ...msg, channelId: this.surfaceId, seq: this.nextSeq++ };
+  append(
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'>,
+  ): ChannelMsg {
+    const full = {
+      ...msg,
+      channelId: this.surfaceId,
+      seq: this.nextSeq++,
+      createdAt: Date.now(),
+    };
     this.log.push(full);
     return full;
   }
@@ -65,6 +74,11 @@ describe('bot graph — consume path resets recalled', () => {
         gate: async () => ({ action: decisions.shift() ?? 'ignore' }),
       } as unknown as GateService,
       {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
+      {
         fetchContext: async () => 'On your plate:\n- [#31] call open_pr',
       } as unknown as FetchService,
       {
@@ -83,6 +97,7 @@ describe('bot graph — consume path resets recalled', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);
