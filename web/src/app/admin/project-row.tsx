@@ -8,10 +8,12 @@ const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
 
 export function ProjectRow({
+  teamId,
   project,
   tokenNames,
   onSuccess,
 }: {
+  teamId: string;
   project: ProjectRecord;
   tokenNames: string[];
   onSuccess: () => void;
@@ -29,7 +31,7 @@ export function ProjectRow({
     setDone(false);
     setPending(true);
     try {
-      await updateProject(project.projectId, {
+      await updateProject(teamId, project.projectId, {
         displayName: str('displayName'),
         gitUrl: str('gitUrl'),
         defaultBranch: str('defaultBranch') || 'main',

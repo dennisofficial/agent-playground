@@ -7,9 +7,11 @@ const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
 
 export function ProjectForm({
+  teamId,
   tokenNames,
   onSuccess,
 }: {
+  teamId: string;
   tokenNames: string[];
   onSuccess: () => void;
 }) {
@@ -25,7 +27,7 @@ export function ProjectForm({
     setDone(false);
     setPending(true);
     try {
-      await createProject({
+      await createProject(teamId, {
         projectId: str('projectId'),
         displayName: str('displayName'),
         gitUrl: str('gitUrl'),

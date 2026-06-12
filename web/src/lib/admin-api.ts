@@ -1,5 +1,4 @@
 import { auth } from './auth';
-import { env } from './env';
 
 /**
  * Client-side admin API.  Uses the @workspace/auth axios instance:
@@ -7,10 +6,8 @@ import { env } from './env';
  *   - 401 → token refresh → retry  (via attachInterceptors in auth.ts)
  *
  * Routes are tenant-scoped: /tenants/:teamId/…
- * Set NEXT_PUBLIC_TEAM_ID in web/.env.personal to your Slack workspace team_id.
- *
- * Function signatures are identical to the previous server-side version so
- * call-sites in components require no changes beyond the onSuccess wiring.
+ * The teamId comes from the ?team= URL search param — callers read it from
+ * useSearchParams() and pass it as the first argument to every function here.
  */
 
 export interface ProjectRecord {
@@ -32,8 +29,8 @@ export interface GithubTokenMeta {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-function tenantPath(path: string): string {
-  return `/tenants/${env.NEXT_PUBLIC_TEAM_ID}${path}`;
+function tenantPath(teamId: string, path: string): string {
+  return `/tenants/${encodeURIComponent(teamId)}${path}`;
 }
 
 /** Extract a human-readable message from an Axios-shaped error without using `any`. */
@@ -63,18 +60,22 @@ async function api<T>(fn: () => Promise<{ data: T }>): Promise<T> {
 
 // ─── projects ─────────────────────────────────────────────────────────────────
 
-export const listProjects = () =>
-  api(() => auth.httpClient.get<ProjectRecord[]>(tenantPath('/projects')));
+export const listProjects = (teamId: string) =>
+  api(() => auth.httpClient.get<ProjectRecord[]>(tenantPath(teamId, '/projects')));
 
-export const createProject = (dto: {
-  projectId: string;
-  displayName: string;
-  gitUrl: string;
-  defaultBranch?: string;
-  tokenName?: string;
-}) => api(() => auth.httpClient.post<ProjectRecord>(tenantPath('/projects'), dto));
+export const createProject = (
+  teamId: string,
+  dto: {
+    projectId: string;
+    displayName: string;
+    gitUrl: string;
+    defaultBranch?: string;
+    tokenName?: string;
+  },
+) => api(() => auth.httpClient.post<ProjectRecord>(tenantPath(teamId, '/projects'), dto));
 
 export const updateProject = (
+  teamId: string,
   id: string,
   dto: Partial<{
     displayName: string;
@@ -85,29 +86,29 @@ export const updateProject = (
 ) =>
   api(() =>
     auth.httpClient.patch<ProjectRecord>(
-      tenantPath(`/projects/${encodeURIComponent(id)}`),
+      tenantPath(teamId, `/projects/${encodeURIComponent(id)}`),
       dto,
     ),
   );
 
 // ─── tokens ───────────────────────────────────────────────────────────────────
 
-export const listTokens = () =>
-  api(() => auth.httpClient.get<GithubTokenMeta[]>(tenantPath('/tokens')));
+export const listTokens = (teamId: string) =>
+  api(() => auth.httpClient.get<GithubTokenMeta[]>(tenantPath(teamId, '/tokens')));
 
-export const putToken = (dto: { name: string; token: string; default?: boolean }) =>
-  api(() => auth.httpClient.post<GithubTokenMeta>(tenantPath('/tokens'), dto));
+export const putToken = (teamId: string, dto: { name: string; token: string; default?: boolean }) =>
+  api(() => auth.httpClient.post<GithubTokenMeta>(tenantPath(teamId, '/tokens'), dto));
 
-export const setDefaultToken = (name: string) =>
+export const setDefaultToken = (teamId: string, name: string) =>
   api(() =>
     auth.httpClient.put<{ ok: boolean }>(
-      tenantPath(`/tokens/${encodeURIComponent(name)}/default`),
+      tenantPath(teamId, `/tokens/${encodeURIComponent(name)}/default`),
     ),
   );
 
-export const deleteToken = (name: string) =>
+export const deleteToken = (teamId: string, name: string) =>
   api(() =>
     auth.httpClient.delete<{ ok: boolean }>(
-      tenantPath(`/tokens/${encodeURIComponent(name)}`),
+      tenantPath(teamId, `/tokens/${encodeURIComponent(name)}`),
     ),
   );

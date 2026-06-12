@@ -5,9 +5,11 @@ import type { GithubTokenMeta } from '@/lib/admin-api';
 import { deleteToken, setDefaultToken } from '@/lib/admin-api';
 
 export function TokenRow({
+  teamId,
   token,
   onSuccess,
 }: {
+  teamId: string;
   token: GithubTokenMeta;
   onSuccess: () => void;
 }) {
@@ -19,7 +21,7 @@ export function TokenRow({
     setError(null);
     setSettingDefault(true);
     try {
-      await setDefaultToken(token.name);
+      await setDefaultToken(teamId, token.name);
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -36,7 +38,7 @@ export function TokenRow({
     setError(null);
     setDeleting(true);
     try {
-      await deleteToken(token.name);
+      await deleteToken(teamId, token.name);
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

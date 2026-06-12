@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { listProjects, listTokens } from '@/lib/admin-api';
 import type { GithubTokenMeta, ProjectRecord } from '@/lib/admin-api';
 import { ProjectForm } from '../../admin/project-form';
@@ -13,18 +14,28 @@ type Data = { projects: ProjectRecord[]; tokens: GithubTokenMeta[] };
 /**
  * The admin surface for the project registry + GitHub token store.
  *
+ * Reads the Slack workspace team_id from the ?team= URL search param so the
+ * same deployed portal can serve any tenant without a redeploy.  If the param
+ * is absent a prompt is shown instead of fetching.
+ *
  * Fetches data client-side on mount (and after each successful mutation via
  * onSuccess callbacks). Auth protection is handled by the enclosing
  * (private)/layout.tsx — this component can assume the user is authenticated.
  */
 export default function AdminPage() {
+  const searchParams = useSearchParams();
+  const teamId = searchParams.get('team') ?? '';
+
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setError(null);
     try {
-      const [projects, tokens] = await Promise.all([listProjects(), listTokens()]);
+      const [projects, tokens] = await Promise.all([
+        listProjects(teamId),
+        listTokens(teamId),
+      ]);
       setData({ projects, tokens });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -32,8 +43,23 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
+    if (!teamId) return;
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId]);
+
+  if (!teamId) {
+    return (
+      <section className="rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+        <h2 className="font-semibold">No workspace selected</h2>
+        <p className="mt-2">
+          Add a <code className="font-mono">?team=</code> query param to the URL with your
+          Slack workspace team_id (e.g.{' '}
+          <code className="font-mono">?team=T0123456789</code>).
+        </p>
+      </section>
+    );
+  }
 
   if (error) {
     return (
@@ -47,9 +73,8 @@ export default function AdminPage() {
             (in <code className="font-mono">backend/</code>)
           </li>
           <li>
-            Make sure <code className="font-mono">NEXT_PUBLIC_TEAM_ID</code> is set in{' '}
-            <code className="font-mono">web/.env.personal</code> (your Slack workspace
-            team_id).
+            Make sure the <code className="font-mono">?team=</code> param in the URL matches a
+            real Slack workspace team_id.
           </li>
         </ul>
       </section>
@@ -75,11 +100,11 @@ export default function AdminPage() {
             <p className="text-sm text-zinc-500">No tokens stored yet.</p>
           ) : (
             data.tokens.map((t) => (
-              <TokenRow key={t.name} token={t} onSuccess={load} />
+              <TokenRow key={t.name} teamId={teamId} token={t} onSuccess={load} />
             ))
           )}
         </div>
-        <TokenForm onSuccess={load} />
+        <TokenForm teamId={teamId} onSuccess={load} />
       </section>
 
       <section className="mt-12">
@@ -95,6 +120,7 @@ export default function AdminPage() {
             data.projects.map((p) => (
               <ProjectRow
                 key={p.projectId}
+                teamId={teamId}
                 project={p}
                 tokenNames={tokenNames}
                 onSuccess={load}
@@ -102,7 +128,7 @@ export default function AdminPage() {
             ))
           )}
         </div>
-        <ProjectForm tokenNames={tokenNames} onSuccess={load} />
+        <ProjectForm teamId={teamId} tokenNames={tokenNames} onSuccess={load} />
       </section>
     </>
   );

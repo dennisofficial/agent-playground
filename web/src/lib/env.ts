@@ -18,6 +18,9 @@ export enum EAppEnv {
  * @workspace/auth — no server-only bearer needed. NEXT_PUBLIC_* vars are inlined
  * into the client bundle at build time.
  *
+ * Tenant identity comes from the ?team= URL search param at runtime, not an env
+ * var — the same portal binary serves every workspace without a redeploy.
+ *
  * Defaults let the app boot locally with no .env files; real values come from
  * .env.local.enc / .env.personal via the `env:inject` script.
  */
@@ -34,14 +37,11 @@ export const env = createEnv({
     NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv).default(EAppEnv.LOCAL),
     // Base URL of the backend admin API (direct browser → NestJS, no Next proxy).
     NEXT_PUBLIC_BACKEND_URL: z.url().default('http://localhost:4000'),
-    // The Slack team_id for the workspace this portal manages (used in tenant-scoped routes).
-    NEXT_PUBLIC_TEAM_ID: z.string().default(''),
   },
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     BUILD_ID: process.env.BUILD_ID,
     NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
     NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL,
-    NEXT_PUBLIC_TEAM_ID: process.env.NEXT_PUBLIC_TEAM_ID,
   },
 });

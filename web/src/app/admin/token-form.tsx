@@ -7,7 +7,7 @@ const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
 
 /** Add a new token or rotate an existing one (same name overwrites the value). */
-export function TokenForm({ onSuccess }: { onSuccess: () => void }) {
+export function TokenForm({ teamId, onSuccess }: { teamId: string; onSuccess: () => void }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -20,7 +20,7 @@ export function TokenForm({ onSuccess }: { onSuccess: () => void }) {
     setDone(false);
     setPending(true);
     try {
-      await putToken({
+      await putToken(teamId, {
         name: str('name'),
         token: str('token'),
         ...(fd.get('default') ? { default: true } : {}),
