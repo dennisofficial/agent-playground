@@ -1,17 +1,50 @@
 'use client';
 
-import { useActionState } from 'react';
-import { createProjectAction } from './actions';
-import { IDLE } from './action-state';
+import { useState } from 'react';
+import { createProject } from '@/lib/admin-api';
 
 const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
 
-export function ProjectForm({ tokenNames }: { tokenNames: string[] }) {
-  const [state, action, pending] = useActionState(createProjectAction, IDLE);
+export function ProjectForm({
+  tokenNames,
+  onSuccess,
+}: {
+  tokenNames: string[];
+  onSuccess: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const str = (key: string) => String(fd.get(key) ?? '').trim();
+    setError(null);
+    setDone(false);
+    setPending(true);
+    try {
+      await createProject({
+        projectId: str('projectId'),
+        displayName: str('displayName'),
+        gitUrl: str('gitUrl'),
+        ...(str('defaultBranch') ? { defaultBranch: str('defaultBranch') } : {}),
+        ...(str('tokenName') ? { tokenName: str('tokenName') } : {}),
+      });
+      setDone(true);
+      (e.target as HTMLFormElement).reset();
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <form
-      action={action}
+      onSubmit={handleSubmit}
       className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
     >
       <h3 className="text-sm font-medium text-black dark:text-zinc-50">Register a project</h3>
@@ -29,7 +62,11 @@ export function ProjectForm({ tokenNames }: { tokenNames: string[] }) {
           placeholder="https://github.com/owner/repo"
           className={`${inputCls} font-mono sm:col-span-2`}
         />
-        <input name="defaultBranch" placeholder="base branch (default: main)" className={`${inputCls} font-mono`} />
+        <input
+          name="defaultBranch"
+          placeholder="base branch (default: main)"
+          className={`${inputCls} font-mono`}
+        />
         <select name="tokenName" defaultValue="" className={inputCls}>
           <option value="">— default token —</option>
           {tokenNames.map((n) => (
@@ -48,10 +85,10 @@ export function ProjectForm({ tokenNames }: { tokenNames: string[] }) {
           {pending ? 'Registering…' : 'Register project'}
         </button>
       </div>
-      {state.error ? (
-        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{state.error}</p>
+      {error ? (
+        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : null}
-      {state.ok ? <p className="mt-2 text-sm text-emerald-600">Registered.</p> : null}
+      {done ? <p className="mt-2 text-sm text-emerald-600">Registered.</p> : null}
     </form>
   );
 }

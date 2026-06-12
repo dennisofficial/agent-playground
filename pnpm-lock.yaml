@@ -456,6 +456,9 @@ importers:
       '@t3-oss/env-nextjs':
         specifier: ^0.13.11
         version: 0.13.11(typescript@6.0.3)(zod@4.4.3)
+      '@workspace/auth':
+        specifier: workspace:*
+        version: link:../packages/jwt-auth
       '@workspace/shared':
         specifier: workspace:*
         version: link:../shared

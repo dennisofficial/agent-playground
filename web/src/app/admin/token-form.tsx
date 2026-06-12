@@ -1,23 +1,53 @@
 'use client';
 
-import { useActionState } from 'react';
-import { putTokenAction } from './actions';
-import { IDLE } from './action-state';
+import { useState } from 'react';
+import { putToken } from '@/lib/admin-api';
 
 const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
 
 /** Add a new token or rotate an existing one (same name overwrites the value). */
-export function TokenForm() {
-  const [state, action, pending] = useActionState(putTokenAction, IDLE);
+export function TokenForm({ onSuccess }: { onSuccess: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const str = (key: string) => String(fd.get(key) ?? '').trim();
+    setError(null);
+    setDone(false);
+    setPending(true);
+    try {
+      await putToken({
+        name: str('name'),
+        token: str('token'),
+        ...(fd.get('default') ? { default: true } : {}),
+      });
+      setDone(true);
+      (e.target as HTMLFormElement).reset();
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <form
-      action={action}
+      onSubmit={handleSubmit}
       className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
     >
       <h3 className="text-sm font-medium text-black dark:text-zinc-50">Add / rotate a token</h3>
       <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-        <input name="name" required placeholder="name (e.g. personal)" className={`${inputCls} sm:w-48 font-mono`} />
+        <input
+          name="name"
+          required
+          placeholder="name (e.g. personal)"
+          className={`${inputCls} font-mono sm:w-48`}
+        />
         <input
           name="token"
           type="password"
@@ -40,10 +70,10 @@ export function TokenForm() {
           {pending ? 'Saving…' : 'Save token'}
         </button>
       </div>
-      {state.error ? (
-        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{state.error}</p>
+      {error ? (
+        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : null}
-      {state.ok ? <p className="mt-2 text-sm text-emerald-600">Saved.</p> : null}
+      {done ? <p className="mt-2 text-sm text-emerald-600">Saved.</p> : null}
     </form>
   );
 }
