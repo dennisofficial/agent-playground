@@ -28,7 +28,7 @@ import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { FetchService } from '../memory/fetch.service';
-import { CHECKPOINTER } from '../memory/memory.module';
+import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { ReconcileService } from '../memory/reconcile.service';
 import {
   SESSION_REGISTRY,

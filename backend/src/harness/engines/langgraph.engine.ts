@@ -8,7 +8,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createAgent } from 'langchain';
 import { flattenContent } from '../domain/text';
 import { ChatModelFactory } from '../llm/chat-model.factory';
-import { CHECKPOINTER } from '../memory/memory.module';
+import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { planningTools, workerTools } from './worker-tools';
 import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
 

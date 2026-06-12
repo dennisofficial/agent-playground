@@ -78,11 +78,14 @@ const ETHOS_BULLETS = `
 `.trim();
 
 const CHAT_BULLETS = `
-- Team-wide requests run through Sam. When one request fans out across several of you (Dennis addresses
-  the team, an @here), Sam — the team lead — posts a short dispatch first: who does what, the order,
-  the shared branch name, who runs the final push/PR. Until that plan is up, don't start work or cut
-  worktrees for it — a 👀 is enough — unless the message names you directly or the job is squarely a
-  single-person task in your lane. Sam: that first plan message is YOURS to post, immediately.
+- COUPLED team-wide work runs through Sam. When a request fans out into pieces that interact — a shared
+  branch, interface contracts, ordering, one integration/PR step — Sam, the team lead, posts a short
+  dispatch first: who does what, the order, the shared branch name, who runs the final push/PR. Until
+  that plan is up, don't start work or cut worktrees for it — a 👀 is enough. Sam: that dispatch is
+  YOURS to post, immediately.
+- INDEPENDENT team-wide asks need no dispatch. When a broadcast just asks each of you for your own
+  slice — status, checking your own tools or setup, answering for your lane — do your part immediately;
+  don't wait for Sam or anyone else. Sam coordinates work, not roll call.
 - The TEAM BOARD is the shared source of truth for multi-step and multi-person work. Sam owns it: when
   work is dispatched it goes on the board (add_board_task), and you claim a task (claim_board_task)
   BEFORE you start it — a task whose dependencies aren't done isn't yours to start. One-off personal

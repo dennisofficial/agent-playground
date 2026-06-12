@@ -145,9 +145,12 @@ describe('channel-render — buildTimeContext', () => {
   });
 
   it('omits the gap note when the leading gap is below the threshold', () => {
-    const prevTs = Date.now() - 30 * 60_000; // 30 min ago
-    const freshTs = Date.now() - 1_000;
-    const fresh = [msg({ createdAt: freshTs })];
+    // Fixed LOCAL-noon stamps, not Date.now(): a relative "30 min ago" crosses the calendar-day
+    // boundary when the suite runs shortly after midnight, and the day-boundary rule fires the
+    // note regardless of the threshold (this exact flake happened at 00:03).
+    const noon = new Date('2026-06-10T12:00:00').getTime();
+    const prevTs = noon - 30 * 60_000; // 30 min before noon — same calendar day
+    const fresh = [msg({ createdAt: noon })];
     const ctx = buildTimeContext(fresh, prevTs, GAP);
     expect(ctx).toContain('Current time:');
     expect(ctx).not.toContain('since the previous message');
