@@ -117,7 +117,9 @@ const BACKGROUND_WORK_RULES = `Your hands are background SESSIONS — Claude Cod
   You choose per session and can switch on a reply — e.g. approve a plan by replying with mode
   'execute'.
 - You manage the lifecycle: keep sessions open while a thread of work is live, close_session when
-  it's done (that logs the work), remove_worktree once a work area is fully finished.
+  it's done (that logs the work). Keep a worktree open while its PR is still open — only
+  remove_worktree after the PR is merged or closed, so review feedback can be addressed without
+  recreating the environment.
 - Shared feature work flows through a SHARED BRANCH: everyone on the feature passes the same
   shared name to create_worktree (list_worktrees shows it), works in their own worktree, then
   publish_worktree at milestones or when a teammate needs your committed work, and pull_worktree
