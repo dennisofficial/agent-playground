@@ -549,4 +549,40 @@ describe('SlackChatSurface Block Kit footer', () => {
     expect(footer).not.toContain('claude-sonnet-4-6');
     expect(footer).not.toContain('calls');
   });
+
+  it('usage + @mention → posts via section+mrkdwn, body contains <@U123>, no markdown block, footer still present', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({
+      ...msgWithUsage,
+      text: '@Dennis can you check this?',
+    });
+
+    // Only one postMessage call — no invalid_blocks retry
+    expect(web.chat.postMessage).toHaveBeenCalledTimes(1);
+    const call = postCall(web.chat.postMessage);
+    const blocks = call.blocks as Array<Record<string, unknown>>;
+
+    // No markdown block — the mention path must bypass it entirely
+    expect(blocks.find((b) => b.type === 'markdown')).toBeUndefined();
+
+    // First block is a section with mrkdwn containing the resolved Slack mention
+    const sectionBlock = blocks.find((b) => b.type === 'section');
+    expect(sectionBlock).toBeDefined();
+    const textEl = sectionBlock!.text as Record<string, unknown>;
+    expect(textEl.type).toBe('mrkdwn');
+    expect(textEl.text as string).toContain('<@U123>');
+    expect(textEl.text as string).not.toContain('@Dennis');
+
+    // Context footer block must still be present
+    const footer = contextFooter(call);
+    expect(footer).toBeTruthy();
+  });
+
+  it('no-mention usage message → first body block is markdown (locks in the two-path split)', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({ ...msgWithUsage }); // msgWithUsage.text has no @handles
+    const call = postCall(web.chat.postMessage);
+    const blocks = call.blocks as Array<Record<string, unknown>>;
+    expect(blocks[0].type).toBe('markdown');
+  });
 });
