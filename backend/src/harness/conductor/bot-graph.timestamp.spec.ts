@@ -10,6 +10,7 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
+import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -99,6 +100,7 @@ function buildFactory(channel: FakeChannel, gapMs?: number) {
       terminalToolNames: () => new Set<string>(),
     } as unknown as ToolRegistry,
     { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+    { isEnabled: () => false } as unknown as RecursionGuardService,
     { fetchContext: async () => '' } as unknown as FetchService,
     {
       reconcileMemory: async () => {},

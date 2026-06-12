@@ -5,6 +5,7 @@ import {
 } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
+import type { EnvService } from '@core/config/env/env.service';
 import type { ChannelRegistryService } from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
@@ -41,12 +42,16 @@ class FakeChannel {
   private nextSeq = 0;
 
   append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'> & {
+      channelId?: string;
+      createdAt?: number;
+    },
   ): ChannelMsg {
-    const full = {
+    const full: ChannelMsg = {
       ...msg,
       channelId: msg.channelId ?? this.surfaceId,
       seq: this.nextSeq++,
+      createdAt: msg.createdAt ?? Date.now(),
     };
     this.log.push(full);
     return full;
@@ -141,6 +146,7 @@ function buildFactory(
     { list: () => [] } as unknown as WorktreeService,
     { list: () => Promise.resolve([]) } as unknown as SessionRegistry,
     new MemorySaver() as unknown as PostgresSaver,
+    { get: () => undefined } as unknown as EnvService,
   );
 }
 

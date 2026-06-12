@@ -1,7 +1,9 @@
-import type { RenderItem } from './messages';
+import type { Reaction, RenderItem } from './messages';
 import { storeReducer } from './store';
 
-const userMsg = (id: string, reactions?: RenderItem['reactions']): RenderItem => ({
+type MsgItem = Extract<RenderItem, { kind: 'user' }>;
+
+const userMsg = (id: string, reactions?: Reaction[]): RenderItem => ({
   id,
   kind: 'user',
   text: 'hi',
@@ -17,7 +19,7 @@ describe('storeReducer', () => {
       by: 'sam',
       emoji: '💭',
     });
-    expect(next[0].reactions).toEqual([{ by: 'sam', emoji: '💭' }]);
+    expect((next[0] as MsgItem).reactions).toEqual([{ by: 'sam', emoji: '💭' }]);
   });
 
   it('un-folds the matching reaction from its target message', () => {
@@ -28,7 +30,7 @@ describe('storeReducer', () => {
       by: 'sam',
       emoji: '💭',
     });
-    expect(next[0].reactions).toEqual([]);
+    expect((next[0] as MsgItem).reactions).toEqual([]);
   });
 
   it('only removes the matching {by, emoji}, leaving others', () => {
@@ -45,7 +47,7 @@ describe('storeReducer', () => {
       by: 'sam',
       emoji: '💭',
     });
-    expect(next[0].reactions).toEqual([
+    expect((next[0] as MsgItem).reactions).toEqual([
       { by: 'dana', emoji: '💭' },
       { by: 'sam', emoji: '👍' },
     ]);
@@ -72,6 +74,6 @@ describe('storeReducer', () => {
       by: 'sam',
       emoji: '💭',
     });
-    expect(next[0].reactions).toEqual([{ by: 'dana', emoji: '👍' }]);
+    expect((next[0] as MsgItem).reactions).toEqual([{ by: 'dana', emoji: '👍' }]);
   });
 });
