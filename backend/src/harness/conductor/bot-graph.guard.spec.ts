@@ -215,10 +215,14 @@ describe('bot graph — recursion guard', () => {
     const { messages, cursor } = final.values as CheckpointValues;
     const lastMsg = messages[messages.length - 1];
 
-    // The pause message is an AIMessage committed to the checkpoint
+    // The pause message is an AIMessage committed to the checkpoint, carrying the judge's
+    // diagnosis so the bot can see WHAT it was repeating
     expect(lastMsg.getType()).toBe('ai');
     expect(flat(lastMsg.content)).toContain(
       "I think I'm going in circles here",
+    );
+    expect(flat(lastMsg.content)).toContain(
+      'What I kept repeating: same status repeated',
     );
 
     // Cursor advanced past the triggering message (seq 0 → cursor 1)
@@ -319,6 +323,166 @@ describe('bot graph — recursion guard', () => {
     expect(detectCalls).toHaveLength(0);
     // Normal llm path ran instead
     expect(invocations).toHaveLength(1);
+  });
+
+  it('(e) skips guard detection when a human spoke ANYWHERE in the batch, even with a bot-latest trigger', async () => {
+    const channel = new FakeChannel();
+    // Dennis pings, then a fast teammate's reply lands LAST in the batch — the old "latest only"
+    // check would have run the guard here and eaten Dennis's answer with a pause.
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: '@Alex are you back?',
+    });
+    channel.append({
+      id: 'b-1',
+      author: 'Riley',
+      authorId: 'riley',
+      authorBotId: 'riley',
+      text: 'welcome back alex',
+    });
+
+    const invocations: BaseMessage[][] = [];
+    const detectCalls: unknown[] = [];
+    const guard = {
+      isEnabled: () => true,
+      windowSize: () => 12,
+      detect: (...args: unknown[]) => {
+        detectCalls.push(args);
+        return Promise.resolve({ looping: true }); // would wrongly break if called
+      },
+    } as unknown as RecursionGuardService;
+
+    const factory = buildFactory(
+      channel,
+      guard,
+      scriptedModel('yes — back and unblocked', invocations),
+    );
+    const graph = factory.getBotGraph(ALEX);
+    const config = {
+      configurable: { thread_id: 'alex:guard-batch-human:root' },
+    };
+    await graph.updateState(config, { messages: priorAiHistory(8), cursor: 0 });
+
+    await drain(
+      await graph.stream(
+        { cursor: 0, forced: false },
+        { ...config, streamMode: 'updates' as const },
+      ),
+    );
+
+    expect(detectCalls).toHaveLength(0); // human in batch → real turn, no fuse check
+    expect(invocations).toHaveLength(1);
+  });
+
+  it('(f) once paused, bot-only chatter never re-fires the guard (re-arms only after a substantive reply)', async () => {
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'b-1',
+      author: 'Riley',
+      authorId: 'riley',
+      authorBotId: 'riley',
+      text: 'still working through the backlog',
+    });
+
+    const invocations: BaseMessage[][] = [];
+    const detectCalls: unknown[] = [];
+    const guard = {
+      isEnabled: () => true,
+      windowSize: () => 12,
+      detect: (...args: unknown[]) => {
+        detectCalls.push(args);
+        return Promise.resolve({ looping: true });
+      },
+    } as unknown as RecursionGuardService;
+
+    const factory = buildFactory(
+      channel,
+      guard,
+      scriptedModel('normal reply', invocations),
+    );
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:guard-paused:root' } };
+    // History ends on a prior pause — the guard must NOT evaluate again on bot-only input.
+    await graph.updateState(config, {
+      messages: [
+        ...priorAiHistory(8),
+        new AIMessage({
+          content:
+            "I think I'm going in circles here — pausing so I don't spin. Ping me when you want me to pick this back up.",
+        }),
+      ],
+      cursor: 0,
+    });
+
+    await drain(
+      await graph.stream(
+        { cursor: 0, forced: false },
+        { ...config, streamMode: 'updates' as const },
+      ),
+    );
+
+    expect(detectCalls).toHaveLength(0); // sentinel-last → guard stays quiet
+    expect(invocations).toHaveLength(1); // the turn itself still runs normally
+  });
+
+  it('(g) prior pause lines are EXCLUDED from the judged window — the breaker never feeds itself', async () => {
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'b-1',
+      author: 'Riley',
+      authorId: 'riley',
+      authorBotId: 'riley',
+      text: 'sounds good as usual',
+    });
+
+    const invocations: BaseMessage[][] = [];
+    const detectCalls: string[] = [];
+    const guard = {
+      isEnabled: () => true,
+      windowSize: () => 12,
+      detect: (_bot: unknown, windowText: string) => {
+        detectCalls.push(windowText);
+        return Promise.resolve({ looping: false });
+      },
+    } as unknown as RecursionGuardService;
+
+    const factory = buildFactory(
+      channel,
+      guard,
+      scriptedModel('proceeding', invocations),
+    );
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:guard-window:root' } };
+    // History: substantive turns, two old pauses in the middle, then a fresh substantive reply
+    // (so the sentinel-last skip doesn't apply and the guard evaluates).
+    await graph.updateState(config, {
+      messages: [
+        ...priorAiHistory(6),
+        new AIMessage({
+          content:
+            "I think I'm going in circles here — pausing so I don't spin.",
+        }),
+        new AIMessage({
+          content:
+            "I think I'm going in circles here — pausing so I don't spin.",
+        }),
+        new AIMessage({ content: 'back to it — picked up the ticket again' }),
+      ],
+      cursor: 0,
+    });
+
+    await drain(
+      await graph.stream(
+        { cursor: 0, forced: false },
+        { ...config, streamMode: 'updates' as const },
+      ),
+    );
+
+    expect(detectCalls).toHaveLength(1);
+    expect(detectCalls[0]).not.toContain('going in circles'); // pauses are not loop evidence
+    expect(detectCalls[0]).toContain('picked up the ticket again');
   });
 
   it('(d) skips guard detection on a forced (job relay) turn', async () => {

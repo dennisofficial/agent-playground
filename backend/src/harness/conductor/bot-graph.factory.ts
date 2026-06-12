@@ -558,9 +558,16 @@ export class BotGraphFactory {
      *   - forced turn (job relay — synthetic message, loop detection irrelevant)
      *   - guard disabled via env
      *   - triggering message is human-authored (loops are bot-origin phenomena)
-     *   - fewer than GUARD_FLOOR of the bot's own AI messages in history (not enough signal)
-     *   - last AI message is already the pause sentinel AND no human has spoken in the batch
-     *     (anti break-spam: don't re-fire until a human has weighed in)
+     *   - a human spoke ANYWHERE in the batch — a batch with a human in it deserves a real turn,
+     *     never a fuse check (also closes the race where a teammate's fast reply lands after the
+     *     human's and steals the "latest" slot)
+     *   - last AI message is already the pause sentinel (anti break-spam: once paused, the guard
+     *     re-arms only after the bot says something substantive again)
+     *   - fewer than GUARD_FLOOR substantive own messages in history (not enough signal)
+     *
+     * The judged window EXCLUDES prior pause lines: the breaker's own output must never count as
+     * loop evidence — a pause-polluted window otherwise re-confirms "looping" forever (observed:
+     * eight consecutive self-confirming re-fires).
      */
     const guardNode = async (
       state: BotStateType,
@@ -570,18 +577,23 @@ export class BotGraphFactory {
       // Only fire on bot-authored triggers — human messages don't form bot loops
       const latest = state.pending[state.pending.length - 1];
       if (!latest?.authorBotId) return {};
-      // Need enough history for a meaningful window
+      // A human anywhere in the batch → real turn, no fuse check.
+      if (state.pending.some((m) => !m.authorBotId)) return {};
       const ownMessages = state.messages.filter((m) => m.getType() === 'ai');
-      if (ownMessages.length < GUARD_FLOOR) return {};
-      // Anti break-spam: if we already fired the break and no human has spoken since, skip
-      const batchHasHuman = state.pending.some((m) => !m.authorBotId);
-      const lastAiText = flattenContent(
-        ownMessages[ownMessages.length - 1].content,
-      ).trim();
-      if (lastAiText.startsWith(PAUSE_SENTINEL) && !batchHasHuman) return {};
-      // Render the rolling window: the bot's own last N AI messages (text + tool-call note)
+      // Anti break-spam: once paused, stay paused on bot-only chatter; the guard re-arms when the
+      // bot next produces a substantive (non-pause) message of its own.
+      const lastAiText = ownMessages.length
+        ? flattenContent(ownMessages[ownMessages.length - 1].content).trim()
+        : '';
+      if (lastAiText.startsWith(PAUSE_SENTINEL)) return {};
+      // Need enough SUBSTANTIVE history for a meaningful window — pause lines don't count.
+      const substantive = ownMessages.filter(
+        (m) => !flattenContent(m.content).trim().startsWith(PAUSE_SENTINEL),
+      );
+      if (substantive.length < GUARD_FLOOR) return {};
+      // Render the rolling window: the bot's own last N substantive AI messages (text + tool-call note)
       const N = this.recursionGuard.windowSize();
-      const windowText = ownMessages
+      const windowText = substantive
         .slice(-N)
         .map((m) => {
           const text = flattenContent(m.content).trim();
@@ -609,6 +621,11 @@ export class BotGraphFactory {
      * history so the checkpoint stays honest), advances the cursor past them, appends a
      * first-person pause AIMessage, and clears `recalled`. Routes to `reconcile → END`.
      *
+     * The pause carries the judge's REASONING — the diagnosis of what looped — so the breaker is
+     * a learning signal, not just a fuse: the bot (and the channel) sees WHAT it was repeating,
+     * and reconcile can keep the lesson. The text still starts with PAUSE_SENTINEL, so the
+     * anti-spam/window checks keep matching.
+     *
      * The conductor's existing stream handler surfaces the pause AIMessage automatically
      * (`if (msg.getType() === 'ai') commit(msg)`) — zero conductor changes required.
      */
@@ -620,8 +637,12 @@ export class BotGraphFactory {
       const newCursor = pending.length
         ? pending[pending.length - 1].seq + 1
         : channel.lengthOf(this.channelIdOf(config));
+      const reason = state.guardReasoning?.trim();
+      const pauseText = reason
+        ? `${PAUSE_TEXT}\n(What I kept repeating: ${reason})`
+        : PAUSE_TEXT;
       return {
-        messages: [...pending.map(asInput), new AIMessage(PAUSE_TEXT)],
+        messages: [...pending.map(asInput), new AIMessage(pauseText)],
         cursor: newCursor,
         recalled: '',
       };

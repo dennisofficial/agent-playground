@@ -81,6 +81,10 @@ import { TenantSlackClients } from './tenant-slack-clients';
   ],
   exports: [
     CHAT_SURFACE,
+    // A @Global module shares ONLY what it exports — without this line the harness's
+    // propose_plan resolves no presenter and degrades to chat-words. (APPROVAL_INTERCEPTOR
+    // needs no export: its consumer, SlackInboundRouter, lives in this module.)
+    PROPOSAL_PRESENTER,
     SlackChatSurface,
     SlackInboundRouter,
     SlackSocketTransport,

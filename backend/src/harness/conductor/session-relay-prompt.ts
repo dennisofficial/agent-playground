@@ -28,8 +28,8 @@ export function sessionRelayPrompt(session: Session): string {
 ${report}
 
 Route each question — you decide where it goes:
-- Product WHAT/WHY (intent, scope, behavior, priorities): Dennis's call. Bring it to him in the channel WITH your recommendation, then leave it OPEN until he answers — no converging with teammates on an answer for him, no proceeding on an assumed answer.
-- Technical HOW you already know (taught before, in recall(), or your own lane): answer it yourself.
+- Product WHAT/WHY (intent, scope, behavior, priorities): Dennis's call. Bring it to him in the channel WITH the question itself (a one-line restatement plus the options) AND your recommendation, then leave it OPEN until he answers — no converging with teammates on an answer for him, no proceeding on an assumed answer.
+- Technical HOW you already know (taught before, in recall(), or your own lane): answer it yourself. If you announce a decision in the channel, restate the question in one line before your answer — nobody else can see inside your session, so a bare "Q1: option 1" is unreadable. Q-numbers only exist inside the session; never reference a question by number alone in chat.
 Collect answers for ALL questions, then send them in ONE reply_session("${sid}", <answers by Q-number>) — do NOT change mode; the session stays in plan. Your reply is recorded as planning Q&A and shown with the plan at approval. If a question was already answered in an earlier round, repeat the answer rather than treating it as new.`;
   }
 
@@ -55,7 +55,7 @@ This is your own background session — still open with full context. Decide wha
 - reply_session("${sid}", <message>) to refine the plan, or approve it into execution (mode: "execute") if it's small ad-hoc work clearly yours to call — the approval gate may refuse the flip; the refusal tells you what to do (board it and get it approved).
 - Relay the plan to the team in the first person when it's worth sharing.
 - close_session("${sid}") if the plan itself was the deliverable.
-Route its open questions: WHAT to build or WHY is Dennis's call — bring it to him with your recommendation and leave it open until he answers. Technical HOW: answer it yourself if you already know; otherwise bring Dennis the options + your recommendation, and remember() his ruling.`;
+Route its open questions: WHAT to build or WHY is Dennis's call — bring it to him with your recommendation and leave it open until he answers. Technical HOW: answer it yourself if you already know; otherwise bring Dennis the options + your recommendation, and remember() his ruling. Either way, when a question reaches the channel, restate it in one line first — nobody else can see inside your session.`;
   }
 
   return `[Session ${sid} — "${session.task}"] reported back:
@@ -65,5 +65,5 @@ This is your own background session — it's still open with full context. Decid
 - reply_session("${sid}", <message>) to continue it — answer its question, ask a follow-up, or approve its plan into execution (mode: "execute").
 - Relay the outcome to the team in the first person when it's worth sharing.
 - close_session("${sid}") when this thread of work is finished.
-Route its questions: WHAT to build or WHY is Dennis's call — bring it to him with your recommendation. Technical HOW: answer it yourself if you already know (taught before, in memory, or the teammate whose area it is); otherwise bring Dennis the options + your recommendation, and remember() his ruling.`;
+Route its questions: WHAT to build or WHY is Dennis's call — bring it to him with your recommendation. Technical HOW: answer it yourself if you already know (taught before, in memory, or the teammate whose area it is); otherwise bring Dennis the options + your recommendation, and remember() his ruling. Either way, when a question reaches the channel, restate it in one line first — nobody else can see inside your session.`;
 }
