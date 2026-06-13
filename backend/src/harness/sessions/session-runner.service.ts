@@ -246,11 +246,15 @@ export class SessionRunnerService {
       // prefix the note rides along in lastReport, reaching the owner via the relay prompt,
       // check_session, and the close-time worklog — no new plumbing required.
       const degraded =
-        kind === undefined && result.trim() !== '' && !echoesOwnName(result, bot.name);
+        kind === undefined &&
+        result.trim() !== '' &&
+        !echoesOwnName(result, bot.name);
       await this.sessions.update(sessionId, {
         status: 'idle',
         engineSessionId: attachEngineSessionId,
-        lastReport: degraded ? lastReport + coherenceNote(bot.name) : lastReport,
+        lastReport: degraded
+          ? lastReport + coherenceNote(bot.name)
+          : lastReport,
         lastReportKind: kind,
         planAttached,
         turns: session.turns + 1,
@@ -271,7 +275,7 @@ export class SessionRunnerService {
         }
       } catch (updateErr) {
         this.logger.error(
-          `Failed to record session ${sessionId} failure: ${updateErr}`,
+          `Failed to record session ${sessionId} failure: ${String(updateErr)}`,
         );
       }
     } finally {
@@ -299,8 +303,15 @@ export class SessionRunnerService {
     engineSessionId?: string;
     note: string;
   } | null> {
-    const { bot, session, worktreePath, planBody, planEngineSessionId, keys, signal } =
-      opts;
+    const {
+      bot,
+      session,
+      worktreePath,
+      planBody,
+      planEngineSessionId,
+      keys,
+      signal,
+    } = opts;
     const keyFor = (engine: EWorkerEngineName) =>
       engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
     const systemPrompt = this.persona.workerPromptFor(bot);

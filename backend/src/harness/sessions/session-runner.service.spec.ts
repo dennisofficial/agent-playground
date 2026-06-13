@@ -544,8 +544,13 @@ describe('SessionRunnerService — the execute-approval gate', () => {
     });
     const session = await idleSession(runner, sessions, 7);
     expect(
-      (await runner.replySession(session.id, 'fix the review comment', 'execute'))
-        .ok,
+      (
+        await runner.replySession(
+          session.id,
+          'fix the review comment',
+          'execute',
+        )
+      ).ok,
     ).toBe(true);
   });
 
@@ -680,7 +685,11 @@ describe('SessionRunnerService — plan auto-attach to the ticket', () => {
             : calls === 2
               ? 'Reviewer: you forgot the migration.' // the review one-shot
               : 'Revised plan — now with the migration.'; // the revision
-        return Promise.resolve({ result: text, sessionId: 'e1', planText: text });
+        return Promise.resolve({
+          result: text,
+          sessionId: 'e1',
+          planText: text,
+        });
       },
     };
     const { runner, sessions, attached } = buildRunner(fake);
@@ -688,7 +697,9 @@ describe('SessionRunnerService — plan auto-attach to the ticket', () => {
     await runner.runSessionTurn(session.id, session.task);
     expect(calls).toBe(3); // plan → review → revise
     expect(attached).toHaveLength(1);
-    expect(attached[0].planMd).toContain('Revised plan — now with the migration.');
+    expect(attached[0].planMd).toContain(
+      'Revised plan — now with the migration.',
+    );
     expect(attached[0].planMd).not.toContain('First draft plan.');
     const after = await sessions.get(session.id);
     expect(after?.lastReport).toContain('self-reviewed');
@@ -722,7 +733,10 @@ describe('SessionRunnerService — coherence canary (name-echo check)', () => {
   it('appends the coherence note when a prose-report turn drops the name', async () => {
     const fake: WorkerEngine = {
       name: EWorkerEngineName.CLAUDE,
-      run: async () => ({ result: 'Here is my report, no name prefix.', sessionId: 'e1' }),
+      run: async () => ({
+        result: 'Here is my report, no name prefix.',
+        sessionId: 'e1',
+      }),
     };
     const { runner, sessions } = buildRunner(fake);
     const session = await sessions.create(newSession);
