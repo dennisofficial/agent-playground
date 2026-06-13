@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { putToken } from '@/lib/admin-api';
+import { usePutTokenMutation } from '@/redux/query/api/tokenApi';
 
 const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
@@ -13,31 +13,40 @@ type FormValues = {
   isDefault: boolean;
 };
 
+function mutationErrorMessage(err: unknown): string {
+  if (!err) return 'An error occurred';
+  if (typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
+  return String(err);
+}
+
 /** Add a new token or rotate an existing one (same name overwrites the value). */
-export function TokenForm({ teamId, onSuccess }: { teamId: string; onSuccess: () => void }) {
+export function TokenForm({ teamId }: { teamId: string }) {
   const [done, setDone] = useState(false);
+  const [putToken, { isLoading }] = usePutTokenMutation();
 
   const {
     register,
     handleSubmit,
     reset,
     setError,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<FormValues>({ defaultValues: { isDefault: false } });
 
   async function onSubmit(values: FormValues) {
     setDone(false);
-    try {
-      await putToken(teamId, {
+    const result = await putToken({
+      teamId,
+      dto: {
         name: values.name,
         token: values.token,
         ...(values.isDefault ? { default: true } : {}),
-      });
+      },
+    });
+    if ('error' in result) {
+      setError('root', { message: mutationErrorMessage(result.error) });
+    } else {
       reset();
       setDone(true);
-      onSuccess();
-    } catch (err) {
-      setError('root', { message: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -72,10 +81,10 @@ export function TokenForm({ teamId, onSuccess }: { teamId: string; onSuccess: ()
         </label>
         <button
           type="submit"
-          disabled={isSubmitting}
+          disabled={isLoading}
           className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
         >
-          {isSubmitting ? 'Saving…' : 'Save token'}
+          {isLoading ? 'Saving…' : 'Save token'}
         </button>
       </div>
       {errors.root ? (

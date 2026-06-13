@@ -1,50 +1,34 @@
 'use client';
 
-import { useState } from 'react';
 import type { GithubTokenMeta } from '@/lib/admin-api';
-import { deleteToken, setDefaultToken } from '@/lib/admin-api';
+import { useSetDefaultTokenMutation, useDeleteTokenMutation } from '@/redux/query/api/tokenApi';
+
+function mutationErrorMessage(err: unknown): string {
+  if (!err) return 'An error occurred';
+  if (typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
+  return String(err);
+}
 
 export function TokenRow({
   teamId,
   token,
-  onSuccess,
 }: {
   teamId: string;
   token: GithubTokenMeta;
-  onSuccess: () => void;
 }) {
-  const [settingDefault, setSettingDefault] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [setDefaultToken, { isLoading: settingDefault, error: setDefaultError }] =
+    useSetDefaultTokenMutation();
+  const [deleteToken, { isLoading: deleting, error: deleteError }] = useDeleteTokenMutation();
+
+  const error = setDefaultError ?? deleteError;
 
   async function handleSetDefault() {
-    setError(null);
-    setSettingDefault(true);
-    try {
-      await setDefaultToken(teamId, token.name);
-      onSuccess();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSettingDefault(false);
-    }
+    await setDefaultToken({ teamId, name: token.name });
   }
 
   async function handleDelete() {
-    if (
-      !confirm(`Delete token "${token.name}"? Projects referencing it will block this.`)
-    )
-      return;
-    setError(null);
-    setDeleting(true);
-    try {
-      await deleteToken(teamId, token.name);
-      onSuccess();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDeleting(false);
-    }
+    if (!confirm(`Delete token "${token.name}"? Projects referencing it will block this.`)) return;
+    await deleteToken({ teamId, name: token.name });
   }
 
   return (
@@ -79,7 +63,9 @@ export function TokenRow({
           </button>
         </div>
       </div>
-      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {error ? (
+        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{mutationErrorMessage(error)}</p>
+      ) : null}
     </div>
   );
 }

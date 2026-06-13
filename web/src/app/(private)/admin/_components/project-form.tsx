@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { createProject } from '@/lib/admin-api';
+import { useCreateProjectMutation } from '@/redux/query/api/projectApi';
 
 const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
@@ -15,40 +15,47 @@ type FormValues = {
   tokenName: string;
 };
 
+function mutationErrorMessage(err: unknown): string {
+  if (!err) return 'An error occurred';
+  if (typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
+  return String(err);
+}
+
 export function ProjectForm({
   teamId,
   tokenNames,
-  onSuccess,
 }: {
   teamId: string;
   tokenNames: string[];
-  onSuccess: () => void;
 }) {
   const [done, setDone] = useState(false);
+  const [createProject, { isLoading }] = useCreateProjectMutation();
 
   const {
     register,
     handleSubmit,
     reset,
     setError,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<FormValues>({ defaultValues: { tokenName: '' } });
 
   async function onSubmit(values: FormValues) {
     setDone(false);
-    try {
-      await createProject(teamId, {
+    const result = await createProject({
+      teamId,
+      dto: {
         projectId: values.projectId,
         displayName: values.displayName,
         gitUrl: values.gitUrl,
         ...(values.defaultBranch ? { defaultBranch: values.defaultBranch } : {}),
         ...(values.tokenName ? { tokenName: values.tokenName } : {}),
-      });
+      },
+    });
+    if ('error' in result) {
+      setError('root', { message: mutationErrorMessage(result.error) });
+    } else {
       reset();
       setDone(true);
-      onSuccess();
-    } catch (err) {
-      setError('root', { message: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -94,10 +101,10 @@ export function ProjectForm({
       <div className="mt-3 flex items-center justify-end">
         <button
           type="submit"
-          disabled={isSubmitting}
+          disabled={isLoading}
           className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
         >
-          {isSubmitting ? 'Registering…' : 'Register project'}
+          {isLoading ? 'Registering…' : 'Register project'}
         </button>
       </div>
       {errors.root ? (

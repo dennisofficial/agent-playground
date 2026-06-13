@@ -1,32 +1,43 @@
-import { connection } from 'next/server';
-import { listAllFacts, listTenants } from '@/lib/admin-api';
+'use client';
+
+import { useSearchParams } from 'next/navigation';
+import { useGetTenantsQuery, useGetAllFactsQuery } from '@/redux/query/api/memoryApi';
 import { MemoryViewer } from './memory-viewer';
+
+function getErrorMessage(err: unknown): string {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
+  return String(err);
+}
 
 /**
  * Memory Viewer — admin read-only view over agent semantic memory across all workspaces.
  * Gated by (private)/layout.tsx (httpOnly cookie check + redirect).
- * All data flows through the Next server; the admin bearer never reaches the browser.
+ * Tenant list and facts are fetched client-side via RTK Query.
  */
-export default async function MemoryPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ team?: string }>;
-}) {
-  await connection(); // never prerender — reads cookies + changes per workspace
+export default function MemoryPage() {
+  const searchParams = useSearchParams();
+  const teamParam = searchParams.get('team') ?? undefined;
 
-  const sp = await searchParams;
+  const { data: tenants, isLoading: tenantsLoading, error: tenantsError } = useGetTenantsQuery();
 
-  let tenants, factsResult;
-  try {
-    tenants = await listTenants();
-  } catch (err) {
-    return <BackendError err={err} />;
+  const selectedTeamId = tenants?.find((t) => t.id === teamParam)?.id ?? tenants?.[0]?.id;
+
+  const {
+    data: factsResult,
+    isLoading: factsLoading,
+    error: factsError,
+  } = useGetAllFactsQuery({ teamId: selectedTeamId! }, { skip: !selectedTeamId });
+
+  if (tenantsError || factsError) {
+    return <BackendError err={tenantsError ?? factsError} />;
   }
 
-  // Pick selected workspace: query param → first tenant alphabetically → null
-  const selectedTeamId = tenants.find((t) => t.id === sp.team)?.id ?? tenants[0]?.id;
+  if (tenantsLoading) {
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  }
 
-  if (tenants.length === 0) {
+  if (!tenants || tenants.length === 0) {
     return (
       <p className="text-sm text-zinc-500 dark:text-zinc-400">
         No workspaces registered yet.
@@ -34,16 +45,14 @@ export default async function MemoryPage({
     );
   }
 
-  try {
-    factsResult = await listAllFacts(selectedTeamId!);
-  } catch (err) {
-    return <BackendError err={err} />;
+  if (!selectedTeamId || factsLoading || !factsResult) {
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
   }
 
   return (
     <MemoryViewer
       tenants={tenants}
-      selectedTeamId={selectedTeamId!}
+      selectedTeamId={selectedTeamId}
       facts={factsResult.facts}
       truncated={factsResult.truncated}
       total={factsResult.total}
@@ -55,9 +64,7 @@ function BackendError({ err }: { err: unknown }) {
   return (
     <section className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
       <h2 className="font-semibold">Backend admin API unreachable</h2>
-      <p className="mt-2 font-mono text-xs">
-        {err instanceof Error ? err.message : String(err)}
-      </p>
+      <p className="mt-2 font-mono text-xs">{getErrorMessage(err)}</p>
       <ul className="mt-3 list-disc pl-5">
         <li>
           Start the api app:{' '}
@@ -65,9 +72,8 @@ function BackendError({ err }: { err: unknown }) {
           <code className="font-mono">backend/</code>)
         </li>
         <li>
-          Make sure <code className="font-mono">ADMIN_API_TOKEN</code> is set in BOTH{' '}
-          <code className="font-mono">backend/.env.personal</code> and{' '}
-          <code className="font-mono">web/.env.personal</code> (same value)
+          Make sure the backend is reachable at{' '}
+          <code className="font-mono">NEXT_PUBLIC_BACKEND_URL</code>
         </li>
       </ul>
     </section>

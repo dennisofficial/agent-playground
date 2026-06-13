@@ -1,15 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { listProjects, listTokens } from '@/lib/admin-api';
-import type { GithubTokenMeta, ProjectRecord } from '@/lib/admin-api';
+import { useGetProjectsQuery } from '@/redux/query/api/projectApi';
+import { useGetTokensQuery } from '@/redux/query/api/tokenApi';
 import { ProjectForm } from './_components/project-form';
 import { ProjectRow } from './_components/project-row';
 import { TokenForm } from './_components/token-form';
 import { TokenRow } from './_components/token-row';
 
-type Data = { projects: ProjectRecord[]; tokens: GithubTokenMeta[] };
+function errorMessage(err: unknown): string {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
+  return String(err);
+}
 
 /**
  * The admin surface for the project registry + GitHub token store.
@@ -18,35 +21,25 @@ type Data = { projects: ProjectRecord[]; tokens: GithubTokenMeta[] };
  * same deployed portal can serve any tenant without a redeploy.  If the param
  * is absent a prompt is shown instead of fetching.
  *
- * Fetches data client-side on mount (and after each successful mutation via
- * onSuccess callbacks). Auth protection is handled by the enclosing
+ * Data is fetched via RTK Query; cache invalidation on mutations drives refetch
+ * automatically. Auth protection is handled by the enclosing
  * (private)/layout.tsx — this component can assume the user is authenticated.
  */
 export default function AdminPage() {
   const searchParams = useSearchParams();
   const teamId = searchParams.get('team') ?? '';
 
-  const [data, setData] = useState<Data | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: projects,
+    isLoading: projectsLoading,
+    error: projectsError,
+  } = useGetProjectsQuery(teamId, { skip: !teamId });
 
-  async function load() {
-    setError(null);
-    try {
-      const [projects, tokens] = await Promise.all([
-        listProjects(teamId),
-        listTokens(teamId),
-      ]);
-      setData({ projects, tokens });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  useEffect(() => {
-    if (!teamId) return;
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamId]);
+  const {
+    data: tokens,
+    isLoading: tokensLoading,
+    error: tokensError,
+  } = useGetTokensQuery(teamId, { skip: !teamId });
 
   if (!teamId) {
     return (
@@ -61,11 +54,12 @@ export default function AdminPage() {
     );
   }
 
-  if (error) {
+  const anyError = projectsError ?? tokensError;
+  if (anyError) {
     return (
       <section className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
         <h2 className="font-semibold">Backend admin API unreachable</h2>
-        <p className="mt-2 font-mono text-xs">{error}</p>
+        <p className="mt-2 font-mono text-xs">{errorMessage(anyError)}</p>
         <ul className="mt-3 list-disc pl-5">
           <li>
             Start the api app:{' '}
@@ -81,11 +75,11 @@ export default function AdminPage() {
     );
   }
 
-  if (!data) {
+  if (projectsLoading || tokensLoading || !projects || !tokens) {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
   }
 
-  const tokenNames = data.tokens.map((t) => t.name);
+  const tokenNames = tokens.map((t) => t.name);
 
   return (
     <>
@@ -96,15 +90,15 @@ export default function AdminPage() {
           without an override use the default.
         </p>
         <div className="mt-4 flex flex-col gap-2">
-          {data.tokens.length === 0 ? (
+          {tokens.length === 0 ? (
             <p className="text-sm text-zinc-500">No tokens stored yet.</p>
           ) : (
-            data.tokens.map((t) => (
-              <TokenRow key={t.name} teamId={teamId} token={t} onSuccess={load} />
+            tokens.map((t) => (
+              <TokenRow key={t.name} teamId={teamId} token={t} />
             ))
           )}
         </div>
-        <TokenForm teamId={teamId} onSuccess={load} />
+        <TokenForm teamId={teamId} />
       </section>
 
       <section className="mt-12">
@@ -114,21 +108,20 @@ export default function AdminPage() {
           publish to. Unregistered projects stay local-only.
         </p>
         <div className="mt-4 flex flex-col gap-2">
-          {data.projects.length === 0 ? (
+          {projects.length === 0 ? (
             <p className="text-sm text-zinc-500">No projects registered yet.</p>
           ) : (
-            data.projects.map((p) => (
+            projects.map((p) => (
               <ProjectRow
                 key={p.projectId}
                 teamId={teamId}
                 project={p}
                 tokenNames={tokenNames}
-                onSuccess={load}
               />
             ))
           )}
         </div>
-        <ProjectForm teamId={teamId} tokenNames={tokenNames} onSuccess={load} />
+        <ProjectForm teamId={teamId} tokenNames={tokenNames} />
       </section>
     </>
   );
