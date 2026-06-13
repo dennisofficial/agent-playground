@@ -102,8 +102,8 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const { svc, semantic } = makeService({});
       await svc.fetchContext(makeBot(), id);
       // SemanticMemory.recall / recallOtherProjects must not be called
-      expect((semantic as Record<string, unknown>).recall).toBeUndefined();
-      expect((semantic as Record<string, unknown>).recallOtherProjects).toBeUndefined();
+      expect((semantic as unknown as Record<string, unknown>).recall).toBeUndefined();
+      expect((semantic as unknown as Record<string, unknown>).recallOtherProjects).toBeUndefined();
     });
   });
 
