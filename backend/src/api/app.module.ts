@@ -45,6 +45,8 @@ import { AuthModule } from './auth/auth.module';
     ProjectsModule,
     LlmKeysModule,
     SlackIdentitiesModule,
+    MemoryAdminModule,
+    TenantsModule,
     AuthModule,
     MemoryAdminModule,
     TenantsModule,

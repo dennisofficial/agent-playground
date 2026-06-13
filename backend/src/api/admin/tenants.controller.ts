@@ -1,14 +1,14 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { type TenantView } from '@workspace/shared';
 import { TenantViewStore } from '../../harness/tenants/tenant-view.store';
-import { AdminAuthGuard } from '../auth/admin-auth.guard';
+import { AdminTokenGuard } from './admin-token.guard';
 
 /**
  * Lists all registered workspaces/teams — powers the workspace picker at the top of the
  * Memory Viewer UI. No `:teamId` param; this is a global, cross-tenant listing.
  */
 @Controller('tenants')
-@UseGuards(AdminAuthGuard)
+@UseGuards(AdminTokenGuard)
 export class TenantsController {
   constructor(private readonly store: TenantViewStore) {}
 

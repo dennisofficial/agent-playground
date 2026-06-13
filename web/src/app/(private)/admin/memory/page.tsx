@@ -1,81 +1,30 @@
-'use client';
-
-import { useSearchParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
-import { listTenants, listAllFacts } from '@/lib/admin-api';
-import type { TenantView, FactView } from '@/lib/admin-api';
+import { connection } from 'next/server';
+import { listAllFacts, listTenants } from '@/lib/admin-api';
 import { MemoryViewer } from './memory-viewer';
 
 /**
  * Memory Viewer — admin read-only view over agent semantic memory across all workspaces.
- * Auth gate is handled by (private)/layout.tsx (httpOnly cookie check + redirect).
- * Data is fetched client-side via auth.httpClient (cookie sent automatically, 401 → refresh).
+ * Gated by (private)/layout.tsx (httpOnly cookie check + redirect).
+ * All data flows through the Next server; the admin bearer never reaches the browser.
  */
-export default function MemoryPage() {
-  const searchParams = useSearchParams();
-  const teamParam = searchParams.get('team') ?? undefined;
+export default async function MemoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ team?: string }>;
+}) {
+  await connection(); // never prerender — reads cookies + changes per workspace
 
-  const [tenants, setTenants] = useState<TenantView[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>();
-  const [facts, setFacts] = useState<FactView[]>([]);
-  const [truncated, setTruncated] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const sp = await searchParams;
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    void (async () => {
-      try {
-        const ts = await listTenants();
-        if (cancelled) return;
-        setTenants(ts);
-
-        const teamId = ts.find((t) => t.id === teamParam)?.id ?? ts[0]?.id;
-        setSelectedTeamId(teamId);
-
-        if (teamId) {
-          const result = await listAllFacts(teamId);
-          if (cancelled) return;
-          setFacts(result.facts);
-          setTruncated(result.truncated);
-          setTotal(result.total);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [teamParam]);
-
-  if (loading) {
-    return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading memory…</p>
-    );
+  let tenants, factsResult;
+  try {
+    tenants = await listTenants();
+  } catch (err) {
+    return <BackendError err={err} />;
   }
 
-  if (error) {
-    return (
-      <section className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-        <h2 className="font-semibold">Backend admin API unreachable</h2>
-        <p className="mt-2 font-mono text-xs">{error}</p>
-        <ul className="mt-3 list-disc pl-5">
-          <li>
-            Start the api app:{' '}
-            <code className="font-mono">pnpm dev:env -- nest start api</code>
-          </li>
-        </ul>
-      </section>
-    );
-  }
+  // Pick selected workspace: query param → first tenant alphabetically → null
+  const selectedTeamId = tenants.find((t) => t.id === sp.team)?.id ?? tenants[0]?.id;
 
   if (tenants.length === 0) {
     return (
@@ -85,13 +34,42 @@ export default function MemoryPage() {
     );
   }
 
+  try {
+    factsResult = await listAllFacts(selectedTeamId!);
+  } catch (err) {
+    return <BackendError err={err} />;
+  }
+
   return (
     <MemoryViewer
       tenants={tenants}
       selectedTeamId={selectedTeamId!}
-      facts={facts}
-      truncated={truncated}
-      total={total}
+      facts={factsResult.facts}
+      truncated={factsResult.truncated}
+      total={factsResult.total}
     />
+  );
+}
+
+function BackendError({ err }: { err: unknown }) {
+  return (
+    <section className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+      <h2 className="font-semibold">Backend admin API unreachable</h2>
+      <p className="mt-2 font-mono text-xs">
+        {err instanceof Error ? err.message : String(err)}
+      </p>
+      <ul className="mt-3 list-disc pl-5">
+        <li>
+          Start the api app:{' '}
+          <code className="font-mono">pnpm dev:env -- nest start api</code> (in{' '}
+          <code className="font-mono">backend/</code>)
+        </li>
+        <li>
+          Make sure <code className="font-mono">ADMIN_API_TOKEN</code> is set in BOTH{' '}
+          <code className="font-mono">backend/.env.personal</code> and{' '}
+          <code className="font-mono">web/.env.personal</code> (same value)
+        </li>
+      </ul>
+    </section>
   );
 }
