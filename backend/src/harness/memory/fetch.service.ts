@@ -71,12 +71,17 @@ export class FetchService {
    * This parameter is NOT re-passed on a mid-turn `refreshContext` refresh — the suggestions slot
    * is unchanged when a memory tool fires mid-turn (only the standing context/board facts change).
    *
+   * `compactionNote` (Phase 6): a brief meta-note injected when the session has been compacted.
+   * Pass a short string when `state.summarizedUpTo > 0`; omit or pass `undefined` otherwise.
+   * The full summary is already injected in `llmNode` as part of the conversation history.
+   *
    * This is the half refreshed when remember / update_memory / forget run mid-turn.
    */
   async fetchMemory(
     bot: EmployeeDefinition,
     id: Identity,
     memorySuggestions?: string,
+    compactionNote?: string,
   ): Promise<string> {
     const parts: string[] = [];
 
@@ -120,7 +125,12 @@ export class FetchService {
       );
     }
 
-    // Slot 5 (compaction summary) is an empty-safe stub — wired in Phase 6.
+    // ── 5. Compaction note (Phase 6) ─────────────────────────────────────────────────────────────
+    // A brief meta-note when earlier conversation has been summarized. The full summary is injected
+    // as part of the conversation history in llmNode (before the verbatim tail). Empty-safe.
+    if (compactionNote?.trim()) {
+      parts.push(`Session context: ${compactionNote}`);
+    }
 
     // ── 6. Memory suggestions (Phase 2) ─────────────────────────────────────────────────────────
     // Suggestions from the previous turn's read-only reconcile pass. The agent acts on them with

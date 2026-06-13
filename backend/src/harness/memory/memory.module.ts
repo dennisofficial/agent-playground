@@ -1,6 +1,7 @@
 import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
 import {
+  CompactionSummary,
   Fact,
   SessionNote,
   Task,
@@ -17,6 +18,7 @@ import { LlmModule } from '../llm/llm.module';
 import { BoardEventsBus } from './board-events.bus';
 import { BoardStore } from './board-store';
 import { CheckpointerModule } from './checkpointer.module';
+import { CompactionSummaryStore } from './compaction-summary.store';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { MemoryMetricsService } from './memory-metrics.service';
@@ -40,6 +42,7 @@ import { WorklogStore } from './worklog-store';
 @CreateModule({
   imports: [
     TypeOrmModule.forFeature([
+      CompactionSummary,
       Fact,
       SessionNote,
       Task,
@@ -109,6 +112,12 @@ import { WorklogStore } from './worklog-store';
       inject: [getRepositoryToken(SessionNote)],
       useFactory: (sessionNotes: Repository<SessionNote>) =>
         new SessionNoteStore(sessionNotes),
+    },
+    {
+      provide: CompactionSummaryStore,
+      inject: [getRepositoryToken(CompactionSummary)],
+      useFactory: (repo: Repository<CompactionSummary>) =>
+        new CompactionSummaryStore(repo),
     },
   ],
 })

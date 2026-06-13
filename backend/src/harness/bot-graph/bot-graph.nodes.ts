@@ -6,6 +6,7 @@ import {
 } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
+import { Logger } from '@nestjs/common';
 import { ChannelRegistryService } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
 import { getIdentity } from '../domain/identity';
@@ -14,6 +15,7 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
+import { CompactionSummaryStore } from '../memory/compaction-summary.store';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
@@ -59,10 +61,14 @@ import { makeRefreshScopesFromTurn } from './routing';
  * constructor — the services it injects are handed straight through here.
  */
 export class BotGraphNodes {
+  private readonly logger = new Logger(BotGraphNodes.name);
   private readonly gapThresholdMs: number;
   /** DORMANCY: master switch + the consecutive-soft-ignore count at which a bot goes dormant. */
   private readonly dormancyEnabled: boolean;
   private readonly dormancyThreshold: number;
+  /** COMPACTION thresholds (Phase 6). */
+  private readonly compactionThreshold: number;
+  private readonly compactionTail: number;
 
   constructor(
     private readonly channel: ChannelService,
@@ -80,10 +86,15 @@ export class BotGraphNodes {
     dormancyEnabled = true,
     dormancyThreshold = 3,
     private readonly engineTools?: EngineToolFactory,
+    compactionThreshold = 50,
+    compactionTail = 20,
+    private readonly compactionStore?: CompactionSummaryStore,
   ) {
     this.gapThresholdMs = gapThresholdMs;
     this.dormancyEnabled = dormancyEnabled;
     this.dormancyThreshold = dormancyThreshold;
+    this.compactionThreshold = compactionThreshold;
+    this.compactionTail = compactionTail;
   }
 
   /**
@@ -296,9 +307,15 @@ export class BotGraphNodes {
       // Three independent reads — run in parallel. Each degrades to '' on error so a service
       // outage never aborts the turn.
       // Pass the previous turn's memorySuggestions so the assembler can inject them (Phase 2).
+      // Phase 6: pass a compaction note so the assembler surfaces a brief meta-note when the
+      // session has been compacted (the full summary is injected in llmNode as history).
+      const compactionNote =
+        state.summarizedUpTo > 0
+          ? `Earlier conversation has been summarized (covers messages 1–${state.summarizedUpTo}). See session summary in conversation history above.`
+          : undefined;
       const [memory, tasks, work] = await Promise.all([
         this.fetchService
-          .fetchMemory(bot, id, state.memorySuggestions)
+          .fetchMemory(bot, id, state.memorySuggestions, compactionNote)
           .catch(() => ''),
         this.fetchService.fetchTasks(bot, id).catch(() => ''),
         this.workContext(bot).catch(() => ''),
@@ -340,9 +357,14 @@ export class BotGraphNodes {
       //   4. time context — VOLATILE (current time + gap note). Placed after recalled so it always
       //      lands outside the cached prefix. Never persisted into `messages`.
       //   5. this turn's new channel messages (with inline time-dividers for any within-batch gaps).
+      // Phase 6: when compacted, use only the verbatim tail; the summary is prepended below.
       // repair → compact prior tool results → cache breakpoints (order matters).
+      const rawHistory =
+        state.summarizedUpTo > 0
+          ? state.messages.slice(state.summarizedUpTo)
+          : state.messages;
       const history = compactPriorToolResults(
-        repairDanglingToolCalls(state.messages),
+        repairDanglingToolCalls(rawHistory),
       );
       const cachedHistory = history.length
         ? [
@@ -370,6 +392,16 @@ export class BotGraphNodes {
       // Render from the LIVE context (may have been refreshed by `refreshContext` after tools ran),
       // not from `state.recalled` (which is the one-shot pre-LLM snapshot for the conductor).
       const liveContext = renderContext(state.context);
+      // Phase 6: when compacted, prepend the summary HumanMessage before the verbatim tail.
+      // Position: [persona] → [summary (if any)] → [verbatim tail] → [memory] → [time] → [fresh] → [draft]
+      const summaryMessages =
+        state.summarizedUpTo > 0 && state.summary
+          ? [
+              new HumanMessage(
+                `(Conversation summary up to this point:\n${state.summary})`,
+              ),
+            ]
+          : [];
       const convo = [
         new SystemMessage({
           content: [
@@ -380,6 +412,7 @@ export class BotGraphNodes {
             },
           ],
         }),
+        ...summaryMessages,
         ...cachedHistory,
         ...(liveContext
           ? [
@@ -700,9 +733,15 @@ export class BotGraphNodes {
             })
             .catch(() => {})
         : Promise.resolve();
+      // Phase 6: preserve the compaction note on mid-turn refreshes so the assembler slot stays
+      // consistent. memorySuggestions is intentionally omitted (unchanged during a refresh).
+      const refreshCompactionNote =
+        state.summarizedUpTo > 0
+          ? `Earlier conversation has been summarized (covers messages 1–${state.summarizedUpTo}). See session summary in conversation history above.`
+          : undefined;
       const refreshMemory = scopes.has('memory')
         ? this.fetchService
-            .fetchMemory(bot, id)
+            .fetchMemory(bot, id, undefined, refreshCompactionNote)
             .then((m) => {
               next.memory = m;
             })
@@ -720,6 +759,130 @@ export class BotGraphNodes {
       return { context: next }; // recalled untouched — no second recall event
     };
 
+    /**
+     * COMPACTION NODE (Phase 6) — runs sequentially after `reconcile` on every path.
+     *
+     * Checks whether enough new messages have accumulated since the last compaction. When the
+     * message count above `summarizedUpTo` exceeds `COMPACTION_THRESHOLD`, it:
+     *   1. Slices the compactable window: `messages.slice(summarizedUpTo, messages.length - COMPACTION_TAIL)`
+     *   2. Calls `buildModel()` to produce a human-readable rolling summary.
+     *   3. Persists an audit row to `compaction_summaries`.
+     *   4. Returns `{ summary, summarizedUpTo, compactionVersion }` which the checkpoint stores.
+     *
+     * On subsequent turns, `llmNode` reconstructs the convo as:
+     *   [persona, summaryHumanMessage, messages.slice(summarizedUpTo), recalled, time, fresh, draft]
+     *
+     * Most turns: a no-op returning `{}` — the threshold check is cheap (no LLM call).
+     * Fire-and-forget on failure: a compaction error must never abort a turn (the raw history is
+     * still correct; the next turn will retry). Returns `{}` on error to be safe.
+     */
+    const compactionNode = async (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Promise<Partial<BotStateType>> => {
+      // Fast exit: not enough new messages to warrant a compaction pass.
+      if (
+        state.messages.length - state.summarizedUpTo <=
+        this.compactionThreshold
+      ) {
+        return {};
+      }
+      // Ensure we have at least `compactionTail` messages to keep verbatim — don't compact a tiny
+      // history (this also guards against edge cases where threshold < tail).
+      const newSummarizedUpTo =
+        state.messages.length - this.compactionTail;
+      if (newSummarizedUpTo <= state.summarizedUpTo) return {};
+
+      try {
+        const toSummarize = state.messages.slice(
+          state.summarizedUpTo,
+          newSummarizedUpTo,
+        );
+        // Render the compactable window as a readable transcript (tool results omitted — they are
+        // bulky and already compressed by compactPriorToolResults in live context).
+        const transcript = toSummarize
+          .flatMap((m): string[] => {
+            const type = m.getType();
+            if (type === 'human') {
+              const text = flattenContent(m.content).trim();
+              return text ? [`User: ${text}`] : [];
+            }
+            if (type === 'ai') {
+              const lines: string[] = [];
+              const text = flattenContent(m.content).trim();
+              if (text) lines.push(`${bot.name}: ${text}`);
+              const calls = (m as AIMessage).tool_calls ?? [];
+              if (calls.length) {
+                lines.push(
+                  `${bot.name}: [used tools: ${calls.map((c) => c.name).join(', ')}]`,
+                );
+              }
+              return lines;
+            }
+            return [];
+          })
+          .join('\n');
+
+        if (!transcript.trim()) return {};
+
+        // Build the summarization prompt. Prepend the previous summary for continuity so each
+        // compaction accumulates rolling context rather than losing it.
+        const previousSummarySection = state.summary
+          ? `Previous summary (earlier conversation context):\n${state.summary}\n\n`
+          : '';
+        const prompt = `You are summarizing a conversation for ${bot.name} (${bot.role}).
+
+${previousSummarySection}Messages to summarize:
+${transcript}
+
+Write a rolling summary covering:
+- Current state: what has been established, decided, or accomplished
+- Work in progress: ongoing tasks and active efforts
+- Key decisions and important facts learned
+- Open items and next steps
+
+Be thorough but concise. Preserve specific names, project names, technical details, and numeric references that matter for future context. Aim for 3–5 paragraphs.`;
+
+        const model = this.models.buildModel();
+        const result = await model.invoke(
+          [new HumanMessage(prompt)],
+          config,
+        );
+        const newSummary = flattenContent(result.content).trim();
+        if (!newSummary) return {};
+
+        const nextVersion = (state.compactionVersion ?? 0) + 1;
+        const threadId =
+          (config.configurable?.thread_id as string | undefined) ?? 'unknown';
+
+        // Persist audit row — fire-and-forget (a store failure must not abort the turn).
+        if (this.compactionStore) {
+          this.compactionStore
+            .record(threadId, nextVersion, newSummarizedUpTo, newSummary)
+            .catch((err) =>
+              this.logger.warn(
+                `compaction audit record failed (thread=${threadId}): ${err}`,
+              ),
+            );
+        }
+
+        this.logger.debug(
+          `compaction ${bot.name} thread=${threadId} v${nextVersion} covered_up_to=${newSummarizedUpTo} (${toSummarize.length} msgs summarized)`,
+        );
+        return {
+          summary: newSummary,
+          summarizedUpTo: newSummarizedUpTo,
+          compactionVersion: nextVersion,
+        };
+      } catch (err) {
+        // Fire-and-forget: a compaction failure is non-fatal; the raw history is still intact.
+        this.logger.warn(
+          `compaction failed for ${bot.name}: ${err}`,
+        );
+        return {};
+      }
+    };
+
     return {
       gate: gateNode,
       loopGuard: loopGuardNode,
@@ -729,6 +892,7 @@ export class BotGraphNodes {
       markSeen: markSeenNode,
       pause: pauseNode,
       reconcile: reconcileNode,
+      compact: compactionNode,
       terminal,
       refresh: REFRESH,
       refreshContext: refreshContextNode,

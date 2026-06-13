@@ -3,6 +3,7 @@
 export * from './admin-user.entity';
 export * from './classes/base.entity';
 export * from './bot-cursor.entity';
+export * from './compaction-summary.entity';
 export * from './channel-message.entity';
 export * from './channel.entity';
 export * from './employee-skill.entity';
@@ -25,6 +26,7 @@ export * from './worklog.entity';
 import { AdminUser } from './admin-user.entity';
 import { BotCursor } from './bot-cursor.entity';
 import { ChannelMessage } from './channel-message.entity';
+import { CompactionSummary } from './compaction-summary.entity';
 import { Channel } from './channel.entity';
 import { EmployeeSkill } from './employee-skill.entity';
 import { Fact } from './fact.entity';
@@ -47,6 +49,7 @@ import { Worklog } from './worklog.entity';
  * Single DB: the `tenants` workspace registry lives here too (no separate control datasource). */
 export const ENTITIES = [
   AdminUser,
+  CompactionSummary,
   Fact,
   Task,
   TeamTask,

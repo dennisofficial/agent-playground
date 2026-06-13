@@ -30,6 +30,12 @@ export interface BotStateDelta {
   /** Suggestion block from the previous turn's memory reconcile — injected into the next turn's
    * context so the agent can act on it with remember / update_memory / forget. '' = nothing. */
   memorySuggestions?: string;
+  /** Phase 6: rolling compaction summary — replaces compacted history in llmNode. */
+  summary?: string;
+  /** Phase 6: messages[] index of the first verbatim-tail message. 0 = no compaction. */
+  summarizedUpTo?: number;
+  /** Phase 6: monotonically incrementing compaction event count per thread. */
+  compactionVersion?: number;
   /** A reaction emoji to surface immediately — the gate's "seen, working" 👀 on a real respond. */
   reaction?: string;
   /** The channel-message id this turn's reaction (👀 or ack) is ON — chosen HERE in the graph so the
@@ -196,6 +202,36 @@ export const BotState = Annotation.Root({
   memorySuggestions: Annotation<string>({
     reducer: (_: string, b: string) => b ?? '',
     default: () => '',
+  }),
+  /**
+   * Phase 6: rolling compaction summary. Written by `compactionNode` when
+   * `messages.length − summarizedUpTo > COMPACTION_THRESHOLD`. The text is a human-readable
+   * rolling summary (state, decisions, next steps, learnings) covering the compacted portion.
+   * '' = no compaction has occurred yet. In `llmNode`, when non-empty, this replaces the
+   * compacted messages: the convo becomes [persona, summaryMsg, tail, recalled, ...].
+   */
+  summary: Annotation<string>({
+    reducer: (_: string, b: string) => b ?? '',
+    default: () => '',
+  }),
+  /**
+   * Phase 6: index into `messages[]` of the first verbatim-tail message. 0 = no compaction.
+   * When > 0, `llmNode` uses `messages.slice(summarizedUpTo)` as the live history, prefixed by
+   * the `summary` HumanMessage. `compactionNode` sets this to `messages.length − COMPACTION_TAIL`
+   * whenever it triggers.
+   */
+  summarizedUpTo: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
+  }),
+  /**
+   * Phase 6: monotonically incrementing compaction event count for this thread. Incremented each
+   * time `compactionNode` fires; used as the `version` field in the `compaction_summaries` audit
+   * table. 0 = no compaction has occurred.
+   */
+  compactionVersion: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
   }),
 });
 

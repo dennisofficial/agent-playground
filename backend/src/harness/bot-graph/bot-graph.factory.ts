@@ -9,6 +9,7 @@ import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
+import { CompactionSummaryStore } from '../memory/compaction-summary.store';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
@@ -103,12 +104,16 @@ export class BotGraphFactory {
     // Optional so the unit specs (which construct BotGraphFactory positionally) need no change; DI
     // always provides it in the app, so tool-capabilities bind in production.
     @Optional() private readonly engineTools?: EngineToolFactory,
+    @Optional() private readonly compactionStore?: CompactionSummaryStore,
   ) {
     const gapThresholdMs =
       env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
     // DORMANCY: default-on (kill-switch via DORMANCY_ENABLED=false), threshold default 3.
     const dormancyEnabled = env.get('DORMANCY_ENABLED') !== false;
     const dormancyThreshold = env.get('DORMANCY_IGNORE_THRESHOLD') ?? 3;
+    // COMPACTION (Phase 6): defaults — 50 msgs threshold, 20-msg verbatim tail.
+    const compactionThreshold = env.get('COMPACTION_THRESHOLD') ?? 50;
+    const compactionTail = env.get('COMPACTION_TAIL') ?? 20;
     this.nodes = new BotGraphNodes(
       this.channel,
       this.channelRegistry,
@@ -125,6 +130,9 @@ export class BotGraphFactory {
       dormancyEnabled,
       dormancyThreshold,
       this.engineTools,
+      compactionThreshold,
+      compactionTail,
+      this.compactionStore,
     );
   }
 
@@ -139,6 +147,15 @@ export class BotGraphFactory {
 
   private build(bot: EmployeeDefinition) {
     const n = this.nodes.forBot(bot);
+    // Phase 6: `compact` runs sequentially after `reconcile` on every path (a cheap threshold
+    // check first — no LLM call unless COMPACTION_THRESHOLD has been crossed). Both checkpoint
+    // their state changes before END.
+    //
+    // Topology (updated):
+    //   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⇄ tools → refreshContext? ─┐
+    //                 │                        └─ pause ──────────────────────────────────┤
+    //                 └─ acknowledge / ignore → mark_seen ──────────────────────────────┴→ reconcile → compact → END
+    //                                              └─ dormant off-lane skip ───────────────────────────────────────→ END
     return new StateGraph(BotState)
       .addNode('gate', n.gate)
       .addNode('loop_guard', n.loopGuard)
@@ -149,6 +166,7 @@ export class BotGraphFactory {
       .addNode('refreshContext', n.refreshContext)
       .addNode('mark_seen', n.markSeen)
       .addNode('reconcile', n.reconcile)
+      .addNode('compact', n.compact)
       .addEdge(START, 'gate')
       .addConditionalEdges('gate', route, ['loop_guard', 'mark_seen'])
       .addConditionalEdges('loop_guard', afterGuard, ['recall', 'pause'])
@@ -162,7 +180,8 @@ export class BotGraphFactory {
       .addEdge('refreshContext', 'llm')
       .addConditionalEdges('mark_seen', afterMarkSeen, ['reconcile', END])
       .addEdge('pause', 'reconcile')
-      .addEdge('reconcile', END)
+      .addEdge('reconcile', 'compact')
+      .addEdge('compact', END)
       .compile({ checkpointer: this.checkpointer });
   }
 }
