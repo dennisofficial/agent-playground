@@ -49,6 +49,10 @@ export interface BotStateDelta {
   reasoning?: string;
   /** Debug only: token usage for this turn's gate call. Absent for hard rules. */
   gateUsage?: { input: number; output: number };
+  /** The gate's input-token count for this turn — the best proxy for total context size. Written
+   * by `gateNode` on every path (0 when the gate call was skipped). Used by `compactionNode` to
+   * decide whether to compact. Last-write-wins (same as all non-message state). */
+  lastContextTokens?: number;
   /** Set by the `loop_guard` node when a no-progress loop is detected — routes to `pause`. */
   loopBreak?: boolean;
   /** Debug only: the guard's one-line rationale. NOT named `reasoning` to avoid conflation with
@@ -110,6 +114,12 @@ export const BotState = Annotation.Root({
     reducer: (_: unknown, b: { input: number; output: number } | undefined) =>
       b,
     default: () => undefined,
+  }),
+  /** The gate's input-token count for this turn — last-write-wins proxy for context size.
+   * Written by `gateNode` on every path; read by `compactionNode`. 0 = gate was skipped. */
+  lastContextTokens: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
   }),
   /** The non-own batch the gate decided on — consumed by `mark_seen` on the ack/ignore path. */
   pending: Annotation<ChannelMsg[]>({
@@ -205,8 +215,8 @@ export const BotState = Annotation.Root({
   }),
   /**
    * Rolling compaction summary. Written by `compactionNode` when
-   * `messages.length − summarizedUpTo > COMPACTION_THRESHOLD`. The text is a human-readable
-   * rolling summary (state, decisions, next steps, learnings) covering the compacted portion.
+   * `lastContextTokens > COMPACTION_TOKEN_THRESHOLD`. The text is a human-readable rolling summary
+   * (state, decisions, next steps, learnings) covering the compacted portion.
    * '' = no compaction has occurred yet. In `llmNode`, when non-empty, this replaces the
    * compacted messages: the convo becomes [persona, summaryMsg, tail, recalled, ...].
    */

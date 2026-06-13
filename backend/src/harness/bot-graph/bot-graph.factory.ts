@@ -11,10 +11,7 @@ import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { CompactionSummaryStore } from '../memory/compaction-summary.store';
 import { FetchService } from '../memory/fetch.service';
-import {
-  COMPACTION_TAIL,
-  COMPACTION_THRESHOLD,
-} from '../memory/memory-constants';
+import { COMPACTION_TAIL } from '../memory/memory-constants';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import {
@@ -131,7 +128,6 @@ export class BotGraphFactory {
       dormancyEnabled,
       dormancyThreshold,
       this.engineTools,
-      COMPACTION_THRESHOLD,
       COMPACTION_TAIL,
       this.compactionStore,
     );
@@ -148,8 +144,8 @@ export class BotGraphFactory {
 
   private build(bot: EmployeeDefinition) {
     const n = this.nodes.forBot(bot);
-    // `compact` runs sequentially after `reconcile` on every path (a cheap threshold
-    // check first — no LLM call unless COMPACTION_THRESHOLD has been crossed). Both checkpoint
+    // `compact` runs sequentially after `reconcile` on every path (a cheap token-threshold
+    // check first — no LLM call unless COMPACTION_TOKEN_THRESHOLD has been crossed). Both checkpoint
     // their state changes before END.
     //
     // Topology (updated):

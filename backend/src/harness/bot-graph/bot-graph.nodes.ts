@@ -16,6 +16,7 @@ import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CompactionSummaryStore } from '../memory/compaction-summary.store';
+import { COMPACTION_TOKEN_THRESHOLD } from '../memory/memory-constants';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
@@ -67,8 +68,7 @@ export class BotGraphNodes {
   /** DORMANCY: master switch + the consecutive-soft-ignore count at which a bot goes dormant. */
   private readonly dormancyEnabled: boolean;
   private readonly dormancyThreshold: number;
-  /** COMPACTION thresholds. */
-  private readonly compactionThreshold: number;
+  /** COMPACTION tail: verbatim messages kept verbatim at the end of a compacted history. */
   private readonly compactionTail: number;
 
   constructor(
@@ -87,14 +87,12 @@ export class BotGraphNodes {
     dormancyEnabled = true,
     dormancyThreshold = 3,
     private readonly engineTools?: EngineToolFactory,
-    compactionThreshold = 50,
     compactionTail = 20,
     private readonly compactionStore?: CompactionSummaryStore,
   ) {
     this.gapThresholdMs = gapThresholdMs;
     this.dormancyEnabled = dormancyEnabled;
     this.dormancyThreshold = dormancyThreshold;
-    this.compactionThreshold = compactionThreshold;
     this.compactionTail = compactionTail;
   }
 
@@ -213,6 +211,7 @@ export class BotGraphNodes {
           turnStart,
           ...rtr,
           consecutiveSoftIgnores: 0, // a forced respond re-engages the bot
+          lastContextTokens: 0, // no gate call on the forced path
         }; // job relay: skip the gate
       const channelId = this.channelIdOf(config);
       const batch = channel
@@ -225,6 +224,7 @@ export class BotGraphNodes {
           turnStart,
           ...rtr,
           consecutiveSoftIgnores: softIgnores,
+          lastContextTokens: 0, // no gate call when batch is empty
         }; // nothing for me
       const latest = batch[batch.length - 1];
       const capped = !!config.configurable?.capped;
@@ -235,6 +235,7 @@ export class BotGraphNodes {
           turnStart,
           ...rtr,
           consecutiveSoftIgnores: softIgnores,
+          lastContextTokens: 0, // no gate call on the capped loop-breaker path
         }; // loop breaker
       const room = this.channelRegistry.get(channelId);
       const dormant =
@@ -273,6 +274,7 @@ export class BotGraphNodes {
         reactionTargetId: latest.id,
         reasoning: d.reasoning,
         gateUsage: d.usage,
+        lastContextTokens: d.usage?.input ?? 0,
         pending: batch,
         turnStart,
         ...rtr,
@@ -765,8 +767,9 @@ export class BotGraphNodes {
     /**
      * COMPACTION NODE — runs sequentially after `reconcile` on every path.
      *
-     * Checks whether enough new messages have accumulated since the last compaction. When the
-     * message count above `summarizedUpTo` exceeds `COMPACTION_THRESHOLD`, it:
+     * Checks whether the gate's reported input-token count has crossed COMPACTION_TOKEN_THRESHOLD.
+     * Token count is a better proxy for context growth than message count: a single tool-heavy turn
+     * can consume as many tokens as twenty plain turns. When the threshold is crossed, it:
      *   1. Slices the compactable window: `messages.slice(summarizedUpTo, messages.length - COMPACTION_TAIL)`
      *   2. Calls `buildModel()` to produce a human-readable rolling summary.
      *   3. Persists an audit row to `compaction_summaries`.
@@ -783,10 +786,12 @@ export class BotGraphNodes {
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
-      // Fast exit: not enough new messages to warrant a compaction pass.
+      // Fast exit: context hasn't grown past the token threshold (or the gate was skipped this turn).
       if (
-        state.messages.length - state.summarizedUpTo <=
-        this.compactionThreshold
+        !(
+          state.lastContextTokens > 0 &&
+          state.lastContextTokens > COMPACTION_TOKEN_THRESHOLD
+        )
       ) {
         return {};
       }
