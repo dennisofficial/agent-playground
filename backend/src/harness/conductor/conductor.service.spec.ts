@@ -342,7 +342,7 @@ describe('ConductorService scheduling', () => {
       input: 1200,
       output: 340,
       cacheRead: 900,
-      cacheWrite: 120,
+      cacheWrite1h: 120,
     };
     const { conductor, events } = await buildConductor({
       run: () => ({

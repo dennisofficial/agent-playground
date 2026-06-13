@@ -38,6 +38,7 @@ import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
 import { ToolRegistry } from '../tools/tool.registry';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
+import { extractMessageUsage } from '../llm/usage-format';
 import {
   GAP_THRESHOLD_DEFAULT_MS,
   buildTimeContext,
@@ -228,17 +229,9 @@ export const MAX_REVISION_PASSES = 2;
 export const revisionNote = (draft: string): string =>
   `(Heads-up: while you were composing, the messages above arrived. You drafted the following reply but it was NOT posted:\n"""\n${draft}\n"""\nRead the new messages first. Post only if your reply still adds something beyond what teammates already said — revise it, or shorten it to a brief agreement. If it's now redundant, output NOTHING (an empty response) and stay silent.)`;
 
-/** Token usage off a model reply (mirrors the conductor's extraction in `commit`). */
-const usageOf = (m: AIMessage): MessageUsage | undefined => {
-  const um = m.usage_metadata;
-  if (!um) return undefined;
-  return {
-    input: um.input_tokens ?? 0,
-    output: um.output_tokens ?? 0,
-    cacheRead: um.input_token_details?.cache_read || undefined,
-    cacheWrite: um.input_token_details?.cache_creation || undefined,
-  };
-};
+/** Token usage off a model reply (delegates to the shared extractor). */
+const usageOf = (m: AIMessage): MessageUsage | undefined =>
+  extractMessageUsage(m);
 
 /**
  * A shallow copy of `m` with a cache breakpoint on its last non-thinking content block — WITHOUT

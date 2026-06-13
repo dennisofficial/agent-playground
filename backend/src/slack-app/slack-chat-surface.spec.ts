@@ -397,7 +397,8 @@ const msgWithUsage = {
     input: 1200,
     output: 80,
     cacheRead: 400,
-    cacheWrite: 0,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
     costUsd: 0.0042,
     callCount: 1,
   },
@@ -492,14 +493,16 @@ describe('SlackChatSurface Block Kit footer', () => {
         input: 500,
         output: 50,
         cacheRead: 200,
-        cacheWrite: 100,
+        cacheWrite5m: 0,
+        cacheWrite1h: 100,
         costUsd: 0.0031,
         callCount: 1,
       },
     });
     const footer = contextFooter(postCall(web.chat.postMessage));
     expect(footer).toContain('cache read 200');
-    expect(footer).toContain('cache write 100');
+    expect(footer).toContain('cache write 1h 100');
+    expect(footer).not.toContain('cache write 5m');
 
     // When cacheRead and cacheWrite are zero, they must not appear
     web.chat.postMessage.mockClear();
@@ -509,7 +512,8 @@ describe('SlackChatSurface Block Kit footer', () => {
         input: 300,
         output: 40,
         cacheRead: 0,
-        cacheWrite: 0,
+        cacheWrite5m: 0,
+        cacheWrite1h: 0,
         costUsd: 0.0009,
         callCount: 1,
       },
@@ -527,7 +531,8 @@ describe('SlackChatSurface Block Kit footer', () => {
         input: 4800,
         output: 320,
         cacheRead: 0,
-        cacheWrite: 0,
+        cacheWrite5m: 0,
+        cacheWrite1h: 0,
         costUsd: 0.0192,
         callCount: 5,
       },

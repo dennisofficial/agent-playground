@@ -14,7 +14,8 @@ import {
 } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
 import { CursorStore } from '../channel/cursor.store';
-import type { ConductorEvent, MessageUsage } from '../domain/conductor-events';
+import type { ConductorEvent } from '../domain/conductor-events';
+import { extractMessageUsage } from '../llm/usage-format';
 import {
   DEFAULT_PROJECT,
   DEFAULT_TEAM,
@@ -456,26 +457,7 @@ export class ConductorService
     let responded = false;
 
     const commit = (msg: BaseMessage) => {
-      const um = (
-        msg as {
-          usage_metadata?: {
-            input_tokens?: number;
-            output_tokens?: number;
-            input_token_details?: {
-              cache_read?: number;
-              cache_creation?: number;
-            };
-          };
-        }
-      ).usage_metadata;
-      const usage: MessageUsage | undefined = um
-        ? {
-            input: um.input_tokens ?? 0,
-            output: um.output_tokens ?? 0,
-            cacheRead: um.input_token_details?.cache_read || undefined,
-            cacheWrite: um.input_token_details?.cache_creation || undefined,
-          }
-        : undefined;
+      const usage = extractMessageUsage(msg);
       // Footer ctx tracks EVERY billed step — including tool-only ones, which carry usage but no
       // text and so emit no `message` event.
       if (usage) {
