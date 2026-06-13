@@ -56,14 +56,12 @@ export class FetchService {
   }
 
   /**
-   * Build the `recalled` context block for `bot`, given this turn's incoming text as the retrieval
-   * query. Facts: embedding top-k over the current project + team, plus a small, strongly-relevant
-   * set from OTHER projects rendered LABELED with their project. Tasks: the open plate for this bot
-   * (the team lead sees the whole team's). Returns '' when there's nothing — the caller MUST
-   * still write that empty string into state so a stale recall from a prior turn never lingers.
+   * The facts + cross-project half of the pre-LLM context. Embedding top-k over the current
+   * project + team, plus a small, strongly-relevant set from OTHER projects rendered LABELED with
+   * their project. Returns '' when there's nothing to recall (empty store or empty query).
    */
-  async fetchContext(
-    bot: EmployeeDefinition,
+  async fetchMemory(
+    _bot: EmployeeDefinition,
     query: string,
     id: Identity,
   ): Promise<string> {
@@ -76,9 +74,8 @@ export class FetchService {
       ? await Promise.all([this.hasFacts(id), this.hasOtherProjectFacts(id)])
       : [false, false];
 
-    // Embed the query ONCE and hand the vector to both recall paths (they used to embed the same
-    // text twice). Retrieval failure (e.g. an embeddings outage) must DEGRADE to empty recall, not
-    // abort the turn — a throw here would fail the whole respond turn; match reconcile's posture.
+    // Embed the query ONCE and hand the vector to both recall paths. Retrieval failure must DEGRADE
+    // to empty recall, not abort the turn — match reconcile's posture.
     let qv: string | undefined;
     if (hasOwn || hasOther) {
       try {
@@ -88,9 +85,7 @@ export class FetchService {
       }
     }
 
-    // Reminders span every recallable project (one in a channel; the shared set in a DM).
-    const projects = recallProjects(id);
-    const [facts, others, plates] = await Promise.all([
+    const [facts, others] = await Promise.all([
       qv && hasOwn
         ? this.semantic
             .recall(query, id, undefined, undefined, qv)
@@ -101,21 +96,7 @@ export class FetchService {
             .recallOtherProjects(query, id, { precomputed: qv })
             .catch(() => [])
         : [],
-      // Reminders: this bot's own plate — except the team lead, who sees the whole team's.
-      Promise.all(
-        projects.map((project) =>
-          bot.teamLead
-            ? this.tasks.openTasks(id.team, project)
-            : this.tasks.listTasks({
-                team: id.team,
-                project,
-                status: 'open',
-                owner: bot.id,
-              }),
-        ),
-      ),
     ]);
-    const plate = plates.flat();
 
     // Recall-health metric: count every pass with a real retrieval query (even one that surfaced
     // nothing — the empty-recall rate is the signal). Facts = own-scope + cross-project, not reminders.
@@ -135,20 +116,39 @@ export class FetchService {
         `From other projects (for reference):\n${others.map((o) => `- [${o.project}] ${o.fact.fact}${sourceTag(o.fact)}`).join('\n')}`,
       );
     }
-    if (plate.length > 0) {
-      const shown = plate.slice(0, REMINDER_CAP);
-      const more = plate.length - shown.length;
-      const lines = shown
-        .map(
-          (t) =>
-            `- [#${t.id}] ${t.description}${bot.teamLead ? ` (→ ${t.owner})` : ''}${projects.length > 1 ? ` [${t.project}]` : ''}`,
-        )
-        .join('\n');
-      parts.push(
-        `${bot.teamLead ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`,
-      );
-    }
 
     return parts.join('\n\n');
+  }
+
+  /**
+   * The reminders-plate half of the pre-LLM context. No query or embedding — cheap. Returns '' when
+   * the plate is empty. The team lead sees the whole team's plate; everyone else sees only their own.
+   */
+  async fetchTasks(bot: EmployeeDefinition, id: Identity): Promise<string> {
+    const projects = recallProjects(id);
+    const plates = await Promise.all(
+      projects.map((project) =>
+        bot.teamLead
+          ? this.tasks.openTasks(id.team, project)
+          : this.tasks.listTasks({
+              team: id.team,
+              project,
+              status: 'open',
+              owner: bot.id,
+            }),
+      ),
+    );
+    const plate = plates.flat();
+    if (plate.length === 0) return '';
+
+    const shown = plate.slice(0, REMINDER_CAP);
+    const more = plate.length - shown.length;
+    const lines = shown
+      .map(
+        (t) =>
+          `- [#${t.id}] ${t.description}${bot.teamLead ? ` (→ ${t.owner})` : ''}${projects.length > 1 ? ` [${t.project}]` : ''}`,
+      )
+      .join('\n');
+    return `${bot.teamLead ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`;
   }
 }

@@ -7,6 +7,15 @@ export interface HarnessToolContext {
 }
 
 /**
+ * Which part of the pre-LLM context a tool call can dirty. Used by the graph to decide which
+ * context slices to recompute after a tool batch (same discovery pattern as `terminal`).
+ * - 'work'   → worktrees + open sessions (create_worktree, remove_worktree, close_session)
+ * - 'memory' → semantic facts (remember, update_memory, forget)
+ * - 'tasks'  → reminders plate (add_task, complete_task)
+ */
+export type RefreshScope = 'work' | 'memory' | 'tasks';
+
+/**
  * A chat-layer tool, as a Nest injectable. Decorate implementations with `@HarnessTool()` and
  * register them in `ToolsModule`; the `ToolRegistry` discovers them and binds them to the LLM as
  * LangChain StructuredTools at graph-build time. Employees allowlist tools by CLASS REFERENCE
@@ -22,5 +31,10 @@ export interface IHarnessTool<S extends z.ZodTypeAny = z.ZodTypeAny> {
    * flag, not from a magic-string list in the graph).
    */
   readonly terminal?: boolean;
+  /**
+   * Parts of the pre-LLM context a successful call dirties — the graph recomputes ONLY these after
+   * the tool runs (same discovery pattern as `terminal`). Omit for read-only tools.
+   */
+  readonly refreshesContext?: readonly RefreshScope[];
   execute(args: z.infer<S>, ctx: HarnessToolContext): Promise<string>;
 }

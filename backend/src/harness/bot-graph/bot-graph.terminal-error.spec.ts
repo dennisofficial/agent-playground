@@ -120,6 +120,7 @@ describe('bot graph — terminal tool error handling', () => {
       {
         toStructuredTools: () => [terminalThrower],
         terminalToolNames: () => new Set(['finish_work']),
+        refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
         gate: async () => ({ action: 'respond' as const }),
@@ -129,7 +130,7 @@ describe('bot graph — terminal tool error handling', () => {
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchContext: async () => '' } as unknown as FetchService,
+      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
@@ -201,6 +202,7 @@ describe('bot graph — terminal tool error handling', () => {
       {
         toStructuredTools: () => [terminalOk],
         terminalToolNames: () => new Set(['finish_work']),
+        refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
         gate: async () => ({ action: 'respond' as const }),
@@ -210,7 +212,7 @@ describe('bot graph — terminal tool error handling', () => {
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchContext: async () => '' } as unknown as FetchService,
+      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
@@ -300,6 +302,7 @@ describe('bot graph — terminal tool error handling', () => {
       {
         toStructuredTools: () => [terminalOk, terminalBad],
         terminalToolNames: () => new Set(['finish_ok', 'finish_bad']),
+        refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
         gate: async () => ({ action: 'respond' as const }),
@@ -309,7 +312,7 @@ describe('bot graph — terminal tool error handling', () => {
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchContext: async () => '' } as unknown as FetchService,
+      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},

@@ -39,6 +39,7 @@ export class CreateWorktreeTool implements IHarnessTool<
   typeof createWorktreeSchema
 > {
   readonly name = 'create_worktree';
+  readonly refreshesContext = ['work'] as const;
   readonly description =
     'Create an isolated git worktree off the project repo — the work area your sessions run in. Cuts a fresh branch from the base by default. Returns the worktree id to open sessions against. Note: a fresh checkout has no installed dependencies; a session can run installs itself if it needs them.';
   readonly schema = createWorktreeSchema;
@@ -132,6 +133,7 @@ export class RemoveWorktreeTool implements IHarnessTool<
   typeof removeWorktreeSchema
 > {
   readonly name = 'remove_worktree';
+  readonly refreshesContext = ['work'] as const;
   readonly description =
     'Remove a worktree whose work is fully finished — only after its PR is merged or closed (while the PR is open, keep the worktree so review feedback can be addressed without recreating it). Refused while it still has open sessions — close them first. The branch (and its commits) survive.';
   readonly schema = removeWorktreeSchema;

@@ -132,12 +132,13 @@ function buildFactory(
     {
       toStructuredTools: () => [],
       terminalToolNames: () => new Set<string>(),
+      refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {
       gate: () => Promise.resolve({ action: 'respond' as const }),
     } as unknown as GateService,
     guard,
-    { fetchContext: () => Promise.resolve('') } as unknown as FetchService,
+    { fetchMemory: () => Promise.resolve(''), fetchTasks: () => Promise.resolve('') } as unknown as FetchService,
     {
       reconcileMemory: () => Promise.resolve(),
       reconcileTasks: () => Promise.resolve(),
