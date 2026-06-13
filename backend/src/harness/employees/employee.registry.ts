@@ -2,19 +2,13 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
 import { collectDecorated } from '../discovery.util';
 import { escapeRegExp } from '../domain/text';
+import { EWorkerEngineName } from '../engines/worker-engine.port';
 import type {
   EffortLevel,
-  WorkerEngineName,
   WorkerMode,
 } from '../engines/worker-engine.port';
 import { AI_EMPLOYEE_METADATA } from './ai-employee.decorator';
 import type { EmployeeDefinition } from './employee.types';
-
-const ENGINE_NAMES: ReadonlyArray<WorkerEngineName> = [
-  'claude',
-  'codex',
-  'langgraph',
-];
 
 /** The model + reasoning effort a worker run resolves to, by employee and phase. */
 export interface ResolvedWorkerModel {
@@ -28,15 +22,15 @@ export interface ResolvedWorkerModel {
 // of truth — an employee only sets planModel/execModel to deviate. Codex/LangGraph carry no fixed
 // ids here (Codex resolves via CODEX_MODEL; effort is Claude-only).
 const ENGINE_MODEL_TIERS: Record<
-  WorkerEngineName,
+  EWorkerEngineName,
   { plan: ResolvedWorkerModel; exec: ResolvedWorkerModel }
 > = {
-  claude: {
+  [EWorkerEngineName.CLAUDE]: {
     plan: { model: 'claude-opus-4-8', effort: 'max' },
     exec: { model: 'claude-sonnet-4-6', effort: 'high' },
   },
-  codex: { plan: {}, exec: {} },
-  langgraph: { plan: {}, exec: {} },
+  [EWorkerEngineName.CODEX]: { plan: {}, exec: {} },
+  [EWorkerEngineName.LANGGRAPH]: { plan: {}, exec: {} },
 };
 
 /**
@@ -74,11 +68,6 @@ export class EmployeeRegistry implements OnModuleInit {
         throw new Error(`Employee id '${e.id}' must be non-empty lowercase`);
       if (ids.has(e.id)) throw new Error(`Duplicate employee id '${e.id}'`);
       ids.add(e.id);
-      if (!ENGINE_NAMES.includes(e.engine)) {
-        throw new Error(
-          `Employee '${e.id}' declares unknown engine '${e.engine as string}'`,
-        );
-      }
     }
     const leads = roster.filter((e) => e.teamLead);
     if (leads.length !== 1) {

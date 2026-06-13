@@ -3,7 +3,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { execFileSync } from 'node:child_process';
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { OPENAI_CODEX_SDK } from '../../_lib/esm/esm.module';
-import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
+import {
+  EWorkerEngineName,
+  RunWorkerArgs,
+  WorkerEngine,
+} from './worker-engine.port';
 
 /**
  * The repo's SHARED git dir for `cwd`. When the working directory is a subdir (or a linked
@@ -31,7 +35,7 @@ function gitCommonDir(cwd: string): string | undefined {
  * via the EsmModule's lazy-loaded DI token; the client itself is constructed lazily. */
 @Injectable()
 export class CodexEngine implements WorkerEngine {
-  readonly name = 'codex' as const;
+  readonly name = EWorkerEngineName.CODEX;
   // One client per API key (single-process multi-tenant: each workspace funds its own runs).
   private readonly clients = new Map<string, Codex>();
 

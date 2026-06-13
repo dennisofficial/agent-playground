@@ -1,4 +1,13 @@
-import { recallScopes, scopeForTier, type Identity } from './identity';
+import {
+  botScope,
+  pairScope,
+  parseScope,
+  projectScope,
+  recallScopes,
+  scopeForTier,
+  teamScope,
+  type Identity,
+} from './identity';
 
 /**
  * The DM-is-workspace-level memory rules: a DM recalls every project the pair shares, and a
@@ -46,6 +55,51 @@ describe('recallScopes', () => {
       'bot:alex',
       'pair:alex:dennis',
     ]);
+  });
+});
+
+describe('parseScope', () => {
+  it('round-trips teamScope', () => {
+    expect(parseScope(teamScope('local'))).toEqual({ tier: 'team' });
+  });
+
+  it('round-trips projectScope', () => {
+    expect(parseScope(projectScope('my-project'))).toEqual({
+      tier: 'project',
+      projectId: 'my-project',
+    });
+  });
+
+  it('round-trips botScope', () => {
+    expect(parseScope(botScope('alex'))).toEqual({
+      tier: 'bot',
+      botId: 'alex',
+    });
+  });
+
+  it('round-trips pairScope', () => {
+    expect(parseScope(pairScope('alex', 'dennis'))).toEqual({
+      tier: 'private',
+      botId: 'alex',
+      humanId: 'dennis',
+    });
+  });
+
+  it('handles a botId that contains underscores — important for starts_with vs LIKE safety', () => {
+    expect(parseScope(pairScope('a_b', 'dennis'))).toEqual({
+      tier: 'private',
+      botId: 'a_b',
+      humanId: 'dennis',
+    });
+  });
+
+  it('handles an unknown/malformed scope gracefully (falls back to team)', () => {
+    expect(parseScope('unknown:xyz')).toEqual({ tier: 'team' });
+    expect(parseScope('')).toEqual({ tier: 'team' });
+  });
+
+  it('handles a pair scope with no human segment (malformed)', () => {
+    expect(parseScope('pair:alex')).toEqual({ tier: 'private', botId: 'alex' });
   });
 });
 

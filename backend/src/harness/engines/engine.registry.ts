@@ -3,12 +3,12 @@ import { ModuleRef } from '@nestjs/core';
 import { ClaudeEngine } from './claude.engine';
 import { CodexEngine } from './codex.engine';
 import { LanggraphEngine } from './langgraph.engine';
-import type { WorkerEngine, WorkerEngineName } from './worker-engine.port';
+import { WorkerEngine, EWorkerEngineName } from './worker-engine.port';
 
-const ENGINE_CLASSES: Record<WorkerEngineName, Type<WorkerEngine>> = {
-  claude: ClaudeEngine,
-  codex: CodexEngine,
-  langgraph: LanggraphEngine,
+const ENGINE_CLASSES: Record<EWorkerEngineName, Type<WorkerEngine>> = {
+  [EWorkerEngineName.CLAUDE]: ClaudeEngine,
+  [EWorkerEngineName.CODEX]: CodexEngine,
+  [EWorkerEngineName.LANGGRAPH]: LanggraphEngine,
 };
 
 /**
@@ -20,7 +20,7 @@ const ENGINE_CLASSES: Record<WorkerEngineName, Type<WorkerEngine>> = {
 export class EngineRegistry {
   constructor(private readonly moduleRef: ModuleRef) {}
 
-  get(name: WorkerEngineName): WorkerEngine {
+  get(name: EWorkerEngineName): WorkerEngine {
     const cls = ENGINE_CLASSES[name];
     if (!cls) throw new Error(`Unknown worker engine '${name as string}'`);
     return this.moduleRef.get(cls);

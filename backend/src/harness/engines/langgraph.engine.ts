@@ -8,9 +8,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createAgent } from 'langchain';
 import { flattenContent } from '../domain/text';
 import { ChatModelFactory } from '../llm/chat-model.factory';
-import { CHECKPOINTER } from '../memory/memory.module';
+import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { planningTools, workerTools } from './worker-tools';
-import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
+import {
+  EWorkerEngineName,
+  RunWorkerArgs,
+  WorkerEngine,
+} from './worker-engine.port';
 
 /**
  * The original hand-rolled ReAct worker, one engine behind the WorkerEngine interface. Kept so the
@@ -18,7 +22,7 @@ import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
  */
 @Injectable()
 export class LanggraphEngine implements WorkerEngine {
-  readonly name = 'langgraph' as const;
+  readonly name = EWorkerEngineName.LANGGRAPH;
 
   // Two memoized agents, keyed by the planning flag. They share the checkpointer, so a session can
   // switch mode between turns (plan one turn, execute the next) and the other-mode agent resumes

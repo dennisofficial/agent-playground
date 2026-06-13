@@ -6,7 +6,11 @@
  */
 
 /** The interchangeable worker backends. */
-export type WorkerEngineName = 'claude' | 'codex' | 'langgraph';
+export enum EWorkerEngineName {
+  CLAUDE = 'claude',
+  CODEX = 'codex',
+  LANGGRAPH = 'langgraph',
+}
 
 /**
  * The mode of one session turn. 'plan' = the engine's native read-only planning posture (agents
@@ -22,6 +26,23 @@ export type WorkerMode = 'plan' | 'execute';
  * honors it today; Codex/LangGraph ignore it.
  */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
+ * One clarifying question a worker asked mid-plan, normalized from the engine's native shape (the
+ * Claude SDK's AskUserQuestion input; the seam stays SDK-agnostic by re-declaring it, like
+ * EffortLevel). A turn that asks ends with the questions as its report instead of a plan.
+ */
+export interface WorkerQuestionOption {
+  label: string;
+  description?: string;
+}
+export interface WorkerQuestion {
+  question: string;
+  /** Short topic label (the SDK caps it at 12 chars). */
+  header?: string;
+  options: WorkerQuestionOption[];
+  multiSelect?: boolean;
+}
 
 /**
  * A normalized progress event, emitted by every engine regardless of its native event shape. This
@@ -62,8 +83,16 @@ export interface RunWorkerArgs {
 }
 
 export interface WorkerEngine {
-  readonly name: WorkerEngineName;
+  readonly name: EWorkerEngineName;
   /** Run one turn to completion (the engine loops internally until it has a report). Returns the
-   * final report and the engine's session id — the resume handle for the session's next turn. */
-  run(args: RunWorkerArgs): Promise<{ result: string; sessionId?: string }>;
+   * final report and the engine's session id — the resume handle for the session's next turn.
+   * `questions` is set when the turn ended by ASKING (the runner renders them as the report and
+   * the owner answers on the next turn); `planText` when a plan was captured (Claude engines set
+   * result to the plan today). Both optional so Codex/LangGraph compile unchanged. */
+  run(args: RunWorkerArgs): Promise<{
+    result: string;
+    sessionId?: string;
+    questions?: WorkerQuestion[];
+    planText?: string;
+  }>;
 }

@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import {
+  APPROVAL_INTERCEPTOR,
   JARVIS_INTERCEPTOR,
   type SlackInbound,
   type SlackInboundInterceptor,
@@ -25,6 +26,9 @@ export class SlackInboundRouter {
     @Optional()
     @Inject(JARVIS_INTERCEPTOR)
     private readonly interceptor?: SlackInboundInterceptor,
+    @Optional()
+    @Inject(APPROVAL_INTERCEPTOR)
+    private readonly approvals?: SlackInboundInterceptor,
   ) {}
 
   async route(item: SlackInbound): Promise<void> {
@@ -40,6 +44,7 @@ export class SlackInboundRouter {
       }
       if (this.interceptor && (await this.interceptor.maybeHandle(item)))
         return;
+      if (this.approvals && (await this.approvals.maybeHandle(item))) return;
       if (item.kind === 'event' && item.body.event?.type === 'message') {
         // team_id routes the message to its workspace; the Events API always carries it.
         const teamId = item.body.team_id ?? DEFAULT_TEAM;

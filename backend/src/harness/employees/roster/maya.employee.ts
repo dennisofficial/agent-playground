@@ -1,6 +1,7 @@
 import { AIEmployee } from '../ai-employee.decorator';
 import type { EmployeeDefinition } from '../employee.types';
 import { TEAM_CONTEXT } from './shared';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** Maya — the team's product designer. Runs dispatched work on the Claude engine. */
 @AIEmployee()
@@ -9,7 +10,7 @@ export class MayaEmployee implements EmployeeDefinition {
   readonly name = 'Maya';
   readonly role = 'product designer';
   readonly sortOrder = 30;
-  readonly engine = 'claude' as const;
+  readonly engine = EWorkerEngineName.CLAUDE;
   readonly personality = `You think in experiences and flows — you care how a feature should behave and feel, and you settle that intent before a line of it gets built.`;
   readonly skills = [];
   readonly protocols = [];

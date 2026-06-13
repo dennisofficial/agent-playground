@@ -4,12 +4,16 @@ import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { JwtModule } from '@workspace/auth/server';
 import { DatabaseModule } from '../_lib/database/database.module';
 import { LlmKeysModule } from '../harness/llm-keys/llm-keys.module';
+import { MemoryAdminModule } from '../harness/memory-admin/memory-admin.module';
 import { ProjectsModule } from '../harness/projects/projects.module';
+import { TenantsModule } from '../harness/tenants/tenants.module';
 import { SlackIdentitiesModule } from '../harness/slack-identities/slack-identities.module';
 import { AdminTokenGuard } from './admin/admin-token.guard';
 import { LlmKeysController } from './admin/llm-keys.controller';
+import { MemoryFactsController } from './admin/memory.controller';
 import { ProjectsController } from './admin/projects.controller';
 import { SlackIdentitiesController } from './admin/slack-identities.controller';
+import { TenantsController } from './admin/tenants.controller';
 import { TokensController } from './admin/tokens.controller';
 import { ApiController } from './api.controller';
 import { ApiService } from './api.service';
@@ -42,6 +46,8 @@ import { AuthModule } from './auth/auth.module';
     LlmKeysModule,
     SlackIdentitiesModule,
     AuthModule,
+    MemoryAdminModule,
+    TenantsModule,
   ],
   controllers: [
     ApiController,
@@ -49,6 +55,8 @@ import { AuthModule } from './auth/auth.module';
     TokensController,
     LlmKeysController,
     SlackIdentitiesController,
+    MemoryFactsController,
+    TenantsController,
   ],
   providers: [ApiService, AdminTokenGuard],
 })

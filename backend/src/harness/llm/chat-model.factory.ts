@@ -85,33 +85,6 @@ export class ChatModelFactory {
 }
 
 /**
- * Debug aid: USD cost of one chat reply. Sonnet 4.6 pricing: $3.00/1M input, $15.00/1M output
- * (verified against the Anthropic model catalog, 2026-06). The chat path caches its prompt prefix,
- * so the billed cost splits by token kind: langchain folds cache reads + writes INTO `input`, so
- * back them out — fresh remainder at full rate, cache reads ~0.1×, cache writes ~2× (1-hour TTL).
- */
-export const CHAT_PRICE_PER_MTOK = { input: 3.0, output: 15.0 } as const;
-const CACHE_READ_MULT = 0.1;
-const CACHE_WRITE_MULT = 2.0; // 1-hour TTL writes cost 2× base (a 5-min-TTL write would be 1.25×)
-export const chatCostUsd = (u: {
-  input: number;
-  output: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-}): number => {
-  const cacheRead = u.cacheRead ?? 0;
-  const cacheWrite = u.cacheWrite ?? 0;
-  const fresh = Math.max(0, u.input - cacheRead - cacheWrite);
-  return (
-    (fresh * CHAT_PRICE_PER_MTOK.input +
-      cacheRead * CHAT_PRICE_PER_MTOK.input * CACHE_READ_MULT +
-      cacheWrite * CHAT_PRICE_PER_MTOK.input * CACHE_WRITE_MULT +
-      u.output * CHAT_PRICE_PER_MTOK.output) /
-    1_000_000
-  );
-};
-
-/**
  * Debug aid: USD cost of one gate call, from the EXACT token counts the API returns. Haiku 4.5
  * pricing: $1.00/1M input, $5.00/1M output (verified against the Anthropic model catalog, 2026-06).
  */

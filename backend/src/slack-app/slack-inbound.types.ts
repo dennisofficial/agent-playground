@@ -66,6 +66,9 @@ export type SlackInbound =
  * router goes straight to the chat surface. Return true = consumed (never reaches the conductor
  * or the channel log). */
 export const JARVIS_INTERCEPTOR = Symbol('JARVIS_INTERCEPTOR');
+/** Second interceptor slot, tried AFTER Jarvis: the plan-approval cards' verdict handling
+ * (`approval:*` action_ids / callback_ids — namespaced, so the two never overlap). */
+export const APPROVAL_INTERCEPTOR = Symbol('APPROVAL_INTERCEPTOR');
 export interface SlackInboundInterceptor {
   maybeHandle(item: SlackInbound): Promise<boolean>;
 }

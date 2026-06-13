@@ -25,6 +25,7 @@ import {
   CompleteTaskTool,
   ListTasksTool,
 } from './tasks/task.tools';
+import { AddNoteTool, GetTicketTool } from './tasks/ticket.tools';
 import type { IHarnessTool } from './tool.types';
 import { EndTurnTool } from './turn/end-turn.tool';
 import {
@@ -67,6 +68,8 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   AddBoardTaskTool,
   ClaimBoardTaskTool,
   UpdateBoardTaskTool,
+  GetTicketTool,
+  AddNoteTool,
   ListRoomsTool,
   SendMessageTool,
 ];

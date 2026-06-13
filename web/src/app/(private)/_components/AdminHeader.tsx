@@ -25,13 +25,21 @@ export default function AdminHeader() {
           GitHub workspaces for the AI employees
         </p>
       </div>
-      <button
-        type="button"
-        onClick={handleSignOut}
-        className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-      >
-        Log out
-      </button>
+      <div className="flex items-center gap-3">
+        <a
+          href="/admin/memory"
+          className="text-sm text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+        >
+          Memory viewer
+        </a>
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+        >
+          Log out
+        </button>
+      </div>
     </header>
   );
 }

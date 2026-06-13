@@ -7,6 +7,7 @@ import type { EmployeeDefinition } from './employees/employee.types';
 import { HarnessTool } from './tools/harness-tool.decorator';
 import { ToolRegistry } from './tools/tool.registry';
 import type { HarnessToolContext, IHarnessTool } from './tools/tool.types';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 const echoSchema = z.object({ text: z.string() });
 
@@ -52,7 +53,7 @@ class TestAlex implements EmployeeDefinition {
   readonly role = 'backend engineer';
   readonly sortOrder = 10;
   readonly roleContext = 'static role context';
-  readonly engine = 'claude' as const;
+  readonly engine = EWorkerEngineName.CLAUDE;
   readonly teamLead = true;
   readonly tools = [EchoTool, EndTurnTool];
 }
@@ -64,7 +65,7 @@ class TestSam implements EmployeeDefinition {
   readonly role = 'team lead';
   readonly sortOrder = 20;
   readonly roleContext = 'static role context';
-  readonly engine = 'codex' as const;
+  readonly engine = EWorkerEngineName.CODEX;
 }
 
 async function buildModule(
@@ -126,7 +127,7 @@ describe('harness decorator discovery', () => {
       readonly role = 'impostor';
       readonly sortOrder = 30;
       readonly roleContext = 'x';
-      readonly engine = 'claude' as const;
+      readonly engine = EWorkerEngineName.CLAUDE;
     }
     await expect(
       buildModule([TestAlex, TestSam, DupAlex, EchoTool, EndTurnTool]),

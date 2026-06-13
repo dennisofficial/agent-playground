@@ -1,5 +1,5 @@
-import type {
-  WorkerEngineName,
+import {
+  EWorkerEngineName,
   WorkerEvent,
   WorkerMode,
 } from '../engines/worker-engine.port';
@@ -37,7 +37,7 @@ export interface Session {
   /** The project/workspace this work belongs to — scopes the work log (isolation). */
   project: string;
   /** Which worker engine runs this session (claude / codex / langgraph). */
-  engine: WorkerEngineName;
+  engine: EWorkerEngineName;
   /** The mode of the LATEST turn — per-turn switchable (approving a plan = replying with 'execute'). */
   mode: WorkerMode;
   /** The engine's own session/thread id, recorded once the worker reports it (the resume handle). */
@@ -46,6 +46,20 @@ export interface Session {
   turns: number;
   /** The latest turn's report — what relayed back to the owner. */
   lastReport?: string;
+  /** What kind of report the last turn produced: 'questions' = the turn ended by asking (the owner
+   * answers via reply_session), 'plan' = a captured plan (with its Q&A appendix when any exists),
+   * undefined = ordinary prose. Set on EVERY turn-end so a stale kind never survives. */
+  lastReportKind?: 'plan' | 'questions';
+  /** Planning Q&A ledger: each asking-turn's report paired with the owner's answer, in order —
+   * appended to the finished plan so every planning decision is visible at approval. */
+  qa?: { q: string; a: string }[];
+  /** The team-board task this session works, when linked. The approval guard's anchor: an execute
+   * turn on a linked session is refused until the task is 'approved'. */
+  boardTaskId?: number;
+  /** Whether the last turn's finished plan was durably attached to the linked board task (set on
+   * plan-kind turn-ends of linked sessions; false = the attach FAILED and the owner should park
+   * the plan on the ticket via add_note). Cleared on every other turn-end like lastReportKind. */
+  planAttached?: boolean;
   error?: string;
 }
 
@@ -53,12 +67,14 @@ export interface NewSession {
   task: string;
   worktreeId: string;
   notifyThread: string;
-  engine: WorkerEngineName;
+  engine: EWorkerEngineName;
   ownerBot: string;
   team: string;
   project: string;
   // REQUIRED (no default): a missing mode must never silently create a write-capable session.
   mode: WorkerMode;
+  /** Link to the team-board task this session works (see Session.boardTaskId). */
+  boardTaskId?: number;
 }
 
 /**

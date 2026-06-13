@@ -1,25 +1,31 @@
-import { EnvService } from '@core/config/env/env.service';
-import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
-import { Fact, Task, TeamTask, Worklog } from '@workspace/shared/schemas';
+import {
+  Fact,
+  Task,
+  TeamSetting,
+  TeamTask,
+  TeamTaskNote,
+  TeamTaskPlan,
+  Worklog,
+} from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmModule } from '../llm/llm.module';
 import { BoardStore } from './board-store';
-import { createCheckpointer, pgConnString } from './checkpointer';
+import { CheckpointerModule } from './checkpointer.module';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
+import { PlanStore } from './plan-store';
 import { ReconcileService } from './reconcile.service';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
+import { TeamSettingsStore } from './team-settings-store';
+import { TicketNoteStore } from './ticket-note-store';
 import { WorklogStore } from './worklog-store';
-
-/** DI token for the working-memory LangGraph checkpointer (PostgresSaver), set up at module init. */
-export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
 
 /**
  * Long-term + working memory for the harness: the framework-light memory ports (semantic facts,
@@ -30,10 +36,21 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
  */
 @CreateModule({
   imports: [
-    TypeOrmModule.forFeature([Fact, Task, TeamTask, Worklog]),
+    TypeOrmModule.forFeature([
+      Fact,
+      Task,
+      TeamTask,
+      TeamTaskPlan,
+      TeamTaskNote,
+      TeamSetting,
+      Worklog,
+    ]),
     LlmModule,
     EmployeesModule,
   ],
+  // CHECKPOINTER lives in its own junction module (see checkpointer.module.ts for why);
+  // re-exported here so existing importers of MemoryModule keep resolving the token.
+  modules: [CheckpointerModule],
   services: [
     MemoryMetricsService,
     MemoryWriteService,
@@ -64,18 +81,21 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
       useFactory: (worklog: Repository<Worklog>) => new WorklogStore(worklog),
     },
     {
-      provide: CHECKPOINTER,
-      inject: [EnvService],
-      useFactory: (env: EnvService): Promise<PostgresSaver> =>
-        createCheckpointer(
-          pgConnString({
-            host: env.get('POSTGRES_HOST'),
-            port: env.get('POSTGRES_PORT'),
-            user: env.get('POSTGRES_USER'),
-            password: env.get('POSTGRES_PASSWORD'),
-            database: env.get('POSTGRES_DB'),
-          }),
-        ),
+      provide: PlanStore,
+      inject: [getRepositoryToken(TeamTaskPlan)],
+      useFactory: (plans: Repository<TeamTaskPlan>) => new PlanStore(plans),
+    },
+    {
+      provide: TicketNoteStore,
+      inject: [getRepositoryToken(TeamTaskNote)],
+      useFactory: (notes: Repository<TeamTaskNote>) =>
+        new TicketNoteStore(notes),
+    },
+    {
+      provide: TeamSettingsStore,
+      inject: [getRepositoryToken(TeamSetting)],
+      useFactory: (settings: Repository<TeamSetting>) =>
+        new TeamSettingsStore(settings),
     },
   ],
 })
