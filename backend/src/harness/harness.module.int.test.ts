@@ -70,6 +70,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'reply_session',
         'search_session',
         'send_message',
+        'share_artifact',
         'update_board_task',
         'update_memory',
       ].sort(),

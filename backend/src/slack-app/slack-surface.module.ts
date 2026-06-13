@@ -8,6 +8,7 @@ import { MemoryModule } from '@harness/memory/memory.module';
 import { ProjectsModule } from '@harness/projects/projects.module';
 import { SecretCipher } from '@harness/projects/secret-cipher';
 import { SlackIdentitiesModule } from '@harness/slack-identities/slack-identities.module';
+import { ARTIFACT_SINK } from '@harness/surface/artifact-sink.port';
 import { CHAT_SURFACE } from '@harness/surface/chat-surface.port';
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -19,6 +20,7 @@ import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import { SlackCommandService } from './slack-commands.service';
 import { SlackDirectoryService } from './slack-directory.service';
+import { SlackFileUploadService } from './slack-file-upload.service';
 import { SlackIdentityRegistry } from './slack-identity.registry';
 import { SlackInboundRouter } from './slack-inbound.router';
 import {
@@ -70,6 +72,7 @@ import { TenantSlackClients } from './tenant-slack-clients';
     SlackIdentityRegistry,
     LeadPresenceService,
     SlackChatSurface,
+    SlackFileUploadService,
     SlackInboundRouter,
     SlackSocketTransport,
     JarvisService,
@@ -82,9 +85,12 @@ import { TenantSlackClients } from './tenant-slack-clients';
     // exactly like CHAT_SURFACE; headless/TUI hosts bind nothing and get the chat-words fallback.
     { provide: PROPOSAL_PRESENTER, useExisting: ApprovalCardsService },
     { provide: CHAT_SURFACE, useExisting: SlackChatSurface },
+    // The artifact-upload port's Slack adapter (share_artifact → filesUploadV2 + chat.update).
+    { provide: ARTIFACT_SINK, useExisting: SlackFileUploadService },
   ],
   exports: [
     CHAT_SURFACE,
+    ARTIFACT_SINK,
     // A @Global module shares ONLY what it exports — without this line the harness's
     // propose_plan resolves no presenter and degrades to chat-words. (APPROVAL_INTERCEPTOR
     // needs no export: its consumer, SlackInboundRouter, lives in this module.)

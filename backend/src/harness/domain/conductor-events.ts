@@ -46,6 +46,9 @@ export type ConductorEvent =
       text: string;
       /** Per-message token usage from the model call that produced it — bot messages only. */
       usage?: MessageUsage;
+      /** Slack file IDs uploaded via share_artifact during this turn — attached to the outbound
+       * message via chat.update(file_ids) after the text post lands. */
+      fileIds?: string[];
       ts: string;
     }
   | {

@@ -1,4 +1,5 @@
 import type { Type } from '@nestjs/common';
+import { ShareArtifactTool } from './artifacts/share-artifact.tool';
 import {
   ForgetTool,
   RecallTool,
@@ -74,4 +75,5 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   AddNoteTool,
   ListRoomsTool,
   SendMessageTool,
+  ShareArtifactTool,
 ];
