@@ -11,6 +11,7 @@ import {
   ForgetTool,
   RecallTool,
   RememberTool,
+  SearchConversationHistoryTool,
   UpdateMemoryTool,
 } from './memory/memory.tools';
 import { ListRoomsTool, SendMessageTool } from './rooms/room.tools';
@@ -94,6 +95,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     RecallTool,
     UpdateMemoryTool,
     ForgetTool,
+    SearchConversationHistoryTool,
     // reminders
     ListTasksTool,
     AddTaskTool,

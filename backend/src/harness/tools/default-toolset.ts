@@ -3,6 +3,7 @@ import {
   ForgetTool,
   RecallTool,
   RememberTool,
+  SearchConversationHistoryTool,
   UpdateMemoryTool,
 } from './memory/memory.tools';
 import { ListRoomsTool, SendMessageTool } from './rooms/room.tools';
@@ -61,6 +62,7 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   RecallTool,
   UpdateMemoryTool,
   ForgetTool,
+  SearchConversationHistoryTool,
   ListTasksTool,
   AddTaskTool,
   CompleteTaskTool,
