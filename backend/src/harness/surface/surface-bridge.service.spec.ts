@@ -71,6 +71,7 @@ describe('SurfaceBridge usage accumulation', () => {
     expect(usage.output).toBe(10);
     const expectedCost = calculateCost(GATE_MODEL, { input: 100, output: 10 });
     expect(usage.costUsd).toBeCloseTo(expectedCost, 10);
+    expect(usage.callCount).toBe(1);
   });
 
   it('accumulates chat usage (usage event) per botId', () => {
@@ -106,6 +107,7 @@ describe('SurfaceBridge usage accumulation', () => {
       cacheRead: 400,
     });
     expect(usage.costUsd).toBeCloseTo(expectedCost, 10);
+    expect(usage.callCount).toBe(1);
   });
 
   it('posting flushes and resets the accumulator (next post starts fresh)', () => {
@@ -159,12 +161,14 @@ describe('SurfaceBridge usage accumulation', () => {
     });
 
     expect(posts).toHaveLength(2);
-    // First post: gate (200+20) + chat (500+60)
+    // First post: gate (200+20) + chat (500+60) = 2 LLM calls
     expect(posts[0].usage!.input).toBe(700);
     expect(posts[0].usage!.output).toBe(80);
+    expect(posts[0].usage!.callCount).toBe(2);
     // Second post: ONLY the second chat call (accumulator was reset after first post)
     expect(posts[1].usage!.input).toBe(300);
     expect(posts[1].usage!.output).toBe(30);
+    expect(posts[1].usage!.callCount).toBe(1);
   });
 
   it('applies gate rates (Haiku) and chat rates (Sonnet) correctly', () => {
@@ -216,6 +220,8 @@ describe('SurfaceBridge usage accumulation', () => {
     expect(usage.costUsd).toBeCloseTo(gateCost + chatCost, 6);
     // Sanity: Sonnet should cost more than Haiku for the same tokens
     expect(chatCost).toBeGreaterThan(gateCost);
+    // One gate call + one chat call = 2 LLM round-trips
+    expect(usage.callCount).toBe(2);
   });
 
   it('rolls gate cost from ignore turns into the next real post', () => {
@@ -284,6 +290,8 @@ describe('SurfaceBridge usage accumulation', () => {
       calculateCost(GATE_MODEL, { input: 200, output: 20 }) +
       calculateCost(CHAT_MODEL, { input: 800, output: 70 });
     expect(usage.costUsd).toBeCloseTo(totalCost, 10);
+    // 3 gate calls + 1 chat call = 4 LLM round-trips
+    expect(usage.callCount).toBe(4);
   });
 
   it('accumulates independently per botId — one bot does not pollute another', () => {
@@ -333,6 +341,8 @@ describe('SurfaceBridge usage accumulation', () => {
     const rileyUsage = posts.find((p) => p.authorBotId === 'riley')!.usage!;
     expect(alexUsage.input).toBe(500);
     expect(rileyUsage.input).toBe(300);
+    expect(alexUsage.callCount).toBe(1);
+    expect(rileyUsage.callCount).toBe(1);
   });
 
   it('attaches undefined usage when no events were accumulated (no footer for zero-cost messages)', () => {
@@ -394,6 +404,8 @@ describe('SurfaceBridge usage accumulation', () => {
       calculateCost(CHAT_MODEL, { input: 400, output: 40 }),
       10,
     );
+    // Hard-rule gate (no usage) does NOT increment callCount; only the chat call counts
+    expect(usage.callCount).toBe(1);
   });
 
   it('prices Sonnet cacheWrite at $6.00/MTok (1-hour TTL rate, not 5-min $3.75)', () => {

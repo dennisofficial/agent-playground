@@ -277,7 +277,11 @@ const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
     }
   }
   return anchor >= 0
-    ? clone(m.content.map((b, i) => (i === anchor ? { ...b, cache_control: cc } : b)))
+    ? clone(
+        m.content.map((b, i) =>
+          i === anchor ? { ...b, cache_control: cc } : b,
+        ),
+      )
     : m;
 };
 
@@ -618,7 +622,10 @@ export class BotGraphFactory {
           : channel
               .since(newCursor, channelId)
               .filter((m) => m.authorBotId && m.authorBotId !== bot.id);
-      if (interleaved.length > 0 && state.revisionPasses < MAX_REVISION_PASSES) {
+      if (
+        interleaved.length > 0 &&
+        state.revisionPasses < MAX_REVISION_PASSES
+      ) {
         // Stale: demote the reply to a draft. The consumed batch still commits atomically and the
         // cursor still advances past what this step actually read; the interleaved messages stay
         // unconsumed and become the revision pass's normal injected input.
@@ -626,7 +633,7 @@ export class BotGraphFactory {
           messages: injected, // NO ai — the draft never enters durable history
           cursor: newCursor,
           draft: aiText,
-          draftUsage: usageOf(ai as AIMessage),
+          draftUsage: usageOf(ai),
           revisionPasses: state.revisionPasses + 1,
         };
       }

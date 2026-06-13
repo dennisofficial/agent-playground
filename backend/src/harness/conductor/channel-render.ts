@@ -132,7 +132,9 @@ export function buildTimeContext(
       gap >= gapThresholdMs ||
       !sameCalendarDay(prevCreatedAt, fresh[0].createdAt)
     ) {
-      lines.push(`[${formatDuration(gap)} since the previous message in this conversation]`);
+      lines.push(
+        `[${formatDuration(gap)} since the previous message in this conversation]`,
+      );
     }
   }
 

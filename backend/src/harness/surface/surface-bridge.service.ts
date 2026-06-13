@@ -118,6 +118,7 @@ export class SurfaceBridge
       cacheRead: cur.cacheRead,
       cacheWrite: cur.cacheWrite,
       costUsd: cur.costUsd + cost,
+      callCount: cur.callCount + 1,
     });
   }
 
@@ -143,10 +144,18 @@ export class SurfaceBridge
       cacheRead: cur.cacheRead + (usage.cacheRead ?? 0),
       cacheWrite: cur.cacheWrite + (usage.cacheWrite ?? 0),
       costUsd: cur.costUsd + cost,
+      callCount: cur.callCount + 1,
     });
   }
 }
 
 function zeroAccum(): AccumulatedUsage {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    costUsd: 0,
+    callCount: 0,
+  };
 }

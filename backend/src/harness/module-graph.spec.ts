@@ -21,11 +21,16 @@ function undefinedImports(
 ): string[] {
   if (!mod || seen.has(mod)) return [];
   seen.add(mod);
-  const asDynamic = mod as { name?: string; module?: { name: string }; imports?: unknown[] };
+  const asDynamic = mod as {
+    name?: string;
+    module?: { name: string };
+    imports?: unknown[];
+  };
   const name = asDynamic.module?.name ?? asDynamic.name ?? String(mod);
   const target = asDynamic.module ?? mod; // DynamicModule vs plain class
   const imports: unknown[] = [
-    ...((Reflect.getMetadata('imports', target) as unknown[] | undefined) ?? []),
+    ...((Reflect.getMetadata('imports', target) as unknown[] | undefined) ??
+      []),
     ...(asDynamic.imports ?? []),
   ];
   const bad: string[] = [];

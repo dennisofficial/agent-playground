@@ -13,6 +13,9 @@ export interface AccumulatedUsage {
   cacheRead: number;
   cacheWrite: number;
   costUsd: number;
+  /** How many LLM round-trips (gate + chat steps) contributed to this post.
+   * Shown in the Slack footer only when > 1, e.g. `claude-sonnet-4-6 · 3 calls · in …`. */
+  callCount: number;
 }
 
 /**

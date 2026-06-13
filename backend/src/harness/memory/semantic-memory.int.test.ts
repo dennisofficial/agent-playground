@@ -125,15 +125,15 @@ describe('SemanticMemory (pgvector, live Postgres)', () => {
   it('recallOtherProjects returns cross-project facts with the correct label and excludes own-project facts', async () => {
     const OTHER_ID: Identity = { ...ID, project: 'other' };
     // Insert the same fact in two projects
-    await mem.remember({ fact: 'A', tier: 'project', id: ID });        // scope: project:local
-    await mem.remember({ fact: 'A', tier: 'project', id: OTHER_ID });  // scope: project:other
+    await mem.remember({ fact: 'A', tier: 'project', id: ID }); // scope: project:local
+    await mem.remember({ fact: 'A', tier: 'project', id: OTHER_ID }); // scope: project:other
 
     const hits = await mem.recallOtherProjects('query about A', ID);
     // Only project:other should surface — project:local is in the caller's own recall set
     expect(hits).toHaveLength(1);
     expect(hits[0].fact.fact).toBe('A');
-    expect(hits[0].project).toBe('other');         // projectLabel strips the 'project:' prefix
-    expect(hits[0].sim).toBeGreaterThan(0.9);      // unit(0) · unit(0) = 1.0
+    expect(hits[0].project).toBe('other'); // projectLabel strips the 'project:' prefix
+    expect(hits[0].sim).toBeGreaterThan(0.9); // unit(0) · unit(0) = 1.0
   });
 
   it('updateFactById re-embeds and returns the updated StoredFact; returns null for out-of-scope id', async () => {

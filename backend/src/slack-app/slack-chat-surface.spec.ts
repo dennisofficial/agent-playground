@@ -399,6 +399,7 @@ const msgWithUsage = {
     cacheRead: 400,
     cacheWrite: 0,
     costUsd: 0.0042,
+    callCount: 1,
   },
 } as const;
 
@@ -493,6 +494,7 @@ describe('SlackChatSurface Block Kit footer', () => {
         cacheRead: 200,
         cacheWrite: 100,
         costUsd: 0.0031,
+        callCount: 1,
       },
     });
     const footer = contextFooter(postCall(web.chat.postMessage));
@@ -509,10 +511,78 @@ describe('SlackChatSurface Block Kit footer', () => {
         cacheRead: 0,
         cacheWrite: 0,
         costUsd: 0.0009,
+        callCount: 1,
       },
     });
     const footer2 = contextFooter(postCall(web.chat.postMessage));
     expect(footer2).not.toContain('cache read');
     expect(footer2).not.toContain('cache write');
+  });
+
+  it('multi-call turn: footer shows model name and call count when callCount > 1', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({
+      ...msgWithUsage,
+      usage: {
+        input: 4800,
+        output: 320,
+        cacheRead: 0,
+        cacheWrite: 0,
+        costUsd: 0.0192,
+        callCount: 5,
+      },
+    });
+    const footer = contextFooter(postCall(web.chat.postMessage));
+    expect(footer).toContain('claude-sonnet-4-6');
+    expect(footer).toContain('5 calls');
+    // Model and call count appear before token counts
+    expect(footer.indexOf('claude-sonnet-4-6')).toBeLessThan(
+      footer.indexOf('in '),
+    );
+    expect(footer.indexOf('5 calls')).toBeLessThan(footer.indexOf('in '));
+  });
+
+  it('single-call turn: footer does NOT show model name or call count', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({ ...msgWithUsage }); // callCount: 1 via msgWithUsage fixture
+    const footer = contextFooter(postCall(web.chat.postMessage));
+    expect(footer).not.toContain('claude-sonnet-4-6');
+    expect(footer).not.toContain('calls');
+  });
+
+  it('usage + @mention → posts via section+mrkdwn, body contains <@U123>, no markdown block, footer still present', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({
+      ...msgWithUsage,
+      text: '@Dennis can you check this?',
+    });
+
+    // Only one postMessage call — no invalid_blocks retry
+    expect(web.chat.postMessage).toHaveBeenCalledTimes(1);
+    const call = postCall(web.chat.postMessage);
+    const blocks = call.blocks as Array<Record<string, unknown>>;
+
+    // No markdown block — the mention path must bypass it entirely
+    expect(blocks.find((b) => b.type === 'markdown')).toBeUndefined();
+
+    // First block is a section with mrkdwn containing the resolved Slack mention
+    const sectionBlock = blocks.find((b) => b.type === 'section');
+    expect(sectionBlock).toBeDefined();
+    const textEl = sectionBlock!.text as Record<string, unknown>;
+    expect(textEl.type).toBe('mrkdwn');
+    expect(textEl.text as string).toContain('<@U123>');
+    expect(textEl.text as string).not.toContain('@Dennis');
+
+    // Context footer block must still be present
+    const footer = contextFooter(call);
+    expect(footer).toBeTruthy();
+  });
+
+  it('no-mention usage message → first body block is markdown (locks in the two-path split)', async () => {
+    const { surface, web } = makeFakes();
+    await surface.post({ ...msgWithUsage }); // msgWithUsage.text has no @handles
+    const call = postCall(web.chat.postMessage);
+    const blocks = call.blocks as Array<Record<string, unknown>>;
+    expect(blocks[0].type).toBe('markdown');
   });
 });

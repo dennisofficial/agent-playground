@@ -122,7 +122,9 @@ export class SemanticMemory {
       .addSelect('1 - (f.embedding <=> :qv::vector)', 'sim')
       .where('f.scope = :scope', { scope })
       .andWhere('f.team_id = :team', { team: input.id.team })
-      .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', { floor: GRAY_FLOOR })
+      .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', {
+        floor: GRAY_FLOOR,
+      })
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .setParameter('qv', qv)
       // entities[i] and raw[i] are aligned only because this is a single-table query —
@@ -217,8 +219,13 @@ export class SemanticMemory {
       // adding a JOIN would silently misalign sim scores.
       .getRawAndEntities();
 
-    const pairs = entities.map((e, i) => ({ entity: e, sim: Number(raw[i].sim) }));
-    return this.rankByRecency(pairs, limit).map(({ entity }) => factToStored(entity));
+    const pairs = entities.map((e, i) => ({
+      entity: e,
+      sim: Number(raw[i].sim),
+    }));
+    return this.rankByRecency(pairs, limit).map(({ entity }) =>
+      factToStored(entity),
+    );
   }
 
   /**
@@ -251,7 +258,10 @@ export class SemanticMemory {
       // adding a JOIN would silently misalign sim scores.
       .getRawAndEntities();
 
-    const pairs = entities.map((e, i) => ({ entity: e, sim: Number(raw[i].sim) }));
+    const pairs = entities.map((e, i) => ({
+      entity: e,
+      sim: Number(raw[i].sim),
+    }));
     return this.rankByRecency(pairs, limit).map(({ entity, sim }) => ({
       fact: factToStored(entity),
       sim,

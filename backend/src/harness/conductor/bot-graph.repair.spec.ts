@@ -252,7 +252,10 @@ describe('bot graph — poisoned-history self-healing', () => {
         new HumanMessage('Dennis: Hello Alex'),
         new AIMessage({
           content: [
-            { type: 'thinking', thinking: 'Let me reason about this carefully…' },
+            {
+              type: 'thinking',
+              thinking: 'Let me reason about this carefully…',
+            },
             { type: 'redacted_thinking', data: 'base64-opaque-blob' },
           ],
         }),
@@ -290,7 +293,9 @@ describe('bot graph — poisoned-history self-healing', () => {
             ((block as { type?: string }).type === 'thinking' ||
               (block as { type?: string }).type === 'redacted_thinking')
           ) {
-            expect((block as { cache_control?: unknown }).cache_control).toBeUndefined();
+            expect(
+              (block as { cache_control?: unknown }).cache_control,
+            ).toBeUndefined();
           }
         }
       }

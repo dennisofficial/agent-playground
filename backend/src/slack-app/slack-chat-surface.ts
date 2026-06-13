@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
 import type { AccumulatedUsage } from '@harness/domain/conductor-events';
-import { formatUsageLine } from '@harness/llm/usage-format';
+import { CHAT_MODEL, formatUsageLine } from '@harness/llm/usage-format';
 import type {
   ChatSurface,
   InboundChatMessage,
@@ -228,6 +228,7 @@ export class SlackChatSurface implements ChatSurface {
                     { channel, text },
                     msg.text,
                     msg.usage!,
+                    mentionMap.size > 0,
                   )
               : () => puppet.chat.postMessage({ channel, text }),
           );
@@ -245,6 +246,7 @@ export class SlackChatSurface implements ChatSurface {
                 { channel, text, ...earsExtras },
                 msg.text,
                 msg.usage,
+                mentionMap.size > 0,
               )
             : await ears.chat.postMessage({
                 channel,
@@ -264,9 +266,11 @@ export class SlackChatSurface implements ChatSurface {
   }
 
   /**
-   * Post with a Block Kit footer showing token usage. First tries the non-standard `markdown` block
-   * type (more Markdown-faithful); if Slack rejects it with `invalid_blocks`, falls back to a
-   * standard `section` + `mrkdwn` block. The `text` field is always populated as the notification
+   * Post with a Block Kit footer showing token usage. When `hasMentions` is true, skips the
+   * non-standard `markdown` block entirely and posts via `section`+`mrkdwn` directly (using the
+   * already-translated text so `<@USER_ID>` mention pings are preserved). When false, first tries
+   * the `markdown` block type (more Markdown-faithful); if Slack rejects it with `invalid_blocks`,
+   * falls back to `section`+`mrkdwn`. The `text` field is always populated as the notification
    * fallback (push notifications, accessibility). `baseArgs` carries channel + username/icon as a
    * plain record so the caller can freely spread extra fields without fighting SDK union types.
    */
@@ -277,30 +281,37 @@ export class SlackChatSurface implements ChatSurface {
     baseArgs: Record<string, unknown>,
     rawText: string,
     usage: AccumulatedUsage,
+    hasMentions: boolean,
   ): Promise<{ ts?: string; ok?: boolean }> {
-    const footer = formatUsageLine(usage);
+    const footer = formatUsageLine(usage, CHAT_MODEL);
     const translatedText = baseArgs.text as string; // already run through translateOutbound
+
+    const divider = { type: 'divider' };
+    const contextBlock = {
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: footer }],
+    };
+    const sectionBlocks = [
+      { type: 'section', text: { type: 'mrkdwn', text: translatedText } },
+      divider,
+      contextBlock,
+    ];
+
+    if (hasMentions) {
+      // Slack's `markdown` block strips `<@USER_ID>` mention syntax, breaking pings.
+      // Route mention-containing messages straight to section+mrkdwn to preserve them.
+      return await postFn({ ...baseArgs, blocks: sectionBlocks });
+    }
 
     try {
       return await postFn({
         ...baseArgs,
-        blocks: [
-          { type: 'markdown', text: rawText },
-          { type: 'divider' },
-          { type: 'context', elements: [{ type: 'mrkdwn', text: footer }] },
-        ],
+        blocks: [{ type: 'markdown', text: rawText }, divider, contextBlock],
       });
     } catch (err) {
       if (!isSlackError(err, ['invalid_blocks'])) throw err;
       // Fall back to the universally-supported section + mrkdwn block.
-      return await postFn({
-        ...baseArgs,
-        blocks: [
-          { type: 'section', text: { type: 'mrkdwn', text: translatedText } },
-          { type: 'divider' },
-          { type: 'context', elements: [{ type: 'mrkdwn', text: footer }] },
-        ],
-      });
+      return await postFn({ ...baseArgs, blocks: sectionBlocks });
     }
   }
 
