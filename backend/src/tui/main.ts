@@ -6,7 +6,6 @@ import { ChannelRegistryService } from '@harness/channel/channel-registry.servic
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
 import { ConductorService } from '@harness/conductor/conductor.service';
 import { EmployeeRegistry } from '@harness/employees/employee.registry';
-import { MemoryMetricsService } from '@harness/memory/memory-metrics.service';
 import { TaskStore } from '@harness/memory/task-store';
 import { CHAT_SURFACE } from '@harness/surface/chat-surface.port';
 import { NestFactory } from '@nestjs/core';
@@ -46,7 +45,6 @@ async function bootstrap() {
       registry: app.get(ChannelRegistryService),
       employees,
       surface,
-      metrics: app.get(MemoryMetricsService),
       project: app.get(EnvService).get('ZERO_PROJECT'),
     }),
     banner:
