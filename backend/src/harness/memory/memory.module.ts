@@ -123,7 +123,7 @@ import { WorklogStore } from './worklog-store';
         new CompactionSummaryStore(repo),
     },
   ],
-  // Phase 7: nightly memory consolidation — dedup, drop-stale, flag contradictions.
+  // Nightly memory consolidation — dedup, drop-stale, flag contradictions.
   // ScheduleModule.forRoot() is imported by HarnessModule (the single composition root).
   cronJobs: [MemoryConsolidationService],
 })

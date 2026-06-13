@@ -137,6 +137,62 @@ export const compactPriorToolResults = (
 };
 
 /**
+ * READ-TIME filter: remove text-less AI tool-dispatch messages and their corresponding
+ * ToolMessages from the history. An AI message with empty/null content and non-empty
+ * `tool_calls` is a pure dispatch step — it only routes to tools and adds no text for
+ * the model to re-read. Keeping these in history adds noise with zero value.
+ *
+ * Because removing a dispatch message would orphan its tool results (Anthropic requires
+ * every `tool_result` to match a `tool_use`), the corresponding ToolMessages are also
+ * removed together. The durable checkpoint is never mutated — this is READ-TIME only.
+ *
+ * The LAST AI message in the history is never filtered — it marks the current-turn
+ * boundary; its tool results may still be active.
+ *
+ * Applied after `repairDanglingToolCalls` + `compactPriorToolResults` so the filter
+ * operates on the already-repaired, already-compacted view.
+ */
+export const filterToolDispatchMessages = (
+  history: BaseMessage[],
+): BaseMessage[] => {
+  // The last AI message is never filtered — it is the current-turn boundary.
+  let lastAiIdx = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].getType() === 'ai') {
+      lastAiIdx = i;
+      break;
+    }
+  }
+
+  // Collect indices of text-less dispatch messages and their tool_call_ids.
+  const dispatchIndices = new Set<number>();
+  const dispatchCallIds = new Set<string>();
+  for (let i = 0; i < history.length; i++) {
+    if (i === lastAiIdx) continue; // never filter the current-turn boundary
+    const m = history[i];
+    if (m.getType() !== 'ai') continue;
+    const ai = m as AIMessage;
+    const calls = ai.tool_calls ?? [];
+    if (calls.length === 0) continue;
+    if (flattenContent(ai.content).trim()) continue; // has text — keep it
+    dispatchIndices.add(i);
+    for (const c of calls) {
+      if (c.id) dispatchCallIds.add(c.id);
+    }
+  }
+  if (dispatchIndices.size === 0) return history; // nothing to filter — return same reference
+
+  return history.filter((m, i) => {
+    if (dispatchIndices.has(i)) return false; // remove text-less dispatch
+    if (m.getType() === 'tool') {
+      // Remove the paired tool result so history stays consistent for the API.
+      if (dispatchCallIds.has((m as ToolMessage).tool_call_id)) return false;
+    }
+    return true;
+  });
+};
+
+/**
  * SELF-HEALING GUARD: repair dangling tool calls in the durable history before every model call.
  *
  * LangGraph checkpoints after EVERY node, so an interruption between the `llm` superstep (which

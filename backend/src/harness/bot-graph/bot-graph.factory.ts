@@ -11,6 +11,10 @@ import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { CompactionSummaryStore } from '../memory/compaction-summary.store';
 import { FetchService } from '../memory/fetch.service';
+import {
+  COMPACTION_TAIL,
+  COMPACTION_THRESHOLD,
+} from '../memory/memory-constants';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import {
@@ -111,9 +115,6 @@ export class BotGraphFactory {
     // DORMANCY: default-on (kill-switch via DORMANCY_ENABLED=false), threshold default 3.
     const dormancyEnabled = env.get('DORMANCY_ENABLED') !== false;
     const dormancyThreshold = env.get('DORMANCY_IGNORE_THRESHOLD') ?? 3;
-    // COMPACTION (Phase 6): defaults — 50 msgs threshold, 20-msg verbatim tail.
-    const compactionThreshold = env.get('COMPACTION_THRESHOLD') ?? 50;
-    const compactionTail = env.get('COMPACTION_TAIL') ?? 20;
     this.nodes = new BotGraphNodes(
       this.channel,
       this.channelRegistry,
@@ -130,8 +131,8 @@ export class BotGraphFactory {
       dormancyEnabled,
       dormancyThreshold,
       this.engineTools,
-      compactionThreshold,
-      compactionTail,
+      COMPACTION_THRESHOLD,
+      COMPACTION_TAIL,
       this.compactionStore,
     );
   }
@@ -147,7 +148,7 @@ export class BotGraphFactory {
 
   private build(bot: EmployeeDefinition) {
     const n = this.nodes.forBot(bot);
-    // Phase 6: `compact` runs sequentially after `reconcile` on every path (a cheap threshold
+    // `compact` runs sequentially after `reconcile` on every path (a cheap threshold
     // check first — no LLM call unless COMPACTION_THRESHOLD has been crossed). Both checkpoint
     // their state changes before END.
     //

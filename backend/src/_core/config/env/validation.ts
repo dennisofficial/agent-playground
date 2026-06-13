@@ -74,13 +74,6 @@ export interface IEnvConfig {
   RECURSION_GUARD_WINDOW?: number; // rolling-window size for the guard (default: 12)
   DORMANCY_ENABLED?: boolean; // false → disable gate dormancy (default: true)
   DORMANCY_IGNORE_THRESHOLD?: number; // consecutive soft-gate ignores before a bot goes dormant (default: 3)
-  // Rolling compaction (Phase 6): number of new messages since the last compaction before triggering
-  // a new summary pass (default 50). Keep last COMPACTION_TAIL messages verbatim (default 20).
-  COMPACTION_THRESHOLD?: number;
-  COMPACTION_TAIL?: number;
-  // Memory consolidation (Phase 7): cron schedule for the nightly consolidation job.
-  // Default: '0 02 * * *' (daily at 2am UTC). Override for faster testing cycles.
-  CONSOLIDATION_CRON?: string;
   // The execute-approval dial — how strictly session execute turns are gated on board approval:
   // 'all' (default) = EVERY execute flip needs a linked board task in 'approved'/'done';
   // 'linked' = only board-linked sessions are gated (unlinked ad-hoc work stays autonomous);
@@ -219,9 +212,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   RECURSION_GUARD_WINDOW: Joi.number().integer().min(1).optional(),
   DORMANCY_ENABLED: Joi.boolean().optional(),
   DORMANCY_IGNORE_THRESHOLD: Joi.number().integer().min(1).optional(),
-  COMPACTION_THRESHOLD: Joi.number().integer().min(1).optional(),
-  COMPACTION_TAIL: Joi.number().integer().min(1).optional(),
-  CONSOLIDATION_CRON: Joi.string().optional(),
   EXECUTION_APPROVAL_MODE: Joi.string()
     .valid('all', 'linked', 'off')
     .optional()

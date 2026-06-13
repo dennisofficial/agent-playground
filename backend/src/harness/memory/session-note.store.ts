@@ -1,6 +1,5 @@
 import { SessionNote as SessionNoteEntity } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
-import { rawRows, toIso } from './sql';
 
 /**
  * Thread-local structured notes — the bot's per-thread scratchpad. Scoped to
@@ -27,38 +26,21 @@ export interface SessionNote {
   updatedAt: string;
 }
 
-interface NoteRow {
-  id: number | string;
-  team_id: string;
-  owner_bot: string;
-  channel_id: string;
-  project: string;
-  kind: string;
-  body: string;
-  status: string;
-  created_at: unknown;
-  updated_at: unknown;
-}
-
-const toNote = (r: NoteRow): SessionNote => ({
-  id: Number(r.id),
-  teamId: r.team_id,
-  ownerBot: r.owner_bot,
-  channelId: r.channel_id,
-  project: r.project,
-  kind: r.kind as NoteKind,
-  body: r.body,
-  status: r.status as NoteStatus,
-  createdAt: toIso(r.created_at),
-  updatedAt: toIso(r.updated_at),
+const entityToNote = (e: SessionNoteEntity): SessionNote => ({
+  id: e.id,
+  teamId: e.team_id,
+  ownerBot: e.owner_bot,
+  channelId: e.channel_id,
+  project: e.project,
+  kind: e.kind as NoteKind,
+  body: e.body,
+  status: e.status as NoteStatus,
+  createdAt: e.created_at.toISOString(),
+  updatedAt: e.updated_at.toISOString(),
 });
 
 export class SessionNoteStore {
   constructor(private readonly repo: Repository<SessionNoteEntity>) {}
-
-  private async q(sql: string, params: unknown[]): Promise<NoteRow[]> {
-    return rawRows<NoteRow>(await this.repo.manager.query(sql, params));
-  }
 
   /** Add a new note to the thread scratchpad. Returns the created note. */
   async add(
@@ -69,17 +51,22 @@ export class SessionNoteStore {
     kind: NoteKind,
     body: string,
   ): Promise<SessionNote> {
-    const rows = await this.q(
-      `INSERT INTO session_notes (team_id, owner_bot, channel_id, project, kind, body, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'open', now(), now())
-       RETURNING *`,
-      [team, ownerBot, channelId, project, kind, body],
+    const entity = await this.repo.save(
+      this.repo.create({
+        team_id: team,
+        owner_bot: ownerBot,
+        channel_id: channelId,
+        project,
+        kind,
+        body,
+        status: 'open',
+      }),
     );
-    return toNote(rows[0]);
+    return entityToNote(entity);
   }
 
   /**
-   * Open notes for this bot's current thread, newest first.
+   * Open notes for this bot's current thread, oldest first (creation order).
    * Scoped strictly to (team, ownerBot, channelId) — different threads are isolated.
    */
   async listOpen(
@@ -87,13 +74,11 @@ export class SessionNoteStore {
     ownerBot: string,
     channelId: string,
   ): Promise<SessionNote[]> {
-    const rows = await this.q(
-      `SELECT * FROM session_notes
-       WHERE team_id = $1 AND owner_bot = $2 AND channel_id = $3 AND status = 'open'
-       ORDER BY created_at ASC`,
-      [team, ownerBot, channelId],
-    );
-    return rows.map(toNote);
+    const rows = await this.repo.find({
+      where: { team_id: team, owner_bot: ownerBot, channel_id: channelId, status: 'open' },
+      order: { created_at: 'ASC' },
+    });
+    return rows.map(entityToNote);
   }
 
   /**
@@ -105,13 +90,11 @@ export class SessionNoteStore {
     ownerBot: string,
     channelId: string,
   ): Promise<SessionNote[]> {
-    const rows = await this.q(
-      `SELECT * FROM session_notes
-       WHERE team_id = $1 AND owner_bot = $2 AND channel_id = $3 AND status = 'resolved'
-       ORDER BY updated_at DESC`,
-      [team, ownerBot, channelId],
-    );
-    return rows.map(toNote);
+    const rows = await this.repo.find({
+      where: { team_id: team, owner_bot: ownerBot, channel_id: channelId, status: 'resolved' },
+      order: { updated_at: 'DESC' },
+    });
+    return rows.map(entityToNote);
   }
 
   /**
@@ -119,13 +102,12 @@ export class SessionNoteStore {
    * resolved. Scoped to (team, ownerBot) so a bot can't resolve another bot's notes.
    */
   async resolve(id: number, team: string, ownerBot: string): Promise<boolean> {
-    const rows = await this.q(
-      `UPDATE session_notes
-       SET status = 'resolved', updated_at = now()
-       WHERE id = $1 AND team_id = $2 AND owner_bot = $3 AND status = 'open'
-       RETURNING id`,
-      [id, team, ownerBot],
-    );
-    return rows.length > 0;
+    const note = await this.repo.findOne({
+      where: { id, team_id: team, owner_bot: ownerBot, status: 'open' },
+    });
+    if (!note) return false;
+    note.status = 'resolved';
+    await this.repo.save(note);
+    return true;
   }
 }

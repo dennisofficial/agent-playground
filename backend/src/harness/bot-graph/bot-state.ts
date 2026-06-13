@@ -30,11 +30,11 @@ export interface BotStateDelta {
   /** Suggestion block from the previous turn's memory reconcile — injected into the next turn's
    * context so the agent can act on it with remember / update_memory / forget. '' = nothing. */
   memorySuggestions?: string;
-  /** Phase 6: rolling compaction summary — replaces compacted history in llmNode. */
+  /** Rolling compaction summary — replaces compacted history in llmNode. */
   summary?: string;
-  /** Phase 6: messages[] index of the first verbatim-tail message. 0 = no compaction. */
+  /** messages[] index of the first verbatim-tail message. 0 = no compaction. */
   summarizedUpTo?: number;
-  /** Phase 6: monotonically incrementing compaction event count per thread. */
+  /** Monotonically incrementing compaction event count per thread. */
   compactionVersion?: number;
   /** A reaction emoji to surface immediately — the gate's "seen, working" 👀 on a real respond. */
   reaction?: string;
@@ -194,7 +194,7 @@ export const BotState = Annotation.Root({
     default: () => false,
   }),
   /**
-   * Phase 2: suggestion block from the previous turn's memory reconcile. Written by
+   * Suggestion block from the previous turn's memory reconcile. Written by
    * `reconcileNode` (possibly '' when nothing qualifies); read by `recallNode` the NEXT turn and
    * injected into the context so the agent sees and acts on it. Overwritten every turn — no stale
    * lifecycle. Empty string → no suggestions slot injected.
@@ -204,7 +204,7 @@ export const BotState = Annotation.Root({
     default: () => '',
   }),
   /**
-   * Phase 6: rolling compaction summary. Written by `compactionNode` when
+   * Rolling compaction summary. Written by `compactionNode` when
    * `messages.length − summarizedUpTo > COMPACTION_THRESHOLD`. The text is a human-readable
    * rolling summary (state, decisions, next steps, learnings) covering the compacted portion.
    * '' = no compaction has occurred yet. In `llmNode`, when non-empty, this replaces the
@@ -215,7 +215,7 @@ export const BotState = Annotation.Root({
     default: () => '',
   }),
   /**
-   * Phase 6: index into `messages[]` of the first verbatim-tail message. 0 = no compaction.
+   * Index into `messages[]` of the first verbatim-tail message. 0 = no compaction.
    * When > 0, `llmNode` uses `messages.slice(summarizedUpTo)` as the live history, prefixed by
    * the `summary` HumanMessage. `compactionNode` sets this to `messages.length − COMPACTION_TAIL`
    * whenever it triggers.
@@ -225,7 +225,7 @@ export const BotState = Annotation.Root({
     default: () => 0,
   }),
   /**
-   * Phase 6: monotonically incrementing compaction event count for this thread. Incremented each
+   * Monotonically incrementing compaction event count for this thread. Incremented each
    * time `compactionNode` fires; used as the `version` field in the `compaction_summaries` audit
    * table. 0 = no compaction has occurred.
    */

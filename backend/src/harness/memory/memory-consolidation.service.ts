@@ -1,7 +1,7 @@
 import { PromptTemplate } from '@langchain/core/prompts';
 import { Runnable, RunnableSequence } from '@langchain/core/runnables';
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Fact } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
@@ -9,15 +9,16 @@ import { z } from 'zod';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
+import { CONSOLIDATION_CRON } from './memory-constants';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
 import { SemanticMemory } from './semantic-memory';
 
 /**
- * Phase 7 — Periodic memory consolidation (LangMem-style housekeeping).
+ * Periodic memory consolidation (LangMem-style housekeeping).
  *
  * A scheduled background job — NOT per-turn — that runs an LLM pass over existing facts to
- * keep the store clean. Runs nightly by default (override via `CONSOLIDATION_CRON` env var).
+ * keep the store clean. Runs nightly (CONSOLIDATION_CRON constant — 02:00 UTC).
  *
  * Per (tenant, scope):
  *   - merge:          auto-apply — collapses undeniable duplicates into one canonical statement.
@@ -34,9 +35,7 @@ import { SemanticMemory } from './semantic-memory';
  */
 
 // ── Cron schedule ─────────────────────────────────────────────────────────────
-// Evaluated at class-definition time (module load); dotenvx has already populated process.env.
-const CRON_SCHEDULE: string =
-  process.env.CONSOLIDATION_CRON ?? CronExpression.EVERY_DAY_AT_2AM;
+const CRON_SCHEDULE = CONSOLIDATION_CRON;
 
 // ── Safety caps ───────────────────────────────────────────────────────────────
 /** Minimum live facts in a scope before we bother running the LLM pass. */
@@ -125,14 +124,6 @@ Your job (be VERY conservative — most scopes need nothing):
 
 Return empty arrays for all three when nothing qualifies. Returning [] everywhere is correct and expected for most scopes.`;
 
-// ── Raw query result shapes ────────────────────────────────────────────────────
-interface TenantRow {
-  team_id: string;
-}
-interface ScopeRow {
-  scope: string;
-}
-
 @Injectable()
 export class MemoryConsolidationService {
   private readonly logger = new Logger(MemoryConsolidationService.name);
@@ -199,14 +190,15 @@ export class MemoryConsolidationService {
 
   private async runAllTenants(): Promise<void> {
     // Only process tenants that currently have live facts — no point iterating an empty store.
-    const rows = await this.factRepo.manager.query<TenantRow[]>(
-      `SELECT DISTINCT team_id
-         FROM facts
-        WHERE deleted_at IS NULL
-          AND team_id IS NOT NULL`,
-      [],
-    );
-    const teamIds = (Array.isArray(rows) ? rows : []).map((r) => r.team_id);
+    // GROUP BY is the most portable way to get distinct team_ids with TypeORM's QB.
+    const rows = await this.factRepo
+      .createQueryBuilder('f')
+      .select('f.team_id', 'team_id')
+      .where('f.deleted_at IS NULL')
+      .andWhere('f.team_id IS NOT NULL')
+      .groupBy('f.team_id')
+      .getRawMany<{ team_id: string }>();
+    const teamIds = rows.map((r) => r.team_id);
 
     if (teamIds.length === 0) {
       this.logger.debug('No tenants with live facts — consolidation no-op.');
@@ -230,18 +222,17 @@ export class MemoryConsolidationService {
   }
 
   private async runTenant(teamId: string): Promise<void> {
-    const rows = await this.factRepo.manager.query<ScopeRow[]>(
-      `SELECT scope
-         FROM facts
-        WHERE team_id = $1
-          AND deleted_at IS NULL
-        GROUP BY scope
-       HAVING COUNT(*) >= $2
-        ORDER BY COUNT(*) DESC
-        LIMIT $3`,
-      [teamId, MIN_FACTS_PER_SCOPE, MAX_SCOPES_PER_TENANT],
-    );
-    const scopes = (Array.isArray(rows) ? rows : []).map((r) => r.scope);
+    const rows = await this.factRepo
+      .createQueryBuilder('f')
+      .select('f.scope', 'scope')
+      .where('f.team_id = :teamId', { teamId })
+      .andWhere('f.deleted_at IS NULL')
+      .groupBy('f.scope')
+      .having('COUNT(*) >= :min', { min: MIN_FACTS_PER_SCOPE })
+      .orderBy('COUNT(*)', 'DESC')
+      .limit(MAX_SCOPES_PER_TENANT)
+      .getRawMany<{ scope: string }>();
+    const scopes = rows.map((r) => r.scope);
 
     if (scopes.length === 0) return;
     this.logger.debug(

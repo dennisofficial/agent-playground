@@ -1,6 +1,6 @@
 import { toSql } from 'pgvector';
 import { Fact } from '@workspace/shared/schemas';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { EmbeddingProvider } from './embedding';
 import {
   Identity,
@@ -19,10 +19,10 @@ import {
  * cosine-over-JSON is replaced by pgvector `embedding <=> :qv` (HNSW-indexed). Framework-light — takes a
  * TypeORM `Repository<Fact>` + an `EmbeddingProvider`, so it's unit/integration-testable without Nest.
  *
- * All vector reads use `createQueryBuilder` with named parameters and `getRawAndEntities()` for
- * type-safe entity hydration. The `embedding <=>` operator is a raw SQL fragment (pgvector provides no
- * typed QB helpers), but named params and TypeORM-managed soft-delete + timestamps replace the previous
- * positional `$1..$N` strings. Writes use QB insert/update + `pgvector.toSql` for the vector literal.
+ * Vector distance queries (recall, remember, recallOtherProjects, mergeFacts, updateFactById) must
+ * use `createQueryBuilder` — TypeORM's repository `.find()` has no native support for the pgvector
+ * `<=>` distance operator. Non-vector queries (standingContext, listLiveByScope, liveFactById,
+ * forgetFactById, forgetByIdInScope) use the repository API directly.
  */
 export interface StoredFact {
   id: number;
@@ -332,14 +332,11 @@ export class SemanticMemory {
    */
   async standingContext(id: Identity, limit = 5): Promise<string> {
     const scope = teamScope(id.team);
-    const rows = await this.facts
-      .createQueryBuilder('f')
-      .where('f.scope = :scope', { scope })
-      .andWhere('f.team_id = :team', { team: id.team })
-      .orderBy('f.updated_at', 'DESC')
-      .addOrderBy('f.confidence', 'DESC')
-      .limit(limit)
-      .getMany();
+    const rows = await this.facts.find({
+      where: { scope, team_id: id.team },
+      order: { updated_at: 'DESC', confidence: 'DESC' },
+      take: limit,
+    });
     if (rows.length === 0) return '';
     return rows.map((f) => `- ${f.fact}`).join('\n');
   }
@@ -351,14 +348,15 @@ export class SemanticMemory {
   ): Promise<Fact | undefined> {
     const scopes = recallScopes(id);
     if (scopes.length === 0) return undefined;
-    return (
-      (await this.facts
-        .createQueryBuilder('f')
-        .where('f.id = :rowId', { rowId })
-        .andWhere('f.scope = ANY(:scopes)', { scopes })
-        .andWhere('(f.team_id = :team OR f.team_id IS NULL)', { team: id.team })
-        .getOne()) ?? undefined
-    );
+    // Two OR branches: tenant-owned fact OR global (team_id IS NULL) fact.
+    // Uses repository.find() since there are no vector distance ops on this path.
+    const row = await this.facts.findOne({
+      where: [
+        { id: rowId, scope: In(scopes), team_id: id.team },
+        { id: rowId, scope: In(scopes), team_id: IsNull() },
+      ],
+    });
+    return row ?? undefined;
   }
 
   /** Overwrite a fact by row id (scope-checked). Returns the updated fact, or null. */
@@ -411,13 +409,11 @@ export class SemanticMemory {
     teamId: string,
     limit = 200,
   ): Promise<Fact[]> {
-    return this.facts
-      .createQueryBuilder('f')
-      .where('f.scope = :scope', { scope })
-      .andWhere('f.team_id = :teamId', { teamId })
-      .orderBy('f.updated_at', 'DESC')
-      .limit(limit)
-      .getMany();
+    return this.facts.find({
+      where: { scope, team_id: teamId },
+      order: { updated_at: 'DESC' },
+      take: limit,
+    });
   }
 
   /**

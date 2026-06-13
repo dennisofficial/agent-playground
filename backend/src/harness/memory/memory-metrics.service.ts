@@ -17,7 +17,7 @@ import { Injectable } from '@nestjs/common';
 export type Decision = 'respond' | 'acknowledge' | 'ignore';
 
 /**
- * Phase 2+: per-path memory suggestion tallies (replaces write counts — all writes now go through
+ * Per-path memory suggestion tallies (replaces write counts — all writes now go through
  * the agent's own tools, tracked by `recordWrite`). Each reconcileMemory pass records how many
  * suggestions it surfaced by qualifying class.
  */
@@ -46,7 +46,7 @@ export interface RecallTally {
 }
 
 /**
- * Periodic memory consolidation counters (Phase 7). Accumulated across all runs until `reset()`.
+ * Periodic memory consolidation counters. Accumulated across all runs until `reset()`.
  * Each `recordConsolidation` call represents ONE scope's outcome; the service sums them.
  */
 export interface ConsolidationTally {
@@ -125,7 +125,7 @@ export class MemoryMetricsService {
 
   /**
    * One memory-reconcile invocation finished — counted even when it surfaced nothing (the
-   * denominator). Phase 2+: counts suggestions by qualifying class, not writes (writes go through
+   * denominator). Counts suggestions by qualifying class, not writes (writes go through
    * the agent's own tools and are captured by `recordWrite`).
    */
   recordMemoryReconcile(d: Decision, t: Omit<MemTally, 'attempts'>): void {

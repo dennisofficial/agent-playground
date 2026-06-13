@@ -20,7 +20,7 @@ import { TaskStore } from './task-store';
  * CURRENT state and emit ops: memory (suggestion-only — no writes) and tasks (add/complete/drop).
  * State-aware by design — they're shown what's already stored.
  *
- * Phase 2 (consent model): `reconcileMemory` is READ-ONLY — it surfaces a short human-readable
+ * Consent model: `reconcileMemory` is READ-ONLY — it surfaces a short human-readable
  * suggestion block (returned, stored in `memorySuggestions`) instead of writing to the store.
  * The agent commits via its own `remember` / `update_memory` / `forget` tools — the only write path.
  * (Ported from playground/src/memory/reconcile.ts; logBus debug rows became Logger lines.)
@@ -32,7 +32,7 @@ const RECONCILE_RECALL_LIMIT = 25;
 // Lower floor than fetch: reconcile wants to SEE marginal neighbors so it can spot contradictions.
 const RECONCILE_FLOOR = 0.15;
 
-// Phase 2: narrowed schema. add/update carry `kind` to force a self-check (the model must name
+// Narrowed schema. add/update carry `kind` to force a self-check (the model must name
 // which of the three qualifying classes each suggestion falls into). delete is always a correction.
 const MemorySchema = z.object({
   reasoning: z
@@ -80,7 +80,9 @@ const MemorySchema = z.object({
           .describe('which qualifying class this update falls into'),
         id: z
           .number()
-          .describe('the #id of the existing fact (from the list above) to update'),
+          .describe(
+            'the #id of the existing fact (from the list above) to update',
+          ),
         newFact: z
           .string()
           .describe(
@@ -105,7 +107,7 @@ const MemorySchema = z.object({
 });
 type MemoryResult = z.infer<typeof MemorySchema>;
 
-// Phase 2: narrowed to exactly three qualifying classes. Everything else is filtered out.
+// Narrowed to exactly three qualifying classes. Everything else is filtered out.
 // Greetings, questions, task instructions, coding-style notes, inferred preferences, generic
 // project/stack facts not framed as a decision, status narration, anticipatory chatter,
 // routine "I'll do X later" — none of these qualify.
@@ -295,7 +297,7 @@ export class ReconcileService {
   }
 
   /**
-   * Phase 2 — READ-ONLY suggestion pass. Reviews the turn and returns a short human-readable block
+   * READ-ONLY suggestion pass. Reviews the turn and returns a short human-readable block
    * of memory suggestions (never writes to the store). The bot commits via its own
    * `remember` / `update_memory` / `forget` tools — the only write path.
    *

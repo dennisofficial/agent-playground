@@ -40,6 +40,7 @@ import {
 import {
   asInput,
   compactPriorToolResults,
+  filterToolDispatchMessages,
   repairDanglingToolCalls,
   usageOf,
   withCacheBreakpoint,
@@ -66,7 +67,7 @@ export class BotGraphNodes {
   /** DORMANCY: master switch + the consecutive-soft-ignore count at which a bot goes dormant. */
   private readonly dormancyEnabled: boolean;
   private readonly dormancyThreshold: number;
-  /** COMPACTION thresholds (Phase 6). */
+  /** COMPACTION thresholds. */
   private readonly compactionThreshold: number;
   private readonly compactionTail: number;
 
@@ -282,7 +283,7 @@ export class BotGraphNodes {
 
     /**
      * The pre-LLM context read: assemble the standing-context core + working-state slots into
-     * `recalled`. Phase 3: FetchService.fetchContext no longer does semantic recall (no embedding)
+     * `recalled`. FetchService.fetchContext no longer does semantic recall (no embedding)
      * — it returns the tiny always-on core (role, project, team prefs) + active board tasks +
      * reminders. The live work state (worktrees + sessions) is joined in from `workContext`.
      * Always set recalled (even to '') so a stale recall from a prior turn never lingers.
@@ -307,7 +308,7 @@ export class BotGraphNodes {
       // Three independent reads — run in parallel. Each degrades to '' on error so a service
       // outage never aborts the turn.
       // Pass the previous turn's memorySuggestions so the assembler can inject them (Phase 2).
-      // Phase 6: pass a compaction note so the assembler surfaces a brief meta-note when the
+      // Pass a compaction note so the assembler surfaces a brief meta-note when the
       // session has been compacted (the full summary is injected in llmNode as history).
       const compactionNote =
         state.summarizedUpTo > 0
@@ -357,14 +358,16 @@ export class BotGraphNodes {
       //   4. time context — VOLATILE (current time + gap note). Placed after recalled so it always
       //      lands outside the cached prefix. Never persisted into `messages`.
       //   5. this turn's new channel messages (with inline time-dividers for any within-batch gaps).
-      // Phase 6: when compacted, use only the verbatim tail; the summary is prepended below.
-      // repair → compact prior tool results → cache breakpoints (order matters).
+      // When compacted, use only the verbatim tail; the summary is prepended below.
+      // repair → compact prior tool results → filter text-less dispatches → cache breakpoints.
       const rawHistory =
         state.summarizedUpTo > 0
           ? state.messages.slice(state.summarizedUpTo)
           : state.messages;
-      const history = compactPriorToolResults(
-        repairDanglingToolCalls(rawHistory),
+      const history = filterToolDispatchMessages(
+        compactPriorToolResults(
+          repairDanglingToolCalls(rawHistory),
+        ),
       );
       const cachedHistory = history.length
         ? [
@@ -392,7 +395,7 @@ export class BotGraphNodes {
       // Render from the LIVE context (may have been refreshed by `refreshContext` after tools ran),
       // not from `state.recalled` (which is the one-shot pre-LLM snapshot for the conductor).
       const liveContext = renderContext(state.context);
-      // Phase 6: when compacted, prepend the summary HumanMessage before the verbatim tail.
+      // When compacted, prepend the summary HumanMessage before the verbatim tail.
       // Position: [persona] → [summary (if any)] → [verbatim tail] → [memory] → [time] → [fresh] → [draft]
       const summaryMessages =
         state.summarizedUpTo > 0 && state.summary
@@ -653,7 +656,7 @@ export class BotGraphNodes {
      * RECONCILE NODE — the single post-turn pass, reached on every path (respond, ack/ignore,
      * pause). Runs two passes concurrently:
      *
-     *  1. `reconcileMemory` (Phase 2): read-only suggestion pass — returns a short human-readable
+     *  1. `reconcileMemory`: read-only suggestion pass — returns a short human-readable
      *     block stored in `memorySuggestions`. NEVER writes to the store; the agent commits via
      *     its own remember / update_memory / forget tools. Returns '' for off-class turns.
      *
@@ -733,7 +736,7 @@ export class BotGraphNodes {
             })
             .catch(() => {})
         : Promise.resolve();
-      // Phase 6: preserve the compaction note on mid-turn refreshes so the assembler slot stays
+      // Preserve the compaction note on mid-turn refreshes so the assembler slot stays
       // consistent. memorySuggestions is intentionally omitted (unchanged during a refresh).
       const refreshCompactionNote =
         state.summarizedUpTo > 0
@@ -760,7 +763,7 @@ export class BotGraphNodes {
     };
 
     /**
-     * COMPACTION NODE (Phase 6) — runs sequentially after `reconcile` on every path.
+     * COMPACTION NODE — runs sequentially after `reconcile` on every path.
      *
      * Checks whether enough new messages have accumulated since the last compaction. When the
      * message count above `summarizedUpTo` exceeds `COMPACTION_THRESHOLD`, it:
@@ -789,8 +792,7 @@ export class BotGraphNodes {
       }
       // Ensure we have at least `compactionTail` messages to keep verbatim — don't compact a tiny
       // history (this also guards against edge cases where threshold < tail).
-      const newSummarizedUpTo =
-        state.messages.length - this.compactionTail;
+      const newSummarizedUpTo = state.messages.length - this.compactionTail;
       if (newSummarizedUpTo <= state.summarizedUpTo) return {};
 
       try {
@@ -844,10 +846,7 @@ Write a rolling summary covering:
 Be thorough but concise. Preserve specific names, project names, technical details, and numeric references that matter for future context. Aim for 3–5 paragraphs.`;
 
         const model = this.models.buildModel();
-        const result = await model.invoke(
-          [new HumanMessage(prompt)],
-          config,
-        );
+        const result = await model.invoke([new HumanMessage(prompt)], config);
         const newSummary = flattenContent(result.content).trim();
         if (!newSummary) return {};
 
@@ -876,9 +875,7 @@ Be thorough but concise. Preserve specific names, project names, technical detai
         };
       } catch (err) {
         // Fire-and-forget: a compaction failure is non-fatal; the raw history is still intact.
-        this.logger.warn(
-          `compaction failed for ${bot.name}: ${err}`,
-        );
+        this.logger.warn(`compaction failed for ${bot.name}: ${err}`);
         return {};
       }
     };
