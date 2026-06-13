@@ -36,7 +36,7 @@ import {
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { SessionRunnerService } from '../sessions/session-runner.service';
-import { type BotStateDelta, BotGraphFactory } from './bot-graph.factory';
+import { type BotStateDelta, BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import { planReadySeed, ticketApprovedSeed } from './board-seed-prompt';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { sessionRelayPrompt } from './session-relay-prompt';

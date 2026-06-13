@@ -1,7 +1,7 @@
 import type { BaseMessage } from '@langchain/core/messages';
 import { Annotation, messagesStateReducer } from '@langchain/langgraph';
-import type { ChannelMsg } from '../../channel/channel.types';
-import type { GateAction, MessageUsage } from '../../domain/conductor-events';
+import type { ChannelMsg } from '../channel/channel.types';
+import type { GateAction, MessageUsage } from '../domain/conductor-events';
 
 /** What the conductor reads out of a node's streamed delta (a partial of BotState). */
 export interface BotStateDelta {
@@ -87,7 +87,7 @@ export const BotState = Annotation.Root({
     reducer: (_: ChannelMsg[], b: ChannelMsg[]) => b ?? [],
     default: () => [],
   }),
-  /** Ephemeral pre-LLM memory context (the `recall` node's output). Re-injected each compose call
+  /** Ephemeral pre-LLM memory context (the `recall` node's output). Re-injected each llm call
    * like the persona, NEVER written into `messages`. Overwritten on EVERY path — by `recall`
    * (respond) and reset by `mark_seen` (ack/ignore) — so a stale recall never survives the
    * checkpoint. */
@@ -114,7 +114,7 @@ export const BotState = Annotation.Root({
     default: () => undefined,
   }),
   /** READ-THE-ROOM: the unposted reply from a step that went stale mid-compose (a teammate posted
-   * during model.invoke). Survives exactly one edge — compose → compose — where the revision note
+   * during model.invoke). Survives exactly one edge — llm → llm — where the revision note
    * carries it back to the model. NEVER enters `messages`: durable history records only what was
    * actually said. Reset explicitly by `gate` every run (Annotation defaults don't re-apply on an
    * existing thread), so a draft orphaned by a crash is dropped, never replayed. */

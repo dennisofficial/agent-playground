@@ -4,22 +4,12 @@ import {
   HumanMessage,
   ToolMessage,
 } from '@langchain/core/messages';
-import type { ChannelMsg } from '../../channel/channel.types';
-import type { MessageUsage } from '../../domain/conductor-events';
+import type { ChannelMsg } from '../channel/channel.types';
+import type { MessageUsage } from '../domain/conductor-events';
 
 /** Channel message → a `Speaker: text` HumanMessage (how a bot reads what others said). */
 export const asInput = (m: ChannelMsg): HumanMessage =>
   new HumanMessage(`${m.author}: ${m.text}`);
-
-// ── Read-the-room constants (exported for tests) ────────────────────────────────────────────────
-/** Max revision passes per turn. Each race round at most one bot posts (the synchronous check),
- * so N contending bots converge in ≤N rounds — 2 covers a realistic pileup; at the cap the draft
- * posts anyway (it already saw the earlier rounds — worst case equals the old blind behavior). */
-export const MAX_REVISION_PASSES = 2;
-/** The revision instruction injected as the LAST trailing HumanMessage — strictly after both
- * cache breakpoints (volatile zone), so interpolating the draft never busts the prompt prefix. */
-export const revisionNote = (draft: string): string =>
-  `(Heads-up: while you were composing, the messages above arrived. You drafted the following reply but it was NOT posted:\n"""\n${draft}\n"""\nRead the new messages first. Post only if your reply still adds something beyond what teammates already said — revise it, or shorten it to a brief agreement. If it's now redundant, output NOTHING (an empty response) and stay silent.)`;
 
 /** Token usage off a model reply (mirrors the conductor's extraction in `commit`). */
 export const usageOf = (m: AIMessage): MessageUsage | undefined => {
@@ -81,7 +71,7 @@ export const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
 /**
  * SELF-HEALING GUARD: repair dangling tool calls in the durable history before every model call.
  *
- * LangGraph checkpoints after EVERY node, so an interruption between the `compose` superstep (which
+ * LangGraph checkpoints after EVERY node, so an interruption between the `llm` superstep (which
  * commits an AI message WITH tool_calls) and the `tools` superstep (which commits the results) —
  * a crash, a process exit mid-turn, an aborted stream — leaves an AIMessage whose `tool_use` has
  * no `tool_result` after it. Anthropic rejects that history outright (400 INVALID_TOOL_RESULTS),

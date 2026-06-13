@@ -31,12 +31,23 @@ export interface TaskTally {
   dropped: number;
 }
 
+/** Recall-side health: not just whether memory is WRITTEN, but whether it SURFACES when needed. */
+export interface RecallTally {
+  /** Fetch passes that attempted recall (a non-empty retrieval query). The denominator. */
+  attempts: number;
+  /** Passes that surfaced at least one fact — the live recall hit-rate is hits / attempts. */
+  hits: number;
+  /** Total facts injected across all passes — facts / attempts is the average context depth. */
+  factsInjected: number;
+}
+
 export interface MemoryMetrics {
   insertCount: number;
   dedupCount: number;
   judgeCallCount: number;
   memByPath: Record<Decision, MemTally>;
   taskByPath: Record<Decision, TaskTally>;
+  recall: RecallTally;
 }
 
 const DECISIONS: Decision[] = ['respond', 'acknowledge', 'ignore'];
@@ -70,6 +81,7 @@ export class MemoryMetricsService {
   private judgeCallCount = 0;
   private memByPath = byPath(zeroMem);
   private taskByPath = byPath(zeroTask);
+  private recall: RecallTally = { attempts: 0, hits: 0, factsInjected: 0 };
 
   /** A durable-memory write landed: 'inserted' = brand-new fact, 'updated' = merged into a near-duplicate. */
   recordWrite(action: 'inserted' | 'updated'): void {
@@ -101,6 +113,14 @@ export class MemoryMetricsService {
     m.dropped += t.dropped;
   }
 
+  /** One pre-LLM fetch attempted recall (non-empty query). `factCount` = facts injected this pass
+   * (0 = the store had nothing relevant). Tracks whether memory SURFACES, not just whether it's written. */
+  recordRecall(factCount: number): void {
+    this.recall.attempts++;
+    if (factCount > 0) this.recall.hits++;
+    this.recall.factsInjected += factCount;
+  }
+
   /** A snapshot of this session's metrics (deep-copied so callers can't mutate the live counters). */
   snapshot(): MemoryMetrics {
     return {
@@ -109,6 +129,7 @@ export class MemoryMetricsService {
       judgeCallCount: this.judgeCallCount,
       memByPath: cloneByPath(this.memByPath),
       taskByPath: cloneByPath(this.taskByPath),
+      recall: { ...this.recall },
     };
   }
 
@@ -119,5 +140,6 @@ export class MemoryMetricsService {
     this.judgeCallCount = 0;
     this.memByPath = byPath(zeroMem);
     this.taskByPath = byPath(zeroTask);
+    this.recall = { attempts: 0, hits: 0, factsInjected: 0 };
   }
 }

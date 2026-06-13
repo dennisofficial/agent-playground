@@ -6,41 +6,45 @@ import {
 } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
-import { ChannelRegistryService } from '../../channel/channel-registry.service';
-import { ChannelService } from '../../channel/channel.service';
-import { getIdentity } from '../../domain/identity';
-import { flattenContent } from '../../domain/text';
-import type { EmployeeDefinition } from '../../employees/employee.types';
-import { PersonaService } from '../../employees/persona.service';
-import { GateService } from '../../gate/gate.service';
-import { ChatModelFactory } from '../../llm/chat-model.factory';
-import { FetchService } from '../../memory/fetch.service';
-import { ReconcileService } from '../../memory/reconcile.service';
-import { RecursionGuardService } from '../../recursion-guard/recursion-guard.service';
+import { ChannelRegistryService } from '../channel/channel-registry.service';
+import { ChannelService } from '../channel/channel.service';
+import { getIdentity } from '../domain/identity';
+import { flattenContent } from '../domain/text';
+import type { EmployeeDefinition } from '../employees/employee.types';
+import { PersonaService } from '../employees/persona.service';
+import { GateService } from '../gate/gate.service';
+import { ChatModelFactory } from '../llm/chat-model.factory';
+import { FetchService } from '../memory/fetch.service';
+import { ConsolidationService } from '../memory/consolidation.service';
+import { ReconcileService } from '../memory/reconcile.service';
+import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import {
   SESSION_REGISTRY,
   type SessionRegistry,
-} from '../../sessions/session-registry.port';
-import { DEFAULT_CHAT_TOOLSET } from '../../tools/default-toolset';
-import { ToolRegistry } from '../../tools/tool.registry';
-import { WorktreeService } from '../../worktrees/worktree.service';
+} from '../sessions/session-registry.port';
+import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
+import { ToolRegistry } from '../tools/tool.registry';
+import { WorktreeService } from '../worktrees/worktree.service';
 import {
   GAP_THRESHOLD_DEFAULT_MS,
   buildTimeContext,
   withDividers,
-} from '../channel-render';
+} from './channel-render';
 import type { BotStateType } from './bot-state';
 import {
-  MAX_REVISION_PASSES,
   asInput,
   repairDanglingToolCalls,
-  revisionNote,
   usageOf,
   withCacheBreakpoint,
 } from './message-helpers';
+import {
+  MAX_REVISION_PASSES,
+  interleavedTeammates,
+  revisionNote,
+} from './read-the-room';
 
 /**
- * The node IMPLEMENTATIONS of a bot's turn-graph — gate, loop_guard, recall, compose, tools,
+ * The node IMPLEMENTATIONS of a bot's turn-graph — gate, loop_guard, recall, llm, tools,
  * mark_seen, pause, reconcile. `BotGraphFactory` owns the DI + the graph TOPOLOGY (which node goes
  * where); this owns what each node DOES. `forBot(bot)` returns the per-bot node functions plus the
  * bot's terminal-tool set (which `makeAfterTools` in routing.ts closes over).
@@ -50,6 +54,7 @@ import {
  */
 export class BotGraphNodes {
   private readonly gapThresholdMs: number;
+  private readonly consolidationWindow: number;
 
   constructor(
     private readonly channel: ChannelService,
@@ -59,13 +64,34 @@ export class BotGraphNodes {
     private readonly recursionGuard: RecursionGuardService,
     private readonly fetchService: FetchService,
     private readonly reconcile: ReconcileService,
+    private readonly consolidation: ConsolidationService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
     private readonly worktrees: WorktreeService,
     private readonly sessions: SessionRegistry,
     gapThresholdMs: number,
+    consolidationWindow: number,
   ) {
     this.gapThresholdMs = gapThresholdMs;
+    this.consolidationWindow = consolidationWindow;
+  }
+
+  /**
+   * The recent room window fed to the async consolidation pass — the last N messages, oldest first.
+   * Teammate (AI) lines are tagged "(teammate)" so the consolidation prompt can extract from the
+   * humans only; humans render as "Name: text". Unlike `turnTranscript` (one turn's slice), this is
+   * the WHOLE recent window — consolidation deliberates over full context, not a fragment.
+   */
+  private consolidationWindowText(channelId: string): string {
+    return this.channel
+      .snapshot(channelId)
+      .slice(-this.consolidationWindow)
+      .map((m) =>
+        m.authorBotId
+          ? `(teammate) ${m.author}: ${m.text}`
+          : `${m.author}: ${m.text}`,
+      )
+      .join('\n');
   }
 
   /**
@@ -194,7 +220,7 @@ export class BotGraphNodes {
         decision: d.action,
         ackEmoji: d.emoji,
         // Fire the transient "composing" 💭 the moment we commit to responding — surfaced before
-        // recall/compose/tools run, and REMOVED by the conductor when the turn ends (so present =
+        // recall/llm/tools run, and REMOVED by the conductor when the turn ends (so present =
         // composing now, gone = replied). Only on a real gated respond; the forced path returned above.
         reaction: d.action === 'respond' ? '💭' : undefined,
         reactionTargetId: latest.id,
@@ -238,7 +264,7 @@ export class BotGraphNodes {
      * commit the new messages + the model's reply + the advanced cursor in ONE atomic checkpoint.
      * A throw here commits nothing, so a retry re-reads the same messages — no loss, no double.
      */
-    const composeNode = async (
+    const llmNode = async (
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
@@ -320,15 +346,11 @@ export class BotGraphNodes {
       // READ-THE-ROOM check: synchronous (same JS tick as the return below — the in-memory channel
       // is synchronous, so nothing interleaves between this read and the checkpoint write request).
       // Only a FINAL text post is gated: a tool-call step must enter history intact (a tool_use
-      // needs its tool_result) and the post-tools compose step folds new messages in anyway. Only
-      // teammate-BOT interleaves count — a human message landing mid-compose folds into the next
-      // gate/turn as usual rather than forcing a rewrite of a finished reply.
+      // needs its tool_result) and the post-tools llm step folds new messages in anyway.
       const interleaved =
         hasToolCalls || !aiText
           ? []
-          : channel
-              .since(newCursor, channelId)
-              .filter((m) => m.authorBotId && m.authorBotId !== bot.id);
+          : interleavedTeammates(channel, channelId, newCursor, bot.id);
       if (
         interleaved.length > 0 &&
         state.revisionPasses < MAX_REVISION_PASSES
@@ -347,7 +369,7 @@ export class BotGraphNodes {
       // Fresh (or at the revision cap → post anyway; or a tool-call step; or a silent empty reply).
       // The draft is resolved either way: posted, superseded by this reply, or — when a revision
       // pass chose to act (tool calls) instead of posting — dropped, since the post-tools step
-      // re-reads the channel fresh. Clearing here keeps `afterCompose`'s draft → compose route
+      // re-reads the channel fresh. Clearing here keeps `afterLlm`'s draft → llm route
       // reachable only from an actual suppression.
       return {
         messages: [...injected, ai],
@@ -522,15 +544,15 @@ export class BotGraphNodes {
 
     /**
      * RECONCILE NODE — the single post-turn write, reached on every path (respond, ack/ignore,
-     * pause). Today it reconciles only the reminders/board plate (add/complete/drop) against the
-     * turn's transcript.
+     * pause). It reconciles the reminders/board plate (add/complete/drop) against the turn's
+     * transcript INLINE, then SCHEDULES durable-fact consolidation off the hot path.
      *
-     * Durable-FACT auto-capture is DISABLED (Dennis, 2026-06-12, first live standup) — too
-     * credulous: it stored Sam's ANTICIPATORY chatter ("ready to execute when the standup closes")
-     * as accomplished facts, recall fed them back as truth, and stale session facts fed Alex's
-     * guard loop. OFF until the memory-system fix (board ticket #10) lands; explicit
-     * remember()/recall() tools are unaffected. To re-enable, add the fact pass back here:
-     *   await this.reconcile.reconcileMemory(bot, transcript, getIdentity(config), state.decision);
+     * Durable-FACT auto-capture replaces the old inline reconcileMemory call, which was disabled
+     * (Dennis, 2026-06-12) for being too credulous — reacting to one turn's fragment, it stored
+     * anticipatory chatter ("ready to execute when the standup closes") as accomplished fact. The
+     * successor is the DEBOUNCED ConsolidationService: `schedule` only (re)arms a timer (no-op when
+     * MEMORY_CONSOLIDATION_ENABLED is off, and never blocks the turn); once the room goes quiet a
+     * single hardened pass runs over the whole recent window. Tasks stay inline (cheap, per-turn).
      */
     const reconcileNode = async (
       state: BotStateType,
@@ -545,6 +567,12 @@ export class BotGraphNodes {
           state.decision,
           config,
         );
+      // Off the hot path: debounced durable-fact consolidation over the full recent room window.
+      this.consolidation.schedule(
+        bot,
+        getIdentity(config),
+        this.consolidationWindowText(this.channelIdOf(config)),
+      );
       return {};
     };
 
@@ -570,7 +598,7 @@ export class BotGraphNodes {
       gate: gateNode,
       loopGuard: loopGuardNode,
       recall: recallNode,
-      compose: composeNode,
+      llm: llmNode,
       tools: toolsNode,
       markSeen: markSeenNode,
       pause: pauseNode,

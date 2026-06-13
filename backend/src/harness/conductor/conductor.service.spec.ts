@@ -22,7 +22,7 @@ import type {
   SessionRegistry,
 } from '../sessions/session-registry.port';
 import type { SessionRunnerService } from '../sessions/session-runner.service';
-import type { BotGraphFactory } from './bot-graph.factory';
+import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorService } from './conductor.service';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';

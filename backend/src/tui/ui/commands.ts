@@ -2,6 +2,7 @@ import { ChannelRegistryService } from '@harness/channel/channel-registry.servic
 import { ConductorService } from '@harness/conductor/conductor.service';
 import { DEFAULT_PROJECT } from '@harness/domain/identity';
 import { EmployeeRegistry } from '@harness/employees/employee.registry';
+import { MemoryMetricsService } from '@harness/memory/memory-metrics.service';
 import { TaskStore } from '@harness/memory/task-store';
 import type { TuiChatSurface } from '../tui-chat-surface';
 
@@ -39,6 +40,7 @@ export interface CommandDeps {
   registry: ChannelRegistryService;
   employees: EmployeeRegistry;
   surface: TuiChatSurface;
+  metrics: MemoryMetricsService;
   project?: string;
 }
 
@@ -212,6 +214,30 @@ export function buildCommands(deps: CommandDeps): Command[] {
     },
   };
 
+  const metricsCommand: Command = {
+    name: 'metrics',
+    summary: '/metrics — memory health this session (recall hit-rate, writes)',
+    run(text, ctx) {
+      if (text !== '/metrics') return false;
+      const m = deps.metrics.snapshot();
+      const pct = (n: number, d: number) =>
+        d ? `${((n / d) * 100).toFixed(0)}%` : '—';
+      const r = m.recall;
+      const sum = (t: Record<string, { attempts: number }>) =>
+        Object.values(t).reduce((a, p) => a + p.attempts, 0);
+      ctx.note(
+        [
+          'Memory (this session):',
+          `  recall: ${r.attempts} attempts · ${pct(r.hits, r.attempts)} surfaced ≥1 fact · ` +
+            `${r.attempts ? (r.factsInjected / r.attempts).toFixed(1) : '0'} facts/pass avg`,
+          `  writes: ${m.insertCount} new · ${m.dedupCount} merged · ${m.judgeCallCount} judge calls`,
+          `  reconcile passes: ${sum(m.memByPath)} memory · ${sum(m.taskByPath)} task`,
+        ].join('\n'),
+      );
+      return true;
+    },
+  };
+
   return [
     exitCommand,
     tasksCommand,
@@ -220,6 +246,7 @@ export function buildCommands(deps: CommandDeps): Command[] {
     roomCommand,
     dmCommand,
     roomsCommand,
+    metricsCommand,
   ];
 }
 

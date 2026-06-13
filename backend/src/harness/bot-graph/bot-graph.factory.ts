@@ -9,6 +9,7 @@ import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
+import { ConsolidationService } from '../memory/consolidation.service';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
@@ -19,43 +20,43 @@ import {
 import { ToolRegistry } from '../tools/tool.registry';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { GAP_THRESHOLD_DEFAULT_MS } from './channel-render';
-import { BotState } from './graph/bot-state';
-import { BotGraphNodes } from './graph/bot-graph.nodes';
-import { afterCompose, afterGuard, makeAfterTools, route } from './graph/routing';
+import { BotState } from './bot-state';
+import { BotGraphNodes } from './bot-graph.nodes';
+import { afterGuard, afterLlm, makeAfterTools, route } from './routing';
 
 // Public surface re-exported from the graph modules so existing importers keep one entry point.
-export type { BotStateDelta } from './graph/bot-state';
-export { MAX_REVISION_PASSES, revisionNote } from './graph/message-helpers';
+export type { BotStateDelta } from './bot-state';
+export { MAX_REVISION_PASSES, revisionNote } from './read-the-room';
 
 /**
  * A bot's TURN, as an explicit LangGraph state machine. One graph per bot, persisted on thread
  * `${bot.id}:${project}:root` (Postgres checkpointer). The conductor invokes it whenever the channel
  * has grown past the bot's cursor.
  *
- *   START → gate ─┬─ respond → loop_guard ─┬─ recall → compose ⟲ ⇄ tools ─┐
+ *   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⟲ ⇄ tools ─┐
  *                 │                        └─ pause ─────────────────────┤
  *                 └─ acknowledge / ignore → mark_seen ───────────────────┴→ reconcile → END
  *
  * Memory is DETERMINISTIC, not agentic: `recall` reads the relevant facts + open tasks IN before the
- * bot thinks, and the single `reconcile` node writes tasks OUT after — on EVERY path. (`compose` ⟲ is
+ * bot thinks, and the single `reconcile` node writes tasks OUT after — on EVERY path. (`llm` ⟲ is
  * the read-the-room revision self-loop.)
- * The compose step keeps its memory/task tools too; reconcile is the state-aware backstop on top.
+ * The llm step keeps its memory/task tools too; reconcile is the state-aware backstop on top.
  *
- * THE HEART (mid-thought collaboration): the `compose` node consumes `channel.since(cursor)` at the
- * TOP of EVERY step, so a teammate's message that lands WHILE this bot is looping is folded into its
+ * THE HEART (mid-thought collaboration): the `llm` node consumes `channel.since(cursor)` at the TOP
+ * of EVERY step, so a teammate's message that lands WHILE this bot is looping is folded into its
  * very next model call.
  *
- * READ-THE-ROOM (the `compose ⟲` self-loop): a final text reply is composed BLIND for one
+ * READ-THE-ROOM (the `llm ⟲` self-loop): a final text reply is composed BLIND for one
  * model-invoke latency — a teammate answering the same broadcast can post during that window, which
  * is how four bots chorus the same news. So after `model.invoke` returns, the node synchronously
  * checks whether teammate-bot messages landed past the cursor this step consumed. If so, the reply
  * is demoted to a DRAFT (never posted, never in durable history) and the graph loops back through
- * `compose`: the teammate messages fold in via the NORMAL top-of-step read, plus a note carrying the
+ * `llm`: the teammate messages fold in via the NORMAL top-of-step read, plus a note carrying the
  * draft — post only if it still adds something, else trim or stay silent. The synchronous channel
  * makes check-then-return atomic per JS tick, so at most one bot "wins" each race round; capped at
  * MAX_REVISION_PASSES, after which the draft posts anyway (worst case = the old blind behavior).
  *
- * Cursor coordinate note: the `cursor` field rides in graph state ONLY so it threads across `compose`
+ * Cursor coordinate note: the `cursor` field rides in graph state ONLY so it threads across `llm`
  * steps within a single run. It is overwritten every invocation from the conductor's durable cursor
  * (CursorStore) passed as input. Unlike the playground (whose in-memory channel restarted at seq 0,
  * making the persisted value DEAD), the channel log + cursors are now both durable and share one
@@ -71,7 +72,7 @@ export { MAX_REVISION_PASSES, revisionNote } from './graph/message-helpers';
 @Injectable()
 export class BotGraphFactory {
   // One compiled graph per bot, lazy + memoized. Tenant-agnostic: the model is built per-invocation
-  // inside the compose node (from the turn's credential context), so one graph serves every workspace.
+  // inside the llm node (from the turn's credential context), so one graph serves every workspace.
   private graphs = new Map<string, ReturnType<BotGraphFactory['build']>>();
   /** The node implementations, handed the same services this factory injects. */
   private readonly nodes: BotGraphNodes;
@@ -84,6 +85,7 @@ export class BotGraphFactory {
     private readonly recursionGuard: RecursionGuardService,
     private readonly fetchService: FetchService,
     private readonly reconcile: ReconcileService,
+    private readonly consolidation: ConsolidationService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
     private readonly worktrees: WorktreeService,
@@ -93,6 +95,7 @@ export class BotGraphFactory {
   ) {
     const gapThresholdMs =
       env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
+    const consolidationWindow = env.get('MEMORY_CONSOLIDATION_WINDOW') ?? 40;
     this.nodes = new BotGraphNodes(
       this.channel,
       this.channelRegistry,
@@ -101,11 +104,13 @@ export class BotGraphFactory {
       this.recursionGuard,
       this.fetchService,
       this.reconcile,
+      this.consolidation,
       this.models,
       this.persona,
       this.worktrees,
       this.sessions,
       gapThresholdMs,
+      consolidationWindow,
     );
   }
 
@@ -125,21 +130,17 @@ export class BotGraphFactory {
       .addNode('loop_guard', n.loopGuard)
       .addNode('pause', n.pause)
       .addNode('recall', n.recall)
-      .addNode('compose', n.compose)
+      .addNode('llm', n.llm)
       .addNode('tools', n.tools)
       .addNode('mark_seen', n.markSeen)
       .addNode('reconcile', n.reconcile)
       .addEdge(START, 'gate')
       .addConditionalEdges('gate', route, ['loop_guard', 'mark_seen'])
       .addConditionalEdges('loop_guard', afterGuard, ['recall', 'pause'])
-      .addEdge('recall', 'compose')
-      .addConditionalEdges('compose', afterCompose, [
-        'tools',
-        'compose',
-        'reconcile',
-      ])
+      .addEdge('recall', 'llm')
+      .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
       .addConditionalEdges('tools', makeAfterTools(n.terminal), [
-        'compose',
+        'llm',
         'reconcile',
       ])
       .addEdge('mark_seen', 'reconcile')
