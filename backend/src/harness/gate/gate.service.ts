@@ -1,5 +1,4 @@
-import type { AIMessage } from '@langchain/core/messages';
-import { PromptTemplate } from '@langchain/core/prompts';
+import { type AIMessage, HumanMessage } from '@langchain/core/messages';
 import {
   Runnable,
   type RunnableConfig,
@@ -10,8 +9,9 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
-import { TEAM_RULES } from '../employees/persona.service';
+import { TEAM_RULES } from '../employees/persona.prompts';
 import { ChatModelFactory } from '../llm/chat-model.factory';
+import { GATE_PROMPT } from './gate.prompts';
 
 /** The three-tier response gate: reply, react ("got it" without noise), or stay silent. */
 export interface GateDecision {
@@ -70,44 +70,6 @@ const Decision = z.object({
 });
 type DecisionT = z.infer<typeof Decision>;
 
-// NOTE: no few-shot worked examples on purpose. They reused the real teammates' names, and on Haiku
-// that bled into the model's self-identity — it would reason "as James" while gating FOR Alex.
-// Identity comes only from {botName}/{botRole} at the top. Re-add examples only with neutral names.
-const PROMPT = `You are {botName}, the {botRole} on a small team, in {room}.
-Team: {roster}.
-
-${TEAM_RULES}
-
-{protocols}
-
-You share this channel with teammates and the boss. You are ONE of several people who could reply — the
-others can answer too. Decide ONLY whether YOU should speak up about the latest message, given the
-conversation so far. Read the room.
-
-Conversation so far (oldest first):
-{history}
-
-Latest message — from {author}{teammateNote}:
-"{text}"
-
-Pick one action. Each one triggers something different AFTER you choose it — so pick by what the message
-needs from you, not just by tone:
-- "respond": you take the floor — you read context, think, then ACT: you answer, or use your tools to
-  actually DO the work being asked. This is the ONLY action that does real work; the other two just react
-  or stay quiet. Pick it when the message is addressed to you, hands you a task or a go-ahead to start
-  work in your lane ({botRole}), asks you a question, or is an open question to the whole team you can add
-  real substance to. If it needs you to act or reply, it's respond.
-- "acknowledge": you drop a single emoji and the turn ENDS right there — no words, no work, nothing else
-  runs. ONLY for a message that needs nothing active from you: a pure FYI/announcement, or a note that
-  just adjusts what's already on your plate (you've seen it — there's nothing to DO). If the message asks
-  you to start, build, run, execute, ship, produce, or answer something, "acknowledge" would silently
-  drop that on the floor — use "respond" instead.
-- "ignore": NOT yours. This is the default when unsure. IGNORE when the latest message continues a
-  back-and-forth between {author} and another teammate, sits in someone else's lane, or is a thanks,
-  dismissal, or small talk not aimed at you. NEVER speak up just to defer ("that's their area"), to
-  agree, to encourage, to volunteer for later, or to be polite — staying silent IS the right move; the
-  teammate it belongs to will pick it up on their own.`;
-
 const cleanEmoji = (e?: string): string => {
   const s = (e ?? '').trim();
   return s && s.length <= 8 ? s : '👍';
@@ -129,20 +91,11 @@ export class GateService {
 
   private soft() {
     return (this.chain ??= RunnableSequence.from<GateInput, GateDecision>([
-      new PromptTemplate<GateInput>({
-        template: PROMPT,
-        inputVariables: [
-          'botName',
-          'botRole',
-          'roster',
-          'room',
-          'history',
-          'author',
-          'teammateNote',
-          'text',
-          'protocols',
-        ],
-      }),
+      // Render the prompt to a single HumanMessage — the same role the prior PromptTemplate's
+      // StringPromptValue produced. TEAM_RULES is spliced into its slot here (static).
+      RunnableLambda.from<GateInput, HumanMessage[]>((v) => [
+        new HumanMessage(GATE_PROMPT({ ...v, teamRules: TEAM_RULES })),
+      ]),
       // includeRaw keeps the raw AIMessage so we can read its usage_metadata (exact token counts).
       this.models.buildGateModel().withStructuredOutput(Decision, {
         name: 'gate_decision',

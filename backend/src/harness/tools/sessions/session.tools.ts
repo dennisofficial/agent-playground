@@ -5,7 +5,7 @@ import type { Identity } from '../../domain/identity';
 import {
   DEFAULT_EXECUTE_PROMPT,
   DEFAULT_PLAN_PROMPT,
-} from '../../engines/role-prompts';
+} from '../../engines/engine.prompts';
 import {
   EWorkerEngineName,
   type WorkerMode,

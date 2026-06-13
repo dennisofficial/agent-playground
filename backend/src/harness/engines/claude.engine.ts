@@ -8,6 +8,7 @@ import { engineHomeDir } from './engine-home';
 import { Inject, Injectable } from '@nestjs/common';
 import { ANTHROPIC_AGENT_SDK } from '../../_lib/esm/esm.module';
 import { bashDenyReason, bashWriteReason, isInsideRoot } from './guard';
+import { CLAUDE_DENIALS } from './engine.prompts';
 import {
   EWorkerEngineName,
   RunWorkerArgs,
@@ -97,53 +98,35 @@ const makeCanUseTool =
     if (toolName === 'AskUserQuestion') {
       if (nativePlan && Array.isArray(input.questions)) {
         onQuestions(normalizeQuestions(input.questions));
-        return {
-          behavior: 'deny',
-          message:
-            'Your questions have been relayed to your team — this is the expected flow, not an error. Do NOT re-ask or rephrase them, do not answer them yourself, and do not call AskUserQuestion again. End your turn NOW with one line saying you are waiting on answers; they arrive as your next message.',
-        };
+        return { behavior: 'deny', message: CLAUDE_DENIALS.questionsRelayed };
       }
-      return {
-        behavior: 'deny',
-        message:
-          'No interactive questions on this turn — carry the work as far as you can and put any open questions in your end-of-turn report.',
-      };
+      return { behavior: 'deny', message: CLAUDE_DENIALS.noQuestions };
     }
     if (toolName === 'ExitPlanMode') {
       if (typeof input.plan === 'string') onPlan(input.plan);
-      return {
-        behavior: 'deny',
-        message:
-          'Plan received and recorded — do not execute anything. End your turn now; your plan is being reviewed.',
-      };
+      return { behavior: 'deny', message: CLAUDE_DENIALS.planRecorded };
     }
     if (readOnly && (toolName === 'Write' || toolName === 'Edit')) {
-      return {
-        behavior: 'deny',
-        message:
-          'This is a read-only turn — describe what you found instead of writing it.',
-      };
+      return { behavior: 'deny', message: CLAUDE_DENIALS.readOnlyWrite };
     }
     if (toolName === 'Bash') {
       const command = typeof input.command === 'string' ? input.command : '';
       const reason = bashDenyReason(command);
-      if (reason) return { behavior: 'deny', message: `Refused: ${reason}.` };
+      if (reason)
+        return { behavior: 'deny', message: CLAUDE_DENIALS.bashRefused(reason) };
       if (readOnly) {
         const write = bashWriteReason(command);
         if (write)
           return {
             behavior: 'deny',
-            message: `This is a read-only turn — ${write}.`,
+            message: CLAUDE_DENIALS.readOnlyBash(write),
           };
       }
     }
     if (toolName === 'Write' || toolName === 'Edit') {
       const path = typeof input.file_path === 'string' ? input.file_path : '';
       if (path && !isInsideRoot(path, root)) {
-        return {
-          behavior: 'deny',
-          message: `Refused: "${path}" escapes the project directory.`,
-        };
+        return { behavior: 'deny', message: CLAUDE_DENIALS.escapesRoot(path) };
       }
     }
     return { behavior: 'allow', updatedInput: input };

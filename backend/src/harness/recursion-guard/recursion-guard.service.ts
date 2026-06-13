@@ -1,5 +1,4 @@
-import type { AIMessage } from '@langchain/core/messages';
-import { PromptTemplate } from '@langchain/core/prompts';
+import { type AIMessage, HumanMessage } from '@langchain/core/messages';
 import {
   Runnable,
   type RunnableConfig,
@@ -11,6 +10,7 @@ import { z } from 'zod';
 import { EnvService } from '@core/config/env/env.service';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { ChatModelFactory } from '../llm/chat-model.factory';
+import { GUARD_PROMPT } from './recursion-guard.prompts';
 
 /** The guard's verdict — looping or not, with optional debug info. */
 export interface GuardDecision {
@@ -39,23 +39,6 @@ type SchemaT = z.infer<typeof Schema>;
 // NOTE: the prompt is intentionally conservative. Normal iterative work — running a sequence of
 // related steps, refining an answer, or alternating between clearly different actions — must NOT
 // trigger the guard. Only an unambiguous, low-information repeat-loop should fire it.
-const PROMPT = `You are watching {botName}'s recent messages for a STUCK, no-progress loop.
-
-{botName}'s last messages (oldest first):
-{window}
-
-Is {botName} stuck — repeating the same statement, question, or action with no new progress?
-
-Be CONSERVATIVE. Do NOT flag:
-- Distinct sequential steps (even on the same topic)
-- Alternating between two clearly different actions
-- A back-and-forth where each reply adds genuinely new information
-- A bot that said something once and then moved on
-
-DO flag ONLY when the same conclusion, status, or action is repeated ≥ 2 times with nothing
-new added — e.g., "still checking…" stalls, identical agreement strings, or the same
-unanswered question re-asked verbatim.`;
-
 /**
  * Rolling-window loop-detection circuit breaker. A single cheap Haiku call over a bot's last N
  * AI messages detects no-progress repetition — semantic/content loops that count-based caps miss.
@@ -89,10 +72,9 @@ export class RecursionGuardService {
       { botName: string; window: string },
       GuardDecision
     >([
-      new PromptTemplate<{ botName: string; window: string }>({
-        template: PROMPT,
-        inputVariables: ['botName', 'window'],
-      }),
+      RunnableLambda.from<{ botName: string; window: string }, HumanMessage[]>(
+        (v) => [new HumanMessage(GUARD_PROMPT(v))],
+      ),
       // includeRaw so we can extract usage_metadata from the raw AIMessage.
       this.models.buildGuardModel().withStructuredOutput(Schema, {
         name: 'recursion_guard',

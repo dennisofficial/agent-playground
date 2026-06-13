@@ -1,5 +1,5 @@
 import type { Session } from '../sessions/session-registry.port';
-import { sessionRelayPrompt } from './session-relay-prompt';
+import { sessionRelayPrompt } from './seed.prompts';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 const session = (overrides: Partial<Session> = {}): Session => ({

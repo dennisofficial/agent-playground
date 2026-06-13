@@ -1,7 +1,7 @@
 import { RunnableLambda } from '@langchain/core/runnables';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { EmployeeRegistry } from '../employees/employee.registry';
-import { TEAM_RULES } from '../employees/persona.service';
+import { TEAM_RULES } from '../employees/persona.prompts';
 import { GateService } from './gate.service';
 import { makeEmployee } from '@harness/employees/employee.testing';
 
@@ -67,8 +67,10 @@ describe('GateService soft gate — prompt enrichment', () => {
     const models = {
       buildGateModel: () => ({
         withStructuredOutput: () =>
-          RunnableLambda.from((promptValue: { toString(): string }) => {
-            captured.push(promptValue.toString());
+          // The gate now feeds the model a single HumanMessage (the rendered prompt) rather than a
+          // PromptTemplate's StringPromptValue — read its content.
+          RunnableLambda.from((messages: { content: string }[]) => {
+            captured.push(messages.map((m) => m.content).join(''));
             return {
               raw: { usage_metadata: null },
               parsed: { action: 'respond', reasoning: 'mocked' },
