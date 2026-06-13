@@ -72,19 +72,21 @@ export class CodexEngine implements WorkerEngine {
 
   private threadOptions(
     cwd: string,
-    opts: { model?: string; planning?: boolean } = {},
+    opts: { model?: string; readOnly?: boolean } = {},
   ): ThreadOptions {
     const model = opts.model ?? this.env.get('CODEX_MODEL');
     // Grant write access to the shared git dir (it's outside cwd — doubly so in a linked worktree,
     // whose `.git` is a FILE pointing into the main repo) so an execute turn can commit/push/merge.
-    // Not needed on a read-only plan turn.
-    const gitDir = opts.planning ? undefined : gitCommonDir(cwd);
+    // Not needed on a read-only (plan or investigate) turn.
+    const gitDir = opts.readOnly ? undefined : gitCommonDir(cwd);
     return {
       workingDirectory: cwd,
       // Confine writes/shell to the worktree; run autonomously (no interactive approval surface).
-      // Codex's read-only sandbox IS its native plan posture — per turn, so a session can plan on
-      // one turn and execute on the next.
-      sandboxMode: opts.planning ? 'read-only' : 'workspace-write',
+      // Codex's read-only sandbox is how BOTH read-only modes (plan, investigate) are enforced — per
+      // turn, so a session can plan/investigate on one turn and execute on the next. (Codex has no
+      // separate plan ceremony beyond the read-only sandbox, so plan and investigate map identically
+      // here — the difference is only in the opening prompt's framing.)
+      sandboxMode: opts.readOnly ? 'read-only' : 'workspace-write',
       approvalPolicy: 'never',
       skipGitRepoCheck: true,
       // Live web search is the whole point of using Codex for research, and a model-side tool
@@ -108,7 +110,7 @@ export class CodexEngine implements WorkerEngine {
     signal,
   }: RunWorkerArgs) {
     const client = this.getCodex(agentId, apiKey);
-    const opts = this.threadOptions(cwd, { model, planning: mode === 'plan' });
+    const opts = this.threadOptions(cwd, { model, readOnly: mode !== 'execute' });
     const thread = sessionId
       ? client.resumeThread(sessionId, opts)
       : client.startThread(opts);

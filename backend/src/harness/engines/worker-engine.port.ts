@@ -14,17 +14,19 @@ export enum EWorkerEngineName {
 
 /**
  * The mode of one session turn. 'plan' = the engine's native read-only planning posture (agents
- * plan deeper when the engine itself enforces look-don't-touch); 'execute' = write-capable within
- * the session's worktree. Chosen per turn by the owning employee — approving a plan is simply the
- * next turn arriving with mode 'execute'.
+ * plan deeper when the engine itself enforces look-don't-touch, ending in a plan artifact);
+ * 'execute' = write-capable within the session's worktree; 'investigate' = read-only like plan but
+ * WITHOUT the native plan ceremony (no ExitPlanMode / plan artifact) — a fast, direct answer FROM the
+ * codebase. Chosen per turn by the owning employee — approving a plan is simply the next turn
+ * arriving with mode 'execute'. Both 'plan' and 'investigate' are read-only at the engine seam.
  */
-export type WorkerMode = 'plan' | 'execute';
+export type WorkerMode = 'plan' | 'execute' | 'investigate';
 
 /**
  * The ROLE a worker run plays — the key for per-employee engine/model/prompt bindings
- * (`EmployeeDefinition.roles`). A superset of `WorkerMode`: 'plan'/'execute' are also session modes,
- * while 'review' is a one-shot adversarial pass (the plan self-review, and the lead's peer review)
- * that never becomes a long-lived session mode.
+ * (`EmployeeDefinition.roles`). 'plan'/'execute' are also session modes; 'review' is a one-shot
+ * adversarial pass (the plan self-review, and the lead's peer review) that never becomes a long-lived
+ * session mode. (The 'investigate' session mode reuses the 'execute' recipe — it isn't its own role.)
  */
 export type WorkerRole = 'plan' | 'execute' | 'review';
 
@@ -80,8 +82,9 @@ export interface RunWorkerArgs {
   /** Reasoning effort for this run (Claude only). Unset → the model's default. */
   effort?: EffortLevel;
   /** This turn's mode. REQUIRED (no default): a missing mode must never silently grant writes.
-   * 'plan' restricts the worker to read-only at the engine seam, so "look, don't touch" is
-   * structurally enforced, not just requested. */
+   * 'plan' and 'investigate' both restrict the worker to read-only at the engine seam, so "look,
+   * don't touch" is structurally enforced, not just requested ('plan' adds the native plan ceremony;
+   * 'investigate' skips it for a fast direct answer). Only 'execute' may write. */
   mode: WorkerMode;
   /** The owning workspace's LLM API key for this run (single-process multi-tenant: each tenant
    * funds its own engine runs). Passed into the engine's subprocess env, NOT the shared process.env.

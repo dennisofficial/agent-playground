@@ -3,8 +3,8 @@ import { WebClient } from '@slack/web-api';
 import { encryptSecret } from '../cli/puppet-identity';
 
 /**
- * Re-seeds the dev workspace's TENANT row after a DB recreate, from the gitignored
- * `SLACK_TENANT_SEED` in `.env.personal`:
+ * Re-seeds the dev workspace's TENANT row after a DB recreate, from `SLACK_TENANT_SEED`
+ * in the committed, encrypted `.env.local.enc` (a `.env.personal` entry still overrides it):
  *
  *   SLACK_TENANT_SEED={"teamId":"T0...","botToken":"xoxb-…","installedBy":"U0..."}
  *
@@ -13,8 +13,7 @@ import { encryptSecret } from '../cli/puppet-identity';
  * the approval cards' boss check fall back to APPROVAL_BOSS_USER_ID). Seeding it makes dev behave
  * like an installed workspace: encrypted token in `tenants` (same v1 AES-256-GCM as OAuth writes),
  * boss check off `installed_by`. Idempotent (upsert); the token round-trips auth.test so a revoked
- * token fails loudly here; team name comes from auth.test. Unset → skipped (personal-machine
- * config, not a fixture).
+ * token fails loudly here; team name comes from auth.test. Unset → skipped.
  */
 export default (async (ds) => {
   const raw = process.env.SLACK_TENANT_SEED;

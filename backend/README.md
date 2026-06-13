@@ -25,6 +25,28 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Local development setup
+
+Shared dev config — local Postgres creds, the Slack ears tokens, the puppet + tenant seeds,
+`SECRETS_ENCRYPTION_KEY`, `ADMIN_API_TOKEN`, `APPROVAL_BOSS_USER_ID` — lives **encrypted** in the
+committed `backend/.env.local.enc`. The only thing not in the repo is the private key that
+decrypts it. So onboarding a new teammate is:
+
+```bash
+# 1. Get backend/.env.keys (DOTENV_PRIVATE_KEY_LOCAL_ENC) from 1Password, drop it in backend/.
+#    .env.keys is git-ignored — it never lives in the repo.
+# 2. Copy the example for your personal secrets (LLM keys, machine paths):
+cp .env.example .env.personal       # then fill in ANTHROPIC_API_KEY / OPENAI_API_KEY / WORKER_ROOT
+# 3. Start Postgres and build the DB (drops → migrates → seeds Slack identities + tenant row):
+docker compose up -d postgres       # from the repo root
+pnpm install
+pnpm db:recreate
+```
+
+After this the 6 puppet bots and the workspace tenant row are seeded from the shared config — no
+manual Slack OAuth needed for local testing. `.env.personal` overrides `.env.local.enc`, so set a
+key there only to deviate from the shared dev workspace.
+
 ## Project setup
 
 ```bash
