@@ -1,5 +1,5 @@
 import { Auth } from '@workspace/auth';
-import type { AdminUserView } from '@workspace/shared';
+import type { IAdminUserResponse } from '@workspace/shared';
 import { env } from './env';
 
 /**
@@ -9,7 +9,7 @@ import { env } from './env';
  * refresh_token cookies; JS never touches the token values.  attachInterceptors
  * wires the 401→refresh→retry cycle onto the shared axios instance.
  */
-const auth = new Auth<AdminUserView>();
+const auth = new Auth<IAdminUserResponse>();
 
 auth.configure({
   apiBaseUrl: env.NEXT_PUBLIC_BACKEND_URL,
