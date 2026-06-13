@@ -3,7 +3,7 @@ import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { BaseAuthGuard, JwtService } from '@workspace/auth/server';
 import { timingSafeEqual } from 'node:crypto';
-import { AdminUserStore } from './admin-user.store';
+import { AdminUserRepo } from './admin-user.repo';
 
 /**
  * Authentication guard for admin API controllers.
@@ -20,14 +20,14 @@ export class AdminAuthGuard extends BaseAuthGuard {
   constructor(
     reflector: Reflector,
     jwtService: JwtService,
-    private readonly store: AdminUserStore,
+    private readonly repo: AdminUserRepo,
     private readonly env: EnvService,
   ) {
     super(reflector, jwtService);
   }
 
   async findUser(sub: string) {
-    return this.store.findById(sub);
+    return this.repo.findOne({ where: { id: sub } });
   }
 
   override async canActivate(context: ExecutionContext): Promise<boolean> {

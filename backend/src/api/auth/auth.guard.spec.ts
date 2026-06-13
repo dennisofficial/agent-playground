@@ -4,7 +4,7 @@ import { Reflector } from '@nestjs/core';
 import type { JwtService } from '@workspace/auth/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
-import type { AdminUserStore } from './admin-user.store';
+import type { AdminUserRepo } from './admin-user.repo';
 import { AdminAuthGuard } from './admin-auth.guard';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -21,8 +21,8 @@ function makeJwt(sub?: string): JwtService {
   } as unknown as JwtService;
 }
 
-function makeStore(user: unknown = { id: 'u1', role: 'admin' }): AdminUserStore {
-  return { findById: vi.fn().mockResolvedValue(user) } as unknown as AdminUserStore;
+function makeRepo(user: unknown = { id: 'u1', role: 'admin' }): AdminUserRepo {
+  return { findOne: vi.fn().mockResolvedValue(user) } as unknown as AdminUserRepo;
 }
 
 function makeEnv(token?: string): EnvService {
@@ -57,7 +57,7 @@ function guard(opts: {
   return new AdminAuthGuard(
     makeReflector(opts.isPublic ?? false),
     makeJwt(opts.sub),
-    makeStore(opts.user ?? { id: opts.sub ?? 'u1', role: 'admin' }),
+    makeRepo(opts.user ?? { id: opts.sub ?? 'u1', role: 'admin' }),
     makeEnv(opts.m2mToken),
   );
 }
@@ -119,7 +119,7 @@ describe('AdminAuthGuard', () => {
     const g = new AdminAuthGuard(
       reflector,
       makeJwt('u1'),
-      makeStore({ id: 'u1', role: 'admin' }),
+      makeRepo({ id: 'u1', role: 'admin' }),
       makeEnv(),
     );
 

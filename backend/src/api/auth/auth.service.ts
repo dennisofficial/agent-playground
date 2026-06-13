@@ -1,16 +1,16 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@workspace/auth/server';
-import type { AdminUserView, LoginResponse } from '@workspace/shared';
+import type { IAdminUserResponse, LoginResponse } from '@workspace/shared';
 import type { AdminUser } from '@workspace/shared/schemas';
 import type { Request, Response } from 'express';
-import { AdminUserStore } from './admin-user.store';
+import { AdminUserRepo } from './admin-user.repo';
 import { verifyPassword } from './password.util';
 
 /** Seconds in a day, used for cookie maxAge calculations. */
 const DAY = 24 * 60 * 60;
 
-function toView(user: AdminUser): AdminUserView {
+function toView(user: AdminUser): IAdminUserResponse {
   return {
     id: user.id,
     email: user.email,
@@ -23,7 +23,7 @@ function toView(user: AdminUser): AdminUserView {
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly store: AdminUserStore,
+    private readonly repo: AdminUserRepo,
     private readonly jwt: JwtService,
     private readonly env: EnvService,
   ) {}
@@ -74,7 +74,7 @@ export class AuthService {
     password: string,
     res: Response,
   ): Promise<LoginResponse> {
-    const user = await this.store.findByEmail(email);
+    const user = await this.repo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const valid = await verifyPassword(password, user.password_hash);
@@ -93,9 +93,9 @@ export class AuthService {
 
   /**
    * Verify the access token from the request cookie and return the bare
-   * AdminUserView (no password_hash — this is the session probe endpoint).
+   * IAdminUserResponse (no password_hash — this is the session probe endpoint).
    */
-  async getSession(req: Request): Promise<AdminUserView> {
+  async getSession(req: Request): Promise<IAdminUserResponse> {
     const token: string | undefined = (req as any).cookies?.['access_token'];
     if (!token) throw new UnauthorizedException('Not authenticated');
 
@@ -108,7 +108,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired session');
     }
 
-    const user = await this.store.findById(sub);
+    const user = await this.repo.findOne({ where: { id: sub } });
     if (!user) throw new UnauthorizedException('User not found');
     return toView(user);
   }
@@ -128,7 +128,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    const user = await this.store.findById(sub);
+    const user = await this.repo.findOne({ where: { id: sub } });
     if (!user) throw new UnauthorizedException('User not found');
 
     const [access, refresh] = await Promise.all([

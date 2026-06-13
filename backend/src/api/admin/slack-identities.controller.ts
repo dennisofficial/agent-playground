@@ -6,11 +6,9 @@ import {
   Get,
   Param,
   Put,
-  UseGuards,
 } from '@nestjs/common';
 import { SecretCipher } from '../../harness/projects/secret-cipher';
 import { SlackIdentityStore } from '../../harness/slack-identities/slack-identity.store';
-import { AdminAuthGuard } from '../auth/admin-auth.guard';
 import { PutSlackIdentityDto } from './dto/slack-identity.dto';
 
 /** Roster employee id shape — the api app is harness-free (no EmployeeRegistry), so this is the
@@ -24,7 +22,6 @@ const BOT_ID = /^[a-z0-9][a-z0-9._-]*$/;
  * one registry TTL (≤60s for a fresh id, ≤10min for a rotation).
  */
 @Controller('tenants/:teamId/slack-identities')
-@UseGuards(AdminAuthGuard)
 export class SlackIdentitiesController {
   constructor(
     private readonly identities: SlackIdentityStore,

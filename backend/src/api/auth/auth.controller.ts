@@ -8,15 +8,17 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
+import { Public } from '@workspace/auth/server';
 import type { Request, Response } from 'express';
 import { LoginDto } from './login.dto';
 import { AuthService } from './auth.service';
 
 /**
  * Cookie-based JWT auth for the admin portal.
- * No guard on this controller — login/refresh/logout are always public;
- * session is self-verifying via the access cookie.
+ * Marked @Public() so the global APP_GUARD (AdminAuthGuard) skips this controller —
+ * login/refresh/logout are always public; session is self-verifying via the access cookie.
  */
+@Public()
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
