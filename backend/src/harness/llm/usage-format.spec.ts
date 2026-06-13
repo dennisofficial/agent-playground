@@ -144,7 +144,12 @@ describe('extractMessageUsage', () => {
         input_token_details: {},
       },
       response_metadata: {
-        usage: { cache_creation: { '5m': 300, '1h': 700 } },
+        usage: {
+          cache_creation: {
+            ephemeral_5m_input_tokens: 300,
+            ephemeral_1h_input_tokens: 700,
+          },
+        },
       },
     } as never;
     const result = extractMessageUsage(msg)!;
@@ -156,7 +161,12 @@ describe('extractMessageUsage', () => {
     const msg = {
       usage_metadata: { input_tokens: 500, output_tokens: 40, input_token_details: {} },
       response_metadata: {
-        usage: { cache_creation: { '5m': 0, '1h': 500 } },
+        usage: {
+          cache_creation: {
+            ephemeral_5m_input_tokens: 0,
+            ephemeral_1h_input_tokens: 500,
+          },
+        },
       },
     } as never;
     const result = extractMessageUsage(msg)!;
@@ -168,11 +178,34 @@ describe('extractMessageUsage', () => {
     const msg = {
       usage_metadata: { input_tokens: 500, output_tokens: 40, input_token_details: {} },
       response_metadata: {
-        usage: { cache_creation_input_tokens: { '5m': 100, '1h': 200 } },
+        usage: {
+          cache_creation_input_tokens: {
+            ephemeral_5m_input_tokens: 100,
+            ephemeral_1h_input_tokens: 200,
+          },
+        },
       },
     } as never;
     const result = extractMessageUsage(msg)!;
     expect(result.cacheWrite5m).toBe(100);
     expect(result.cacheWrite1h).toBe(200);
+  });
+
+  it('falls back to flat total (input_token_details.cache_creation) when object keys are unrecognised', () => {
+    const msg = {
+      usage_metadata: {
+        input_tokens: 1000,
+        output_tokens: 80,
+        input_token_details: { cache_creation: 900 },
+      },
+      response_metadata: {
+        // unknown future shape — neither bucket key is recognisable
+        usage: { cache_creation: { some_future_key: 900 } },
+      },
+    } as never;
+    const result = extractMessageUsage(msg)!;
+    expect(result.cacheWrite5m).toBeUndefined();
+    // falls back to flat total treated as 1h
+    expect(result.cacheWrite1h).toBe(900);
   });
 });
