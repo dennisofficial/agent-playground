@@ -82,9 +82,9 @@ export function formatUsageLine(
   model?: string,
 ): string {
   const parts: string[] = [];
-  if (model && usage.callCount > 1) {
-    parts.push(model, `${usage.callCount} calls`);
-  }
+  if (model) parts.push(model);
+  if (usage.callCount > 1) parts.push(`${usage.callCount} calls`);
+
   parts.push(
     `in ${usage.input.toLocaleString('en-US')}`,
     `out ${usage.output.toLocaleString('en-US')}`,
