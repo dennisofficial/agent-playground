@@ -11,6 +11,9 @@ export * from './project.entity';
 export * from './provider-key.entity';
 export * from './slack-identity.entity';
 export * from './task.entity';
+export * from './team-setting.entity';
+export * from './team-task-note.entity';
+export * from './team-task-plan.entity';
 export * from './team-task.entity';
 export * from './tenant.entity';
 export * from './worklog.entity';
@@ -25,6 +28,9 @@ import { Project } from './project.entity';
 import { ProviderKey } from './provider-key.entity';
 import { SlackIdentity } from './slack-identity.entity';
 import { Task } from './task.entity';
+import { TeamSetting } from './team-setting.entity';
+import { TeamTaskNote } from './team-task-note.entity';
+import { TeamTaskPlan } from './team-task-plan.entity';
 import { TeamTask } from './team-task.entity';
 import { Tenant } from './tenant.entity';
 import { Worklog } from './worklog.entity';
@@ -35,6 +41,9 @@ export const ENTITIES = [
   Fact,
   Task,
   TeamTask,
+  TeamTaskPlan,
+  TeamTaskNote,
+  TeamSetting,
   Worklog,
   ChannelMessage,
   BotCursor,

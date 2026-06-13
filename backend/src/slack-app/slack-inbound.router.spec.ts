@@ -16,13 +16,17 @@ const interactivityItem = (): SlackInbound => ({
   respond: vi.fn(async () => {}),
 });
 
-function makeRouter(interceptor?: SlackInboundInterceptor) {
+function makeRouter(
+  interceptor?: SlackInboundInterceptor,
+  approvals?: SlackInboundInterceptor,
+) {
   const surface = { handleMessageEvent: vi.fn(async () => {}) };
   const presence = { observe: vi.fn(async () => {}) };
   const router = new SlackInboundRouter(
     surface as never,
     presence as never,
     interceptor,
+    approvals,
   );
   return { router, surface, presence };
 }
@@ -74,12 +78,42 @@ describe('SlackInboundRouter', () => {
     presence.observe.mockImplementation(async () => {
       throw new Error('presence boom');
     });
-    await router.route(eventItem({ type: 'member_joined_channel', user: 'U1' }));
+    await router.route(
+      eventItem({ type: 'member_joined_channel', user: 'U1' }),
+    );
     expect(presence.observe).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'member_joined_channel' }),
       'T1',
     );
     expect(interceptor.maybeHandle).toHaveBeenCalled(); // routing proceeded regardless
+  });
+
+  it('tries the approval interceptor AFTER Jarvis: Jarvis-false → approval handles; approval-true consumes', async () => {
+    const order: string[] = [];
+    const jarvis = {
+      maybeHandle: vi.fn(async () => {
+        order.push('jarvis');
+        return false;
+      }),
+    };
+    const approvals = {
+      maybeHandle: vi.fn(async () => {
+        order.push('approvals');
+        return true;
+      }),
+    };
+    const { router, surface } = makeRouter(jarvis, approvals);
+    await router.route(eventItem({ type: 'message', text: 'hi' }));
+    expect(order).toEqual(['jarvis', 'approvals']);
+    expect(surface.handleMessageEvent).not.toHaveBeenCalled();
+  });
+
+  it('a Jarvis-consumed item never reaches the approval interceptor', async () => {
+    const jarvis = { maybeHandle: vi.fn(async () => true) };
+    const approvals = { maybeHandle: vi.fn(async () => true) };
+    const { router } = makeRouter(jarvis, approvals);
+    await router.route(interactivityItem());
+    expect(approvals.maybeHandle).not.toHaveBeenCalled();
   });
 
   it('contains handler errors (a poison item must not take down the transport)', async () => {

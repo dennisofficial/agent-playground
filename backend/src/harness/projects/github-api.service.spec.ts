@@ -100,3 +100,73 @@ describe('GithubApiService.openPullRequest', () => {
     );
   });
 });
+
+describe('GithubApiService.listOpenPullRequests', () => {
+  const listArgs = { owner: 'dennis', repo: 'app' };
+
+  const fakePr = (n: number, draft = false) => ({
+    number: n,
+    title: `PR ${n}`,
+    html_url: `https://github.com/dennis/app/pull/${n}`,
+    user: { login: 'contributor' },
+    head: { ref: `feature/${n}` },
+    base: { ref: 'main' },
+    draft,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-02T00:00:00Z',
+  });
+
+  it('maps the GitHub response to PullRequestSummary objects and sends required headers', async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, body: [fakePr(7), fakePr(3, true)] },
+    ]);
+    const api = new GithubApiService();
+    api.fetchImpl = impl;
+    const res = await api.listOpenPullRequests('TOK', listArgs);
+    expect(res).toHaveLength(2);
+    expect(res[0]).toEqual({
+      number: 7,
+      title: 'PR 7',
+      url: 'https://github.com/dennis/app/pull/7',
+      author: 'contributor',
+      headBranch: 'feature/7',
+      baseBranch: 'main',
+      draft: false,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-02T00:00:00Z',
+    });
+    expect(res[1].draft).toBe(true);
+    expect(calls[0].url).toContain(
+      'https://api.github.com/repos/dennis/app/pulls',
+    );
+    expect(calls[0].url).toContain('state=open');
+    const headers = calls[0].init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer TOK');
+    expect(headers.Accept).toBe('application/vnd.github+json');
+    expect(headers['X-GitHub-Api-Version']).toBe('2022-11-28');
+    expect(headers['User-Agent']).toBe('agent-playground');
+  });
+
+  it('returns an empty array when the repo has no open PRs', async () => {
+    const { impl } = fakeFetch([{ status: 200, body: [] }]);
+    const api = new GithubApiService();
+    api.fetchImpl = impl;
+    expect(await api.listOpenPullRequests('TOK', listArgs)).toEqual([]);
+  });
+
+  it('surfaces failures with status + GitHub message, never the token', async () => {
+    const { impl } = fakeFetch([
+      { status: 403, body: { message: 'Must have push access' } },
+    ]);
+    const api = new GithubApiService();
+    api.fetchImpl = impl;
+    await expect(
+      api.listOpenPullRequests('SECRET_TOK', listArgs),
+    ).rejects.toThrow(
+      /GitHub refused the pull request list \(403\): Must have push access/,
+    );
+    await expect(
+      api.listOpenPullRequests('SECRET_TOK', listArgs),
+    ).rejects.not.toThrow(/SECRET_TOK/);
+  });
+});

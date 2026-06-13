@@ -6,7 +6,11 @@
  */
 
 /** The interchangeable worker backends. */
-export type WorkerEngineName = 'claude' | 'codex' | 'langgraph';
+export enum EWorkerEngineName {
+  CLAUDE = 'claude',
+  CODEX = 'codex',
+  LANGGRAPH = 'langgraph',
+}
 
 /**
  * The mode of one session turn. 'plan' = the engine's native read-only planning posture (agents
@@ -24,6 +28,23 @@ export type WorkerMode = 'plan' | 'execute';
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /**
+ * One clarifying question a worker asked mid-plan, normalized from the engine's native shape (the
+ * Claude SDK's AskUserQuestion input; the seam stays SDK-agnostic by re-declaring it, like
+ * EffortLevel). A turn that asks ends with the questions as its report instead of a plan.
+ */
+export interface WorkerQuestionOption {
+  label: string;
+  description?: string;
+}
+export interface WorkerQuestion {
+  question: string;
+  /** Short topic label (the SDK caps it at 12 chars). */
+  header?: string;
+  options: WorkerQuestionOption[];
+  multiSelect?: boolean;
+}
+
+/**
  * A normalized progress event, emitted by every engine regardless of its native event shape. This
  * is what feeds the per-session transcript that `check_session`/`search_session` read — decoupled
  * from any one SDK.
@@ -39,6 +60,10 @@ export interface RunWorkerArgs {
   cwd: string;
   /** The composed worker persona for this engine (correct tool names per engine). */
   systemPrompt: string;
+  /** The owning employee's id — namespaces the engine's isolated config/state HOME so each employee
+   * owns their own CLAUDE_CONFIG_DIR / CODEX_HOME (skills and MCP servers are granted PER EMPLOYEE,
+   * not team-wide, so the homes must not be shared). See engine-home.ts. */
+  agentId: string;
   /** A prior engine session/thread id to resume, if any. */
   sessionId?: string;
   /** Override the engine's model for this run (e.g. a high-reasoning model for planning, a cheaper
@@ -62,8 +87,16 @@ export interface RunWorkerArgs {
 }
 
 export interface WorkerEngine {
-  readonly name: WorkerEngineName;
+  readonly name: EWorkerEngineName;
   /** Run one turn to completion (the engine loops internally until it has a report). Returns the
-   * final report and the engine's session id — the resume handle for the session's next turn. */
-  run(args: RunWorkerArgs): Promise<{ result: string; sessionId?: string }>;
+   * final report and the engine's session id — the resume handle for the session's next turn.
+   * `questions` is set when the turn ended by ASKING (the runner renders them as the report and
+   * the owner answers on the next turn); `planText` when a plan was captured (Claude engines set
+   * result to the plan today). Both optional so Codex/LangGraph compile unchanged. */
+  run(args: RunWorkerArgs): Promise<{
+    result: string;
+    sessionId?: string;
+    questions?: WorkerQuestion[];
+    planText?: string;
+  }>;
 }

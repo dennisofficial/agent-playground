@@ -2,6 +2,23 @@
 export type GateAction = 'respond' | 'acknowledge' | 'ignore';
 
 /**
+ * Per-bot aggregate token usage accumulated across ALL steps of a single Slack post — gate call(s),
+ * every LLM step in the turn (including tool-call-only steps), and prior ignore/ack turns whose gate
+ * costs rolled forward. Flushed and reset when the bot posts a message; displayed as a Block Kit
+ * footer on the Slack message.
+ */
+export interface AccumulatedUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number;
+  /** How many LLM round-trips (gate + chat steps) contributed to this post.
+   * Shown in the Slack footer only when > 1, e.g. `claude-sonnet-4-6 · 3 calls · in …`. */
+  callCount: number;
+}
+
+/**
  * The conductor's domain event stream — what a bot *said* or *did*, plus observability. This is the
  * seam between the orchestration core and any presentation surface: the terminal UI accumulates
  * these into render rows, a logger could write them, and the Slack adapter will post them. The core
@@ -45,6 +62,9 @@ export type ConductorEvent =
       emoji: string;
       /** The channel-message id this reaction is on, so the UI folds it INTO that message node. */
       targetId: string;
+      /** When true, REMOVE this reaction instead of adding it (clears the transient "composing"
+       * marker at turn end). Absent/false = add (back-compat). */
+      remove?: boolean;
     }
   // Observability: the response gate's verdict + rationale (why a bot spoke, reacted, or stayed
   // silent). Only soft-gate (LLM) calls carry `reasoning`/`usage`; hard rules omit them.
@@ -59,6 +79,10 @@ export type ConductorEvent =
     }
   // Observability: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
   | { id: string; kind: 'recall'; botId: string; botName: string; text: string }
+  // Observability: a composed reply suppressed at the post seam (read-the-room) — teammates posted
+  // while the model was composing, so the bot is revising instead of posting. The only trace of a
+  // suppressed draft; its token usage rides a separate `usage` event (it's still a billed step).
+  | { id: string; kind: 'draft'; botId: string; botName: string; text: string }
   // A human approved or rejected a plan (dormant until the approval flow ports).
   | {
       id: string;
@@ -68,7 +92,16 @@ export type ConductorEvent =
       by: string;
       note?: string;
     }
-  | { id: string; kind: 'error'; message: string };
+  | { id: string; kind: 'error'; message: string }
+  // Observability: per-step token usage for the chat LLM path (one event per billed AI step).
+  // Consumed by the SurfaceBridge to build the per-post aggregate footer; not rendered by the TUI.
+  | {
+      id: string;
+      kind: 'usage';
+      botId: string;
+      role: 'chat';
+      usage: MessageUsage;
+    };
 
 export interface ContextUsage {
   input?: number;

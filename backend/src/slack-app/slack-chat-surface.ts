@@ -1,5 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ConductorEventsBus } from '@harness/conductor/conductor-events.bus';
+import type { AccumulatedUsage } from '@harness/domain/conductor-events';
+import { CHAT_MODEL, formatUsageLine } from '@harness/llm/usage-format';
 import type {
   ChatSurface,
   InboundChatMessage,
@@ -13,6 +15,7 @@ import { SlackIdentityRegistry } from './slack-identity.registry';
 import type { SlackInboundEvent } from './slack-inbound.types';
 import {
   emojiToSlackName,
+  extractHandles,
   extractMentionIds,
   translateInbound,
   translateOutbound,
@@ -30,8 +33,9 @@ const slackSurfaceId = (teamId: string, channel: string): string =>
   `${SURFACE_PREFIX}${teamId}:${channel}`;
 
 /** Parse `slack:<teamId>:<channel>` → its parts, or undefined for a non-slack / DM coordinate
- * (only real channels are posted to in v1). */
-function parseSlackSurface(
+ * (only real channels are posted to in v1). Exported for the approval cards (the proposal port's
+ * Slack adapter routes by the same coordinate). */
+export function parseSlackSurface(
   surfaceId: string,
 ): { teamId: string; channel: string } | undefined {
   if (!surfaceId.startsWith(SURFACE_PREFIX)) return undefined;
@@ -156,7 +160,11 @@ export class SlackChatSurface implements ChatSurface {
    * username/icon overrides — the app identity IS the employee); everyone else (Jarvis, employees
    * without tokens) rides the main app + `username` override, exactly the pre-puppet behavior.
    * Non-Slack rooms (e.g. bot-minted `tui:dm:*`) are skipped — the message is already durable in
-   * the channel log; Slack DMs are a v2 item. */
+   * the channel log; Slack DMs are a v2 item.
+   *
+   * When `msg.usage` is present, the message is posted as Block Kit with a context footer showing
+   * the aggregate token usage and cost. Two-pass Block Kit: first tries the `markdown` block type;
+   * if Slack returns `invalid_blocks`, falls back to a `section` + `mrkdwn` block. */
   async post(msg: OutboundChatMessage): Promise<void> {
     const parsed = parseSlackSurface(msg.surfaceId);
     if (!parsed) {
@@ -164,7 +172,18 @@ export class SlackChatSurface implements ChatSurface {
       return;
     }
     const { teamId, channel } = parsed;
-    const text = translateOutbound(msg.text); // LLMs emit Markdown; Slack renders mrkdwn
+    // Pre-resolve @handles to Slack user ids — mirrors the inbound extractMentionIds pre-resolve
+    // pattern. The async resolution happens here; the sync translator gets a callback.
+    const handles = extractHandles(msg.text);
+    const mentionMap = new Map<string, string>();
+    for (const handle of handles) {
+      const slackId = await this.directory.resolveMention(teamId, handle);
+      if (slackId) mentionMap.set(handle, slackId);
+    }
+    const text = translateOutbound(msg.text, {
+      resolveMention:
+        mentionMap.size > 0 ? (h) => mentionMap.get(h) : undefined,
+    }); // LLMs emit Markdown; Slack renders mrkdwn; @handles become <@SLACK_USER_ID> when resolved
     const puppet = await this.identities.clientFor(teamId, msg.authorBotId);
     // The ears app (username/icon override) is the fallback — used when there's no puppet AND when a
     // puppet's post fails membership (private channel). No puppet AND no ears token (workspace not
@@ -176,26 +195,66 @@ export class SlackChatSurface implements ChatSurface {
       );
       return;
     }
+
+    const earsExtras: Record<string, unknown> = {
+      username: msg.authorName,
+      ...(this.avatarBase
+        ? { icon_url: `${this.avatarBase}/${msg.authorBotId}.png` }
+        : {}),
+    };
+
     let lastErr: unknown;
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
-        let res = puppet
-          ? await this.tryWithJoin(
-              puppet,
-              channel,
-              msg.authorBotId,
-              POST_MEMBERSHIP_ERRORS,
-              () => puppet.chat.postMessage({ channel, text }),
-            )
-          : undefined;
-        res ??= await ears?.chat.postMessage({
-          channel,
-          text,
-          username: msg.authorName,
-          ...(this.avatarBase
-            ? { icon_url: `${this.avatarBase}/${msg.authorBotId}.png` }
-            : {}),
-        });
+        let res: { ts?: string; ok?: boolean } | undefined;
+
+        if (puppet) {
+          res = await this.tryWithJoin(
+            puppet,
+            channel,
+            msg.authorBotId,
+            POST_MEMBERSHIP_ERRORS,
+            msg.usage
+              ? () =>
+                  this.postWithBlocksFallback(
+                    // Cast at the Slack boundary: the helper uses Record<string, unknown> internally;
+                    // the cast here is the single point where we cross into the SDK's union type.
+                    (args) =>
+                      puppet.chat.postMessage(
+                        args as unknown as Parameters<
+                          typeof puppet.chat.postMessage
+                        >[0],
+                      ),
+                    { channel, text },
+                    msg.text,
+                    msg.usage!,
+                    mentionMap.size > 0,
+                  )
+              : () => puppet.chat.postMessage({ channel, text }),
+          );
+        }
+
+        if (!res && ears) {
+          res = msg.usage
+            ? await this.postWithBlocksFallback(
+                (args) =>
+                  ears.chat.postMessage(
+                    args as unknown as Parameters<
+                      typeof ears.chat.postMessage
+                    >[0],
+                  ),
+                { channel, text, ...earsExtras },
+                msg.text,
+                msg.usage,
+                mentionMap.size > 0,
+              )
+            : await ears.chat.postMessage({
+                channel,
+                text,
+                ...earsExtras,
+              });
+        }
+
         if (res?.ts) this.recordPostedId(msg.id, { channel, ts: res.ts });
         return;
       } catch (err) {
@@ -204,6 +263,56 @@ export class SlackChatSurface implements ChatSurface {
       }
     }
     throw lastErr;
+  }
+
+  /**
+   * Post with a Block Kit footer showing token usage. When `hasMentions` is true, skips the
+   * non-standard `markdown` block entirely and posts via `section`+`mrkdwn` directly (using the
+   * already-translated text so `<@USER_ID>` mention pings are preserved). When false, first tries
+   * the `markdown` block type (more Markdown-faithful); if Slack rejects it with `invalid_blocks`,
+   * falls back to `section`+`mrkdwn`. The `text` field is always populated as the notification
+   * fallback (push notifications, accessibility). `baseArgs` carries channel + username/icon as a
+   * plain record so the caller can freely spread extra fields without fighting SDK union types.
+   */
+  private async postWithBlocksFallback(
+    postFn: (
+      args: Record<string, unknown>,
+    ) => Promise<{ ts?: string; ok?: boolean }>,
+    baseArgs: Record<string, unknown>,
+    rawText: string,
+    usage: AccumulatedUsage,
+    hasMentions: boolean,
+  ): Promise<{ ts?: string; ok?: boolean }> {
+    const footer = formatUsageLine(usage, CHAT_MODEL);
+    const translatedText = baseArgs.text as string; // already run through translateOutbound
+
+    const divider = { type: 'divider' };
+    const contextBlock = {
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: footer }],
+    };
+    const sectionBlocks = [
+      { type: 'section', text: { type: 'mrkdwn', text: translatedText } },
+      divider,
+      contextBlock,
+    ];
+
+    if (hasMentions) {
+      // Slack's `markdown` block strips `<@USER_ID>` mention syntax, breaking pings.
+      // Route mention-containing messages straight to section+mrkdwn to preserve them.
+      return await postFn({ ...baseArgs, blocks: sectionBlocks });
+    }
+
+    try {
+      return await postFn({
+        ...baseArgs,
+        blocks: [{ type: 'markdown', text: rawText }, divider, contextBlock],
+      });
+    } catch (err) {
+      if (!isSlackError(err, ['invalid_blocks'])) throw err;
+      // Fall back to the universally-supported section + mrkdwn block.
+      return await postFn({ ...baseArgs, blocks: sectionBlocks });
+    }
   }
 
   /** React on a surface message: a raw Slack ts (human messages ride their native id), or a
@@ -244,6 +353,47 @@ export class SlackChatSurface implements ChatSurface {
     } catch (err) {
       // Same-emoji collisions stay fine: per-identity duplicates (or two fallback bots) no-op.
       if (isSlackError(err, ['already_reacted'])) return;
+      throw err;
+    }
+  }
+
+  /** Remove a reaction this bot added (clears the transient "composing" 💭). Mirrors `react`'s
+   * puppet-first/ears-fallback resolution — Slack only lets an identity remove its OWN reaction,
+   * so the resolution order MUST match the add. A missing reaction (`no_reaction`) is a no-op. */
+  async unreact(
+    targetMessageId: string,
+    emoji: string,
+    asBot: { id: string; name: string },
+    channelId: string,
+  ): Promise<void> {
+    const parsed = parseSlackSurface(channelId);
+    if (!parsed) return;
+    const posted = this.postedIds.get(targetMessageId);
+    const channel = posted?.channel ?? parsed.channel;
+    const timestamp = posted?.ts ?? targetMessageId;
+    if (!/^\d+\.\d+$/.test(timestamp)) {
+      this.logger.debug(`no Slack ts for reaction target ${targetMessageId}`);
+      return;
+    }
+    const args = { channel, timestamp, name: emojiToSlackName(emoji) };
+    try {
+      const puppet = await this.identities.clientFor(parsed.teamId, asBot.id);
+      const removed = puppet
+        ? await this.tryWithJoin(
+            puppet,
+            channel,
+            asBot.id,
+            REACT_MEMBERSHIP_ERRORS,
+            () => puppet.reactions.remove(args),
+          )
+        : undefined;
+      if (!removed) {
+        const ears = await this.clients.clientFor(parsed.teamId);
+        await ears?.reactions.remove(args);
+      }
+    } catch (err) {
+      // Nothing to remove (never added, or added by the other identity) — fine, leave it be.
+      if (isSlackError(err, ['no_reaction'])) return;
       throw err;
     }
   }

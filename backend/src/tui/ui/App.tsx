@@ -98,15 +98,20 @@ export function App({ deps }: { deps: AppDeps }) {
   useEffect(() => {
     const eventsSub = deps.bus.events$.subscribe((e) => {
       if (e.kind === 'reaction') {
-        dispatch({
-          t: 'react',
-          id: e.id,
-          targetId: e.targetId,
-          by: e.botName,
-          emoji: e.emoji,
-        });
+        dispatch(
+          e.remove
+            ? { t: 'unreact', targetId: e.targetId, by: e.botName, emoji: e.emoji }
+            : {
+                t: 'react',
+                id: e.id,
+                targetId: e.targetId,
+                by: e.botName,
+                emoji: e.emoji,
+              },
+        );
       } else {
-        dispatch({ t: 'add', item: renderEvent(e) });
+        const item = renderEvent(e);
+        if (item) dispatch({ t: 'add', item });
       }
     });
     const statusSub = deps.bus.status$.subscribe(setStatus);

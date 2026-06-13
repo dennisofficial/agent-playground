@@ -2,7 +2,12 @@ import type {
   ConductorEvent,
   MessageUsage,
 } from '@harness/domain/conductor-events';
-import { chatCostUsd, gateCostUsd } from '@harness/llm/chat-model.factory';
+import { gateCostUsd } from '@harness/llm/chat-model.factory';
+import {
+  calculateCost,
+  CHAT_MODEL,
+  formatUsageLine,
+} from '@harness/llm/usage-format';
 
 /**
  * Plain, render-ready view of the conversation for the terminal UI. The conductor emits domain
@@ -62,6 +67,8 @@ export type RenderItem =
   | { id: string; kind: 'note'; text: string }
   // Debug only: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
   | { id: string; kind: 'recall'; by: string; text: string }
+  // Debug only: a reply suppressed at the post seam (read-the-room) — the bot is revising.
+  | { id: string; kind: 'draft'; by: string; text: string }
   // A human's approve/reject decision on a plan (dormant until the approval flow ports).
   | {
       id: string;
@@ -78,6 +85,7 @@ export type RenderItem =
 const DEBUG_KINDS = new Set<RenderItem['kind']>([
   'gate',
   'recall',
+  'draft',
   'memory',
   'reminders',
   'workspace',
@@ -87,8 +95,10 @@ const DEBUG_KINDS = new Set<RenderItem['kind']>([
 export const isDebug = (item: RenderItem): boolean =>
   DEBUG_KINDS.has(item.kind);
 
-/** Map a conductor domain event to a terminal render row. Presentation decisions live here. */
-export function renderEvent(e: ConductorEvent): RenderItem {
+/** Map a conductor domain event to a terminal render row. Presentation decisions live here.
+ * Returns `null` for events that have no TUI representation (e.g. `usage`, consumed by the
+ * SurfaceBridge for the Slack footer; the TUI already shows usage inline on the `assistant` row). */
+export function renderEvent(e: ConductorEvent): RenderItem | null {
   switch (e.kind) {
     case 'message':
       return e.fromHuman
@@ -133,6 +143,8 @@ export function renderEvent(e: ConductorEvent): RenderItem {
     }
     case 'recall':
       return { id: e.id, kind: 'recall', by: e.botName, text: e.text };
+    case 'draft':
+      return { id: e.id, kind: 'draft', by: e.botName, text: e.text };
     case 'approval':
       return {
         id: e.id,
@@ -144,17 +156,26 @@ export function renderEvent(e: ConductorEvent): RenderItem {
       };
     case 'error':
       return { id: e.id, kind: 'error', text: e.message };
+    case 'usage':
+      // Per-step usage events are consumed by the SurfaceBridge for the Slack footer; the TUI
+      // already renders per-message usage inline on the `assistant` row. Return null so the App
+      // skips adding any item to the store (avoids empty debug rows per billed step).
+      return null;
   }
 }
 
 /**
  * One-line dim token summary shown at the end of a rendered assistant message, e.g.
- * `812 in · 96 out · 640 cached · $0.001234` — priced via `chatCostUsd` (cache-aware).
+ * `in 812 · out 96 · cache read 640 · $0.0012` — delegates to the shared `formatUsageLine`
+ * helper so the TUI and the Slack Block Kit footer use the same format.
  */
 export function formatMessageUsage(u: MessageUsage): string {
-  const parts = [`${u.input} in`, `${u.output} out`];
-  if (u.cacheRead) parts.push(`${u.cacheRead} cached`);
-  if (u.cacheWrite) parts.push(`${u.cacheWrite} cache-write`);
-  parts.push(`$${chatCostUsd(u).toFixed(6)}`);
-  return parts.join(' · ');
+  return formatUsageLine({
+    input: u.input,
+    output: u.output,
+    cacheRead: u.cacheRead ?? 0,
+    cacheWrite: u.cacheWrite ?? 0,
+    costUsd: calculateCost(CHAT_MODEL, u),
+    callCount: 1,
+  });
 }

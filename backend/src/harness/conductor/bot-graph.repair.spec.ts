@@ -5,6 +5,7 @@ import {
 } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
+import type { EnvService } from '@core/config/env/env.service';
 import type { ChannelRegistryService } from '../channel/channel-registry.service';
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
@@ -13,10 +14,12 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
+import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * Self-healing for a POISONED thread. LangGraph checkpoints per node, so an interruption between
@@ -33,12 +36,15 @@ class FakeChannel {
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
   append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'> & {
+      channelId?: string;
+    },
   ): ChannelMsg {
     const full = {
       ...msg,
       channelId: msg.channelId ?? this.surfaceId,
       seq: this.nextSeq++,
+      createdAt: Date.now(),
     };
     this.log.push(full);
     return full;
@@ -66,7 +72,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'ctx',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
 };
 
 describe('bot graph — poisoned-history self-healing', () => {
@@ -100,6 +106,11 @@ describe('bot graph — poisoned-history self-healing', () => {
       {
         gate: async () => ({ action: 'respond' as const }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       { fetchContext: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
@@ -110,6 +121,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);
@@ -180,6 +192,116 @@ describe('bot graph — poisoned-history self-healing', () => {
     ).toBe(false);
   });
 
+  it('does not attach cache_control to thinking blocks when the last history message is thinking-only', async () => {
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Hello Alex',
+    });
+
+    const capturedConvos: BaseMessage[][] = [];
+    const fakeModel = {
+      bindTools() {
+        return this;
+      },
+      async invoke(convo: BaseMessage[]) {
+        capturedConvos.push(convo);
+        return new AIMessage({ content: 'Hi there!' });
+      },
+    };
+
+    const factory = new BotGraphFactory(
+      channel as unknown as ChannelService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
+      {
+        toStructuredTools: () => [],
+        terminalToolNames: () => new Set<string>(),
+      } as unknown as ToolRegistry,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
+      { fetchContext: async () => '' } as unknown as FetchService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
+      { buildModel: () => fakeModel } as unknown as ChatModelFactory,
+      { chatPromptFor: () => 'persona' } as unknown as PersonaService,
+      { list: () => [] } as unknown as WorktreeService,
+      { list: async () => [] } as unknown as SessionRegistry,
+      new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
+    );
+
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:thinking-cache:root' } };
+
+    // Seed the checkpoint: the last history message is a thinking-only assistant turn —
+    // only thinking/redacted_thinking blocks, no text block to anchor the cache breakpoint on.
+    // Before the fix, withCacheBreakpoint would naively stamp cache_control on the last block
+    // (a thinking block), which Anthropic rejects with a 400.
+    await graph.updateState(config, {
+      messages: [
+        new HumanMessage('Dennis: Hello Alex'),
+        new AIMessage({
+          content: [
+            {
+              type: 'thinking',
+              thinking: 'Let me reason about this carefully…',
+            },
+            { type: 'redacted_thinking', data: 'base64-opaque-blob' },
+          ],
+        }),
+      ],
+      cursor: 1,
+    });
+
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Still there?',
+    });
+
+    const stream = await graph.stream(
+      { cursor: 1, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    expect(capturedConvos).toHaveLength(1);
+    const convo = capturedConvos[0];
+
+    // No thinking or redacted_thinking block in the conversation sent to the model should
+    // carry cache_control — the fix must skip them when searching for the cache anchor.
+    for (const msg of convo) {
+      const content = (msg as { content: unknown }).content;
+      if (typeof content !== 'string' && Array.isArray(content)) {
+        for (const block of content as unknown[]) {
+          if (
+            typeof block === 'object' &&
+            block !== null &&
+            ((block as { type?: string }).type === 'thinking' ||
+              (block as { type?: string }).type === 'redacted_thinking')
+          ) {
+            expect(
+              (block as { cache_control?: unknown }).cache_control,
+            ).toBeUndefined();
+          }
+        }
+      }
+    }
+  });
+
   it('leaves a healthy history (tool_use followed by its result) untouched', async () => {
     const channel = new FakeChannel();
     channel.append({
@@ -210,6 +332,11 @@ describe('bot graph — poisoned-history self-healing', () => {
       {
         gate: async () => ({ action: 'respond' as const }),
       } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
       { fetchContext: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
@@ -220,6 +347,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       { list: () => [] } as unknown as WorktreeService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
     );
 
     const graph = factory.getBotGraph(ALEX);

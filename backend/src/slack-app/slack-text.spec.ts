@@ -1,5 +1,6 @@
 import {
   emojiToSlackName,
+  extractHandles,
   translateInbound,
   translateOutbound,
 } from './slack-text';
@@ -68,6 +69,7 @@ describe('emojiToSlackName', () => {
     expect(emojiToSlackName('✅')).toBe('white_check_mark');
     expect(emojiToSlackName('🎉')).toBe('tada');
     expect(emojiToSlackName('🚀')).toBe('rocket');
+    expect(emojiToSlackName('💭')).toBe('thought_balloon'); // the "composing" marker
   });
 
   it('is variation-selector-insensitive in both directions', () => {
@@ -168,5 +170,127 @@ describe('translateOutbound (Markdown → mrkdwn)', () => {
     expect(
       translateOutbound('an image placeholder: ![alt text](image.png)'),
     ).toBe('an image placeholder: alt text');
+  });
+});
+
+describe('extractHandles', () => {
+  it('extracts bare @handles from prose', () => {
+    expect(extractHandles('@Dennis ping')).toEqual(['Dennis']);
+    expect(extractHandles('hey @Alex, check this out')).toEqual(['Alex']);
+    expect(extractHandles('@Sam and @Riley please review')).toEqual([
+      'Sam',
+      'Riley',
+    ]);
+  });
+
+  it('deduplicates repeated handles', () => {
+    expect(extractHandles('@Alex and also @Alex')).toEqual(['Alex']);
+  });
+
+  it('skips handles inside fenced code blocks', () => {
+    expect(extractHandles('```\n@Dennis\n```')).toEqual([]);
+    expect(extractHandles('before ```@Alex``` after')).toEqual([]);
+  });
+
+  it('skips handles inside inline code', () => {
+    expect(extractHandles('run `@Dennis --help`')).toEqual([]);
+    expect(extractHandles('try `npm run @test`')).toEqual([]);
+  });
+
+  it('skips email-like patterns (@ preceded by word chars)', () => {
+    expect(extractHandles('email user@example.com please')).toEqual([]);
+    expect(extractHandles('dennis@slack.com')).toEqual([]);
+  });
+
+  it('skips handles in URL paths (@ preceded by /)', () => {
+    expect(extractHandles('see https://github.com/@alex for details')).toEqual(
+      [],
+    );
+  });
+
+  it('skips broadcast keywords (here/channel/everyone)', () => {
+    expect(extractHandles('@here everyone!')).toEqual([]);
+    expect(extractHandles('@channel update')).toEqual([]);
+    expect(extractHandles('@everyone listen up')).toEqual([]);
+  });
+
+  it('handles dots and hyphens in handle names', () => {
+    expect(extractHandles('@first.last ping')).toEqual(['first.last']);
+    expect(extractHandles('@de-sign check')).toEqual(['de-sign']);
+  });
+});
+
+describe('translateOutbound with resolveMention', () => {
+  const resolve =
+    (map: Record<string, string>) =>
+    (h: string): string | undefined =>
+      map[h];
+
+  it('converts a resolved @handle to <@SLACK_ID>', () => {
+    expect(
+      translateOutbound('@Dennis ping', {
+        resolveMention: resolve({ Dennis: 'U123' }),
+      }),
+    ).toBe('<@U123> ping');
+  });
+
+  it('leaves an unresolved @handle literal (graceful degradation)', () => {
+    expect(
+      translateOutbound('@Unknown check this', { resolveMention: resolve({}) }),
+    ).toBe('@Unknown check this');
+  });
+
+  it('converts multiple distinct handles in one message', () => {
+    expect(
+      translateOutbound('@Dennis and @Alex please sync', {
+        resolveMention: resolve({ Dennis: 'U123', Alex: 'UABC' }),
+      }),
+    ).toBe('<@U123> and <@UABC> please sync');
+  });
+
+  it('leaves @here/@channel/@everyone literal (broadcasts off in v1)', () => {
+    expect(
+      translateOutbound('@here standup time', {
+        resolveMention: resolve({ here: 'Uhere' }),
+      }),
+    ).toBe('@here standup time');
+    expect(
+      translateOutbound('@channel heads up', { resolveMention: resolve({}) }),
+    ).toBe('@channel heads up');
+  });
+
+  it('does not convert @handles inside inline code or fenced blocks', () => {
+    expect(
+      translateOutbound('run `@Dennis --help`', {
+        resolveMention: resolve({ Dennis: 'U123' }),
+      }),
+    ).toBe('run `@Dennis --help`');
+    expect(
+      translateOutbound('```\n@Dennis\n```', {
+        resolveMention: resolve({ Dennis: 'U123' }),
+      }),
+    ).toBe('```\n@Dennis\n```');
+  });
+
+  it('does not convert email-like patterns', () => {
+    expect(
+      translateOutbound('contact dennis@example.com', {
+        resolveMention: resolve({ 'example.com': 'Uoops' }),
+      }),
+    ).toBe('contact dennis@example.com');
+  });
+
+  it('converts mentions AND applies mrkdwn formatting in the same message', () => {
+    expect(
+      translateOutbound('**done** — @Dennis LGTM?', {
+        resolveMention: resolve({ Dennis: 'U123' }),
+      }),
+    ).toBe('*done* — <@U123> LGTM?');
+  });
+
+  it('no-dep call (undefined deps) is identical to the original behaviour', () => {
+    const plain = '**bold** @Dennis and `code`';
+    expect(translateOutbound(plain)).toBe(translateOutbound(plain, undefined));
+    expect(translateOutbound(plain)).toBe('*bold* @Dennis and `code`');
   });
 });

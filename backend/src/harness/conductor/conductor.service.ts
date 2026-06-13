@@ -34,6 +34,7 @@ import {
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import { type BotStateDelta, BotGraphFactory } from './bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
+import { sessionRelayPrompt } from './session-relay-prompt';
 
 /**
  * The dispatcher: a thin event loop around the shared channel. The human appends to the channel and
@@ -98,6 +99,16 @@ export class ConductorService
    * one room's bot cascade must not throttle another's. */
   private botBurst = new Map<string, number>();
   private relayQueue: Session[] = [];
+
+  /** Pending SILENT wake-ups injected from outside the conductor (e.g. a Slack approval-card
+   * verdict waking the proposing lead). Same delivery semantics as session relays: gate-bypassed
+   * seed turn, run when the bot is free; the seed is visible only to that bot — what (if anything)
+   * to say in the channel is the bot's own call. */
+  private seedQueue: Array<{
+    botId: string;
+    channelId: string;
+    prompt: string;
+  }> = [];
   /** Consecutive no-progress failures at a stuck cursor, keyed `${botId}|${channelId}` — the error
    * retry-cap loop breaker, scoped so one room's poison message can't skip another room's batch. */
   private failures = new Map<string, { cursor: number; count: number }>();
@@ -225,6 +236,17 @@ export class ConductorService
     );
   }
 
+  /**
+   * SILENTLY wake one bot with a gate-bypassed seed turn — the session-relay mechanism, exposed
+   * for out-of-band events (e.g. an approval-card verdict waking the proposing lead). Nothing is
+   * appended to the channel log: only the woken bot sees the seed, and whether anything gets said
+   * in the room is its decision — exactly how a session report-back wakes its owner.
+   */
+  injectSeed(botId: string, channelId: string, prompt: string): void {
+    this.seedQueue.push({ botId, channelId, prompt });
+    this.schedule();
+  }
+
   /** Append a human message from a known author (the ChatSurface inbound path). `opts.id` is the
    * surface-native message id (a Slack ts) — kept so reactions/edits target the surface's own
    * coordinate; minted only when the caller has none. */
@@ -325,6 +347,32 @@ export class ConductorService
       }
       this.relayQueue.splice(i, 1);
       this.claim(this.botKey(team, owner), () => this.runSessionRelay(session));
+    }
+    // Injected silent wake-ups — same discipline as session relays.
+    for (let i = 0; i < this.seedQueue.length; ) {
+      const seed = this.seedQueue[i];
+      const team = this.registry.teamIdOf(seed.channelId);
+      if (!this.readiness.isReady(team)) {
+        this.readiness.ensureChecked(team);
+        i++;
+        continue;
+      }
+      const bot = this.employees.byId(seed.botId);
+      if (!bot) {
+        this.seedQueue.splice(i, 1); // unknown bot — drop rather than wedge the queue
+        continue;
+      }
+      if (this.runningBots.has(this.botKey(team, bot.id))) {
+        i++;
+        continue;
+      }
+      this.seedQueue.splice(i, 1);
+      const channelId = this.registry.get(seed.channelId)
+        ? seed.channelId
+        : this.channel.surfaceId;
+      this.claim(this.botKey(team, bot.id), () =>
+        this.runBotGraph(bot, { seed: seed.prompt, channelId }),
+      );
     }
     // Room deliveries: each idle member bot with undelivered non-own work, per room.
     for (const info of this.registry.list()) {
@@ -430,10 +478,21 @@ export class ConductorService
         : undefined;
       // Footer ctx tracks EVERY billed step — including tool-only ones, which carry usage but no
       // text and so emit no `message` event.
-      if (usage)
+      if (usage) {
         this.bus.patchStatus({
           ctx: { input: usage.input, output: usage.output },
         });
+        // Per-step usage event: emitted for EVERY billed step (text and tool-call-only), BEFORE the
+        // `message` event that triggers the Slack post — so the SurfaceBridge accumulator is always
+        // complete when it attaches the footer.
+        this.emit({
+          id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
+          kind: 'usage',
+          botId: bot.id,
+          role: 'chat',
+          usage,
+        });
+      }
 
       const text = flattenContent(msg.content).trim();
       if (text) {
@@ -481,6 +540,9 @@ export class ConductorService
     if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
 
     let failed = false;
+    // The transient "composing" reaction (💭) this turn placed, if any — removed in `finally` once
+    // the turn ends (success, error, or step-cap), so present = composing now, gone = replied.
+    let composing: { emoji: string; targetId: string } | undefined;
     try {
       const stream = await this.graphs.getBotGraph(bot).stream(input, {
         configurable: { thread_id: thread, identity, capped, channelId },
@@ -512,8 +574,14 @@ export class ConductorService
             ); // a real reply counts toward this room's loop breaker
           }
           // Surface whatever reactions the graph decided — the conductor only renders; the brain decides.
-          if (delta.reaction)
+          if (delta.reaction) {
             this.react(bot, channelId, delta.reaction, delta.reactionTargetId);
+            // Remember it so we can clear it when the turn ends (the gate only sets this on respond).
+            composing = {
+              emoji: delta.reaction,
+              targetId: delta.reactionTargetId ?? '',
+            };
+          }
           if (delta.decision === 'acknowledge')
             this.react(
               bot,
@@ -531,6 +599,33 @@ export class ConductorService
               text: delta.recalled,
             });
           }
+          // READ-THE-ROOM: a suppressed draft never appears in delta.messages, so `commit` can't
+          // bill it — emit its usage here (same pipeline as tool-only steps: ctx footer + the
+          // SurfaceBridge accumulator that builds the per-post cost footer), then the debug event.
+          if (delta.draftUsage) {
+            this.bus.patchStatus({
+              ctx: {
+                input: delta.draftUsage.input,
+                output: delta.draftUsage.output,
+              },
+            });
+            this.emit({
+              id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
+              kind: 'usage',
+              botId: bot.id,
+              role: 'chat',
+              usage: delta.draftUsage,
+            });
+          }
+          if (delta.draft) {
+            this.emit({
+              id: `d-${this.emitSeq++}`,
+              kind: 'draft',
+              botId: bot.id,
+              botName: bot.name,
+              text: delta.draft,
+            });
+          }
           for (const msg of delta.messages ?? []) {
             if (msg.getType() === 'ai') commit(msg); // skip injected Human messages (already in channel/UI)
           }
@@ -545,6 +640,12 @@ export class ConductorService
       }
       this.emitError(err);
       failed = true;
+    } finally {
+      // Clear the "composing" 💭 now the turn is over — runs on success, error, AND the step-cap
+      // early-return above (the bot has stopped composing in every case). Forced/relay turns set
+      // no reaction, so `composing` stays undefined and nothing is removed.
+      if (composing?.targetId)
+        this.unreact(bot, channelId, composing.emoji, composing.targetId);
     }
 
     // The checkpoint is the cursor's source of truth; read it back, then persist it. MONOTONIC on
@@ -602,20 +703,20 @@ export class ConductorService
 
   /** Relay a session's turn-end through its owner bot (gate-bypassed seed); its reply enters the
    * room the session was opened from — `session.notifyThread` carries that channel coordinate (it's
-   * set from `identity.surface` at creation). An unknown coordinate falls back to the default room. */
+   * set from `identity.surface` at creation). An unknown coordinate falls back to the default room.
+   * The seed text branches on what the turn produced (questions / plan / prose / failure) — see
+   * sessionRelayPrompt. */
   private async runSessionRelay(session: Session): Promise<void> {
     if (session.status !== 'idle' && session.status !== 'failed') return;
     const bot =
       this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-
-    const prompt =
-      session.status === 'failed'
-        ? `[Session ${session.id} — "${session.task}"] this turn FAILED: ${session.error ?? '(unknown)'}. The session is still open. Let the team know briefly, first person; reply_session("${session.id}", <message>) to retry or redirect it, or close_session("${session.id}") to drop it.`
-        : `[Session ${session.id} — "${session.task}"] reported back:\n${session.lastReport ?? '(no report)'}\n\nThis is your own background session — it's still open with full context. Decide what's next:\n- reply_session("${session.id}", <message>) to continue it — answer its question, ask a follow-up, or approve its plan into execution (mode: "execute").\n- Relay the outcome to the team in the first person when it's worth sharing.\n- close_session("${session.id}") when this thread of work is finished.\nAnything about WHAT to build or WHY is Dennis's call — surface it to him; technical HOW is yours (answer it, or @mention the teammate whose area it is).`;
     const channelId = this.registry.get(session.notifyThread)
       ? session.notifyThread
       : this.channel.surfaceId;
-    await this.runBotGraph(bot, { seed: prompt, channelId });
+    await this.runBotGraph(bot, {
+      seed: sessionRelayPrompt(session),
+      channelId,
+    });
   }
 
   /** Emit a reaction from a bot ON a target message, so the surface folds it into that message. */
@@ -633,6 +734,25 @@ export class ConductorService
       botName: bot.name,
       emoji,
       targetId: targetId ?? '',
+    });
+  }
+
+  /** Remove a reaction this bot previously added — clears the transient "composing" 💭 at turn end. */
+  private unreact(
+    bot: EmployeeDefinition,
+    channelId: string,
+    emoji: string,
+    targetId: string,
+  ): void {
+    this.emit({
+      id: `r-${this.emitSeq++}`,
+      kind: 'reaction',
+      channelId,
+      botId: bot.id,
+      botName: bot.name,
+      emoji,
+      targetId,
+      remove: true,
     });
   }
 
