@@ -1,3 +1,5 @@
+import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before any LangChain run
+
 import { setupLogger } from '@core/setup-logger';
 import { EnvService } from '@core/config/env/env.service';
 import { ChannelRegistryService } from '@harness/channel/channel-registry.service';

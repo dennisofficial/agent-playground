@@ -138,6 +138,13 @@ export interface IEnvConfig {
   LANGSMITH_TRACING?: string;
   LANGSMITH_API_KEY?: string;
   LANGSMITH_PROJECT?: string;
+
+  // Langfuse observability (optional — pending-keys mode; @core/tracing self-disables when absent).
+  // The Langfuse OTEL SDK reads all four directly from process.env at bootstrap.
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  LANGFUSE_BASE_URL?: string;
+  LANGFUSE_TRACING_ENVIRONMENT?: string; // tags traces by deployment env (e.g. 'development')
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -231,4 +238,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   LANGSMITH_TRACING: Joi.string().optional(),
   LANGSMITH_API_KEY: Joi.string().optional(),
   LANGSMITH_PROJECT: Joi.string().optional(),
+
+  // Langfuse observability
+  LANGFUSE_PUBLIC_KEY: Joi.string().optional(),
+  LANGFUSE_SECRET_KEY: Joi.string().optional(),
+  LANGFUSE_BASE_URL: Joi.string().uri().optional(),
+  LANGFUSE_TRACING_ENVIRONMENT: Joi.string().optional(),
 });

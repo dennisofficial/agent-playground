@@ -82,7 +82,7 @@ describe('SurfaceBridge usage accumulation', () => {
       kind: 'usage',
       botId: 'alex',
       role: 'chat',
-      usage: { input: 1000, output: 80, cacheRead: 400, cacheWrite: 0 },
+      usage: { input: 1000, output: 80, cacheRead: 400 },
     });
     bus.emit({
       id: SEQ(),
@@ -100,7 +100,8 @@ describe('SurfaceBridge usage accumulation', () => {
     expect(usage.input).toBe(1000);
     expect(usage.output).toBe(80);
     expect(usage.cacheRead).toBe(400);
-    expect(usage.cacheWrite).toBe(0);
+    expect(usage.cacheWrite5m).toBe(0);
+    expect(usage.cacheWrite1h).toBe(0);
     const expectedCost = calculateCost(CHAT_MODEL, {
       input: 1000,
       output: 80,
@@ -408,46 +409,65 @@ describe('SurfaceBridge usage accumulation', () => {
     expect(usage.callCount).toBe(1);
   });
 
-  it('prices Sonnet cacheWrite at $6.00/MTok (1-hour TTL rate, not 5-min $3.75)', () => {
+  it('prices Sonnet cache writes: 1h at $6.00/MTok and 5m at $3.75/MTok', () => {
     // This test asserts LITERAL dollar amounts so a wrong rate in PRICING won't hide behind a
-    // tautological calculateCost() call. The chat path uses ttl:'1h' (extended-cache-ttl beta),
-    // billed by Anthropic at 2× base ($3.00 × 2 = $6.00/MTok). The 5-min rate is $3.75 — wrong.
-    const { bus, posts } = makeBridge();
+    // tautological calculateCost() call.
 
-    // 1M cacheWrite tokens via chat (Sonnet) — no fresh input, no output.
-    // cacheWrite is included in `input` (langchain folds it in), so set input = cacheWrite.
-    bus.emit({
+    // 1h TTL: chat path uses ttl:'1h' via extended-cache-ttl-2025-04-11 beta.
+    // Billed by Anthropic at 2× base ($3.00 × 2 = $6.00/MTok).
+    const { bus: bus1h, posts: posts1h } = makeBridge();
+    bus1h.emit({
       id: SEQ(),
       kind: 'usage',
       botId: 'alex',
       role: 'chat',
-      usage: { input: 1_000_000, output: 0, cacheWrite: 1_000_000 },
+      usage: { input: 1_000_000, output: 0, cacheWrite1h: 1_000_000 },
     });
-    bus.emit({
+    bus1h.emit({
       id: SEQ(),
       kind: 'message',
       channelId: 'slack:T1:C1',
       authorId: 'alex',
       authorName: 'Alex',
       fromHuman: false,
-      text: 'cache-write cost check',
+      text: 'cache-write 1h cost check',
       ts: '00:00:07',
     });
+    // 1M cacheWrite1h tokens @ $6.00/MTok = $6.00 exactly
+    expect(posts1h[0].usage!.costUsd).toBeCloseTo(6.0, 6);
 
-    expect(posts).toHaveLength(1);
-    // 1M cacheWrite tokens @ $6.00/MTok = $6.00 exactly
-    expect(posts[0].usage!.costUsd).toBeCloseTo(6.0, 6);
+    // 5m TTL: standard cache writes at 1.25× base ($3.00 × 1.25 = $3.75/MTok).
+    const { bus: bus5m, posts: posts5m } = makeBridge();
+    bus5m.emit({
+      id: SEQ(),
+      kind: 'usage',
+      botId: 'alex',
+      role: 'chat',
+      usage: { input: 1_000_000, output: 0, cacheWrite5m: 1_000_000 },
+    });
+    bus5m.emit({
+      id: SEQ(),
+      kind: 'message',
+      channelId: 'slack:T1:C1',
+      authorId: 'alex',
+      authorName: 'Alex',
+      fromHuman: false,
+      text: 'cache-write 5m cost check',
+      ts: '00:00:07',
+    });
+    // 1M cacheWrite5m tokens @ $3.75/MTok = $3.75 exactly
+    expect(posts5m[0].usage!.costUsd).toBeCloseTo(3.75, 6);
 
     // Also assert cacheRead rate: 1M cacheRead tokens @ $0.30/MTok = $0.30.
-    const { bus: bus2, posts: posts2 } = makeBridge();
-    bus2.emit({
+    const { bus: busRead, posts: postsRead } = makeBridge();
+    busRead.emit({
       id: SEQ(),
       kind: 'usage',
       botId: 'alex',
       role: 'chat',
       usage: { input: 1_000_000, output: 0, cacheRead: 1_000_000 },
     });
-    bus2.emit({
+    busRead.emit({
       id: SEQ(),
       kind: 'message',
       channelId: 'slack:T1:C1',
@@ -458,6 +478,6 @@ describe('SurfaceBridge usage accumulation', () => {
       ts: '00:00:08',
     });
     // 1M cacheRead tokens @ $0.30/MTok = $0.30 exactly
-    expect(posts2[0].usage!.costUsd).toBeCloseTo(0.3, 6);
+    expect(postsRead[0].usage!.costUsd).toBeCloseTo(0.3, 6);
   });
 });

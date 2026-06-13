@@ -62,7 +62,7 @@ Route its open questions: WHAT to build or WHY is Dennis's call — bring it to 
 ${report}
 
 This is your own background session — it's still open with full context. Decide what's next:
-- reply_session("${sid}", <message>) to continue it — answer its question, ask a follow-up, or approve its plan into execution (mode: "execute").
+- reply_session("${sid}", <message>) to continue it — answer its question, ask a follow-up, or send a course correction.
 - Relay the outcome to the team in the first person when it's worth sharing.
 - close_session("${sid}") when this thread of work is finished.
 Route its questions: WHAT to build or WHY is Dennis's call — bring it to him with your recommendation. Technical HOW: answer it yourself if you already know (taught before, in memory, or the teammate whose area it is); otherwise bring Dennis the options + your recommendation, and remember() his ruling. Either way, when a question reaches the channel, restate it in one line first — nobody else can see inside your session.`;

@@ -34,6 +34,8 @@ const base = {
  */
 export default defineConfig((env) => {
   // Real LLM calls. Single-threaded + long timeout. Run with: pnpm test:ai
+  // globalSetup provisions + migrates the *_test DB: the memory evals (memory.ai.test.ts) drive
+  // real recall/extraction over live Postgres, so AI mode needs the same DB bootstrap as e2e.
   if (env.mode === 'ai') {
     return {
       ...base,
@@ -41,6 +43,7 @@ export default defineConfig((env) => {
         globals: true,
         environment: 'node',
         setupFiles,
+        globalSetup,
         include: ['**/*.ai.test.ts'],
         testTimeout: 100_000,
         pool: 'threads',

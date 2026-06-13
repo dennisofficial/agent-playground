@@ -11,7 +11,10 @@ export interface AccumulatedUsage {
   input: number;
   output: number;
   cacheRead: number;
-  cacheWrite: number;
+  /** Cache writes billed at the 5-minute TTL rate (standard cache writes). */
+  cacheWrite5m: number;
+  /** Cache writes billed at the 1-hour TTL rate (extended-cache-ttl-2025-04-11 beta). */
+  cacheWrite1h: number;
   costUsd: number;
   /** How many LLM round-trips (gate + chat steps) contributed to this post.
    * Shown in the Slack footer only when > 1, e.g. `claude-sonnet-4-6 · 3 calls · in …`. */
@@ -43,6 +46,9 @@ export type ConductorEvent =
       text: string;
       /** Per-message token usage from the model call that produced it — bot messages only. */
       usage?: MessageUsage;
+      /** Slack file IDs uploaded via share_artifact during this turn — attached to the outbound
+       * message via chat.update(file_ids) after the text post lands. */
+      fileIds?: string[];
       ts: string;
     }
   | {
@@ -110,14 +116,17 @@ export interface ContextUsage {
 
 /**
  * Per-message token usage, broken out so a renderer can show cache hits. `input` is the TOTAL input
- * tokens (langchain folds cache reads + writes into it); `cacheRead`/`cacheWrite` are the cached
- * slices of that total.
+ * tokens (langchain folds cache reads + writes into it); `cacheRead`/`cacheWrite5m`/`cacheWrite1h`
+ * are the cached slices of that total, split by TTL bucket.
  */
 export interface MessageUsage {
   input: number;
   output: number;
   cacheRead?: number;
-  cacheWrite?: number;
+  /** Cache writes at the 5-minute TTL rate. */
+  cacheWrite5m?: number;
+  /** Cache writes at the 1-hour TTL rate (extended-cache-ttl-2025-04-11 beta). */
+  cacheWrite1h?: number;
 }
 
 /** Ephemeral, overwrite-style status that drives the TUI spinner/footer — a pull snapshot, distinct

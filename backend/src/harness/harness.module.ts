@@ -7,6 +7,7 @@ import { GateModule } from './gate/gate.module';
 import { CredentialModule } from './llm-keys/credential.module';
 import { LlmModule } from './llm/llm.module';
 import { MemoryModule } from './memory/memory.module';
+import { ObservabilityModule } from './observability/observability.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SkillsModule } from './skills/skills.module';
 import { SurfaceModule } from './surface/surface.module';
@@ -30,6 +31,7 @@ import { WorktreesModule } from './worktrees/worktrees.module';
 @CreateModule({
   modules: [
     CredentialModule,
+    ObservabilityModule,
     ChannelModule,
     MemoryModule,
     EmployeesModule,

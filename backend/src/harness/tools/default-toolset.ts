@@ -1,4 +1,5 @@
 import type { Type } from '@nestjs/common';
+import { ShareArtifactTool } from './artifacts/share-artifact.tool';
 import {
   ForgetTool,
   RecallTool,
@@ -37,6 +38,7 @@ import {
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
 import { OpenPrTool } from './worktrees/open-pr.tool';
+import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -50,6 +52,7 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   PullWorktreeTool,
   RemoveWorktreeTool,
   OpenPrTool,
+  MarkPrReadyTool,
   CreateSessionTool,
   ReplySessionTool,
   CloseSessionTool,
@@ -74,4 +77,5 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   AddNoteTool,
   ListRoomsTool,
   SendMessageTool,
+  ShareArtifactTool,
 ];

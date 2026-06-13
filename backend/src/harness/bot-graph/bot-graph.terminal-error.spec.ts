@@ -36,9 +36,7 @@ class FakeChannel {
   readonly surfaceId = 'tui:test';
   private log: ChannelMsg[] = [];
   private nextSeq = 0;
-  append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'>,
-  ): ChannelMsg {
+  append(msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'>): ChannelMsg {
     const full = {
       ...msg,
       channelId: this.surfaceId,

@@ -1,5 +1,6 @@
 import { TeamTaskPlan as TeamTaskPlanEntity } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
+import type { BoardEventsBus } from './board-events.bus';
 import { rawRows, toIso } from './sql';
 
 /**
@@ -45,7 +46,12 @@ const toPlan = (r: PlanRow): TaskPlan => ({
 });
 
 export class PlanStore {
-  constructor(private readonly repo: Repository<TeamTaskPlanEntity>) {}
+  // `events` is optional so tests can `new PlanStore(repo)` without the bus; production wires it
+  // via the MemoryModule factory.
+  constructor(
+    private readonly repo: Repository<TeamTaskPlanEntity>,
+    private readonly events?: BoardEventsBus,
+  ) {}
 
   private async q(sql: string, params: unknown[]): Promise<PlanRow[]> {
     return rawRows<PlanRow>(await this.repo.manager.query(sql, params));
@@ -67,7 +73,17 @@ export class PlanStore {
        RETURNING *`,
       [p.team, p.taskId, p.employee, p.planMd, p.sessionId ?? null],
     );
-    return toPlan(rows[0]);
+    const plan = toPlan(rows[0]);
+    // Wake the lead to review — re-attach resets lead_status to 'pending', so a revised plan earns
+    // a fresh review.
+    this.events?.emit({
+      kind: 'plan-attached',
+      team: p.team,
+      taskId: p.taskId,
+      employee: p.employee,
+      sessionId: p.sessionId,
+    });
+    return plan;
   }
 
   async get(

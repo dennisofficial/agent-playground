@@ -7,6 +7,7 @@ import { MemoryModule } from '../memory/memory.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
+import { ShareArtifactTool } from './artifacts/share-artifact.tool';
 import {
   ForgetTool,
   RecallTool,
@@ -48,6 +49,7 @@ import {
 } from './worktrees/worktree.tools';
 import { ListPullRequestsTool } from './projects/list-pull-requests.tool';
 import { OpenPrTool } from './worktrees/open-pr.tool';
+import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -78,6 +80,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     PullWorktreeTool,
     RemoveWorktreeTool,
     OpenPrTool,
+    MarkPrReadyTool,
     // projects
     ListPullRequestsTool,
     // sessions
@@ -113,6 +116,8 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     ProposePlanTool,
     OpenStandupTool,
     CloseStandupTool,
+    // artifacts
+    ShareArtifactTool,
   ],
 })
 export class ToolsModule {}
