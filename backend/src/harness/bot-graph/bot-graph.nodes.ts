@@ -209,27 +209,20 @@ export class BotGraphNodes {
       };
     };
 
-    /** The pre-LLM read: fetch the facts + open tasks relevant to what's being said into `recalled`. */
+    /**
+     * The pre-LLM context read: assemble the standing-context core + working-state slots into
+     * `recalled`. Phase 3: FetchService.fetchContext no longer does semantic recall (no embedding)
+     * — it returns the tiny always-on core (role, project, team prefs) + active board tasks +
+     * reminders. The live work state (worktrees + sessions) is joined in from `workContext`.
+     * Always set recalled (even to '') so a stale recall from a prior turn never lingers.
+     */
     const recallNode = async (
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
-      const channelId = this.channelIdOf(config);
-      const fresh = channel
-        .since(state.cursor, channelId)
-        .filter((m) => m.authorBotId !== bot.id);
-      const freshText = fresh.map((m) => `${m.author}: ${m.text}`).join('\n');
-      // Enrich the retrieval query with a few lines of prior context so a THIN turn ("sounds good")
-      // doesn't embed to noise. The tail is query-only — it shapes retrieval, never what's stored.
-      const priorTail = fresh.length
-        ? this.historyBefore(fresh[0].seq, channelId, 3)
-        : '';
-      const query = [priorTail, freshText].filter((s) => s.trim()).join('\n');
-      // Always set recalled (to '' when empty) so a stale recall from a prior turn never lingers.
-      // Memory/tasks and the live work state (worktrees + sessions) are independent reads.
       const [memory, work] = await Promise.all([
-        this.fetchService.fetchContext(bot, query, getIdentity(config)),
-        this.workContext(bot).catch(() => ''), // degrade like retrieval — never fail the turn
+        this.fetchService.fetchContext(bot, getIdentity(config)),
+        this.workContext(bot).catch(() => ''), // degrade gracefully — never fail the turn
       ]);
       return {
         recalled: [memory, work].filter((s) => s.trim()).join('\n\n'),
