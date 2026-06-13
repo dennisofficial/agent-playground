@@ -1,6 +1,6 @@
 import { CreateModule } from '@workspace/nestjs-core';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Session } from '@workspace/shared/schemas';
+import { Session, SessionEvent } from '@workspace/shared/schemas';
 import { EmployeesModule } from '../employees/employees.module';
 import { EnginesModule } from '../engines/engines.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
@@ -19,7 +19,7 @@ import { SessionRunnerService } from './session-runner.service';
  */
 @CreateModule({
   imports: [
-    TypeOrmModule.forFeature([Session]),
+    TypeOrmModule.forFeature([Session, SessionEvent]),
     EmployeesModule,
     EnginesModule,
     LlmKeysModule,

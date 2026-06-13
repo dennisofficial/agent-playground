@@ -1,7 +1,10 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import { Session as SessionEntity } from '@workspace/shared/schemas';
+import {
+  Session as SessionEntity,
+  SessionEvent as SessionEventEntity,
+} from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
 import {
   EWorkerEngineName,
@@ -21,10 +24,11 @@ import type {
  * SESSION_REGISTRY port. Session ROWS survive restarts (carrying `engine_session_id`, the engine's
  * resume handle), so a reply after a restart resumes the on-disk SDK transcript by id.
  *
- * Still in-memory (and lost on restart, by design): the transcript event BUFFER (check_session
- * narration — the SDK's JSONL under the engine home is the real record) and `onUpdate` subscriptions
- * (single-process harness, so this is sufficient). On boot, any `running` row whose process died is
- * reconciled to 'failed' — safe because only one process composes the harness at a time.
+ * The transcript is durable too: every streamed event lands in `session_events` (the SINGLE source
+ * of truth check_session/searchTranscript read), so narration survives a restart. `onUpdate`
+ * subscriptions stay in-process (single-process harness, so this is sufficient). On boot, any
+ * `running` row whose process died is reconciled to 'failed' — safe because only one process
+ * composes the harness at a time.
  */
 
 /** camelCase domain key → snake_case entity column, for partial updates. */
@@ -81,17 +85,20 @@ export class PostgresSessionRegistry
   implements SessionRegistry, OnApplicationBootstrap
 {
   private readonly logger = new Logger(PostgresSessionRegistry.name);
-  // Transcript event buffers (ephemeral — narration only) and in-process update fan-out.
-  private readonly transcripts = new Map<string, WorkerEvent[]>();
+  // In-process update fan-out (session lifecycle changes → the conductor's relay). The transcript
+  // itself lives in `session_events`, not in memory.
   private readonly emitter = new EventEmitter();
 
   constructor(
     @InjectRepository(SessionEntity)
     private readonly repo: Repository<SessionEntity>,
+    @InjectRepository(SessionEventEntity)
+    private readonly events: Repository<SessionEventEntity>,
   ) {}
 
   /** Reconcile sessions left `running` when the process died — their turn (and AbortController) is
-   * gone. Mark 'failed' so the owner can reply to resume (engine session preserved) or close. */
+   * gone. Mark 'failed' so the owner can reply to resume (engine session preserved) or close. Also
+   * logs the survival count so a restart visibly proves sessions persisted. */
   async onApplicationBootstrap(): Promise<void> {
     const res = await this.repo.update(
       { status: 'running' },
@@ -101,10 +108,13 @@ export class PostgresSessionRegistry
           'Interrupted by a harness restart — reply_session to resume (the engine session is preserved) or close_session to drop it.',
       },
     );
-    if (res.affected)
-      this.logger.warn(
-        `Reconciled ${res.affected} interrupted session(s) to 'failed' after restart.`,
-      );
+    // Survival readout: open (idle/failed) sessions are the ones a teammate can still pick back up.
+    const open = await this.repo.count({
+      where: [{ status: 'idle' }, { status: 'failed' }],
+    });
+    this.logger.log(
+      `Sessions hydrated from Postgres: ${open} open (resumable)${res.affected ? `, ${res.affected} interrupted → 'failed' this boot` : ''}.`,
+    );
   }
 
   async create(input: NewSession): Promise<Session> {
@@ -123,7 +133,6 @@ export class PostgresSessionRegistry
       board_task_id: input.boardTaskId ?? null,
     });
     const saved = await this.repo.save(entity);
-    this.transcripts.set(saved.id, []);
     const session = toDomain(saved);
     this.emitter.emit('update', session);
     return session;
@@ -179,16 +188,32 @@ export class PostgresSessionRegistry
     return session;
   }
 
-  // Transcript buffer is in-memory (narration only), so these are sync behind the async port.
-  appendProgress(id: string, event: WorkerEvent): Promise<void> {
-    const buf = this.transcripts.get(id);
-    if (buf) buf.push(event);
-    else this.transcripts.set(id, [event]);
-    return Promise.resolve();
+  /** Append one streamed event to the durable transcript (called fire-and-forget per event). */
+  async appendProgress(id: string, event: WorkerEvent): Promise<void> {
+    await this.events.insert({
+      session_id: id,
+      kind: event.kind,
+      text: event.kind === 'tool' ? null : event.text,
+      name: event.kind === 'tool' ? event.name : null,
+      detail: event.kind === 'tool' ? (event.detail ?? null) : null,
+    });
   }
 
-  progress(id: string): Promise<WorkerEvent[]> {
-    return Promise.resolve(this.transcripts.get(id) ?? []);
+  /** The full transcript for a session, oldest first — the single source of truth. */
+  async progress(id: string): Promise<WorkerEvent[]> {
+    const rows = await this.events.find({
+      where: { session_id: id },
+      order: { id: 'ASC' },
+    });
+    return rows.map((r) =>
+      r.kind === 'tool'
+        ? {
+            kind: 'tool',
+            name: r.name ?? '',
+            ...(r.detail != null ? { detail: r.detail } : {}),
+          }
+        : { kind: r.kind as 'text' | 'result', text: r.text ?? '' },
+    );
   }
 
   onUpdate(cb: (session: Session) => void): () => void {

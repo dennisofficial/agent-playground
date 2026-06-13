@@ -1,9 +1,22 @@
-import { ENTITIES, Session as SessionEntity } from '@workspace/shared/schemas';
+import {
+  ENTITIES,
+  Session as SessionEntity,
+  SessionEvent as SessionEventEntity,
+} from '@workspace/shared/schemas';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
 import { PostgresSessionRegistry } from './postgres-session.registry';
 import type { NewSession } from './session-registry.port';
+
+// Construct the registry the way DI does — both repos. A fresh instance over the same DataSource
+// stands in for the post-restart process.
+function makeRegistry(ds: DataSource): PostgresSessionRegistry {
+  return new PostgresSessionRegistry(
+    ds.getRepository(SessionEntity),
+    ds.getRepository(SessionEventEntity),
+  );
+}
 
 function makeDataSource(): DataSource {
   return new DataSource({
@@ -37,13 +50,13 @@ describe('PostgresSessionRegistry (live Postgres)', () => {
   beforeAll(async () => {
     ds = makeDataSource();
     await ds.initialize();
-    registry = new PostgresSessionRegistry(ds.getRepository(SessionEntity));
+    registry = makeRegistry(ds);
   });
   afterAll(async () => {
     await ds?.destroy();
   });
   beforeEach(async () => {
-    await ds.query('TRUNCATE sessions');
+    await ds.query('TRUNCATE sessions, session_events');
   });
 
   it('persists a created session and reads it back across a fresh registry instance', async () => {
@@ -53,7 +66,7 @@ describe('PostgresSessionRegistry (live Postgres)', () => {
     expect(created.boardTaskId).toBe(7);
 
     // A SECOND registry over the same DB = the post-restart read. The row survives the process.
-    const reborn = new PostgresSessionRegistry(ds.getRepository(SessionEntity));
+    const reborn = makeRegistry(ds);
     const got = await reborn.get(created.id);
     expect(got?.task).toBe('plan the thing');
     expect(got?.engine).toBe(EWorkerEngineName.CLAUDE);
@@ -106,13 +119,33 @@ describe('PostgresSessionRegistry (live Postgres)', () => {
     expect((await registry.latest('alex'))?.id).toBe(a.id);
   });
 
+  it('persists the transcript and reads it back ordered across a restart', async () => {
+    const s = await registry.create(newSession());
+    await registry.appendProgress(s.id, { kind: 'text', text: 'thinking…' });
+    await registry.appendProgress(s.id, {
+      kind: 'tool',
+      name: 'Read',
+      detail: 'calc.ts',
+    });
+    await registry.appendProgress(s.id, { kind: 'result', text: 'done' });
+
+    // The transcript is the durable single source of truth — a fresh instance reads it back in order.
+    const reborn = makeRegistry(ds);
+    const events = await reborn.progress(s.id);
+    expect(events).toEqual([
+      { kind: 'text', text: 'thinking…' },
+      { kind: 'tool', name: 'Read', detail: 'calc.ts' },
+      { kind: 'result', text: 'done' },
+    ]);
+  });
+
   it('reconciles interrupted running sessions to failed on boot', async () => {
     const running = await registry.create(newSession());
     const idle = await registry.create(newSession());
     await registry.update(idle.id, { status: 'idle' });
 
     // Simulate a restart: a NEW registry instance runs its boot reconciliation.
-    const reborn = new PostgresSessionRegistry(ds.getRepository(SessionEntity));
+    const reborn = makeRegistry(ds);
     await reborn.onApplicationBootstrap();
 
     const wasRunning = await reborn.get(running.id);
