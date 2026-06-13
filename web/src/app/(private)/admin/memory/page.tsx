@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useGetTenantsQuery, useGetAllFactsQuery } from '@/redux/query/api/memoryApi';
 import { MemoryViewer } from './memory-viewer';
@@ -25,9 +26,13 @@ export default function MemoryPage() {
 
   const {
     data: factsResult,
-    isLoading: factsLoading,
+    isFetching: factsFetching,
     error: factsError,
   } = useGetAllFactsQuery({ teamId: selectedTeamId! }, { skip: !selectedTeamId });
+
+  const lastFactsResult = useRef<typeof factsResult>(undefined);
+  if (factsResult) lastFactsResult.current = factsResult;
+  const displayFacts = factsResult ?? lastFactsResult.current;
 
   if (tenantsError || factsError) {
     return <BackendError err={tenantsError ?? factsError} />;
@@ -45,7 +50,7 @@ export default function MemoryPage() {
     );
   }
 
-  if (!selectedTeamId || factsLoading || !factsResult) {
+  if (!selectedTeamId || !displayFacts) {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
   }
 
@@ -53,9 +58,10 @@ export default function MemoryPage() {
     <MemoryViewer
       tenants={tenants}
       selectedTeamId={selectedTeamId}
-      facts={factsResult.facts}
-      truncated={factsResult.truncated}
-      total={factsResult.total}
+      facts={displayFacts.facts}
+      truncated={displayFacts.truncated}
+      total={displayFacts.total}
+      isFetching={factsFetching}
     />
   );
 }

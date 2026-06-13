@@ -5,7 +5,7 @@ import { auth } from '@/lib/auth';
 
 /**
  * Admin chrome header — client island for the interactive Log out action.
- * Imported by the (private) Server Component layout.
+ * Imported by the (private) Client Component layout.
  */
 export default function AdminHeader() {
   const router = useRouter();
