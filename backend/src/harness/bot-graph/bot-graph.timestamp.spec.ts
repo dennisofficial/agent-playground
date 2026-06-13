@@ -103,12 +103,13 @@ function buildFactory(channel: FakeChannel, gapMs?: number) {
     {
       toStructuredTools: () => [],
       terminalToolNames: () => new Set<string>(),
+      refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {
       gate: async () => ({ action: 'respond' as const }),
     } as unknown as GateService,
     { isEnabled: () => false } as unknown as RecursionGuardService,
-    { fetchContext: async () => '' } as unknown as FetchService,
+    { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
     {
       reconcileMemory: async () => {},
       reconcileTasks: async () => {},

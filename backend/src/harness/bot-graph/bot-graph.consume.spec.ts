@@ -68,6 +68,7 @@ describe('bot graph — consume path resets recalled', () => {
       {
         toStructuredTools: () => [],
         terminalToolNames: () => new Set<string>(),
+        refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
         gate: async () => ({ action: decisions.shift() ?? 'ignore' }),
@@ -78,7 +79,8 @@ describe('bot graph — consume path resets recalled', () => {
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
       {
-        fetchContext: async () => 'On your plate:\n- [#31] call open_pr',
+        fetchMemory: async () => '',
+        fetchTasks: async () => 'On your plate:\n- [#31] call open_pr',
       } as unknown as FetchService,
       {
         reconcileMemory: async () => {},

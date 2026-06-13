@@ -3,6 +3,24 @@ import { Annotation, messagesStateReducer } from '@langchain/langgraph';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { GateAction, MessageUsage } from '../domain/conductor-events';
 
+/**
+ * The three independently-refreshable slices of the pre-LLM context. Stored separately so the
+ * post-tools `refreshContext` node can recompute only the dirtied parts without paying for a full
+ * re-fetch every tool batch.
+ * - `memory` — semantic facts + cross-project facts (embedding-based; set once by `recall`)
+ * - `tasks`  — the reminders plate (cheap SQL; refreshed by add_task / complete_task)
+ * - `work`   — worktrees + open sessions (registry reads; refreshed by create/remove_worktree, close_session)
+ */
+export interface ContextParts {
+  work: string;
+  memory: string;
+  tasks: string;
+}
+
+/** Render order preserves today's output: facts/others → plate → worktrees/sessions. */
+export const renderContext = (c: ContextParts): string =>
+  [c.memory, c.tasks, c.work].filter((s) => s.trim()).join('\n\n');
+
 /** What the conductor reads out of a node's streamed delta (a partial of BotState). */
 export interface BotStateDelta {
   messages?: BaseMessage[];
@@ -14,7 +32,9 @@ export interface BotStateDelta {
   /** The channel-message id this turn's reaction (👀 or ack) is ON — chosen HERE in the graph so the
    * conductor can tell the surface which message to fold the reaction into. */
   reactionTargetId?: string;
-  /** The pre-LLM recall's `recalled` block — the conductor emits a `recall` event from it. */
+  /** The pre-LLM observability snapshot — written once by `recall` and reset by `mark_seen`. The
+   * conductor emits exactly one `recall` event per respond turn from this field. `llm` renders live
+   * context from `context` instead (so mid-turn refreshes don't emit extra recall events). */
   recalled?: string;
   /** Debug only: the soft gate's one-line rationale. Absent for hard rules. */
   reasoning?: string;
@@ -90,8 +110,22 @@ export const BotState = Annotation.Root({
   /** Ephemeral pre-LLM memory context (the `recall` node's output). Re-injected each llm call
    * like the persona, NEVER written into `messages`. Overwritten on EVERY path — by `recall`
    * (respond) and reset by `mark_seen` (ack/ignore) — so a stale recall never survives the
-   * checkpoint. */
+   * checkpoint. This is the observability snapshot: written once by `recall`, read by the conductor
+   * for the `recall` event. `llm` renders live context from `context` instead. */
   recalled: Annotation<string>({
+    reducer: (_: string, b: string) => b ?? '',
+    default: () => '',
+  }),
+  /** The three independently-refreshable context slices. `llm` renders them to one string each
+   * call via `renderContext`. Reset by `mark_seen` / `pause` alongside `recalled`. */
+  context: Annotation<ContextParts>({
+    reducer: (_: ContextParts, b: ContextParts) =>
+      b ?? { work: '', memory: '', tasks: '' },
+    default: () => ({ work: '', memory: '', tasks: '' }),
+  }),
+  /** The turn's retrieval query — persisted so `refreshContext` can re-run `fetchMemory` after the
+   * cursor has advanced past the fresh messages. Reset by `mark_seen` / `pause`. */
+  recallQuery: Annotation<string>({
     reducer: (_: string, b: string) => b ?? '',
     default: () => '',
   }),

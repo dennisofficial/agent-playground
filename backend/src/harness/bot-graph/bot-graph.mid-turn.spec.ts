@@ -132,6 +132,7 @@ describe('bot graph — mid-thought message injection', () => {
       {
         toStructuredTools: () => [pokeTool],
         terminalToolNames: () => new Set<string>(),
+        refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
         gate: async () => ({ action: 'respond' as const }),
@@ -141,7 +142,7 @@ describe('bot graph — mid-thought message injection', () => {
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchContext: async () => '' } as unknown as FetchService,
+      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
@@ -238,6 +239,7 @@ describe('bot graph — mid-thought message injection', () => {
       {
         toStructuredTools: () => [pokeTool],
         terminalToolNames: () => new Set<string>(),
+        refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
         gate: async () => ({ action: 'respond' as const }),
@@ -247,7 +249,7 @@ describe('bot graph — mid-thought message injection', () => {
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchContext: async () => '' } as unknown as FetchService,
+      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},

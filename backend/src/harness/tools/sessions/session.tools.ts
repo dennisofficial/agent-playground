@@ -201,6 +201,7 @@ export class CloseSessionTool implements IHarnessTool<
   typeof closeSessionSchema
 > {
   readonly name = 'close_session';
+  readonly refreshesContext = ['work'] as const;
   readonly description =
     "Close a session you're done with (stops it if it's mid-turn and discards that turn's result). Its completed work is logged. The worktree stays until you remove_worktree it.";
   readonly schema = closeSessionSchema;

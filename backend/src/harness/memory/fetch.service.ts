@@ -31,6 +31,11 @@ const BOARD_TASK_CAP = 5;
  * The bot's worktrees + sessions (`workContext`) are assembled by the `recallNode` in
  * `bot-graph.nodes.ts` and joined to this output — they are bounded working state that lives in
  * the graph layer because they need WorktreeService + SessionRegistry.
+ *
+ * Split into `fetchMemory` (sections 1–2) and `fetchTasks` (section 3) so the post-tools
+ * `refreshContext` node can recompute only the dirtied half without re-running the whole assembler.
+ * `fetchContext` remains as a full-context convenience wrapper (backward-compat for callers and
+ * tests that want the complete block in one call).
  */
 @Injectable()
 export class FetchService {
@@ -41,12 +46,15 @@ export class FetchService {
   ) {}
 
   /**
-   * Build the `recalled` context block for `bot`. Returns '' when there's nothing to inject (an
-   * empty team store yields a role/project core + nothing else — practically always non-empty).
-   * The caller MUST write the result into state (even '') so a stale recall never survives the
-   * checkpoint.
+   * The standing-context + board-work slice of the pre-LLM context (`memory` refresh scope).
+   * No query or embedding — cheap. Returns the standing context core (role, project, team prefs)
+   * plus any in-progress board tasks.
+   *
+   * This is the half refreshed when remember / update_memory / forget run mid-turn. In Phase 3
+   * those tools don't change standing context or board tasks directly, but the split is the right
+   * home for Phase 2 memory suggestions and future semantic-recall reactivation.
    */
-  async fetchContext(bot: EmployeeDefinition, id: Identity): Promise<string> {
+  async fetchMemory(bot: EmployeeDefinition, id: Identity): Promise<string> {
     const parts: string[] = [];
 
     // ── 1. Standing context core ────────────────────────────────────────────────────────────────
@@ -71,6 +79,18 @@ export class FetchService {
       );
     }
 
+    // Slots 4–6 (session notes, compaction summary, memory suggestions) are empty-safe stubs
+    // that will be wired in Phases 4, 6, and 2 respectively.
+
+    return parts.join('\n\n');
+  }
+
+  /**
+   * The reminders-plate slice of the pre-LLM context (`tasks` refresh scope). No query or
+   * embedding — cheap. Returns '' when the plate is empty. The team lead sees the whole team's
+   * plate; everyone else sees only their own.
+   */
+  async fetchTasks(bot: EmployeeDefinition, id: Identity): Promise<string> {
     // ── 3. Reminder plate ───────────────────────────────────────────────────────────────────────
     // Personal commitments the bot has made. A DM spans every project the pair shares.
     // Team-lead sees the whole team's plate; others see their own.
@@ -89,23 +109,34 @@ export class FetchService {
       ),
     );
     const plate = plates.flat();
-    if (plate.length > 0) {
-      const shown = plate.slice(0, REMINDER_CAP);
-      const more = plate.length - shown.length;
-      const lines = shown
-        .map(
-          (t) =>
-            `- [#${t.id}] ${t.description}${bot.teamLead ? ` (→ ${t.owner})` : ''}${projects.length > 1 ? ` [${t.project}]` : ''}`,
-        )
-        .join('\n');
-      parts.push(
-        `${bot.teamLead ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`,
-      );
-    }
+    if (plate.length === 0) return '';
 
-    // Slots 4–6 (session notes, compaction summary, memory suggestions) are empty-safe stubs
-    // that will be wired in Phases 4, 6, and 2 respectively.
+    const shown = plate.slice(0, REMINDER_CAP);
+    const more = plate.length - shown.length;
+    const lines = shown
+      .map(
+        (t) =>
+          `- [#${t.id}] ${t.description}${bot.teamLead ? ` (→ ${t.owner})` : ''}${projects.length > 1 ? ` [${t.project}]` : ''}`,
+      )
+      .join('\n');
+    return `${bot.teamLead ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`;
+  }
 
-    return parts.join('\n\n');
+  /**
+   * Build the full `recalled` context block for `bot` — `fetchMemory` + `fetchTasks` joined.
+   * Returns '' when there's nothing to inject (an empty team store yields a role/project core +
+   * nothing else — practically always non-empty). The caller MUST write the result into state
+   * (even '') so a stale recall never survives the checkpoint.
+   *
+   * Kept for backward compatibility and as a convenience wrapper; the graph layer calls
+   * `fetchMemory` and `fetchTasks` independently so `refreshContext` can recompute only the
+   * dirtied slice.
+   */
+  async fetchContext(bot: EmployeeDefinition, id: Identity): Promise<string> {
+    const [memory, tasks] = await Promise.all([
+      this.fetchMemory(bot, id).catch(() => ''),
+      this.fetchTasks(bot, id).catch(() => ''),
+    ]);
+    return [memory, tasks].filter((s) => s.trim()).join('\n\n');
   }
 }
