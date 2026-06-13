@@ -21,6 +21,7 @@ import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { WorktreeService } from '../worktrees/worktree.service';
+import { coherenceNote, echoesOwnName } from './coherence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
@@ -240,10 +241,20 @@ export class SessionRunnerService {
             return false;
           });
       }
+      // Coherence canary: prose-report turns only (kind === undefined) — plan/questions artifacts
+      // are never flagged (their format differs intentionally). When the worker drops its name
+      // prefix the note rides along in lastReport, reaching the owner via the relay prompt,
+      // check_session, and the close-time worklog — no new plumbing required.
+      const degraded =
+        kind === undefined &&
+        result.trim() !== '' &&
+        !echoesOwnName(result, bot.name);
       await this.sessions.update(sessionId, {
         status: 'idle',
         engineSessionId: attachEngineSessionId,
-        lastReport,
+        lastReport: degraded
+          ? lastReport + coherenceNote(bot.name)
+          : lastReport,
         lastReportKind: kind,
         planAttached,
         turns: session.turns + 1,
@@ -264,7 +275,7 @@ export class SessionRunnerService {
         }
       } catch (updateErr) {
         this.logger.error(
-          `Failed to record session ${sessionId} failure: ${updateErr}`,
+          `Failed to record session ${sessionId} failure: ${String(updateErr)}`,
         );
       }
     } finally {
@@ -292,8 +303,15 @@ export class SessionRunnerService {
     engineSessionId?: string;
     note: string;
   } | null> {
-    const { bot, session, worktreePath, planBody, planEngineSessionId, keys, signal } =
-      opts;
+    const {
+      bot,
+      session,
+      worktreePath,
+      planBody,
+      planEngineSessionId,
+      keys,
+      signal,
+    } = opts;
     const keyFor = (engine: EWorkerEngineName) =>
       engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
     const systemPrompt = this.persona.workerPromptFor(bot);
