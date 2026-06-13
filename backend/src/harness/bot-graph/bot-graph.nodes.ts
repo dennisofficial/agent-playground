@@ -30,9 +30,14 @@ import {
   buildTimeContext,
   withDividers,
 } from './channel-render';
-import { type BotStateType, type ContextParts, renderContext } from './bot-state';
+import {
+  type BotStateType,
+  type ContextParts,
+  renderContext,
+} from './bot-state';
 import {
   asInput,
+  compactPriorToolResults,
   repairDanglingToolCalls,
   usageOf,
   withCacheBreakpoint,
@@ -220,7 +225,8 @@ export class BotGraphNodes {
           consecutiveSoftIgnores: softIgnores,
         }; // loop breaker
       const room = this.channelRegistry.get(channelId);
-      const dormant = this.dormancyEnabled && softIgnores >= this.dormancyThreshold;
+      const dormant =
+        this.dormancyEnabled && softIgnores >= this.dormancyThreshold;
       const d = await this.gateService.gate(
         bot,
         latest.text,
@@ -291,7 +297,9 @@ export class BotGraphNodes {
       // outage never aborts the turn.
       // Pass the previous turn's memorySuggestions so the assembler can inject them (Phase 2).
       const [memory, tasks, work] = await Promise.all([
-        this.fetchService.fetchMemory(bot, id, state.memorySuggestions).catch(() => ''),
+        this.fetchService
+          .fetchMemory(bot, id, state.memorySuggestions)
+          .catch(() => ''),
         this.fetchService.fetchTasks(bot, id).catch(() => ''),
         this.workContext(bot).catch(() => ''),
       ]);
@@ -332,7 +340,10 @@ export class BotGraphNodes {
       //   4. time context — VOLATILE (current time + gap note). Placed after recalled so it always
       //      lands outside the cached prefix. Never persisted into `messages`.
       //   5. this turn's new channel messages (with inline time-dividers for any within-batch gaps).
-      const history = repairDanglingToolCalls(state.messages);
+      // repair → compact prior tool results → cache breakpoints (order matters).
+      const history = compactPriorToolResults(
+        repairDanglingToolCalls(state.messages),
+      );
       const cachedHistory = history.length
         ? [
             ...history.slice(0, -1),
@@ -631,7 +642,13 @@ export class BotGraphNodes {
           ? this.reconcile.reconcileMemory(bot, transcript, id, state.decision)
           : Promise.resolve(''),
         transcript.trim()
-          ? this.reconcile.reconcileTasks(bot, transcript, id, state.decision, config)
+          ? this.reconcile.reconcileTasks(
+              bot,
+              transcript,
+              id,
+              state.decision,
+              config,
+            )
           : Promise.resolve(),
       ]);
       return { memorySuggestions };
