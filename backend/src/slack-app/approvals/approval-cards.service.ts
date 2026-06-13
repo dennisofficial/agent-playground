@@ -8,7 +8,7 @@ import { EmployeeRegistry } from '@harness/employees/employee.registry';
 import { BoardStore } from '@harness/memory/board-store';
 import { TicketNoteStore } from '@harness/memory/ticket-note-store';
 import { Injectable, Logger } from '@nestjs/common';
-import { parseSlackSurface } from '../slack-chat-surface';
+import { parseSlackSurface } from '../slack-membership';
 import { SlackDirectoryService } from '../slack-directory.service';
 import { SlackIdentityRegistry } from '../slack-identity.registry';
 import type {

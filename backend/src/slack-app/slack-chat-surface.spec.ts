@@ -586,3 +586,110 @@ describe('SlackChatSurface Block Kit footer', () => {
     expect(blocks[0].type).toBe('markdown');
   });
 });
+
+// ── File attachment (share_artifact) ────────────────────────────────────────────────────────────
+
+describe('SlackChatSurface file attachment (fileIds)', () => {
+  const msgWithFile = {
+    id: 'alex:k2:20',
+    authorBotId: 'alex',
+    authorName: 'Alex',
+    text: 'Here is the analysis.',
+    surfaceId: 'slack:T1:C042',
+    fileIds: ['F0ABCDEF'] as string[],
+  };
+
+  it('posts text first, then calls chat.update with file_ids when fileIds present', async () => {
+    const web = {
+      chat: {
+        postMessage: vi.fn(async () => ({ ok: true, ts: '1712.0050' })),
+        update: vi.fn(async () => ({ ok: true })),
+      },
+      reactions: { add: vi.fn(async () => ({ ok: true })) },
+    };
+    const clients = { clientFor: vi.fn(async () => web) };
+    const identities = { clientFor: vi.fn(async () => undefined) };
+    const directory = {
+      selfUserIdFor: vi.fn(async () => 'UBOT'),
+      resolveUser: vi.fn(async () => ({
+        authorId: 'dennis',
+        authorName: 'Dennis',
+      })),
+      displayNameOf: vi.fn(() => undefined),
+      ensureChannelRegistered: vi.fn(async () => {}),
+      resolveMention: vi.fn(async () => undefined),
+    };
+    const bus = { patchStatus: vi.fn() };
+    const env = { get: () => undefined };
+    const surface = new SlackChatSurface(
+      clients as never,
+      directory as never,
+      identities as never,
+      bus as never,
+      env as never,
+    );
+
+    await surface.post(msgWithFile);
+
+    // postMessage must be called first
+    expect(web.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(web.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C042',
+        text: 'Here is the analysis.',
+      }),
+    );
+
+    // chat.update must be called with the ts from postMessage and the file_ids
+    expect(web.chat.update).toHaveBeenCalledTimes(1);
+    expect(web.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C042',
+        ts: '1712.0050',
+        file_ids: ['F0ABCDEF'],
+      }),
+    );
+  });
+
+  it('does NOT call chat.update when fileIds is absent', async () => {
+    const { surface, web } = makeFakes();
+    // Add update mock to web
+    const update = vi.fn(async () => ({ ok: true }));
+    (web.chat as Record<string, unknown>).update = update;
+
+    await surface.post({
+      id: 'alex:k2:21',
+      authorBotId: 'alex',
+      authorName: 'Alex',
+      text: 'no file here',
+      surfaceId: 'slack:T1:C042',
+    });
+
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('puppet posts text and then calls chat.update with file_ids', async () => {
+    const alex = {
+      chat: {
+        postMessage: vi.fn(async () => ({ ok: true, ts: '1712.0060' })),
+        update: vi.fn(async () => ({ ok: true })),
+      },
+      reactions: { add: vi.fn(async () => ({ ok: true })) },
+      conversations: { join: vi.fn(async () => ({ ok: true })) },
+    };
+    const { surface, web } = makeFakes({}, { alex });
+
+    await surface.post(msgWithFile);
+
+    // Puppet posts the text
+    expect(alex.chat.postMessage).toHaveBeenCalledTimes(1);
+    // Puppet updates with file_ids (same client that posted)
+    expect(alex.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ts: '1712.0060',
+        file_ids: ['F0ABCDEF'],
+      }),
+    );
+    expect(web.chat.postMessage).not.toHaveBeenCalled();
+  });
+});

@@ -7,6 +7,7 @@ import { MemoryModule } from '../memory/memory.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
+import { ShareArtifactTool } from './artifacts/share-artifact.tool';
 import {
   ForgetTool,
   RecallTool,
@@ -111,6 +112,8 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     ProposePlanTool,
     OpenStandupTool,
     CloseStandupTool,
+    // artifacts
+    ShareArtifactTool,
   ],
 })
 export class ToolsModule {}

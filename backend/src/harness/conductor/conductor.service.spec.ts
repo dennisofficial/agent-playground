@@ -1,3 +1,4 @@
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { EnvService } from '@core/config/env/env.service';
 import { Subject } from 'rxjs';
 import type {
@@ -376,5 +377,136 @@ describe('ConductorService scheduling', () => {
     expect(events.some((e) => e.kind === 'message' && !e.fromHuman)).toBe(
       false,
     );
+  });
+});
+
+// ── share_artifact coordination ───────────────────────────────────────────────────────────────────
+
+describe('ConductorService share_artifact coordination', () => {
+  it('defers the message event until the tool result arrives, then emits with fileIds', async () => {
+    // Case A: text + share_artifact in the same AIMessage.
+    // Delta 1: AIMessage with text + share_artifact tool call.
+    // Delta 2: ToolMessage with the file_id result.
+    // Expected: ONE message event emitted AFTER delta 2, with fileIds.
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          {
+            decision: 'respond',
+            messages: [
+              new AIMessage({
+                content: 'Here is the analysis.',
+                tool_calls: [
+                  {
+                    id: 'call_abc',
+                    name: 'share_artifact',
+                    args: { content: '# Data', filename: 'data.md' },
+                  },
+                ],
+              }),
+              new ToolMessage({
+                content: 'Uploaded (file_id: F0ABCDEF).',
+                tool_call_id: 'call_abc',
+              }),
+            ],
+          },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'can you share your analysis?');
+    await conductor.whenIdle();
+
+    const botMessages = events.filter(
+      (e) => e.kind === 'message' && !e.fromHuman,
+    ) as Extract<ConductorEvent, { kind: 'message' }>[];
+
+    expect(botMessages).toHaveLength(1);
+    expect(botMessages[0].text).toBe('Here is the analysis.');
+    expect(botMessages[0].fileIds).toEqual(['F0ABCDEF']);
+  });
+
+  it('emits with fileIds collected from a prior tool-call step (Case B: no text in tool-call message)', async () => {
+    // Case B: AIMessage 1 has only tool_call (no text), ToolMessage brings file_id,
+    // AIMessage 2 has text — the text message should carry the fileIds.
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          {
+            decision: 'respond',
+            messages: [
+              // Step 1: tool call only, no text
+              new AIMessage({
+                content: '',
+                tool_calls: [
+                  {
+                    id: 'call_xyz',
+                    name: 'share_artifact',
+                    args: { content: 'data', filename: 'out.md' },
+                  },
+                ],
+              }),
+              new ToolMessage({
+                content: 'Uploaded (file_id: F1B2C3D4).',
+                tool_call_id: 'call_xyz',
+              }),
+              // Step 2: final text (no tool calls)
+              new AIMessage({ content: 'Here is the file.' }),
+            ],
+          },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'upload it');
+    await conductor.whenIdle();
+
+    const botMessages = events.filter(
+      (e) => e.kind === 'message' && !e.fromHuman,
+    ) as Extract<ConductorEvent, { kind: 'message' }>[];
+
+    // Only the text-bearing message should be emitted
+    expect(botMessages).toHaveLength(1);
+    expect(botMessages[0].text).toBe('Here is the file.');
+    expect(botMessages[0].fileIds).toEqual(['F1B2C3D4']);
+  });
+
+  it('safety-flushes a deferred message without fileIds if the turn ends before the tool result', async () => {
+    // Simulates a graph that produces an AIMessage with text+share_artifact but no ToolMessage
+    // (e.g. the graph errored or hit the step cap before running tools).
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          {
+            decision: 'respond',
+            messages: [
+              new AIMessage({
+                content: 'I attempted to share.',
+                tool_calls: [
+                  {
+                    id: 'call_fail',
+                    name: 'share_artifact',
+                    args: { content: 'x', filename: 'x.md' },
+                  },
+                ],
+              }),
+              // No ToolMessage — the tool result never arrives
+            ],
+          },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'share something');
+    await conductor.whenIdle();
+
+    const botMessages = events.filter(
+      (e) => e.kind === 'message' && !e.fromHuman,
+    ) as Extract<ConductorEvent, { kind: 'message' }>[];
+
+    // The message IS still emitted (safety flush), just without fileIds
+    expect(botMessages).toHaveLength(1);
+    expect(botMessages[0].text).toBe('I attempted to share.');
+    expect(botMessages[0].fileIds).toBeUndefined();
   });
 });

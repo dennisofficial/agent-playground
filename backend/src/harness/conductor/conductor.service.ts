@@ -1,5 +1,9 @@
 import { EnvService } from '@core/config/env/env.service';
-import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
+import {
+  type BaseMessage,
+  HumanMessage,
+  ToolMessage,
+} from '@langchain/core/messages';
 import { GraphRecursionError } from '@langchain/langgraph';
 import {
   Inject,
@@ -455,6 +459,39 @@ export class ConductorService
     const capped = (this.botBurst.get(channelId) ?? 0) >= MAX_BOT_BURST;
     let responded = false;
 
+    // ── share_artifact coordination ──────────────────────────────────────────────────────────────
+    // When an AIMessage contains both text AND share_artifact tool call(s), the message event is
+    // DEFERRED until the tool results arrive (so the Slack post happens AFTER the file_id is known
+    // and can be attached via chat.update). `resolvedFileIds` accumulates ids across all
+    // share_artifact results in the turn; they're spliced into the next text-bearing message event.
+    let deferredMsg:
+      | {
+          id: string;
+          text: string;
+          usage: MessageUsage | undefined;
+          pendingCallIds: Set<string>;
+        }
+      | undefined;
+    const resolvedFileIds: string[] = [];
+
+    const flushDeferred = (fileIds: string[]) => {
+      if (!deferredMsg) return;
+      const { id, text, usage } = deferredMsg;
+      deferredMsg = undefined;
+      this.emit({
+        id,
+        kind: 'message',
+        channelId,
+        authorId: bot.id,
+        authorName: bot.name,
+        fromHuman: false,
+        text,
+        usage,
+        fileIds: fileIds.length > 0 ? fileIds : undefined,
+        ts: clock(),
+      });
+    };
+
     const commit = (msg: BaseMessage) => {
       const um = (
         msg as {
@@ -495,9 +532,13 @@ export class ConductorService
       }
 
       const text = flattenContent(msg.content).trim();
+      const calls = (msg as { tool_calls?: ToolCall[] }).tool_calls ?? [];
+      const shareArtifactCalls = calls.filter(
+        (c) => c.name === 'share_artifact',
+      );
+
       if (text) {
-        // The reply goes back onto the room's shared log so teammates + session relays see it, and the
-        // `message` event carries the SAME id so the channel message and its render row line up.
+        // The reply goes back onto the room's shared log so teammates + session relays see it.
         const id = `${bot.id}:${this.mintTag}:${this.emitSeq++}`;
         this.channel.append({
           id,
@@ -507,19 +548,39 @@ export class ConductorService
           authorBotId: bot.id,
           text,
         });
-        this.emit({
-          id,
-          kind: 'message',
-          channelId,
-          authorId: bot.id,
-          authorName: bot.name,
-          fromHuman: false,
-          text,
-          usage,
-          ts: clock(),
-        });
+
+        if (shareArtifactCalls.length > 0) {
+          // Defer the message event: the file upload happens in the tool node (next delta).
+          // After the ToolMessages arrive we'll flush with the collected file_ids.
+          deferredMsg = {
+            id,
+            text,
+            usage,
+            pendingCallIds: new Set(
+              shareArtifactCalls
+                .map((c) => c.id)
+                .filter((id): id is string => id != null),
+            ),
+          };
+        } else {
+          // No share_artifact — emit immediately, carrying any already-resolved file_ids from
+          // a PRIOR tool-call step (Case B: AI called share_artifact separately, then said text).
+          const ids = resolvedFileIds.splice(0);
+          this.emit({
+            id,
+            kind: 'message',
+            channelId,
+            authorId: bot.id,
+            authorName: bot.name,
+            fromHuman: false,
+            text,
+            usage,
+            fileIds: ids.length > 0 ? ids : undefined,
+            ts: clock(),
+          });
+        }
       }
-      const calls = (msg as { tool_calls?: ToolCall[] }).tool_calls ?? [];
+
       for (const c of calls) {
         this.emit({
           id: `${bot.id}:${this.emitSeq++}`,
@@ -627,7 +688,26 @@ export class ConductorService
             });
           }
           for (const msg of delta.messages ?? []) {
-            if (msg.getType() === 'ai') commit(msg); // skip injected Human messages (already in channel/UI)
+            if (msg.getType() === 'ai') {
+              commit(msg); // skip injected Human messages (already in channel/UI)
+            } else if (msg instanceof ToolMessage && deferredMsg) {
+              // Check if this is a share_artifact result the deferred message is waiting on.
+              const callId = msg.tool_call_id;
+              if (callId && deferredMsg.pendingCallIds.has(callId)) {
+                deferredMsg.pendingCallIds.delete(callId);
+                // Extract file_id from the tool result (format: "Uploaded (file_id: Fxxxxxxx).")
+                const content =
+                  typeof msg.content === 'string'
+                    ? msg.content
+                    : JSON.stringify(msg.content);
+                const m = content.match(/file_id:\s*(F[A-Z0-9]+)/i);
+                if (m?.[1]) resolvedFileIds.push(m[1]);
+                // Flush when all pending share_artifact calls have reported back.
+                if (deferredMsg.pendingCallIds.size === 0) {
+                  flushDeferred(resolvedFileIds.splice(0));
+                }
+              }
+            }
           }
         }
       }
@@ -646,6 +726,9 @@ export class ConductorService
       // no reaction, so `composing` stays undefined and nothing is removed.
       if (composing?.targetId)
         this.unreact(bot, channelId, composing.emoji, composing.targetId);
+      // Safety-flush a deferred message (e.g. the graph ended/errored before the tool result
+      // arrived). Posts without file_ids rather than silently dropping the message.
+      if (deferredMsg) flushDeferred(resolvedFileIds.splice(0));
     }
 
     // The checkpoint is the cursor's source of truth; read it back, then persist it. MONOTONIC on
@@ -659,7 +742,7 @@ export class ConductorService
       const final = await this.graphs
         .getBotGraph(bot)
         .getState({ configurable: { thread_id: thread } });
-      const committed = final.values.cursor as number | undefined;
+      const committed = (final.values as { cursor?: number }).cursor;
       cursorAfter = Math.max(
         cursorBefore,
         typeof committed === 'number' ? committed : cursorBefore,

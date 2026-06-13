@@ -83,6 +83,7 @@ export class SurfaceBridge
             text: e.text,
             surfaceId: e.channelId,
             usage,
+            fileIds: e.fileIds,
           }).catch((err) => this.logger.error(`surface.post failed: ${err}`));
         } else if (e.kind === 'reaction') {
           const asBot = { id: e.botId, name: e.botName };

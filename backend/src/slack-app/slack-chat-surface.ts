@@ -14,6 +14,12 @@ import { SlackDirectoryService } from './slack-directory.service';
 import { SlackIdentityRegistry } from './slack-identity.registry';
 import type { SlackInboundEvent } from './slack-inbound.types';
 import {
+  isSlackError,
+  parseSlackSurface,
+  slackSurfaceId,
+  withMembershipJoin,
+} from './slack-membership';
+import {
   emojiToSlackName,
   extractHandles,
   extractMentionIds,
@@ -22,31 +28,11 @@ import {
 } from './slack-text';
 import { TenantSlackClients } from './tenant-slack-clients';
 
-const SURFACE_PREFIX = 'slack:';
+export { parseSlackSurface } from './slack-membership';
+
 /** Bot-on-bot reactions target harness-minted message ids — remember where we posted each one. */
 const POSTED_ID_LRU_MAX = 2_000;
 const POST_RETRIES = 3;
-
-/** Tenant-qualified Slack room coordinate: `slack:<teamId>:<channel>`. Slack channel ids aren't
- * guaranteed unique across workspaces, so the team id is part of the coordinate. */
-const slackSurfaceId = (teamId: string, channel: string): string =>
-  `${SURFACE_PREFIX}${teamId}:${channel}`;
-
-/** Parse `slack:<teamId>:<channel>` → its parts, or undefined for a non-slack / DM coordinate
- * (only real channels are posted to in v1). Exported for the approval cards (the proposal port's
- * Slack adapter routes by the same coordinate). */
-export function parseSlackSurface(
-  surfaceId: string,
-): { teamId: string; channel: string } | undefined {
-  if (!surfaceId.startsWith(SURFACE_PREFIX)) return undefined;
-  const rest = surfaceId.slice(SURFACE_PREFIX.length);
-  const sep = rest.indexOf(':');
-  if (sep <= 0) return undefined;
-  const teamId = rest.slice(0, sep);
-  const channel = rest.slice(sep + 1);
-  if (!channel || channel.startsWith('dm:')) return undefined; // Slack DMs are a v2 item
-  return { teamId, channel };
-}
 
 /** Slack's membership-failure codes differ per method: puppets hit these in channels they
  * haven't joined → `conversations.join` + one retry, then fall back to the main app. */
@@ -207,6 +193,7 @@ export class SlackChatSurface implements ChatSurface {
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
         let res: { ts?: string; ok?: boolean } | undefined;
+        let usedClient: WebClient | undefined;
 
         if (puppet) {
           res = await this.tryWithJoin(
@@ -232,6 +219,7 @@ export class SlackChatSurface implements ChatSurface {
                   )
               : () => puppet.chat.postMessage({ channel, text }),
           );
+          if (res) usedClient = puppet;
         }
 
         if (!res && ears) {
@@ -253,9 +241,22 @@ export class SlackChatSurface implements ChatSurface {
                 text,
                 ...earsExtras,
               });
+          if (res) usedClient = ears;
         }
 
-        if (res?.ts) this.recordPostedId(msg.id, { channel, ts: res.ts });
+        if (res?.ts) {
+          this.recordPostedId(msg.id, { channel, ts: res.ts });
+          // Attach uploaded files to the message via chat.update(file_ids).
+          // The files were uploaded UNSHARED during the tool call; this step links them.
+          if (msg.fileIds?.length && usedClient) {
+            await usedClient.chat.update({
+              channel,
+              ts: res.ts,
+              text,
+              file_ids: msg.fileIds,
+            });
+          }
+        }
         return;
       } catch (err) {
         lastErr = err;
@@ -402,7 +403,8 @@ export class SlackChatSurface implements ChatSurface {
    * `channels:join` scope) and retry ONCE. Returns undefined when the join/retry also fails
    * (private channel, puppet not invited) — callers fall back to the main-app identity. Anything
    * that is NOT a membership failure (network, already_reacted, …) propagates to the caller's
-   * own handling. */
+   * own handling. Delegates the join-and-retry logic to `withMembershipJoin`; this method adds the
+   * class-level dedup warn so private-channel fallbacks are only logged once. */
   private async tryWithJoin<T>(
     client: WebClient,
     channel: string,
@@ -410,24 +412,15 @@ export class SlackChatSurface implements ChatSurface {
     membershipCodes: string[],
     call: () => Promise<T>,
   ): Promise<T | undefined> {
-    try {
-      return await call();
-    } catch (err) {
-      if (!isSlackError(err, membershipCodes)) throw err;
-      try {
-        await client.conversations.join({ channel });
-        return await call();
-      } catch {
-        const key = `${botId}|${channel}`;
-        if (!this.membershipFallbacks.has(key)) {
-          this.membershipFallbacks.add(key);
-          this.logger.warn(
-            `puppet '${botId}' can't act in ${channel} (private channel? invite the bot) — falling back to the main app identity`,
-          );
-        }
-        return undefined;
+    return withMembershipJoin(client, channel, membershipCodes, call, () => {
+      const key = `${botId}|${channel}`;
+      if (!this.membershipFallbacks.has(key)) {
+        this.membershipFallbacks.add(key);
+        this.logger.warn(
+          `puppet '${botId}' can't act in ${channel} (private channel? invite the bot) — falling back to the main app identity`,
+        );
       }
-    }
+    });
   }
 
   private recordPostedId(
@@ -440,12 +433,6 @@ export class SlackChatSurface implements ChatSurface {
       if (oldest !== undefined) this.postedIds.delete(oldest);
     }
   }
-}
-
-function isSlackError(err: unknown, codes: string[]): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  const code = (err as { data?: { error?: string } }).data?.error;
-  return code !== undefined && codes.includes(code);
 }
 
 function sleep(ms: number): Promise<void> {
