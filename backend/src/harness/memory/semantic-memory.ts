@@ -9,6 +9,7 @@ import {
   recallProjects,
   recallScopes,
   scopeForTier,
+  teamScope,
   Tier,
 } from '../domain/identity';
 
@@ -320,6 +321,27 @@ export class SemanticMemory {
     return [...tierA, ...tierB]
       .sort((a, b) => b.sim - a.sim)
       .map(({ entity, sim }) => ({ entity, sim }));
+  }
+
+  /**
+   * A cheap, always-on standing-preferences core: the top `limit` team-scope facts for this team,
+   * ordered by recency then confidence — **no embedding** (must be near-free; runs on every turn).
+   * Used by the context assembler to build the tiny injected standing-context block; never for
+   * dedup or similarity judgments. Returns a newline-joined list of `- fact` lines, or '' when
+   * the team scope holds no live facts.
+   */
+  async standingContext(id: Identity, limit = 5): Promise<string> {
+    const scope = teamScope(id.team);
+    const rows = await this.facts
+      .createQueryBuilder('f')
+      .where('f.scope = :scope', { scope })
+      .andWhere('f.team_id = :team', { team: id.team })
+      .orderBy('f.updated_at', 'DESC')
+      .addOrderBy('f.confidence', 'DESC')
+      .limit(limit)
+      .getMany();
+    if (rows.length === 0) return '';
+    return rows.map((f) => `- ${f.fact}`).join('\n');
   }
 
   /** A live fact by row id, ONLY if in a scope this identity may access — the id-op guard. */

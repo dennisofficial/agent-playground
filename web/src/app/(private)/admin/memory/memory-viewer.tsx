@@ -23,6 +23,7 @@ interface MemoryViewerProps {
   facts: FactView[];
   truncated: boolean;
   total: number;
+  isFetching?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────────────────────────
@@ -33,9 +34,11 @@ export function MemoryViewer({
   facts,
   truncated,
   total,
+  isFetching = false,
 }: MemoryViewerProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const busy = isPending || isFetching;
 
   // Derive sorted list of distinct agent ids from loaded facts (bot + private facts only have botId).
   const agents = [...new Set(facts.flatMap((f) => (f.botId !== null ? [f.botId] : [])))].sort();
@@ -137,7 +140,7 @@ export function MemoryViewer({
           id="workspace-select"
           value={selectedTeamId}
           onChange={(e) => handleTeamChange(e.target.value)}
-          disabled={isPending}
+          disabled={busy}
           className={`${inputCls} min-w-[180px] disabled:opacity-60`}
         >
           {tenants.map((t) => (
@@ -146,7 +149,7 @@ export function MemoryViewer({
             </option>
           ))}
         </select>
-        {isPending && (
+        {busy && (
           <span className="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
         )}
       </div>

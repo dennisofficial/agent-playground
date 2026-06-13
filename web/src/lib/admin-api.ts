@@ -1,18 +1,10 @@
-import 'server-only';
-import { env } from './env';
+import { auth } from './auth';
 import type { FactView, FactListResponse, TenantView, Tier } from '@workspace/shared';
 
 // Re-export shared types so consumers can import them from this module.
 export type { FactView, FactListResponse, TenantView, Tier };
 
 /**
- * Server-side client for the backend admin API. The bearer lives in server env and every call
- * happens on the Next server (Server Components for reads, Server Actions for mutations) — the
- * browser never talks to the backend or sees the token.
- *
- * All project and token endpoints are tenant-scoped: /tenants/:teamId/projects and
- * /tenants/:teamId/tokens. Every function accepts teamId as its first argument.
- *
  * Type mirrors of backend/src/harness/projects/project.types.ts — two small interfaces; mirroring
  * beats coupling the web build to backend sources (keep in sync by hand).
  */
@@ -48,94 +40,10 @@ export interface GithubTokenMeta {
   updatedAt: string;
 }
 
-async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = env.ADMIN_API_TOKEN;
-  if (!token) {
-    throw new Error(
-      'ADMIN_API_TOKEN is not set for the web app — add it to web/.env.personal (same value as the backend).',
-    );
-  }
-  const res = await fetch(`${env.BACKEND_URL}${path}`, {
-    ...init,
-    cache: 'no-store',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
-    const message = Array.isArray(body.message) ? body.message.join('; ') : body.message;
-    throw new Error(message || `Backend admin API answered ${res.status}.`);
-  }
-  return (await res.json()) as T;
-}
-
-/** Builds the tenant-scoped base path for all project/token routes. */
-const tenantBase = (teamId: string) => `/tenants/${encodeURIComponent(teamId)}`;
-
-export const listProjects = (teamId: string) =>
-  adminFetch<ProjectRecord[]>(`${tenantBase(teamId)}/projects`);
-
-export const createProject = (
-  teamId: string,
-  dto: {
-    projectId: string;
-    displayName: string;
-    gitUrl: string;
-    defaultBranch?: string;
-    tokenName?: string;
-  },
-) =>
-  adminFetch<ProjectRecord>(`${tenantBase(teamId)}/projects`, {
-    method: 'POST',
-    body: JSON.stringify(dto),
-  });
-
-export const updateProject = (
-  teamId: string,
-  id: string,
-  dto: Partial<{
-    displayName: string;
-    gitUrl: string;
-    defaultBranch: string;
-    tokenName: string | null;
-  }>,
-) =>
-  adminFetch<ProjectRecord>(
-    `${tenantBase(teamId)}/projects/${encodeURIComponent(id)}`,
-    { method: 'PATCH', body: JSON.stringify(dto) },
-  );
-
-export const listTokens = (teamId: string) =>
-  adminFetch<GithubTokenMeta[]>(`${tenantBase(teamId)}/tokens`);
-
-export const putToken = (teamId: string, dto: { name: string; token: string; default?: boolean }) =>
-  adminFetch<GithubTokenMeta>(`${tenantBase(teamId)}/tokens`, {
-    method: 'POST',
-    body: JSON.stringify(dto),
-  });
-
-export const setDefaultToken = (teamId: string, name: string) =>
-  adminFetch<{ ok: boolean }>(
-    `${tenantBase(teamId)}/tokens/${encodeURIComponent(name)}/default`,
-    { method: 'PUT' },
-  );
-
-export const deleteToken = (teamId: string, name: string) =>
-  adminFetch<{ ok: boolean }>(
-    `${tenantBase(teamId)}/tokens/${encodeURIComponent(name)}`,
-    { method: 'DELETE' },
-  );
-
 // ── Memory Viewer API ────────────────────────────────────────────────────────────────────────────
 
-/** All registered workspaces, sorted by display name. Powers the workspace picker. */
-export const listTenants = () => adminFetch<TenantView[]>('/tenants');
-
 /** Filtered, paginated list of facts for a tenant. */
-export function listFacts(teamId: string, query: FactQuery = {}): Promise<FactListResponse> {
+export async function listFacts(teamId: string, query: FactQuery = {}): Promise<FactListResponse> {
   const params = new URLSearchParams();
   if (query.tier !== undefined) params.set('tier', query.tier);
   if (query.projectId !== undefined) params.set('projectId', query.projectId);
@@ -151,21 +59,16 @@ export function listFacts(teamId: string, query: FactQuery = {}): Promise<FactLi
   if (query.sort !== undefined) params.set('sort', query.sort);
 
   const qs = params.toString();
-  return adminFetch<FactListResponse>(
+  const res = await auth.httpClient.get<FactListResponse>(
     `/tenants/${encodeURIComponent(teamId)}/memory/facts${qs ? `?${qs}` : ''}`,
   );
+  return res.data;
 }
-
-/** Single fact by numeric row id (includes soft-deleted). Returns null-equivalent on 404. */
-export const getFact = (teamId: string, id: number) =>
-  adminFetch<FactView>(
-    `/tenants/${encodeURIComponent(teamId)}/memory/facts/${encodeURIComponent(String(id))}`,
-  );
 
 const ALL_FACTS_PAGE_SIZE = 200;
 
 /**
- * Load every fact for a tenant in a single server-side call (paginated under the hood).
+ * Load every fact for a tenant in a single call (paginated under the hood).
  * Always fetches with `includeDeleted: true` so the client can compute the forgotten count
  * hint without a second request.
  *

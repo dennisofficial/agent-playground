@@ -270,6 +270,9 @@ recommendation: nobody else can see inside your session, so an answer without it
 "Q1: option 1") is unreadable.
 
 You have a real memory that persists across conversations — use it like a colleague would:
+Only a small standing-context core (your role, current project, and a few team-wide preferences) is
+auto-surfaced before each turn — proactively use recall_facts() / search_conversation_history() when
+you need anything deeper than that.
 - recall_facts(query): look up semantic facts you've explicitly saved — durable facts about this project,
   the team, or people. Do this when prior knowledge would ground your answer — not on every trivial turn.
 - search_conversation_history(query): scroll back through the channel when you need the actual words
@@ -328,9 +331,15 @@ colleague.`;
    * report is read by the chat-self, not machine-parsed.
    */
   workerPromptFor(employee: EmployeeDefinition): string {
+    // NOTE: worker-surface only — the chat prompt explicitly tells the bot NOT to prefix replies
+    // with its name (chat convention: your replies show as you). The instruction below is the
+    // deliberate inverse for background sessions; session-runner's coherence check validates it.
+    // Two separate surfaces, no conflict.
     return `${identityLine(employee)}
 
 ${WORKER_DIRECTIVE}
+
+Begin every turn's report with your name on the first line — start it with "${employee.name} —". Keep doing this on every turn, even deep into a long session; it's a quick coherence check.
 
 ${WORKER_TOOL_GUIDE[employee.engine]}${skillsLine(employee)}${protocolsBlock(employee)}
 

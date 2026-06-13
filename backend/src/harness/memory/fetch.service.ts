@@ -1,141 +1,111 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Fact } from '@workspace/shared/schemas';
-import { Repository } from 'typeorm';
-import {
-  Identity,
-  projectScope,
-  recallProjects,
-  recallScopes,
-} from '../domain/identity';
+import { Identity, recallProjects } from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
-import { MemoryMetricsService } from './memory-metrics.service';
+import { BoardStore } from './board-store';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
 
-// Cap on reminders injected per turn, so a growing plate doesn't monotonically bloat context.
+// Cap on reminders injected per turn so a growing plate doesn't monotonically bloat context.
 const REMINDER_CAP = 12;
+// Cap on active board tasks shown in the working-state slot.
+const BOARD_TASK_CAP = 5;
 
 /**
- * The pre-LLM memory FETCH — the read half of deterministic memory. Before a bot thinks, this pulls
- * the facts + open tasks relevant to what's being said and hands them back as a `recalled` block the
- * graph injects into the model's context. So the bot always walks in knowing, instead of
- * (un)reliably choosing to call `recall` itself. Each half has a cheap programmatic skip so an empty
- * store costs nothing (no embeddings call).
- * (Ported from playground/src/memory/fetch.ts; the ticket-workspace block is deliberately dropped —
- * worktrees/board are not in this pass.)
+ * The pre-LLM context ASSEMBLER — builds the `recalled` block injected before the bot thinks.
+ * Priority policy (top = highest priority, smallest footprint; bottom = lower priority):
+ *
+ *   1. Standing context core (~100–200 tokens, always emitted):
+ *        Role + active project + ≤5 team-scope standing preferences (no embedding — near-free).
+ *   2. Active board tasks  (in_progress for this bot, hard-capped at BOARD_TASK_CAP).
+ *   3. Reminder plate      (open tasks, REMINDER_CAP-capped).
+ *   4. Open notes slot     (Phase 4 — empty-safe until Phase 4 lands).
+ *   5. Compaction summary  (Phase 6 — empty-safe until Phase 6 lands).
+ *   6. Memory suggestions  (Phase 2 — empty-safe until Phase 2 lands).
+ *
+ * The bulk semantic-recall ("What you already know") and cross-project blocks are REMOVED from
+ * auto-injection — they live behind on-demand `recall_facts()` / `search_conversation_history()`.
+ * Those blocks created a "Lost in the Middle" problem: marginally-relevant facts buried the ones
+ * that actually matter. The tiny always-on core is what the bot can reliably use; everything else
+ * is on-demand.
+ *
+ * The bot's worktrees + sessions (`workContext`) are assembled by the `recallNode` in
+ * `bot-graph.nodes.ts` and joined to this output — they are bounded working state that lives in
+ * the graph layer because they need WorktreeService + SessionRegistry.
+ *
+ * Split into `fetchMemory` (sections 1–2) and `fetchTasks` (section 3) so the post-tools
+ * `refreshContext` node can recompute only the dirtied half without re-running the whole assembler.
+ * `fetchContext` remains as a full-context convenience wrapper (backward-compat for callers and
+ * tests that want the complete block in one call).
  */
 @Injectable()
 export class FetchService {
   constructor(
-    @InjectRepository(Fact) private readonly facts: Repository<Fact>,
     private readonly semantic: SemanticMemory,
     private readonly tasks: TaskStore,
-    private readonly metrics: MemoryMetricsService,
+    private readonly board: BoardStore,
   ) {}
 
-  /** Programmatic empty-skip: does this identity have ANY live fact in its recall scopes? */
-  private async hasFacts(id: Identity): Promise<boolean> {
-    const scopes = recallScopes(id);
-    if (scopes.length === 0) return false;
-    const rows: unknown[] = await this.facts.manager.query(
-      `SELECT 1 FROM facts WHERE scope = ANY($1) AND deleted_at IS NULL LIMIT 1`,
-      [scopes],
-    );
-    return rows.length > 0;
-  }
-
-  /** Programmatic empty-skip for the cross-project block: does ANY OTHER project hold a live fact?
-   * "Other" = not recallable this turn (a DM recalls every shared project directly). */
-  private async hasOtherProjectFacts(id: Identity): Promise<boolean> {
-    const rows: unknown[] = await this.facts.manager.query(
-      `SELECT 1 FROM facts WHERE scope LIKE 'project:%' AND scope <> ALL($1::text[]) AND deleted_at IS NULL LIMIT 1`,
-      [recallProjects(id).map(projectScope)],
-    );
-    return rows.length > 0;
-  }
-
   /**
-   * The facts + cross-project half of the pre-LLM context. Embedding top-k over the current
-   * project + team, plus a small, strongly-relevant set from OTHER projects rendered LABELED with
-   * their project. Returns '' when there's nothing to recall (empty store or empty query).
+   * The standing-context + board-work slice of the pre-LLM context (`memory` refresh scope).
+   * No query or embedding — cheap. Returns the standing context core (role, project, team prefs)
+   * plus any in-progress board tasks.
+   *
+   * This is the half refreshed when remember / update_memory / forget run mid-turn. In Phase 3
+   * those tools don't change standing context or board tasks directly, but the split is the right
+   * home for Phase 2 memory suggestions and future semantic-recall reactivation.
    */
-  async fetchMemory(
-    _bot: EmployeeDefinition,
-    query: string,
-    id: Identity,
-  ): Promise<string> {
+  async fetchMemory(bot: EmployeeDefinition, id: Identity): Promise<string> {
     const parts: string[] = [];
 
-    // The two programmatic empty-skips are independent — run them in parallel. Cross-project recall
-    // is gated INDEPENDENTLY of hasFacts: a clean-slate current project must still surface
-    // strongly-relevant facts from other projects.
-    const [hasOwn, hasOther] = query.trim()
-      ? await Promise.all([this.hasFacts(id), this.hasOtherProjectFacts(id)])
-      : [false, false];
+    // ── 1. Standing context core ────────────────────────────────────────────────────────────────
+    // Role + active project is always rendered for grounding (it's nearly free and restates
+    // identity compactly). Team-scope standing prefs are appended when present.
+    const prefs = await this.semantic.standingContext(id).catch(() => '');
+    const coreLines: string[] = [`Role: ${bot.role}, project: ${id.project}.`];
+    if (prefs) coreLines.push(prefs);
+    parts.push(`Standing context:\n${coreLines.join('\n')}`);
 
-    // Embed the query ONCE and hand the vector to both recall paths. Retrieval failure must DEGRADE
-    // to empty recall, not abort the turn — match reconcile's posture.
-    let qv: string | undefined;
-    if (hasOwn || hasOther) {
-      try {
-        qv = await this.semantic.embed(query);
-      } catch {
-        /* degrade to no recall */
-      }
-    }
-
-    const [facts, others] = await Promise.all([
-      qv && hasOwn
-        ? this.semantic
-            .recall(query, id, undefined, undefined, qv)
-            .catch(() => [])
-        : [],
-      qv && hasOther
-        ? this.semantic
-            .recallOtherProjects(query, id, { precomputed: qv })
-            .catch(() => [])
-        : [],
-    ]);
-
-    // Recall-health metric: count every pass with a real retrieval query (even one that surfaced
-    // nothing — the empty-recall rate is the signal). Facts = own-scope + cross-project, not reminders.
-    if (query.trim()) this.metrics.recordRecall(facts.length + others.length);
-
-    // `(source: …)` is assertion PROVENANCE — the human speaking when the fact was extracted —
-    // not whose work the fact describes.
-    const sourceTag = (f: { asserted_by: string | null }): string =>
-      f.asserted_by ? ` (source: ${f.asserted_by})` : '';
-    if (facts.length > 0) {
+    // ── 2. Active board tasks (in_progress) ─────────────────────────────────────────────────────
+    // Directly-actionable working state: what the bot is currently executing on the team board.
+    const boardTasks = await this.board
+      .list({ team: id.team, assignee: bot.id, status: 'in_progress' })
+      .catch(() => []);
+    if (boardTasks.length > 0) {
+      const shown = boardTasks.slice(0, BOARD_TASK_CAP);
+      const more = boardTasks.length - shown.length;
+      const lines = shown.map((t) => `- [#${t.id}] ${t.title}`).join('\n');
       parts.push(
-        `What you already know:\n${facts.map((f) => `- ${f.fact}${sourceTag(f)}`).join('\n')}`,
+        `Active board work:\n${lines}${more > 0 ? `\n…and ${more} more (list_board)` : ''}`,
       );
     }
-    if (others.length > 0) {
-      parts.push(
-        `From other projects (for reference):\n${others.map((o) => `- [${o.project}] ${o.fact.fact}${sourceTag(o.fact)}`).join('\n')}`,
-      );
-    }
+
+    // Slots 4–6 (session notes, compaction summary, memory suggestions) are empty-safe stubs
+    // that will be wired in Phases 4, 6, and 2 respectively.
 
     return parts.join('\n\n');
   }
 
   /**
-   * The reminders-plate half of the pre-LLM context. No query or embedding — cheap. Returns '' when
-   * the plate is empty. The team lead sees the whole team's plate; everyone else sees only their own.
+   * The reminders-plate slice of the pre-LLM context (`tasks` refresh scope). No query or
+   * embedding — cheap. Returns '' when the plate is empty. The team lead sees the whole team's
+   * plate; everyone else sees only their own.
    */
   async fetchTasks(bot: EmployeeDefinition, id: Identity): Promise<string> {
+    // ── 3. Reminder plate ───────────────────────────────────────────────────────────────────────
+    // Personal commitments the bot has made. A DM spans every project the pair shares.
+    // Team-lead sees the whole team's plate; others see their own.
     const projects = recallProjects(id);
     const plates = await Promise.all(
       projects.map((project) =>
-        bot.teamLead
+        (bot.teamLead
           ? this.tasks.openTasks(id.team, project)
           : this.tasks.listTasks({
               team: id.team,
               project,
               status: 'open',
               owner: bot.id,
-            }),
+            })
+        ).catch(() => [] as Awaited<ReturnType<typeof this.tasks.listTasks>>),
       ),
     );
     const plate = plates.flat();
@@ -150,5 +120,23 @@ export class FetchService {
       )
       .join('\n');
     return `${bot.teamLead ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`;
+  }
+
+  /**
+   * Build the full `recalled` context block for `bot` — `fetchMemory` + `fetchTasks` joined.
+   * Returns '' when there's nothing to inject (an empty team store yields a role/project core +
+   * nothing else — practically always non-empty). The caller MUST write the result into state
+   * (even '') so a stale recall never survives the checkpoint.
+   *
+   * Kept for backward compatibility and as a convenience wrapper; the graph layer calls
+   * `fetchMemory` and `fetchTasks` independently so `refreshContext` can recompute only the
+   * dirtied slice.
+   */
+  async fetchContext(bot: EmployeeDefinition, id: Identity): Promise<string> {
+    const [memory, tasks] = await Promise.all([
+      this.fetchMemory(bot, id).catch(() => ''),
+      this.fetchTasks(bot, id).catch(() => ''),
+    ]);
+    return [memory, tasks].filter((s) => s.trim()).join('\n\n');
   }
 }

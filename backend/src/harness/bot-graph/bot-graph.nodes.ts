@@ -214,7 +214,13 @@ export class BotGraphNodes {
       };
     };
 
-    /** The pre-LLM read: fetch the facts + open tasks relevant to what's being said into `recalled`. */
+    /**
+     * The pre-LLM context read: assemble the standing-context core + working-state slots into
+     * `recalled`. Phase 3: FetchService.fetchContext no longer does semantic recall (no embedding)
+     * — it returns the tiny always-on core (role, project, team prefs) + active board tasks +
+     * reminders. The live work state (worktrees + sessions) is joined in from `workContext`.
+     * Always set recalled (even to '') so a stale recall from a prior turn never lingers.
+     */
     const recallNode = async (
       state: BotStateType,
       config: RunnableConfig,
@@ -223,9 +229,10 @@ export class BotGraphNodes {
       const fresh = channel
         .since(state.cursor, channelId)
         .filter((m) => m.authorBotId !== bot.id);
+      // Build the retrieval query from fresh messages + a few lines of prior context. Stored in
+      // `recallQuery` for potential future use (semantic recall reactivation); not consumed by
+      // fetchMemory in Phase 3 (standing context + board tasks — no embedding needed).
       const freshText = fresh.map((m) => `${m.author}: ${m.text}`).join('\n');
-      // Enrich the retrieval query with a few lines of prior context so a THIN turn ("sounds good")
-      // doesn't embed to noise. The tail is query-only — it shapes retrieval, never what's stored.
       const priorTail = fresh.length
         ? this.historyBefore(fresh[0].seq, channelId, 3)
         : '';
@@ -234,7 +241,7 @@ export class BotGraphNodes {
       // Three independent reads — run in parallel. Each degrades to '' on error so a service
       // outage never aborts the turn.
       const [memory, tasks, work] = await Promise.all([
-        this.fetchService.fetchMemory(bot, query, id).catch(() => ''),
+        this.fetchService.fetchMemory(bot, id).catch(() => ''),
         this.fetchService.fetchTasks(bot, id).catch(() => ''),
         this.workContext(bot).catch(() => ''),
       ]);
@@ -611,7 +618,7 @@ export class BotGraphNodes {
         : Promise.resolve();
       const refreshMemory = scopes.has('memory')
         ? this.fetchService
-            .fetchMemory(bot, state.recallQuery, id)
+            .fetchMemory(bot, id)
             .then((m) => {
               next.memory = m;
             })
