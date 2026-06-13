@@ -21,6 +21,14 @@ export enum EWorkerEngineName {
 export type WorkerMode = 'plan' | 'execute';
 
 /**
+ * The ROLE a worker run plays — the key for per-employee engine/model/prompt bindings
+ * (`EmployeeDefinition.roles`). A superset of `WorkerMode`: 'plan'/'execute' are also session modes,
+ * while 'review' is a one-shot adversarial pass (the plan self-review, and the lead's peer review)
+ * that never becomes a long-lived session mode.
+ */
+export type WorkerRole = 'plan' | 'execute' | 'review';
+
+/**
  * Reasoning-effort level for a worker run. Mirrors the Claude Agent SDK's `effort` option (the seam
  * stays SDK-agnostic by re-declaring the union rather than importing it). Only the Claude engine
  * honors it today; Codex/LangGraph ignore it.

@@ -59,6 +59,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'list_sessions',
         'list_tasks',
         'list_worktrees',
+        'mark_pr_ready',
         'open_pr',
         'publish_worktree',
         'pull_worktree',

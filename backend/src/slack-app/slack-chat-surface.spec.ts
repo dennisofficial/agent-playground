@@ -547,11 +547,11 @@ describe('SlackChatSurface Block Kit footer', () => {
     expect(footer.indexOf('5 calls')).toBeLessThan(footer.indexOf('in '));
   });
 
-  it('single-call turn: footer does NOT show model name or call count', async () => {
+  it('single-call turn: footer shows the model name but no call count', async () => {
     const { surface, web } = makeFakes();
     await surface.post({ ...msgWithUsage }); // callCount: 1 via msgWithUsage fixture
     const footer = contextFooter(postCall(web.chat.postMessage));
-    expect(footer).not.toContain('claude-sonnet-4-6');
+    expect(footer).toContain('claude-sonnet-4-6');
     expect(footer).not.toContain('calls');
   });
 

@@ -1,3 +1,5 @@
+import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before any LangChain run
+
 import { EnvService } from '@core/config/env/env.service';
 import { setupLogger } from '@core/setup-logger';
 import { ValidationPipe } from '@nestjs/common';

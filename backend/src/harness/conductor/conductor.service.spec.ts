@@ -11,13 +11,18 @@ import type { ConductorEvent } from '../domain/conductor-events';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
+import type {
+  BoardEvent,
+  BoardEventsBus,
+} from '../memory/board-events.bus';
+import type { PlanStore } from '../memory/plan-store';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type {
   Session,
   SessionRegistry,
 } from '../sessions/session-registry.port';
 import type { SessionRunnerService } from '../sessions/session-runner.service';
-import type { BotGraphFactory } from './bot-graph.factory';
+import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorService } from './conductor.service';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
@@ -171,6 +176,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     list: () => [ALEX],
     byId: (id: string) => (id === 'alex' ? ALEX : undefined),
     fallbackOwner: () => ALEX,
+    teamLead: () => ALEX,
   } as unknown as EmployeeRegistry;
 
   const sessionUpdateCbs: Array<(s: Session) => void> = [];
@@ -198,6 +204,16 @@ async function buildConductor(behavior: FakeGraphBehavior) {
   const credCtx = {
     run: (_c: unknown, fn: () => unknown) => fn(),
   } as unknown as CredentialContext;
+  const boardEventCbs: Array<(e: BoardEvent) => void> = [];
+  const boardEvents = {
+    onEvent: (cb: (e: BoardEvent) => void) => {
+      boardEventCbs.push(cb);
+      return () => {};
+    },
+  } as unknown as BoardEventsBus;
+  const plans = {
+    listForTask: async () => [],
+  } as unknown as PlanStore;
 
   const conductor = new ConductorService(
     channel as unknown as ChannelService,
@@ -212,6 +228,8 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     readiness,
     creds,
     credCtx,
+    boardEvents,
+    plans,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -220,6 +238,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     cursors,
     events,
     fireSessionUpdate: (s: Session) => sessionUpdateCbs.forEach((cb) => cb(s)),
+    fireBoardEvent: (e: BoardEvent) => boardEventCbs.forEach((cb) => cb(e)),
   };
 }
 

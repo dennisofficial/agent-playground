@@ -21,11 +21,12 @@ function makeUsage(
 }
 
 describe('formatUsageLine', () => {
-  it('single-call turn: no model prefix, no call count', () => {
+  it('single-call turn: model prefix shows, but no call count', () => {
     const line = formatUsageLine(makeUsage({ callCount: 1 }), CHAT_MODEL);
-    expect(line).not.toContain(CHAT_MODEL);
+    expect(line).toContain(CHAT_MODEL);
     expect(line).not.toContain('calls');
-    expect(line).toMatch(/^in /);
+    // model precedes the token counts
+    expect(line.indexOf(CHAT_MODEL)).toBeLessThan(line.indexOf('in '));
   });
 
   it('single-call turn without model arg: no model prefix', () => {
@@ -46,10 +47,12 @@ describe('formatUsageLine', () => {
     expect(line).toContain('out 80');
   });
 
-  it('multi-call turn without model arg: no prefix even with callCount > 1', () => {
+  it('multi-call turn without model arg: call count shows, no model prefix', () => {
     const line = formatUsageLine(makeUsage({ callCount: 5 }));
-    expect(line).not.toContain('calls');
-    expect(line).toMatch(/^in /);
+    expect(line).not.toContain(CHAT_MODEL);
+    expect(line).toContain('5 calls');
+    // line leads with the call count, then the token counts
+    expect(line.indexOf('5 calls')).toBeLessThan(line.indexOf('in '));
   });
 
   it('callCount exactly 2: boundary — prefix shows', () => {

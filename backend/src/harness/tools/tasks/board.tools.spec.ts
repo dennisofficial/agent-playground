@@ -197,6 +197,28 @@ describe('board tools authority', () => {
     ).resolves.toContain('posted for approval');
   });
 
+  it("an assignee can't self-'done' APPROVED or in-review work — that acceptance is the lead's (Dennis's call)", async () => {
+    const { board, employees } = makeFakes();
+    const tool = new UpdateBoardTaskTool(board as never, employees as never);
+
+    // Approved work: the assignee can't complete it themselves.
+    board.get.mockResolvedValue(task({ assignee: 'alex', status: 'approved' }));
+    await expect(
+      tool.execute({ id: 7, status: 'done' }, identity('alex')),
+    ).resolves.toContain("team lead's call");
+
+    // In-review work: same — they keep addressing feedback; the lead closes it.
+    board.get.mockResolvedValue(task({ assignee: 'alex', status: 'in_review' }));
+    await expect(
+      tool.execute({ id: 7, status: 'done' }, identity('alex')),
+    ).resolves.toContain('Dennis accepts');
+
+    // The lead records Dennis's acceptance.
+    await expect(
+      tool.execute({ id: 7, status: 'done' }, identity('sam')),
+    ).resolves.toContain('done');
+  });
+
   it('the lead reassigns, reopens, and edits anything', async () => {
     const { board, employees } = makeFakes();
     const tool = new UpdateBoardTaskTool(board as never, employees as never);
