@@ -37,11 +37,15 @@ export type ExecutePromptTemplate = (input: ExecutePromptInput) => string;
 export type ReviewPromptTemplate = (input: ReviewPromptInput) => string;
 
 export const DEFAULT_PLAN_PROMPT: PlanPromptTemplate = ({ ticket, context }) =>
-  `Plan this work — investigate the codebase first, then produce a concrete plan.\n\n` +
+  `You are in PLAN MODE. Investigate the codebase READ-ONLY — read and search as much as you need to ` +
+  `understand the work, but do NOT modify anything, run write/build commands, or start implementing. ` +
+  `Your one deliverable this turn is the plan itself.\n\n` +
   `TICKET:\n${ticket}\n` +
   (context ? `\nCONTEXT:\n${context}\n` : '') +
-  `\nProduce a plan that a SEPARATE execute session can run from this text alone (it will NOT have ` +
-  `your investigation context). Structure it with these sections:\n` +
+  `\nWhen you understand the work, write a concrete plan that a SEPARATE execute session could carry ` +
+  `out from this text ALONE (it will NOT have your investigation context), then STOP and end your turn ` +
+  `— the plan goes to review and approval before any code is written; do not implement it now. ` +
+  `Structure the plan with these exact sections:\n` +
   `- **Summary** — what's being changed and why, in a few lines.\n` +
   `- **Files to touch** — the specific files/areas, each with what changes there.\n` +
   `- **Constraints & gotchas** — anything you discovered that the executor must respect ` +

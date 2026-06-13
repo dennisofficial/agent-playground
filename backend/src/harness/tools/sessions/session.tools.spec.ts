@@ -1,4 +1,5 @@
 import { makeEmployee } from '@harness/employees/employee.testing';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 import type { Identity } from '../../domain/identity';
 import { CreateSessionTool } from './session.tools';
 
@@ -25,6 +26,7 @@ function makeTool(opts: {
   refusal?: string | null;
   boardTask?: { id: number; title?: string; description?: string } | undefined;
   plan?: { planMd: string } | undefined;
+  engine?: EWorkerEngineName;
 }) {
   const created: Record<string, unknown>[] = [];
   const sessions = {
@@ -38,7 +40,7 @@ function makeTool(opts: {
     runSessionTurn: vi.fn((_id: string, _message: string) => Promise.resolve()),
   };
   const worktrees = { get: () => ({ id: 'wt-001', path: '/tmp/wt' }) };
-  const alex = makeEmployee({ id: 'alex', name: 'Alex' });
+  const alex = makeEmployee({ id: 'alex', name: 'Alex', engine: opts.engine });
   const employees = {
     byId: () => alex,
     fallbackOwner: () => alex,
@@ -78,6 +80,29 @@ describe('create_session × the approval gate', () => {
     expect(out).toContain('Opened sess-001');
     expect(created).toHaveLength(1);
     expect(runner.executeRefusal).not.toHaveBeenCalled();
+  });
+
+  it('frames a non-Claude (Codex) plan turn with the structured plan-mode prompt', async () => {
+    const { tool, runner } = makeTool({ engine: EWorkerEngineName.CODEX });
+    await tool.execute(
+      { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
+      ctx,
+    );
+    const opening = runner.runSessionTurn.mock.calls[0]?.[1] as string;
+    // Codex has no native plan ceremony, so the posture is established in the prompt.
+    expect(opening).toContain('PLAN MODE');
+    expect(opening).toContain('READ-ONLY');
+    expect(opening).toContain('**Files to touch**');
+    expect(opening).toContain('add rate limiting'); // the raw task rides in as the ticket
+  });
+
+  it('leaves a Claude plan turn on the raw task (its native plan mode does the ceremony)', async () => {
+    const { tool, runner } = makeTool({ engine: EWorkerEngineName.CLAUDE });
+    await tool.execute(
+      { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
+      ctx,
+    );
+    expect(runner.runSessionTurn.mock.calls[0]?.[1]).toBe('add rate limiting');
   });
 
   it('validates the board link and threads it onto the session', async () => {
