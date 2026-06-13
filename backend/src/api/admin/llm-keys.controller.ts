@@ -6,7 +6,6 @@ import {
   Get,
   Param,
   Put,
-  UseGuards,
 } from '@nestjs/common';
 import {
   isLlmProvider,
@@ -14,7 +13,6 @@ import {
 } from '../../harness/llm-keys/llm-key.types';
 import { ProviderKeyStore } from '../../harness/llm-keys/provider-key.store';
 import { SecretCipher } from '../../harness/projects/secret-cipher';
-import { AdminTokenGuard } from './admin-token.guard';
 import { PutLlmKeyDto } from './dto/llm-key.dto';
 
 /**
@@ -24,7 +22,6 @@ import { PutLlmKeyDto } from './dto/llm-key.dto';
  * here flips the harness process out of pending-keys mode within one readiness poll.
  */
 @Controller('tenants/:teamId/llm-keys')
-@UseGuards(AdminTokenGuard)
 export class LlmKeysController {
   constructor(
     private readonly keys: ProviderKeyStore,

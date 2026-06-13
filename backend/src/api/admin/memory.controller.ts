@@ -4,23 +4,20 @@ import {
   NotFoundException,
   Param,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { type FactListResponse, type FactView } from '@workspace/shared';
 import { FactViewStore } from '../../harness/memory-admin/fact-view.store';
-import { AdminTokenGuard } from './admin-token.guard';
 import { FactQueryDto } from './dto/fact-query.dto';
 
 /**
  * Read-only admin view over the semantic-memory facts table.
  * Powers the Memory Viewer UI (`/admin/memory`).
  *
- * Gated by `AdminTokenGuard` (same bearer as the rest of the admin API). God-view:
+ * Gated by the global AdminAuthGuard (APP_GUARD — cookie JWT + M2M bearer fallback). God-view:
  * no scope filtering — the admin can inspect facts across all tiers and agents.
  * The embedding vector is never returned.
  */
 @Controller('tenants/:teamId/memory/facts')
-@UseGuards(AdminTokenGuard)
 export class MemoryFactsController {
   constructor(private readonly store: FactViewStore) {}
 
