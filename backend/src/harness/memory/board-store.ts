@@ -1,5 +1,6 @@
 import { TeamTask as TeamTaskEntity } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
+import type { BoardEventsBus } from './board-events.bus';
 import { rawRows, toIso } from './sql';
 
 /**
@@ -81,10 +82,23 @@ const toBoardTask = (r: BoardRow): BoardTask => ({
 });
 
 export class BoardStore {
-  constructor(private readonly repo: Repository<TeamTaskEntity>) {}
+  // `events` is optional so tests can `new BoardStore(repo)` without the bus; production wires it
+  // via the MemoryModule factory.
+  constructor(
+    private readonly repo: Repository<TeamTaskEntity>,
+    private readonly events?: BoardEventsBus,
+  ) {}
 
   private async q(sql: string, params: unknown[]): Promise<BoardRow[]> {
     return rawRows<BoardRow>(await this.repo.manager.query(sql, params));
+  }
+
+  /** Fire `ticket-approved` when a write lands a task in 'approved' — both the CAS path (the Slack
+   * approval card → transition) and the manual path (a lead's update_board_task → update) funnel
+   * through here, so the owner is woken to execute no matter how the verdict arrived. */
+  private announceIfApproved(team: string, task: BoardTask | undefined): void {
+    if (task?.status === 'approved')
+      this.events?.emit({ kind: 'ticket-approved', team, taskId: task.id });
   }
 
   /**
@@ -172,7 +186,9 @@ export class BoardStore {
       `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 AND status = $3 RETURNING *`,
       args,
     );
-    return rows[0] ? toBoardTask(rows[0]) : undefined;
+    const task = rows[0] ? toBoardTask(rows[0]) : undefined;
+    this.announceIfApproved(team, task);
+    return task;
   }
 
   /** Guarded field update — AUTHORITY IS THE TOOL'S JOB; this only enforces team + existence. */
@@ -200,7 +216,9 @@ export class BoardStore {
       `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 RETURNING *`,
       args,
     );
-    return rows[0] ? toBoardTask(rows[0]) : undefined;
+    const task = rows[0] ? toBoardTask(rows[0]) : undefined;
+    if (patch.status === 'approved') this.announceIfApproved(team, task);
+    return task;
   }
 
   /** A single board task by id within a team (for authority checks), or undefined. */

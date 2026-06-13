@@ -1,6 +1,8 @@
 import { EnvService } from '@core/config/env/env.service';
+import { tracingEnabled } from '@core/tracing';
 import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { GraphRecursionError } from '@langchain/langgraph';
+import { LangfuseCallbackHandler } from '@workspace/langfuse';
 import {
   Inject,
   Injectable,
@@ -26,6 +28,8 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
+import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
+import { PlanStore } from '../memory/plan-store';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -33,6 +37,7 @@ import {
 } from '../sessions/session-registry.port';
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import { type BotStateDelta, BotGraphFactory } from './bot-graph.factory';
+import { planReadySeed, ticketApprovedSeed } from './board-seed-prompt';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { sessionRelayPrompt } from './session-relay-prompt';
 
@@ -134,6 +139,8 @@ export class ConductorService
     private readonly readiness: LlmReadinessService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly boardEvents: BoardEventsBus,
+    private readonly plans: PlanStore,
   ) {}
 
   /** runningBots is keyed per (tenant, bot): a bot works ONE turn at a time within a workspace, but
@@ -205,7 +212,70 @@ export class ConductorService
         }
       }),
     );
+    // Board state transitions wake the right bot mechanically (instead of relying on an owner
+    // remembering to announce / the lead's gate firing). The callback is sync; resolution
+    // (plans → sessions → worktree, the lead) runs as detached async that ends in injectSeed.
+    this.unsubscribers.push(
+      this.boardEvents.onEvent((event) => {
+        void this.handleBoardEvent(event).catch((err) =>
+          this.logger.warn(`board event (${event.kind}) wake failed: ${err}`),
+        );
+      }),
+    );
     this.schedule();
+  }
+
+  /**
+   * Turn a board transition into a gate-bypassed wake-up. `plan-attached` → the lead reviews
+   * (skip self-plans — the lead proposes their own); `ticket-approved` → each plan owner opens a
+   * fresh execute session, carrying the resolved worktree id so the action is mechanically
+   * possible. Channel resolution comes from the planning session's notifyThread, falling back to
+   * the process's default room.
+   */
+  private async handleBoardEvent(event: BoardEvent): Promise<void> {
+    if (event.kind === 'plan-attached') {
+      const lead = this.employees.teamLead();
+      if (event.employee === lead.id) return; // the lead doesn't review their own plan
+      const channelId = await this.channelForSession(event.sessionId);
+      this.injectSeed(
+        lead.id,
+        channelId,
+        planReadySeed({ taskId: event.taskId, employee: event.employee }),
+      );
+      return;
+    }
+    // ticket-approved: wake every teammate with a plan on the ticket to execute it.
+    const plans = await this.plans.listForTask(event.team, event.taskId);
+    for (const plan of plans) {
+      const session = plan.sessionId
+        ? await this.sessions.get(plan.sessionId)
+        : undefined;
+      const channelId = session
+        ? this.resolveRoom(session.notifyThread)
+        : this.channel.surfaceId;
+      this.injectSeed(
+        plan.employee,
+        channelId,
+        ticketApprovedSeed({
+          taskId: event.taskId,
+          worktreeId: session?.worktreeId,
+        }),
+      );
+    }
+  }
+
+  /** The room a session relays into (its notifyThread), or the default room when unknown. */
+  private resolveRoom(channelId: string): string {
+    return this.registry.get(channelId) ? channelId : this.channel.surfaceId;
+  }
+
+  /** The room for a board wake derived from a planning session, or the default room. */
+  private async channelForSession(sessionId?: string): Promise<string> {
+    if (!sessionId) return this.channel.surfaceId;
+    const session = await this.sessions.get(sessionId);
+    return session
+      ? this.resolveRoom(session.notifyThread)
+      : this.channel.surfaceId;
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -544,10 +614,31 @@ export class ConductorService
     // the turn ends (success, error, or step-cap), so present = composing now, gone = replied.
     let composing: { emoji: string; targetId: string } | undefined;
     try {
+      // Langfuse: a FRESH handler per turn — it holds per-run span state, so sharing one across
+      // concurrently-running bot turns would interleave their traces. `sessionId = channelId` groups
+      // every turn in a room into one Langfuse session (the conversation timeline); the gate, compose,
+      // tool, and read-the-room revision steps nest under it because LangGraph propagates these
+      // callbacks into each node's config. No-op when tracing is disabled.
+      const callbacks = tracingEnabled
+        ? [
+            new LangfuseCallbackHandler({
+              sessionId: channelId,
+              userId: bot.id,
+              tags: [bot.name, info.teamId],
+              traceMetadata: {
+                teamId: info.teamId,
+                threadId: thread,
+                seed: !!opts.seed,
+              },
+            }),
+          ]
+        : undefined;
       const stream = await this.graphs.getBotGraph(bot).stream(input, {
         configurable: { thread_id: thread, identity, capped, channelId },
         streamMode: 'updates',
         recursionLimit: MAX_TURN_STEPS,
+        callbacks,
+        runName: `turn:${bot.name}`,
       });
       for await (const update of stream as AsyncIterable<
         Record<string, BotStateDelta>
@@ -841,6 +932,7 @@ export class ConductorService
     return (
       this.runningBots.size === 0 &&
       this.relayQueue.length === 0 &&
+      this.seedQueue.length === 0 &&
       (this.stopping || !this.anyUndelivered())
     );
   }

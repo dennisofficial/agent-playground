@@ -1,5 +1,9 @@
 import { PromptTemplate } from '@langchain/core/prompts';
-import { Runnable, RunnableSequence } from '@langchain/core/runnables';
+import {
+  Runnable,
+  type RunnableConfig,
+  RunnableSequence,
+} from '@langchain/core/runnables';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { Identity, recallProjects } from '../domain/identity';
@@ -377,6 +381,8 @@ export class ReconcileService {
     transcript: string,
     id: Identity,
     decision: Decision = 'respond',
+    /** Forwarded to the task chain so its LLM call nests under the turn's Langfuse trace. */
+    config?: RunnableConfig,
   ): Promise<void> {
     try {
       // A DM spans every project the pair shares — its plate (and where complete/drop act) does too.
@@ -420,7 +426,7 @@ export class ReconcileService {
               .join('\n')
           : '(none)',
         transcript,
-      });
+      }, config);
       const ids = this.knownIds(id);
       // Actual outcomes, not proposed lengths: addTask dedups to undefined on the unique index, and
       // complete/drop return false when the id isn't an open reminder this turn could act on.
