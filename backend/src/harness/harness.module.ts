@@ -1,4 +1,5 @@
 import { CreateModule } from '@workspace/nestjs-core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ChannelModule } from './channel/channel.module';
 import { ConductorModule } from './conductor/conductor.module';
 import { EmployeesModule } from './employees/employees.module';
@@ -26,9 +27,15 @@ import { WorktreesModule } from './worktrees/worktrees.module';
  * workspaces) from that one process: rooms/cursors/memory carry a tenant dimension and keys flow
  * per-turn via the @Global CredentialModule.
  *
+ * `ScheduleModule.forRoot()` is imported here — the single composition root — so the Phase 7
+ * `MemoryConsolidationService` cron job runs in exactly one process. Never import
+ * `ScheduleModule.forRoot()` in a sub-module or a secondary app.
+ *
  * Requires `DatabaseModule` and `EsmModule` (both @Global) in the hosting app.
  */
 @CreateModule({
+  // ScheduleModule.forRoot() lives here so only the harness (single process) owns the scheduler.
+  imports: [ScheduleModule.forRoot()],
   modules: [
     CredentialModule,
     ObservabilityModule,

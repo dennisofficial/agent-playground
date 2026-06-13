@@ -23,9 +23,9 @@ export type Decision = 'respond' | 'acknowledge' | 'ignore';
  */
 export interface MemTally {
   attempts: number;
-  corrections: number;  // explicit-correction suggestions surfaced
-  decisions: number;    // stated-decision suggestions surfaced
-  preferences: number;  // explicit-preference suggestions surfaced
+  corrections: number; // explicit-correction suggestions surfaced
+  decisions: number; // stated-decision suggestions surfaced
+  preferences: number; // explicit-preference suggestions surfaced
 }
 
 export interface TaskTally {
@@ -45,6 +45,22 @@ export interface RecallTally {
   factsInjected: number;
 }
 
+/**
+ * Periodic memory consolidation counters (Phase 7). Accumulated across all runs until `reset()`.
+ * Each `recordConsolidation` call represents ONE scope's outcome; the service sums them.
+ */
+export interface ConsolidationTally {
+  scopesScanned: number;
+  /** Facts soft-deleted as part of a merge (dupes collapsed into the survivor). */
+  merged: number;
+  /** Facts soft-deleted as clearly stale. */
+  dropped: number;
+  /** Contradiction pairs flagged for human/agent review (NOT auto-resolved). */
+  contradictionsFlagged: number;
+  /** Per-scope errors that were swallowed (fire-and-forget). */
+  errors: number;
+}
+
 export interface MemoryMetrics {
   insertCount: number;
   dedupCount: number;
@@ -52,6 +68,7 @@ export interface MemoryMetrics {
   memByPath: Record<Decision, MemTally>;
   taskByPath: Record<Decision, TaskTally>;
   recall: RecallTally;
+  consolidation: ConsolidationTally;
 }
 
 const DECISIONS: Decision[] = ['respond', 'acknowledge', 'ignore'];
@@ -77,6 +94,14 @@ const cloneByPath = <T extends object>(
     T
   >;
 
+const zeroConsolidation = (): ConsolidationTally => ({
+  scopesScanned: 0,
+  merged: 0,
+  dropped: 0,
+  contradictionsFlagged: 0,
+  errors: 0,
+});
+
 @Injectable()
 export class MemoryMetricsService {
   private insertCount = 0;
@@ -85,6 +110,7 @@ export class MemoryMetricsService {
   private memByPath = byPath(zeroMem);
   private taskByPath = byPath(zeroTask);
   private recall: RecallTally = { attempts: 0, hits: 0, factsInjected: 0 };
+  private consolidation: ConsolidationTally = zeroConsolidation();
 
   /** A durable-memory write landed: 'inserted' = brand-new fact, 'updated' = merged into a near-duplicate. */
   recordWrite(action: 'inserted' | 'updated'): void {
@@ -127,6 +153,19 @@ export class MemoryMetricsService {
     this.recall.factsInjected += factCount;
   }
 
+  /**
+   * Record the outcome of one scope's consolidation pass. Call once per scope whether the pass
+   * produced anything or not (scopesScanned is the denominator). Errors are counted separately so
+   * the consolidation loop can swallow them without losing observability.
+   */
+  recordConsolidation(t: Omit<ConsolidationTally, 'scopesScanned'>): void {
+    this.consolidation.scopesScanned++;
+    this.consolidation.merged += t.merged;
+    this.consolidation.dropped += t.dropped;
+    this.consolidation.contradictionsFlagged += t.contradictionsFlagged;
+    this.consolidation.errors += t.errors;
+  }
+
   /** A snapshot of this session's metrics (deep-copied so callers can't mutate the live counters). */
   snapshot(): MemoryMetrics {
     return {
@@ -136,6 +175,7 @@ export class MemoryMetricsService {
       memByPath: cloneByPath(this.memByPath),
       taskByPath: cloneByPath(this.taskByPath),
       recall: { ...this.recall },
+      consolidation: { ...this.consolidation },
     };
   }
 
@@ -147,5 +187,6 @@ export class MemoryMetricsService {
     this.memByPath = byPath(zeroMem);
     this.taskByPath = byPath(zeroTask);
     this.recall = { attempts: 0, hits: 0, factsInjected: 0 };
+    this.consolidation = zeroConsolidation();
   }
 }

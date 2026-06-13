@@ -14,7 +14,9 @@ import {
 import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
+import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
+import { MemoryConsolidationService } from './memory-consolidation.service';
 import { BoardEventsBus } from './board-events.bus';
 import { BoardStore } from './board-store';
 import { CheckpointerModule } from './checkpointer.module';
@@ -53,6 +55,7 @@ import { WorklogStore } from './worklog-store';
       Worklog,
     ]),
     LlmModule,
+    LlmKeysModule,
     EmployeesModule,
   ],
   // CHECKPOINTER lives in its own junction module (see checkpointer.module.ts for why);
@@ -120,5 +123,8 @@ import { WorklogStore } from './worklog-store';
         new CompactionSummaryStore(repo),
     },
   ],
+  // Phase 7: nightly memory consolidation — dedup, drop-stale, flag contradictions.
+  // ScheduleModule.forRoot() is imported by HarnessModule (the single composition root).
+  cronJobs: [MemoryConsolidationService],
 })
 export class MemoryModule {}

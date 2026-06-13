@@ -1,6 +1,6 @@
 import { toSql } from 'pgvector';
 import { Fact } from '@workspace/shared/schemas';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { EmbeddingProvider } from './embedding';
 import {
   Identity,
@@ -396,5 +396,69 @@ export class SemanticMemory {
     if (!row) return null;
     await this.facts.softDelete(rowId);
     return factToStored(row);
+  }
+
+  // ── Scope-level methods for trusted infrastructure (cron jobs) ─────────────
+  // These bypass the conversation-Identity guard — callers are responsible for
+  // enforcing (scope, team_id) isolation and running inside CredentialContext.
+
+  /**
+   * All live facts in a given (scope, teamId), ordered newest-first. For the consolidation job:
+   * only facts the job may reason over — no cross-scope leakage. Capped at `limit`.
+   */
+  async listLiveByScope(
+    scope: string,
+    teamId: string,
+    limit = 200,
+  ): Promise<Fact[]> {
+    return this.facts
+      .createQueryBuilder('f')
+      .where('f.scope = :scope', { scope })
+      .andWhere('f.team_id = :teamId', { teamId })
+      .orderBy('f.updated_at', 'DESC')
+      .limit(limit)
+      .getMany();
+  }
+
+  /**
+   * Collapse duplicate facts into one canonical statement. The survivor's text and embedding are
+   * updated; the dropped facts are soft-deleted. Caller is responsible for serializing via
+   * `MemoryWriteService.withLock` — this method performs no locking of its own.
+   *
+   * Safety: all operations are constrained to `teamId` so a bug in the consolidation loop can't
+   * touch another tenant's data.
+   */
+  async mergeFacts(
+    survivorId: number,
+    droppedIds: number[],
+    canonicalText: string,
+    teamId: string,
+  ): Promise<void> {
+    if (droppedIds.length === 0) return;
+    const qv = vecSql(await this.embedder.embed(canonicalText));
+    await this.facts
+      .createQueryBuilder()
+      .update(Fact)
+      .set({
+        fact: canonicalText,
+        embedding: () => ':qv::vector',
+        embed_model: this.embedder.model,
+      })
+      .where('id = :survivorId AND team_id = :teamId', { survivorId, teamId })
+      .setParameter('qv', qv)
+      .execute();
+    await this.facts.softDelete({ id: In(droppedIds), team_id: teamId });
+  }
+
+  /**
+   * Soft-delete a fact by id, enforcing (scope, teamId) so a stray drop can't touch
+   * a different scope or tenant. For the consolidation job's drop-stale path.
+   */
+  async forgetByIdInScope(
+    id: number,
+    scope: string,
+    teamId: string,
+  ): Promise<void> {
+    await this.facts.softDelete({ id, scope, team_id: teamId });
   }
 }
