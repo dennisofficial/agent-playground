@@ -1,5 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
+import { tracingEnabled } from '@core/tracing';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  type ChatTracePointer,
+  traceSessionTurn,
+} from '@workspace/langfuse';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
 import {
@@ -80,7 +85,11 @@ export class SessionRunnerService {
    * owner's reply on later ones. Fire-and-forget — errors are caught here so there's never an
    * unhandled rejection.
    */
-  async runSessionTurn(sessionId: string, message: string): Promise<void> {
+  async runSessionTurn(
+    sessionId: string,
+    message: string,
+    parentChatTrace?: ChatTracePointer,
+  ): Promise<void> {
     // Everything — including the registry read — runs inside the try: callers fire-and-forget
     // (`void runSessionTurn(...)`), so a rejection escaping this method would vanish and leave the
     // session stuck in 'running' forever with no failure relay.
@@ -119,35 +128,61 @@ export class SessionRunnerService {
           : keys.anthropic;
       // Jail the in-process langgraph tools to the worktree for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
+      const runEngineTurn = () =>
+        withActiveRoot(worktree.path, () =>
+          this.credCtx.run({ teamId: session.team, keys }, () =>
+            this.engines.get(session.engine).run({
+              task: message,
+              cwd: worktree.path,
+              systemPrompt,
+              agentId: bot.id,
+              sessionId: session.engineSessionId,
+              model,
+              effort,
+              mode: session.mode,
+              apiKey: engineKey,
+              onEvent: (e) =>
+                void this.sessions
+                  .appendProgress(sessionId, e)
+                  .catch((err) =>
+                    this.logger.warn(
+                      `appendProgress(${sessionId}) failed: ${err}`,
+                    ),
+                  ),
+              signal: ac.signal,
+            }),
+          ),
+        );
+      // Langfuse: ONE observation per session turn (its own trace, grouped by the harness session
+      // id) — the engine work (system prompt, the real opening/reply message, the report) is
+      // otherwise invisible (subprocess engines emit no spans; this turn is ALS-detached from the
+      // chat stream). `parentChatTrace` links it back to the spawning chat turn. No-op when tracing
+      // is off. NOTE: pass NO LangChain callbacks into the engine — that would re-bleed tokens into
+      // the chat stream the detach exists to prevent.
       const {
         result,
         sessionId: engineSessionId,
         questions,
         planText,
-      } = await withActiveRoot(worktree.path, () =>
-        this.credCtx.run({ teamId: session.team, keys }, () =>
-          this.engines.get(session.engine).run({
-            task: message,
-            cwd: worktree.path,
-            systemPrompt,
-            agentId: bot.id,
-            sessionId: session.engineSessionId,
-            model,
-            effort,
-            mode: session.mode,
-            apiKey: engineKey,
-            onEvent: (e) =>
-              void this.sessions
-                .appendProgress(sessionId, e)
-                .catch((err) =>
-                  this.logger.warn(
-                    `appendProgress(${sessionId}) failed: ${err}`,
-                  ),
-                ),
-            signal: ac.signal,
-          }),
-        ),
-      );
+      } = tracingEnabled
+        ? await traceSessionTurn(runEngineTurn, {
+            name: `session.turn:${session.engine}:${session.mode}`,
+            sessionId,
+            input: message,
+            metadata: {
+              systemPrompt,
+              model,
+              effort,
+              mode: session.mode,
+              engine: session.engine,
+              boardTaskId: session.boardTaskId,
+              agentId: bot.id,
+              worktree: worktree.id,
+              turn: session.turns + 1,
+              parentChatTrace,
+            },
+          })
+        : await runEngineTurn();
       // Closed while we were finishing up: discard the result, don't go idle or relay. The abort
       // flag alone isn't enough — closeSession writes 'closed' BEFORE calling abort(), so an engine
       // that resolves inside that window would see aborted=false and overwrite the close with
@@ -277,6 +312,7 @@ export class SessionRunnerService {
     sessionId: string,
     message: string,
     mode?: WorkerMode,
+    parentChatTrace?: ChatTracePointer,
   ): Promise<ActionResult> {
     const session = await this.sessions.get(sessionId);
     if (!session) return { ok: false, reason: `No session "${sessionId}".` };
@@ -330,7 +366,7 @@ export class SessionRunnerService {
       ...(mode ? { mode } : {}),
       ...qaPatch,
     });
-    void this.runSessionTurn(sessionId, message);
+    void this.runSessionTurn(sessionId, message, parentChatTrace);
     return { ok: true };
   }
 

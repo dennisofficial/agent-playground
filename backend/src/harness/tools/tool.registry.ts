@@ -1,6 +1,7 @@
 import { tool, type StructuredToolInterface } from '@langchain/core/tools';
 import { Injectable, OnModuleInit, Type } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
+import { captureParentChatTrace } from '@workspace/langfuse';
 import { getIdentity } from '../domain/identity';
 import { collectDecorated } from '../discovery.util';
 import { HARNESS_TOOL_METADATA } from './harness-tool.decorator';
@@ -62,7 +63,11 @@ export class ToolRegistry implements OnModuleInit {
         async (
           args: unknown,
           config?: { configurable?: Record<string, unknown> },
-        ) => impl.execute(args as never, { identity: getIdentity(config) }),
+        ) =>
+          impl.execute(args as never, {
+            identity: getIdentity(config),
+            parentChatTrace: captureParentChatTrace(),
+          }),
         { name: impl.name, description: impl.description, schema: impl.schema },
       );
     });

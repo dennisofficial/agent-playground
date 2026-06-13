@@ -37,7 +37,10 @@ function makeTool(opts: {
   };
   const runner = {
     executeRefusal: vi.fn(() => Promise.resolve(opts.refusal ?? null)),
-    runSessionTurn: vi.fn((_id: string, _message: string) => Promise.resolve()),
+    runSessionTurn: vi.fn(
+      (_id: string, _message: string, _parentChatTrace?: unknown) =>
+        Promise.resolve(),
+    ),
   };
   const worktrees = { get: () => ({ id: 'wt-001', path: '/tmp/wt' }) };
   const alex = makeEmployee({ id: 'alex', name: 'Alex', engine: opts.engine });
@@ -154,5 +157,16 @@ describe('create_session × the approval gate', () => {
       ctx,
     );
     expect(runner.runSessionTurn.mock.calls[0]?.[1]).toBe('just do it');
+  });
+
+  it('threads the chat-turn trace pointer through to the first session turn (Langfuse link)', async () => {
+    const { tool, runner } = makeTool({ engine: EWorkerEngineName.CLAUDE });
+    const parentChatTrace = { traceId: 'abc123', spanId: 'def456' };
+    await tool.execute(
+      { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
+      { ...ctx, parentChatTrace },
+    );
+    // 3rd arg of runSessionTurn is the parent-chat-trace pointer (for the session-turn observation).
+    expect(runner.runSessionTurn.mock.calls[0]?.[2]).toEqual(parentChatTrace);
   });
 });

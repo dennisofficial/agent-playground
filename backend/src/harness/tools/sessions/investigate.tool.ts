@@ -69,6 +69,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
       openingTask,
       mode: 'investigate',
       engine,
+      parentChatTrace: ctx.parentChatTrace,
     });
     return `Investigating in ${wt.id}${wt.created ? ' (opened a fresh worktree)' : ''}: ${sessionId} (${engine}, read-only). You're notified when it reports back; close_session it once you have your answer.`;
   }

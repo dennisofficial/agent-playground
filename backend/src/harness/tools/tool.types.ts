@@ -1,9 +1,16 @@
+import type { ChatTracePointer } from '@workspace/langfuse';
 import type { z } from 'zod';
 import type { Identity } from '../domain/identity';
 
 /** Per-call context threaded from the run config (set by the conductor) into a tool's execute. */
 export interface HarnessToolContext {
   identity: Identity;
+  /**
+   * Best-effort pointer to the chat turn's Langfuse trace, captured at the tool seam. Threaded into
+   * detached background work (session turns) purely to LINK it back to the turn that spawned it —
+   * `undefined` when no span is active. Never load-bearing.
+   */
+  parentChatTrace?: ChatTracePointer;
 }
 
 /**

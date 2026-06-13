@@ -1,5 +1,6 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { Inject } from '@nestjs/common';
+import type { ChatTracePointer } from '@workspace/langfuse';
 import { z } from 'zod';
 import type { Identity } from '../../domain/identity';
 import {
@@ -147,6 +148,7 @@ export class CreateSessionTool implements IHarnessTool<
       mode,
       engine: engineName,
       boardTaskId: board_task_id,
+      parentChatTrace: ctx.parentChatTrace,
     });
     return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
   }
@@ -168,6 +170,8 @@ export class CreateSessionTool implements IHarnessTool<
     mode: WorkerMode;
     engine: EWorkerEngineName;
     boardTaskId?: number;
+    /** Best-effort link back to the spawning chat turn's trace (for Langfuse session linkage). */
+    parentChatTrace?: ChatTracePointer;
   }): Promise<{ sessionId: string }> {
     const session = await this.sessions.create({
       task: opts.task,
@@ -183,7 +187,11 @@ export class CreateSessionTool implements IHarnessTool<
         : {}),
     });
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.runner.runSessionTurn(session.id, opts.openingTask);
+      void this.runner.runSessionTurn(
+        session.id,
+        opts.openingTask,
+        opts.parentChatTrace,
+      );
     });
     return { sessionId: session.id };
   }
@@ -231,7 +239,12 @@ export class ReplySessionTool implements IHarnessTool<
     await AsyncLocalStorageProviderSingleton.getInstance().run(
       undefined,
       async () => {
-        res = await this.runner.replySession(sessionId, message, mode);
+        res = await this.runner.replySession(
+          sessionId,
+          message,
+          mode,
+          ctx.parentChatTrace,
+        );
       },
     );
     if (!res.ok)
