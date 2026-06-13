@@ -896,9 +896,11 @@ export class BotGraphFactory {
     };
 
     // After tools run, END the turn (skip the loop back to `llm` that would otherwise force a chatty
-    // text-only follow-up) when EVERY call in the triggering message is terminal. `every` (not
-    // `some`) is load-bearing: a message mixing a terminal tool with an informational or FALLIBLE
-    // one loops back so that result is relayed.
+    // text-only follow-up) when EVERY call in the triggering message is terminal AND all succeeded.
+    // `every` (not `some`) is load-bearing: a message mixing a terminal tool with an informational
+    // or fallible one loops back so that result is relayed.
+    // If any terminal call has status:'error' we also loop back — a failed terminal tool must not
+    // silently end the turn; the model needs a chance to react to the error ToolMessage.
     const afterTools = (state: BotStateType): 'llm' | string[] => {
       const lastAi = [...state.messages]
         .reverse()
@@ -906,7 +908,19 @@ export class BotGraphFactory {
       const calls = lastAi?.tool_calls ?? [];
       const allTerminal =
         calls.length > 0 && calls.every((c) => TERMINAL.has(c.name));
-      return allTerminal ? RECONCILE : 'llm';
+      if (!allTerminal) return 'llm';
+      // Route back to llm when any terminal call failed — scan for ToolMessages whose call_id
+      // belongs to the current AI message and whose status is 'error'.
+      const callIds = new Set(
+        calls.map((c) => c.id).filter(Boolean) as string[],
+      );
+      const anyFailed = state.messages.some(
+        (m) =>
+          m.getType() === 'tool' &&
+          callIds.has((m as ToolMessage).tool_call_id) &&
+          (m as ToolMessage).status === 'error',
+      );
+      return anyFailed ? 'llm' : RECONCILE;
     };
 
     return new StateGraph(BotState)

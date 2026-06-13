@@ -77,7 +77,9 @@ export class CreateSessionTool implements IHarnessTool<
     const id = ctx.identity;
     const worktree = this.worktrees.get(worktreeId);
     if (!worktree)
-      return `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`;
+      throw new Error(
+        `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`,
+      );
     if (
       board_task_id !== undefined &&
       !(await this.board.get(id.team, board_task_id))
@@ -152,7 +154,7 @@ export class ReplySessionTool implements IHarnessTool<
   ): Promise<string> {
     const session = await this.sessions.get(sessionId);
     if (!session || session.ownerBot !== ctx.identity.selfAgent)
-      return `Couldn't reply to ${sessionId}: not your session.`;
+      throw new Error(`Couldn't reply to ${sessionId}: not your session.`);
     // The reply fires fire-and-forget and must run in a clean store so a LangGraph run's callbacks
     // don't bleed into the chat stream.
     let res: ActionResult = { ok: false };
@@ -162,9 +164,9 @@ export class ReplySessionTool implements IHarnessTool<
         res = await this.runner.replySession(sessionId, message, mode);
       },
     );
-    return res.ok
-      ? `Sent to ${sessionId}${mode ? ` (mode → ${mode})` : ''}; it's working and will report back.`
-      : `Couldn't reply to ${sessionId}: ${res.reason}`;
+    if (!res.ok)
+      throw new Error(`Couldn't reply to ${sessionId}: ${res.reason}`);
+    return `Sent to ${sessionId}${mode ? ` (mode → ${mode})` : ''}; it's working and will report back.`;
   }
 }
 
