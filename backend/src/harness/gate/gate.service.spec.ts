@@ -3,6 +3,7 @@ import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import { TEAM_RULES } from '../employees/persona.service';
 import { GateService } from './gate.service';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * The gate's channel-aware HARD rules. The soft (LLM) path is faked to explode — these decisions
@@ -15,7 +16,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'x',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
 };
 
 function buildGate() {

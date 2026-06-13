@@ -2,6 +2,7 @@ import { RunnableLambda } from '@langchain/core/runnables';
 import type { Identity } from '../domain/identity';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
+import { EWorkerEngineName } from '../engines/worker-engine.port';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { MemoryMetricsService } from './memory-metrics.service';
 import type { MemoryWriteService } from './memory-write.service';
@@ -46,7 +47,7 @@ const bot = (id: string, name: string, teamLead = false): EmployeeDefinition =>
     id,
     name,
     role: teamLead ? 'team lead' : 'engineer',
-    engine: 'claude',
+    engine: EWorkerEngineName.CLAUDE,
     roleContext: 'ctx',
     ...(teamLead ? { teamLead: true } : {}),
   }) as unknown as EmployeeDefinition;

@@ -20,7 +20,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ChannelRegistryService } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
-import type { GateAction } from '../domain/conductor-events';
+import type { GateAction, MessageUsage } from '../domain/conductor-events';
 import { getIdentity } from '../domain/identity';
 import { flattenContent } from '../domain/text';
 import type { EmployeeDefinition } from '../employees/employee.types';
@@ -28,7 +28,7 @@ import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { FetchService } from '../memory/fetch.service';
-import { CHECKPOINTER } from '../memory/memory.module';
+import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { ReconcileService } from '../memory/reconcile.service';
 import {
   SESSION_REGISTRY,
@@ -49,9 +49,9 @@ import {
  * `${bot.id}:${project}:root` (Postgres checkpointer). The conductor invokes it whenever the channel
  * has grown past the bot's cursor.
  *
- *   START → gate ─┬─ respond → guard ─┬─ fetch → llm ⇄ tools ─┐
- *                 │                   └─ break ─────────────────┤
- *                 └─ acknowledge / ignore → consume ─────────────┴→ reconcile-memory ∥ reconcile-task → END
+ *   START → gate ─┬─ respond → guard ─┬─ fetch → llm ⟲ ⇄ tools ─┐
+ *                 │                   └─ break ──────────────────┤
+ *                 └─ acknowledge / ignore → consume ──────────────┴→ reconcile-memory ∥ reconcile-task → END
  *
  * Memory is DETERMINISTIC, not agentic: `fetch` reads the relevant facts + open tasks IN before the
  * bot thinks, and the two parallel `reconcile` nodes write memory/tasks OUT after — on EVERY path.
@@ -60,6 +60,16 @@ import {
  * THE HEART (mid-thought collaboration): the `llm` node consumes `channel.since(cursor)` at the TOP
  * of EVERY step, so a teammate's message that lands WHILE this bot is looping is folded into its
  * very next model call.
+ *
+ * READ-THE-ROOM (the `llm ⟲` self-loop): a final text reply is composed BLIND for one
+ * model-invoke latency — a teammate answering the same broadcast can post during that window, which
+ * is how four bots chorus the same news. So after `model.invoke` returns, the node synchronously
+ * checks whether teammate-bot messages landed past the cursor this step consumed. If so, the reply
+ * is demoted to a DRAFT (never posted, never in durable history) and the graph loops back through
+ * `llm`: the teammate messages fold in via the NORMAL top-of-step read, plus a note carrying the
+ * draft — post only if it still adds something, else trim or stay silent. The synchronous channel
+ * makes check-then-return atomic per JS tick, so at most one bot "wins" each race round; capped at
+ * MAX_REVISION_PASSES, after which the draft posts anyway (worst case = the old blind behavior).
  *
  * Cursor coordinate note: the `cursor` field rides in graph state ONLY so it threads across `llm`
  * steps within a single run. It is overwritten every invocation from the conductor's durable cursor
@@ -93,6 +103,14 @@ export interface BotStateDelta {
   /** Debug only: the guard's one-line rationale. NOT named `reasoning` to avoid conflation with
    * the gate event the conductor emits on `delta.reasoning`. Rides in the checkpoint only. */
   guardReasoning?: string;
+  /** A reply suppressed at the post seam (teammates posted mid-compose) — the conductor emits a
+   * `draft` debug event from it. NEVER appears in `messages`, so the commit loop can't post it. */
+  draft?: string;
+  /** Token usage of the suppressed draft step — still a billed call: the conductor emits a normal
+   * `usage` event from it so the per-post footer stays the true turn total. */
+  draftUsage?: MessageUsage;
+  /** Read-the-room revision passes taken this turn (debug only in the delta). */
+  revisionPasses?: number;
 }
 
 const BotState = Annotation.Root({
@@ -172,6 +190,26 @@ const BotState = Annotation.Root({
     reducer: (_: unknown, b: string | undefined) => b,
     default: () => undefined,
   }),
+  /** READ-THE-ROOM: the unposted reply from a step that went stale mid-compose (a teammate posted
+   * during model.invoke). Survives exactly one edge — llm → llm — where the revision note carries
+   * it back to the model. NEVER enters `messages`: durable history records only what was actually
+   * said. Reset explicitly by `gate` every run (Annotation defaults don't re-apply on an existing
+   * thread), so a draft orphaned by a crash is dropped, never replayed. */
+  draft: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
+    default: () => undefined,
+  }),
+  /** Usage of the suppressed draft step (billed even though unposted). Reset with `draft`. */
+  draftUsage: Annotation<MessageUsage | undefined>({
+    reducer: (_: unknown, b: MessageUsage | undefined) => b,
+    default: () => undefined,
+  }),
+  /** Revision passes taken THIS turn — bounds the read-the-room loop at MAX_REVISION_PASSES.
+   * Reset explicitly by `gate` every run. */
+  revisionPasses: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
+  }),
 });
 
 type BotStateType = typeof BotState.State;
@@ -180,10 +218,36 @@ type BotStateType = typeof BotState.State;
 const asInput = (m: ChannelMsg): HumanMessage =>
   new HumanMessage(`${m.author}: ${m.text}`);
 
+// ── Read-the-room constants (exported for tests) ────────────────────────────────────────────────
+/** Max revision passes per turn. Each race round at most one bot posts (the synchronous check),
+ * so N contending bots converge in ≤N rounds — 2 covers a realistic pileup; at the cap the draft
+ * posts anyway (it already saw the earlier rounds — worst case equals the old blind behavior). */
+export const MAX_REVISION_PASSES = 2;
+/** The revision instruction injected as the LAST trailing HumanMessage — strictly after both
+ * cache breakpoints (volatile zone), so interpolating the draft never busts the prompt prefix. */
+export const revisionNote = (draft: string): string =>
+  `(Heads-up: while you were composing, the messages above arrived. You drafted the following reply but it was NOT posted:\n"""\n${draft}\n"""\nRead the new messages first. Post only if your reply still adds something beyond what teammates already said — revise it, or shorten it to a brief agreement. If it's now redundant, output NOTHING (an empty response) and stay silent.)`;
+
+/** Token usage off a model reply (mirrors the conductor's extraction in `commit`). */
+const usageOf = (m: AIMessage): MessageUsage | undefined => {
+  const um = m.usage_metadata;
+  if (!um) return undefined;
+  return {
+    input: um.input_tokens ?? 0,
+    output: um.output_tokens ?? 0,
+    cacheRead: um.input_token_details?.cache_read || undefined,
+    cacheWrite: um.input_token_details?.cache_creation || undefined,
+  };
+};
+
 /**
- * A shallow copy of `m` with a cache breakpoint on its last content block — WITHOUT mutating the
- * original (it rides in checkpointed state, so a mutation would poison the durable history). Only
- * anchors on human/ai turns carrying cacheable text; other turns fall back to system-only caching.
+ * A shallow copy of `m` with a cache breakpoint on its last non-thinking content block — WITHOUT
+ * mutating the original (it rides in checkpointed state, so a mutation would poison the durable
+ * history). Only anchors on human/ai turns carrying cacheable text; other turns fall back to
+ * system-only caching. `thinking` and `redacted_thinking` blocks are intentionally skipped when
+ * searching for the anchor: Anthropic rejects `cache_control` on thinking blocks, and a
+ * thinking-only assistant turn (no trailing text block) returns `m` unchanged so that turn falls
+ * back to system-only caching rather than crashing the API call.
  */
 const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
   const kind = m.getType();
@@ -200,11 +264,20 @@ const withCacheBreakpoint = (m: BaseMessage): BaseMessage => {
       ? clone([{ type: 'text', text: m.content, cache_control: cc }])
       : m;
   }
-  const last = m.content.length - 1;
-  return last >= 0
-    ? clone(
-        m.content.map((b, i) => (i === last ? { ...b, cache_control: cc } : b)),
-      )
+  const isThinking = (b: unknown): boolean =>
+    typeof b === 'object' &&
+    b !== null &&
+    ((b as { type?: string }).type === 'thinking' ||
+      (b as { type?: string }).type === 'redacted_thinking');
+  let anchor = -1;
+  for (let i = m.content.length - 1; i >= 0; i--) {
+    if (!isThinking(m.content[i])) {
+      anchor = i;
+      break;
+    }
+  }
+  return anchor >= 0
+    ? clone(m.content.map((b, i) => (i === anchor ? { ...b, cache_control: cc } : b)))
     : m;
 };
 
@@ -377,17 +450,25 @@ export class BotGraphFactory {
       // Mark where this turn's messages begin, so the reconcile nodes can slice just this turn out
       // of the full persisted history (set on every path — reconcile runs on all of them).
       const turnStart = state.messages.length;
-      if (state.forced) return { decision: 'respond', pending: [], turnStart }; // job relay: skip the gate
+      // Per-turn read-the-room reset, on EVERY path: Annotation defaults don't re-apply on an
+      // existing thread, and a draft orphaned by a crash mid-revision must drop, not replay.
+      const rtr = {
+        draft: undefined,
+        draftUsage: undefined,
+        revisionPasses: 0,
+      };
+      if (state.forced)
+        return { decision: 'respond', pending: [], turnStart, ...rtr }; // job relay: skip the gate
       const channelId = this.channelIdOf(config);
       const batch = channel
         .since(state.cursor, channelId)
         .filter((m) => m.authorBotId !== bot.id);
       if (batch.length === 0)
-        return { decision: 'ignore', pending: [], turnStart }; // nothing for me
+        return { decision: 'ignore', pending: [], turnStart, ...rtr }; // nothing for me
       const latest = batch[batch.length - 1];
       const capped = !!config.configurable?.capped;
       if (capped && latest.authorBotId)
-        return { decision: 'ignore', pending: batch, turnStart }; // loop breaker
+        return { decision: 'ignore', pending: batch, turnStart, ...rtr }; // loop breaker
       const room = this.channelRegistry.get(channelId);
       const d = await this.gateService.gate(bot, latest.text, {
         authorBotId: latest.authorBotId,
@@ -410,6 +491,7 @@ export class BotGraphFactory {
         gateUsage: d.usage,
         pending: batch,
         turnStart,
+        ...rtr,
       };
     };
 
@@ -513,12 +595,52 @@ export class BotGraphFactory {
         // history cache breakpoint so it never invalidates the cached prefix.
         new HumanMessage(`(${timeContext})`),
         ...freshForModel,
+        // READ-THE-ROOM revision pass: the unposted draft + instruction, as the LAST message —
+        // the teammate messages that staled it arrived through `freshForModel` above (they sat
+        // past the cursor, so the normal top-of-step read picked them up).
+        ...(state.draft ? [new HumanMessage(revisionNote(state.draft))] : []),
       ];
       // Built per-invocation (not at graph-build) so it reads the CURRENT turn's tenant key from
       // the credential context — one compiled graph per bot serves every workspace.
       const model = this.models.buildModel().bindTools(tools);
       const ai = await model.invoke(convo, config);
-      return { messages: [...injected, ai], cursor: newCursor };
+      const aiText = flattenContent(ai.content).trim();
+      const hasToolCalls = ((ai as AIMessage).tool_calls?.length ?? 0) > 0;
+      // READ-THE-ROOM check: synchronous (same JS tick as the return below — the in-memory channel
+      // is synchronous, so nothing interleaves between this read and the checkpoint write request).
+      // Only a FINAL text post is gated: a tool-call step must enter history intact (a tool_use
+      // needs its tool_result) and the post-tools llm step folds new messages in anyway. Only
+      // teammate-BOT interleaves count — a human message landing mid-compose folds into the next
+      // gate/turn as usual rather than forcing a rewrite of a finished reply.
+      const interleaved =
+        hasToolCalls || !aiText
+          ? []
+          : channel
+              .since(newCursor, channelId)
+              .filter((m) => m.authorBotId && m.authorBotId !== bot.id);
+      if (interleaved.length > 0 && state.revisionPasses < MAX_REVISION_PASSES) {
+        // Stale: demote the reply to a draft. The consumed batch still commits atomically and the
+        // cursor still advances past what this step actually read; the interleaved messages stay
+        // unconsumed and become the revision pass's normal injected input.
+        return {
+          messages: injected, // NO ai — the draft never enters durable history
+          cursor: newCursor,
+          draft: aiText,
+          draftUsage: usageOf(ai as AIMessage),
+          revisionPasses: state.revisionPasses + 1,
+        };
+      }
+      // Fresh (or at the revision cap → post anyway; or a tool-call step; or a silent empty reply).
+      // The draft is resolved either way: posted, superseded by this reply, or — when a revision
+      // pass chose to act (tool calls) instead of posting — dropped, since the post-tools step
+      // re-reads the channel fresh. Clearing here keeps `afterLlm`'s draft → llm route reachable
+      // only from an actual suppression.
+      return {
+        messages: [...injected, ai],
+        cursor: newCursor,
+        draft: undefined,
+        draftUsage: undefined,
+      };
     };
 
     const toolsNode = new ToolNode(tools);
@@ -538,37 +660,58 @@ export class BotGraphFactory {
      *
      * Runs on the respond path between `gate` and `fetch`. Returns `{ loopBreak: true }` when a
      * loop is detected; the conditional edge `afterGuard` routes to `break` instead of `fetch`.
-     * Returns `{}` (no change) on all fast-path skips, so the default `loopBreak: false` persists
-     * and the turn proceeds normally to `fetch → llm`.
      *
-     * Fast-path skips (no Haiku call):
+     * EVERY exit writes `loopBreak` EXPLICITLY — never `{}`. The flag rides in the CHECKPOINT, so
+     * a skip that "changes nothing" would leave a previous turn's `true` in place and the
+     * conditional edge would re-break forever on a stale verdict (observed live: pauses kept
+     * firing on direct human pings, carrying an hour-old reasoning line, with every skip working
+     * "correctly"). The annotation default only covers never-written threads.
+     *
+     * Fast-path skips (no Haiku call, all clearing the flag):
      *   - forced turn (job relay — synthetic message, loop detection irrelevant)
      *   - guard disabled via env
      *   - triggering message is human-authored (loops are bot-origin phenomena)
-     *   - fewer than GUARD_FLOOR of the bot's own AI messages in history (not enough signal)
-     *   - last AI message is already the pause sentinel AND no human has spoken in the batch
-     *     (anti break-spam: don't re-fire until a human has weighed in)
+     *   - a human spoke ANYWHERE in the batch — a batch with a human in it deserves a real turn,
+     *     never a fuse check (also closes the race where a teammate's fast reply lands after the
+     *     human's and steals the "latest" slot)
+     *   - last AI message is already the pause sentinel (anti break-spam: once paused, the guard
+     *     re-arms only after the bot says something substantive again)
+     *   - fewer than GUARD_FLOOR substantive own messages in history (not enough signal)
+     *
+     * The judged window EXCLUDES prior pause lines: the breaker's own output must never count as
+     * loop evidence — a pause-polluted window otherwise re-confirms "looping" forever (observed:
+     * eight consecutive self-confirming re-fires).
      */
+    /** The skip verdict — clears any checkpointed break from a prior turn (see docstring). */
+    const GUARD_SKIP: Partial<BotStateType> = {
+      loopBreak: false,
+      guardReasoning: undefined,
+    };
     const guardNode = async (
       state: BotStateType,
     ): Promise<Partial<BotStateType>> => {
-      if (state.forced) return {};
-      if (!this.recursionGuard.isEnabled()) return {};
+      if (state.forced) return GUARD_SKIP;
+      if (!this.recursionGuard.isEnabled()) return GUARD_SKIP;
       // Only fire on bot-authored triggers — human messages don't form bot loops
       const latest = state.pending[state.pending.length - 1];
-      if (!latest?.authorBotId) return {};
-      // Need enough history for a meaningful window
+      if (!latest?.authorBotId) return GUARD_SKIP;
+      // A human anywhere in the batch → real turn, no fuse check.
+      if (state.pending.some((m) => !m.authorBotId)) return GUARD_SKIP;
       const ownMessages = state.messages.filter((m) => m.getType() === 'ai');
-      if (ownMessages.length < GUARD_FLOOR) return {};
-      // Anti break-spam: if we already fired the break and no human has spoken since, skip
-      const batchHasHuman = state.pending.some((m) => !m.authorBotId);
-      const lastAiText = flattenContent(
-        ownMessages[ownMessages.length - 1].content,
-      ).trim();
-      if (lastAiText.startsWith(PAUSE_SENTINEL) && !batchHasHuman) return {};
-      // Render the rolling window: the bot's own last N AI messages (text + tool-call note)
+      // Anti break-spam: once paused, stay paused on bot-only chatter; the guard re-arms when the
+      // bot next produces a substantive (non-pause) message of its own.
+      const lastAiText = ownMessages.length
+        ? flattenContent(ownMessages[ownMessages.length - 1].content).trim()
+        : '';
+      if (lastAiText.startsWith(PAUSE_SENTINEL)) return GUARD_SKIP;
+      // Need enough SUBSTANTIVE history for a meaningful window — pause lines don't count.
+      const substantive = ownMessages.filter(
+        (m) => !flattenContent(m.content).trim().startsWith(PAUSE_SENTINEL),
+      );
+      if (substantive.length < GUARD_FLOOR) return GUARD_SKIP;
+      // Render the rolling window: the bot's own last N substantive AI messages (text + tool-call note)
       const N = this.recursionGuard.windowSize();
-      const windowText = ownMessages
+      const windowText = substantive
         .slice(-N)
         .map((m) => {
           const text = flattenContent(m.content).trim();
@@ -581,7 +724,7 @@ export class BotGraphFactory {
         })
         .filter((s): s is string => s !== null)
         .join('\n');
-      if (!windowText.trim()) return {};
+      if (!windowText.trim()) return GUARD_SKIP;
       const result = await this.recursionGuard.detect(bot, windowText);
       return {
         loopBreak: result.looping,
@@ -596,6 +739,11 @@ export class BotGraphFactory {
      * history so the checkpoint stays honest), advances the cursor past them, appends a
      * first-person pause AIMessage, and clears `recalled`. Routes to `reconcile → END`.
      *
+     * The pause carries the judge's REASONING — the diagnosis of what looped — so the breaker is
+     * a learning signal, not just a fuse: the bot (and the channel) sees WHAT it was repeating,
+     * and reconcile can keep the lesson. The text still starts with PAUSE_SENTINEL, so the
+     * anti-spam/window checks keep matching.
+     *
      * The conductor's existing stream handler surfaces the pause AIMessage automatically
      * (`if (msg.getType() === 'ai') commit(msg)`) — zero conductor changes required.
      */
@@ -607,8 +755,12 @@ export class BotGraphFactory {
       const newCursor = pending.length
         ? pending[pending.length - 1].seq + 1
         : channel.lengthOf(this.channelIdOf(config));
+      const reason = state.guardReasoning?.trim();
+      const pauseText = reason
+        ? `${PAUSE_TEXT}\n(What I kept repeating: ${reason})`
+        : PAUSE_TEXT;
       return {
-        messages: [...pending.map(asInput), new AIMessage(PAUSE_TEXT)],
+        messages: [...pending.map(asInput), new AIMessage(pauseText)],
         cursor: newCursor,
         recalled: '',
       };
@@ -653,22 +805,28 @@ export class BotGraphFactory {
         })
         .join('\n');
 
-    /** The post-LLM write: reconcile durable facts (add/update/delete) against the turn. */
-    const reconcileMemoryNode = async (
-      state: BotStateType,
-      config: RunnableConfig,
-    ): Promise<Partial<BotStateType>> => {
-      const transcript = turnTranscript(state);
-      // Tag the reconcile with this turn's gate verdict, so the session metric can separate writes
-      // made on the respond path from those a silent (acknowledge/ignore) bot makes.
-      if (transcript.trim())
-        await this.reconcile.reconcileMemory(
-          bot,
-          transcript,
-          getIdentity(config),
-          state.decision,
-        );
-      return {};
+    /** The post-LLM write: reconcile durable facts (add/update/delete) against the turn.
+     *
+     * DISABLED 2026-06-12 (Dennis, during the first live standup) — the auto-capture is too
+     * credulous: it stored Sam's ANTICIPATORY chatter ("ready to execute when the standup
+     * closes") as accomplished facts ("#6 and #11 are approved"), recall fed them back as truth,
+     * and Sam preferred memory over the board (which was correct the whole time). Stale session
+     * facts from the same path also fed Alex's guard loop. OFF until the memory-system fix
+     * (board ticket #10) lands; explicit remember()/recall() tools are unaffected — this only
+     * silences the automatic post-turn write. The node + edges stay so the graph shape (and
+     * checkpoints) don't change.
+     */
+    const reconcileMemoryNode = (): Promise<Partial<BotStateType>> => {
+      // Disabled — see the docstring above. The original body, for the re-enable:
+      //   const transcript = turnTranscript(state);
+      //   if (transcript.trim())
+      //     await this.reconcile.reconcileMemory(
+      //       bot,
+      //       transcript,
+      //       getIdentity(config),
+      //       state.decision,
+      //     );
+      return Promise.resolve({});
     };
 
     /** The post-LLM write: reconcile the reminders plate (add/complete/drop) against the turn. */
@@ -718,7 +876,12 @@ export class BotGraphFactory {
       'reconcileMemory',
       'reconcileTask',
     ];
-    const afterLlm = (state: BotStateType): 'tools' | string[] => {
+    const afterLlm = (state: BotStateType): 'tools' | 'llm' | string[] => {
+      // Draft check FIRST: a suppression returns WITHOUT appending its AI message, so `last` would
+      // be stale history (in a crash-repaired thread it could even be a dangling tool_call AI —
+      // routing that to `tools` would re-execute stale calls). llmNode clears `draft` on every
+      // non-suppression return, so this route is reachable only from an actual suppression.
+      if (state.draft) return 'llm'; // read-the-room revision pass
       const last = state.messages[state.messages.length - 1] as
         | AIMessage
         | undefined;
@@ -755,6 +918,7 @@ export class BotGraphFactory {
       .addEdge('fetch', 'llm')
       .addConditionalEdges('llm', afterLlm, [
         'tools',
+        'llm',
         'reconcileMemory',
         'reconcileTask',
       ])

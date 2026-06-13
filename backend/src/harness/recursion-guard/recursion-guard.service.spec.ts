@@ -2,6 +2,7 @@ import { RunnableLambda } from '@langchain/core/runnables';
 import type { EnvService } from '@core/config/env/env.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import { RecursionGuardService } from './recursion-guard.service';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * RecursionGuardService unit tests. The Haiku model is faked with RunnableLambda (same pattern
@@ -15,7 +16,7 @@ const BOT = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'ctx',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
 };
 
 /** Minimal EnvService double. `enabled` defaults to undefined (on). */

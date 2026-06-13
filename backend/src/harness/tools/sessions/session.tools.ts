@@ -2,6 +2,7 @@ import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { Inject } from '@nestjs/common';
 import { z } from 'zod';
 import { EmployeeRegistry } from '../../employees/employee.registry';
+import { BoardStore } from '../../memory/board-store';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -37,6 +38,13 @@ const createSessionSchema = z.object({
     .string()
     .describe('A clear, self-contained opening message for the session.'),
   mode: modeField,
+  board_task_id: z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      'The team-board task (#N from list_board) this session works. Link it for ANY board work: the plan→approval flow runs through the board, and an execute turn is refused until the task is approved.',
+    ),
 });
 
 @HarnessTool()
@@ -54,16 +62,32 @@ export class CreateSessionTool implements IHarnessTool<
     private readonly runner: SessionRunnerService,
     private readonly worktrees: WorktreeService,
     private readonly employees: EmployeeRegistry,
+    private readonly board: BoardStore,
   ) {}
 
   async execute(
-    { worktreeId, task, mode }: z.infer<typeof createSessionSchema>,
+    {
+      worktreeId,
+      task,
+      mode,
+      board_task_id,
+    }: z.infer<typeof createSessionSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
     const worktree = this.worktrees.get(worktreeId);
     if (!worktree)
       return `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`;
+    if (
+      board_task_id !== undefined &&
+      !(await this.board.get(id.team, board_task_id))
+    )
+      return `No board task #${board_task_id} — check list_board, or omit board_task_id.`;
+    // The same approval gate reply_session applies — a fresh execute-mode session can't bypass it.
+    if (mode === 'execute') {
+      const refusal = await this.runner.executeRefusal(id.team, board_task_id);
+      if (refusal) return `Can't open an execute session: ${refusal}`;
+    }
     // The engine is the employee's locked engine — there is no per-session override.
     const engineName = (
       this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner()
@@ -77,6 +101,7 @@ export class CreateSessionTool implements IHarnessTool<
       team: id.team,
       project: id.project,
       mode,
+      ...(board_task_id !== undefined ? { boardTaskId: board_task_id } : {}),
     });
     // Fire-and-forget: the turn runs in the background, the chat turn returns immediately.
     //
@@ -88,7 +113,7 @@ export class CreateSessionTool implements IHarnessTool<
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
       void this.runner.runSessionTurn(session.id, task);
     });
-    return `Opened ${session.id} (${engineName}, ${mode}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
+    return `Opened ${session.id} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
   }
 }
 
@@ -217,7 +242,15 @@ export class CheckSessionTool implements IHarnessTool<
       session.mode,
     );
     const tier = `${session.mode} on ${model ?? `${session.engine} default`}${effort ? `, effort ${effort}` : ''}`;
-    const header = `${session.id} [${session.status}] (${tier}, ${session.worktreeId}, turn ${session.turns}): "${session.task}"`;
+    const board =
+      session.boardTaskId !== undefined
+        ? `, board #${session.boardTaskId}`
+        : '';
+    const waiting =
+      session.status === 'idle' && session.lastReportKind === 'questions'
+        ? ' — waiting on answers'
+        : '';
+    const header = `${session.id} [${session.status}]${waiting} (${tier}, ${session.worktreeId}${board}, turn ${session.turns}): "${session.task}"`;
     if (session.status === 'idle')
       return `${header}\nLast report: ${session.lastReport ?? '(none)'}`;
     if (session.status === 'failed')
@@ -260,7 +293,7 @@ export class ListSessionsTool implements IHarnessTool<
       .sort((a, b) => order[a.status] - order[b.status])
       .map(
         (s) =>
-          `- ${s.id} [${s.status}] (${s.mode}, ${s.worktreeId}, turn ${s.turns}): "${s.task}"`,
+          `- ${s.id} [${s.status}] (${s.mode}, ${s.worktreeId}${s.boardTaskId !== undefined ? `, board #${s.boardTaskId}` : ''}, turn ${s.turns}): "${s.task}"${s.status === 'idle' && s.lastReportKind === 'questions' ? ' — waiting on answers' : ''}`,
       )
       .join('\n');
   }

@@ -15,6 +15,7 @@ oauth_config:
       - chat:write
       - chat:write.customize # fallback posting as employees (username/icon override)
       - reactions:write
+      - files:write # plan snippets on approval cards (files.uploadV2)
       - channels:read
       - channels:history
       - channels:join

@@ -147,10 +147,10 @@ export class ClaimBoardTaskTool implements IHarnessTool<typeof claimSchema> {
 const updateSchema = z.object({
   id: z.number().describe('The board task id (the #N from list_board).'),
   status: z
-    .enum(['open', 'in_progress', 'done'])
+    .enum(['open', 'in_progress', 'awaiting_approval', 'approved', 'done'])
     .optional()
     .describe(
-      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee).",
+      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY: proposing normally happens via propose_plan, and 'approved' records Dennis's explicit verdict.",
     ),
   assignee: z
     .string()
@@ -167,7 +167,7 @@ const updateSchema = z.object({
 export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
   readonly name = 'update_board_task';
   readonly description =
-    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), or — team lead only — reassign/reopen/edit anything. Teammates can only complete or release their OWN tasks.";
+    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), or — team lead only — reassign/reopen/edit anything, propose manually ('awaiting_approval'; normally propose_plan does this), and record Dennis's approval ('approved'). Teammates can only complete or release their OWN tasks.";
   readonly schema = updateSchema;
 
   constructor(
@@ -190,6 +190,17 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     if (!task) return `No board task #${taskId} found.`;
     const isLead = !!this.employees.byId(id.selfAgent)?.teamLead;
     const release = status === 'open';
+
+    // The approval seam: 'approved' is the record of DENNIS's decision, clerked by the lead, and
+    // 'awaiting_approval' is set by the lead's propose_plan (manual set = the lead's escape hatch).
+    if (status === 'approved') {
+      if (!isLead)
+        return `Marking a plan 'approved' is the team lead's call — and the lead records it only on Dennis's explicit approval.`;
+      if (task.status !== 'awaiting_approval')
+        return `Board task #${taskId} is '${task.status}', not 'awaiting_approval' — only a proposed ticket can be approved (propose_plan proposes it).`;
+    }
+    if (status === 'awaiting_approval' && !isLead)
+      return `Posting for approval isn't a status you set — your plan AUTO-ATTACHES to the ticket when your linked planning session finishes. Notify @Sam your plan on #${taskId} is ready for review; he proposes the ticket to Dennis (propose_plan) once every plan is lead-approved.`;
 
     if (!isLead) {
       if (
@@ -222,6 +233,10 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     if (!updated) return `No board task #${taskId} found.`;
     if (status === 'done')
       return `Board task #${taskId} done: ${updated.title}`;
+    if (status === 'awaiting_approval')
+      return `Board task #${taskId} posted for approval: ${updated.title} — it queues for Dennis's next planning sitting.`;
+    if (status === 'approved')
+      return `Board task #${taskId} APPROVED: ${updated.title} — ${updated.assignee ?? 'the assignee'} can flip its session to execute.`;
     if (release && !newAssignee)
       return `Board task #${taskId} released back to the board (unassigned, open).`;
     return `Updated board task #${taskId} (${fmtAssignee(updated)}, ${updated.status}).`;
@@ -240,10 +255,10 @@ const listSchema = z.object({
     .optional()
     .describe("Filter to one teammate's tasks (a roster id like 'alex')."),
   status: z
-    .enum(['open', 'in_progress', 'done'])
+    .enum(['open', 'in_progress', 'awaiting_approval', 'approved', 'done'])
     .optional()
     .describe(
-      'Filter by status; omit for open + in-progress (the live board).',
+      "Filter by status; omit for everything not done (the live board). 'awaiting_approval' lists the plans queued for Dennis's sign-off.",
     ),
 });
 

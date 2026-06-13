@@ -8,8 +8,18 @@ import { rawRows, toIso } from './sql';
  * claim unassigned items. Claiming is ATOMIC at the DB (one conditional UPDATE — the DB plays the
  * role of a claim lock), and `blocked` is DERIVED from `depends_on` inside that same statement, so
  * completing a task never fans out writes to its dependents.
+ *
+ * Lifecycle (the approval layer rides on status): open → claim → in_progress (planning) →
+ * awaiting_approval (plan + its Q&A posted for Dennis) → approved (TEAM LEAD only, recorded on
+ * Dennis's explicit word at a planning sitting) → execution → done. claim() takes only 'open'
+ * tasks, and only 'done' satisfies a dependency — both unchanged by the approval states.
  */
-export type BoardStatus = 'open' | 'in_progress' | 'done';
+export type BoardStatus =
+  | 'open'
+  | 'in_progress'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'done';
 
 export interface BoardTask {
   id: number;
@@ -139,6 +149,30 @@ export class BoardStore {
     )
       return 'taken';
     return 'blocked';
+  }
+
+  /**
+   * Atomic compare-and-set status transition — the claim() idiom (one conditional UPDATE, the DB
+   * is the lock). The verdict handler's guard against double clicks and stale approval cards: two
+   * concurrent verdicts on one task, exactly one wins; the loser reads the task to say why.
+   */
+  async transition(
+    team: string,
+    id: number,
+    from: BoardStatus,
+    patch: { status: BoardStatus; assignee?: string | null },
+  ): Promise<BoardTask | undefined> {
+    const sets = ['status = $4', 'updated_at = now()'];
+    const args: unknown[] = [id, team, from, patch.status];
+    if (patch.assignee !== undefined) {
+      args.push(patch.assignee);
+      sets.push(`assignee = $${args.length}`);
+    }
+    const rows = await this.q(
+      `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 AND status = $3 RETURNING *`,
+      args,
+    );
+    return rows[0] ? toBoardTask(rows[0]) : undefined;
   }
 
   /** Guarded field update — AUTHORITY IS THE TOOL'S JOB; this only enforces team + existence. */

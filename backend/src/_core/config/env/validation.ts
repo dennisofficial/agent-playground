@@ -72,6 +72,14 @@ export interface IEnvConfig {
   GUARD_MODEL?: string; // recursion-guard model (default in code: Haiku)
   RECURSION_GUARD_ENABLED?: boolean; // false → disable the loop-detection guard (default: true)
   RECURSION_GUARD_WINDOW?: number; // rolling-window size for the guard (default: 12)
+  // The execute-approval dial — how strictly session execute turns are gated on board approval:
+  // 'all' (default) = EVERY execute flip needs a linked board task in 'approved'/'done';
+  // 'linked' = only board-linked sessions are gated (unlinked ad-hoc work stays autonomous);
+  // 'off' = no mechanical gate (prompt-governed only). Tone down as trust builds.
+  EXECUTION_APPROVAL_MODE: 'all' | 'linked' | 'off';
+  // Slack user id allowed to rule on approval cards when the workspace has no OAuth installer
+  // (tenant.installed_by is null on env-token dev workspaces). installed_by wins when set.
+  APPROVAL_BOSS_USER_ID?: string;
   // Directory worker engines are jailed to. No code default on purpose: dispatching a job without
   // it fails loudly rather than letting a worker loose in an arbitrary cwd.
   WORKER_ROOT?: string;
@@ -113,6 +121,11 @@ export interface IEnvConfig {
   // Dev-only (CLI seed, not the app): puppet bot tokens re-seeded into slack_identities on
   // `db:seed`, JSON: {"teamId":"T0…","tokens":{"alex":"xoxb-…", …}}. Lives in .env.personal.
   SLACK_PUPPET_SEED?: string;
+  // Dev-only (CLI seed, not the app): the dev workspace's tenant row (ears token + installer),
+  // re-seeded on `db:seed` — socket-mode dev never OAuth-installs, so without it there's no
+  // tenant row (boss check falls back to APPROVAL_BOSS_USER_ID). JSON:
+  // {"teamId":"T0…","botToken":"xoxb-…","installedBy":"U0…"}. Lives in .env.personal.
+  SLACK_TENANT_SEED?: string;
   CONTROL_POSTGRES_DB?: string; // control-plane DB name (default 'agent_control'; server coords from POSTGRES_*)
   TENANT_ENV_ROOT?: string; // where per-tenant env overlays are written (provisioner)
   TENANT_PORT_BASE?: number; // first inbound port allocated to tenant stacks (default 4200)
@@ -182,6 +195,11 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   GUARD_MODEL: Joi.string().optional(),
   RECURSION_GUARD_ENABLED: Joi.boolean().optional(),
   RECURSION_GUARD_WINDOW: Joi.number().integer().min(1).optional(),
+  EXECUTION_APPROVAL_MODE: Joi.string()
+    .valid('all', 'linked', 'off')
+    .optional()
+    .default('all'),
+  APPROVAL_BOSS_USER_ID: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
@@ -206,6 +224,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SLACK_SIGNING_SECRET: Joi.string().optional(),
   SLACK_PUPPET_OAUTH: Joi.string().optional(),
   SLACK_PUPPET_SEED: Joi.string().optional(),
+  SLACK_TENANT_SEED: Joi.string().optional(),
   GATEWAY_SHARED_SECRET: Joi.string().optional(),
   GATEWAY_PUBLIC_URL: Joi.string().uri().optional(),
   GATEWAY_PORT: Joi.number().port().optional(),

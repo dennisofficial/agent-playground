@@ -115,14 +115,18 @@ export class FetchService {
     ]);
     const plate = plates.flat();
 
+    // `(source: …)` is assertion PROVENANCE — the human speaking when the fact was extracted —
+    // not whose work the fact describes.
+    const sourceTag = (f: { asserted_by: string | null }): string =>
+      f.asserted_by ? ` (source: ${f.asserted_by})` : '';
     if (facts.length > 0) {
       parts.push(
-        `What you already know:\n${facts.map((f) => `- ${f.fact}`).join('\n')}`,
+        `What you already know:\n${facts.map((f) => `- ${f.fact}${sourceTag(f)}`).join('\n')}`,
       );
     }
     if (others.length > 0) {
       parts.push(
-        `From other projects (for reference):\n${others.map((o) => `- [${o.project}] ${o.fact.fact}`).join('\n')}`,
+        `From other projects (for reference):\n${others.map((o) => `- [${o.project}] ${o.fact.fact}${sourceTag(o.fact)}`).join('\n')}`,
       );
     }
     if (plate.length > 0) {

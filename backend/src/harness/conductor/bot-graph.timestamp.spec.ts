@@ -1,4 +1,8 @@
-import { AIMessage, type BaseMessage, SystemMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  type BaseMessage,
+  SystemMessage,
+} from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import type { EnvService } from '@core/config/env/env.service';
@@ -15,6 +19,7 @@ import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * Pins the time-context injection contract:
@@ -75,7 +80,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'ctx',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
 };
 
 const PERSONA_TEXT = 'you are alex, the backend bot';
@@ -99,7 +104,9 @@ function buildFactory(channel: FakeChannel, gapMs?: number) {
       toStructuredTools: () => [],
       terminalToolNames: () => new Set<string>(),
     } as unknown as ToolRegistry,
-    { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+    {
+      gate: async () => ({ action: 'respond' as const }),
+    } as unknown as GateService,
     { isEnabled: () => false } as unknown as RecursionGuardService,
     { fetchContext: async () => '' } as unknown as FetchService,
     {
@@ -120,7 +127,12 @@ function buildFactory(channel: FakeChannel, gapMs?: number) {
 describe('bot graph — time context injection', () => {
   it('includes a "Current time:" HumanMessage in the volatile block on every llm step', async () => {
     const channel = new FakeChannel();
-    channel.append({ id: 'u-0', author: 'Dennis', authorId: 'dennis', text: 'hey' });
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'hey',
+    });
     const { factory, invocations } = buildFactory(channel);
     const graph = factory.getBotGraph(ALEX);
     await graph.invoke(
@@ -141,7 +153,9 @@ describe('bot graph — time context injection', () => {
 
     // The volatile HumanMessage block MUST carry the current-time line.
     const humanMsgs = convo.filter((m) => m.getType() === 'human');
-    const timeMsg = humanMsgs.find((m) => flat(m.content).includes('Current time:'));
+    const timeMsg = humanMsgs.find((m) =>
+      flat(m.content).includes('Current time:'),
+    );
     expect(timeMsg).toBeDefined();
   });
 
@@ -199,8 +213,12 @@ describe('bot graph — time context injection', () => {
     expect(hasDivider).toBe(true);
 
     // The actual message content is still present (plain Author: text form).
-    const hasFirstMsg = humanTexts.some((t) => t.includes('Dennis: back after a while'));
-    const hasSecondMsg = humanTexts.some((t) => t.includes('Dennis: and another one'));
+    const hasFirstMsg = humanTexts.some((t) =>
+      t.includes('Dennis: back after a while'),
+    );
+    const hasSecondMsg = humanTexts.some((t) =>
+      t.includes('Dennis: and another one'),
+    );
     expect(hasFirstMsg).toBe(true);
     expect(hasSecondMsg).toBe(true);
   });
@@ -237,10 +255,9 @@ describe('bot graph — time context injection', () => {
 
     // Divider labels must NOT be in the durable checkpoint — only real "Author: text" entries.
     expect(persistedHuman.every((t) => !t.includes('———'))).toBe(true);
-    expect(persistedHuman.every((t) => !t.includes('Current time:'))).toBe(true);
-    expect(persistedHuman).toEqual([
-      'Dennis: hey',
-      'Dennis: anyone here?',
-    ]);
+    expect(persistedHuman.every((t) => !t.includes('Current time:'))).toBe(
+      true,
+    );
+    expect(persistedHuman).toEqual(['Dennis: hey', 'Dennis: anyone here?']);
   });
 });
