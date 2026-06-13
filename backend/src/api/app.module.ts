@@ -48,8 +48,6 @@ import { AuthModule } from './auth/auth.module';
     MemoryAdminModule,
     TenantsModule,
     AuthModule,
-    MemoryAdminModule,
-    TenantsModule,
   ],
   controllers: [
     ApiController,
