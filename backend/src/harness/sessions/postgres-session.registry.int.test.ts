@@ -139,8 +139,16 @@ describe('PostgresSessionRegistry (live Postgres)', () => {
     ]);
   });
 
-  it('reconciles interrupted running sessions to failed on boot', async () => {
-    const running = await registry.create(newSession());
+  it('reconciles interrupted running sessions to failed on boot, with a truthful resume message', async () => {
+    // A session killed before its first turn finished (turns=0, no engine handle)…
+    const fresh = await registry.create(newSession());
+    // …vs one that completed a turn and was running again (has a resume handle)…
+    const resumable = await registry.create(newSession());
+    await registry.update(resumable.id, {
+      engineSessionId: 'engine-xyz',
+      turns: 1,
+    });
+    await registry.update(resumable.id, { status: 'running' }); // mid second turn at restart
     const idle = await registry.create(newSession());
     await registry.update(idle.id, { status: 'idle' });
 
@@ -148,10 +156,16 @@ describe('PostgresSessionRegistry (live Postgres)', () => {
     const reborn = makeRegistry(ds);
     await reborn.onApplicationBootstrap();
 
-    const wasRunning = await reborn.get(running.id);
-    expect(wasRunning?.status).toBe('failed');
-    expect(wasRunning?.error).toContain('restart');
-    // An idle session is untouched — only zombies are swept.
+    const freshAfter = await reborn.get(fresh.id);
+    expect(freshAfter?.status).toBe('failed');
+    expect(freshAfter?.error).toContain('no saved context'); // truthful: nothing to resume
+
+    const resumableAfter = await reborn.get(resumable.id);
+    expect(resumableAfter?.status).toBe('failed');
+    expect(resumableAfter?.error).toContain('resumes it with full context');
+    expect(resumableAfter?.engineSessionId).toBe('engine-xyz'); // handle preserved
+
+    // An idle session is untouched — only running zombies are swept.
     expect((await reborn.get(idle.id))?.status).toBe('idle');
   });
 });

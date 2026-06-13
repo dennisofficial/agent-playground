@@ -100,20 +100,30 @@ export class PostgresSessionRegistry
    * gone. Mark 'failed' so the owner can reply to resume (engine session preserved) or close. Also
    * logs the survival count so a restart visibly proves sessions persisted. */
   async onApplicationBootstrap(): Promise<void> {
-    const res = await this.repo.update(
-      { status: 'running' },
-      {
-        status: 'failed',
-        error:
-          'Interrupted by a harness restart — reply_session to resume (the engine session is preserved) or close_session to drop it.',
-      },
-    );
-    // Survival readout: open (idle/failed) sessions are the ones a teammate can still pick back up.
+    // The error message must tell the TRUTH per session: a session with an engine_session_id (≥1
+    // completed turn) genuinely resumes with full context; one killed before its first turn finished
+    // (no handle) has nothing to resume and must restart from the task. An unconditional "context is
+    // preserved" would mislead a bot into reply_session expecting context that isn't there.
+    const withCtx =
+      'Interrupted by a harness restart — reply_session resumes it with full context (the engine session was preserved), or close_session to drop it.';
+    const noCtx =
+      'Interrupted by a harness restart before its first turn finished — there is no saved context to resume; reply_session restarts it from the original task, or close_session to drop it.';
+    const interrupted = await this.repo.count({
+      where: { status: 'running' },
+    });
+    if (interrupted)
+      await this.repo.manager.query(
+        `UPDATE sessions SET status = 'failed', updated_at = now(),
+           error = CASE WHEN engine_session_id IS NOT NULL THEN $1 ELSE $2 END
+         WHERE status = 'running'`,
+        [withCtx, noCtx],
+      );
+    // Survival readout: idle/failed sessions are the ones a teammate can still pick back up.
     const open = await this.repo.count({
       where: [{ status: 'idle' }, { status: 'failed' }],
     });
     this.logger.log(
-      `Sessions hydrated from Postgres: ${open} open (resumable)${res.affected ? `, ${res.affected} interrupted → 'failed' this boot` : ''}.`,
+      `Sessions hydrated from Postgres: ${open} open${interrupted ? `, ${interrupted} interrupted → 'failed' this boot` : ''}.`,
     );
   }
 
