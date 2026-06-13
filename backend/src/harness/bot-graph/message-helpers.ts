@@ -6,22 +6,16 @@ import {
 } from '@langchain/core/messages';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { MessageUsage } from '../domain/conductor-events';
+import { extractMessageUsage } from '../llm/usage-format';
 
 /** Channel message → a `Speaker: text` HumanMessage (how a bot reads what others said). */
 export const asInput = (m: ChannelMsg): HumanMessage =>
   new HumanMessage(`${m.author}: ${m.text}`);
 
-/** Token usage off a model reply (mirrors the conductor's extraction in `commit`). */
-export const usageOf = (m: AIMessage): MessageUsage | undefined => {
-  const um = m.usage_metadata;
-  if (!um) return undefined;
-  return {
-    input: um.input_tokens ?? 0,
-    output: um.output_tokens ?? 0,
-    cacheRead: um.input_token_details?.cache_read || undefined,
-    cacheWrite: um.input_token_details?.cache_creation || undefined,
-  };
-};
+/** Token usage off a model reply (delegates to the shared extractor — the same one the conductor's
+ * `commit` uses — so cache-write TTL buckets are split consistently). */
+export const usageOf = (m: AIMessage): MessageUsage | undefined =>
+  extractMessageUsage(m);
 
 /**
  * A shallow copy of `m` with a cache breakpoint on its last non-thinking content block — WITHOUT

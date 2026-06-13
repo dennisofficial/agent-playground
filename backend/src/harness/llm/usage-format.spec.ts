@@ -1,4 +1,8 @@
-import { CHAT_MODEL, formatUsageLine } from './usage-format';
+import {
+  CHAT_MODEL,
+  extractMessageUsage,
+  formatUsageLine,
+} from './usage-format';
 
 /** Minimal valid AccumulatedUsage with all fields. */
 function makeUsage(
@@ -8,7 +12,8 @@ function makeUsage(
     input: 1000,
     output: 80,
     cacheRead: 0,
-    cacheWrite: 0,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
     costUsd: 0.0042,
     callCount: 1,
     ...overrides,
@@ -58,16 +63,29 @@ describe('formatUsageLine', () => {
 
   it('cache fields appear when non-zero, omitted when zero', () => {
     const withCache = formatUsageLine(
-      makeUsage({ cacheRead: 300, cacheWrite: 50, callCount: 1 }),
+      makeUsage({ cacheRead: 300, cacheWrite5m: 20, cacheWrite1h: 30, callCount: 1 }),
     );
     expect(withCache).toContain('cache read 300');
-    expect(withCache).toContain('cache write 50');
+    expect(withCache).toContain('cache write 5m 20');
+    expect(withCache).toContain('cache write 1h 30');
 
     const noCache = formatUsageLine(
-      makeUsage({ cacheRead: 0, cacheWrite: 0, callCount: 1 }),
+      makeUsage({ cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, callCount: 1 }),
     );
     expect(noCache).not.toContain('cache read');
     expect(noCache).not.toContain('cache write');
+  });
+
+  it('only cacheWrite5m non-zero: shows 5m label, omits 1h', () => {
+    const line = formatUsageLine(makeUsage({ cacheWrite5m: 50, cacheWrite1h: 0 }));
+    expect(line).toContain('cache write 5m 50');
+    expect(line).not.toContain('cache write 1h');
+  });
+
+  it('only cacheWrite1h non-zero: shows 1h label, omits 5m', () => {
+    const line = formatUsageLine(makeUsage({ cacheWrite5m: 0, cacheWrite1h: 80 }));
+    expect(line).toContain('cache write 1h 80');
+    expect(line).not.toContain('cache write 5m');
   });
 
   it('cost is formatted to 4 decimal places', () => {
@@ -81,5 +99,80 @@ describe('formatUsageLine', () => {
     );
     expect(line).toContain('in 1,234,567');
     expect(line).toContain('out 98,765');
+  });
+});
+
+describe('extractMessageUsage', () => {
+  it('returns undefined when usage_metadata is absent', () => {
+    expect(extractMessageUsage({} as never)).toBeUndefined();
+  });
+
+  it('extracts basic input/output/cacheRead from usage_metadata', () => {
+    const msg = {
+      usage_metadata: {
+        input_tokens: 1000,
+        output_tokens: 80,
+        input_token_details: { cache_read: 400 },
+      },
+    } as never;
+    const result = extractMessageUsage(msg)!;
+    expect(result.input).toBe(1000);
+    expect(result.output).toBe(80);
+    expect(result.cacheRead).toBe(400);
+    expect(result.cacheWrite5m).toBeUndefined();
+    expect(result.cacheWrite1h).toBeUndefined();
+  });
+
+  it('falls back to input_token_details.cache_creation as cacheWrite1h when response_metadata absent', () => {
+    const msg = {
+      usage_metadata: {
+        input_tokens: 1000,
+        output_tokens: 80,
+        input_token_details: { cache_creation: 200 },
+      },
+    } as never;
+    const result = extractMessageUsage(msg)!;
+    expect(result.cacheWrite1h).toBe(200);
+    expect(result.cacheWrite5m).toBeUndefined();
+  });
+
+  it('extracts TTL-split cache_creation object from response_metadata', () => {
+    const msg = {
+      usage_metadata: {
+        input_tokens: 1000,
+        output_tokens: 80,
+        input_token_details: {},
+      },
+      response_metadata: {
+        usage: { cache_creation: { '5m': 300, '1h': 700 } },
+      },
+    } as never;
+    const result = extractMessageUsage(msg)!;
+    expect(result.cacheWrite5m).toBe(300);
+    expect(result.cacheWrite1h).toBe(700);
+  });
+
+  it('treats zero TTL buckets as undefined (omits them)', () => {
+    const msg = {
+      usage_metadata: { input_tokens: 500, output_tokens: 40, input_token_details: {} },
+      response_metadata: {
+        usage: { cache_creation: { '5m': 0, '1h': 500 } },
+      },
+    } as never;
+    const result = extractMessageUsage(msg)!;
+    expect(result.cacheWrite5m).toBeUndefined();
+    expect(result.cacheWrite1h).toBe(500);
+  });
+
+  it('also checks cache_creation_input_tokens key (Anthropic SDK field name)', () => {
+    const msg = {
+      usage_metadata: { input_tokens: 500, output_tokens: 40, input_token_details: {} },
+      response_metadata: {
+        usage: { cache_creation_input_tokens: { '5m': 100, '1h': 200 } },
+      },
+    } as never;
+    const result = extractMessageUsage(msg)!;
+    expect(result.cacheWrite5m).toBe(100);
+    expect(result.cacheWrite1h).toBe(200);
   });
 });
