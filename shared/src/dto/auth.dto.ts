@@ -16,3 +16,9 @@ export interface AdminUserView {
 export interface LoginResponse {
   user: AdminUserView;
 }
+
+/**
+ * Preferred alias for AdminUserView — use this name going forward.
+ * AdminUserView is kept for backwards-compat with existing backend references.
+ */
+export type IAdminUserResponse = AdminUserView;

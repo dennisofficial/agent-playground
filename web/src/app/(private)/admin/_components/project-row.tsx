@@ -1,11 +1,19 @@
 'use client';
 
 import { useState } from 'react';
+import { useForm } from 'react-hook-form';
 import type { ProjectRecord } from '@/lib/admin-api';
 import { updateProject } from '@/lib/admin-api';
 
 const inputCls =
   'rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:border-zinc-700 dark:text-zinc-50';
+
+type FormValues = {
+  displayName: string;
+  gitUrl: string;
+  defaultBranch: string;
+  tokenName: string;
+};
 
 export function ProjectRow({
   teamId,
@@ -19,30 +27,35 @@ export function ProjectRow({
   onSuccess: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    const str = (key: string) => String(fd.get(key) ?? '').trim();
-    setError(null);
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<FormValues>({
+    defaultValues: {
+      displayName: project.displayName,
+      gitUrl: project.gitUrl,
+      defaultBranch: project.defaultBranch,
+      tokenName: project.tokenName ?? '',
+    },
+  });
+
+  async function onSubmit(values: FormValues) {
     setDone(false);
-    setPending(true);
     try {
       await updateProject(teamId, project.projectId, {
-        displayName: str('displayName'),
-        gitUrl: str('gitUrl'),
-        defaultBranch: str('defaultBranch') || 'main',
-        tokenName: str('tokenName') || null,
+        displayName: values.displayName,
+        gitUrl: values.gitUrl,
+        defaultBranch: values.defaultBranch || 'main',
+        tokenName: values.tokenName || null,
       });
       setDone(true);
       onSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPending(false);
+      setError('root', { message: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -72,29 +85,26 @@ export function ProjectRow({
 
       {open ? (
         <form
-          onSubmit={handleSubmit}
+          onSubmit={handleSubmit(onSubmit)}
           className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-900"
         >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <input
-              name="displayName"
-              defaultValue={project.displayName}
-              required
+              {...register('displayName', { required: true })}
               className={inputCls}
             />
             <input
-              name="defaultBranch"
-              defaultValue={project.defaultBranch}
-              required
+              {...register('defaultBranch', { required: true })}
               className={`${inputCls} font-mono`}
             />
             <input
-              name="gitUrl"
-              defaultValue={project.gitUrl}
-              required
+              {...register('gitUrl', {
+                required: true,
+                pattern: { value: /^https?:\/\/.+/, message: 'Must be a valid URL' },
+              })}
               className={`${inputCls} font-mono sm:col-span-2`}
             />
-            <select name="tokenName" defaultValue={project.tokenName ?? ''} className={inputCls}>
+            <select {...register('tokenName')} className={inputCls}>
               <option value="">— default token —</option>
               {tokenNames.map((n) => (
                 <option key={n} value={n}>
@@ -104,14 +114,14 @@ export function ProjectRow({
             </select>
             <button
               type="submit"
-              disabled={pending}
+              disabled={isSubmitting}
               className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
             >
-              {pending ? 'Saving…' : 'Save changes'}
+              {isSubmitting ? 'Saving…' : 'Save changes'}
             </button>
           </div>
-          {error ? (
-            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
+          {errors.root ? (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{errors.root.message}</p>
           ) : null}
           {done ? <p className="mt-2 text-sm text-emerald-600">Saved.</p> : null}
         </form>

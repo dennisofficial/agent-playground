@@ -1,24 +1,59 @@
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import type { AuthState } from '@workspace/auth';
+import { auth } from '@/lib/auth';
 import AdminHeader from './_components/AdminHeader';
 
 /**
- * Server-side route-protection layout for all routes under (private)/.
+ * Client-side route-protection layout for all routes under (private)/.
  *
- * Reads the httpOnly `access_token` cookie before the page renders.
- * If absent, issues a server redirect to /admin/login — no JS required,
- * no client flash. The client-side 401 → refresh cycle (in admin-api.ts)
- * handles token expiry after the initial render.
+ * Subscribes to auth state via auth.onAuthStateChanged() before calling
+ * auth.initialize(). Shows a loading indicator while the session probe is
+ * in flight, an inline error when the backend is unreachable, and redirects
+ * to /admin/login when the user is not authenticated.
  *
- * The header chrome (title + Log out button) is a client island so the
- * interactive sign-out action has access to useRouter.
+ * Renders <AdminHeader />{children} once the session is confirmed.
  */
-export default async function PrivateLayout({ children }: { children: React.ReactNode }) {
-  const cookieStore = await cookies();
-  const hasSession = cookieStore.has('access_token');
+export default function PrivateLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const [state, setState] = useState<AuthState | null>(null);
 
-  if (!hasSession) {
-    redirect('/admin/login');
+  useEffect(() => {
+    // Subscribe first so we never miss the first notification from initialize().
+    const unsub = auth.onAuthStateChanged((s) => setState(s));
+    void auth.initialize();
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (state !== null && !state.authenticated && !state.backendUnreachable) {
+      router.replace('/admin/login');
+    }
+  }, [state, router]);
+
+  // Loading: session probe not completed yet.
+  if (state === null) {
+    return (
+      <main className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-12 font-sans dark:bg-black">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
+      </main>
+    );
+  }
+
+  // Backend down — show inline message rather than redirecting to login.
+  if (state.backendUnreachable) {
+    return (
+      <main className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-12 font-sans dark:bg-black">
+        <p className="text-sm text-red-600 dark:text-red-400">Can't reach the server</p>
+      </main>
+    );
+  }
+
+  // Not authenticated — redirect handled by useEffect above; render nothing while navigating.
+  if (!state.authenticated) {
+    return null;
   }
 
   return (
