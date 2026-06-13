@@ -6,7 +6,10 @@ import {
   WorkerEngine,
 } from '../engines/worker-engine.port';
 import type { EmployeeRegistry } from '../employees/employee.registry';
+import { makeEmployee } from '../employees/employee.testing';
 import type { PersonaService } from '../employees/persona.service';
+import type { LifecycleRunner } from '../lifecycle/lifecycle.runner';
+import { LifecycleEvent } from '../lifecycle/lifecycle.types';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type { BoardStatus, BoardStore } from '../memory/board-store';
@@ -18,14 +21,12 @@ import { InMemorySessionRegistry } from './in-memory-session.registry';
 import type { Session } from './session-registry.port';
 import { SessionRunnerService } from './session-runner.service';
 
-const ALEX = {
+const ALEX = makeEmployee({
   id: 'alex',
   name: 'Alex',
   role: 'backend engineer',
   sortOrder: 10,
-  roleContext: 'x',
-  engine: EWorkerEngineName.CLAUDE,
-};
+});
 
 const WT = {
   id: 'wt-001',
@@ -50,23 +51,29 @@ function buildRunner(
     standupOpen?: boolean;
     /** Make PlanStore.attach reject (the attach-failure path). */
     attachFails?: boolean;
+    /** Simulate a `plan.finished` self-review hook transforming the plan body. */
+    selfReview?: (planBody: string) => string;
   } = {},
 ) {
   const worktree = 'worktree' in opts ? opts.worktree : WT;
   const sessions = new InMemorySessionRegistry();
   const engines = { get: () => engine } as unknown as EngineRegistry;
+  const ctx = { team: 'local', roster: 'Alex — backend engineer' };
   const employees = {
     byId: () => ALEX,
     fallbackOwner: () => ALEX,
-    resolveWorkerModel: (_bot: unknown, role: string) => ({
-      engine: EWorkerEngineName.CLAUDE,
-      model: role === 'plan' ? 'plan-model' : 'exec-model',
-      effort: 'high' as const,
-    }),
+    context: () => ctx,
   } as unknown as EmployeeRegistry;
   const persona = {
-    workerPromptFor: () => 'worker prompt',
+    context: () => ctx,
   } as unknown as PersonaService;
+  // Lifecycle double: returns the payload, optionally transforming planBody (the self-review hook).
+  const lifecycle = {
+    run: async (_event: LifecycleEvent, payload: { planBody: string }) =>
+      opts.selfReview
+        ? { ...payload, planBody: opts.selfReview(payload.planBody) }
+        : payload,
+  } as unknown as LifecycleRunner;
   const worklogged: unknown[] = [];
   const worklog = {
     logWork: async (e: unknown) => void worklogged.push(e),
@@ -105,6 +112,7 @@ function buildRunner(
     engines,
     employees,
     persona,
+    lifecycle,
     worklog,
     worktrees,
     creds,
@@ -606,13 +614,13 @@ describe('SessionRunnerService — the execute-approval gate', () => {
   });
 });
 
-describe('SessionRunnerService — plan auto-attach to the ticket', () => {
+describe('SessionRunnerService — plan relay (no auto-attach) + plan.finished hooks', () => {
   const planEngine = (planText: string): WorkerEngine => ({
     name: EWorkerEngineName.CLAUDE,
     run: () => Promise.resolve({ result: planText, sessionId: 'e1', planText }),
   });
 
-  it('a plan turn on a LINKED session attaches the report (incl. Q&A) and marks planAttached', async () => {
+  it('a board-linked plan turn does NOT auto-attach — it relays the plan (incl. Q&A) for the employee to submit', async () => {
     let calls = 0;
     const fake: WorkerEngine = {
       name: EWorkerEngineName.CLAUDE,
@@ -634,98 +642,48 @@ describe('SessionRunnerService — plan auto-attach to the ticket', () => {
     const { runner, sessions, attached } = buildRunner(fake);
     const session = await sessions.create({ ...newSession, boardTaskId: 7 });
     await runner.runSessionTurn(session.id, session.task);
-    expect(attached).toHaveLength(0); // a questions-turn attaches nothing
-
     await runner.replySession(session.id, 'Q1: option 1');
     await new Promise((r) => setTimeout(r, 20));
 
-    expect(attached).toHaveLength(1);
-    expect(attached[0]).toMatchObject({
-      team: 'local',
-      taskId: 7,
-      employee: 'alex',
-      sessionId: session.id, // provenance = the harness session id
-    });
-    // The attached text is the full report — plan + the Q&A appendix.
-    expect(attached[0].planMd).toContain('The plan.');
-    expect(attached[0].planMd).toContain('Decisions made while planning');
-    expect((await sessions.get(session.id))?.planAttached).toBe(true);
+    // The runner attaches NOTHING — submit_plan is what attaches (the employee gate).
+    expect(attached).toHaveLength(0);
+    const after = await sessions.get(session.id);
+    expect(after?.lastReportKind).toBe('plan');
+    expect(after?.lastReport).toContain('The plan.');
+    expect(after?.lastReport).toContain('Decisions made while planning');
   });
 
-  it('an UNLINKED plan turn attaches nothing and leaves planAttached unset', async () => {
+  it('an UNLINKED plan turn relays the plan and attaches nothing', async () => {
     const { runner, sessions, attached } = buildRunner(planEngine('A plan.'));
     const session = await sessions.create(newSession);
     await runner.runSessionTurn(session.id, session.task);
     expect(attached).toHaveLength(0);
-    expect((await sessions.get(session.id))?.planAttached).toBeUndefined();
+    expect((await sessions.get(session.id))?.lastReport).toContain('A plan.');
   });
 
-  it('an attach FAILURE still idles the session, with planAttached: false', async () => {
-    const { runner, sessions } = buildRunner(planEngine('A plan.'), {
-      attachFails: true,
+  it('applies a plan.finished self-review hook transform to the relayed plan', async () => {
+    const { runner, sessions } = buildRunner(planEngine('First draft plan.'), {
+      // The lifecycle double stands in for the self-review hook (the handler is tested separately).
+      selfReview: () =>
+        'Revised plan — now with the migration.\n\n_(self-reviewed by codex before attaching)_',
     });
     const session = await sessions.create({ ...newSession, boardTaskId: 7 });
     await runner.runSessionTurn(session.id, session.task);
     const after = await sessions.get(session.id);
-    expect(after?.status).toBe('idle');
-    expect(after?.lastReport).toContain('A plan.'); // + the self-review note
-    expect(after?.planAttached).toBe(false);
-  });
-
-  it('self-reviews a board-linked plan: a different engine critiques, the planning engine revises, the REVISED plan attaches', async () => {
-    // Distinct outputs per call so we can prove the revised text (not the first draft) attaches.
-    let calls = 0;
-    const fake: WorkerEngine = {
-      name: EWorkerEngineName.CLAUDE,
-      run() {
-        calls++;
-        const text =
-          calls === 1
-            ? 'First draft plan.' // the planning turn
-            : calls === 2
-              ? 'Reviewer: you forgot the migration.' // the review one-shot
-              : 'Revised plan — now with the migration.'; // the revision
-        return Promise.resolve({
-          result: text,
-          sessionId: 'e1',
-          planText: text,
-        });
-      },
-    };
-    const { runner, sessions, attached } = buildRunner(fake);
-    const session = await sessions.create({ ...newSession, boardTaskId: 7 });
-    await runner.runSessionTurn(session.id, session.task);
-    expect(calls).toBe(3); // plan → review → revise
-    expect(attached).toHaveLength(1);
-    expect(attached[0].planMd).toContain(
+    expect(after?.lastReport).toContain(
       'Revised plan — now with the migration.',
     );
-    expect(attached[0].planMd).not.toContain('First draft plan.');
-    const after = await sessions.get(session.id);
     expect(after?.lastReport).toContain('self-reviewed');
-    expect(after?.planAttached).toBe(true);
+    expect(after?.lastReport).not.toContain('First draft plan.');
   });
 
-  it('a later non-plan turn clears planAttached (no stale flag survives)', async () => {
-    let calls = 0;
-    const fake: WorkerEngine = {
-      name: EWorkerEngineName.CLAUDE,
-      run() {
-        calls++;
-        return Promise.resolve(
-          calls === 1
-            ? { result: 'The plan.', sessionId: 'e1', planText: 'The plan.' }
-            : { result: 'Alex — Just an update.', sessionId: 'e1' },
-        );
-      },
-    };
-    const { runner, sessions } = buildRunner(fake);
+  it('a board-linked plan with NO hook relays the un-transformed plan', async () => {
+    const { runner, sessions } = buildRunner(planEngine('The only plan.'));
     const session = await sessions.create({ ...newSession, boardTaskId: 7 });
     await runner.runSessionTurn(session.id, session.task);
-    expect((await sessions.get(session.id))?.planAttached).toBe(true);
-    await runner.replySession(session.id, 'thanks, one more thing');
-    await new Promise((r) => setTimeout(r, 20));
-    expect((await sessions.get(session.id))?.planAttached).toBeUndefined();
+    expect((await sessions.get(session.id))?.lastReport).toContain(
+      'The only plan.',
+    );
   });
 });
 

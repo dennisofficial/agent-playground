@@ -19,7 +19,7 @@ import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
-import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
+import { makeEmployee } from '@harness/employees/employee.testing';
 
 /**
  * Pins the time-context injection contract:
@@ -74,14 +74,12 @@ class FakeChannel {
   }
 }
 
-const ALEX = {
+const ALEX = makeEmployee({
   id: 'alex',
   name: 'Alex',
   role: 'backend engineer',
   sortOrder: 10,
-  roleContext: 'ctx',
-  engine: EWorkerEngineName.CLAUDE,
-};
+});
 
 const PERSONA_TEXT = 'you are alex, the backend bot';
 

@@ -22,6 +22,12 @@ export interface GateDecision {
   reasoning?: string;
   /** Debug only: exact token usage for this gate call (from the API). Absent for hard-rule decisions. */
   usage?: { input: number; output: number };
+  /** True when the soft (LLM) gate actually ran — drives the dormancy counter (only soft ignores
+   * push a bot toward dormancy). Absent/false for every hard-rule and dormant-skip decision. */
+  softGate?: boolean;
+  /** True when a DORMANT bot cheap-ignored an off-lane message (no wake trigger) — no LLM call.
+   * The gate node routes this to `mark_seen → END`, skipping the reconcile pass too. */
+  dormantSkip?: boolean;
 }
 
 const RESPOND: GateDecision = { action: 'respond' };
@@ -155,7 +161,7 @@ export class GateService {
                   emoji: cleanEmoji(parsed.emoji),
                 }
               : { action: parsed.action };
-          return { ...base, reasoning: parsed.reasoning, usage };
+          return { ...base, reasoning: parsed.reasoning, usage, softGate: true };
         },
       ),
     ]).withConfig({ runName: 'Response Gate' }));
@@ -182,6 +188,11 @@ export class GateService {
       channel?: GateChannelContext;
       /** The bot's full unconsumed batch (oldest first), when it consumed more than `text`. */
       batch?: { text: string; authorBotId?: string }[];
+      /** DORMANCY: when true, this bot has gone dormant in the room (K consecutive soft ignores).
+       * An off-lane message with no wake trigger (its name/@/broadcast already short-circuit to
+       * respond above; a bare-name hail or a lane keyword still wakes it) is cheap-ignored without
+       * the soft LLM call. */
+      dormant?: boolean;
     } = {},
     /** Forwarded to the soft chain so its LLM call nests under the turn's Langfuse trace. */
     config?: RunnableConfig,
@@ -205,6 +216,16 @@ export class GateService {
     if (meMentioned) return RESPOND;
     if (anyBroadcast) return RESPOND;
     if (addressed.length > 0 && !meAddressed) return IGNORE;
+
+    // DORMANCY: a dormant bot only earns the soft gate when something hails it — a bare-name/@
+    // mention of itself (meAddressed; @handle already returned respond above) or a lane keyword
+    // anywhere in the batch. An off-lane message is a free ignore (no LLM; the graph also skips
+    // reconcile via dormantSkip). When not dormant, behaves exactly as before.
+    if (opts.dormant && !meAddressed) {
+      const batchText = batch.map((m) => m.text).join('\n');
+      if (!this.employees.keywordHit(bot, batchText))
+        return { action: 'ignore', dormantSkip: true };
+    }
 
     try {
       return await this.soft().invoke({

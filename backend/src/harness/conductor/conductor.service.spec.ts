@@ -25,6 +25,7 @@ import type {
 import type { SessionRunnerService } from '../sessions/session-runner.service';
 import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
+import { ConductorMetricsService } from './conductor-metrics.service';
 import { ConductorService } from './conductor.service';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
@@ -215,6 +216,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
   const plans = {
     listForTask: async () => [],
   } as unknown as PlanStore;
+  const metrics = new ConductorMetricsService();
 
   const conductor = new ConductorService(
     channel as unknown as ChannelService,
@@ -231,6 +233,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     credCtx,
     boardEvents,
     plans,
+    metrics,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -238,6 +241,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     channel,
     cursors,
     events,
+    metrics,
     fireSessionUpdate: (s: Session) => sessionUpdateCbs.forEach((cb) => cb(s)),
     fireBoardEvent: (e: BoardEvent) => boardEventCbs.forEach((cb) => cb(e)),
   };
@@ -255,6 +259,45 @@ describe('ConductorService scheduling', () => {
     await conductor.whenIdle();
     expect(cursors.get('alex', 'tui:test')).toBe(1);
     expect(events.filter((e) => e.kind === 'message')).toHaveLength(1); // the human's own echo
+  });
+
+  it('records an under-response drop when a human message draws no respond-action turn', async () => {
+    const { conductor, channel, metrics, events } = await buildConductor({
+      run: () => ({
+        deltas: [{ decision: 'ignore' }],
+        cursorAfter: channel.length, // consumed everything, but nobody responded
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'anyone around?');
+    await conductor.whenIdle();
+    expect(metrics.snapshot().humanBurstDropped).toBe(1);
+    const drops = events.filter((e) => e.kind === 'dropped');
+    expect(drops).toHaveLength(1);
+    expect((drops[0] as { text: string }).text).toBe('anyone around?');
+  });
+
+  it('does NOT record a drop when a bot responds', async () => {
+    const { conductor, channel, metrics, events } = await buildConductor({
+      run: () => ({
+        deltas: [{ decision: 'respond' }],
+        cursorAfter: channel.length,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'ship it');
+    await conductor.whenIdle();
+    expect(metrics.snapshot().humanBurstDropped).toBe(0);
+    expect(events.filter((e) => e.kind === 'dropped')).toHaveLength(0);
+  });
+
+  it('records a drop only ONCE per burst even across rapid-fire messages', async () => {
+    const { conductor, channel, metrics } = await buildConductor({
+      run: () => ({ deltas: [{ decision: 'ignore' }], cursorAfter: channel.length }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'first');
+    conductor.submitFrom('dennis', 'Dennis', 'second');
+    await conductor.whenIdle();
+    // The map holds one entry per room (latest burst), so at most one drop is recorded.
+    expect(metrics.snapshot().humanBurstDropped).toBe(1);
   });
 
   it('gives up after MAX_TURN_RETRIES no-progress failures and skips the wedged batch', async () => {

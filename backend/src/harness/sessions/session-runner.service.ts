@@ -2,20 +2,17 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
-import { DEFAULT_REVIEW_PROMPT } from '../engines/role-prompts';
 import {
   EWorkerEngineName,
   WorkerEvent,
   WorkerMode,
 } from '../engines/worker-engine.port';
 import { EmployeeRegistry } from '../employees/employee.registry';
-import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
+import { LifecycleRunner } from '../lifecycle/lifecycle.runner';
+import { LifecycleEvent } from '../lifecycle/lifecycle.types';
 import { CredentialContext } from '../llm-keys/credential-context';
-import {
-  TenantCredentialService,
-  type TenantKeys,
-} from '../llm-keys/tenant-credential.service';
+import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import { BoardStore } from '../memory/board-store';
 import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
@@ -67,6 +64,7 @@ export class SessionRunnerService {
     private readonly engines: EngineRegistry,
     private readonly employees: EmployeeRegistry,
     private readonly persona: PersonaService,
+    private readonly lifecycle: LifecycleRunner,
     private readonly worklog: WorklogStore,
     private readonly worktrees: WorktreeService,
     private readonly creds: TenantCredentialService,
@@ -99,13 +97,15 @@ export class SessionRunnerService {
           `Worktree "${session.worktreeId}" no longer exists — the session has nowhere to run.`,
         );
       }
-      // Per-turn model tiering: a 'plan' turn runs on a high-reasoning model + max effort, an
-      // 'execute' turn on the cheaper everyday model. `mode` also drives the engine's read-only
-      // posture at the seam.
-      const { model, effort } = this.employees.resolveWorkerModel(
-        bot,
-        session.mode,
-      );
+      // Per-turn spec from the employee: a 'plan' turn runs on the plan engine recipe, 'execute' on
+      // the execute one (model/effort/systemPrompt). Byte-stable across turns; `mode` also drives the
+      // engine's read-only posture at the seam. `session.engine` (fixed at create) is the source of
+      // truth for WHICH engine — an engine-changing mode flip is refused at replySession, so the
+      // resolved spec's engine always matches it.
+      const ctx = this.persona.context();
+      const spec =
+        session.mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx);
+      const { model, effort, systemPrompt } = spec;
 
       this.logger.log(
         `${sessionId} turn ${session.turns + 1} — ${session.mode} on ${model ?? `${session.engine} default`}${effort ? ` (effort:${effort})` : ''} (${bot.name}, ${worktree.id})`,
@@ -129,7 +129,7 @@ export class SessionRunnerService {
           this.engines.get(session.engine).run({
             task: message,
             cwd: worktree.path,
-            systemPrompt: this.persona.workerPromptFor(bot),
+            systemPrompt,
             agentId: bot.id,
             sessionId: session.engineSessionId,
             model,
@@ -181,66 +181,51 @@ export class SessionRunnerService {
           : undefined;
       const qa = live.qa ?? [];
 
-      // PLAN SELF-REVIEW: before a board-linked plan attaches, a DIFFERENT engine (the employee's
-      // `review` role) adversarially reviews it once, then the planning engine revises once — the
-      // analogue of Codex reviewing a plan before it's proposed. Best-effort: any failure falls back
-      // to the un-reviewed plan. Skipped when the turn asked questions or isn't board-linked.
+      // PLAN.FINISHED lifecycle hooks: for a board-linked plan turn, fire the engine-agnostic
+      // lifecycle runner. Employees that declare a blocking `plan.finished` hook (the self-review
+      // capability — engineers, not Sam) transform the plan here: a different engine critiques it and
+      // the planning engine revises once. The runner is best-effort (it isolates failures/aborts and
+      // keeps the prior payload) and may replace only planBody + engineSessionId (the transform
+      // contract). Sam's plans declare no hook → the runner returns the payload unchanged.
       let finalPlanBody = planBody;
       let attachEngineSessionId = engineSessionId;
-      let selfReviewNote = '';
       if (
         kind === 'plan' &&
         session.boardTaskId !== undefined &&
         !ac.signal.aborted
       ) {
-        const reviewed = await this.runPlanSelfReview({
-          bot,
+        const reviewed = await this.lifecycle.run(LifecycleEvent.PlanFinished, {
+          employee: bot,
           session,
-          worktreePath: worktree.path,
           planBody,
-          planEngineSessionId: engineSessionId,
+          engineSessionId,
+          worktreePath: worktree.path,
           keys,
           signal: ac.signal,
+          onProgress: (e) =>
+            void this.sessions
+              .appendProgress(sessionId, e)
+              .catch(() => undefined),
         });
-        if (reviewed) {
-          finalPlanBody = reviewed.planBody;
-          attachEngineSessionId = reviewed.engineSessionId;
-          selfReviewNote = reviewed.note;
-        }
+        finalPlanBody = reviewed.planBody;
+        attachEngineSessionId = reviewed.engineSessionId;
       }
-      // Closed (and thus aborted) while self-reviewing: don't finalize over the close.
+      // Closed (and thus aborted) while a hook ran: don't finalize over the close.
       if (ac.signal.aborted) return;
 
       const lastReport =
         kind === 'questions'
           ? renderQuestionsReport(questions!, planText)
           : kind === 'plan'
-            ? (qa.length
-                ? `${finalPlanBody}\n\n${renderQaAppendix(qa)}`
-                : finalPlanBody) + selfReviewNote
+            ? qa.length
+              ? `${finalPlanBody}\n\n${renderQaAppendix(qa)}`
+              : finalPlanBody
             : result || '(no report)';
-      // A finished plan on a board-linked session AUTO-ATTACHES to its ticket (per employee,
-      // latest wins) — the ticket is the durable artifact (sessions die on restart) and what the
-      // lead reviews/proposes from. `planAttached` is reported on every turn-end like
-      // `lastReportKind` so the relay prompt can tell the owner the truth.
-      let planAttached: boolean | undefined;
-      if (kind === 'plan' && session.boardTaskId !== undefined) {
-        planAttached = await this.plans
-          .attach({
-            team: session.team,
-            taskId: session.boardTaskId,
-            employee: session.ownerBot,
-            planMd: lastReport,
-            sessionId,
-          })
-          .then(() => true)
-          .catch((err) => {
-            this.logger.warn(
-              `plan attach to #${session.boardTaskId} (${sessionId}) failed: ${err}`,
-            );
-            return false;
-          });
-      }
+      // NO auto-attach. A finished plan RELAYS to the owning employee (the relay prompt tells it to
+      // review and submit_plan); the employee's explicit submit_plan is what attaches it to the
+      // ticket. This is the employee gating its own engine's plan, like a person reviewing their
+      // Claude Code's plan before pushing it.
+      //
       // Coherence canary: prose-report turns only (kind === undefined) — plan/questions artifacts
       // are never flagged (their format differs intentionally). When the worker drops its name
       // prefix the note rides along in lastReport, reaching the owner via the relay prompt,
@@ -256,7 +241,6 @@ export class SessionRunnerService {
           ? lastReport + coherenceNote(bot.name)
           : lastReport,
         lastReportKind: kind,
-        planAttached,
         turns: session.turns + 1,
       });
     } catch (err) {
@@ -284,118 +268,6 @@ export class SessionRunnerService {
   }
 
   /**
-   * One-shot plan self-review: the employee's `review` engine adversarially critiques the freshly
-   * produced plan, then the PLANNING engine revises it once (resuming its session, so the revision
-   * keeps full investigation context). Returns the revised plan body + the planning engine's new
-   * session id, or null to fall back to the un-reviewed plan (any failure or an abort). Both runs are
-   * jailed to the worktree and read-only (`mode: 'plan'`), like the main turn.
-   */
-  private async runPlanSelfReview(opts: {
-    bot: EmployeeDefinition;
-    session: Session;
-    worktreePath: string;
-    planBody: string;
-    planEngineSessionId?: string;
-    keys: TenantKeys;
-    signal: AbortSignal;
-  }): Promise<{
-    planBody: string;
-    engineSessionId?: string;
-    note: string;
-  } | null> {
-    const {
-      bot,
-      session,
-      worktreePath,
-      planBody,
-      planEngineSessionId,
-      keys,
-      signal,
-    } = opts;
-    const keyFor = (engine: EWorkerEngineName) =>
-      engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
-    const systemPrompt = this.persona.workerPromptFor(bot);
-    const onEvent = (e: WorkerEvent) =>
-      void this.sessions.appendProgress(session.id, e).catch(() => undefined);
-    try {
-      const task =
-        session.boardTaskId !== undefined
-          ? await this.board.get(session.team, session.boardTaskId)
-          : undefined;
-      const ticketText = task
-        ? `${task.title}\n\n${task.description}`.trim()
-        : session.task;
-      const goal = task?.title ?? session.task;
-
-      // 1. Adversarial review on the employee's `review` engine (stateless one-shot).
-      const reviewBinding = this.employees.resolveWorkerModel(bot, 'review');
-      const reviewTemplate = bot.roles?.review?.prompt ?? DEFAULT_REVIEW_PROMPT;
-      const reviewPrompt = reviewTemplate({
-        goal,
-        ticket: ticketText,
-        plan: planBody,
-      });
-      const review = await withActiveRoot(worktreePath, () =>
-        this.credCtx.run({ teamId: session.team, keys }, () =>
-          this.engines.get(reviewBinding.engine).run({
-            task: reviewPrompt,
-            cwd: worktreePath,
-            systemPrompt,
-            agentId: bot.id,
-            sessionId: undefined,
-            model: reviewBinding.model,
-            effort: reviewBinding.effort,
-            mode: 'plan',
-            apiKey: keyFor(reviewBinding.engine),
-            onEvent,
-            signal,
-          }),
-        ),
-      );
-      if (signal.aborted) return null;
-      const critique = review.result?.trim();
-      if (!critique) return null;
-
-      // 2. Revise ONCE on the planning engine, resuming its session (keeps investigation context).
-      const planBinding = this.employees.resolveWorkerModel(bot, 'plan');
-      const revisionPrompt =
-        `A reviewer reviewed your plan and raised these points:\n\n${critique}\n\n` +
-        `Revise your plan ONCE, folding in the valid points (ignore any that are wrong, noting why ` +
-        `in a line). Output the FULL revised plan with the same structured sections.`;
-      const revision = await withActiveRoot(worktreePath, () =>
-        this.credCtx.run({ teamId: session.team, keys }, () =>
-          this.engines.get(session.engine).run({
-            task: revisionPrompt,
-            cwd: worktreePath,
-            systemPrompt,
-            agentId: bot.id,
-            sessionId: planEngineSessionId,
-            model: planBinding.model,
-            effort: planBinding.effort,
-            mode: 'plan',
-            apiKey: keyFor(session.engine),
-            onEvent,
-            signal,
-          }),
-        ),
-      );
-      if (signal.aborted) return null;
-      const revisedBody = (revision.planText ?? revision.result)?.trim();
-      if (!revisedBody) return null;
-      return {
-        planBody: revisedBody,
-        engineSessionId: revision.sessionId ?? planEngineSessionId,
-        note: `\n\n_(self-reviewed by ${reviewBinding.engine} before attaching)_`,
-      };
-    } catch (err) {
-      this.logger.warn(
-        `plan self-review for ${session.id} failed (${err instanceof Error ? err.message : String(err)}) — attaching the un-reviewed plan`,
-      );
-      return null;
-    }
-  }
-
-  /**
    * Send the owner's next message into an open session — the conversation continues with full
    * engine context. Valid on 'idle' (the normal case) and 'failed' (a reply retries on the same
    * engine session). An optional `mode` switches the session for this and subsequent turns — this
@@ -419,6 +291,25 @@ export class SessionRunnerService {
         ok: false,
         reason: `${sessionId} is closed — open a new session for new work.`,
       };
+    }
+    // Engine guard (constraint #4): a session is pinned to its create-time engine for its life. A
+    // mode flip that would need a DIFFERENT engine than the session runs on is refused — open a fresh
+    // session in that mode instead. (For every current employee plan/execute share an engine, so this
+    // only bites a future divergent config; it prevents silent wrong-engine execution.)
+    if (mode && mode !== session.mode) {
+      const bot =
+        this.employees.byId(session.ownerBot) ??
+        this.employees.fallbackOwner();
+      const ctx = this.persona.context();
+      const targetEngine = (
+        mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx)
+      ).engine;
+      if (targetEngine !== session.engine) {
+        return {
+          ok: false,
+          reason: `${sessionId} runs on ${session.engine}; switching to '${mode}' needs the ${targetEngine} engine. Open a fresh ${mode} session instead.`,
+        };
+      }
     }
     // The approval gate, BEFORE any mutation — a refused flip must not record Q&A or change status.
     if (mode === 'execute') {

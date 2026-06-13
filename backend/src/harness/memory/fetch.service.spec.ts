@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { EmployeeDefinition } from '../employees/employee.types';
-import { EWorkerEngineName } from '../engines/worker-engine.port';
+import { makeEmployee } from '../employees/employee.testing';
 import { CLI_IDENTITY, type Identity } from '../domain/identity';
 import { FetchService } from './fetch.service';
 import type { SemanticMemory } from './semantic-memory';
@@ -10,13 +10,16 @@ import type { Task } from './task-store';
 import type { BoardTask } from './board-store';
 
 /** Minimal EmployeeDefinition for tests. */
-const makeBot = (overrides: Partial<EmployeeDefinition> = {}): EmployeeDefinition => ({
-  id: 'alex',
-  name: 'Alex',
-  role: 'backend engineer',
-  sortOrder: 1,
-  roleContext: '',
-  engine: EWorkerEngineName.CLAUDE,
+const makeBot = (
+  overrides: Partial<EmployeeDefinition> = {},
+): EmployeeDefinition => ({
+  ...makeEmployee({
+    id: 'alex',
+    name: 'Alex',
+    role: 'backend engineer',
+    sortOrder: 1,
+    roleContext: '',
+  }),
   ...overrides,
 });
 

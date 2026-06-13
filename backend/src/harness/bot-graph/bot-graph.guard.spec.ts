@@ -19,7 +19,7 @@ import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
-import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
+import { makeEmployee } from '@harness/employees/employee.testing';
 
 /**
  * Pins the recursion guard's four critical behaviours:
@@ -75,14 +75,12 @@ class FakeChannel {
   }
 }
 
-const ALEX = {
+const ALEX = makeEmployee({
   id: 'alex',
   name: 'Alex',
   role: 'backend engineer',
   sortOrder: 10,
-  roleContext: 'ctx',
-  engine: EWorkerEngineName.CLAUDE,
-};
+});
 
 const flat = (c: BaseMessage['content']): string =>
   typeof c === 'string'
@@ -100,6 +98,21 @@ const priorAiHistory = (n: number): AIMessage[] =>
   Array.from(
     { length: n },
     (_, i) => new AIMessage({ content: `prior response ${i + 1}` }),
+  );
+
+/**
+ * Seed N tool-only AI messages (empty content + a tool call) — the shape of a silent turn where
+ * the gate passed but the employee just used a tool and ended its turn. These post no chat text
+ * and must never count as loop evidence.
+ */
+const toolOnlyHistory = (n: number): AIMessage[] =>
+  Array.from(
+    { length: n },
+    (_, i) =>
+      new AIMessage({
+        content: '',
+        tool_calls: [{ name: 'list_sessions', args: {}, id: `t${i}` }],
+      }),
   );
 
 /** A fake model that records every invocation and replies with a fixed string. */
@@ -590,5 +603,105 @@ describe('bot graph — recursion guard', () => {
     expect(detectCalls).toHaveLength(0);
     // LLM ran normally (forced → respond path → no guard → fetch → llm)
     expect(invocations).toHaveLength(1);
+  });
+
+  it('(i) silent tool-only turns are never loop evidence — gate-passed end_turn declines do not pause', async () => {
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'b-1',
+      author: 'Riley',
+      authorId: 'riley',
+      authorBotId: 'riley',
+      text: 'pushing the deploy now',
+    });
+
+    const invocations: BaseMessage[][] = [];
+    const detectCalls: unknown[] = [];
+    const guard = {
+      isEnabled: () => true,
+      windowSize: () => 12,
+      detect: (...args: unknown[]) => {
+        detectCalls.push(args);
+        return Promise.resolve({ looping: true }); // would wrongly break if reached
+      },
+    } as unknown as RecursionGuardService;
+
+    const factory = buildFactory(
+      channel,
+      guard,
+      scriptedModel('normal reply', invocations),
+    );
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:guard-silent:root' } };
+
+    // History is ALL tool-only turns: the bot kept passing the gate, checking sessions, and
+    // ending its turn silently. There are 8 such AI messages — well past GUARD_FLOOR by count —
+    // but none of them is spoken, so the guard must never run.
+    await graph.updateState(config, {
+      messages: toolOnlyHistory(8),
+      cursor: 0,
+    });
+
+    await drain(
+      await graph.stream(
+        { cursor: 0, forced: false },
+        { ...config, streamMode: 'updates' as const },
+      ),
+    );
+
+    expect(detectCalls).toHaveLength(0); // no spoken messages → floor not met → no judging
+    expect(invocations).toHaveLength(1); // and a normal turn ran instead of a pause
+  });
+
+  it('(j) mixed history feeds only SPOKEN messages to the judge — silent tool turns are excluded', async () => {
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'b-1',
+      author: 'Riley',
+      authorId: 'riley',
+      authorBotId: 'riley',
+      text: 'sounds good as usual',
+    });
+
+    const invocations: BaseMessage[][] = [];
+    const detectCalls: string[] = [];
+    const guard = {
+      isEnabled: () => true,
+      windowSize: () => 12,
+      detect: (_bot: unknown, windowText: string) => {
+        detectCalls.push(windowText);
+        return Promise.resolve({ looping: false });
+      },
+    } as unknown as RecursionGuardService;
+
+    const factory = buildFactory(
+      channel,
+      guard,
+      scriptedModel('proceeding', invocations),
+    );
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:guard-mixed:root' } };
+
+    // 6 spoken turns interleaved with silent tool-only turns. The silent turns must not appear
+    // in the judged window, even though they sit between the spoken lines.
+    await graph.updateState(config, {
+      messages: priorAiHistory(6).flatMap((m) => [m, ...toolOnlyHistory(1)]),
+      cursor: 0,
+    });
+
+    await drain(
+      await graph.stream(
+        { cursor: 0, forced: false },
+        { ...config, streamMode: 'updates' as const },
+      ),
+    );
+
+    expect(detectCalls).toHaveLength(1);
+    // Spoken lines are present…
+    expect(detectCalls[0]).toContain('prior response 1');
+    expect(detectCalls[0]).toContain('prior response 6');
+    // …and the empty-text tool-only lines are not.
+    expect(detectCalls[0]).not.toContain('[tools: list_sessions]');
+    expect(detectCalls[0]).not.toMatch(/^Alex:\s*\[tools:/m);
   });
 });

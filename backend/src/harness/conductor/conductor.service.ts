@@ -1,5 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { tracingEnabled } from '@core/tracing';
+import { trace } from '@opentelemetry/api';
 import {
   type BaseMessage,
   HumanMessage,
@@ -44,6 +45,7 @@ import { SessionRunnerService } from '../sessions/session-runner.service';
 import { type BotStateDelta, BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import { planReadySeed, ticketApprovedSeed } from './board-seed-prompt';
 import { ConductorEventsBus } from './conductor-events.bus';
+import { ConductorMetricsService } from './conductor-metrics.service';
 import { sessionRelayPrompt } from './session-relay-prompt';
 
 /**
@@ -108,6 +110,11 @@ export class ConductorService
   /** Bot response-turns since the last human message, PER ROOM (loop breaker; uncapped today) —
    * one room's bot cascade must not throttle another's. */
   private botBurst = new Map<string, number>();
+  /** UNDER-RESPONSE telemetry: the latest human message in a room that has NOT yet drawn a
+   * respond-action turn. Set (before append) when a human speaks; the seq is patched in once the
+   * append assigns it; cleared the moment any bot responds. If a room goes quiescent with an entry
+   * still present, that burst was dropped (recorded once). One entry per room (latest burst). */
+  private awaitingResponse = new Map<string, { text: string; seq?: number }>();
   private relayQueue: Session[] = [];
 
   /** Pending SILENT wake-ups injected from outside the conductor (e.g. a Slack approval-card
@@ -146,6 +153,7 @@ export class ConductorService
     private readonly credCtx: CredentialContext,
     private readonly boardEvents: BoardEventsBus,
     private readonly plans: PlanStore,
+    private readonly metrics: ConductorMetricsService,
   ) {}
 
   /** runningBots is keyed per (tenant, bot): a bot works ONE turn at a time within a workspace, but
@@ -341,8 +349,20 @@ export class ConductorService
     });
     this.registry.addMembers(channelId, [authorId]);
     this.botBurst.set(channelId, 0); // a human spoke → reset this room's bot-cascade budget
+    // UNDER-RESPONSE: mark the room awaiting a response BEFORE the append. `append` synchronously
+    // notifies subscribers → schedule(), so the pending entry must exist first; the seq is patched
+    // in from the append result. (Bot turns run async via claim(), so no respond can clear this
+    // synchronously — but setting it first is the safe ordering.)
+    this.awaitingResponse.set(channelId, { text });
     const id = opts.id ?? `u-${this.mintTag}-${this.emitSeq++}`;
-    this.channel.append({ id, channelId, author: authorName, authorId, text });
+    const appended = this.channel.append({
+      id,
+      channelId,
+      author: authorName,
+      authorId,
+      text,
+    });
+    this.awaitingResponse.set(channelId, { text, seq: appended.seq });
     // Surface the human's own message through the SAME event stream, keyed by the channel id — so
     // the UI renders it from one uniform path and a bot's reaction can fold onto it.
     this.emit({
@@ -464,7 +484,55 @@ export class ConductorService
         );
       }
     }
+    this.checkUnderResponse();
     this.maybeResolveIdle();
+  }
+
+  /**
+   * UNDER-RESPONSE detection (measure, not fix): a room that has settled — no member bot running,
+   * no member with unconsumed work — while still flagged as awaiting a response means the human's
+   * message drew ZERO respond-action turns. Record it once (the respond site clears the flag, so a
+   * picked-up message never reaches here) and clear it. Runs at the tail of every schedule pass;
+   * the map only holds entries after a human message, so it's a no-op otherwise.
+   */
+  private checkUnderResponse(): void {
+    for (const [channelId, pending] of this.awaitingResponse) {
+      const info = this.registry.get(channelId);
+      if (!info) continue; // can't evaluate an unknown room — leave it pending
+      const bots = this.botsIn(info);
+      const settled = bots.every(
+        (b) =>
+          !this.runningBots.has(this.botKey(info.teamId, b.id)) &&
+          !this.hasWork(b, channelId),
+      );
+      if (!settled) continue;
+      this.awaitingResponse.delete(channelId);
+      this.metrics.recordDroppedBurst();
+      this.bus.patchStatus({ dropped: this.metrics.snapshot().humanBurstDropped });
+      this.emit({
+        id: `drop-${this.emitSeq++}`,
+        kind: 'dropped',
+        channelId,
+        text: pending.text,
+        seq: pending.seq ?? -1,
+      });
+      this.logger.warn(
+        `under-response: no one responded to "${pending.text.slice(0, 80)}" in ${channelId}`,
+      );
+      // Standalone Langfuse trace (no active turn span at quiescence) — a top-level OTEL span the
+      // LangfuseSpanProcessor exports as its own `message_dropped` trace. No-op when tracing is off.
+      if (tracingEnabled) {
+        const span = trace.getTracer('conductor').startSpan('message_dropped', {
+          attributes: {
+            'langfuse.session.id': channelId,
+            teamId: info.teamId,
+            seq: pending.seq ?? -1,
+            text: pending.text.slice(0, 500),
+          },
+        });
+        span.end();
+      }
+    }
   }
 
   /** Mark a bot busy (before any async work), run `task`, then release + re-schedule. `key` is the
@@ -713,6 +781,7 @@ export class ConductorService
               channelId,
               (this.botBurst.get(channelId) ?? 0) + 1,
             ); // a real reply counts toward this room's loop breaker
+            this.awaitingResponse.delete(channelId); // someone picked it up — not a drop
           }
           // Surface whatever reactions the graph decided — the conductor only renders; the brain decides.
           if (delta.reaction) {

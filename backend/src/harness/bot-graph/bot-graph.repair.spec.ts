@@ -19,7 +19,7 @@ import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { BotGraphFactory } from './bot-graph.factory';
-import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
+import { makeEmployee } from '@harness/employees/employee.testing';
 
 /**
  * Self-healing for a POISONED thread. LangGraph checkpoints per node, so an interruption between
@@ -66,14 +66,12 @@ class FakeChannel {
   }
 }
 
-const ALEX = {
+const ALEX = makeEmployee({
   id: 'alex',
   name: 'Alex',
   role: 'backend engineer',
   sortOrder: 10,
-  roleContext: 'ctx',
-  engine: EWorkerEngineName.CLAUDE,
-};
+});
 
 describe('bot graph — poisoned-history self-healing', () => {
   it('splices synthetic tool_results after a dangling tool_use so the next turn succeeds', async () => {

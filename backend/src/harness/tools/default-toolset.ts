@@ -28,6 +28,7 @@ import {
   ListTasksTool,
 } from './tasks/task.tools';
 import { AddNoteTool, GetTicketTool } from './tasks/ticket.tools';
+import { SubmitPlanTool } from './sessions/submit-plan.tool';
 import type { IHarnessTool } from './tool.types';
 import { EndTurnTool } from './turn/end-turn.tool';
 import {
@@ -55,6 +56,7 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   MarkPrReadyTool,
   CreateSessionTool,
   ReplySessionTool,
+  SubmitPlanTool,
   CloseSessionTool,
   CheckSessionTool,
   ListSessionsTool,
