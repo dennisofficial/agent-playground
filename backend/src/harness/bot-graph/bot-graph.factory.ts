@@ -9,7 +9,6 @@ import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
-import { ConsolidationService } from '../memory/consolidation.service';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
@@ -85,7 +84,6 @@ export class BotGraphFactory {
     private readonly recursionGuard: RecursionGuardService,
     private readonly fetchService: FetchService,
     private readonly reconcile: ReconcileService,
-    private readonly consolidation: ConsolidationService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
     private readonly worktrees: WorktreeService,
@@ -95,7 +93,6 @@ export class BotGraphFactory {
   ) {
     const gapThresholdMs =
       env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
-    const consolidationWindow = env.get('MEMORY_CONSOLIDATION_WINDOW') ?? 40;
     this.nodes = new BotGraphNodes(
       this.channel,
       this.channelRegistry,
@@ -104,13 +101,11 @@ export class BotGraphFactory {
       this.recursionGuard,
       this.fetchService,
       this.reconcile,
-      this.consolidation,
       this.models,
       this.persona,
       this.worktrees,
       this.sessions,
       gapThresholdMs,
-      consolidationWindow,
     );
   }
 

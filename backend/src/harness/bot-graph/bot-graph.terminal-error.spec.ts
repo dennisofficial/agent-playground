@@ -12,7 +12,6 @@ import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
-import type { ConsolidationService } from '../memory/consolidation.service';
 import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
@@ -135,7 +134,6 @@ describe('bot graph — terminal tool error handling', () => {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
       } as unknown as ReconcileService,
-      { schedule: () => {} } as unknown as ConsolidationService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
       { list: () => [] } as unknown as WorktreeService,
@@ -217,7 +215,6 @@ describe('bot graph — terminal tool error handling', () => {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
       } as unknown as ReconcileService,
-      { schedule: () => {} } as unknown as ConsolidationService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
       { list: () => [] } as unknown as WorktreeService,
@@ -317,7 +314,6 @@ describe('bot graph — terminal tool error handling', () => {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
       } as unknown as ReconcileService,
-      { schedule: () => {} } as unknown as ConsolidationService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
       { list: () => [] } as unknown as WorktreeService,

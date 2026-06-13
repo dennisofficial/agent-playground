@@ -116,47 +116,6 @@ by the #id shown above — never invent an id:
 
 Return empty arrays when nothing changed.`;
 
-// The CONSOLIDATION prompt — the hardened, off-the-hot-path successor to MEMORY_PROMPT. It reads a
-// WINDOW of recent conversation (not one turn's slice) and is deliberately strict about WHAT counts as
-// a durable fact, because the inline pass was disabled (2026-06-12) for storing anticipatory chatter
-// ("ready to execute when the standup closes") as accomplished fact. The two structural guards:
-//   1. extract ONLY from the humans — teammate (AI) lines are marked "(teammate)" and must be ignored;
-//   2. extract ONLY settled facts that are TRUE RIGHT NOW — never intentions, plans, or status.
-const CONSOLIDATION_PROMPT = `You are {botName}, the team's {botRole}, consolidating your long-term MEMORY
-from a window of recent conversation in {room}. People and their ids: {people}.
-
-What you currently know (existing facts, each with its #id):
-{currentFacts}
-
-Recent conversation (oldest first; lines marked "(teammate)" are your AI colleagues — NEVER extract
-facts from those, only from the HUMANS):
-{transcript}
-
-Decide what should change — be CONSERVATIVE; most windows change nothing. Reference existing facts ONLY
-by the #id shown above (never invent an id).
-
-ONLY store a fact that is ALL of:
-  - DURABLE — a stable preference, decision, role, or project fact worth recalling weeks later;
-  - SETTLED and TRUE RIGHT NOW — already decided/established, not in motion.
-NEVER store (these are what broke this before):
-  - intentions or plans ("I'll…", "going to…", "planning to…", "we should…");
-  - anticipatory or conditional statements ("ready to… once…", "after X I'll…", "when the standup closes");
-  - status or progress narration ("working on it", "almost done", "running now", "publishing");
-  - questions, greetings, chit-chat, task instructions, or coding-style nits.
-
-- add: a NEW durable fact, as the BARE atomic claim ONLY — the decision/preference itself, no rationale,
-  consequences, or "what this means" elaboration (store "Backend standardizes on PostgreSQL", not a
-  paragraph); elaborated facts pile up as near-duplicates that never dedup. Set "tier": project = DEFAULT
-  for work facts (about THIS project — its repo, stack, goals, a decision made here); team = roles, who
-  does what, and the boss's STANDING preferences that hold across every project; private = personal;
-  bot = only you. Set "authorId" = the HUMAN who said it. Do NOT re-add something already above, even if
-  worded differently. If the new fact CONTRADICTS or replaces an existing one, set "supersedes" to that
-  fact's #id so the stale one is overwritten, not kept alongside.{tierNote}
-- update: an existing fact (by #id) whose wording/value CHANGED — give "id" and "newFact".
-- delete: an existing fact (by #id) now contradicted or no longer true — give "id".
-
-Return empty arrays when nothing changed.`;
-
 const TaskSchema = z.object({
   reasoning: z
     .string()
@@ -219,7 +178,6 @@ Return empty arrays when nothing changed.`;
 export class ReconcileService {
   private readonly logger = new Logger(ReconcileService.name);
   private memoryChain?: Runnable<Record<string, string>, MemoryResult>;
-  private consolidationChain?: Runnable<Record<string, string>, MemoryResult>;
   private taskChain?: Runnable<Record<string, string>, TaskResult>;
 
   constructor(
@@ -277,29 +235,6 @@ export class ReconcileService {
         .buildExtractModel()
         .withStructuredOutput(MemorySchema, { name: 'reconcile_memory' }),
     ]).withConfig({ runName: 'Reconcile Memory' }));
-  }
-
-  private consolidation() {
-    return (this.consolidationChain ??= RunnableSequence.from<
-      Record<string, string>,
-      MemoryResult
-    >([
-      new PromptTemplate({
-        template: CONSOLIDATION_PROMPT,
-        inputVariables: [
-          'botName',
-          'botRole',
-          'room',
-          'tierNote',
-          'people',
-          'currentFacts',
-          'transcript',
-        ],
-      }),
-      this.models
-        .buildExtractModel()
-        .withStructuredOutput(MemorySchema, { name: 'consolidate_memory' }),
-    ]).withConfig({ runName: 'Consolidate Memory' }));
   }
 
   private task() {
@@ -375,55 +310,7 @@ export class ReconcileService {
   }
 
   /**
-   * Consolidate durable memory from a WINDOW of recent conversation — the async, off-the-hot-path
-   * successor to `reconcileMemory`. Same write semantics (judge-deduped adds, supersede/update/delete
-   * by shown #id), but a stricter prompt (`CONSOLIDATION_PROMPT`): settled facts only, human lines
-   * only, no anticipatory/status chatter — the failure that got the inline pass disabled. The caller
-   * (ConsolidationService) debounces and serializes per room; this just does one pass.
-   * Fire-and-forget — errors swallowed (memory work must never surface to a user).
-   */
-  async consolidateMemory(
-    bot: EmployeeDefinition,
-    transcript: string,
-    id: Identity,
-    decision: Decision = 'respond',
-  ): Promise<void> {
-    if (!transcript.trim()) return;
-    try {
-      const current = await this.semantic.recall(
-        transcript,
-        id,
-        RECONCILE_RECALL_LIMIT,
-        RECONCILE_FLOOR,
-      );
-      const shownIds = new Set(current.map((f) => f.id));
-      const result = await this.consolidation().invoke({
-        botName: bot.name,
-        botRole: bot.role,
-        room: id.isChannel
-          ? `the team channel '${id.surface}'`
-          : `a PRIVATE 1:1 DM with ${titleCase(id.speaker)}`,
-        tierNote: id.isChannel
-          ? ''
-          : '\n  NOTE — this happened in a PRIVATE 1:1 DM: default to "private" for anything this person told' +
-            ' you about themselves or in confidence; use project/team ONLY for clearly work-wide facts they would' +
-            ' state openly in the team channel. A DM is not tied to one project — for tier "project" you MUST' +
-            ` also set "project" to the project the fact is about (your shared projects: ${recallProjects(id).join(', ') || '(none)'});` +
-            ' without it the fact stays private to the two of you.',
-        people: this.peopleHint(id),
-        currentFacts: current.length
-          ? current.map((f) => `- [#${f.id}] ${f.fact}`).join('\n')
-          : '(none)',
-        transcript,
-      });
-      await this.applyMemoryResult(bot, result, id, shownIds, decision);
-    } catch {
-      /* fire-and-forget: consolidation must never surface an error */
-    }
-  }
-
-  /**
-   * Apply a MemoryResult's ops, shared by the inline reconcile and the async consolidation pass. Each
+   * Apply a MemoryResult's ops, used by the reconcile pass. Each
    * mutation is serialized through MemoryWriteService's lock (the model.invoke stays OUTSIDE it).
    * update/delete/supersede act ONLY on ids actually shown to the model; updateFactById additionally
    * scope-checks each id. Tallies what ACTUALLY landed (an add can dedup-merge; an update/delete

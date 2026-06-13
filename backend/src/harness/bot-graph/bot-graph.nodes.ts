@@ -15,7 +15,6 @@ import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { FetchService } from '../memory/fetch.service';
-import { ConsolidationService } from '../memory/consolidation.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import {
@@ -54,7 +53,6 @@ import {
  */
 export class BotGraphNodes {
   private readonly gapThresholdMs: number;
-  private readonly consolidationWindow: number;
 
   constructor(
     private readonly channel: ChannelService,
@@ -64,34 +62,13 @@ export class BotGraphNodes {
     private readonly recursionGuard: RecursionGuardService,
     private readonly fetchService: FetchService,
     private readonly reconcile: ReconcileService,
-    private readonly consolidation: ConsolidationService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
     private readonly worktrees: WorktreeService,
     private readonly sessions: SessionRegistry,
     gapThresholdMs: number,
-    consolidationWindow: number,
   ) {
     this.gapThresholdMs = gapThresholdMs;
-    this.consolidationWindow = consolidationWindow;
-  }
-
-  /**
-   * The recent room window fed to the async consolidation pass — the last N messages, oldest first.
-   * Teammate (AI) lines are tagged "(teammate)" so the consolidation prompt can extract from the
-   * humans only; humans render as "Name: text". Unlike `turnTranscript` (one turn's slice), this is
-   * the WHOLE recent window — consolidation deliberates over full context, not a fragment.
-   */
-  private consolidationWindowText(channelId: string): string {
-    return this.channel
-      .snapshot(channelId)
-      .slice(-this.consolidationWindow)
-      .map((m) =>
-        m.authorBotId
-          ? `(teammate) ${m.author}: ${m.text}`
-          : `${m.author}: ${m.text}`,
-      )
-      .join('\n');
   }
 
   /**
@@ -544,15 +521,14 @@ export class BotGraphNodes {
 
     /**
      * RECONCILE NODE — the single post-turn write, reached on every path (respond, ack/ignore,
-     * pause). It reconciles the reminders/board plate (add/complete/drop) against the turn's
-     * transcript INLINE, then SCHEDULES durable-fact consolidation off the hot path.
+     * pause). Today it reconciles only the reminders/board plate (add/complete/drop) against the
+     * turn's transcript.
      *
-     * Durable-FACT auto-capture replaces the old inline reconcileMemory call, which was disabled
-     * (Dennis, 2026-06-12) for being too credulous — reacting to one turn's fragment, it stored
-     * anticipatory chatter ("ready to execute when the standup closes") as accomplished fact. The
-     * successor is the DEBOUNCED ConsolidationService: `schedule` only (re)arms a timer (no-op when
-     * MEMORY_CONSOLIDATION_ENABLED is off, and never blocks the turn); once the room goes quiet a
-     * single hardened pass runs over the whole recent window. Tasks stay inline (cheap, per-turn).
+     * Durable-FACT auto-capture stays DISABLED (Dennis, 2026-06-12) — too credulous: the inline
+     * pass stored anticipatory chatter ("ready to execute when the standup closes") as accomplished
+     * fact. The replacement is the suggestion-mode reconcile + periodic hygiene pass designed in
+     * board ticket #10 (read-only suggestions, not auto-writes); explicit remember()/recall() are
+     * unaffected. `ReconcileService.reconcileMemory` remains for the memory eval baseline only.
      */
     const reconcileNode = async (
       state: BotStateType,
@@ -567,12 +543,6 @@ export class BotGraphNodes {
           state.decision,
           config,
         );
-      // Off the hot path: debounced durable-fact consolidation over the full recent room window.
-      this.consolidation.schedule(
-        bot,
-        getIdentity(config),
-        this.consolidationWindowText(this.channelIdOf(config)),
-      );
       return {};
     };
 

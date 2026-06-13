@@ -16,7 +16,6 @@ import { LlmModule } from '../llm/llm.module';
 import { BoardEventsBus } from './board-events.bus';
 import { BoardStore } from './board-store';
 import { CheckpointerModule } from './checkpointer.module';
-import { ConsolidationService } from './consolidation.service';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { MemoryMetricsService } from './memory-metrics.service';
@@ -58,7 +57,6 @@ import { WorklogStore } from './worklog-store';
     MemoryWriteService,
     FetchService,
     ReconcileService,
-    ConsolidationService,
     BoardEventsBus,
     {
       provide: SemanticMemory,
