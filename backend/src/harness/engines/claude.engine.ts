@@ -24,6 +24,11 @@ const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'];
 // clarifying-question tool (restricting `tools` without listing it silently removes it; that was
 // why sessions never asked anything). Plan turns only: execute turns put questions in the report.
 const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode', 'AskUserQuestion'];
+// An 'investigate' turn is read-only like plan but WITHOUT the native plan ceremony: it gets the read
+// tools only — no Write/Edit (so there's nothing to deny), and no ExitPlanMode/AskUserQuestion (it
+// answers directly instead of producing a plan or relaying questions). Bash stays for read commands
+// (git log / grep); its write commands are still denied in canUseTool when the turn is read-only.
+const INVESTIGATE_TOOLS = ['Read', 'Glob', 'Grep', 'Bash'];
 // Auto-approve safe reads. Write/Edit/Bash are intentionally absent so they fall through to
 // canUseTool, where the project-root + bash boundary is re-applied.
 const AUTO_APPROVE = ['Read', 'Glob', 'Grep'];
@@ -82,14 +87,15 @@ function normalizeQuestions(raw: unknown[]): WorkerQuestion[] {
  */
 const makeCanUseTool =
   (
-    planning: boolean,
+    readOnly: boolean,
+    nativePlan: boolean,
     root: string,
     onPlan: (plan: string) => void,
     onQuestions: (questions: WorkerQuestion[]) => void,
   ): CanUseTool =>
   async (toolName, input): Promise<PermissionResult> => {
     if (toolName === 'AskUserQuestion') {
-      if (planning && Array.isArray(input.questions)) {
+      if (nativePlan && Array.isArray(input.questions)) {
         onQuestions(normalizeQuestions(input.questions));
         return {
           behavior: 'deny',
@@ -111,23 +117,23 @@ const makeCanUseTool =
           'Plan received and recorded — do not execute anything. End your turn now; your plan is being reviewed.',
       };
     }
-    if (planning && (toolName === 'Write' || toolName === 'Edit')) {
+    if (readOnly && (toolName === 'Write' || toolName === 'Edit')) {
       return {
         behavior: 'deny',
         message:
-          'Planning is read-only — describe the change in your plan instead of writing it.',
+          'This is a read-only turn — describe what you found instead of writing it.',
       };
     }
     if (toolName === 'Bash') {
       const command = typeof input.command === 'string' ? input.command : '';
       const reason = bashDenyReason(command);
       if (reason) return { behavior: 'deny', message: `Refused: ${reason}.` };
-      if (planning) {
+      if (readOnly) {
         const write = bashWriteReason(command);
         if (write)
           return {
             behavior: 'deny',
-            message: `Planning is read-only — ${write}.`,
+            message: `This is a read-only turn — ${write}.`,
           };
       }
     }
@@ -185,7 +191,11 @@ export class ClaudeEngine implements WorkerEngine {
       'claude',
       agentId,
     );
+    // 'plan' is the native plan posture (permissionMode 'plan' → ExitPlanMode ceremony); both 'plan'
+    // and 'investigate' are read-only (no writes), but investigate skips the ceremony for a fast,
+    // direct answer.
     const planMode = mode === 'plan';
+    const readOnly = mode !== 'execute';
     let capturedPlan = '';
     // Accumulated across the turn, deduped by question text — a model that re-asks despite the
     // deny instruction must not produce duplicate entries in the report.
@@ -195,9 +205,10 @@ export class ClaudeEngine implements WorkerEngine {
       systemPrompt,
       // SDK isolation: do NOT inherit the user's global ~/.claude config, skills, or hooks.
       settingSources: [],
-      tools: planMode ? PLAN_TOOLS : WORKER_TOOLS,
+      tools: planMode ? PLAN_TOOLS : readOnly ? INVESTIGATE_TOOLS : WORKER_TOOLS,
       allowedTools: AUTO_APPROVE,
       canUseTool: makeCanUseTool(
+        readOnly,
         planMode,
         cwd,
         (plan) => {

@@ -25,6 +25,7 @@ import {
   SearchSessionTool,
 } from './sessions/session.tools';
 import { SubmitPlanTool } from './sessions/submit-plan.tool';
+import { InvestigateTool } from './sessions/investigate.tool';
 import { EngineToolFactory } from './engine-tool.factory';
 import {
   AddBoardTaskTool,
@@ -91,6 +92,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     CreateSessionTool,
     ReplySessionTool,
     SubmitPlanTool,
+    InvestigateTool,
     CloseSessionTool,
     CheckSessionTool,
     ListSessionsTool,
