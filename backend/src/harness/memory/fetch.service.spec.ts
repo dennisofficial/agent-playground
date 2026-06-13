@@ -231,4 +231,46 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       expect(result).toContain('Standing context:');
     });
   });
+
+  describe('memory suggestions slot (Phase 2)', () => {
+    it('injects suggestions block when memorySuggestions is non-empty', async () => {
+      const { svc } = makeService({});
+      const suggestions = '• remember: "Dennis wants PRs to target develop" (preference · team)';
+      const result = await svc.fetchMemory(makeBot(), id, suggestions);
+      expect(result).toContain('Memory suggestions from last turn');
+      expect(result).toContain('Dennis wants PRs to target develop');
+    });
+
+    it('omits the suggestions slot when memorySuggestions is empty string', async () => {
+      const { svc } = makeService({});
+      const result = await svc.fetchMemory(makeBot(), id, '');
+      expect(result).not.toContain('Memory suggestions');
+    });
+
+    it('omits the suggestions slot when memorySuggestions is undefined', async () => {
+      const { svc } = makeService({});
+      const result = await svc.fetchMemory(makeBot(), id, undefined);
+      expect(result).not.toContain('Memory suggestions');
+    });
+
+    it('suggestions slot appears AFTER standing context and board tasks', async () => {
+      const boardTasks: BoardTask[] = [
+        { id: 1, title: 'Build auth', description: '', status: 'in_progress', project: 'main', assignee: 'alex', createdBy: 'sam', dependsOn: [], createdAt: '', updatedAt: '' },
+      ];
+      const { svc } = makeService({ boardTasks });
+      const suggestions = '• remember: "Backend uses PostgreSQL" (decision)';
+      const result = await svc.fetchMemory(makeBot(), id, suggestions);
+      const standingIdx = result.indexOf('Standing context:');
+      const boardIdx = result.indexOf('Active board work:');
+      const suggestionsIdx = result.indexOf('Memory suggestions');
+      expect(standingIdx).toBeLessThan(boardIdx);
+      expect(boardIdx).toBeLessThan(suggestionsIdx);
+    });
+
+    it('fetchContext wrapper does not inject suggestions (no memorySuggestions arg)', async () => {
+      const { svc } = makeService({});
+      const result = await svc.fetchContext(makeBot(), id);
+      expect(result).not.toContain('Memory suggestions');
+    });
+  });
 });

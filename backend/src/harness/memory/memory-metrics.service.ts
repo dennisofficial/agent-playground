@@ -16,12 +16,16 @@ import { Injectable } from '@nestjs/common';
 
 export type Decision = 'respond' | 'acknowledge' | 'ignore';
 
+/**
+ * Phase 2+: per-path memory suggestion tallies (replaces write counts — all writes now go through
+ * the agent's own tools, tracked by `recordWrite`). Each reconcileMemory pass records how many
+ * suggestions it surfaced by qualifying class.
+ */
 export interface MemTally {
   attempts: number;
-  inserted: number;
-  deduped: number;
-  updated: number;
-  deleted: number;
+  corrections: number;  // explicit-correction suggestions surfaced
+  decisions: number;    // stated-decision suggestions surfaced
+  preferences: number;  // explicit-preference suggestions surfaced
 }
 
 export interface TaskTally {
@@ -53,10 +57,9 @@ export interface MemoryMetrics {
 const DECISIONS: Decision[] = ['respond', 'acknowledge', 'ignore'];
 const zeroMem = (): MemTally => ({
   attempts: 0,
-  inserted: 0,
-  deduped: 0,
-  updated: 0,
-  deleted: 0,
+  corrections: 0,
+  decisions: 0,
+  preferences: 0,
 });
 const zeroTask = (): TaskTally => ({
   attempts: 0,
@@ -94,14 +97,17 @@ export class MemoryMetricsService {
     this.judgeCallCount++;
   }
 
-  /** One memory-reconcile invocation finished — counted even when it wrote nothing (the denominator). */
+  /**
+   * One memory-reconcile invocation finished — counted even when it surfaced nothing (the
+   * denominator). Phase 2+: counts suggestions by qualifying class, not writes (writes go through
+   * the agent's own tools and are captured by `recordWrite`).
+   */
   recordMemoryReconcile(d: Decision, t: Omit<MemTally, 'attempts'>): void {
     const m = this.memByPath[d];
     m.attempts++;
-    m.inserted += t.inserted;
-    m.deduped += t.deduped;
-    m.updated += t.updated;
-    m.deleted += t.deleted;
+    m.corrections += t.corrections;
+    m.decisions += t.decisions;
+    m.preferences += t.preferences;
   }
 
   /** One task-reconcile invocation finished — counted even when it wrote nothing (the denominator). */

@@ -289,8 +289,9 @@ export class BotGraphNodes {
       const id = getIdentity(config);
       // Three independent reads — run in parallel. Each degrades to '' on error so a service
       // outage never aborts the turn.
+      // Pass the previous turn's memorySuggestions so the assembler can inject them (Phase 2).
       const [memory, tasks, work] = await Promise.all([
-        this.fetchService.fetchMemory(bot, id).catch(() => ''),
+        this.fetchService.fetchMemory(bot, id, state.memorySuggestions).catch(() => ''),
         this.fetchService.fetchTasks(bot, id).catch(() => ''),
         this.workContext(bot).catch(() => ''),
       ]);
@@ -605,30 +606,35 @@ export class BotGraphNodes {
         .join('\n');
 
     /**
-     * RECONCILE NODE — the single post-turn write, reached on every path (respond, ack/ignore,
-     * pause). Today it reconciles only the reminders/board plate (add/complete/drop) against the
-     * turn's transcript.
+     * RECONCILE NODE — the single post-turn pass, reached on every path (respond, ack/ignore,
+     * pause). Runs two passes concurrently:
      *
-     * Durable-FACT auto-capture stays DISABLED (Dennis, 2026-06-12) — too credulous: the inline
-     * pass stored anticipatory chatter ("ready to execute when the standup closes") as accomplished
-     * fact. The replacement is the suggestion-mode reconcile + periodic hygiene pass designed in
-     * board ticket #10 (read-only suggestions, not auto-writes); explicit remember()/recall() are
-     * unaffected. `ReconcileService.reconcileMemory` remains for the memory eval baseline only.
+     *  1. `reconcileMemory` (Phase 2): read-only suggestion pass — returns a short human-readable
+     *     block stored in `memorySuggestions`. NEVER writes to the store; the agent commits via
+     *     its own remember / update_memory / forget tools. Returns '' for off-class turns.
+     *
+     *  2. `reconcileTasks`: captures new forward commitments, completes finished ones, drops stale.
+     *     Still auto-writing — Dennis's consent decision applies to durable facts, not reminders.
+     *
+     * Both are fire-and-forget: an error in one must not abort the turn.
      */
     const reconcileNode = async (
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
       const transcript = turnTranscript(state);
-      if (transcript.trim())
-        await this.reconcile.reconcileTasks(
-          bot,
-          transcript,
-          getIdentity(config),
-          state.decision,
-          config,
-        );
-      return {};
+      const id = getIdentity(config);
+      // Run both passes concurrently. memorySuggestions is always written (even '') so a stale
+      // value from a prior turn never lingers in the checkpoint.
+      const [memorySuggestions] = await Promise.all([
+        transcript.trim()
+          ? this.reconcile.reconcileMemory(bot, transcript, id, state.decision)
+          : Promise.resolve(''),
+        transcript.trim()
+          ? this.reconcile.reconcileTasks(bot, transcript, id, state.decision, config)
+          : Promise.resolve(),
+      ]);
+      return { memorySuggestions };
     };
 
     /** Record the gated batch in the checkpoint without a model call (the ack/ignore path). */

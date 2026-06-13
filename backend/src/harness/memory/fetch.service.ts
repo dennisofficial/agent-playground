@@ -48,13 +48,20 @@ export class FetchService {
   /**
    * The standing-context + board-work slice of the pre-LLM context (`memory` refresh scope).
    * No query or embedding — cheap. Returns the standing context core (role, project, team prefs)
-   * plus any in-progress board tasks.
+   * plus any in-progress board tasks, and (Phase 2) memory suggestions from the previous turn.
    *
-   * This is the half refreshed when remember / update_memory / forget run mid-turn. In Phase 3
-   * those tools don't change standing context or board tasks directly, but the split is the right
-   * home for Phase 2 memory suggestions and future semantic-recall reactivation.
+   * `memorySuggestions` is the string written by `reconcileNode` at the END of the previous turn
+   * (stored in `BotState.memorySuggestions`). Pass '' or omit to skip the suggestions slot.
+   * This parameter is NOT re-passed on a mid-turn `refreshContext` refresh — the suggestions slot
+   * is unchanged when a memory tool fires mid-turn (only the standing context/board facts change).
+   *
+   * This is the half refreshed when remember / update_memory / forget run mid-turn.
    */
-  async fetchMemory(bot: EmployeeDefinition, id: Identity): Promise<string> {
+  async fetchMemory(
+    bot: EmployeeDefinition,
+    id: Identity,
+    memorySuggestions?: string,
+  ): Promise<string> {
     const parts: string[] = [];
 
     // ── 1. Standing context core ────────────────────────────────────────────────────────────────
@@ -79,8 +86,16 @@ export class FetchService {
       );
     }
 
-    // Slots 4–6 (session notes, compaction summary, memory suggestions) are empty-safe stubs
-    // that will be wired in Phases 4, 6, and 2 respectively.
+    // Slots 4–5 (session notes, compaction summary) are empty-safe stubs — wired in Phases 4, 6.
+
+    // ── 6. Memory suggestions (Phase 2) ─────────────────────────────────────────────────────────
+    // Suggestions from the previous turn's read-only reconcile pass. The agent acts on them with
+    // remember / update_memory / forget. Empty-safe: omitted when '' or undefined.
+    if (memorySuggestions?.trim()) {
+      parts.push(
+        `Memory suggestions from last turn (act on these with remember / update_memory / forget if accurate):\n${memorySuggestions}`,
+      );
+    }
 
     return parts.join('\n\n');
   }

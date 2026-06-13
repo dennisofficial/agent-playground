@@ -27,6 +27,9 @@ export interface BotStateDelta {
   cursor?: number;
   decision?: GateAction;
   ackEmoji?: string;
+  /** Suggestion block from the previous turn's memory reconcile — injected into the next turn's
+   * context so the agent can act on it with remember / update_memory / forget. '' = nothing. */
+  memorySuggestions?: string;
   /** A reaction emoji to surface immediately — the gate's "seen, working" 👀 on a real respond. */
   reaction?: string;
   /** The channel-message id this turn's reaction (👀 or ack) is ON — chosen HERE in the graph so the
@@ -183,6 +186,16 @@ export const BotState = Annotation.Root({
   dormantSkip: Annotation<boolean>({
     reducer: (_: boolean, b: boolean) => b ?? false,
     default: () => false,
+  }),
+  /**
+   * Phase 2: suggestion block from the previous turn's memory reconcile. Written by
+   * `reconcileNode` (possibly '' when nothing qualifies); read by `recallNode` the NEXT turn and
+   * injected into the context so the agent sees and acts on it. Overwritten every turn — no stale
+   * lifecycle. Empty string → no suggestions slot injected.
+   */
+  memorySuggestions: Annotation<string>({
+    reducer: (_: string, b: string) => b ?? '',
+    default: () => '',
   }),
 });
 
