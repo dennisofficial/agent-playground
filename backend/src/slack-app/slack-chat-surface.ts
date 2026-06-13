@@ -192,7 +192,7 @@ export class SlackChatSurface implements ChatSurface {
     let lastErr: unknown;
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
-        let res: { ts?: string; ok?: boolean } | undefined;
+        let res: { ts?: string; ok?: boolean; blocks?: unknown[] } | undefined;
         let usedClient: WebClient | undefined;
 
         if (puppet) {
@@ -248,13 +248,28 @@ export class SlackChatSurface implements ChatSurface {
           this.recordPostedId(msg.id, { channel, ts: res.ts });
           // Attach uploaded files to the message via chat.update(file_ids).
           // The files were uploaded UNSHARED during the tool call; this step links them.
+          // Re-send the SAME blocks the post used: `chat.update` with `text` and no `blocks`
+          // REMOVES the existing blocks, which would strip the usage footer + mention Block Kit.
+          //
+          // Wrapped in its OWN try/catch — the message has already posted (recordPostedId above), so a
+          // failed attach must NOT bubble into the retry loop (that would re-post a duplicate). Known
+          // failure mode: the file was uploaded by the puppet but the post fell back to the ears
+          // client (puppet not a channel member) — ears can't attach the puppet-owned private file.
+          // Degrade to the message-without-file rather than duplicating or failing the turn.
           if (msg.fileIds?.length && usedClient) {
-            await usedClient.chat.update({
-              channel,
-              ts: res.ts,
-              text,
-              file_ids: msg.fileIds,
-            });
+            try {
+              await usedClient.chat.update({
+                channel,
+                ts: res.ts,
+                text,
+                ...(res.blocks ? { blocks: res.blocks } : {}),
+                file_ids: msg.fileIds,
+              } as unknown as Parameters<typeof usedClient.chat.update>[0]);
+            } catch (attachErr) {
+              this.logger.warn(
+                `chat.update(file_ids) failed for ${channel}/${res.ts} — message posted without the artifact: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`,
+              );
+            }
           }
         }
         return;
@@ -283,7 +298,7 @@ export class SlackChatSurface implements ChatSurface {
     rawText: string,
     usage: AccumulatedUsage,
     hasMentions: boolean,
-  ): Promise<{ ts?: string; ok?: boolean }> {
+  ): Promise<{ ts?: string; ok?: boolean; blocks?: unknown[] }> {
     const footer = formatUsageLine(usage, CHAT_MODEL);
     const translatedText = baseArgs.text as string; // already run through translateOutbound
 
@@ -297,22 +312,29 @@ export class SlackChatSurface implements ChatSurface {
       divider,
       contextBlock,
     ];
+    const markdownBlocks = [
+      { type: 'markdown', text: rawText },
+      divider,
+      contextBlock,
+    ];
 
+    // Return the blocks that were actually posted so the caller can re-send them on a later
+    // chat.update(file_ids) — otherwise Slack drops the footer when the files are attached.
     if (hasMentions) {
       // Slack's `markdown` block strips `<@USER_ID>` mention syntax, breaking pings.
       // Route mention-containing messages straight to section+mrkdwn to preserve them.
-      return await postFn({ ...baseArgs, blocks: sectionBlocks });
+      const res = await postFn({ ...baseArgs, blocks: sectionBlocks });
+      return { ...res, blocks: sectionBlocks };
     }
 
     try {
-      return await postFn({
-        ...baseArgs,
-        blocks: [{ type: 'markdown', text: rawText }, divider, contextBlock],
-      });
+      const res = await postFn({ ...baseArgs, blocks: markdownBlocks });
+      return { ...res, blocks: markdownBlocks };
     } catch (err) {
       if (!isSlackError(err, ['invalid_blocks'])) throw err;
       // Fall back to the universally-supported section + mrkdwn block.
-      return await postFn({ ...baseArgs, blocks: sectionBlocks });
+      const res = await postFn({ ...baseArgs, blocks: sectionBlocks });
+      return { ...res, blocks: sectionBlocks };
     }
   }
 

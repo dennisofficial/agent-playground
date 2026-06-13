@@ -13,6 +13,7 @@ import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmModule } from '../llm/llm.module';
+import { BoardEventsBus } from './board-events.bus';
 import { BoardStore } from './board-store';
 import { CheckpointerModule } from './checkpointer.module';
 import { OpenAIEmbeddingProvider } from './embedding';
@@ -56,6 +57,7 @@ import { WorklogStore } from './worklog-store';
     MemoryWriteService,
     FetchService,
     ReconcileService,
+    BoardEventsBus,
     {
       provide: SemanticMemory,
       inject: [getRepositoryToken(Fact), CredentialContext],
@@ -72,8 +74,9 @@ import { WorklogStore } from './worklog-store';
     },
     {
       provide: BoardStore,
-      inject: [getRepositoryToken(TeamTask)],
-      useFactory: (board: Repository<TeamTask>) => new BoardStore(board),
+      inject: [getRepositoryToken(TeamTask), BoardEventsBus],
+      useFactory: (board: Repository<TeamTask>, events: BoardEventsBus) =>
+        new BoardStore(board, events),
     },
     {
       provide: WorklogStore,
@@ -82,8 +85,9 @@ import { WorklogStore } from './worklog-store';
     },
     {
       provide: PlanStore,
-      inject: [getRepositoryToken(TeamTaskPlan)],
-      useFactory: (plans: Repository<TeamTaskPlan>) => new PlanStore(plans),
+      inject: [getRepositoryToken(TeamTaskPlan), BoardEventsBus],
+      useFactory: (plans: Repository<TeamTaskPlan>, events: BoardEventsBus) =>
+        new PlanStore(plans, events),
     },
     {
       provide: TicketNoteStore,

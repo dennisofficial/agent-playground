@@ -2,6 +2,7 @@ import type { AIMessage } from '@langchain/core/messages';
 import { PromptTemplate } from '@langchain/core/prompts';
 import {
   Runnable,
+  type RunnableConfig,
   RunnableLambda,
   RunnableSequence,
 } from '@langchain/core/runnables';
@@ -125,13 +126,18 @@ export class RecursionGuardService {
   async detect(
     bot: EmployeeDefinition,
     windowText: string,
+    /** Forwarded to the guard chain so its LLM call nests under the turn's Langfuse trace. */
+    config?: RunnableConfig,
   ): Promise<GuardDecision> {
     if (!this.isEnabled()) return NOT_LOOPING;
     try {
-      return await this.guard().invoke({
-        botName: bot.name,
-        window: windowText,
-      });
+      return await this.guard().invoke(
+        {
+          botName: bot.name,
+          window: windowText,
+        },
+        config,
+      );
     } catch {
       return NOT_LOOPING; // fail-open: never break a turn on a Haiku failure
     }

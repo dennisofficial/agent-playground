@@ -1,10 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
+import { tracingEnabled } from '@core/tracing';
 import {
   type BaseMessage,
   HumanMessage,
   ToolMessage,
 } from '@langchain/core/messages';
 import { GraphRecursionError } from '@langchain/langgraph';
+import { LangfuseCallbackHandler } from '@workspace/langfuse';
 import {
   Inject,
   Injectable,
@@ -19,6 +21,7 @@ import {
 import { ChannelService } from '../channel/channel.service';
 import { CursorStore } from '../channel/cursor.store';
 import type { ConductorEvent, MessageUsage } from '../domain/conductor-events';
+import { extractMessageUsage } from '../llm/usage-format';
 import {
   DEFAULT_PROJECT,
   DEFAULT_TEAM,
@@ -30,13 +33,16 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
+import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
+import { PlanStore } from '../memory/plan-store';
 import {
   SESSION_REGISTRY,
   type Session,
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { SessionRunnerService } from '../sessions/session-runner.service';
-import { type BotStateDelta, BotGraphFactory } from './bot-graph.factory';
+import { type BotStateDelta, BotGraphFactory } from '../bot-graph/bot-graph.factory';
+import { planReadySeed, ticketApprovedSeed } from './board-seed-prompt';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { sessionRelayPrompt } from './session-relay-prompt';
 
@@ -138,6 +144,8 @@ export class ConductorService
     private readonly readiness: LlmReadinessService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly boardEvents: BoardEventsBus,
+    private readonly plans: PlanStore,
   ) {}
 
   /** runningBots is keyed per (tenant, bot): a bot works ONE turn at a time within a workspace, but
@@ -209,7 +217,70 @@ export class ConductorService
         }
       }),
     );
+    // Board state transitions wake the right bot mechanically (instead of relying on an owner
+    // remembering to announce / the lead's gate firing). The callback is sync; resolution
+    // (plans → sessions → worktree, the lead) runs as detached async that ends in injectSeed.
+    this.unsubscribers.push(
+      this.boardEvents.onEvent((event) => {
+        void this.handleBoardEvent(event).catch((err) =>
+          this.logger.warn(`board event (${event.kind}) wake failed: ${err}`),
+        );
+      }),
+    );
     this.schedule();
+  }
+
+  /**
+   * Turn a board transition into a gate-bypassed wake-up. `plan-attached` → the lead reviews
+   * (skip self-plans — the lead proposes their own); `ticket-approved` → each plan owner opens a
+   * fresh execute session, carrying the resolved worktree id so the action is mechanically
+   * possible. Channel resolution comes from the planning session's notifyThread, falling back to
+   * the process's default room.
+   */
+  private async handleBoardEvent(event: BoardEvent): Promise<void> {
+    if (event.kind === 'plan-attached') {
+      const lead = this.employees.teamLead();
+      if (event.employee === lead.id) return; // the lead doesn't review their own plan
+      const channelId = await this.channelForSession(event.sessionId);
+      this.injectSeed(
+        lead.id,
+        channelId,
+        planReadySeed({ taskId: event.taskId, employee: event.employee }),
+      );
+      return;
+    }
+    // ticket-approved: wake every teammate with a plan on the ticket to execute it.
+    const plans = await this.plans.listForTask(event.team, event.taskId);
+    for (const plan of plans) {
+      const session = plan.sessionId
+        ? await this.sessions.get(plan.sessionId)
+        : undefined;
+      const channelId = session
+        ? this.resolveRoom(session.notifyThread)
+        : this.channel.surfaceId;
+      this.injectSeed(
+        plan.employee,
+        channelId,
+        ticketApprovedSeed({
+          taskId: event.taskId,
+          worktreeId: session?.worktreeId,
+        }),
+      );
+    }
+  }
+
+  /** The room a session relays into (its notifyThread), or the default room when unknown. */
+  private resolveRoom(channelId: string): string {
+    return this.registry.get(channelId) ? channelId : this.channel.surfaceId;
+  }
+
+  /** The room for a board wake derived from a planning session, or the default room. */
+  private async channelForSession(sessionId?: string): Promise<string> {
+    if (!sessionId) return this.channel.surfaceId;
+    const session = await this.sessions.get(sessionId);
+    return session
+      ? this.resolveRoom(session.notifyThread)
+      : this.channel.surfaceId;
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -473,6 +544,10 @@ export class ConductorService
         }
       | undefined;
     const resolvedFileIds: string[] = [];
+    // Every share_artifact tool_call id seen this turn — tracked INDEPENDENTLY of `deferredMsg` so a
+    // tool-call-only artifact upload (no accompanying text → no deferred message) still has its
+    // file_id collected and attached to the NEXT text-bearing message (Case B).
+    const artifactCallIds = new Set<string>();
 
     const flushDeferred = (fileIds: string[]) => {
       if (!deferredMsg) return;
@@ -493,26 +568,7 @@ export class ConductorService
     };
 
     const commit = (msg: BaseMessage) => {
-      const um = (
-        msg as {
-          usage_metadata?: {
-            input_tokens?: number;
-            output_tokens?: number;
-            input_token_details?: {
-              cache_read?: number;
-              cache_creation?: number;
-            };
-          };
-        }
-      ).usage_metadata;
-      const usage: MessageUsage | undefined = um
-        ? {
-            input: um.input_tokens ?? 0,
-            output: um.output_tokens ?? 0,
-            cacheRead: um.input_token_details?.cache_read || undefined,
-            cacheWrite: um.input_token_details?.cache_creation || undefined,
-          }
-        : undefined;
+      const usage = extractMessageUsage(msg);
       // Footer ctx tracks EVERY billed step — including tool-only ones, which carry usage but no
       // text and so emit no `message` event.
       if (usage) {
@@ -536,6 +592,9 @@ export class ConductorService
       const shareArtifactCalls = calls.filter(
         (c) => c.name === 'share_artifact',
       );
+      // Track these ids turn-wide so their file_ids are collected even when this step has no text
+      // (Case B) — the ToolMessage handler keys off `artifactCallIds`, not `deferredMsg`.
+      for (const c of shareArtifactCalls) if (c.id) artifactCallIds.add(c.id);
 
       if (text) {
         // The reply goes back onto the room's shared log so teammates + session relays see it.
@@ -605,10 +664,31 @@ export class ConductorService
     // the turn ends (success, error, or step-cap), so present = composing now, gone = replied.
     let composing: { emoji: string; targetId: string } | undefined;
     try {
+      // Langfuse: a FRESH handler per turn — it holds per-run span state, so sharing one across
+      // concurrently-running bot turns would interleave their traces. `sessionId = channelId` groups
+      // every turn in a room into one Langfuse session (the conversation timeline); the gate, compose,
+      // tool, and read-the-room revision steps nest under it because LangGraph propagates these
+      // callbacks into each node's config. No-op when tracing is disabled.
+      const callbacks = tracingEnabled
+        ? [
+            new LangfuseCallbackHandler({
+              sessionId: channelId,
+              userId: bot.id,
+              tags: [bot.name, info.teamId],
+              traceMetadata: {
+                teamId: info.teamId,
+                threadId: thread,
+                seed: !!opts.seed,
+              },
+            }),
+          ]
+        : undefined;
       const stream = await this.graphs.getBotGraph(bot).stream(input, {
         configurable: { thread_id: thread, identity, capped, channelId },
         streamMode: 'updates',
         recursionLimit: MAX_TURN_STEPS,
+        callbacks,
+        runName: `turn:${bot.name}`,
       });
       for await (const update of stream as AsyncIterable<
         Record<string, BotStateDelta>
@@ -690,11 +770,12 @@ export class ConductorService
           for (const msg of delta.messages ?? []) {
             if (msg.getType() === 'ai') {
               commit(msg); // skip injected Human messages (already in channel/UI)
-            } else if (msg instanceof ToolMessage && deferredMsg) {
-              // Check if this is a share_artifact result the deferred message is waiting on.
+            } else if (msg instanceof ToolMessage) {
+              // A share_artifact result — collect its file_id regardless of whether a message is
+              // currently deferred (Case B: the artifact was uploaded in a tool-call-only step).
               const callId = msg.tool_call_id;
-              if (callId && deferredMsg.pendingCallIds.has(callId)) {
-                deferredMsg.pendingCallIds.delete(callId);
+              if (callId && artifactCallIds.has(callId)) {
+                artifactCallIds.delete(callId);
                 // Extract file_id from the tool result (format: "Uploaded (file_id: Fxxxxxxx).")
                 const content =
                   typeof msg.content === 'string'
@@ -702,9 +783,13 @@ export class ConductorService
                     : JSON.stringify(msg.content);
                 const m = content.match(/file_id:\s*(F[A-Z0-9]+)/i);
                 if (m?.[1]) resolvedFileIds.push(m[1]);
-                // Flush when all pending share_artifact calls have reported back.
-                if (deferredMsg.pendingCallIds.size === 0) {
-                  flushDeferred(resolvedFileIds.splice(0));
+                // If a text message is waiting on this call (Case A), flush once all its
+                // share_artifact calls have reported back.
+                if (deferredMsg?.pendingCallIds.has(callId)) {
+                  deferredMsg.pendingCallIds.delete(callId);
+                  if (deferredMsg.pendingCallIds.size === 0) {
+                    flushDeferred(resolvedFileIds.splice(0));
+                  }
                 }
               }
             }
@@ -924,6 +1009,7 @@ export class ConductorService
     return (
       this.runningBots.size === 0 &&
       this.relayQueue.length === 0 &&
+      this.seedQueue.length === 0 &&
       (this.stopping || !this.anyUndelivered())
     );
   }

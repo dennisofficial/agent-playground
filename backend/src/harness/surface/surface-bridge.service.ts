@@ -117,7 +117,8 @@ export class SurfaceBridge
       input: cur.input + gateUsage.input,
       output: cur.output + gateUsage.output,
       cacheRead: cur.cacheRead,
-      cacheWrite: cur.cacheWrite,
+      cacheWrite5m: cur.cacheWrite5m,
+      cacheWrite1h: cur.cacheWrite1h,
       costUsd: cur.costUsd + cost,
       callCount: cur.callCount + 1,
     });
@@ -129,21 +130,24 @@ export class SurfaceBridge
       input: number;
       output: number;
       cacheRead?: number;
-      cacheWrite?: number;
+      cacheWrite5m?: number;
+      cacheWrite1h?: number;
     },
   ): void {
     const cost = calculateCost(CHAT_MODEL, {
       input: usage.input,
       output: usage.output,
       cacheRead: usage.cacheRead,
-      cacheWrite: usage.cacheWrite,
+      cacheWrite5m: usage.cacheWrite5m,
+      cacheWrite1h: usage.cacheWrite1h,
     });
     const cur = this.usageByBot.get(botId) ?? zeroAccum();
     this.usageByBot.set(botId, {
       input: cur.input + usage.input,
       output: cur.output + usage.output,
       cacheRead: cur.cacheRead + (usage.cacheRead ?? 0),
-      cacheWrite: cur.cacheWrite + (usage.cacheWrite ?? 0),
+      cacheWrite5m: cur.cacheWrite5m + (usage.cacheWrite5m ?? 0),
+      cacheWrite1h: cur.cacheWrite1h + (usage.cacheWrite1h ?? 0),
       costUsd: cur.costUsd + cost,
       callCount: cur.callCount + 1,
     });
@@ -155,7 +159,8 @@ function zeroAccum(): AccumulatedUsage {
     input: 0,
     output: 0,
     cacheRead: 0,
-    cacheWrite: 0,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
     costUsd: 0,
     callCount: 0,
   };

@@ -18,12 +18,14 @@ import { ApprovalCardsService } from './approvals/approval-cards.service';
 import { JarvisService } from './jarvis/jarvis.service';
 import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
+import { SlackCommandService } from './slack-commands.service';
 import { SlackDirectoryService } from './slack-directory.service';
 import { SlackFileUploadService } from './slack-file-upload.service';
 import { SlackIdentityRegistry } from './slack-identity.registry';
 import { SlackInboundRouter } from './slack-inbound.router';
 import {
   APPROVAL_INTERCEPTOR,
+  COMMAND_INTERCEPTOR,
   JARVIS_INTERCEPTOR,
 } from './slack-inbound.types';
 import { SlackSocketTransport } from './slack-socket-transport';
@@ -75,8 +77,10 @@ import { TenantSlackClients } from './tenant-slack-clients';
     SlackSocketTransport,
     JarvisService,
     ApprovalCardsService,
+    SlackCommandService,
     { provide: JARVIS_INTERCEPTOR, useExisting: JarvisService },
     { provide: APPROVAL_INTERCEPTOR, useExisting: ApprovalCardsService },
+    { provide: COMMAND_INTERCEPTOR, useExisting: SlackCommandService },
     // The plan-proposal OUTBOUND PORT's Slack adapter (propose_plan → approval card) — bound here
     // exactly like CHAT_SURFACE; headless/TUI hosts bind nothing and get the chat-words fallback.
     { provide: PROPOSAL_PRESENTER, useExisting: ApprovalCardsService },

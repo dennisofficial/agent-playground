@@ -23,7 +23,7 @@ const openPrSchema = z.object({
 export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
   readonly name = 'open_pr';
   readonly description =
-    "When a feature's shared branch is ready for Dennis, open (or find) its pull request on the project's registered GitHub repo — returns the PR URL to relay. Call it ONCE per feature: publish_worktree already keeps the shared branch synced to GitHub, so later publishes update the open PR by themselves.";
+    "Open (or find) the pull request for a feature's shared branch on the project's registered GitHub repo — as a DRAFT, so it doesn't read as ready while you're still working. Returns the PR URL to relay. Call it ONCE per feature: publish_worktree keeps the shared branch synced, so later publishes update the open PR by themselves. When the work is done and you want Dennis to review, mark_pr_ready flips it out of draft.";
   readonly schema = openPrSchema;
 
   constructor(
@@ -68,10 +68,11 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
         base: rec.defaultBranch,
         title,
         body,
+        draft: true,
       });
       return pr.existing
         ? `A PR for ${sharedBranch} already exists: ${pr.url}`
-        : `Opened PR for ${sharedBranch}: ${pr.url}`;
+        : `Opened DRAFT PR for ${sharedBranch}: ${pr.url} — mark_pr_ready when it's ready for Dennis.`;
     } catch (err) {
       return `Couldn't open the PR: ${err instanceof Error ? err.message : String(err)}`;
     }

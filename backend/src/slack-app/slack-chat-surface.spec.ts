@@ -397,7 +397,8 @@ const msgWithUsage = {
     input: 1200,
     output: 80,
     cacheRead: 400,
-    cacheWrite: 0,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
     costUsd: 0.0042,
     callCount: 1,
   },
@@ -492,14 +493,16 @@ describe('SlackChatSurface Block Kit footer', () => {
         input: 500,
         output: 50,
         cacheRead: 200,
-        cacheWrite: 100,
+        cacheWrite5m: 0,
+        cacheWrite1h: 100,
         costUsd: 0.0031,
         callCount: 1,
       },
     });
     const footer = contextFooter(postCall(web.chat.postMessage));
     expect(footer).toContain('cache read 200');
-    expect(footer).toContain('cache write 100');
+    expect(footer).toContain('cache write 1h 100');
+    expect(footer).not.toContain('cache write 5m');
 
     // When cacheRead and cacheWrite are zero, they must not appear
     web.chat.postMessage.mockClear();
@@ -509,7 +512,8 @@ describe('SlackChatSurface Block Kit footer', () => {
         input: 300,
         output: 40,
         cacheRead: 0,
-        cacheWrite: 0,
+        cacheWrite5m: 0,
+        cacheWrite1h: 0,
         costUsd: 0.0009,
         callCount: 1,
       },
@@ -527,7 +531,8 @@ describe('SlackChatSurface Block Kit footer', () => {
         input: 4800,
         output: 320,
         cacheRead: 0,
-        cacheWrite: 0,
+        cacheWrite5m: 0,
+        cacheWrite1h: 0,
         costUsd: 0.0192,
         callCount: 5,
       },
@@ -542,11 +547,11 @@ describe('SlackChatSurface Block Kit footer', () => {
     expect(footer.indexOf('5 calls')).toBeLessThan(footer.indexOf('in '));
   });
 
-  it('single-call turn: footer does NOT show model name or call count', async () => {
+  it('single-call turn: footer shows the model name but no call count', async () => {
     const { surface, web } = makeFakes();
     await surface.post({ ...msgWithUsage }); // callCount: 1 via msgWithUsage fixture
     const footer = contextFooter(postCall(web.chat.postMessage));
-    expect(footer).not.toContain('claude-sonnet-4-6');
+    expect(footer).toContain('claude-sonnet-4-6');
     expect(footer).not.toContain('calls');
   });
 
@@ -691,5 +696,51 @@ describe('SlackChatSurface file attachment (fileIds)', () => {
       }),
     );
     expect(web.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('usage + fileIds: chat.update RE-SENDS the blocks so the footer survives the attach', async () => {
+    // Regression guard: chat.update with text + file_ids but NO blocks would strip the usage
+    // footer (Slack removes existing blocks). The update must carry the same blocks the post used.
+    const web = {
+      chat: {
+        postMessage: vi.fn(async () => ({ ok: true, ts: '1712.0070' })),
+        update: vi.fn(async () => ({ ok: true })),
+      },
+      reactions: { add: vi.fn(async () => ({ ok: true })) },
+    };
+    const clients = { clientFor: vi.fn(async () => web) };
+    const identities = { clientFor: vi.fn(async () => undefined) };
+    const directory = {
+      selfUserIdFor: vi.fn(async () => 'UBOT'),
+      resolveUser: vi.fn(async () => ({
+        authorId: 'dennis',
+        authorName: 'Dennis',
+      })),
+      displayNameOf: vi.fn(() => undefined),
+      ensureChannelRegistered: vi.fn(async () => {}),
+      resolveMention: vi.fn(async () => undefined),
+    };
+    const bus = { patchStatus: vi.fn() };
+    const env = { get: () => undefined };
+    const surface = new SlackChatSurface(
+      clients as never,
+      directory as never,
+      identities as never,
+      bus as never,
+      env as never,
+    );
+
+    await surface.post({ ...msgWithUsage, fileIds: ['F0ABCDEF'] });
+
+    expect(web.chat.update).toHaveBeenCalledTimes(1);
+    const updateArg = (web.chat.update.mock.calls[0] as unknown[])[0] as Record<
+      string,
+      unknown
+    >;
+    expect(updateArg.file_ids).toEqual(['F0ABCDEF']);
+    // Blocks must be present on the update, including the context footer.
+    const blocks = updateArg.blocks as Array<Record<string, unknown>>;
+    expect(blocks).toBeDefined();
+    expect(blocks.some((b) => b.type === 'context')).toBe(true);
   });
 });

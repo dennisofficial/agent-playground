@@ -147,10 +147,17 @@ export class ClaimBoardTaskTool implements IHarnessTool<typeof claimSchema> {
 const updateSchema = z.object({
   id: z.number().describe('The board task id (the #N from list_board).'),
   status: z
-    .enum(['open', 'in_progress', 'awaiting_approval', 'approved', 'done'])
+    .enum([
+      'open',
+      'in_progress',
+      'awaiting_approval',
+      'approved',
+      'in_review',
+      'done',
+    ])
     .optional()
     .describe(
-      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY: proposing normally happens via propose_plan, and 'approved' records Dennis's explicit verdict.",
+      "New status. 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY (proposing normally happens via propose_plan; 'approved' records Dennis's verdict). 'in_review' is normally set by mark_pr_ready when the PR is up. 'done' completes it — but for APPROVED work that's the team lead recording Dennis's acceptance, not the assignee.",
     ),
   assignee: z
     .string()
@@ -201,6 +208,15 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     }
     if (status === 'awaiting_approval' && !isLead)
       return `Posting for approval isn't a status you set — your plan AUTO-ATTACHES to the ticket when your linked planning session finishes. Notify @Sam your plan on #${taskId} is ready for review; he proposes the ticket to Dennis (propose_plan) once every plan is lead-approved.`;
+    // Completing APPROVED work is Dennis's acceptance, clerked by the lead — an assignee can't
+    // self-'done' a ticket that went through approval (or is in review). They keep iterating on
+    // review feedback in their execute session; the lead marks it done once Dennis accepts the PR.
+    if (
+      status === 'done' &&
+      (task.status === 'approved' || task.status === 'in_review') &&
+      !isLead
+    )
+      return `Board task #${taskId} is '${task.status}' — completing approved work records Dennis's acceptance, which is the team lead's call. Keep addressing review feedback in your execute session; @Sam marks it 'done' once Dennis accepts the PR.`;
 
     if (!isLead) {
       if (
@@ -255,10 +271,17 @@ const listSchema = z.object({
     .optional()
     .describe("Filter to one teammate's tasks (a roster id like 'alex')."),
   status: z
-    .enum(['open', 'in_progress', 'awaiting_approval', 'approved', 'done'])
+    .enum([
+      'open',
+      'in_progress',
+      'awaiting_approval',
+      'approved',
+      'in_review',
+      'done',
+    ])
     .optional()
     .describe(
-      "Filter by status; omit for everything not done (the live board). 'awaiting_approval' lists the plans queued for Dennis's sign-off.",
+      "Filter by status; omit for everything not done (the live board). 'awaiting_approval' lists the plans queued for Dennis's sign-off; 'in_review' lists the PRs up and waiting on him.",
     ),
 });
 

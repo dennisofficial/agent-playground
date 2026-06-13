@@ -2,15 +2,20 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
+import { DEFAULT_REVIEW_PROMPT } from '../engines/role-prompts';
 import {
   EWorkerEngineName,
   WorkerEvent,
   WorkerMode,
 } from '../engines/worker-engine.port';
 import { EmployeeRegistry } from '../employees/employee.registry';
+import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
 import { CredentialContext } from '../llm-keys/credential-context';
-import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
+import {
+  TenantCredentialService,
+  type TenantKeys,
+} from '../llm-keys/tenant-credential.service';
 import { BoardStore } from '../memory/board-store';
 import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
@@ -19,6 +24,7 @@ import { WorktreeService } from '../worktrees/worktree.service';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
+  type Session,
   type SessionRegistry,
 } from './session-registry.port';
 
@@ -154,17 +160,63 @@ export class SessionRunnerService {
       // plan with unanswered questions isn't approvable. A finished plan carries its planning Q&A
       // appendix so every decision made along the way is visible at approval. `lastReportKind` is
       // written on EVERY turn-end (undefined clears it) so a stale kind never survives.
+      // Engine-neutral plan artifact: only ClaudeEngine has a native plan-capture signal (its
+      // ExitPlanMode capture, surfaced as `planText` and folded into `result`). Engines WITHOUT one
+      // (Codex/LangGraph) would otherwise never classify a plan, so for a BOARD-LINKED plan turn that
+      // finished without questions, their report IS the plan — they attach and self-review too.
+      // Claude keeps its precise signal: a plan-mode status update that captured no plan must not
+      // clobber the attached plan.
+      const engineCapturesPlan = session.engine === EWorkerEngineName.CLAUDE;
+      const isBoardLinkedPlanTurn =
+        !engineCapturesPlan &&
+        session.mode === 'plan' &&
+        session.boardTaskId !== undefined &&
+        !questions?.length;
+      const planBody = planText ?? result; // result == the plan for Claude; the report otherwise
       const kind = questions?.length
         ? ('questions' as const)
-        : planText
+        : planText || isBoardLinkedPlanTurn
           ? ('plan' as const)
           : undefined;
       const qa = live.qa ?? [];
+
+      // PLAN SELF-REVIEW: before a board-linked plan attaches, a DIFFERENT engine (the employee's
+      // `review` role) adversarially reviews it once, then the planning engine revises once — the
+      // analogue of Codex reviewing a plan before it's proposed. Best-effort: any failure falls back
+      // to the un-reviewed plan. Skipped when the turn asked questions or isn't board-linked.
+      let finalPlanBody = planBody;
+      let attachEngineSessionId = engineSessionId;
+      let selfReviewNote = '';
+      if (
+        kind === 'plan' &&
+        session.boardTaskId !== undefined &&
+        !ac.signal.aborted
+      ) {
+        const reviewed = await this.runPlanSelfReview({
+          bot,
+          session,
+          worktreePath: worktree.path,
+          planBody,
+          planEngineSessionId: engineSessionId,
+          keys,
+          signal: ac.signal,
+        });
+        if (reviewed) {
+          finalPlanBody = reviewed.planBody;
+          attachEngineSessionId = reviewed.engineSessionId;
+          selfReviewNote = reviewed.note;
+        }
+      }
+      // Closed (and thus aborted) while self-reviewing: don't finalize over the close.
+      if (ac.signal.aborted) return;
+
       const lastReport =
         kind === 'questions'
           ? renderQuestionsReport(questions!, planText)
-          : kind === 'plan' && qa.length
-            ? `${planText}\n\n${renderQaAppendix(qa)}`
+          : kind === 'plan'
+            ? (qa.length
+                ? `${finalPlanBody}\n\n${renderQaAppendix(qa)}`
+                : finalPlanBody) + selfReviewNote
             : result || '(no report)';
       // A finished plan on a board-linked session AUTO-ATTACHES to its ticket (per employee,
       // latest wins) — the ticket is the durable artifact (sessions die on restart) and what the
@@ -190,7 +242,7 @@ export class SessionRunnerService {
       }
       await this.sessions.update(sessionId, {
         status: 'idle',
-        engineSessionId,
+        engineSessionId: attachEngineSessionId,
         lastReport,
         lastReportKind: kind,
         planAttached,
@@ -217,6 +269,111 @@ export class SessionRunnerService {
       }
     } finally {
       this.controllers.delete(sessionId);
+    }
+  }
+
+  /**
+   * One-shot plan self-review: the employee's `review` engine adversarially critiques the freshly
+   * produced plan, then the PLANNING engine revises it once (resuming its session, so the revision
+   * keeps full investigation context). Returns the revised plan body + the planning engine's new
+   * session id, or null to fall back to the un-reviewed plan (any failure or an abort). Both runs are
+   * jailed to the worktree and read-only (`mode: 'plan'`), like the main turn.
+   */
+  private async runPlanSelfReview(opts: {
+    bot: EmployeeDefinition;
+    session: Session;
+    worktreePath: string;
+    planBody: string;
+    planEngineSessionId?: string;
+    keys: TenantKeys;
+    signal: AbortSignal;
+  }): Promise<{
+    planBody: string;
+    engineSessionId?: string;
+    note: string;
+  } | null> {
+    const { bot, session, worktreePath, planBody, planEngineSessionId, keys, signal } =
+      opts;
+    const keyFor = (engine: EWorkerEngineName) =>
+      engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
+    const systemPrompt = this.persona.workerPromptFor(bot);
+    const onEvent = (e: WorkerEvent) =>
+      void this.sessions.appendProgress(session.id, e).catch(() => undefined);
+    try {
+      const task =
+        session.boardTaskId !== undefined
+          ? await this.board.get(session.team, session.boardTaskId)
+          : undefined;
+      const ticketText = task
+        ? `${task.title}\n\n${task.description}`.trim()
+        : session.task;
+      const goal = task?.title ?? session.task;
+
+      // 1. Adversarial review on the employee's `review` engine (stateless one-shot).
+      const reviewBinding = this.employees.resolveWorkerModel(bot, 'review');
+      const reviewTemplate = bot.roles?.review?.prompt ?? DEFAULT_REVIEW_PROMPT;
+      const reviewPrompt = reviewTemplate({
+        goal,
+        ticket: ticketText,
+        plan: planBody,
+      });
+      const review = await withActiveRoot(worktreePath, () =>
+        this.credCtx.run({ teamId: session.team, keys }, () =>
+          this.engines.get(reviewBinding.engine).run({
+            task: reviewPrompt,
+            cwd: worktreePath,
+            systemPrompt,
+            agentId: bot.id,
+            sessionId: undefined,
+            model: reviewBinding.model,
+            effort: reviewBinding.effort,
+            mode: 'plan',
+            apiKey: keyFor(reviewBinding.engine),
+            onEvent,
+            signal,
+          }),
+        ),
+      );
+      if (signal.aborted) return null;
+      const critique = review.result?.trim();
+      if (!critique) return null;
+
+      // 2. Revise ONCE on the planning engine, resuming its session (keeps investigation context).
+      const planBinding = this.employees.resolveWorkerModel(bot, 'plan');
+      const revisionPrompt =
+        `A reviewer reviewed your plan and raised these points:\n\n${critique}\n\n` +
+        `Revise your plan ONCE, folding in the valid points (ignore any that are wrong, noting why ` +
+        `in a line). Output the FULL revised plan with the same structured sections.`;
+      const revision = await withActiveRoot(worktreePath, () =>
+        this.credCtx.run({ teamId: session.team, keys }, () =>
+          this.engines.get(session.engine).run({
+            task: revisionPrompt,
+            cwd: worktreePath,
+            systemPrompt,
+            agentId: bot.id,
+            sessionId: planEngineSessionId,
+            model: planBinding.model,
+            effort: planBinding.effort,
+            mode: 'plan',
+            apiKey: keyFor(session.engine),
+            onEvent,
+            signal,
+          }),
+        ),
+      );
+      if (signal.aborted) return null;
+      const revisedBody = (revision.planText ?? revision.result)?.trim();
+      if (!revisedBody) return null;
+      return {
+        planBody: revisedBody,
+        engineSessionId: revision.sessionId ?? planEngineSessionId,
+        note: `\n\n_(self-reviewed by ${reviewBinding.engine} before attaching)_`,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `plan self-review for ${session.id} failed (${err instanceof Error ? err.message : String(err)}) — attaching the un-reviewed plan`,
+      );
+      return null;
     }
   }
 
@@ -269,13 +426,14 @@ export class SessionRunnerService {
   }
 
   /**
-   * Why an execute turn on this work is not allowed yet — or null when it is. Two gates, both
-   * skipped only on dial 'off': (1) an OPEN STANDUP pauses every execute flip team-wide (approved
-   * or not — approval at the sitting isn't GO; the lead's close_standup is); (2) the
-   * EXECUTION_APPROVAL_MODE dial: 'all' = every execute turn needs a linked board task in
-   * 'approved' (or 'done'); 'linked' = only board-linked sessions are gated. Unknown dial values
-   * fail closed to 'all'. Also used by create_session for execute-mode opens, so a fresh session
-   * can't bypass the gate.
+   * Why an execute turn on this work is not allowed yet — or null when it is. Gates, all skipped on
+   * dial 'off': (1) a ticket already 'in_review' (its PR is up, Dennis is looking) bypasses every
+   * gate — addressing review feedback is NOT "starting new work", the original approval covers it;
+   * (2) an OPEN STANDUP pauses every other execute flip team-wide (approved or not — approval at the
+   * sitting isn't GO; the lead's close_standup is); (3) the EXECUTION_APPROVAL_MODE dial: 'all' =
+   * every execute turn needs a linked board task in 'approved' (or 'done'/'in_review'); 'linked' =
+   * only board-linked sessions are gated. Unknown dial values fail closed to 'all'. Also used by
+   * create_session for execute-mode opens, so a fresh session can't bypass the gate.
    */
   async executeRefusal(
     team: string,
@@ -283,6 +441,14 @@ export class SessionRunnerService {
   ): Promise<string | null> {
     const dial = this.env.get('EXECUTION_APPROVAL_MODE');
     if (dial === 'off') return null;
+    const task =
+      boardTaskId !== undefined
+        ? await this.board.get(team, boardTaskId)
+        : undefined;
+    if (boardTaskId !== undefined && !task)
+      return `linked board task #${boardTaskId} no longer exists — fix the link before executing.`;
+    // Review-feedback loop: a ticket in review stays executable through every round, standup or not.
+    if (task?.status === 'in_review') return null;
     if (await this.settings.isStandupOpen(team)) {
       return `the standup is still OPEN — approved or not, nothing starts executing until the team lead closes it (close_standup). Keep planning or wait for the all-clear in the channel.`;
     }
@@ -291,11 +457,8 @@ export class SessionRunnerService {
         ? null
         : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
     }
-    const task = await this.board.get(team, boardTaskId);
-    if (!task)
-      return `linked board task #${boardTaskId} no longer exists — fix the link before executing.`;
-    if (task.status === 'approved' || task.status === 'done') return null;
-    return `board task #${boardTaskId} is '${task.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; @Sam reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
+    if (task!.status === 'approved' || task!.status === 'done') return null;
+    return `board task #${boardTaskId} is '${task!.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; @Sam reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
   }
 
   /**

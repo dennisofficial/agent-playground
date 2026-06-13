@@ -9,6 +9,7 @@ import {
   recallScopes,
 } from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
+import { MemoryMetricsService } from './memory-metrics.service';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
 
@@ -30,6 +31,7 @@ export class FetchService {
     @InjectRepository(Fact) private readonly facts: Repository<Fact>,
     private readonly semantic: SemanticMemory,
     private readonly tasks: TaskStore,
+    private readonly metrics: MemoryMetricsService,
   ) {}
 
   /** Programmatic empty-skip: does this identity have ANY live fact in its recall scopes? */
@@ -114,6 +116,10 @@ export class FetchService {
       ),
     ]);
     const plate = plates.flat();
+
+    // Recall-health metric: count every pass with a real retrieval query (even one that surfaced
+    // nothing — the empty-recall rate is the signal). Facts = own-scope + cross-project, not reminders.
+    if (query.trim()) this.metrics.recordRecall(facts.length + others.length);
 
     // `(source: …)` is assertion PROVENANCE — the human speaking when the fact was extracted —
     // not whose work the fact describes.

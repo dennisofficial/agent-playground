@@ -1,0 +1,16 @@
+{
+  "name": "old-standing-preference-survives-recent-pr-chatter",
+  "kind": "recall",
+  "bot": "alex",
+  "query": "how large should I let a pull request get",
+  "k": 2,
+  "stale": true,
+  "seedFacts": [
+    { "fact": "Dennis wants pull requests kept under 400 lines", "tier": "team", "ageDays": 120 },
+    { "fact": "Pull requests open against the shared integration branch", "ageDays": 1 },
+    { "fact": "Every pull request needs a Codex review before merge", "ageDays": 1 },
+    { "fact": "Pull request titles follow conventional-commit format", "ageDays": 1 },
+    { "fact": "Draft pull requests are acceptable for work in progress", "ageDays": 1 }
+  ],
+  "shouldRecall": ["Dennis wants pull requests kept under 400 lines"]
+}
