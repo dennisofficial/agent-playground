@@ -83,7 +83,7 @@ describe('open_pr tool', () => {
       body: 'desc',
     });
     expect(out).toBe(
-      'Opened PR for shared/feat: https://github.com/dennis/proj/pull/9',
+      `Opened DRAFT PR for shared/feat: https://github.com/dennis/proj/pull/9 — mark_pr_ready when it's ready for Dennis.`,
     );
     expect(calls).toEqual(['push', 'pr']); // push BEFORE pr
     expect(prArgs[0]).toEqual({
@@ -93,6 +93,7 @@ describe('open_pr tool', () => {
       base: 'main',
       title: 'Feature',
       body: 'desc',
+      draft: true,
     });
     expect(out).not.toContain('SECRET');
   });

@@ -12,14 +12,18 @@ import { rawRows, toIso } from './sql';
  *
  * Lifecycle (the approval layer rides on status): open → claim → in_progress (planning) →
  * awaiting_approval (plan + its Q&A posted for Dennis) → approved (TEAM LEAD only, recorded on
- * Dennis's explicit word at a planning sitting) → execution → done. claim() takes only 'open'
- * tasks, and only 'done' satisfies a dependency — both unchanged by the approval states.
+ * Dennis's explicit word at a planning sitting) → execution → in_review (the PR is up and marked
+ * ready, waiting on Dennis) → done. An APPROVED ticket stays the owner's to execute and re-execute:
+ * review feedback loops in 'in_review' with NO re-approval (the original approval covers it), and
+ * only Dennis's acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only
+ * 'open' tasks, and only 'done' satisfies a dependency — both unchanged by the in-between states.
  */
 export type BoardStatus =
   | 'open'
   | 'in_progress'
   | 'awaiting_approval'
   | 'approved'
+  | 'in_review'
   | 'done';
 
 export interface BoardTask {

@@ -58,8 +58,9 @@ function buildRunner(
   const employees = {
     byId: () => ALEX,
     fallbackOwner: () => ALEX,
-    resolveWorkerModel: (_bot: unknown, mode: string) => ({
-      model: mode === 'plan' ? 'plan-model' : 'exec-model',
+    resolveWorkerModel: (_bot: unknown, role: string) => ({
+      engine: EWorkerEngineName.CLAUDE,
+      model: role === 'plan' ? 'plan-model' : 'exec-model',
       effort: 'high' as const,
     }),
   } as unknown as EmployeeRegistry;
@@ -535,6 +536,19 @@ describe('SessionRunnerService — the execute-approval gate', () => {
     );
   });
 
+  it('a ticket in review stays executable through review-fix rounds — even during an open standup', async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      boardTasks: { 7: { status: 'in_review' } },
+      standupOpen: true,
+    });
+    const session = await idleSession(runner, sessions, 7);
+    expect(
+      (await runner.replySession(session.id, 'fix the review comment', 'execute'))
+        .ok,
+    ).toBe(true);
+  });
+
   it('an OPEN standup refuses every execute flip — even an approved linked task, even unlinked', async () => {
     const { runner, sessions } = buildRunner(echo, {
       approvalMode: 'all',
@@ -649,8 +663,36 @@ describe('SessionRunnerService — plan auto-attach to the ticket', () => {
     await runner.runSessionTurn(session.id, session.task);
     const after = await sessions.get(session.id);
     expect(after?.status).toBe('idle');
-    expect(after?.lastReport).toBe('A plan.');
+    expect(after?.lastReport).toContain('A plan.'); // + the self-review note
     expect(after?.planAttached).toBe(false);
+  });
+
+  it('self-reviews a board-linked plan: a different engine critiques, the planning engine revises, the REVISED plan attaches', async () => {
+    // Distinct outputs per call so we can prove the revised text (not the first draft) attaches.
+    let calls = 0;
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run() {
+        calls++;
+        const text =
+          calls === 1
+            ? 'First draft plan.' // the planning turn
+            : calls === 2
+              ? 'Reviewer: you forgot the migration.' // the review one-shot
+              : 'Revised plan — now with the migration.'; // the revision
+        return Promise.resolve({ result: text, sessionId: 'e1', planText: text });
+      },
+    };
+    const { runner, sessions, attached } = buildRunner(fake);
+    const session = await sessions.create({ ...newSession, boardTaskId: 7 });
+    await runner.runSessionTurn(session.id, session.task);
+    expect(calls).toBe(3); // plan → review → revise
+    expect(attached).toHaveLength(1);
+    expect(attached[0].planMd).toContain('Revised plan — now with the migration.');
+    expect(attached[0].planMd).not.toContain('First draft plan.');
+    const after = await sessions.get(session.id);
+    expect(after?.lastReport).toContain('self-reviewed');
+    expect(after?.planAttached).toBe(true);
   });
 
   it('a later non-plan turn clears planAttached (no stale flag survives)', async () => {

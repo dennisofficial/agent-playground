@@ -56,8 +56,8 @@ export class ApprovePlanTool implements IHarnessTool<typeof approveSchema> {
       .filter((p) => p.leadStatus !== 'approved')
       .map((p) => p.employee);
     return pending.length
-      ? `Approved ${who}'s plan on #${task_id} — tell ${who} to CLOSE the planning session (the ticket carries the plan). Still pending your review: ${pending.join(', ')}.`
-      : `Approved ${who}'s plan on #${task_id} — tell ${who} to CLOSE the planning session. All ${all.length} plan(s) on #${task_id} are now lead-approved: consolidate and propose_plan when ready.`;
+      ? `Approved ${who}'s plan on #${task_id} — tell ${who} to KEEP their planning session OPEN until Dennis rules (your sign-off clears layer 1 only; if Dennis sends revision notes, ${who} replies them into that still-open session). Still pending your review: ${pending.join(', ')}.`
+      : `Approved ${who}'s plan on #${task_id} — tell ${who} to KEEP their planning session OPEN until Dennis rules (revision notes go back into it). All ${all.length} plan(s) on #${task_id} are now lead-approved: consolidate and propose_plan when ready.`;
   }
 }
 

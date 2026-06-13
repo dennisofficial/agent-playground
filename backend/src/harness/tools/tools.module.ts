@@ -47,6 +47,7 @@ import {
 } from './worktrees/worktree.tools';
 import { ListPullRequestsTool } from './projects/list-pull-requests.tool';
 import { OpenPrTool } from './worktrees/open-pr.tool';
+import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -77,6 +78,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     PullWorktreeTool,
     RemoveWorktreeTool,
     OpenPrTool,
+    MarkPrReadyTool,
     // projects
     ListPullRequestsTool,
     // sessions
