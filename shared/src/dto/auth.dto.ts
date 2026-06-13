@@ -1,10 +1,10 @@
 /**
  * Wire shapes for the admin portal auth API.
  *
- * AdminUserView is the public projection of an AdminUser — password_hash is
+ * IAdminUserResponse is the public projection of an AdminUser — password_hash is
  * deliberately omitted and must NEVER appear in any API response.
  */
-export interface AdminUserView {
+export interface IAdminUserResponse {
   id: string;
   email: string;
   name: string | null;
@@ -14,7 +14,7 @@ export interface AdminUserView {
 
 /** Returned by POST /auth/login, GET /auth/session, and POST /auth/refresh. */
 export interface LoginResponse {
-  user: AdminUserView;
+  user: IAdminUserResponse;
 }
 
 /**

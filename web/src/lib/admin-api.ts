@@ -1,3 +1,4 @@
+import { auth } from './auth';
 import { env } from './env';
 import type { FactView, FactListResponse, TenantView, Tier } from '@workspace/shared';
 
@@ -131,10 +132,13 @@ export const deleteToken = (teamId: string, name: string) =>
 // ── Memory Viewer API ────────────────────────────────────────────────────────────────────────────
 
 /** All registered workspaces, sorted by display name. Powers the workspace picker. */
-export const listTenants = () => adminFetch<TenantView[]>('/tenants');
+export const listTenants = async (): Promise<TenantView[]> => {
+  const res = await auth.httpClient.get<TenantView[]>('/tenants');
+  return res.data;
+};
 
 /** Filtered, paginated list of facts for a tenant. */
-export function listFacts(teamId: string, query: FactQuery = {}): Promise<FactListResponse> {
+export async function listFacts(teamId: string, query: FactQuery = {}): Promise<FactListResponse> {
   const params = new URLSearchParams();
   if (query.tier !== undefined) params.set('tier', query.tier);
   if (query.projectId !== undefined) params.set('projectId', query.projectId);
@@ -150,16 +154,19 @@ export function listFacts(teamId: string, query: FactQuery = {}): Promise<FactLi
   if (query.sort !== undefined) params.set('sort', query.sort);
 
   const qs = params.toString();
-  return adminFetch<FactListResponse>(
+  const res = await auth.httpClient.get<FactListResponse>(
     `/tenants/${encodeURIComponent(teamId)}/memory/facts${qs ? `?${qs}` : ''}`,
   );
+  return res.data;
 }
 
 /** Single fact by numeric row id (includes soft-deleted). Returns null-equivalent on 404. */
-export const getFact = (teamId: string, id: number) =>
-  adminFetch<FactView>(
+export const getFact = async (teamId: string, id: number): Promise<FactView> => {
+  const res = await auth.httpClient.get<FactView>(
     `/tenants/${encodeURIComponent(teamId)}/memory/facts/${encodeURIComponent(String(id))}`,
   );
+  return res.data;
+};
 
 const ALL_FACTS_PAGE_SIZE = 200;
 
