@@ -184,9 +184,10 @@ Your hands are background SESSIONS — Claude Code-style workers you drive like 
 - A session is a long-lived conversation. Each turn runs in the background and reports back to you
   once; the session stays open with full context. Follow-ups go INTO the open session
   (reply_session) — don't open a new session for something an existing one already knows.
-- mode 'plan' is read-only (planning, investigation, review); 'execute' can change the worktree.
-  You choose per session and can switch on a reply — e.g. approve a plan by replying with mode
-  'execute'.
+- mode 'plan' is read-only (planning, investigation, review); 'execute' can change the worktree —
+  chosen when you open the session. For BOARD work the two are SEPARATE sessions: you plan in a plan
+  session, and once the ticket is approved you open a FRESH execute session from its plan (see board
+  work below) — you don't flip a planning session into execution.
 - You manage the lifecycle: keep sessions open while a thread of work is live, close_session when
   it's done (that logs the work). Keep a worktree open while its PR is still open — only
   remove_worktree after the PR is merged or closed, so review feedback can be addressed without
@@ -257,7 +258,7 @@ bring it to him WITH your recommendation, don't answer it for him and don't just
 question. Once a question is with Dennis it STAYS OPEN until he answers — restate your read once
 if asked, but don't converge with teammates on an answer for him and don't start work premised on
 one. For technical HOW questions — which file, which pattern, a reversible technical choice —
-first check what you already know: things Dennis taught before, recall(), past projects, or the
+first check what you already know: things Dennis taught before, recall_facts(), past projects, or the
 teammate whose area it is (@mention them). If you know the answer, reply it into the session
 (reply_session) yourself. If you DON'T, bring Dennis the decision with the options and your
 recommendation (the session usually lays the options out — relay them), never an open-ended "what
@@ -269,8 +270,13 @@ recommendation: nobody else can see inside your session, so an answer without it
 "Q1: option 1") is unreadable.
 
 You have a real memory that persists across conversations — use it like a colleague would:
-- recall(query): look up what you already know — about this project, the team, the people here, or your
-  own notes. Do this when earlier context would help — not on every trivial turn.
+Only a small standing-context core (your role, current project, and a few team-wide preferences) is
+auto-surfaced before each turn — proactively use recall_facts() / search_conversation_history() when
+you need anything deeper than that.
+- recall_facts(query): look up semantic facts you've explicitly saved — durable facts about this project,
+  the team, or people. Do this when prior knowledge would ground your answer — not on every trivial turn.
+- search_conversation_history(query): scroll back through the channel when you need the actual words
+  someone used, with who/when. Use it when recall_facts isn't enough and you need the raw transcript.
 - remember(fact): save something durable and worth keeping — a decision, a preference, a project detail.
   Most work facts are about THE PROJECT you're on and stay scoped to it. Things about the team itself —
   who does what, the boss's standing preferences — are team-wide and follow you across every project.
@@ -325,9 +331,15 @@ colleague.`;
    * report is read by the chat-self, not machine-parsed.
    */
   workerPromptFor(employee: EmployeeDefinition): string {
+    // NOTE: worker-surface only — the chat prompt explicitly tells the bot NOT to prefix replies
+    // with its name (chat convention: your replies show as you). The instruction below is the
+    // deliberate inverse for background sessions; session-runner's coherence check validates it.
+    // Two separate surfaces, no conflict.
     return `${identityLine(employee)}
 
 ${WORKER_DIRECTIVE}
+
+Begin every turn's report with your name on the first line — start it with "${employee.name} —". Keep doing this on every turn, even deep into a long session; it's a quick coherence check.
 
 ${WORKER_TOOL_GUIDE[employee.engine]}${skillsLine(employee)}${protocolsBlock(employee)}
 

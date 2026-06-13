@@ -184,6 +184,64 @@ export class ChannelService implements OnModuleInit {
     return this.write(async () => {});
   }
 
+  /**
+   * Full-text ILIKE search over persisted channel_messages, scoped to a team (via the channels
+   * registry join) and optionally narrowed to specific surfaces. Returns newest-first results capped
+   * at `limit` (default 20). `surfaceIds: []` searches all surfaces for the team.
+   */
+  async search(opts: {
+    teamId: string;
+    surfaceIds: string[];
+    query: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<
+    {
+      author: string;
+      authorBotId?: string;
+      surfaceId: string;
+      seq: number;
+      ts: number;
+      snippet: string;
+    }[]
+  > {
+    const { teamId, surfaceIds, query, limit = 20, offset = 0 } = opts;
+    // Raw ILIKE — the team join scopes results to the caller's tenant;
+    // $2::text[] IS NULL short-circuits the surface filter when the array is empty.
+    const rows: Array<{
+      author: string;
+      author_bot_id: string | null;
+      surface_id: string;
+      seq: string;
+      ts: Date;
+      snippet: string;
+    }> = await this.repo.query(
+      `SELECT m.author, m.author_bot_id, m.surface_id, m.seq,
+              m.created_at AS ts, m.text AS snippet
+       FROM channel_messages m
+       JOIN channels c ON c.channel_id = m.surface_id AND c.team_id = $1
+       WHERE ($2::text[] IS NULL OR m.surface_id = ANY($2::text[]))
+         AND m.text ILIKE $3
+       ORDER BY m.created_at DESC
+       LIMIT $4 OFFSET $5`,
+      [
+        teamId,
+        surfaceIds.length ? surfaceIds : null,
+        `%${query}%`,
+        limit,
+        offset,
+      ],
+    );
+    return rows.map((r) => ({
+      author: r.author,
+      authorBotId: r.author_bot_id ?? undefined,
+      surfaceId: r.surface_id,
+      seq: Number(r.seq),
+      ts: new Date(r.ts).getTime(),
+      snippet: r.snippet,
+    }));
+  }
+
   private room(channelId: string): RoomLog {
     let room = this.rooms.get(channelId);
     if (!room) {

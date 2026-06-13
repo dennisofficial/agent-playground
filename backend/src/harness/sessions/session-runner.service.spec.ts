@@ -58,8 +58,9 @@ function buildRunner(
   const employees = {
     byId: () => ALEX,
     fallbackOwner: () => ALEX,
-    resolveWorkerModel: (_bot: unknown, mode: string) => ({
-      model: mode === 'plan' ? 'plan-model' : 'exec-model',
+    resolveWorkerModel: (_bot: unknown, role: string) => ({
+      engine: EWorkerEngineName.CLAUDE,
+      model: role === 'plan' ? 'plan-model' : 'exec-model',
       effort: 'high' as const,
     }),
   } as unknown as EmployeeRegistry;
@@ -136,7 +137,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
         seen.push(args);
         args.onEvent({ kind: 'text', text: 'exploring' });
         args.onEvent({ kind: 'tool', name: 'Read', detail: 'src/index.ts' });
-        const result = 'Found it.';
+        const result = 'Alex — Found it.';
         args.onEvent({ kind: 'result', text: result });
         return { result, sessionId: 'engine-1' };
       },
@@ -152,7 +153,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     const after = await sessions.get(session.id);
     expect(after?.status).toBe('idle'); // open, awaiting the owner — NOT done
     expect(after?.engineSessionId).toBe('engine-1');
-    expect(after?.lastReport).toBe('Found it.');
+    expect(after?.lastReport).toBe('Alex — Found it.');
     expect(after?.turns).toBe(1);
     expect(seen[0]?.cwd).toBe(WT.path); // the turn ran in the worktree, not WORKER_ROOT
     expect(seen[0]?.mode).toBe('plan');
@@ -172,7 +173,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
         calls++;
         modes.push(args.mode);
         return {
-          result: calls === 1 ? 'Here is the plan.' : 'Built it.',
+          result: calls === 1 ? 'Alex — Here is the plan.' : 'Alex — Built it.',
           sessionId: 'engine-1',
         };
       },
@@ -249,7 +250,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
   it('logs completed work on close (when the session produced a report)', async () => {
     const fake: WorkerEngine = {
       name: EWorkerEngineName.CLAUDE,
-      run: async () => ({ result: 'Shipped the fix.', sessionId: 'e1' }),
+      run: async () => ({ result: 'Alex — Shipped the fix.', sessionId: 'e1' }),
     };
     const { runner, sessions, worklogged } = buildRunner(fake);
     const session = await sessions.create(newSession);
@@ -262,7 +263,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
         ownerBot: 'alex',
         project: 'local',
         task: 'find the thing',
-        summary: 'Shipped the fix.',
+        summary: 'Alex — Shipped the fix.',
       },
     ]);
   });
@@ -274,7 +275,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
       async run() {
         calls++;
         if (calls === 1) throw new Error('engine exploded');
-        return { result: 'Recovered.', sessionId: 'e1' };
+        return { result: 'Alex — Recovered.', sessionId: 'e1' };
       },
     };
     const { runner, sessions } = buildRunner(fake);
@@ -413,7 +414,7 @@ describe('SessionRunnerService — questions and planning Q&A', () => {
         return Promise.resolve(
           calls === 1
             ? { result: 'x', sessionId: 'e1', questions: [QUESTION] }
-            : { result: 'Just an update.', sessionId: 'e1' },
+            : { result: 'Alex — Just an update.', sessionId: 'e1' },
         );
       },
     };
@@ -425,7 +426,7 @@ describe('SessionRunnerService — questions and planning Q&A', () => {
     await new Promise((r) => setTimeout(r, 20));
     const after = await sessions.get(session.id);
     expect(after?.lastReportKind).toBeUndefined();
-    expect(after?.lastReport).toBe('Just an update.');
+    expect(after?.lastReport).toBe('Alex — Just an update.');
     expect(after?.qa).toHaveLength(1); // the answer was still recorded
   });
 });
@@ -533,6 +534,24 @@ describe('SessionRunnerService — the execute-approval gate', () => {
     expect((await runner.replySession(session.id, 'go', 'execute')).ok).toBe(
       true,
     );
+  });
+
+  it('a ticket in review stays executable through review-fix rounds — even during an open standup', async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      boardTasks: { 7: { status: 'in_review' } },
+      standupOpen: true,
+    });
+    const session = await idleSession(runner, sessions, 7);
+    expect(
+      (
+        await runner.replySession(
+          session.id,
+          'fix the review comment',
+          'execute',
+        )
+      ).ok,
+    ).toBe(true);
   });
 
   it('an OPEN standup refuses every execute flip — even an approved linked task, even unlinked', async () => {
@@ -649,8 +668,42 @@ describe('SessionRunnerService — plan auto-attach to the ticket', () => {
     await runner.runSessionTurn(session.id, session.task);
     const after = await sessions.get(session.id);
     expect(after?.status).toBe('idle');
-    expect(after?.lastReport).toBe('A plan.');
+    expect(after?.lastReport).toContain('A plan.'); // + the self-review note
     expect(after?.planAttached).toBe(false);
+  });
+
+  it('self-reviews a board-linked plan: a different engine critiques, the planning engine revises, the REVISED plan attaches', async () => {
+    // Distinct outputs per call so we can prove the revised text (not the first draft) attaches.
+    let calls = 0;
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run() {
+        calls++;
+        const text =
+          calls === 1
+            ? 'First draft plan.' // the planning turn
+            : calls === 2
+              ? 'Reviewer: you forgot the migration.' // the review one-shot
+              : 'Revised plan — now with the migration.'; // the revision
+        return Promise.resolve({
+          result: text,
+          sessionId: 'e1',
+          planText: text,
+        });
+      },
+    };
+    const { runner, sessions, attached } = buildRunner(fake);
+    const session = await sessions.create({ ...newSession, boardTaskId: 7 });
+    await runner.runSessionTurn(session.id, session.task);
+    expect(calls).toBe(3); // plan → review → revise
+    expect(attached).toHaveLength(1);
+    expect(attached[0].planMd).toContain(
+      'Revised plan — now with the migration.',
+    );
+    expect(attached[0].planMd).not.toContain('First draft plan.');
+    const after = await sessions.get(session.id);
+    expect(after?.lastReport).toContain('self-reviewed');
+    expect(after?.planAttached).toBe(true);
   });
 
   it('a later non-plan turn clears planAttached (no stale flag survives)', async () => {
@@ -662,7 +715,7 @@ describe('SessionRunnerService — plan auto-attach to the ticket', () => {
         return Promise.resolve(
           calls === 1
             ? { result: 'The plan.', sessionId: 'e1', planText: 'The plan.' }
-            : { result: 'Just an update.', sessionId: 'e1' },
+            : { result: 'Alex — Just an update.', sessionId: 'e1' },
         );
       },
     };
@@ -673,5 +726,86 @@ describe('SessionRunnerService — plan auto-attach to the ticket', () => {
     await runner.replySession(session.id, 'thanks, one more thing');
     await new Promise((r) => setTimeout(r, 20));
     expect((await sessions.get(session.id))?.planAttached).toBeUndefined();
+  });
+});
+
+describe('SessionRunnerService — coherence canary (name-echo check)', () => {
+  it('appends the coherence note when a prose-report turn drops the name', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run: async () => ({
+        result: 'Here is my report, no name prefix.',
+        sessionId: 'e1',
+      }),
+    };
+    const { runner, sessions } = buildRunner(fake);
+    const session = await sessions.create(newSession);
+    await runner.runSessionTurn(session.id, session.task);
+    const after = await sessions.get(session.id);
+    expect(after?.lastReport).toContain('Here is my report, no name prefix.');
+    expect(after?.lastReport).toContain('⚠️ Coherence check');
+    expect(after?.lastReport).toContain('Alex');
+  });
+
+  it('does NOT append the note when the prose report echoes the name', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run: async () => ({ result: 'Alex — found the issue.', sessionId: 'e1' }),
+    };
+    const { runner, sessions } = buildRunner(fake);
+    const session = await sessions.create(newSession);
+    await runner.runSessionTurn(session.id, session.task);
+    const after = await sessions.get(session.id);
+    expect(after?.lastReport).toBe('Alex — found the issue.');
+    expect(after?.lastReport).not.toContain('⚠️');
+  });
+
+  it('does NOT append the note on a plan turn (kind=plan)', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run: async () => ({
+        result: 'No name prefix here.',
+        sessionId: 'e1',
+        planText: 'No name prefix here.',
+      }),
+    };
+    const { runner, sessions } = buildRunner(fake);
+    const session = await sessions.create(newSession);
+    await runner.runSessionTurn(session.id, session.task);
+    const after = await sessions.get(session.id);
+    expect(after?.lastReportKind).toBe('plan');
+    expect(after?.lastReport).not.toContain('⚠️');
+  });
+
+  it('does NOT append the note on a questions turn (kind=questions)', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run: async () => ({
+        result: 'No name prefix here.',
+        sessionId: 'e1',
+        questions: [
+          { question: 'Which approach?', options: [{ label: 'Option A' }] },
+        ],
+      }),
+    };
+    const { runner, sessions } = buildRunner(fake);
+    const session = await sessions.create(newSession);
+    await runner.runSessionTurn(session.id, session.task);
+    const after = await sessions.get(session.id);
+    expect(after?.lastReportKind).toBe('questions');
+    expect(after?.lastReport).not.toContain('⚠️');
+  });
+
+  it('does NOT append the note when result is empty (the (no report) fallback)', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run: async () => ({ result: '', sessionId: 'e1' }),
+    };
+    const { runner, sessions } = buildRunner(fake);
+    const session = await sessions.create(newSession);
+    await runner.runSessionTurn(session.id, session.task);
+    const after = await sessions.get(session.id);
+    expect(after?.lastReport).toBe('(no report)');
+    expect(after?.lastReport).not.toContain('⚠️');
   });
 });

@@ -1,7 +1,35 @@
 import type { Type } from '@nestjs/common';
 import { EffortLevel, EWorkerEngineName } from '../engines/worker-engine.port';
+import type {
+  ExecutePromptTemplate,
+  PlanPromptTemplate,
+  ReviewPromptTemplate,
+} from '../engines/role-prompts';
 import type { McpServerConfig, SkillSource } from '../skills/skill.types';
 import type { IHarnessTool } from '../tools/tool.types';
+
+/**
+ * One per-role engine binding (`EmployeeDefinition.roles`). Each field is optional and falls back to
+ * the employee's base `engine` + the engine's default model tier — an employee only sets what
+ * deviates. `prompt` overrides the role's default task-prompt template (`engines/role-prompts.ts`).
+ */
+export interface RoleBinding<TPrompt> {
+  /** Which engine plays this role. Omit → the employee's base `engine`. */
+  readonly engine?: EWorkerEngineName;
+  /** Model id for this role. Omit → the engine's default tier for the role. */
+  readonly model?: string;
+  /** Reasoning effort (Claude only). Omit → the role tier's default. */
+  readonly effort?: EffortLevel;
+  /** Override the role's task-prompt template (typed to the role's inputs). */
+  readonly prompt?: TPrompt;
+}
+
+/** Per-role engine/model/prompt bindings for an employee's background work. */
+export interface EmployeeRoles {
+  readonly plan?: RoleBinding<PlanPromptTemplate>;
+  readonly execute?: RoleBinding<ExecutePromptTemplate>;
+  readonly review?: RoleBinding<ReviewPromptTemplate>;
+}
 
 /**
  * An employee — one self-contained AI teammate, as a single class decorated with `@AIEmployee()`.
@@ -37,14 +65,20 @@ export interface EmployeeDefinition {
    */
   readonly roleContext: string;
   /**
-   * The engine this employee's dispatched background work runs on. An employee is LOCKED to its
-   * engine — no per-dispatch override; switch engines by changing this field.
+   * The BASE engine for this employee's background work — the default for every role a `roles`
+   * binding doesn't override. With no `roles` at all, the employee runs entirely on this engine.
    */
   readonly engine: EWorkerEngineName;
   /**
-   * Per-phase model tiering (optional overrides; per-engine defaults in
-   * `EmployeeRegistry.resolveWorkerModel` apply when unset). PLAN runs on a high-reasoning model,
-   * EXECUTE on a cheaper one.
+   * Per-ROLE engine/model/prompt bindings (plan / execute / review). Each role falls back to `engine`
+   * + the engine's default model tier when unset. This is how an employee plans on one engine,
+   * executes on another, and self-reviews on a third (the review role is the one-shot adversarial
+   * pass before a plan attaches). Resolved by `EmployeeRegistry.resolveWorkerModel`.
+   */
+  readonly roles?: EmployeeRoles;
+  /**
+   * @deprecated Back-compat aliases folded into `roles.plan` / `roles.execute`. `resolveWorkerModel`
+   * reads `roles` first, then these, then the engine tier. Prefer `roles` for new employees.
    */
   readonly planModel?: string;
   readonly planEffort?: EffortLevel;

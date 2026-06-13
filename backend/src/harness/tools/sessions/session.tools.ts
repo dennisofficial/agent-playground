@@ -1,8 +1,10 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { Inject } from '@nestjs/common';
 import { z } from 'zod';
+import { DEFAULT_EXECUTE_PROMPT } from '../../engines/role-prompts';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { BoardStore } from '../../memory/board-store';
+import { PlanStore } from '../../memory/plan-store';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -63,6 +65,7 @@ export class CreateSessionTool implements IHarnessTool<
     private readonly worktrees: WorktreeService,
     private readonly employees: EmployeeRegistry,
     private readonly board: BoardStore,
+    private readonly plans: PlanStore,
   ) {}
 
   async execute(
@@ -77,21 +80,42 @@ export class CreateSessionTool implements IHarnessTool<
     const id = ctx.identity;
     const worktree = this.worktrees.get(worktreeId);
     if (!worktree)
-      return `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`;
-    if (
-      board_task_id !== undefined &&
-      !(await this.board.get(id.team, board_task_id))
-    )
+      throw new Error(
+        `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`,
+      );
+    const boardTask =
+      board_task_id !== undefined
+        ? await this.board.get(id.team, board_task_id)
+        : undefined;
+    if (board_task_id !== undefined && !boardTask)
       return `No board task #${board_task_id} — check list_board, or omit board_task_id.`;
     // The same approval gate reply_session applies — a fresh execute-mode session can't bypass it.
     if (mode === 'execute') {
       const refusal = await this.runner.executeRefusal(id.team, board_task_id);
       if (refusal) return `Can't open an execute session: ${refusal}`;
     }
-    // The engine is the employee's locked engine — there is no per-session override.
-    const engineName = (
-      this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner()
-    ).engine;
+    // The engine is the employee's binding for THIS session's role (plan/execute) — so a plan session
+    // and an execute session on the same employee can run different engines (Option B). Fixed at
+    // create; a session never swaps engines mid-life.
+    const bot = this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner();
+    const engineName = this.employees.resolveWorkerModel(bot, mode).engine;
+    // OPTION B handoff: a fresh execute session is seeded from the APPROVED PLAN (the durable ticket
+    // artifact), not the planning session's investigation noise. When this is an execute session on a
+    // board task with the owner's attached plan, the engine's first message IS the enriched plan
+    // (rendered through the employee's `execute` template); the chat-self's brief `task` rides along
+    // as a note. The stored session.task stays the brief (for list_sessions); the engine gets the full
+    // handoff. Falls back to the plain task when there's no attached plan (e.g. a non-plan execute).
+    let openingTask = task;
+    if (mode === 'execute' && board_task_id !== undefined && boardTask) {
+      const plan = await this.plans.get(id.team, board_task_id, id.selfAgent);
+      if (plan) {
+        const template = bot.roles?.execute?.prompt ?? DEFAULT_EXECUTE_PROMPT;
+        const ticketText = `${boardTask.title}\n\n${boardTask.description}`.trim();
+        openingTask = template({ ticket: ticketText, plan: plan.planMd });
+        if (task.trim())
+          openingTask += `\n\nNote from your chat-self: ${task.trim()}`;
+      }
+    }
     const session = await this.sessions.create({
       task,
       worktreeId,
@@ -111,7 +135,7 @@ export class CreateSessionTool implements IHarnessTool<
     // LangGraph turn's invoke() inherits the chat stream's message handler and its tokens/
     // tool-calls bleed into the main chat. run(undefined, …) roots the turn in a clean store.
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.runner.runSessionTurn(session.id, task);
+      void this.runner.runSessionTurn(session.id, openingTask);
     });
     return `Opened ${session.id} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
   }
@@ -127,7 +151,7 @@ const replySessionSchema = z.object({
   mode: modeField
     .optional()
     .describe(
-      "Switch the session's mode from this turn on — approve a plan by replying with 'execute'.",
+      "Switch the session's mode from this turn on (e.g. a plan session into execution for quick non-board work). BOARD work does NOT switch here — approved tickets execute in a fresh execute session opened from the plan.",
     ),
 });
 
@@ -137,7 +161,7 @@ export class ReplySessionTool implements IHarnessTool<
 > {
   readonly name = 'reply_session';
   readonly description =
-    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. Also how a plan gets approved: reply with mode 'execute'. Calling this ENDS YOUR TURN; you're notified when the turn reports back.";
+    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. This is how you feed review/revision notes back into a still-open planning or execute session. Calling this ENDS YOUR TURN; you're notified when the turn reports back.";
   readonly schema = replySessionSchema;
   readonly terminal = true;
 
@@ -152,7 +176,7 @@ export class ReplySessionTool implements IHarnessTool<
   ): Promise<string> {
     const session = await this.sessions.get(sessionId);
     if (!session || session.ownerBot !== ctx.identity.selfAgent)
-      return `Couldn't reply to ${sessionId}: not your session.`;
+      throw new Error(`Couldn't reply to ${sessionId}: not your session.`);
     // The reply fires fire-and-forget and must run in a clean store so a LangGraph run's callbacks
     // don't bleed into the chat stream.
     let res: ActionResult = { ok: false };
@@ -162,9 +186,9 @@ export class ReplySessionTool implements IHarnessTool<
         res = await this.runner.replySession(sessionId, message, mode);
       },
     );
-    return res.ok
-      ? `Sent to ${sessionId}${mode ? ` (mode → ${mode})` : ''}; it's working and will report back.`
-      : `Couldn't reply to ${sessionId}: ${res.reason}`;
+    if (!res.ok)
+      throw new Error(`Couldn't reply to ${sessionId}: ${res.reason}`);
+    return `Sent to ${sessionId}${mode ? ` (mode → ${mode})` : ''}; it's working and will report back.`;
   }
 }
 

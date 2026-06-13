@@ -4,3 +4,6 @@
 [submodule "packages/jwt-auth"]
 	path = packages/jwt-auth
 	url = https://github.com/dennisofficial/jwt-auth.git
+[submodule "packages/nestjs-ai-essentials"]
+	path = packages/nestjs-ai-essentials
+	url = https://github.com/dennisofficial/nestjs-ai-essentials

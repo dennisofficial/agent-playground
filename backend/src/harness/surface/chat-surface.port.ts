@@ -35,6 +35,9 @@ export interface OutboundChatMessage {
    * including costs from prior ignore/ack turns). When present, a Slack surface renders it as a
    * Block Kit context footer; the TUI already shows per-step usage inline. */
   usage?: AccumulatedUsage;
+  /** Slack file IDs uploaded via share_artifact — attached to the message after the text post
+   * lands, via `chat.update(file_ids)`. Absent when no artifacts were uploaded this turn. */
+  fileIds?: string[];
 }
 
 /**

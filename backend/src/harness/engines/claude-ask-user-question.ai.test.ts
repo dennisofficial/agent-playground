@@ -37,6 +37,7 @@ describe('ClaudeEngine AskUserQuestion on a plan turn (real LLM)', () => {
         cwd: dir,
         systemPrompt:
           'You are a careful planning agent. When a decision genuinely blocks your plan, ask via AskUserQuestion.',
+        agentId: 'test',
         mode: 'plan',
         onEvent: (e) => events.push(e),
       });
@@ -63,6 +64,7 @@ describe('ClaudeEngine AskUserQuestion on a plan turn (real LLM)', () => {
         cwd: dir,
         systemPrompt:
           'You are a careful planning agent. When a decision genuinely blocks your plan, ask via AskUserQuestion.',
+        agentId: 'test',
         sessionId: first.sessionId,
         mode: 'plan',
         onEvent: (e) => events.push(e),

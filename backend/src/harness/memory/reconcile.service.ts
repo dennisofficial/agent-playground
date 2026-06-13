@@ -1,5 +1,9 @@
 import { PromptTemplate } from '@langchain/core/prompts';
-import { Runnable, RunnableSequence } from '@langchain/core/runnables';
+import {
+  Runnable,
+  type RunnableConfig,
+  RunnableSequence,
+} from '@langchain/core/runnables';
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { Identity, recallProjects } from '../domain/identity';
@@ -299,67 +303,80 @@ export class ReconcileService {
           : '(none)',
         transcript,
       });
-      // Write-application: each mutation is serialized; the model.invoke above stays OUTSIDE the
-      // lock. update/delete/supersede act ONLY on ids actually shown to the model this turn;
-      // updateFactById additionally scope-checks each id as defense in depth. Tally what ACTUALLY
-      // landed (an add can dedup-merge; an update/delete no-ops when its id isn't live/accessible).
-      const ids = this.knownIds(id);
-      let inserted = 0;
-      let deduped = 0;
-      let updated = 0;
-      let deleted = 0;
-      for (const a of result.add) {
-        if (!a.fact?.trim()) continue;
-        // A contradicting/replacing add overwrites the named fact in place instead of co-storing the
-        // opposite (the dedup judge treats opposites as distinct, so a plain add would keep both).
-        if (typeof a.supersedes === 'number' && shownIds.has(a.supersedes)) {
-          const r = await this.writes.withLock(() =>
-            this.semantic.updateFactById(a.supersedes as number, a.fact, id),
-          );
-          if (r) updated++;
-          continue;
-        }
-        const speaker = this.realId(a.authorId, ids) ?? id.speaker;
-        const r = await this.writes.rememberDeduped({
-          fact: a.fact,
-          tier: a.tier,
-          id: { ...id, speaker },
-          project: a.project,
-        });
-        if (r.action === 'inserted') inserted++;
-        else deduped++;
-      }
-      for (const u of result.update) {
-        if (shownIds.has(u.id) && u.newFact?.trim()) {
-          const r = await this.writes.withLock(() =>
-            this.semantic.updateFactById(u.id, u.newFact, id),
-          );
-          if (r) updated++;
-        }
-      }
-      for (const d of result.delete) {
-        if (shownIds.has(d.id)) {
-          const r = await this.writes.withLock(() =>
-            this.semantic.forgetFactById(d.id, id),
-          );
-          if (r) deleted++;
-        }
-      }
-      // Record EVERY pass (even all-zero) so ignore/acknowledge attempts form the denominator for
-      // "do silent reconciles ever write?" The debug line fires only when something changed.
-      this.metrics.recordMemoryReconcile(decision, {
-        inserted,
-        deduped,
-        updated,
-        deleted,
-      });
-      if (inserted || deduped || updated || deleted) {
-        this.logger.debug(
-          `memory ${bot.name} [${decision}] +${inserted} ≈${deduped} ✎${updated} -${deleted}`,
-        );
-      }
+      await this.applyMemoryResult(bot, result, id, shownIds, decision);
     } catch {
       /* fire-and-forget: reconciliation must never break a turn */
+    }
+  }
+
+  /**
+   * Apply a MemoryResult's ops, used by the reconcile pass. Each
+   * mutation is serialized through MemoryWriteService's lock (the model.invoke stays OUTSIDE it).
+   * update/delete/supersede act ONLY on ids actually shown to the model; updateFactById additionally
+   * scope-checks each id. Tallies what ACTUALLY landed (an add can dedup-merge; an update/delete
+   * no-ops when its id isn't live/accessible) and records the per-path metric for EVERY pass.
+   */
+  private async applyMemoryResult(
+    bot: EmployeeDefinition,
+    result: MemoryResult,
+    id: Identity,
+    shownIds: Set<number>,
+    decision: Decision,
+  ): Promise<void> {
+    const ids = this.knownIds(id);
+    let inserted = 0;
+    let deduped = 0;
+    let updated = 0;
+    let deleted = 0;
+    for (const a of result.add) {
+      if (!a.fact?.trim()) continue;
+      // A contradicting/replacing add overwrites the named fact in place instead of co-storing the
+      // opposite (the dedup judge treats opposites as distinct, so a plain add would keep both).
+      if (typeof a.supersedes === 'number' && shownIds.has(a.supersedes)) {
+        const r = await this.writes.withLock(() =>
+          this.semantic.updateFactById(a.supersedes as number, a.fact, id),
+        );
+        if (r) updated++;
+        continue;
+      }
+      const speaker = this.realId(a.authorId, ids) ?? id.speaker;
+      const r = await this.writes.rememberDeduped({
+        fact: a.fact,
+        tier: a.tier,
+        id: { ...id, speaker },
+        project: a.project,
+      });
+      if (r.action === 'inserted') inserted++;
+      else deduped++;
+    }
+    for (const u of result.update) {
+      if (shownIds.has(u.id) && u.newFact?.trim()) {
+        const r = await this.writes.withLock(() =>
+          this.semantic.updateFactById(u.id, u.newFact, id),
+        );
+        if (r) updated++;
+      }
+    }
+    for (const d of result.delete) {
+      if (shownIds.has(d.id)) {
+        const r = await this.writes.withLock(() =>
+          this.semantic.forgetFactById(d.id, id),
+        );
+        if (r) deleted++;
+      }
+    }
+    // Record EVERY pass (even all-zero) so ignore/acknowledge attempts form the denominator for
+    // "do silent reconciles ever write?" The debug line fires only when something changed.
+    this.metrics.recordMemoryReconcile(decision, {
+      inserted,
+      deduped,
+      updated,
+      deleted,
+    });
+    if (inserted || deduped || updated || deleted) {
+      this.logger.debug(
+        `memory ${bot.name} [${decision}] +${inserted} ≈${deduped} ✎${updated} -${deleted}`,
+      );
     }
   }
 
@@ -377,6 +394,8 @@ export class ReconcileService {
     transcript: string,
     id: Identity,
     decision: Decision = 'respond',
+    /** Forwarded to the task chain so its LLM call nests under the turn's Langfuse trace. */
+    config?: RunnableConfig,
   ): Promise<void> {
     try {
       // A DM spans every project the pair shares — its plate (and where complete/drop act) does too.
@@ -395,32 +414,35 @@ export class ReconcileService {
       ).flat();
       const shownIds = new Set(open.map((t) => t.id));
       const projectById = new Map(open.map((t) => [t.id, t.project]));
-      const result = await this.task().invoke({
-        botName: bot.name,
-        room: id.isChannel
-          ? `the team channel '${id.surface}'`
-          : `a private 1:1 DM with ${titleCase(id.speaker)}`,
-        projectNote: id.isChannel
-          ? ''
-          : `In this DM a reminder may belong to a specific project — for a new one, set "project" to one of:` +
-            ` ${projects.join(', ')} (omit it for a general reminder).\n`,
-        // Every bot reconciles every channel turn, so letting each capture a TEAMMATE's commitment
-        // mints the same reminder once per observer. Non-lead bots capture their OWN commitments
-        // only; the team lead is the one cross-owner assigner.
-        ownershipNote: bot.teamLead
-          ? `Set "owner" to whoever is responsible — you for your own commitments, or the teammate who committed or was handed the work. `
-          : `Set "owner" ONLY to yourself (${bot.name}) — capture YOUR OWN commitments ("I'll …") and work handed TO YOU by name. A teammate's commitment is THEIRS to capture — never log a reminder for someone else. `,
-        people: this.peopleHint(id),
-        openTasks: open.length
-          ? open
-              .map(
-                (t) =>
-                  `- [#${t.id}] ${t.description} (→ ${t.owner})${projects.length > 1 ? ` [${t.project}]` : ''}`,
-              )
-              .join('\n')
-          : '(none)',
-        transcript,
-      });
+      const result = await this.task().invoke(
+        {
+          botName: bot.name,
+          room: id.isChannel
+            ? `the team channel '${id.surface}'`
+            : `a private 1:1 DM with ${titleCase(id.speaker)}`,
+          projectNote: id.isChannel
+            ? ''
+            : `In this DM a reminder may belong to a specific project — for a new one, set "project" to one of:` +
+              ` ${projects.join(', ')} (omit it for a general reminder).\n`,
+          // Every bot reconciles every channel turn, so letting each capture a TEAMMATE's commitment
+          // mints the same reminder once per observer. Non-lead bots capture their OWN commitments
+          // only; the team lead is the one cross-owner assigner.
+          ownershipNote: bot.teamLead
+            ? `Set "owner" to whoever is responsible — you for your own commitments, or the teammate who committed or was handed the work. `
+            : `Set "owner" ONLY to yourself (${bot.name}) — capture YOUR OWN commitments ("I'll …") and work handed TO YOU by name. A teammate's commitment is THEIRS to capture — never log a reminder for someone else. `,
+          people: this.peopleHint(id),
+          openTasks: open.length
+            ? open
+                .map(
+                  (t) =>
+                    `- [#${t.id}] ${t.description} (→ ${t.owner})${projects.length > 1 ? ` [${t.project}]` : ''}`,
+                )
+                .join('\n')
+            : '(none)',
+          transcript,
+        },
+        config,
+      );
       const ids = this.knownIds(id);
       // Actual outcomes, not proposed lengths: addTask dedups to undefined on the unique index, and
       // complete/drop return false when the id isn't an open reminder this turn could act on.

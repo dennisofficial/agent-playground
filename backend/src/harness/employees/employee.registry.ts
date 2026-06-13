@@ -3,34 +3,39 @@ import { DiscoveryService } from '@nestjs/core';
 import { collectDecorated } from '../discovery.util';
 import { escapeRegExp } from '../domain/text';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
-import type {
-  EffortLevel,
-  WorkerMode,
-} from '../engines/worker-engine.port';
+import type { EffortLevel, WorkerRole } from '../engines/worker-engine.port';
 import { AI_EMPLOYEE_METADATA } from './ai-employee.decorator';
 import type { EmployeeDefinition } from './employee.types';
 
-/** The model + reasoning effort a worker run resolves to, by employee and phase. */
+/** The engine + model + reasoning effort a worker run resolves to, by employee and role. */
 export interface ResolvedWorkerModel {
+  /** The engine this role runs on (the employee's base `engine`, or a `roles.<role>.engine` override). */
+  engine: EWorkerEngineName;
   /** Model id, or undefined to let the engine use its env/SDK default (e.g. Codex via CODEX_MODEL). */
   model?: string;
   /** Reasoning effort (Claude only). */
   effort?: EffortLevel;
 }
 
-// Per-engine model tiers: a high-reasoning model for PLAN, a cheaper one for EXECUTE. Single source
-// of truth — an employee only sets planModel/execModel to deviate. Codex/LangGraph carry no fixed
-// ids here (Codex resolves via CODEX_MODEL; effort is Claude-only).
+interface RoleTier {
+  model?: string;
+  effort?: EffortLevel;
+}
+
+// Per-engine, per-role model tiers: a high-reasoning model for PLAN/REVIEW, a cheaper one for
+// EXECUTE. Single source of truth — an employee only sets a `roles` binding to deviate. Codex/
+// LangGraph carry no fixed ids here (Codex resolves via CODEX_MODEL; effort is Claude-only).
 const ENGINE_MODEL_TIERS: Record<
   EWorkerEngineName,
-  { plan: ResolvedWorkerModel; exec: ResolvedWorkerModel }
+  Record<WorkerRole, RoleTier>
 > = {
   [EWorkerEngineName.CLAUDE]: {
     plan: { model: 'claude-opus-4-8', effort: 'max' },
-    exec: { model: 'claude-sonnet-4-6', effort: 'high' },
+    execute: { model: 'claude-sonnet-4-6', effort: 'high' },
+    review: { model: 'claude-opus-4-8', effort: 'high' },
   },
-  [EWorkerEngineName.CODEX]: { plan: {}, exec: {} },
-  [EWorkerEngineName.LANGGRAPH]: { plan: {}, exec: {} },
+  [EWorkerEngineName.CODEX]: { plan: {}, execute: {}, review: {} },
+  [EWorkerEngineName.LANGGRAPH]: { plan: {}, execute: {}, review: {} },
 };
 
 /**
@@ -144,20 +149,31 @@ export class EmployeeRegistry implements OnModuleInit {
   }
 
   /**
-   * Resolve the model + effort for a worker run: the employee's per-phase override if set, else the
-   * engine's default tier. PLAN → high-reasoning model + max effort; EXECUTE → the everyday model.
+   * Resolve the engine + model + effort for a worker run by ROLE. Precedence: the employee's
+   * `roles.<role>` binding → the deprecated flat fields (`planModel`/`planEffort`/`execModel`) →
+   * the resolved engine's default role tier. The engine is the role's `engine` override or the
+   * employee's base `engine`; the model tier is keyed off THAT engine. PLAN/REVIEW → high-reasoning;
+   * EXECUTE → the everyday model.
    */
   resolveWorkerModel(
     employee: EmployeeDefinition,
-    mode: WorkerMode,
+    role: WorkerRole,
   ): ResolvedWorkerModel {
-    const tier = ENGINE_MODEL_TIERS[employee.engine];
-    if (mode === 'plan') {
-      return {
-        model: employee.planModel ?? tier.plan.model,
-        effort: employee.planEffort ?? tier.plan.effort,
-      };
-    }
-    return { model: employee.execModel ?? tier.exec.model };
+    const binding = employee.roles?.[role];
+    const engine = binding?.engine ?? employee.engine;
+    const tier = ENGINE_MODEL_TIERS[engine][role];
+    // Deprecated flat fields only alias plan/execute (there was never a flat review field).
+    const legacyModel =
+      role === 'plan'
+        ? employee.planModel
+        : role === 'execute'
+          ? employee.execModel
+          : undefined;
+    const legacyEffort = role === 'plan' ? employee.planEffort : undefined;
+    return {
+      engine,
+      model: binding?.model ?? legacyModel ?? tier.model,
+      effort: binding?.effort ?? legacyEffort ?? tier.effort,
+    };
   }
 }

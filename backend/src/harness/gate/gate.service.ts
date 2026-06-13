@@ -2,6 +2,7 @@ import type { AIMessage } from '@langchain/core/messages';
 import { PromptTemplate } from '@langchain/core/prompts';
 import {
   Runnable,
+  type RunnableConfig,
   RunnableLambda,
   RunnableSequence,
 } from '@langchain/core/runnables';
@@ -182,6 +183,8 @@ export class GateService {
       /** The bot's full unconsumed batch (oldest first), when it consumed more than `text`. */
       batch?: { text: string; authorBotId?: string }[];
     } = {},
+    /** Forwarded to the soft chain so its LLM call nests under the turn's Langfuse trace. */
+    config?: RunnableConfig,
   ): Promise<GateDecision> {
     if (opts.authorBotId === bot.id) return IGNORE; // never react to your own message
     if (opts.channel?.kind === 'dm') return RESPOND; // a 1:1 is always yours to answer
@@ -219,7 +222,7 @@ export class GateService {
         protocols: bot.protocols?.length
           ? `Your standing protocols:\n${bot.protocols.map((p) => `- ${p}`).join('\n')}`
           : '',
-      });
+      }, config);
     } catch {
       return IGNORE; // a gate failure must never crash the channel — default to quiet
     }

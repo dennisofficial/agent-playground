@@ -51,25 +51,25 @@ export function storeReducer(
     case 'unreact': {
       const matches = (by: string, emoji: string): boolean =>
         by === action.by && emoji === action.emoji;
-      return items
-        // Drop a standalone reaction row that matches (the not-found fallback from 'react').
-        .filter(
-          (it) => !(it.kind === 'reaction' && matches(it.by, it.emoji)),
-        )
-        // Un-fold the matching reaction from its target message (removes the FIRST match only).
-        .map((it) => {
-          if (
-            (it.kind !== 'user' && it.kind !== 'assistant') ||
-            it.id !== action.targetId ||
-            !it.reactions?.length
-          )
-            return it;
-          const at = it.reactions.findIndex((r) => matches(r.by, r.emoji));
-          if (at === -1) return it;
-          const reactions = it.reactions.slice();
-          reactions.splice(at, 1);
-          return { ...it, reactions };
-        });
+      return (
+        items
+          // Drop a standalone reaction row that matches (the not-found fallback from 'react').
+          .filter((it) => !(it.kind === 'reaction' && matches(it.by, it.emoji)))
+          // Un-fold the matching reaction from its target message (removes the FIRST match only).
+          .map((it) => {
+            if (
+              (it.kind !== 'user' && it.kind !== 'assistant') ||
+              it.id !== action.targetId ||
+              !it.reactions?.length
+            )
+              return it;
+            const at = it.reactions.findIndex((r) => matches(r.by, r.emoji));
+            if (at === -1) return it;
+            const reactions = it.reactions.slice();
+            reactions.splice(at, 1);
+            return { ...it, reactions };
+          })
+      );
     }
   }
 }

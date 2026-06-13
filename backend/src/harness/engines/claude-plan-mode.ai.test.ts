@@ -42,6 +42,7 @@ describe('ClaudeEngine native plan mode (real LLM)', () => {
         task: 'Read calc.ts, then produce a short plan (2-3 steps) for adding a subtract function. Planning only — do not implement.',
         cwd: dir,
         systemPrompt: 'You are a careful planning agent.',
+        agentId: 'test',
         mode: 'plan',
         onEvent: (e) => events.push(e),
       });

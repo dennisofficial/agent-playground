@@ -9,6 +9,7 @@ import {
   recallProjects,
   recallScopes,
   scopeForTier,
+  teamScope,
   Tier,
 } from '../domain/identity';
 
@@ -72,6 +73,15 @@ function recencyBonus(updatedAt: string): number {
   return RECENCY_TIEBREAK * 0.5 ** (ageMs / 86_400_000 / RECENCY_HALFLIFE_DAYS);
 }
 
+// Fraction of a recall's slots RESERVED for pure relevance (recency cannot evict them). The bug this
+// fixes: with a single sim+recency score, a tiny recency bonus flips a fresh-but-weaker fact above an
+// older-but-more-relevant one, so a saved fact that directly answers the query never surfaces. By
+// filling the first ceil(limit * RELEVANCE_RESERVE) slots strictly by cosine, the most-relevant facts
+// are guaranteed in regardless of age; the remaining slots stay recency-blended so freshness still
+// tiebreaks among comparably-relevant facts. Threshold-free on purpose — a hard "strong match" cosine
+// cutoff is unstable across embedding models, but reserving slots is not.
+const RELEVANCE_RESERVE = 0.5;
+
 /** Serialize a JS vector to the pgvector SQL literal (e.g. `[0.1,0.2,…]`). Non-null assertion is safe
  * because we always pass a non-null number[] produced by the embedder. */
 const vecSql = (v: number[]): string => toSql(v)!;
@@ -122,7 +132,9 @@ export class SemanticMemory {
       .addSelect('1 - (f.embedding <=> :qv::vector)', 'sim')
       .where('f.scope = :scope', { scope })
       .andWhere('f.team_id = :team', { team: input.id.team })
-      .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', { floor: GRAY_FLOOR })
+      .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', {
+        floor: GRAY_FLOOR,
+      })
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .setParameter('qv', qv)
       // entities[i] and raw[i] are aligned only because this is a single-table query —
@@ -190,8 +202,10 @@ export class SemanticMemory {
 
   /**
    * Semantic recall over the tiers this bot can access. Facts below `floor` cosine to the query are
-   * dropped; the rest rank by cosine + a tiny recency tiebreak. The FETCH path uses the default floor;
-   * the RECONCILE path passes a lower one (it wants marginal neighbors to detect supersession).
+   * dropped; the rest are ranked TWO-TIER (see `rankRecall`): the most-relevant facts are reserved a
+   * slot so recency can't bury a strong match, and the remaining slots are recency-blended. The FETCH
+   * path uses the default floor; the RECONCILE path passes a lower one (it wants marginal neighbors to
+   * detect supersession).
    */
   async recall(
     query: string,
@@ -217,8 +231,13 @@ export class SemanticMemory {
       // adding a JOIN would silently misalign sim scores.
       .getRawAndEntities();
 
-    const pairs = entities.map((e, i) => ({ entity: e, sim: Number(raw[i].sim) }));
-    return this.rankByRecency(pairs, limit).map(({ entity }) => factToStored(entity));
+    const pairs = entities.map((e, i) => ({
+      entity: e,
+      sim: Number(raw[i].sim),
+    }));
+    return this.rankRecall(pairs, limit).map(({ entity }) =>
+      factToStored(entity),
+    );
   }
 
   /**
@@ -251,27 +270,78 @@ export class SemanticMemory {
       // adding a JOIN would silently misalign sim scores.
       .getRawAndEntities();
 
-    const pairs = entities.map((e, i) => ({ entity: e, sim: Number(raw[i].sim) }));
-    return this.rankByRecency(pairs, limit).map(({ entity, sim }) => ({
+    const pairs = entities.map((e, i) => ({
+      entity: e,
+      sim: Number(raw[i].sim),
+    }));
+    return this.rankRecall(pairs, limit).map(({ entity, sim }) => ({
       fact: factToStored(entity),
       sim,
       project: projectLabel(entity.scope) ?? entity.scope,
     }));
   }
 
-  /** Re-rank a distance-ordered window by (cosine + recency tiebreak) and take `limit`. */
-  private rankByRecency(
+  /**
+   * Re-rank a distance-ordered window into the top `limit`, two-tier:
+   *   1. RELEVANCE tier — the first `ceil(limit * RELEVANCE_RESERVE)` slots go to the highest-cosine
+   *      facts (recency only breaks exact ties). This guarantees a strong match surfaces no matter how
+   *      old it is — the fix for fresh-but-weaker facts evicting the fact that actually answers the query.
+   *   2. RECENCY-BLENDED tier — the remaining slots fill from what's left by (cosine + recency tiebreak),
+   *      so freshness still wins among comparably-relevant facts.
+   * The merged result is returned strongest-relevance-first (the injected recall block reads top-down,
+   * so the most relevant fact lands at the head rather than buried in the middle).
+   */
+  private rankRecall(
     pairs: { entity: Fact; sim: number }[],
     limit: number,
   ): { entity: Fact; sim: number }[] {
-    return pairs
-      .map((p) => ({
-        ...p,
-        score: p.sim + recencyBonus(p.entity.updated_at.toISOString()),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
+    if (pairs.length <= limit) {
+      return [...pairs].sort((a, b) => b.sim - a.sim);
+    }
+    const scored = pairs.map((p) => ({
+      ...p,
+      recency: recencyBonus(p.entity.updated_at.toISOString()),
+    }));
+    const reserve = Math.min(
+      limit,
+      Math.max(1, Math.ceil(limit * RELEVANCE_RESERVE)),
+    );
+
+    const byRelevance = [...scored].sort(
+      (a, b) => b.sim - a.sim || b.recency - a.recency,
+    );
+    const tierA = byRelevance.slice(0, reserve);
+    const taken = new Set(tierA.map((x) => x.entity.id));
+
+    const tierB = scored
+      .filter((x) => !taken.has(x.entity.id))
+      .sort((a, b) => b.sim + b.recency - (a.sim + a.recency))
+      .slice(0, limit - tierA.length);
+
+    return [...tierA, ...tierB]
+      .sort((a, b) => b.sim - a.sim)
       .map(({ entity, sim }) => ({ entity, sim }));
+  }
+
+  /**
+   * A cheap, always-on standing-preferences core: the top `limit` team-scope facts for this team,
+   * ordered by recency then confidence — **no embedding** (must be near-free; runs on every turn).
+   * Used by the context assembler to build the tiny injected standing-context block; never for
+   * dedup or similarity judgments. Returns a newline-joined list of `- fact` lines, or '' when
+   * the team scope holds no live facts.
+   */
+  async standingContext(id: Identity, limit = 5): Promise<string> {
+    const scope = teamScope(id.team);
+    const rows = await this.facts
+      .createQueryBuilder('f')
+      .where('f.scope = :scope', { scope })
+      .andWhere('f.team_id = :team', { team: id.team })
+      .orderBy('f.updated_at', 'DESC')
+      .addOrderBy('f.confidence', 'DESC')
+      .limit(limit)
+      .getMany();
+    if (rows.length === 0) return '';
+    return rows.map((f) => `- ${f.fact}`).join('\n');
   }
 
   /** A live fact by row id, ONLY if in a scope this identity may access — the id-op guard. */

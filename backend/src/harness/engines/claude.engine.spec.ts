@@ -65,6 +65,7 @@ const baseArgs = (mode: 'plan' | 'execute'): RunWorkerArgs => ({
   task: 'do the thing',
   cwd: '/tmp/wt',
   systemPrompt: 'worker prompt',
+  agentId: 'test',
   mode,
   onEvent: () => {},
 });

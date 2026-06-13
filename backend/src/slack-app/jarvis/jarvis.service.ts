@@ -112,6 +112,7 @@ export class JarvisService
 
   /** Router contract: true = consumed, never reaches the conductor or the channel log. */
   async maybeHandle(item: SlackInbound): Promise<boolean> {
+    if (item.kind === 'command') return false; // slash commands belong to the command handler
     if (item.kind === 'interactivity') {
       const teamId = item.payload.team?.id ?? DEFAULT_TEAM;
       return this.handleInteractivity(item, teamId);

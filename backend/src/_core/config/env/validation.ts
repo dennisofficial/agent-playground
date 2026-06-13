@@ -85,6 +85,12 @@ export interface IEnvConfig {
   WORKER_ROOT?: string;
   // Root for per-project repo clones (code default: ~/.agent-playground/repos)
   REPOS_ROOT?: string;
+  // Root for the worker engines' OWN config/state homes — CLAUDE_CONFIG_DIR (<root>/claude) and
+  // CODEX_HOME (<root>/codex) are pinned here so subprocesses never read the developer's personal
+  // ~/.claude / ~/.codex (deterministic across dev and deploy) and their session transcripts land
+  // in a stable, durable location. Code default: <repoRoot>/.agent-home (gitignored). Point at a
+  // persistent volume in deployment.
+  AGENT_HOME_ROOT?: string;
   // 32-byte key (base64 or hex) encrypting stored GitHub tokens at rest. Unset → token writes
   // refuse loudly; local-only flows are unaffected.
   SECRETS_ENCRYPTION_KEY?: string;
@@ -139,6 +145,13 @@ export interface IEnvConfig {
   LANGSMITH_TRACING?: string;
   LANGSMITH_API_KEY?: string;
   LANGSMITH_PROJECT?: string;
+
+  // Langfuse observability (optional — pending-keys mode; @core/tracing self-disables when absent).
+  // The Langfuse OTEL SDK reads all four directly from process.env at bootstrap.
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  LANGFUSE_BASE_URL?: string;
+  LANGFUSE_TRACING_ENVIRONMENT?: string; // tags traces by deployment env (e.g. 'development')
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -202,6 +215,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
+  AGENT_HOME_ROOT: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
 
@@ -238,4 +252,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   LANGSMITH_TRACING: Joi.string().optional(),
   LANGSMITH_API_KEY: Joi.string().optional(),
   LANGSMITH_PROJECT: Joi.string().optional(),
+
+  // Langfuse observability
+  LANGFUSE_PUBLIC_KEY: Joi.string().optional(),
+  LANGFUSE_SECRET_KEY: Joi.string().optional(),
+  LANGFUSE_BASE_URL: Joi.string().uri().optional(),
+  LANGFUSE_TRACING_ENVIRONMENT: Joi.string().optional(),
 });

@@ -81,8 +81,16 @@ export class SlackSocketTransport implements OnApplicationShutdown {
         respond,
       });
       await respond(); // safety net — no-op when the handler already responded
+    } else if (envelope.type === 'slash_commands') {
+      // The handler's reply rides the ack body; the post-route ack is the idempotent safety net.
+      await this.router.route({
+        kind: 'command',
+        command: envelope.body as never,
+        respond,
+      });
+      await respond();
     }
-    // Other envelope kinds (hello, slash_commands, …) are not ours — leave them be.
+    // Other envelope kinds (hello, …) are not ours — leave them be.
   }
 
   /** Idempotent ack: the first call wins (with or without a payload), later calls no-op. Ack

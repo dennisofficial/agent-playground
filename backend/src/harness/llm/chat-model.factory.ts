@@ -35,7 +35,10 @@ export class ChatModelFactory {
     return new ChatAnthropic({
       apiKey: this.apiKey(),
       model: this.env.get('CHAT_MODEL') ?? DEFAULT_CHAT_MODEL,
-      betas: ['extended-cache-ttl-2025-04-11'], // honor `ttl: '1h'` cache_control; without it 1h silently falls back to 5m
+      betas: [
+        'extended-cache-ttl-2025-04-11', // honor `ttl: '1h'` cache_control; without it 1h silently falls back to 5m
+        'compact-2026-01-12', // server-side context compaction — auto-compacts long context to cut input tokens
+      ],
       thinking: { type: 'adaptive', display: 'summarized' },
       maxTokens,
       temperature,

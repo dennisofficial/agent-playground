@@ -41,8 +41,7 @@ describe('TicketNoteStore + TeamSettingsStore (live Postgres)', () => {
   });
 
   it('notes append and page newest-first with a stable total', async () => {
-    for (let i = 1; i <= 12; i++)
-      await notes.add('T1', 7, 'nora', `note ${i}`);
+    for (let i = 1; i <= 12; i++) await notes.add('T1', 7, 'nora', `note ${i}`);
     const p1 = await notes.listForTask('T1', 7, { page: 1, pageSize: 10 });
     expect(p1.total).toBe(12);
     expect(p1.notes).toHaveLength(10);

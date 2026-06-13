@@ -1,4 +1,4 @@
-import type { EnvService } from '@core/config/env/env.service';
+import { EnvService } from '@core/config/env/env.service';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -34,20 +34,15 @@ async function buildApp(token?: string): Promise<INestApplication> {
       },
       AdminTokenGuard,
       {
-        provide: 'EnvService' as unknown as symbol,
+        // Provide EnvService under its real class token so AdminTokenGuard's constructor
+        // injection resolves; `ADMIN_API_TOKEN` drives the guard's enabled/valid checks.
+        provide: EnvService,
         useValue: {
           get: (k: string) => (k === 'ADMIN_API_TOKEN' ? token : undefined),
         },
       },
     ],
-  })
-    .overrideProvider(AdminTokenGuard)
-    .useValue(
-      new AdminTokenGuard({
-        get: (k: string) => (k === 'ADMIN_API_TOKEN' ? token : undefined),
-      } as unknown as EnvService),
-    )
-    .compile();
+  }).compile();
 
   const app = module.createNestApplication();
   await app.init();

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ChannelService } from '../../channel/channel.service';
 import { MemoryWriteService } from '../../memory/memory-write.service';
 import { SemanticMemory, type StoredFact } from '../../memory/semantic-memory';
 import { HarnessTool } from '../harness-tool.decorator';
@@ -68,9 +69,9 @@ const recallSchema = z.object({
 
 @HarnessTool()
 export class RecallTool implements IHarnessTool<typeof recallSchema> {
-  readonly name = 'recall';
+  readonly name = 'recall_facts';
   readonly description =
-    'Look up what you already know that is relevant right now — this project, team knowledge, your own notes, or (in a 1:1) what you know about this person. Use it to ground yourself before answering. Each result carries its #id — pass that id to update_memory or forget to change a specific fact.';
+    "Semantic facts you've explicitly saved — use this to retrieve durable facts about the project, team, or people. Each result carries its #id — pass that id to update_memory or forget to change a specific fact.";
   readonly schema = recallSchema;
 
   constructor(private readonly semantic: SemanticMemory) {}
@@ -147,5 +148,48 @@ export class ForgetTool implements IHarnessTool<typeof forgetSchema> {
       this.semantic.forgetFactById(factId, ctx.identity),
     );
     return gone ? `Forgot #${factId}.` : `No live fact #${factId} to forget.`;
+  }
+}
+
+const searchConversationHistorySchema = z.object({
+  query: z
+    .string()
+    .describe('Keywords or a phrase to search for in past messages.'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Max results to return (default 20).'),
+});
+
+@HarnessTool()
+export class SearchConversationHistoryTool
+  implements IHarnessTool<typeof searchConversationHistorySchema>
+{
+  readonly name = 'search_conversation_history';
+  readonly description =
+    'Search through past channel messages for exact words, decisions, or context — returns who said what and when.';
+  readonly schema = searchConversationHistorySchema;
+
+  constructor(private readonly channelService: ChannelService) {}
+
+  async execute(
+    { query, limit }: z.infer<typeof searchConversationHistorySchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const hits = await this.channelService.search({
+      teamId: ctx.identity.team,
+      surfaceIds: [ctx.identity.surface],
+      query,
+      limit,
+    });
+    if (hits.length === 0) return 'No messages found matching that query.';
+    return hits
+      .map((h) => {
+        const when = new Date(h.ts).toISOString();
+        return `[${when}] ${h.author}: ${h.snippet}`;
+      })
+      .join('\n');
   }
 }

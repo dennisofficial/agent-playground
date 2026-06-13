@@ -4,6 +4,7 @@ import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import {
   APPROVAL_INTERCEPTOR,
+  COMMAND_INTERCEPTOR,
   JARVIS_INTERCEPTOR,
   type SlackInbound,
   type SlackInboundInterceptor,
@@ -29,10 +30,18 @@ export class SlackInboundRouter {
     @Optional()
     @Inject(APPROVAL_INTERCEPTOR)
     private readonly approvals?: SlackInboundInterceptor,
+    @Optional()
+    @Inject(COMMAND_INTERCEPTOR)
+    private readonly commands?: SlackInboundInterceptor,
   ) {}
 
   async route(item: SlackInbound): Promise<void> {
     try {
+      // Slash commands have their own handler and never reach the conductor or the chat surface.
+      if (item.kind === 'command') {
+        if (this.commands) await this.commands.maybeHandle(item);
+        return;
+      }
       // Lead presence watches every event BEFORE the interceptor (Jarvis CONSUMES
       // member_joined_channel, so a post-interceptor hook would never see the lead's own join).
       // Fire-and-forget: presence can never delay or break routing.

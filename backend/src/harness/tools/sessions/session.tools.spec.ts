@@ -23,7 +23,8 @@ const ctx: { identity: Identity } = {
 
 function makeTool(opts: {
   refusal?: string | null;
-  boardTask?: { id: number } | undefined;
+  boardTask?: { id: number; title?: string; description?: string } | undefined;
+  plan?: { planMd: string } | undefined;
 }) {
   const created: Record<string, unknown>[] = [];
   const sessions = {
@@ -34,22 +35,27 @@ function makeTool(opts: {
   };
   const runner = {
     executeRefusal: vi.fn(() => Promise.resolve(opts.refusal ?? null)),
-    runSessionTurn: vi.fn(() => Promise.resolve()),
+    runSessionTurn: vi.fn((_id: string, _message: string) => Promise.resolve()),
   };
   const worktrees = { get: () => ({ id: 'wt-001', path: '/tmp/wt' }) };
   const employees = {
     byId: () => ({ id: 'alex', engine: EWorkerEngineName.CLAUDE }),
     fallbackOwner: () => ({ id: 'alex', engine: EWorkerEngineName.CLAUDE }),
+    resolveWorkerModel: (_bot: unknown, _role: string) => ({
+      engine: EWorkerEngineName.CLAUDE,
+    }),
   };
   const board = { get: vi.fn(() => Promise.resolve(opts.boardTask)) };
+  const plans = { get: vi.fn(() => Promise.resolve(opts.plan)) };
   const tool = new CreateSessionTool(
     sessions as never,
     runner as never,
     worktrees as never,
     employees as never,
     board as never,
+    plans as never,
   );
-  return { tool, created, runner, board };
+  return { tool, created, runner, board, plans };
 }
 
 describe('create_session × the approval gate', () => {
@@ -92,5 +98,37 @@ describe('create_session × the approval gate', () => {
     expect(out).toContain('board #7');
     expect(linked.runner.executeRefusal).toHaveBeenCalledWith('T1', 7);
     expect(linked.created[0]?.boardTaskId).toBe(7);
+  });
+
+  it('Option B: an execute session seeds the engine with the attached plan, not the brief task', async () => {
+    const { tool, created, runner } = makeTool({
+      boardTask: { id: 7, title: 'Wire auth', description: 'cookie sessions' },
+      plan: { planMd: 'PLAN: add the auth middleware.' },
+      refusal: null,
+    });
+    await tool.execute(
+      { worktreeId: 'wt-001', task: 'go execute #7', mode: 'execute', board_task_id: 7 },
+      ctx,
+    );
+    // The stored session.task stays the brief (for list_sessions)...
+    expect(created[0]?.task).toBe('go execute #7');
+    // ...but the engine's opening message is the enriched plan handoff + the brief as a note.
+    const opening = runner.runSessionTurn.mock.calls[0]?.[1] as string;
+    expect(opening).toContain('PLAN: add the auth middleware.');
+    expect(opening).toContain('Wire auth');
+    expect(opening).toContain('go execute #7');
+  });
+
+  it('falls back to the plain task when an execute session has no attached plan', async () => {
+    const { tool, runner } = makeTool({
+      boardTask: { id: 7, title: 'Wire auth' },
+      plan: undefined,
+      refusal: null,
+    });
+    await tool.execute(
+      { worktreeId: 'wt-001', task: 'just do it', mode: 'execute', board_task_id: 7 },
+      ctx,
+    );
+    expect(runner.runSessionTurn.mock.calls[0]?.[1]).toBe('just do it');
   });
 });

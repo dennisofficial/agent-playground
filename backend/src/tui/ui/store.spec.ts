@@ -19,7 +19,9 @@ describe('storeReducer', () => {
       by: 'sam',
       emoji: '💭',
     });
-    expect((next[0] as MsgItem).reactions).toEqual([{ by: 'sam', emoji: '💭' }]);
+    expect((next[0] as MsgItem).reactions).toEqual([
+      { by: 'sam', emoji: '💭' },
+    ]);
   });
 
   it('un-folds the matching reaction from its target message', () => {
@@ -74,6 +76,8 @@ describe('storeReducer', () => {
       by: 'sam',
       emoji: '💭',
     });
-    expect((next[0] as MsgItem).reactions).toEqual([{ by: 'dana', emoji: '👍' }]);
+    expect((next[0] as MsgItem).reactions).toEqual([
+      { by: 'dana', emoji: '👍' },
+    ]);
   });
 });
