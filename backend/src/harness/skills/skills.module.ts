@@ -1,12 +1,16 @@
 import { CreateModule } from '@workspace/nestjs-core';
+import { EmployeesModule } from '../employees/employees.module';
+import { EngineHomeProvisioner } from './engine-home-provisioner.service';
 import { SkillLoaderService } from './skill-loader.service';
 
 /**
- * Skills & MCP scaffold. Employees declare `skills: SkillSource[]` and `mcpServers` in their
- * definitions; this module will bootstrap them locally at startup (git clone/sync → validate
- * SKILL.md → hand dirs to the engines). The loader is a typed no-op for now.
+ * Skills & MCP. Employees declare `skills: SkillSource[]` and `mcpServers` in their definitions; the
+ * loader clones/syncs git sources + validates SKILL.md, and the provisioner materializes each
+ * employee's per-engine HOME at boot (skills symlinked in, codex MCP written to config.toml) and
+ * memoizes `forAgent()` for the engines. Inert until an employee declares skills/MCP.
  */
 @CreateModule({
-  services: [SkillLoaderService],
+  imports: [EmployeesModule],
+  services: [SkillLoaderService, EngineHomeProvisioner],
 })
 export class SkillsModule {}

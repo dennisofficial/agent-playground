@@ -36,11 +36,24 @@ export function engineHomeDir(
   engine: 'claude' | 'codex',
   agentId: string,
 ): string {
-  const base = root ?? join(repoRoot(), '.agent-home');
   // Defensive: the roster supplies controlled kebab ids, but never let an id escape the base dir.
   const safeAgent = agentId.replace(/[^a-z0-9_-]/gi, '_') || 'unknown';
-  const dir = join(base, safeAgent, engine);
+  const dir = join(agentHomeBase(root), safeAgent, engine);
   // Idempotent — the CLIs expect the dir to exist (and won't create a deep custom path themselves).
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** The base under which all per-employee engine homes (and the skill cache) live — repo-root
+ * `.agent-home` by default, or AGENT_HOME_ROOT when set (a persistent volume in deployment). */
+export function agentHomeBase(root: string | undefined): string {
+  return root ?? join(repoRoot(), '.agent-home');
+}
+
+/** Shared, durable cache for git-sourced skills — cloned ONCE here, then symlinked into each
+ * employee's home (the same skill repo must not clone per-employee). */
+export function skillCacheDir(root: string | undefined): string {
+  const dir = join(agentHomeBase(root), '.skill-cache');
   mkdirSync(dir, { recursive: true });
   return dir;
 }

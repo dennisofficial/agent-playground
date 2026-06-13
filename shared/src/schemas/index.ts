@@ -9,6 +9,7 @@ export * from './fact.entity';
 export * from './github-token.entity';
 export * from './project.entity';
 export * from './provider-key.entity';
+export * from './session.entity';
 export * from './slack-identity.entity';
 export * from './task.entity';
 export * from './team-setting.entity';
@@ -26,6 +27,7 @@ import { Fact } from './fact.entity';
 import { GithubToken } from './github-token.entity';
 import { Project } from './project.entity';
 import { ProviderKey } from './provider-key.entity';
+import { Session } from './session.entity';
 import { SlackIdentity } from './slack-identity.entity';
 import { Task } from './task.entity';
 import { TeamSetting } from './team-setting.entity';
@@ -51,6 +53,7 @@ export const ENTITIES = [
   Project,
   GithubToken,
   ProviderKey,
+  Session,
   SlackIdentity,
   Tenant,
   EmployeeSkill,
