@@ -60,6 +60,10 @@ export interface RunWorkerArgs {
   cwd: string;
   /** The composed worker persona for this engine (correct tool names per engine). */
   systemPrompt: string;
+  /** The owning employee's id — namespaces the engine's isolated config/state HOME so each employee
+   * owns their own CLAUDE_CONFIG_DIR / CODEX_HOME (skills and MCP servers are granted PER EMPLOYEE,
+   * not team-wide, so the homes must not be shared). See engine-home.ts. */
+  agentId: string;
   /** A prior engine session/thread id to resume, if any. */
   sessionId?: string;
   /** Override the engine's model for this run (e.g. a high-reasoning model for planning, a cheaper

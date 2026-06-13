@@ -123,6 +123,7 @@ export class SessionRunnerService {
             task: message,
             cwd: worktree.path,
             systemPrompt: this.persona.workerPromptFor(bot),
+            agentId: bot.id,
             sessionId: session.engineSessionId,
             model,
             effort,

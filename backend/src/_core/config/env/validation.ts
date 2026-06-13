@@ -85,6 +85,12 @@ export interface IEnvConfig {
   WORKER_ROOT?: string;
   // Root for per-project repo clones (code default: ~/.agent-playground/repos)
   REPOS_ROOT?: string;
+  // Root for the worker engines' OWN config/state homes — CLAUDE_CONFIG_DIR (<root>/claude) and
+  // CODEX_HOME (<root>/codex) are pinned here so subprocesses never read the developer's personal
+  // ~/.claude / ~/.codex (deterministic across dev and deploy) and their session transcripts land
+  // in a stable, durable location. Code default: <repoRoot>/.agent-home (gitignored). Point at a
+  // persistent volume in deployment.
+  AGENT_HOME_ROOT?: string;
   // 32-byte key (base64 or hex) encrypting stored GitHub tokens at rest. Unset → token writes
   // refuse loudly; local-only flows are unaffected.
   SECRETS_ENCRYPTION_KEY?: string;
@@ -195,6 +201,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
+  AGENT_HOME_ROOT: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
 

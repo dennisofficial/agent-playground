@@ -4,6 +4,7 @@ import type {
   PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 import { EnvService } from '@core/config/env/env.service';
+import { engineHomeDir } from './engine-home';
 import { Inject, Injectable } from '@nestjs/common';
 import { ANTHROPIC_AGENT_SDK } from '../../_lib/esm/esm.module';
 import { bashDenyReason, bashWriteReason, isInsideRoot } from './guard';
@@ -157,6 +158,7 @@ export class ClaudeEngine implements WorkerEngine {
     task,
     cwd,
     systemPrompt,
+    agentId,
     sessionId,
     model,
     effort,
@@ -175,6 +177,14 @@ export class ClaudeEngine implements WorkerEngine {
         });
     }
     const resolvedModel = model ?? this.env.get('WORKER_MODEL');
+    // Pin the SDK subprocess to this EMPLOYEE'S isolated config/state home — never the developer's
+    // personal ~/.claude, and never shared with other employees (per-employee skills/MCP) — so
+    // transcripts land in a stable durable dir and behavior matches deployment.
+    const claudeConfigDir = engineHomeDir(
+      this.env.get('AGENT_HOME_ROOT'),
+      'claude',
+      agentId,
+    );
     const planMode = mode === 'plan';
     let capturedPlan = '';
     // Accumulated across the turn, deduped by question text — a model that re-asks despite the
@@ -205,9 +215,14 @@ export class ClaudeEngine implements WorkerEngine {
       // settingSources stays [] (no config FILES are read).
       settings: { attribution: { commit: '', pr: '' } },
       abortController,
-      // Per-tenant key into the SDK subprocess env (NOT the shared process.env) — each workspace
-      // funds its own runs. Unset → the subprocess inherits the ambient env (dev/TUI).
-      ...(apiKey ? { env: { ...process.env, ANTHROPIC_API_KEY: apiKey } } : {}),
+      // Subprocess env: CLAUDE_CONFIG_DIR isolates config/state/transcripts from ~/.claude (always
+      // set). The per-tenant key (when resolved) funds this workspace's runs; unset → the key falls
+      // back to the ambient env (dev/TUI). settingSources stays [] so NO config files are read.
+      env: {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: claudeConfigDir,
+        ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
+      },
       ...(sessionId ? { resume: sessionId } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(effort ? { effort } : {}),
