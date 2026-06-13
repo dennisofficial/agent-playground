@@ -22,7 +22,7 @@ import {
   MAX_REVISION_PASSES,
   revisionNote,
 } from './bot-graph.factory';
-import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
+import { makeEmployee } from '@harness/employees/employee.testing';
 
 /**
  * READ-THE-ROOM (optimistic-concurrency posting). A final text reply is composed blind for one
@@ -67,14 +67,12 @@ class FakeChannel {
   }
 }
 
-const ALEX = {
+const ALEX = makeEmployee({
   id: 'alex',
   name: 'Alex',
   role: 'backend engineer',
   sortOrder: 10,
-  roleContext: 'ctx',
-  engine: EWorkerEngineName.CLAUDE,
-};
+});
 
 const flat = (c: BaseMessage['content']): string =>
   typeof c === 'string'

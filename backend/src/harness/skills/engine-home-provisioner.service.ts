@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { engineHomeDir } from '../engines/engine-home';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
 import { EmployeeRegistry } from '../employees/employee.registry';
+import type { EmployeeContext } from '../employees/employee-context';
+import type { EmployeeDefinition } from '../employees/employee.types';
 import { SkillLoaderService } from './skill-loader.service';
 import type { LoadedSkill, McpServerConfig } from './skill.types';
 
@@ -46,29 +48,37 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
 
   async onApplicationBootstrap(): Promise<void> {
     const root = this.env.get('AGENT_HOME_ROOT');
+    const ctx = this.employees.context();
     for (const emp of this.employees.list()) {
       const sources = emp.skills ?? [];
       const mcpServers = emp.mcpServers ?? [];
       if (sources.length === 0 && mcpServers.length === 0) continue; // nothing to materialize
 
       const skills = await this.loader.resolve(sources);
-      const kind = engineKind(emp.engine);
-      if (kind === 'claude')
-        this.writeClaudeHome(engineHomeDir(root, 'claude', emp.id), skills);
-      else if (kind === 'codex')
-        this.writeCodexHome(
-          engineHomeDir(root, 'codex', emp.id),
-          mcpServers,
-          skills,
-        );
-      // langgraph: in-process, no subprocess home — skills/MCP would be prompt-level (not yet wired).
+      // An employee can run on MORE than one engine — plan/execute specs plus its capability specs
+      // (e.g. a Claude planner that self-reviews on Codex). Materialize a per-engine home for EVERY
+      // distinct engine its specs use, not just one base engine, so a cross-engine spec isn't left
+      // without its skills/MCP home.
+      const engines = enginesFor(emp, ctx);
+      for (const engine of engines) {
+        const kind = engineKind(engine);
+        if (kind === 'claude')
+          this.writeClaudeHome(engineHomeDir(root, 'claude', emp.id), skills);
+        else if (kind === 'codex')
+          this.writeCodexHome(
+            engineHomeDir(root, 'codex', emp.id),
+            mcpServers,
+            skills,
+          );
+        // langgraph: in-process, no subprocess home — skills/MCP prompt-level (not yet wired).
+      }
 
       this.byAgent.set(emp.id, {
         skillNames: skills.map((s) => s.name),
         mcpServers,
       });
       this.logger.log(
-        `Provisioned ${emp.id} (${emp.engine}): ${skills.length} skill(s), ${mcpServers.length} MCP server(s)`,
+        `Provisioned ${emp.id} (${[...engines].join(', ')}): ${skills.length} skill(s), ${mcpServers.length} MCP server(s)`,
       );
     }
   }
@@ -106,6 +116,19 @@ function engineKind(engine: EWorkerEngineName): 'claude' | 'codex' | null {
   if (engine === EWorkerEngineName.CLAUDE) return 'claude';
   if (engine === EWorkerEngineName.CODEX) return 'codex';
   return null;
+}
+
+/** The distinct set of engines an employee runs on — plan + execute specs + every capability spec. */
+function enginesFor(
+  emp: EmployeeDefinition,
+  ctx: EmployeeContext,
+): Set<EWorkerEngineName> {
+  const engines = new Set<EWorkerEngineName>([
+    emp.planEngine(ctx).engine,
+    emp.executeEngine(ctx).engine,
+  ]);
+  for (const cap of emp.capabilities(ctx)) engines.add(cap.spec(ctx).engine);
+  return engines;
 }
 
 const tomlStr = (v: string): string =>

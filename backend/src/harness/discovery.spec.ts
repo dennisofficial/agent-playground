@@ -2,12 +2,13 @@ import { DiscoveryModule } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { z } from 'zod';
 import { AIEmployee } from './employees/ai-employee.decorator';
+import { BaseEmployee } from './employees/base-employee';
+import type { EmployeeContext } from './employees/employee-context';
 import { EmployeeRegistry } from './employees/employee.registry';
-import type { EmployeeDefinition } from './employees/employee.types';
 import { HarnessTool } from './tools/harness-tool.decorator';
 import { ToolRegistry } from './tools/tool.registry';
 import type { HarnessToolContext, IHarnessTool } from './tools/tool.types';
-import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
+import { EXECUTE_CODEX, PLAN_CODEX } from './engines/engine-presets';
 
 const echoSchema = z.object({ text: z.string() });
 
@@ -47,25 +48,29 @@ class UnregisteredTool implements IHarnessTool<typeof echoSchema> {
 }
 
 @AIEmployee()
-class TestAlex implements EmployeeDefinition {
+class TestAlex extends BaseEmployee {
   readonly id = 'alex';
   readonly name = 'Alex';
   readonly role = 'backend engineer';
   readonly sortOrder = 10;
-  readonly roleContext = 'static role context';
-  readonly engine = EWorkerEngineName.CLAUDE;
   readonly teamLead = true;
   readonly tools = [EchoTool, EndTurnTool];
+  roleContext(_ctx: EmployeeContext): string {
+    return 'static role context';
+  }
 }
 
 @AIEmployee()
-class TestSam implements EmployeeDefinition {
+class TestSam extends BaseEmployee {
   readonly id = 'sam';
   readonly name = 'Sam';
   readonly role = 'team lead';
   readonly sortOrder = 20;
-  readonly roleContext = 'static role context';
-  readonly engine = EWorkerEngineName.CODEX;
+  protected readonly planPreset = PLAN_CODEX;
+  protected readonly executePreset = EXECUTE_CODEX;
+  roleContext(_ctx: EmployeeContext): string {
+    return 'static role context';
+  }
 }
 
 async function buildModule(
@@ -84,7 +89,9 @@ describe('harness decorator discovery', () => {
     const moduleRef = await buildModule();
     const registry = moduleRef.get(EmployeeRegistry);
     expect(registry.list().map((e) => e.id)).toEqual(['alex', 'sam']);
-    expect(registry.byId('sam')?.engine).toBe('codex');
+    expect(registry.byId('sam')?.planEngine(registry.context()).engine).toBe(
+      'codex',
+    );
     expect(registry.fallbackOwner().id).toBe('alex');
     expect(
       registry.addressedBots('Alex, can you take a look?').map((e) => e.id),
@@ -121,13 +128,14 @@ describe('harness decorator discovery', () => {
 
   it('fails boot on duplicate employee ids', async () => {
     @AIEmployee()
-    class DupAlex implements EmployeeDefinition {
+    class DupAlex extends BaseEmployee {
       readonly id = 'alex';
       readonly name = 'Alex2';
       readonly role = 'impostor';
       readonly sortOrder = 30;
-      readonly roleContext = 'x';
-      readonly engine = EWorkerEngineName.CLAUDE;
+      roleContext(_ctx: EmployeeContext): string {
+        return 'x';
+      }
     }
     await expect(
       buildModule([TestAlex, TestSam, DupAlex, EchoTool, EndTurnTool]),

@@ -1,7 +1,12 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { Inject } from '@nestjs/common';
 import { z } from 'zod';
+import type { Identity } from '../../domain/identity';
 import { DEFAULT_EXECUTE_PROMPT } from '../../engines/role-prompts';
+import type {
+  EWorkerEngineName,
+  WorkerMode,
+} from '../../engines/worker-engine.port';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { BoardStore } from '../../memory/board-store';
 import { PlanStore } from '../../memory/plan-store';
@@ -94,11 +99,14 @@ export class CreateSessionTool implements IHarnessTool<
       const refusal = await this.runner.executeRefusal(id.team, board_task_id);
       if (refusal) return `Can't open an execute session: ${refusal}`;
     }
-    // The engine is the employee's binding for THIS session's role (plan/execute) — so a plan session
+    // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
     // and an execute session on the same employee can run different engines (Option B). Fixed at
-    // create; a session never swaps engines mid-life.
+    // create; a session never swaps engines mid-life (replySession refuses an engine-changing flip).
     const bot = this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner();
-    const engineName = this.employees.resolveWorkerModel(bot, mode).engine;
+    const engCtx = this.employees.context();
+    const engineName = (
+      mode === 'plan' ? bot.planEngine(engCtx) : bot.executeEngine(engCtx)
+    ).engine;
     // OPTION B handoff: a fresh execute session is seeded from the APPROVED PLAN (the durable ticket
     // artifact), not the planning session's investigation noise. When this is an execute session on a
     // board task with the owner's attached plan, the engine's first message IS the enriched plan
@@ -109,35 +117,62 @@ export class CreateSessionTool implements IHarnessTool<
     if (mode === 'execute' && board_task_id !== undefined && boardTask) {
       const plan = await this.plans.get(id.team, board_task_id, id.selfAgent);
       if (plan) {
-        const template = bot.roles?.execute?.prompt ?? DEFAULT_EXECUTE_PROMPT;
         const ticketText = `${boardTask.title}\n\n${boardTask.description}`.trim();
-        openingTask = template({ ticket: ticketText, plan: plan.planMd });
+        openingTask = DEFAULT_EXECUTE_PROMPT({
+          ticket: ticketText,
+          plan: plan.planMd,
+        });
         if (task.trim())
           openingTask += `\n\nNote from your chat-self: ${task.trim()}`;
       }
     }
-    const session = await this.sessions.create({
-      task,
+    const { sessionId } = await this.openSession({
+      identity: id,
       worktreeId,
-      notifyThread: id.surface,
-      engine: engineName,
-      ownerBot: id.selfAgent,
-      team: id.team,
-      project: id.project,
+      task,
+      openingTask,
       mode,
-      ...(board_task_id !== undefined ? { boardTaskId: board_task_id } : {}),
+      engine: engineName,
+      boardTaskId: board_task_id,
     });
-    // Fire-and-forget: the turn runs in the background, the chat turn returns immediately.
-    //
-    // Detach the background turn from the conductor's streaming callback context. create_session
-    // runs inside the chat graph's `streamMode: 'messages'` run, and LangChain propagates that
-    // run's callbacks to nested runnables via AsyncLocalStorage. Without clearing the store, a
-    // LangGraph turn's invoke() inherits the chat stream's message handler and its tokens/
-    // tool-calls bleed into the main chat. run(undefined, …) roots the turn in a clean store.
+    return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
+  }
+
+  /**
+   * The canonical create-session-and-fire-first-turn path, reused by `create_session` AND by
+   * engine-tool capabilities (`EngineToolFactory`) so they don't invent a parallel worker path. The
+   * engine is fixed at create. The first turn is fire-and-forget, detached from the conductor's
+   * streaming callback context (AsyncLocalStorage `run(undefined, …)`) — without that, a LangGraph
+   * turn's invoke() inherits the chat stream's message handler and its tokens bleed into the chat.
+   */
+  async openSession(opts: {
+    identity: Identity;
+    worktreeId: string;
+    /** Stored brief (titles list_sessions + the close-time worklog). */
+    task: string;
+    /** The actual first-turn message (may be enriched, e.g. the Option-B plan handoff). */
+    openingTask: string;
+    mode: WorkerMode;
+    engine: EWorkerEngineName;
+    boardTaskId?: number;
+  }): Promise<{ sessionId: string }> {
+    const session = await this.sessions.create({
+      task: opts.task,
+      worktreeId: opts.worktreeId,
+      notifyThread: opts.identity.surface,
+      engine: opts.engine,
+      ownerBot: opts.identity.selfAgent,
+      team: opts.identity.team,
+      project: opts.identity.project,
+      mode: opts.mode,
+      ...(opts.boardTaskId !== undefined
+        ? { boardTaskId: opts.boardTaskId }
+        : {}),
+    });
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.runner.runSessionTurn(session.id, openingTask);
+      void this.runner.runSessionTurn(session.id, opts.openingTask);
     });
-    return `Opened ${session.id} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
+    return { sessionId: session.id };
   }
 }
 
@@ -262,10 +297,11 @@ export class CheckSessionTool implements IHarnessTool<
     }
     const bot =
       this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-    const { model, effort } = this.employees.resolveWorkerModel(
-      bot,
-      session.mode,
-    );
+    const specCtx = this.employees.context();
+    const { model, effort } =
+      session.mode === 'plan'
+        ? bot.planEngine(specCtx)
+        : bot.executeEngine(specCtx);
     const tier = `${session.mode} on ${model ?? `${session.engine} default`}${effort ? `, effort ${effort}` : ''}`;
     const board =
       session.boardTaskId !== undefined

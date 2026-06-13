@@ -16,7 +16,7 @@ import type { RecursionGuardService } from '../recursion-guard/recursion-guard.s
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
-import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
+import { makeEmployee } from '@harness/employees/employee.testing';
 import { BotGraphFactory } from './bot-graph.factory';
 
 /**
@@ -57,14 +57,12 @@ class FakeChannel {
   }
 }
 
-const ALEX = {
+const ALEX = makeEmployee({
   id: 'alex',
   name: 'Alex',
   role: 'backend engineer',
   sortOrder: 10,
-  roleContext: 'ctx',
-  engine: EWorkerEngineName.CLAUDE,
-};
+});
 
 describe('bot graph — terminal tool error handling', () => {
   it('(a) terminal tool that throws loops back to llm — model invoked twice', async () => {

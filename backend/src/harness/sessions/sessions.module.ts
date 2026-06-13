@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Session, SessionEvent } from '@workspace/shared/schemas';
 import { EmployeesModule } from '../employees/employees.module';
 import { EnginesModule } from '../engines/engines.module';
+import { LifecycleModule } from '../lifecycle/lifecycle.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
@@ -22,6 +23,7 @@ import { SessionRunnerService } from './session-runner.service';
     TypeOrmModule.forFeature([Session, SessionEvent]),
     EmployeesModule,
     EnginesModule,
+    LifecycleModule,
     LlmKeysModule,
     MemoryModule,
     WorktreesModule,

@@ -1,4 +1,4 @@
-import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
+import { makeEmployee } from '@harness/employees/employee.testing';
 import type { Identity } from '../../domain/identity';
 import { CreateSessionTool } from './session.tools';
 
@@ -38,12 +38,11 @@ function makeTool(opts: {
     runSessionTurn: vi.fn((_id: string, _message: string) => Promise.resolve()),
   };
   const worktrees = { get: () => ({ id: 'wt-001', path: '/tmp/wt' }) };
+  const alex = makeEmployee({ id: 'alex', name: 'Alex' });
   const employees = {
-    byId: () => ({ id: 'alex', engine: EWorkerEngineName.CLAUDE }),
-    fallbackOwner: () => ({ id: 'alex', engine: EWorkerEngineName.CLAUDE }),
-    resolveWorkerModel: (_bot: unknown, _role: string) => ({
-      engine: EWorkerEngineName.CLAUDE,
-    }),
+    byId: () => alex,
+    fallbackOwner: () => alex,
+    context: () => ({ team: 'local', roster: 'Alex — backend engineer' }),
   };
   const board = { get: vi.fn(() => Promise.resolve(opts.boardTask)) };
   const plans = { get: vi.fn(() => Promise.resolve(opts.plan)) };

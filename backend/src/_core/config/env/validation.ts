@@ -72,6 +72,8 @@ export interface IEnvConfig {
   GUARD_MODEL?: string; // recursion-guard model (default in code: Haiku)
   RECURSION_GUARD_ENABLED?: boolean; // false → disable the loop-detection guard (default: true)
   RECURSION_GUARD_WINDOW?: number; // rolling-window size for the guard (default: 12)
+  DORMANCY_ENABLED?: boolean; // false → disable gate dormancy (default: true)
+  DORMANCY_IGNORE_THRESHOLD?: number; // consecutive soft-gate ignores before a bot goes dormant (default: 3)
   // The execute-approval dial — how strictly session execute turns are gated on board approval:
   // 'all' (default) = EVERY execute flip needs a linked board task in 'approved'/'done';
   // 'linked' = only board-linked sessions are gated (unlinked ad-hoc work stays autonomous);
@@ -208,6 +210,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   GUARD_MODEL: Joi.string().optional(),
   RECURSION_GUARD_ENABLED: Joi.boolean().optional(),
   RECURSION_GUARD_WINDOW: Joi.number().integer().min(1).optional(),
+  DORMANCY_ENABLED: Joi.boolean().optional(),
+  DORMANCY_IGNORE_THRESHOLD: Joi.number().integer().min(1).optional(),
   EXECUTION_APPROVAL_MODE: Joi.string()
     .valid('all', 'linked', 'off')
     .optional()

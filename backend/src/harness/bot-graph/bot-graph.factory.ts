@@ -1,7 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { END, START, StateGraph } from '@langchain/langgraph';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ChannelRegistryService } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
 import type { EmployeeDefinition } from '../employees/employee.types';
@@ -16,12 +16,19 @@ import {
   SESSION_REGISTRY,
   type SessionRegistry,
 } from '../sessions/session-registry.port';
+import { EngineToolFactory } from '../tools/engine-tool.factory';
 import { ToolRegistry } from '../tools/tool.registry';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { GAP_THRESHOLD_DEFAULT_MS } from './channel-render';
 import { BotState } from './bot-state';
 import { BotGraphNodes } from './bot-graph.nodes';
-import { afterGuard, afterLlm, makeAfterTools, route } from './routing';
+import {
+  afterGuard,
+  afterLlm,
+  afterMarkSeen,
+  makeAfterTools,
+  route,
+} from './routing';
 
 // Public surface re-exported from the graph modules so existing importers keep one entry point.
 export type { BotStateDelta } from './bot-state';
@@ -35,10 +42,13 @@ export { MAX_REVISION_PASSES, revisionNote } from './read-the-room';
  *   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⟲ ⇄ tools → refreshContext? ─┐
  *                 │                        └─ pause ──────────────────────────────────────┤
  *                 └─ acknowledge / ignore → mark_seen ──────────────────────────────────┴→ reconcile → END
+ *                                              └─ dormant off-lane skip ─────────────────────────────→ END
  *
  * Memory is DETERMINISTIC, not agentic: `recall` reads the relevant facts + open tasks IN before the
- * bot thinks, and the single `reconcile` node writes tasks OUT after — on EVERY path. (`llm` ⟲ is
- * the read-the-room revision self-loop.)
+ * bot thinks, and the single `reconcile` node writes tasks OUT after — on EVERY path EXCEPT the
+ * dormant off-lane skip (a dormant bot cheap-ignoring a message that named no one and hit no lane
+ * keyword ends at `mark_seen` with zero LLM calls; anything about its work wakes it and reconciles
+ * normally). (`llm` ⟲ is the read-the-room revision self-loop.)
  * The llm step keeps its memory/task tools too; reconcile is the state-aware backstop on top.
  *
  * THE HEART (mid-thought collaboration): the `llm` node consumes `channel.since(cursor)` at the TOP
@@ -90,9 +100,15 @@ export class BotGraphFactory {
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     @Inject(CHECKPOINTER) private readonly checkpointer: PostgresSaver,
     env: EnvService,
+    // Optional so the unit specs (which construct BotGraphFactory positionally) need no change; DI
+    // always provides it in the app, so tool-capabilities bind in production.
+    @Optional() private readonly engineTools?: EngineToolFactory,
   ) {
     const gapThresholdMs =
       env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
+    // DORMANCY: default-on (kill-switch via DORMANCY_ENABLED=false), threshold default 3.
+    const dormancyEnabled = env.get('DORMANCY_ENABLED') !== false;
+    const dormancyThreshold = env.get('DORMANCY_IGNORE_THRESHOLD') ?? 3;
     this.nodes = new BotGraphNodes(
       this.channel,
       this.channelRegistry,
@@ -106,6 +122,9 @@ export class BotGraphFactory {
       this.worktrees,
       this.sessions,
       gapThresholdMs,
+      dormancyEnabled,
+      dormancyThreshold,
+      this.engineTools,
     );
   }
 
@@ -141,7 +160,7 @@ export class BotGraphFactory {
         'reconcile',
       ])
       .addEdge('refreshContext', 'llm')
-      .addEdge('mark_seen', 'reconcile')
+      .addConditionalEdges('mark_seen', afterMarkSeen, ['reconcile', END])
       .addEdge('pause', 'reconcile')
       .addEdge('reconcile', END)
       .compile({ checkpointer: this.checkpointer });

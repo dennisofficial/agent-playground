@@ -6,6 +6,7 @@ import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { ConductorEventsModule } from './conductor-events.module';
+import { ConductorMetricsService } from './conductor-metrics.service';
 import { ConductorService } from './conductor.service';
 
 /**
@@ -25,7 +26,7 @@ import { ConductorService } from './conductor.service';
     MemoryModule,
     SessionsModule,
   ],
-  services: [ConductorService],
-  exports: [ConductorEventsModule],
+  services: [ConductorService, ConductorMetricsService],
+  exports: [ConductorEventsModule, ConductorMetricsService],
 })
 export class ConductorModule {}

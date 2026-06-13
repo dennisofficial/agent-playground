@@ -24,6 +24,8 @@ import {
   ReplySessionTool,
   SearchSessionTool,
 } from './sessions/session.tools';
+import { SubmitPlanTool } from './sessions/submit-plan.tool';
+import { EngineToolFactory } from './engine-tool.factory';
 import {
   AddBoardTaskTool,
   ClaimBoardTaskTool,
@@ -70,6 +72,8 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
   ],
   services: [
     ToolRegistry,
+    // capability tool seam (binds tool-triggered capabilities at graph-build)
+    EngineToolFactory,
     // rooms (cross-room relay)
     ListRoomsTool,
     SendMessageTool,
@@ -86,6 +90,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     // sessions
     CreateSessionTool,
     ReplySessionTool,
+    SubmitPlanTool,
     CloseSessionTool,
     CheckSessionTool,
     ListSessionsTool,

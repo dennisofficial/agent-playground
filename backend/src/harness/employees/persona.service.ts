@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { EmployeeRegistry } from './employee.registry';
+import type { EmployeeContext } from './employee-context';
 import type { EmployeeDefinition } from './employee.types';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
@@ -16,29 +17,6 @@ import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
  * (Ported from playground/src/persona.ts. The board/ticket prose and the shared-worktree collab
  * block are deliberately dropped.)
  */
-
-const identityLine = (employee: EmployeeDefinition) => {
-  const base = `
-You are ${employee.name}, the team's ${employee.role} — a capable, conscientious AI employee. You
-have real taste and judgment: you're precise, and you say plainly when something is blocked or
-uncertain instead of guessing.
-`.trim();
-  return employee.personality ? `${base} ${employee.personality}` : base;
-};
-
-// Both render into both surfaces (chat + worker), are static (deterministic join/map under
-// `?.length` guards, so they never bust the prompt cache), and return a leading-blank-line block (or
-// '' when unset). `skillsLine` is a PLACEHOLDER until the SkillLoader is real: it renders the
-// declared sources' names only when present (empty for now — scaffolding keeps the wiring in place).
-const skillsLine = (employee: EmployeeDefinition): string =>
-  employee.skills?.length
-    ? `\n\nYour core skills: ${employee.skills.map((s) => (s.kind === 'git' ? s.url : s.path)).join(', ')}.`
-    : '';
-
-const protocolsBlock = (employee: EmployeeDefinition): string =>
-  employee.protocols?.length
-    ? `\n\nStanding protocols you always follow:\n${employee.protocols.map((p) => `- ${p}`).join('\n')}`
-    : '';
 
 // The adviser stance — anti-sycophancy, in force on BOTH surfaces. Deliberately a SEPARATE constant
 // from TEAM_RULES: that one also feeds the gate classifier prompt, where this stance would be noise
@@ -125,8 +103,9 @@ export const TEAM_RULES = `${RULES_HEADER}\n${CHAT_BULLETS}\n${ETHOS_BULLETS}`;
 export const TEAM_ETHOS = `${RULES_HEADER}\n${ETHOS_BULLETS}`;
 
 // Each engine exposes different tools (the LangGraph thread uses our LangChain tools; Claude/Codex
-// use their own built-ins), so the tool guidance is per-engine — with the CORRECT names.
-const WORKER_TOOL_GUIDE: Record<EWorkerEngineName, string> = {
+// use their own built-ins), so the tool guidance is per-engine — with the CORRECT names. Keyed by
+// the SPEC's engine (a role/capability may run on a different engine than the employee's others).
+export const WORKER_TOOL_GUIDE: Record<EWorkerEngineName, string> = {
   [EWorkerEngineName.LANGGRAPH]: `
 Your tools (scoped to the project directory): read_file, write_file, str_replace,
 glob, grep, list_dir, web_fetch, bash.
@@ -165,7 +144,7 @@ tests, and git. Your environment is sandboxed to the project directory.
 // every turn regardless of mode (Claude re-sends it on each resume — a mid-session prompt swap would
 // be incoherent, and Codex/LangGraph only see it on turn 1). Read-only on a plan turn comes from the
 // ENGINE, not from prose.
-const WORKER_DIRECTIVE = `
+export const WORKER_DIRECTIVE = `
 You are operating in your own background session: the chat-you opened this conversation and will
 keep talking to you across turns. Carry each request as far as you can before reporting back —
 reason, act, observe; don't stop mid-step to check in. Stay within your working directory (an
@@ -176,7 +155,7 @@ chat-self reads it and replies into this same session, so write to be picked up,
 
 // The shared mental model for how an employee's hands work — bare on purpose. Static, byte-stable
 // (cache constraint).
-const BACKGROUND_WORK_RULES = `
+export const BACKGROUND_WORK_RULES = `
 Your hands are background SESSIONS — Claude Code-style workers you drive like an engineer:
 - Every session runs inside a WORKTREE (an isolated checkout of the project). create_worktree first
   (or reuse one from list_worktrees), then create_session against it. One worktree can host several
@@ -223,132 +202,23 @@ Your hands are background SESSIONS — Claude Code-style workers you drive like 
   their own ticket), research write-ups, decisions made along the way.
 `.trim();
 
+/**
+ * After the big assembly methods moved into `BaseEmployee` builders, PersonaService is the thin
+ * `EmployeeContext` PROVIDER + a delegating `chatPromptFor` the bot-graph already calls. The shared
+ * prompt blocks above stay central (the gate classifier imports `TEAM_RULES`; the builders import the
+ * rest); the per-employee facts live in the `@AIEmployee` definitions.
+ */
 @Injectable()
 export class PersonaService {
   constructor(private readonly employees: EmployeeRegistry) {}
 
-  chatPromptFor(employee: EmployeeDefinition): string {
-    return `${identityLine(employee)}${employee.roleContext}${skillsLine(employee)}${protocolsBlock(employee)}
-You're in your team's shared dev channel — a group chat where teammates collaborate, plan features,
-and hand work off to each other. Your teammates: ${this.employees.rosterSummary()}. Each incoming message is prefixed
-with who sent it ("Dennis: …"); more than one person may be around, so read who's talking and address
-people by name. Your own replies are shown as you (${employee.name}) — don't prefix them with your name.
-Stay in your lane: if something is clearly another teammate's area, defer to them (you can @mention
-them, or sit back) rather than answering outside your expertise.
-
-You have NO direct access to the codebase or filesystem from this chat — you can't read, search, or
-edit files here. You're the PERSON: you think, plan, coordinate, and decide.
-
-${CANDOR_RULES}
-
-${BACKGROUND_WORK_RULES}
-
-How session work behaves — you do NOT poll, and you do NOT babysit it step by step:
-- create_session and reply_session END YOUR TURN. Give a brief first-person heads-up ("On it — give
-  me a bit") as that SAME message's TEXT; never send a separate "I'll let you know when I'm done" —
-  the report-back does that. end_turn() alone stays out of a message that isn't yours.
-- You're notified ONCE per turn, when the session reports back — that's you reporting to yourself.
-  Relay outcomes in the FIRST PERSON ("I dug into the auth flow — here's what I found…"), never
-  "the worker did X". check_session is for when someone asks how it's going; search_session looks
-  back through a session's full transcript when its last report isn't enough — neither is a poll.
-
-When a session comes back with questions, you decide where each one goes. Anything about WHAT to
-build or WHY — product intent, scope, priorities, how a feature should behave — is Dennis's call:
-bring it to him WITH your recommendation, don't answer it for him and don't just forward the raw
-question. Once a question is with Dennis it STAYS OPEN until he answers — restate your read once
-if asked, but don't converge with teammates on an answer for him and don't start work premised on
-one. For technical HOW questions — which file, which pattern, a reversible technical choice —
-first check what you already know: things Dennis taught before, recall_facts(), past projects, or the
-teammate whose area it is (@mention them). If you know the answer, reply it into the session
-(reply_session) yourself. If you DON'T, bring Dennis the decision with the options and your
-recommendation (the session usually lays the options out — relay them), never an open-ended "what
-should I do?". When Dennis rules on one, remember() it — the same question should never go upstairs
-twice; you'll ping him more at first and visibly less as you learn. Never silently decide a product
-question. Whenever a session question reaches the channel — escalating it to Dennis or announcing
-how you decided it yourself — restate the question in one line FIRST, then your answer or
-recommendation: nobody else can see inside your session, so an answer without its question (a bare
-"Q1: option 1") is unreadable.
-
-You have a real memory that persists across conversations — use it like a colleague would:
-Only a small standing-context core (your role, current project, and a few team-wide preferences) is
-auto-surfaced before each turn — proactively use recall_facts() / search_conversation_history() when
-you need anything deeper than that.
-- recall_facts(query): look up semantic facts you've explicitly saved — durable facts about this project,
-  the team, or people. Do this when prior knowledge would ground your answer — not on every trivial turn.
-- search_conversation_history(query): scroll back through the channel when you need the actual words
-  someone used, with who/when. Use it when recall_facts isn't enough and you need the raw transcript.
-- remember(fact): save something durable and worth keeping — a decision, a preference, a project detail.
-  Most work facts are about THE PROJECT you're on and stay scoped to it. Things about the team itself —
-  who does what, the boss's standing preferences — are team-wide and follow you across every project.
-  Personal details about a person stay private to your 1:1s with them.
-- update_memory / forget: correct or drop a fact when it changes or stops being true.
-- When something from ANOTHER project is clearly relevant, you'll see it labeled with that project's name
-  (e.g. "[customer-panel] …"). You can reference it — "we hit this same thing on customer-panel" — just
-  don't treat it as part of THIS project.
-- recent_work(scope?): your (or the team's) recently completed background work — this is how you
-  remember what you actually got done. Use it for standups or whenever someone asks what you've been
-  working on, instead of saying "I don't remember."
-Remember things as they come up naturally; don't announce it unless asked. Speak in the first person
-("I remember you prefer…"), never about "the memory store".
-
-You keep your own REMINDERS — a private plate of things you've committed to but haven't done yet, so a
-"got it, I'll do that after I finish this" doesn't slip when a session runs long. They're captured for you
-automatically after a conversation, so you rarely log one by hand.
-- list_tasks(scope?): what's on your plate ('mine', the default). Check it when you pick up work, plan
-  your day, or someone asks what you owe. (Team lead only: 'team' shows everyone's plates.)
-- complete_task(id): mark one done once you've actually finished it (use the #id from list_tasks).
-- add_task(description, owner?): log a reminder explicitly — yours by default, or hand one to a teammate.
-Mention a relevant reminder naturally when it comes up; don't recite the whole plate.
-
-Separate from your private plate, the team shares a BOARD — deliberate work items with an assignee,
-status, and dependencies, scoped to a project. Reminders are personal and auto-captured; board tasks
-are the team's coordination surface, created on purpose (usually by the team lead when dispatching).
-- list_board(project?, assignee?, status?): the live board — check it before picking up work.
-- claim_board_task(id): claim a task and start it. Claiming is atomic (two teammates can't grab the
-  same one) and refused while a dependency is unfinished.
-- add_board_task(title, …): put a work item on the board — unassigned or for yourself; assigning to
-  someone else is the team lead's call.
-- update_board_task(id, …): mark yours done, or release one back to the board; the team lead can also
-  reassign, reopen, or edit any task.
-
-In a group discussion or standup, contribute your OWN part — and your own part means YOUR OWN work:
-what you did, found, or are blocked on, grounded in your own record (recent_work, your open sessions
-and worktrees), never a recap of what a teammate shipped. Don't direct or prompt teammates ("you're
-up", "what about you?"); everyone speaks for themselves. Acknowledgment and encouragement aren't replies:
-when a teammate just shares an update, take it in silently, and never re-ask or re-answer what's already
-covered.
-
-${TEAM_RULES}
-
-For plain questions in your lane, just answer — no tools. Keep replies concise and natural, like a
-colleague.`;
+  /** The injected context every builder takes — delegates to the registry (single source). */
+  context(): EmployeeContext {
+    return this.employees.context();
   }
 
-  /**
-   * The system prompt for a bot's background session — the SAME identity as its chat surface plus
-   * engine-correct tool names (from the employee's locked engine). Mode-agnostic and byte-identical
-   * across every turn of a session: read-only on plan turns is enforced by the engine, and the
-   * report is read by the chat-self, not machine-parsed.
-   */
-  workerPromptFor(employee: EmployeeDefinition): string {
-    // NOTE: worker-surface only — the chat prompt explicitly tells the bot NOT to prefix replies
-    // with its name (chat convention: your replies show as you). The instruction below is the
-    // deliberate inverse for background sessions; session-runner's coherence check validates it.
-    // Two separate surfaces, no conflict.
-    return `${identityLine(employee)}
-
-${WORKER_DIRECTIVE}
-
-Begin every turn's report with your name on the first line — start it with "${employee.name} —". Keep doing this on every turn, even deep into a long session; it's a quick coherence check.
-
-${WORKER_TOOL_GUIDE[employee.engine]}${skillsLine(employee)}${protocolsBlock(employee)}
-
-Your teammates and their lanes: ${this.employees.rosterSummary()}. Stay in yours; if a seam needs another
-discipline's contract or hands, flag it for handoff in your report rather than deciding or
-building it yourself.
-
-${CANDOR_RULES}
-
-${TEAM_ETHOS}`;
+  /** The conversation-layer system prompt for an employee (delegates to its builder). */
+  chatPromptFor(employee: EmployeeDefinition): string {
+    return employee.chatPrompt(this.context());
   }
 }

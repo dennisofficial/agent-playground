@@ -22,6 +22,7 @@ import {
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
+import { EngineToolFactory } from '../tools/engine-tool.factory';
 import { ToolRegistry } from '../tools/tool.registry';
 import { WorktreeService } from '../worktrees/worktree.service';
 import {
@@ -54,6 +55,9 @@ import { makeRefreshScopesFromTurn } from './routing';
  */
 export class BotGraphNodes {
   private readonly gapThresholdMs: number;
+  /** DORMANCY: master switch + the consecutive-soft-ignore count at which a bot goes dormant. */
+  private readonly dormancyEnabled: boolean;
+  private readonly dormancyThreshold: number;
 
   constructor(
     private readonly channel: ChannelService,
@@ -68,8 +72,13 @@ export class BotGraphNodes {
     private readonly worktrees: WorktreeService,
     private readonly sessions: SessionRegistry,
     gapThresholdMs: number,
+    dormancyEnabled = true,
+    dormancyThreshold = 3,
+    private readonly engineTools?: EngineToolFactory,
   ) {
     this.gapThresholdMs = gapThresholdMs;
+    this.dormancyEnabled = dormancyEnabled;
+    this.dormancyThreshold = dormancyThreshold;
   }
 
   /**
@@ -146,6 +155,14 @@ export class BotGraphNodes {
     // can't-fail tools should be terminal: the conductor surfaces only assistant text, never
     // tool-result content, so a swallowed failure from a fallible terminal tool would be invisible.
     const terminal = this.toolRegistry.terminalToolNames(allowlist);
+    // Tool-triggered CAPABILITIES (e.g. Nora's deep_research) bind here at graph-build, alongside the
+    // static allowlist and under the same cache_control breakpoint. Each opens a session, so it's
+    // terminal like create_session. (Absent in unit specs where engineTools isn't injected.)
+    if (this.engineTools) {
+      const cap = this.engineTools.buildTools(bot, this.persona.context());
+      tools.push(...cap.tools);
+      for (const name of cap.terminalNames) terminal.add(name);
+    }
     // Context-refreshing tools: name → scopes map, derived from the allowlist's `refreshesContext`
     // flags. Used by `makeAfterTools` (routing) and `refreshContextNode` (recompute).
     const REFRESH = this.toolRegistry.refreshScopesByName(allowlist);
@@ -161,24 +178,49 @@ export class BotGraphNodes {
       const turnStart = state.messages.length;
       // Per-turn read-the-room reset, on EVERY path: Annotation defaults don't re-apply on an
       // existing thread, and a draft orphaned by a crash mid-revision must drop, not replay.
+      // `dormantSkip` resets here too (same trap: a stale `true` would skip reconcile next turn).
       const rtr = {
         draft: undefined,
         draftUsage: undefined,
         revisionPasses: 0,
+        dormantSkip: false,
       };
+      // DORMANCY accumulator (per (bot, room), via the checkpoint). Carried forward UNCHANGED on
+      // the no-soft-call paths below; the gated path recomputes it. Written explicitly on every
+      // path — annotation defaults only cover never-written threads.
+      const softIgnores = state.consecutiveSoftIgnores ?? 0;
       if (state.forced)
-        return { decision: 'respond', pending: [], turnStart, ...rtr }; // job relay: skip the gate
+        return {
+          decision: 'respond',
+          pending: [],
+          turnStart,
+          ...rtr,
+          consecutiveSoftIgnores: 0, // a forced respond re-engages the bot
+        }; // job relay: skip the gate
       const channelId = this.channelIdOf(config);
       const batch = channel
         .since(state.cursor, channelId)
         .filter((m) => m.authorBotId !== bot.id);
       if (batch.length === 0)
-        return { decision: 'ignore', pending: [], turnStart, ...rtr }; // nothing for me
+        return {
+          decision: 'ignore',
+          pending: [],
+          turnStart,
+          ...rtr,
+          consecutiveSoftIgnores: softIgnores,
+        }; // nothing for me
       const latest = batch[batch.length - 1];
       const capped = !!config.configurable?.capped;
       if (capped && latest.authorBotId)
-        return { decision: 'ignore', pending: batch, turnStart, ...rtr }; // loop breaker
+        return {
+          decision: 'ignore',
+          pending: batch,
+          turnStart,
+          ...rtr,
+          consecutiveSoftIgnores: softIgnores,
+        }; // loop breaker
       const room = this.channelRegistry.get(channelId);
+      const dormant = this.dormancyEnabled && softIgnores >= this.dormancyThreshold;
       const d = await this.gateService.gate(
         bot,
         latest.text,
@@ -194,9 +236,14 @@ export class BotGraphNodes {
             text: m.text,
             authorBotId: m.authorBotId,
           })),
+          dormant,
         },
         config,
       );
+      // Next dormancy count: a respond/ack re-engages (→0); a SOFT ignore advances toward dormancy
+      // (+1); a cheap dormant-skip or hard-rule ignore leaves it unchanged.
+      const nextSoftIgnores =
+        d.action !== 'ignore' ? 0 : d.softGate ? softIgnores + 1 : softIgnores;
       // reasoning + gateUsage ride the delta so the conductor can emit them (debug only).
       return {
         decision: d.action,
@@ -211,6 +258,8 @@ export class BotGraphNodes {
         pending: batch,
         turnStart,
         ...rtr,
+        consecutiveSoftIgnores: nextSoftIgnores,
+        dormantSkip: !!d.dormantSkip, // overrides rtr's false on the cheap-ignore path
       };
     };
 
@@ -409,12 +458,18 @@ export class BotGraphNodes {
      *   - a human spoke ANYWHERE in the batch — a batch with a human in it deserves a real turn,
      *     never a fuse check (also closes the race where a teammate's fast reply lands after the
      *     human's and steals the "latest" slot)
-     *   - last AI message is already the pause sentinel (anti break-spam: once paused, the guard
-     *     re-arms only after the bot says something substantive again)
-     *   - fewer than GUARD_FLOOR substantive own messages in history (not enough signal)
+     *   - last SPOKEN AI message is already the pause sentinel (anti break-spam: once paused, the
+     *     guard re-arms only after the bot says something substantive again)
+     *   - fewer than GUARD_FLOOR substantive SPOKEN own messages in history (not enough signal)
      *
-     * The judged window EXCLUDES prior pause lines: the breaker's own output must never count as
-     * loop evidence — a pause-polluted window otherwise re-confirms "looping" forever (observed:
+     * The judged window counts only SPOKEN messages (non-empty chat text). A tool-only turn —
+     * gate passed, but the employee used a tool and ended its turn silently via end_turn — posts
+     * no chat text and is never loop evidence; it's a deliberate "second gate" decline, not a
+     * stall. (Without this, a quiet teammate woken by bot-only chatter accumulates identical
+     * empty-text "Name: [tools: list_sessions]" lines that the judge reads as a no-progress loop.)
+     *
+     * The judged window also EXCLUDES prior pause lines: the breaker's own output must never count
+     * as loop evidence — a pause-polluted window otherwise re-confirms "looping" forever (observed:
      * eight consecutive self-confirming re-fires).
      */
     /** The skip verdict — clears any checkpointed break from a prior turn (see docstring). */
@@ -434,14 +489,20 @@ export class BotGraphNodes {
       // A human anywhere in the batch → real turn, no fuse check.
       if (state.pending.some((m) => !m.authorBotId)) return GUARD_SKIP;
       const ownMessages = state.messages.filter((m) => m.getType() === 'ai');
+      // Only the bot's SPOKEN messages are loop evidence. A tool-only turn (gate passed, but the
+      // employee used a tool and ended its turn silently via end_turn) is a deliberate "second
+      // gate" decline, not a stall — it must not count toward the floor or appear in the window.
+      const spoken = ownMessages.filter(
+        (m) => flattenContent(m.content).trim() !== '',
+      );
       // Anti break-spam: once paused, stay paused on bot-only chatter; the guard re-arms when the
-      // bot next produces a substantive (non-pause) message of its own.
-      const lastAiText = ownMessages.length
-        ? flattenContent(ownMessages[ownMessages.length - 1].content).trim()
+      // bot next SPEAKS a substantive (non-pause) message of its own.
+      const lastSpoken = spoken.length
+        ? flattenContent(spoken[spoken.length - 1].content).trim()
         : '';
-      if (lastAiText.startsWith(PAUSE_SENTINEL)) return GUARD_SKIP;
+      if (lastSpoken.startsWith(PAUSE_SENTINEL)) return GUARD_SKIP;
       // Need enough SUBSTANTIVE history for a meaningful window — pause lines don't count.
-      const substantive = ownMessages.filter(
+      const substantive = spoken.filter(
         (m) => !flattenContent(m.content).trim().startsWith(PAUSE_SENTINEL),
       );
       if (substantive.length < GUARD_FLOOR) return GUARD_SKIP;

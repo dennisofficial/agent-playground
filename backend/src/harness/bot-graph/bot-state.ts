@@ -167,6 +167,23 @@ export const BotState = Annotation.Root({
     reducer: (_: number, b: number) => b ?? 0,
     default: () => 0,
   }),
+  /** DORMANCY accumulator: consecutive soft-gate IGNOREs in this room (the checkpoint thread is
+   * per (bot, room)). At/above the threshold the bot is "dormant" and stops paying for the soft
+   * gate until a wake trigger (its name/@/broadcast, or a lane keyword) fires. Persists across
+   * turns; `gate` rewrites it explicitly on every path (reset to 0 on respond/ack/forced, +1 on a
+   * soft ignore, unchanged on a cheap/hard ignore). */
+  consecutiveSoftIgnores: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
+  }),
+  /** DORMANCY per-turn routing flag: set by `gate` when a dormant bot cheap-ignores an off-lane
+   * message (no wake trigger). Routes `mark_seen → END`, skipping the reconcile LLM call. Like
+   * `draft`/`loopBreak`, written explicitly every run (annotation defaults don't re-apply on an
+   * existing thread, so a stale `true` would otherwise skip reconcile on the next turn). */
+  dormantSkip: Annotation<boolean>({
+    reducer: (_: boolean, b: boolean) => b ?? false,
+    default: () => false,
+  }),
 });
 
 export type BotStateType = typeof BotState.State;

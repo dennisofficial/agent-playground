@@ -2,41 +2,14 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
 import { collectDecorated } from '../discovery.util';
 import { escapeRegExp } from '../domain/text';
-import { EWorkerEngineName } from '../engines/worker-engine.port';
-import type { EffortLevel, WorkerRole } from '../engines/worker-engine.port';
 import { AI_EMPLOYEE_METADATA } from './ai-employee.decorator';
+import type { EmployeeContext } from './employee-context';
 import type { EmployeeDefinition } from './employee.types';
+import { TEAM_CONTEXT } from './roster/shared';
+import { LifecycleEvent } from '../lifecycle/lifecycle.types';
 
-/** The engine + model + reasoning effort a worker run resolves to, by employee and role. */
-export interface ResolvedWorkerModel {
-  /** The engine this role runs on (the employee's base `engine`, or a `roles.<role>.engine` override). */
-  engine: EWorkerEngineName;
-  /** Model id, or undefined to let the engine use its env/SDK default (e.g. Codex via CODEX_MODEL). */
-  model?: string;
-  /** Reasoning effort (Claude only). */
-  effort?: EffortLevel;
-}
-
-interface RoleTier {
-  model?: string;
-  effort?: EffortLevel;
-}
-
-// Per-engine, per-role model tiers: a high-reasoning model for PLAN/REVIEW, a cheaper one for
-// EXECUTE. Single source of truth — an employee only sets a `roles` binding to deviate. Codex/
-// LangGraph carry no fixed ids here (Codex resolves via CODEX_MODEL; effort is Claude-only).
-const ENGINE_MODEL_TIERS: Record<
-  EWorkerEngineName,
-  Record<WorkerRole, RoleTier>
-> = {
-  [EWorkerEngineName.CLAUDE]: {
-    plan: { model: 'claude-opus-4-8', effort: 'max' },
-    execute: { model: 'claude-sonnet-4-6', effort: 'high' },
-    review: { model: 'claude-opus-4-8', effort: 'high' },
-  },
-  [EWorkerEngineName.CODEX]: { plan: {}, execute: {}, review: {} },
-  [EWorkerEngineName.LANGGRAPH]: { plan: {}, execute: {}, review: {} },
-};
+/** The lifecycle events a capability may legally hook (boot-validated). */
+const KNOWN_LIFECYCLE_EVENTS = new Set<string>(Object.values(LifecycleEvent));
 
 /**
  * The roster, assembled by discovery: every `@AIEmployee()` class provider, validated and sorted at
@@ -81,6 +54,32 @@ export class EmployeeRegistry implements OnModuleInit {
       );
     }
     this.roster = roster;
+
+    // Validate each employee's declared capabilities once the roster (and thus context) exists:
+    // a lifecycle hook must name a known event; capability names must be unique per employee and not
+    // empty. Resolving each spec also surfaces a broken builder at boot rather than mid-turn.
+    const ctx = this.context();
+    for (const e of roster) {
+      const caps = e.capabilities(ctx);
+      const names = new Set<string>();
+      for (const cap of caps) {
+        if (!cap.name)
+          throw new Error(`Employee '${e.id}' has a capability with no name`);
+        if (names.has(cap.name))
+          throw new Error(
+            `Employee '${e.id}' has duplicate capability '${cap.name}'`,
+          );
+        names.add(cap.name);
+        cap.spec(ctx); // throws here (at boot) if the spec builder is broken
+        if (
+          cap.trigger.kind === 'lifecycle' &&
+          !KNOWN_LIFECYCLE_EVENTS.has(cap.trigger.on)
+        )
+          throw new Error(
+            `Employee '${e.id}' capability '${cap.name}' hooks unknown lifecycle event '${cap.trigger.on}'`,
+          );
+      }
+    }
   }
 
   /** The one team lead (validated exactly-one at boot). */
@@ -143,37 +142,41 @@ export class EmployeeRegistry implements OnModuleInit {
     return /@(here|channel|everyone)\b/i.test(text);
   }
 
+  /**
+   * True when `text` mentions one of this employee's lane keywords (case-insensitive, word
+   * boundary). The cheap programmatic wake-from-dormancy check — no LLM. Compiles one alternation
+   * RegExp per bot, cached by id (terms are escaped so a keyword like "go-to-market" matches
+   * literally). No keywords → always false.
+   */
+  keywordHit(bot: EmployeeDefinition, text: string): boolean {
+    const re = this.keywordRe(bot);
+    return re ? re.test(text) : false;
+  }
+
+  private readonly keywordRes = new Map<string, RegExp | null>();
+  private keywordRe(bot: EmployeeDefinition): RegExp | null {
+    let re = this.keywordRes.get(bot.id);
+    if (re === undefined) {
+      const terms = (bot.keywords ?? []).filter((k) => k.trim());
+      re = terms.length
+        ? new RegExp(`\\b(?:${terms.map(escapeRegExp).join('|')})\\b`, 'i')
+        : null;
+      this.keywordRes.set(bot.id, re);
+    }
+    return re;
+  }
+
   /** One-line roster summary for prompts ("Alex — backend engineer; Sam — team lead"). */
   rosterSummary(): string {
     return this.roster.map((b) => `${b.name} — ${b.role}`).join('; ');
   }
 
   /**
-   * Resolve the engine + model + effort for a worker run by ROLE. Precedence: the employee's
-   * `roles.<role>` binding → the deprecated flat fields (`planModel`/`planEffort`/`execModel`) →
-   * the resolved engine's default role tier. The engine is the role's `engine` override or the
-   * employee's base `engine`; the model tier is keyed off THAT engine. PLAN/REVIEW → high-reasoning;
-   * EXECUTE → the everyday model.
+   * The agnostic context the harness injects into an employee's builders (`roleContext`/`planEngine`/
+   * `capabilities`). Static today (team frame + roster summary), a DB row tomorrow. Single source so
+   * the lifecycle runner, session tools, and PersonaService all build identical bytes.
    */
-  resolveWorkerModel(
-    employee: EmployeeDefinition,
-    role: WorkerRole,
-  ): ResolvedWorkerModel {
-    const binding = employee.roles?.[role];
-    const engine = binding?.engine ?? employee.engine;
-    const tier = ENGINE_MODEL_TIERS[engine][role];
-    // Deprecated flat fields only alias plan/execute (there was never a flat review field).
-    const legacyModel =
-      role === 'plan'
-        ? employee.planModel
-        : role === 'execute'
-          ? employee.execModel
-          : undefined;
-    const legacyEffort = role === 'plan' ? employee.planEffort : undefined;
-    return {
-      engine,
-      model: binding?.model ?? legacyModel ?? tier.model,
-      effort: binding?.effort ?? legacyEffort ?? tier.effort,
-    };
+  context(): EmployeeContext {
+    return { team: TEAM_CONTEXT, roster: this.rosterSummary() };
   }
 }

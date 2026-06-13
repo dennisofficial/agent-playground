@@ -45,26 +45,19 @@ describe('sessionRelayPrompt', () => {
     expect(out).toContain('do NOT change mode');
   });
 
-  it('a board-linked plan reports the auto-attach and routes to Sam, never a self-set status', () => {
+  it('a board-linked plan is NOT auto-attached — it routes to submit_plan, then Sam, never a self-set status', () => {
     const out = sessionRelayPrompt(
-      session({ lastReportKind: 'plan', boardTaskId: 7, planAttached: true }),
+      session({ lastReportKind: 'plan', boardTaskId: 7 }),
     );
     expect(out).toContain('finished its PLAN');
-    expect(out).toContain('automatically ATTACHED to ticket #7');
-    expect(out).toContain('@Sam reviews every attached plan');
+    expect(out).toContain('NOT attached yet');
+    expect(out).toContain('submit_plan("sess-001")');
+    expect(out).toContain('@Sam reviews every submitted plan');
     expect(out).toContain('Keep THIS session OPEN');
     expect(out).toContain('close_session("sess-001")');
     expect(out).toContain('Do NOT set any board status yourself');
     expect(out).toContain("do NOT reply with mode 'execute'");
     expect(out).not.toContain('update_board_task');
-  });
-
-  it('a FAILED auto-attach tells the owner to park the plan on the ticket via add_note', () => {
-    const out = sessionRelayPrompt(
-      session({ lastReportKind: 'plan', boardTaskId: 7, planAttached: false }),
-    );
-    expect(out).toContain('FAILED');
-    expect(out).toContain('add_note(7,');
     expect(out).not.toContain('automatically ATTACHED');
   });
 

@@ -35,16 +35,13 @@ Collect answers for ALL questions, then send them in ONE reply_session("${sid}",
 
   if (session.lastReportKind === 'plan') {
     if (session.boardTaskId !== undefined) {
-      const attachLine =
-        session.planAttached === false
-          ? `The automatic attach to ticket #${session.boardTaskId} FAILED — park the full plan on the ticket yourself with add_note(${session.boardTaskId}, <the plan>) before anything else; the ticket is the durable copy.`
-          : `Your plan (with its Q&A) was automatically ATTACHED to ticket #${session.boardTaskId} — the ticket is the durable copy.`;
-      return `[Session ${sid} — "${session.task}"] finished its PLAN (its planning Q&A is included below):
+      return `[Session ${sid} — "${session.task}"] finished its PLAN (self-reviewed; its planning Q&A is included below):
 ${report}
 
-This session is linked to board task #${session.boardTaskId}. ${attachLine} Next:
-- Tell the team, first person and brief, that your plan on #${session.boardTaskId} is ready — @Sam reviews every attached plan before anything is proposed to Dennis.
-- Keep THIS session OPEN through the WHOLE approval pipeline — Sam's review AND Dennis's verdict. Sam's approval only clears layer 1; it is NOT your cue to close. Any revision notes — Sam's, then Dennis's — reply_session straight in, and the revised plan re-attaches on the next turn with full planning context intact. If Dennis requests changes, reply them in here; the plan re-attaches and goes back up the pipeline.
+This session is linked to board task #${session.boardTaskId}. The plan is NOT attached yet — it came back to YOU to approve first, like reviewing your own Claude Code's plan before pushing it. Next:
+- READ the plan above. Happy with it? submit_plan("${sid}") attaches it to ticket #${session.boardTaskId} and notifies @Sam to review — that's your explicit approval of your own plan. Want changes first? reply_session("${sid}", <your notes>) and it'll revise and come back; submit when it's right.
+- After submitting, tell the team in the first person and brief that your plan on #${session.boardTaskId} is ready — @Sam reviews every submitted plan before anything is proposed to Dennis.
+- Keep THIS session OPEN through the WHOLE approval pipeline — Sam's review AND Dennis's verdict. Sam's approval only clears layer 1; it is NOT your cue to close. Any revision notes — Sam's, then Dennis's — reply_session straight in, then submit_plan again to re-attach the revised plan with full planning context intact.
 - close_session("${sid}") ONLY once Dennis has APPROVED (and the standup closes) — the ticket carries the plan and the execute session opens fresh from it. Closing earlier throws away the context you'll want for revisions.
 Do NOT set any board status yourself and do NOT reply with mode 'execute' — the system refuses early flips.`;
     }
