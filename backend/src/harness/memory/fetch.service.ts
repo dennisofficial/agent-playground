@@ -3,12 +3,27 @@ import { Identity, recallProjects } from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { BoardStore } from './board-store';
 import { SemanticMemory } from './semantic-memory';
+import { SessionNoteStore } from './session-note.store';
+import type { SessionNote } from './session-note.store';
 import { TaskStore } from './task-store';
 
 // Cap on reminders injected per turn so a growing plate doesn't monotonically bloat context.
 const REMINDER_CAP = 12;
 // Cap on active board tasks shown in the working-state slot.
 const BOARD_TASK_CAP = 5;
+// Cap on open session notes shown in the notes slot.
+const NOTES_CAP = 10;
+
+/** Priority order for note kinds: blockers surface first, then todos, hypotheses, handoffs. */
+const NOTE_KIND_ORDER: Record<string, number> = {
+  blocker: 0,
+  todo: 1,
+  hypothesis: 2,
+  handoff: 3,
+};
+
+const sortNotes = (a: SessionNote, b: SessionNote): number =>
+  (NOTE_KIND_ORDER[a.kind] ?? 9) - (NOTE_KIND_ORDER[b.kind] ?? 9);
 
 /**
  * The pre-LLM context ASSEMBLER — builds the `recalled` block injected before the bot thinks.
@@ -18,7 +33,7 @@ const BOARD_TASK_CAP = 5;
  *        Role + active project + ≤5 team-scope standing preferences (no embedding — near-free).
  *   2. Active board tasks  (in_progress for this bot, hard-capped at BOARD_TASK_CAP).
  *   3. Reminder plate      (open tasks, REMINDER_CAP-capped).
- *   4. Open notes slot     (Phase 4 — empty-safe until Phase 4 lands).
+ *   4. Open session notes  (per-thread scratchpad: blocker→todo→hypothesis→handoff, NOTES_CAP-capped).
  *   5. Compaction summary  (Phase 6 — empty-safe until Phase 6 lands).
  *   6. Memory suggestions  (Phase 2 — empty-safe until Phase 2 lands).
  *
@@ -43,6 +58,7 @@ export class FetchService {
     private readonly semantic: SemanticMemory,
     private readonly tasks: TaskStore,
     private readonly board: BoardStore,
+    private readonly sessionNotes: SessionNoteStore,
   ) {}
 
   /**
@@ -86,7 +102,25 @@ export class FetchService {
       );
     }
 
-    // Slots 4–5 (session notes, compaction summary) are empty-safe stubs — wired in Phases 4, 6.
+    // ── 4. Open session notes ─────────────────────────────────────────────────────────────────────
+    // Thread-local scratchpad: blockers surface first (highest priority), then todos, hypotheses,
+    // handoffs. Hard-capped at NOTES_CAP; omitted when empty. Scoped to (team, bot, surface).
+    const openNotes = await this.sessionNotes
+      .listOpen(id.team, bot.id, id.surface)
+      .catch(() => []);
+    if (openNotes.length > 0) {
+      const sorted = [...openNotes].sort(sortNotes);
+      const shown = sorted.slice(0, NOTES_CAP);
+      const more = sorted.length - shown.length;
+      const lines = shown
+        .map((n) => `- [#${n.id}] (${n.kind}) ${n.body}`)
+        .join('\n');
+      parts.push(
+        `Open notes (this thread):\n${lines}${more > 0 ? `\n…and ${more} more (list_session_notes)` : ''}`,
+      );
+    }
+
+    // Slot 5 (compaction summary) is an empty-safe stub — wired in Phase 6.
 
     // ── 6. Memory suggestions (Phase 2) ─────────────────────────────────────────────────────────
     // Suggestions from the previous turn's read-only reconcile pass. The agent acts on them with

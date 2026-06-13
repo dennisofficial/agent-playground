@@ -15,6 +15,11 @@ import {
   SearchConversationHistoryTool,
   UpdateMemoryTool,
 } from './memory/memory.tools';
+import {
+  AddSessionNoteTool,
+  ListSessionNotesTool,
+  ResolveSessionNoteTool,
+} from './memory/session-note.tools';
 import { ListRoomsTool, SendMessageTool } from './rooms/room.tools';
 import {
   CheckSessionTool,
@@ -104,6 +109,10 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     UpdateMemoryTool,
     ForgetTool,
     SearchConversationHistoryTool,
+    // session notes (thread-local scratchpad)
+    AddSessionNoteTool,
+    ListSessionNotesTool,
+    ResolveSessionNoteTool,
     // reminders
     ListTasksTool,
     AddTaskTool,

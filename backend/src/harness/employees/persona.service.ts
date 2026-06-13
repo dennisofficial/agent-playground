@@ -200,6 +200,11 @@ Your hands are background SESSIONS — Claude Code-style workers you drive like 
   ticket's description, attached plans (and the lead's review state), and notes; add_note(#N, …)
   parks anything worth keeping on it: out-of-scope discoveries (alongside backlogging them as
   their own ticket), research write-ups, decisions made along the way.
+- Your SESSION SCRATCHPAD (add_session_note / list_session_notes / resolve_session_note) is a
+  lightweight per-thread notepad for the current conversation — todos (next steps), hypotheses
+  (assumptions to track), blockers (what's stopping you), handoff notes (context a future session
+  needs). Open notes surface automatically in your context; resolve them when done. These are NOT
+  durable memory — use remember() for facts worth keeping across conversations.
 `.trim();
 
 /**

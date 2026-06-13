@@ -2,6 +2,7 @@ import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
 import {
   Fact,
+  SessionNote,
   Task,
   TeamSetting,
   TeamTask,
@@ -20,6 +21,7 @@ import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
+import { SessionNoteStore } from './session-note.store';
 import { PlanStore } from './plan-store';
 import { ReconcileService } from './reconcile.service';
 import { SemanticMemory } from './semantic-memory';
@@ -39,6 +41,7 @@ import { WorklogStore } from './worklog-store';
   imports: [
     TypeOrmModule.forFeature([
       Fact,
+      SessionNote,
       Task,
       TeamTask,
       TeamTaskPlan,
@@ -100,6 +103,12 @@ import { WorklogStore } from './worklog-store';
       inject: [getRepositoryToken(TeamSetting)],
       useFactory: (settings: Repository<TeamSetting>) =>
         new TeamSettingsStore(settings),
+    },
+    {
+      provide: SessionNoteStore,
+      inject: [getRepositoryToken(SessionNote)],
+      useFactory: (sessionNotes: Repository<SessionNote>) =>
+        new SessionNoteStore(sessionNotes),
     },
   ],
 })

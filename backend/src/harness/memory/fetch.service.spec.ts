@@ -6,8 +6,10 @@ import { FetchService } from './fetch.service';
 import type { SemanticMemory } from './semantic-memory';
 import type { TaskStore } from './task-store';
 import type { BoardStore } from './board-store';
+import type { SessionNoteStore } from './session-note.store';
 import type { Task } from './task-store';
 import type { BoardTask } from './board-store';
+import type { SessionNote } from './session-note.store';
 
 /** Minimal EmployeeDefinition for tests. */
 const makeBot = (
@@ -30,6 +32,7 @@ function makeService(opts: {
   prefs?: string;
   boardTasks?: BoardTask[];
   reminders?: Task[];
+  openNotes?: SessionNote[];
 }) {
   const semantic = {
     standingContext: vi.fn().mockResolvedValue(opts.prefs ?? ''),
@@ -44,7 +47,17 @@ function makeService(opts: {
     list: vi.fn().mockResolvedValue(opts.boardTasks ?? []),
   } as unknown as BoardStore;
 
-  return { svc: new FetchService(semantic, tasks, board), semantic, tasks, board };
+  const sessionNotes = {
+    listOpen: vi.fn().mockResolvedValue(opts.openNotes ?? []),
+  } as unknown as SessionNoteStore;
+
+  return {
+    svc: new FetchService(semantic, tasks, board, sessionNotes),
+    semantic,
+    tasks,
+    board,
+    sessionNotes,
+  };
 }
 
 describe('FetchService.fetchContext (Phase 3 assembler)', () => {
@@ -79,9 +92,17 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const semantic = {
         standingContext: vi.fn().mockRejectedValue(new Error('db error')),
       } as unknown as SemanticMemory;
-      const tasks = { listTasks: vi.fn().mockResolvedValue([]), openTasks: vi.fn().mockResolvedValue([]) } as unknown as TaskStore;
-      const board = { list: vi.fn().mockResolvedValue([]) } as unknown as BoardStore;
-      const svc = new FetchService(semantic, tasks, board);
+      const tasks = {
+        listTasks: vi.fn().mockResolvedValue([]),
+        openTasks: vi.fn().mockResolvedValue([]),
+      } as unknown as TaskStore;
+      const board = {
+        list: vi.fn().mockResolvedValue([]),
+      } as unknown as BoardStore;
+      const sessionNotes = {
+        listOpen: vi.fn().mockResolvedValue([]),
+      } as unknown as SessionNoteStore;
+      const svc = new FetchService(semantic, tasks, board, sessionNotes);
       const result = await svc.fetchContext(makeBot(), id);
       expect(result).toContain('Standing context:');
       expect(result).toContain('backend engineer');
@@ -105,15 +126,30 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const { svc, semantic } = makeService({});
       await svc.fetchContext(makeBot(), id);
       // SemanticMemory.recall / recallOtherProjects must not be called
-      expect((semantic as unknown as Record<string, unknown>).recall).toBeUndefined();
-      expect((semantic as unknown as Record<string, unknown>).recallOtherProjects).toBeUndefined();
+      expect(
+        (semantic as unknown as Record<string, unknown>).recall,
+      ).toBeUndefined();
+      expect(
+        (semantic as unknown as Record<string, unknown>).recallOtherProjects,
+      ).toBeUndefined();
     });
   });
 
   describe('active board tasks slot', () => {
     it('renders in-progress board tasks when present', async () => {
       const boardTasks: BoardTask[] = [
-        { id: 10, title: 'Build auth API', description: '', status: 'in_progress', project: 'main', assignee: 'alex', createdBy: 'sam', dependsOn: [], createdAt: '', updatedAt: '' },
+        {
+          id: 10,
+          title: 'Build auth API',
+          description: '',
+          status: 'in_progress',
+          project: 'main',
+          assignee: 'alex',
+          createdBy: 'sam',
+          dependsOn: [],
+          createdAt: '',
+          updatedAt: '',
+        },
       ];
       const { svc } = makeService({ boardTasks });
       const result = await svc.fetchContext(makeBot(), id);
@@ -147,10 +183,20 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
     });
 
     it('degrades gracefully when board.list throws', async () => {
-      const semantic = { standingContext: vi.fn().mockResolvedValue('') } as unknown as SemanticMemory;
-      const tasks = { listTasks: vi.fn().mockResolvedValue([]), openTasks: vi.fn().mockResolvedValue([]) } as unknown as TaskStore;
-      const board = { list: vi.fn().mockRejectedValue(new Error('db down')) } as unknown as BoardStore;
-      const svc = new FetchService(semantic, tasks, board);
+      const semantic = {
+        standingContext: vi.fn().mockResolvedValue(''),
+      } as unknown as SemanticMemory;
+      const tasks = {
+        listTasks: vi.fn().mockResolvedValue([]),
+        openTasks: vi.fn().mockResolvedValue([]),
+      } as unknown as TaskStore;
+      const board = {
+        list: vi.fn().mockRejectedValue(new Error('db down')),
+      } as unknown as BoardStore;
+      const sessionNotes = {
+        listOpen: vi.fn().mockResolvedValue([]),
+      } as unknown as SessionNoteStore;
+      const svc = new FetchService(semantic, tasks, board, sessionNotes);
       const result = await svc.fetchContext(makeBot(), id);
       // Should still return standing context, no board section
       expect(result).toContain('Standing context:');
@@ -161,7 +207,15 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
   describe('reminder plate slot', () => {
     it('renders open reminders when present', async () => {
       const reminders: Task[] = [
-        { id: 1, project: 'local', description: 'Wire the auth hooks', owner: 'alex', status: 'open', createdAt: '', updatedAt: '' },
+        {
+          id: 1,
+          project: 'local',
+          description: 'Wire the auth hooks',
+          owner: 'alex',
+          status: 'open',
+          createdAt: '',
+          updatedAt: '',
+        },
       ];
       const { svc } = makeService({ reminders });
       const result = await svc.fetchContext(makeBot(), id);
@@ -192,7 +246,15 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
 
     it('uses "Open reminders (team):" label for the team lead', async () => {
       const reminders: Task[] = [
-        { id: 1, project: 'local', description: 'Team task', owner: 'riley', status: 'open', createdAt: '', updatedAt: '' },
+        {
+          id: 1,
+          project: 'local',
+          description: 'Team task',
+          owner: 'riley',
+          status: 'open',
+          createdAt: '',
+          updatedAt: '',
+        },
       ];
       const { svc } = makeService({ reminders });
       const result = await svc.fetchContext(makeBot({ teamLead: true }), id);
@@ -203,10 +265,29 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
   describe('section ordering and structure', () => {
     it('sections appear in priority order: standing → board → reminders', async () => {
       const boardTasks: BoardTask[] = [
-        { id: 5, title: 'Board job', description: '', status: 'in_progress', project: 'main', assignee: 'alex', createdBy: 'sam', dependsOn: [], createdAt: '', updatedAt: '' },
+        {
+          id: 5,
+          title: 'Board job',
+          description: '',
+          status: 'in_progress',
+          project: 'main',
+          assignee: 'alex',
+          createdBy: 'sam',
+          dependsOn: [],
+          createdAt: '',
+          updatedAt: '',
+        },
       ];
       const reminders: Task[] = [
-        { id: 1, project: 'local', description: 'Do a thing', owner: 'alex', status: 'open', createdAt: '', updatedAt: '' },
+        {
+          id: 1,
+          project: 'local',
+          description: 'Do a thing',
+          owner: 'alex',
+          status: 'open',
+          createdAt: '',
+          updatedAt: '',
+        },
       ];
       const { svc } = makeService({
         prefs: '- Prefer TypeScript strict mode',
@@ -232,10 +313,136 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
     });
   });
 
+  describe('open session notes slot (Phase 4)', () => {
+    const makeNote = (
+      id: number,
+      kind: SessionNote['kind'],
+      body: string,
+    ): SessionNote => ({
+      id,
+      teamId: 'local',
+      ownerBot: 'alex',
+      channelId: 'dev:root',
+      project: 'local',
+      kind,
+      body,
+      status: 'open',
+      createdAt: '',
+      updatedAt: '',
+    });
+
+    it('renders open notes when present', async () => {
+      const openNotes: SessionNote[] = [
+        makeNote(1, 'blocker', 'DB migration locked'),
+        makeNote(2, 'todo', 'Wire the auth hook'),
+      ];
+      const { svc } = makeService({ openNotes });
+      const result = await svc.fetchContext(makeBot(), id);
+      expect(result).toContain('Open notes (this thread):');
+      expect(result).toContain('[#1] (blocker) DB migration locked');
+      expect(result).toContain('[#2] (todo) Wire the auth hook');
+    });
+
+    it('omits the notes section when there are no open notes', async () => {
+      const { svc } = makeService({ openNotes: [] });
+      const result = await svc.fetchContext(makeBot(), id);
+      expect(result).not.toContain('Open notes (this thread):');
+    });
+
+    it('orders by kind priority: blocker → todo → hypothesis → handoff', async () => {
+      const openNotes: SessionNote[] = [
+        makeNote(1, 'handoff', 'Hand off to next session'),
+        makeNote(2, 'hypothesis', 'Might be a caching issue'),
+        makeNote(3, 'todo', 'Wire the auth hook'),
+        makeNote(4, 'blocker', 'Missing env var'),
+      ];
+      const { svc } = makeService({ openNotes });
+      const result = await svc.fetchMemory(makeBot(), id);
+      const blockerIdx = result.indexOf('(blocker)');
+      const todoIdx = result.indexOf('(todo)');
+      const hypothesisIdx = result.indexOf('(hypothesis)');
+      const handoffIdx = result.indexOf('(handoff)');
+      expect(blockerIdx).toBeGreaterThanOrEqual(0);
+      expect(blockerIdx).toBeLessThan(todoIdx);
+      expect(todoIdx).toBeLessThan(hypothesisIdx);
+      expect(hypothesisIdx).toBeLessThan(handoffIdx);
+    });
+
+    it('caps at NOTES_CAP (10) and shows overflow note', async () => {
+      const openNotes: SessionNote[] = Array.from({ length: 13 }, (_, i) =>
+        makeNote(i + 1, 'todo', `Todo item ${i + 1}`),
+      );
+      const { svc } = makeService({ openNotes });
+      const result = await svc.fetchContext(makeBot(), id);
+      expect(result).toContain('…and 3 more (list_session_notes)');
+    });
+
+    it('notes section appears after board tasks and before memory suggestions', async () => {
+      const boardTasks: BoardTask[] = [
+        {
+          id: 1,
+          title: 'Build auth',
+          description: '',
+          status: 'in_progress',
+          project: 'main',
+          assignee: 'alex',
+          createdBy: 'sam',
+          dependsOn: [],
+          createdAt: '',
+          updatedAt: '',
+        },
+      ];
+      const openNotes: SessionNote[] = [makeNote(1, 'blocker', 'DB locked')];
+      const { svc } = makeService({ boardTasks, openNotes });
+      const suggestions =
+        '• remember: "Dennis wants PRs to target develop" (preference · team)';
+      const result = await svc.fetchMemory(makeBot(), id, suggestions);
+      const boardIdx = result.indexOf('Active board work:');
+      const notesIdx = result.indexOf('Open notes (this thread):');
+      const suggestionsIdx = result.indexOf('Memory suggestions');
+      expect(boardIdx).toBeGreaterThanOrEqual(0);
+      expect(notesIdx).toBeGreaterThanOrEqual(0);
+      expect(suggestionsIdx).toBeGreaterThanOrEqual(0);
+      expect(boardIdx).toBeLessThan(notesIdx);
+      expect(notesIdx).toBeLessThan(suggestionsIdx);
+    });
+
+    it('degrades gracefully when sessionNotes.listOpen throws', async () => {
+      const semantic = {
+        standingContext: vi.fn().mockResolvedValue(''),
+      } as unknown as SemanticMemory;
+      const tasks = {
+        listTasks: vi.fn().mockResolvedValue([]),
+        openTasks: vi.fn().mockResolvedValue([]),
+      } as unknown as TaskStore;
+      const board = {
+        list: vi.fn().mockResolvedValue([]),
+      } as unknown as BoardStore;
+      const sessionNotes = {
+        listOpen: vi.fn().mockRejectedValue(new Error('db error')),
+      } as unknown as SessionNoteStore;
+      const svc = new FetchService(semantic, tasks, board, sessionNotes);
+      const result = await svc.fetchContext(makeBot(), id);
+      expect(result).toContain('Standing context:');
+      expect(result).not.toContain('Open notes (this thread):');
+    });
+
+    it('passes (team, bot.id, surface) to listOpen', async () => {
+      const { svc, sessionNotes } = makeService({});
+      await svc.fetchMemory(makeBot(), id);
+      expect(sessionNotes.listOpen).toHaveBeenCalledWith(
+        id.team,
+        'alex', // bot.id from makeBot()
+        id.surface,
+      );
+    });
+  });
+
   describe('memory suggestions slot (Phase 2)', () => {
     it('injects suggestions block when memorySuggestions is non-empty', async () => {
       const { svc } = makeService({});
-      const suggestions = '• remember: "Dennis wants PRs to target develop" (preference · team)';
+      const suggestions =
+        '• remember: "Dennis wants PRs to target develop" (preference · team)';
       const result = await svc.fetchMemory(makeBot(), id, suggestions);
       expect(result).toContain('Memory suggestions from last turn');
       expect(result).toContain('Dennis wants PRs to target develop');
@@ -255,7 +462,18 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
 
     it('suggestions slot appears AFTER standing context and board tasks', async () => {
       const boardTasks: BoardTask[] = [
-        { id: 1, title: 'Build auth', description: '', status: 'in_progress', project: 'main', assignee: 'alex', createdBy: 'sam', dependsOn: [], createdAt: '', updatedAt: '' },
+        {
+          id: 1,
+          title: 'Build auth',
+          description: '',
+          status: 'in_progress',
+          project: 'main',
+          assignee: 'alex',
+          createdBy: 'sam',
+          dependsOn: [],
+          createdAt: '',
+          updatedAt: '',
+        },
       ];
       const { svc } = makeService({ boardTasks });
       const suggestions = '• remember: "Backend uses PostgreSQL" (decision)';
