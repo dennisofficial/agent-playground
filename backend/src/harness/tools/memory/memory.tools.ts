@@ -36,6 +36,7 @@ const rememberSchema = z.object({
 @HarnessTool()
 export class RememberTool implements IHarnessTool<typeof rememberSchema> {
   readonly name = 'remember';
+  readonly refreshesContext = ['memory'] as const;
   readonly description =
     'Save a durable fact worth recalling in later conversations — a decision, a preference, a work detail. State it as ONE bare, atomic claim: the fact itself, with no interpretation, consequences, or "what this means" elaboration (those make near-duplicates that never dedup). Pick who should know it.';
   readonly schema = rememberSchema;
@@ -100,6 +101,7 @@ const updateSchema = z.object({
 @HarnessTool()
 export class UpdateMemoryTool implements IHarnessTool<typeof updateSchema> {
   readonly name = 'update_memory';
+  readonly refreshesContext = ['memory'] as const;
   readonly description =
     'Correct an existing fact by its #id (the [#N] shown by recall) when something changes. Recall first to get the id — there is no fuzzy matching, and an unknown id is a no-op.';
   readonly schema = updateSchema;
@@ -131,6 +133,7 @@ const forgetSchema = z.object({
 @HarnessTool()
 export class ForgetTool implements IHarnessTool<typeof forgetSchema> {
   readonly name = 'forget';
+  readonly refreshesContext = ['memory'] as const;
   readonly description =
     'Forget a saved fact by its #id (the [#N] shown by recall; soft-deleted, not destroyed). Recall first to get the id — there is no fuzzy matching, and an unknown id is a no-op. Use when something is no longer true.';
   readonly schema = forgetSchema;

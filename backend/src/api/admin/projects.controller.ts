@@ -8,19 +8,16 @@ import {
   Param,
   Patch,
   Post,
-  UseGuards,
 } from '@nestjs/common';
 import {
   ProjectConflictError,
   ProjectStore,
 } from '../../harness/projects/project-store';
 import { GithubTokenStore } from '../../harness/projects/github-token-store';
-import { AdminTokenGuard } from './admin-token.guard';
 import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto';
 
 /** Admin CRUD for the project registry (which GitHub repo each project's code flows to). */
 @Controller('tenants/:teamId/projects')
-@UseGuards(AdminTokenGuard)
 export class ProjectsController {
   constructor(
     private readonly projects: ProjectStore,

@@ -32,9 +32,9 @@ export { MAX_REVISION_PASSES, revisionNote } from './read-the-room';
  * `${bot.id}:${project}:root` (Postgres checkpointer). The conductor invokes it whenever the channel
  * has grown past the bot's cursor.
  *
- *   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⟲ ⇄ tools ─┐
- *                 │                        └─ pause ─────────────────────┤
- *                 └─ acknowledge / ignore → mark_seen ───────────────────┴→ reconcile → END
+ *   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⟲ ⇄ tools → refreshContext? ─┐
+ *                 │                        └─ pause ──────────────────────────────────────┤
+ *                 └─ acknowledge / ignore → mark_seen ──────────────────────────────────┴→ reconcile → END
  *
  * Memory is DETERMINISTIC, not agentic: `recall` reads the relevant facts + open tasks IN before the
  * bot thinks, and the single `reconcile` node writes tasks OUT after — on EVERY path. (`llm` ⟲ is
@@ -127,6 +127,7 @@ export class BotGraphFactory {
       .addNode('recall', n.recall)
       .addNode('llm', n.llm)
       .addNode('tools', n.tools)
+      .addNode('refreshContext', n.refreshContext)
       .addNode('mark_seen', n.markSeen)
       .addNode('reconcile', n.reconcile)
       .addEdge(START, 'gate')
@@ -134,10 +135,12 @@ export class BotGraphFactory {
       .addConditionalEdges('loop_guard', afterGuard, ['recall', 'pause'])
       .addEdge('recall', 'llm')
       .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
-      .addConditionalEdges('tools', makeAfterTools(n.terminal), [
+      .addConditionalEdges('tools', makeAfterTools(n.terminal, n.refresh), [
         'llm',
+        'refreshContext',
         'reconcile',
       ])
+      .addEdge('refreshContext', 'llm')
       .addEdge('mark_seen', 'reconcile')
       .addEdge('pause', 'reconcile')
       .addEdge('reconcile', END)

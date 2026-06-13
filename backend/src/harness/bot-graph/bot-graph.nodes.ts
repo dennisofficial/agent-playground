@@ -29,7 +29,7 @@ import {
   buildTimeContext,
   withDividers,
 } from './channel-render';
-import type { BotStateType } from './bot-state';
+import { type BotStateType, type ContextParts, renderContext } from './bot-state';
 import {
   asInput,
   repairDanglingToolCalls,
@@ -41,6 +41,7 @@ import {
   interleavedTeammates,
   revisionNote,
 } from './read-the-room';
+import { makeRefreshScopesFromTurn } from './routing';
 
 /**
  * The node IMPLEMENTATIONS of a bot's turn-graph — gate, loop_guard, recall, llm, tools,
@@ -145,6 +146,10 @@ export class BotGraphNodes {
     // can't-fail tools should be terminal: the conductor surfaces only assistant text, never
     // tool-result content, so a swallowed failure from a fallible terminal tool would be invisible.
     const terminal = this.toolRegistry.terminalToolNames(allowlist);
+    // Context-refreshing tools: name → scopes map, derived from the allowlist's `refreshesContext`
+    // flags. Used by `makeAfterTools` (routing) and `refreshContextNode` (recompute).
+    const REFRESH = this.toolRegistry.refreshScopesByName(allowlist);
+    const refreshScopesFromTurn = makeRefreshScopesFromTurn(REFRESH);
 
     /** Peek the channel (read-only — never touches messages/cursor) and pick respond/ack/ignore. */
     const gateNode = async (
@@ -220,12 +225,33 @@ export class BotGraphNodes {
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
-      const [memory, work] = await Promise.all([
-        this.fetchService.fetchContext(bot, getIdentity(config)),
-        this.workContext(bot).catch(() => ''), // degrade gracefully — never fail the turn
+      const channelId = this.channelIdOf(config);
+      const fresh = channel
+        .since(state.cursor, channelId)
+        .filter((m) => m.authorBotId !== bot.id);
+      // Build the retrieval query from fresh messages + a few lines of prior context. Stored in
+      // `recallQuery` for potential future use (semantic recall reactivation); not consumed by
+      // fetchMemory in Phase 3 (standing context + board tasks — no embedding needed).
+      const freshText = fresh.map((m) => `${m.author}: ${m.text}`).join('\n');
+      const priorTail = fresh.length
+        ? this.historyBefore(fresh[0].seq, channelId, 3)
+        : '';
+      const query = [priorTail, freshText].filter((s) => s.trim()).join('\n');
+      const id = getIdentity(config);
+      // Three independent reads — run in parallel. Each degrades to '' on error so a service
+      // outage never aborts the turn.
+      const [memory, tasks, work] = await Promise.all([
+        this.fetchService.fetchMemory(bot, id).catch(() => ''),
+        this.fetchService.fetchTasks(bot, id).catch(() => ''),
+        this.workContext(bot).catch(() => ''),
       ]);
+      const context: ContextParts = { memory, tasks, work };
+      // recalled = the one-shot pre-LLM snapshot for the conductor's `recall` event.
+      // llm renders live context from `context` on every call.
       return {
-        recalled: [memory, work].filter((s) => s.trim()).join('\n\n'),
+        context,
+        recalled: renderContext(context),
+        recallQuery: query,
       };
     };
 
@@ -280,6 +306,9 @@ export class BotGraphNodes {
             ? new HumanMessage(item.label)
             : asInput(item.msg),
       );
+      // Render from the LIVE context (may have been refreshed by `refreshContext` after tools ran),
+      // not from `state.recalled` (which is the one-shot pre-LLM snapshot for the conductor).
+      const liveContext = renderContext(state.context);
       const convo = [
         new SystemMessage({
           content: [
@@ -291,10 +320,10 @@ export class BotGraphNodes {
           ],
         }),
         ...cachedHistory,
-        ...(state.recalled
+        ...(liveContext
           ? [
               new HumanMessage(
-                `(Relevant memory — for your reference:\n${state.recalled})`,
+                `(Relevant memory — for your reference:\n${liveContext})`,
               ),
             ]
           : []),
@@ -470,6 +499,8 @@ export class BotGraphNodes {
         messages: [...pending.map(asInput), new AIMessage(pauseText)],
         cursor: newCursor,
         recalled: '',
+        context: { work: '', memory: '', tasks: '' },
+        recallQuery: '',
       };
     };
 
@@ -548,13 +579,61 @@ export class BotGraphNodes {
       const newCursor = pending.length
         ? pending[pending.length - 1].seq + 1
         : channel.lengthOf(this.channelIdOf(config));
-      // recalled is reset here too — this path skips `recall`, and an un-cleared value would ride
-      // the checkpoint as a stale recall (deleted reminder ids included) until the next respond.
+      // recalled, context, and recallQuery are all reset here — this path skips `recall`, and
+      // un-cleared values would ride the checkpoint as a stale recall until the next respond.
       return {
         messages: pending.map(asInput),
         cursor: newCursor,
         recalled: '',
+        context: { work: '', memory: '', tasks: '' },
+        recallQuery: '',
       };
+    };
+
+    /**
+     * REFRESH_CONTEXT NODE — recompute only the context slices dirtied by the just-run tool batch.
+     *
+     * Runs between `tools` and `llm` when a state-mutating tool call ran (create/remove_worktree,
+     * close_session, remember/update_memory/forget, add/complete_task). Only the flagged scopes are
+     * re-fetched — a memory-only refresh doesn't re-list worktrees, and vice-versa. Detection is
+     * name-based (same posture as terminal): a failed mutation still triggers a harmless, idempotent
+     * recompute. Errors degrade silently, keeping the previous slice intact.
+     *
+     * `recalled` is NOT updated — it's the one-shot pre-LLM snapshot for the conductor's `recall`
+     * event. No duplicate `recall` events are emitted mid-turn.
+     */
+    const refreshContextNode = async (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Promise<Partial<BotStateType>> => {
+      const scopes = refreshScopesFromTurn(state);
+      const id = getIdentity(config);
+      const next: ContextParts = { ...state.context };
+      const refreshWork = scopes.has('work')
+        ? this.workContext(bot)
+            .then((w) => {
+              next.work = w;
+            })
+            .catch(() => {})
+        : Promise.resolve();
+      const refreshMemory = scopes.has('memory')
+        ? this.fetchService
+            .fetchMemory(bot, id)
+            .then((m) => {
+              next.memory = m;
+            })
+            .catch(() => {})
+        : Promise.resolve();
+      const refreshTasks = scopes.has('tasks')
+        ? this.fetchService
+            .fetchTasks(bot, id)
+            .then((t) => {
+              next.tasks = t;
+            })
+            .catch(() => {})
+        : Promise.resolve();
+      await Promise.all([refreshWork, refreshMemory, refreshTasks]);
+      return { context: next }; // recalled untouched — no second recall event
     };
 
     return {
@@ -567,6 +646,8 @@ export class BotGraphNodes {
       pause: pauseNode,
       reconcile: reconcileNode,
       terminal,
+      refresh: REFRESH,
+      refreshContext: refreshContextNode,
     };
   }
 }
