@@ -44,8 +44,8 @@ ${report}
 
 This session is linked to board task #${session.boardTaskId}. ${attachLine} Next:
 - Tell the team, first person and brief, that your plan on #${session.boardTaskId} is ready — @Sam reviews every attached plan before anything is proposed to Dennis.
-- Keep THIS session OPEN: if Sam sends revision notes, reply_session them in — the revised plan re-attaches on the next turn.
-- Once Sam approves your plan, close_session("${sid}") — the ticket carries the plan, and the execute session opens fresh from it after Dennis approves and the standup closes.
+- Keep THIS session OPEN through the WHOLE approval pipeline — Sam's review AND Dennis's verdict. Sam's approval only clears layer 1; it is NOT your cue to close. Any revision notes — Sam's, then Dennis's — reply_session straight in, and the revised plan re-attaches on the next turn with full planning context intact. If Dennis requests changes, reply them in here; the plan re-attaches and goes back up the pipeline.
+- close_session("${sid}") ONLY once Dennis has APPROVED (and the standup closes) — the ticket carries the plan and the execute session opens fresh from it. Closing earlier throws away the context you'll want for revisions.
 Do NOT set any board status yourself and do NOT reply with mode 'execute' — the system refuses early flips.`;
     }
     return `[Session ${sid} — "${session.task}"] finished its PLAN:
