@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { recallProjects } from '../../domain/identity';
 import { BoardStore, type BoardTask } from '../../memory/board-store';
+import { PlanStore, type PlanState } from '../../memory/plan-store';
+import { STATUS_COLUMN_GUIDE } from '../../employees/persona.prompts';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
@@ -16,8 +18,11 @@ import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 const fmtAssignee = (t: BoardTask): string =>
   t.assignee ? `→ ${t.assignee}` : 'unassigned';
 
-const fmtTask = (t: BoardTask, blockers?: number[]): string =>
-  `- [#${t.id}] ${t.title} (${fmtAssignee(t)}, ${t.status})` +
+const fmtPlan = (s?: PlanState): string =>
+  s && s !== 'none' ? `, plan: ${s}` : '';
+
+const fmtTask = (t: BoardTask, blockers?: number[], plan?: PlanState): string =>
+  `- [#${t.id}] ${t.title} (${fmtAssignee(t)}, ${t.status}${fmtPlan(plan)})` +
   (t.dependsOn.length ? ` after #${t.dependsOn.join(', #')}` : '') +
   (blockers?.length ? ` — BLOCKED by #${blockers.join(', #')}` : '');
 
@@ -296,10 +301,14 @@ const listSchema = z.object({
 export class ListBoardTool implements IHarnessTool<typeof listSchema> {
   readonly name = 'list_board';
   readonly description =
-    "The TEAM BOARD — the shared task list with assignees, status, and dependencies (NOT your private reminders; that's list_tasks). Check it before picking up work or when coordinating who does what.";
+    "The TEAM BOARD — the shared task list with assignees, status, and dependencies (NOT your private reminders; that's list_tasks). Check it before picking up work or when coordinating who does what.\n\n" +
+    STATUS_COLUMN_GUIDE;
   readonly schema = listSchema;
 
-  constructor(private readonly board: BoardStore) {}
+  constructor(
+    private readonly board: BoardStore,
+    private readonly plans: PlanStore,
+  ) {}
 
   async execute(
     { project, assignee, status }: z.infer<typeof listSchema>,
@@ -319,9 +328,13 @@ export class ListBoardTool implements IHarnessTool<typeof listSchema> {
     if (tasks.length === 0)
       return target ? `The ${target} board is clear.` : 'The board is clear.';
     const blocked = await this.board.blockersOf(id.team, tasks);
+    const planStates = await this.plans.planStatesOf(
+      id.team,
+      tasks.map((t) => t.id),
+    );
     const lines = tasks.map(
       (t) =>
-        `${fmtTask(t, blocked.get(t.id))}${target ? '' : ` [${t.project}]`}`,
+        `${fmtTask(t, blocked.get(t.id), planStates.get(t.id))}${target ? '' : ` [${t.project}]`}`,
     );
     return `Team board${target ? ` (${target})` : ''}:\n${lines.join('\n')}`;
   }
