@@ -45,7 +45,9 @@ import {
 import {
   asInput,
   compactPriorToolResults,
+  dropLeadingOrphanToolResults,
   filterToolDispatchMessages,
+  pairSafeBoundary,
   repairDanglingToolCalls,
   usageOf,
   withCacheBreakpoint,
@@ -433,7 +435,7 @@ export class BotGraphNodes {
       // repair → compact prior tool results → filter text-less dispatches → cache breakpoints.
       const rawHistory =
         state.summarizedUpTo > 0
-          ? state.messages.slice(state.summarizedUpTo)
+          ? dropLeadingOrphanToolResults(state.messages.slice(state.summarizedUpTo))
           : state.messages;
       const history = filterToolDispatchMessages(
         compactPriorToolResults(
@@ -962,7 +964,8 @@ export class BotGraphNodes {
      * Checks whether the most recent AI message's input-token count has crossed COMPACTION_TOKEN_THRESHOLD.
      * Token count is a better proxy for context growth than message count: a single tool-heavy turn
      * can consume as many tokens as twenty plain turns. When the threshold is crossed, it:
-     *   1. Slices the compactable window: `messages.slice(summarizedUpTo, messages.length - COMPACTION_TAIL)`
+     *   1. Calls `pairSafeBoundary(messages, messages.length − COMPACTION_TAIL, summarizedUpTo)` for
+     *      a pair-safe cut (walks back if the arithmetic cut lands on a ToolMessage).
      *   2. Calls `buildModel()` to produce a human-readable rolling summary.
      *   3. Persists an audit row to `compaction_summaries`.
      *   4. Returns `{ summary, summarizedUpTo, compactionVersion }` which the checkpoint stores.
@@ -993,7 +996,11 @@ export class BotGraphNodes {
       }
       // Ensure we have at least `compactionTail` messages to keep verbatim — don't compact a tiny
       // history (this also guards against edge cases where threshold < tail).
-      const newSummarizedUpTo = state.messages.length - this.compactionTail;
+      const newSummarizedUpTo = pairSafeBoundary(
+        state.messages,
+        state.messages.length - this.compactionTail,
+        state.summarizedUpTo,
+      );
       if (newSummarizedUpTo <= state.summarizedUpTo) return {};
 
       try {

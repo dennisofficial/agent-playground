@@ -112,3 +112,32 @@ export function ticketApprovedSeed(p: {
     : APPROVED_WHERE_GONE({ taskId });
   return APPROVED_SEED({ taskId, where });
 }
+
+// ── Review-pipeline narration ──────────────────────────────────────────────────────────────────
+// The harness ran a mechanical step in the PR self-review (opened the draft PR, hit a snag, readied
+// the PR); these wake the OWNER to narrate it in their own voice (Dennis chose real seeded narration).
+// The bot does NOT act here — the harness already did the work; this is just the heads-up to relay.
+
+const PR_OPENED_SEED = tmpl`[Board] Your work on ticket #${'taskId'} is published and its DRAFT pull request is open (${'prUrl'}). The harness is running the final self-review now — nothing for you to do. Give the team a brief first-person heads-up that #${'taskId'} is up as a draft and self-review is running, if it's worth sharing.`;
+
+const PR_READY_SEED = tmpl`[Board] Self-review passed on ticket #${'taskId'} — the harness flipped its PR out of draft and it's READY for Dennis (${'prUrl'}); the ticket is now in_review. Nothing more to do unless Dennis comes back with feedback. Let the team/Dennis know the PR is ready, first person, if it's worth a line.`;
+
+const SELF_REVIEW_FAILED_SEED = tmpl`[Board] The harness couldn't auto-finish the self-review on ticket #${'taskId'}: ${'reason'}. This needs YOU — pick it up in your execute session, address it, and submit_for_review again. Give a short first-person heads-up if the team should know it's held up.`;
+
+/** Wake the owner that their draft PR is open and the final review is running. */
+export function prOpenedSeed(p: { taskId: number; prUrl: string }): string {
+  return PR_OPENED_SEED({ taskId: String(p.taskId), prUrl: p.prUrl });
+}
+
+/** Wake the owner that self-review cleared and the PR is ready for Dennis. */
+export function prReadySeed(p: { taskId: number; prUrl: string }): string {
+  return PR_READY_SEED({ taskId: String(p.taskId), prUrl: p.prUrl });
+}
+
+/** Wake the owner that a review step couldn't auto-clear and needs them. */
+export function selfReviewFailedSeed(p: {
+  taskId: number;
+  reason: string;
+}): string {
+  return SELF_REVIEW_FAILED_SEED({ taskId: String(p.taskId), reason: p.reason });
+}

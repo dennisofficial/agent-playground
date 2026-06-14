@@ -196,6 +196,12 @@ const conflictReply = (
 ): string =>
   `Merge conflict with ${res.sharedBranch} in: ${(res.files ?? []).join(', ') || '(unknown files)'}. The merge is left IN PROGRESS in ${worktreeId} — reply into a session there (mode 'execute') to resolve and commit it, then ${verb} again.`;
 
+const baseConflictReply = (
+  worktreeId: string,
+  res: { baseBranch?: string; files?: string[] },
+): string =>
+  `Merge conflict with the base branch ${res.baseBranch ?? '(base)'} in: ${(res.files ?? []).join(', ') || '(unknown files)'}. The merge is left IN PROGRESS in ${worktreeId} — reply into a session there (mode 'execute') to resolve and commit it, then refresh again.`;
+
 const publishWorktreeSchema = z.object({
   worktreeId: z
     .string()
@@ -274,6 +280,46 @@ export class PullWorktreeTool implements IHarnessTool<
       return `Pulled ${res.sharedBranch} into ${wt.branch}.${res.originFetched ? ' (Shared branch synced from GitHub first.)' : ' (Local shared branch only — origin was not synced.)'}`;
     } catch (err) {
       return `Couldn't pull into ${worktreeId}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+}
+
+const refreshWorktreeSchema = z.object({
+  worktreeId: z
+    .string()
+    .describe("The worktree to update with the project's base branch."),
+});
+
+@HarnessTool()
+export class RefreshWorktreeTool implements IHarnessTool<
+  typeof refreshWorktreeSchema
+> {
+  readonly name = 'refresh_worktree';
+  readonly description =
+    "Update a worktree with the latest of the project's base branch (fetches origin and merges it in) — pick up changes merged since the worktree was cut. Execute sessions refresh automatically on start; use this to re-sync mid-work. Refused while a session in the worktree is mid-turn.";
+  readonly schema = refreshWorktreeSchema;
+
+  constructor(
+    private readonly worktrees: WorktreeService,
+    @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
+  ) {}
+
+  async execute({
+    worktreeId,
+  }: z.infer<typeof refreshWorktreeSchema>): Promise<string> {
+    const wt = this.worktrees.get(worktreeId);
+    if (!wt) return `No worktree "${worktreeId}".`;
+    const refusal = await midTurnRefusal(this.sessions, worktreeId, 'refresh');
+    if (refusal) return refusal;
+    try {
+      const res = await this.worktrees.refreshFromBase(worktreeId);
+      if (res.conflicted) return baseConflictReply(worktreeId, res);
+      if (res.refreshed) {
+        return `Refreshed ${wt.branch} with ${res.baseBranch}.`;
+      }
+      return `Did not refresh ${worktreeId}: ${res.detail ?? 'no base branch available'}.`;
+    } catch (err) {
+      return `Couldn't refresh ${worktreeId}: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }

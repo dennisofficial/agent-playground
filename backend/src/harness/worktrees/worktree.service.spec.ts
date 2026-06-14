@@ -1,6 +1,14 @@
 import type { EnvService } from '@core/config/env/env.service';
+import { Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -26,6 +34,26 @@ async function commit(
   await writeFile(join(checkout, file), content);
   await git(checkout, 'add', file);
   await git(checkout, 'commit', '-m', `edit ${file}`);
+}
+
+/** Push a new commit to a bare origin's `main` via a scratch clone — stands in for "Dennis merged
+ * a PR to main." Returns the new main tip sha. */
+async function advanceOrigin(
+  originDir: string,
+  file: string,
+  content: string,
+): Promise<string> {
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), 'wt-adv-')));
+  await git(scratch, 'clone', originDir, '.');
+  await git(scratch, 'config', 'user.email', 'adv@test');
+  await git(scratch, 'config', 'user.name', 'adv');
+  await writeFile(join(scratch, file), content);
+  await git(scratch, 'add', file);
+  await git(scratch, 'commit', '-m', `advance ${file}`);
+  await git(scratch, 'push', 'origin', 'main');
+  const sha = await git(scratch, 'rev-parse', 'HEAD');
+  await rm(scratch, { recursive: true, force: true });
+  return sha;
 }
 
 /** A throwaway real git repo — worktree behavior is git behavior, so the spec runs against git. */
@@ -180,6 +208,63 @@ describe('WorktreeService (real git, temp repo)', () => {
       project: 'local',
     });
     expect(warning).toMatch(/uncommitted/i);
+  });
+
+  it('logs error and warns (without fail-hard) when submodule init fails', async () => {
+    // Build a standalone repo with a .gitmodules + gitlink pointing to a path that does not
+    // exist — no network call, deterministic. We never run `git submodule add`, so the
+    // .git/modules cache is empty and git must attempt a fresh clone on `submodule update`,
+    // which immediately fails. This mirrors the real agent-worktree failure shape.
+    const submodRepo = await realpath(
+      await mkdtemp(join(tmpdir(), 'wt-submod-spec-')),
+    );
+    try {
+      await git(submodRepo, 'init', '-b', 'main');
+      await git(submodRepo, 'config', 'user.email', 'spec@test');
+      await git(submodRepo, 'config', 'user.name', 'spec');
+      await writeFile(join(submodRepo, 'README.md'), 'hello\n');
+      await git(submodRepo, 'add', '.');
+      await git(submodRepo, 'commit', '-m', 'init');
+      // Register a submodule via .gitmodules pointing at a path that will never exist.
+      await writeFile(
+        join(submodRepo, '.gitmodules'),
+        '[submodule "vendor/stub"]\n\tpath = vendor/stub\n\turl = /tmp/wt-spec-no-such-submod\n',
+      );
+      await git(submodRepo, 'add', '.gitmodules');
+      // Add a gitlink entry (mode 160000) so the committed tree contains the submodule ref.
+      const sha = await git(submodRepo, 'rev-parse', 'HEAD');
+      await git(
+        submodRepo,
+        'update-index',
+        '--add',
+        '--cacheinfo',
+        `160000,${sha},vendor/stub`,
+      );
+      await git(submodRepo, 'commit', '-m', 'add submodule stub (unreachable url)');
+
+      const submodService = makeService(submodRepo);
+      const errorSpy = vi.spyOn(Logger.prototype, 'error');
+      try {
+        const { worktree, warning } = await submodService.create({
+          name: 'submod-test',
+          ownerBot: 'alex',
+          team: 'local',
+          project: 'local',
+        });
+        // create must succeed — no fail-hard on submodule init failure
+        expect(worktree.id).toBeTruthy();
+        // warning signals the failure and contains the remediation command
+        expect(warning).toMatch(/submodule init failed/i);
+        expect(warning).toContain('git submodule update --init --recursive');
+        // Logger.error was called with the failure message
+        expect(errorSpy).toHaveBeenCalled();
+        expect(String(errorSpy.mock.calls[0][0])).toMatch(/submodule init failed/i);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    } finally {
+      await rm(submodRepo, { recursive: true, force: true });
+    }
   });
 
   it('removes the checkout but keeps the branch', async () => {
@@ -854,6 +939,83 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     expect(adoptedA?.sharedBranch).toBe('shared/feat');
     expect(adoptedB?.project).toBe('');
     expect(adoptedB?.repoRoot).not.toBe(join(reposRoot, 'local', 'proj'));
+  });
+
+  it('cuts a NEW worktree from the latest base after origin advances (not the frozen clone HEAD)', async () => {
+    // First create materializes the managed clone.
+    await service.create({
+      name: 'a',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    // Dennis merges a PR to main while the clone sits frozen.
+    const newTip = await advanceOrigin(originDir, 'merged.txt', 'from main\n');
+    // A second worktree must start from the advanced base, not the stale local HEAD.
+    const second = await service.create({
+      name: 'b',
+      ownerBot: 'riley',
+      team: 'local',
+      project: 'proj',
+    });
+    expect(second.worktree.baseRef).toBe(newTip);
+    expect(
+      await readFile(join(second.worktree.checkout, 'merged.txt'), 'utf8'),
+    ).toBe('from main\n');
+  });
+
+  it('refreshFromBase merges origin base advances into an existing worktree', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    await commit(worktree.checkout, 'local.txt', 'local work\n');
+    const newTip = await advanceOrigin(originDir, 'merged.txt', 'from main\n');
+    const res = await service.refreshFromBase(worktree.id);
+    expect(res.refreshed).toBe(true);
+    expect(res.baseBranch).toBe('main');
+    // Both the local work and origin's change are present after the merge.
+    expect(await readFile(join(worktree.checkout, 'local.txt'), 'utf8')).toBe(
+      'local work\n',
+    );
+    expect(await readFile(join(worktree.checkout, 'merged.txt'), 'utf8')).toBe(
+      'from main\n',
+    );
+    expect(await git(worktree.checkout, 'log', '--format=%H')).toContain(newTip);
+  });
+
+  it('refreshFromBase leaves a conflict IN PROGRESS for a session to resolve', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    // The worktree and origin both change the SAME file from the seed → conflict.
+    await commit(worktree.checkout, 'README.md', 'worktree change\n');
+    await advanceOrigin(originDir, 'README.md', 'origin change\n');
+    const res = await service.refreshFromBase(worktree.id);
+    expect(res.refreshed).toBe(false);
+    expect(res.conflicted).toBe(true);
+    expect(res.files).toContain('README.md');
+    // The merge is left in progress (MERGE_HEAD present) for the next turn to finish.
+    await expect(
+      git(worktree.checkout, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refreshFromBase is a no-op for an unregistered worktree (no base to track)', async () => {
+    const { worktree } = await service.create({
+      name: 'l',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'local',
+    });
+    const res = await service.refreshFromBase(worktree.id);
+    expect(res.refreshed).toBe(false);
+    expect(res.detail).toMatch(/no registered GitHub repo/i);
   });
 });
 

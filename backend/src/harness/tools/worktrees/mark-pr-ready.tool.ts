@@ -54,8 +54,11 @@ export class MarkPrReadyTool implements IHarnessTool<typeof markReadySchema> {
     const isLead = !!this.employees.byId(id.selfAgent)?.teamLead;
     if (task.assignee !== id.selfAgent && !isLead)
       return `Board task #${board_task_id} is ${task.assignee ? `${task.assignee}'s` : 'unassigned'} — only they or the team lead mark its PR ready.`;
-    if (task.status !== 'approved' && task.status !== 'in_review')
-      return `Board task #${board_task_id} is '${task.status}', not approved/in-review — only approved work has a PR to mark ready.`;
+    // Lead-only override now that the review pipeline normally readies PRs automatically — accept any
+    // execution-phase status (the work has a shared-branch PR to ready).
+    const readyable = ['approved', 'executing', 'self_review', 'in_review'];
+    if (!readyable.includes(task.status))
+      return `Board task #${board_task_id} is '${task.status}', not in execution — only approved/executing work has a PR to mark ready.`;
 
     const wt = this.worktrees.get(worktreeId);
     if (!wt) return `No worktree "${worktreeId}".`;

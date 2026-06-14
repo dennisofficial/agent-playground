@@ -20,6 +20,7 @@ import { BoardStore } from '../memory/board-store';
 import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
+import { MetricsEventsService } from '../metrics/metrics-events.service';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
 import { investigationConfidence } from './confidence-check';
@@ -76,6 +77,7 @@ export class SessionRunnerService {
     private readonly worktrees: WorktreeService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly metrics: MetricsEventsService,
     private readonly board: BoardStore,
     private readonly env: EnvService,
     private readonly plans: PlanStore,
@@ -91,11 +93,13 @@ export class SessionRunnerService {
     sessionId: string,
     message: string,
     parentChatTrace?: ChatTracePointer,
+    enteringExecute = false,
   ): Promise<void> {
     // Everything — including the registry read — runs inside the try: callers fire-and-forget
     // (`void runSessionTurn(...)`), so a rejection escaping this method would vanish and leave the
     // session stuck in 'running' forever with no failure relay.
     const ac = new AbortController();
+    const startedAt = Date.now();
     this.controllers.set(sessionId, ac);
     try {
       const session = await this.sessions.get(sessionId);
@@ -107,6 +111,43 @@ export class SessionRunnerService {
         throw new Error(
           `Worktree "${session.worktreeId}" no longer exists — the session has nowhere to run.`,
         );
+      }
+      // Entering execute (a fresh execute session, or a plan→execute flip): bring the worktree up
+      // to date with the base branch before the engine runs. A worktree cut during stand-up is
+      // stale by now (base moved while it sat idle / between sequential tickets). Skip if ANOTHER
+      // session is mid-turn in the same checkout (a merge would mutate files under it) — this
+      // session is already 'running', so it's excluded. Best-effort: a refresh failure logs and the
+      // turn proceeds; a CONFLICT is handed to the engine to resolve as its first act.
+      if (enteringExecute) {
+        const otherLive = (await this.sessions.list({
+          worktreeId: session.worktreeId,
+        })).some((s) => s.id !== sessionId && s.status === 'running');
+        if (otherLive) {
+          this.logger.warn(
+            `${sessionId}: another session is mid-turn in ${worktree.id} — skipping base refresh`,
+          );
+        } else {
+          try {
+            const r = await this.worktrees.refreshFromBase(session.worktreeId);
+            if (r.conflicted) {
+              this.logger.log(
+                `${sessionId}: base refresh hit conflicts (${r.baseBranch}) — handing them to the turn`,
+              );
+              message =
+                `Before anything else: a merge of the base branch \`${r.baseBranch}\` into this worktree is IN PROGRESS with conflicts in: ${(r.files ?? []).join(', ') || '(unknown files)'}. Resolve the conflicts, commit the merge, then continue.\n\n${message}`;
+            } else if (r.refreshed) {
+              this.logger.log(
+                `${sessionId}: refreshed ${worktree.id} from ${r.baseBranch}`,
+              );
+            } else if (r.detail) {
+              this.logger.log(`${sessionId}: base refresh no-op — ${r.detail}`);
+            }
+          } catch (err) {
+            this.logger.warn(
+              `${sessionId}: base refresh failed (${worktree.id}), proceeding on local state: ${err}`,
+            );
+          }
+        }
       }
       // Per-turn spec from the employee: a 'plan' turn runs on the plan engine recipe, 'execute' on
       // the execute one (model/effort/systemPrompt). Byte-stable across turns; `mode` also drives the
@@ -181,7 +222,6 @@ export class SessionRunnerService {
             sessionId,
             input: turnMessage,
             metadata: {
-              systemPrompt,
               model: turnModel,
               effort,
               mode: session.mode,
@@ -328,19 +368,48 @@ export class SessionRunnerService {
         lastReportKind: kind,
         turns: session.turns + 1,
       });
+      if (session.mode === 'execute') {
+        await this.metrics
+          .recordExecutionCompleted({
+            teamId: session.team,
+            agentId: session.ownerBot,
+            projectId: session.project,
+            sessionId,
+            durationMs: Date.now() - startedAt,
+          })
+          .catch((metricsErr) =>
+            this.logger.warn(
+              `recordExecutionCompleted(${sessionId}) failed: ${metricsErr}`,
+            ),
+          );
+      }
     } catch (err) {
       // An abort surfaces here as a thrown error — that's a close, not a failure; closeSession
       // already finalized the status. The updates are themselves guarded (a registry rejection here
       // must not escape the fire-and-forget caller) and never overwrite a status closeSession wrote.
       try {
-        if (
-          !ac.signal.aborted &&
-          (await this.sessions.get(sessionId))?.status === 'running'
-        ) {
+        const live = await this.sessions.get(sessionId);
+        if (!ac.signal.aborted && live?.status === 'running') {
           await this.sessions.update(sessionId, {
             status: 'failed',
             error: err instanceof Error ? err.message : String(err),
           });
+          if (live.mode === 'execute') {
+            await this.metrics
+              .recordExecutionBlocked({
+                teamId: live.team,
+                agentId: live.ownerBot,
+                projectId: live.project,
+                sessionId,
+                durationMs: Date.now() - startedAt,
+                reason: err instanceof Error ? err.message : String(err),
+              })
+              .catch((metricsErr) =>
+                this.logger.warn(
+                  `recordExecutionBlocked(${sessionId}) failed: ${metricsErr}`,
+                ),
+              );
+          }
         }
       } catch (updateErr) {
         this.logger.error(
@@ -410,12 +479,20 @@ export class SessionRunnerService {
       session.lastReportKind === 'questions' && session.lastReport
         ? { qa: [...(session.qa ?? []), { q: session.lastReport, a: message }] }
         : {};
+    // A real transition INTO execute (plan→execute flip) starts execution for this work — refresh
+    // the worktree against base. `session.mode` is still the pre-update value here.
+    const enteringExecute = mode === 'execute' && session.mode !== 'execute';
     await this.sessions.update(sessionId, {
       status: 'running',
       ...(mode ? { mode } : {}),
       ...qaPatch,
     });
-    void this.runSessionTurn(sessionId, message, parentChatTrace);
+    void this.runSessionTurn(
+      sessionId,
+      message,
+      parentChatTrace,
+      enteringExecute,
+    );
     return { ok: true };
   }
 
@@ -451,8 +528,57 @@ export class SessionRunnerService {
         ? null
         : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
     }
-    if (task!.status === 'approved' || task!.status === 'done') return null;
+    // 'approved' (first execute session — the approved→executing CAS in CreateSessionTool flips it),
+    // 'executing' (work in flight — continuing turns and additional owners), and 'done' all execute.
+    // 'self_review' is NOT here: the integration barrier's bounded fix loop reaches a self_review
+    // session only through SessionRunner.resumeInternal (harness-initiated), never a bot tool call.
+    if (
+      task!.status === 'approved' ||
+      task!.status === 'executing' ||
+      task!.status === 'done'
+    )
+      return null;
     return `board task #${boardTaskId} is '${task!.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; @Sam reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
+  }
+
+  /**
+   * Resume a session for ONE awaited turn, HARNESS-INITIATED — deliberately bypasses executeRefusal
+   * (that gate guards a bot's own tool calls, not the harness's review pipeline). The review
+   * pipeline's bounded fix loop and conflict-resolution call this; the bot never reaches a
+   * 'self_review' session through a tool. Sets the session running in `mode`, awaits the turn, and
+   * returns the resulting session ('idle' with lastReport, or 'failed'). A timeout aborts the turn.
+   * `enteringExecute` is false — the work already lives in the worktree; an internal fix/resolve turn
+   * must NOT trigger a base refresh that could clobber an in-progress merge.
+   */
+  async resumeInternal(
+    sessionId: string,
+    prompt: string,
+    opts: { mode?: WorkerMode; timeoutMs?: number } = {},
+  ): Promise<Session | undefined> {
+    const mode: WorkerMode = opts.mode ?? 'execute';
+    const session = await this.sessions.get(sessionId);
+    if (!session) return undefined;
+    if (session.status === 'closed') return session;
+    if (session.status === 'running')
+      throw new Error(
+        `session ${sessionId} is mid-turn — cannot resume it internally`,
+      );
+    await this.sessions.update(sessionId, { status: 'running', mode });
+    const turn = this.runSessionTurn(sessionId, prompt, undefined, false);
+    if (opts.timeoutMs) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          this.controllers.get(sessionId)?.abort();
+          resolve();
+        }, opts.timeoutMs);
+      });
+      await Promise.race([turn, timeout]);
+      if (timer) clearTimeout(timer);
+    } else {
+      await turn;
+    }
+    return this.sessions.get(sessionId);
   }
 
   /**

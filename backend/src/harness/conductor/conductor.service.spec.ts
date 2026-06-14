@@ -14,6 +14,7 @@ import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import type { BoardEvent, BoardEventsBus } from '../memory/board-events.bus';
 import type { PlanStore } from '../memory/plan-store';
+import type { BoardStore } from '../memory/board-store';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type {
   Session,
@@ -213,6 +214,10 @@ async function buildConductor(behavior: FakeGraphBehavior) {
   const plans = {
     listForTask: async () => [],
   } as unknown as PlanStore;
+  const board = {
+    countInFlightExecution: async () => 0,
+    list: async () => [],
+  } as unknown as BoardStore;
   const metrics = new ConductorMetricsService();
 
   const conductor = new ConductorService(
@@ -230,6 +235,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     credCtx,
     boardEvents,
     plans,
+    board,
     metrics,
   );
   await conductor.onApplicationBootstrap();

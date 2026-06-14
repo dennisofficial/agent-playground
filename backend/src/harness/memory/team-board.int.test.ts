@@ -60,7 +60,7 @@ describe('BoardStore (live Postgres)', () => {
     expect(wins).toHaveLength(1);
     expect(losses).toHaveLength(1);
     const after = await board.get('T1', t.id);
-    expect(after?.status).toBe('in_progress');
+    expect(after?.status).toBe('planning');
     expect(['alex', 'riley']).toContain(after?.assignee);
   });
 
@@ -77,7 +77,7 @@ describe('BoardStore (live Postgres)', () => {
     await board.update('T1', dep.id, { status: 'done' });
 
     const claimed = asTask(await board.claim('T1', t.id, 'alex'));
-    expect(claimed.status).toBe('in_progress');
+    expect(claimed.status).toBe('planning');
     expect(claimed.assignee).toBe('alex');
   });
 
@@ -85,7 +85,7 @@ describe('BoardStore (live Postgres)', () => {
     const t = asTask(await create({ assignee: 'riley' }));
     expect(await board.claim('T1', t.id, 'alex')).toBe('taken');
     const claimed = asTask(await board.claim('T1', t.id, 'riley'));
-    expect(claimed.status).toBe('in_progress');
+    expect(claimed.status).toBe('planning');
   });
 
   it('unknown dependency ids are rejected at create', async () => {
@@ -115,7 +115,7 @@ describe('BoardStore (live Postgres)', () => {
     expect(await board.list({ team: 'T1', assignee: 'alex' })).toHaveLength(1);
     asTask(await board.claim('T1', a.id, 'maya'));
     expect(
-      await board.list({ team: 'T1', status: 'in_progress' }),
+      await board.list({ team: 'T1', status: 'planning' }),
     ).toHaveLength(1);
   });
 

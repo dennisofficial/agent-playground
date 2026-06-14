@@ -345,7 +345,7 @@ describe('ApprovalCardsService — verdicts', () => {
       7,
       'awaiting_approval',
       {
-        status: 'in_progress',
+        status: 'planning',
       },
     );
     expect(conductor.injectSeed).toHaveBeenCalledWith(

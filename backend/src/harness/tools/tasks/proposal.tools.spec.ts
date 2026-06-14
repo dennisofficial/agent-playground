@@ -30,6 +30,7 @@ const plan = (
   employee,
   planMd: `${employee}'s plan body`,
   leadStatus,
+  ownerStatus: 'executing',
   createdAt: '2026-06-12T00:00:00.000Z',
   updatedAt: '2026-06-12T00:00:00.000Z',
 });
@@ -71,7 +72,7 @@ function makeFakes(opts: {
 describe('approve_plan', () => {
   it('is lead-only and records the sign-off with a progress readout', async () => {
     const f = makeFakes({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       approveResult: plan('alex', 'approved'),
       plans: [plan('alex', 'approved'), plan('riley', 'pending')],
     });
@@ -95,7 +96,7 @@ describe('approve_plan', () => {
 
   it('says when ALL plans are approved, and refuses a missing plan', async () => {
     const all = makeFakes({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       approveResult: plan('alex', 'approved'),
       plans: [plan('alex', 'approved')],
     });
@@ -109,7 +110,7 @@ describe('approve_plan', () => {
     ).toContain('All 1 plan(s) on #7 are now lead-approved');
 
     const missing = makeFakes({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       approveResult: undefined,
     });
     const tool2 = new ApprovePlanTool(
@@ -143,7 +144,7 @@ describe('propose_plan', () => {
 
   it('walks the guard ladder: lead-only → status → plans exist → all lead-approved', async () => {
     const { tool } = makeTool({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       plans: APPROVED_TWO,
     });
     expect(
@@ -158,13 +159,13 @@ describe('propose_plan', () => {
       ),
     ).toContain("'open'");
 
-    const noPlans = makeTool({ taskStatus: 'in_progress', plans: [] });
+    const noPlans = makeTool({ taskStatus: 'planning', plans: [] });
     expect(
       await noPlans.tool.execute({ task_id: 7, summary: 's' }, identity('sam')),
     ).toContain('No plans are attached');
 
     const pending = makeTool({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       plans: [plan('alex', 'approved'), plan('riley', 'pending')],
     });
     expect(
@@ -175,7 +176,7 @@ describe('propose_plan', () => {
   it('flips via atomic transition and presents the full event', async () => {
     const presented: PlanProposalEvent[] = [];
     const { tool, board } = makeTool({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       plans: APPROVED_TWO,
       presenter: {
         present: (e) => {
@@ -189,7 +190,7 @@ describe('propose_plan', () => {
       identity('sam'),
     );
     expect(out).toContain('approval card posted');
-    expect(board.transition).toHaveBeenCalledWith('T1', 7, 'in_progress', {
+    expect(board.transition).toHaveBeenCalledWith('T1', 7, 'planning', {
       status: 'awaiting_approval',
     });
     expect(presented).toHaveLength(1);
@@ -230,7 +231,7 @@ describe('propose_plan', () => {
 
   it('degrades to chat-words when no presenter is bound or present() throws', async () => {
     const unbound = makeTool({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       plans: APPROVED_TWO,
     });
     const out1 = await unbound.tool.execute(
@@ -241,7 +242,7 @@ describe('propose_plan', () => {
     expect(out1).toContain('awaiting_approval');
 
     const throwing = makeTool({
-      taskStatus: 'in_progress',
+      taskStatus: 'planning',
       plans: APPROVED_TWO,
       presenter: { present: () => Promise.reject(new Error('slack down')) },
     });
