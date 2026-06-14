@@ -33,9 +33,22 @@ export interface ReviewPromptInput {
   plan: string;
 }
 
+/** The reasons an employee opens an investigation — shapes the prompt's EMPHASIS, not the model. */
+export const INVESTIGATE_INTENTS = ['trace', 'debug', 'review'] as const;
+export type InvestigateIntent = (typeof INVESTIGATE_INTENTS)[number];
+export interface InvestigatePromptInput {
+  /** The code-grounded question to answer. */
+  question: string;
+  /** Why this investigation is being run — selects an emphasis line (optional). */
+  intent?: InvestigateIntent;
+}
+
 export type PlanPromptTemplate = (input: PlanPromptInput) => string;
 export type ExecutePromptTemplate = (input: ExecutePromptInput) => string;
 export type ReviewPromptTemplate = (input: ReviewPromptInput) => string;
+export type InvestigatePromptTemplate = (
+  input: InvestigatePromptInput,
+) => string;
 
 // PLAN has an optional CONTEXT section, so it composes three pieces (logic in code, text in templates).
 const PLAN_HEAD = tmpl`You are in PLAN MODE. Investigate the codebase READ-ONLY — read and search as much as you need to understand the work, but do NOT modify anything, run write/build commands, or start implementing. Your one deliverable this turn is the plan itself.
@@ -77,6 +90,36 @@ PLAN UNDER REVIEW:
 ${'plan'}
 
 Challenge it: missing steps, wrong assumptions, files it forgot, ordering/dependency risks, and where it fails against how this codebase actually works. If the plan is sound, say so plainly and briefly. Return a short, specific list of concrete objections (or "no blocking issues").`;
+
+// INVESTIGATE composes a head + optional intent emphasis + a REQUIRED epistemic-output tail (text in
+// templates, the optional piece in code — same shape as PLAN). The tail is the load-bearing part: it
+// forces the worker to self-report confidence and what it couldn't verify, so a reader knows when an
+// answer is on soft ground (an answer that's confidently wrong is worse than no session).
+const INVESTIGATE_HEAD = tmpl`Answer this question by reading the ACTUAL codebase, then report back. This turn is READ-ONLY — do not modify, plan, or propose changes; just find the answer and give it concisely, citing the relevant file:line references for every claim. Trust the real code over your prior assumptions or any docs: if something is described one way but the code differs, the code wins, and if you cannot find something, say so plainly instead of guessing.
+
+QUESTION:
+${'question'}
+`;
+const INVESTIGATE_EMPHASIS: Record<InvestigateIntent, string> = {
+  trace:
+    'Walk the exact path end to end and name every hop, with a file:line at each step.',
+  debug:
+    "You're chasing unexpected behavior: hunt for the discrepancy, edge case, or wrong assumption — and first check whether the premise is even true (the thing described may not exist, or may work differently than stated).",
+  review:
+    'Evaluate the design itself — trade-offs, risks, and where it could fail — not just describe what the code does.',
+};
+const INVESTIGATE_TAIL = `
+End your report with these two lines, exactly:
+Confidence: high | medium | low — <one phrase on why>
+Couldn't verify: <the specific things you could not confirm from the code, or "none">`;
+
+export const DEFAULT_INVESTIGATE_PROMPT: InvestigatePromptTemplate = ({
+  question,
+  intent,
+}) =>
+  INVESTIGATE_HEAD({ question }) +
+  (intent ? `\nFOCUS: ${INVESTIGATE_EMPHASIS[intent]}\n` : '') +
+  INVESTIGATE_TAIL;
 
 /**
  * The Claude engine's tool-denial messages (returned from `canUseTool`). Static strings stay constants;
