@@ -13,9 +13,8 @@ export const route = (state: BotStateType): 'loop_guard' | 'mark_seen' =>
  * advanced the cursor, so skipping reconcile saves its LLM call. Safe because that path fires only
  * when nothing named this bot or hit a lane keyword; anything about its work wakes it (name/@/
  * keyword) and runs reconcile normally. */
-export const afterMarkSeen = (
-  state: BotStateType,
-): 'reconcile' | typeof END => (state.dormantSkip ? END : 'reconcile');
+export const afterMarkSeen = (state: BotStateType): 'reconcile' | typeof END =>
+  state.dormantSkip ? END : 'reconcile';
 
 /** Out of `loop_guard`: a confirmed loop routes to `pause`, otherwise proceeds to `recall`. */
 export const afterGuard = (state: BotStateType): 'recall' | 'pause' =>

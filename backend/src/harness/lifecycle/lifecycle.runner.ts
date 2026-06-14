@@ -87,12 +87,17 @@ export class LifecycleRunner {
       const spec = cap.spec(ctx);
 
       if (cap.trigger.mode === 'async') {
-        void this.invoke(handler, event, current, spec, cap.trigger.timeoutMs)
-          .catch((err) =>
-            this.logger.warn(
-              `async hook '${cap.name}' failed: ${asMessage(err)}`,
-            ),
-          );
+        void this.invoke(
+          handler,
+          event,
+          current,
+          spec,
+          cap.trigger.timeoutMs,
+        ).catch((err) =>
+          this.logger.warn(
+            `async hook '${cap.name}' failed: ${asMessage(err)}`,
+          ),
+        );
         continue;
       }
 

@@ -16,18 +16,30 @@ import { EngineToolFactory } from './engine-tool.factory';
 const CTX: EmployeeContext = { team: 'local', roster: 'Nora — researcher' };
 
 // A Nora-like employee whose deep_research runs on Codex.
-const nora = (): EmployeeDefinition =>
-  ({
-    ...makeEmployee({ id: 'nora', name: 'Nora', engine: EWorkerEngineName.CODEX }),
-    capabilities: () => [
-      deepResearchCapability(() => ({
-        ...EXECUTE_CODEX,
-        systemPrompt: 'research worker',
-      })),
-    ],
-  }) as EmployeeDefinition;
+const nora = (): EmployeeDefinition => ({
+  ...makeEmployee({
+    id: 'nora',
+    name: 'Nora',
+    engine: EWorkerEngineName.CODEX,
+  }),
+  capabilities: () => [
+    deepResearchCapability(() => ({
+      ...EXECUTE_CODEX,
+      systemPrompt: 'research worker',
+    })),
+  ],
+});
 
-const config = { configurable: { identity: { selfAgent: 'nora', team: 'local', project: 'p', surface: 'dev:root' } } };
+const config = {
+  configurable: {
+    identity: {
+      selfAgent: 'nora',
+      team: 'local',
+      project: 'p',
+      surface: 'dev:root',
+    },
+  },
+};
 
 function build(opts: { worktrees?: string[] } = {}) {
   const opened: Array<Record<string, unknown>> = [];
@@ -59,10 +71,9 @@ describe('EngineToolFactory', () => {
   it('opens a session on the capability spec engine, reusing a given worktree', async () => {
     const { factory, opened } = build({ worktrees: ['wt-1'] });
     const { tools } = factory.buildTools(nora(), CTX);
-    const out = await (tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }).invoke(
-      { question: 'How does X price?', worktreeId: 'wt-1' },
-      config,
-    );
+    const out = await (
+      tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }
+    ).invoke({ question: 'How does X price?', worktreeId: 'wt-1' }, config);
     expect(opened).toHaveLength(1);
     expect(opened[0]).toMatchObject({
       worktreeId: 'wt-1',
@@ -76,20 +87,18 @@ describe('EngineToolFactory', () => {
   it('falls back to the bot’s latest worktree when none is given', async () => {
     const { factory, opened } = build({ worktrees: ['wt-1', 'wt-2'] });
     const { tools } = factory.buildTools(nora(), CTX);
-    await (tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }).invoke(
-      { question: 'research this' },
-      config,
-    );
+    await (
+      tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }
+    ).invoke({ question: 'research this' }, config);
     expect(opened[0]).toMatchObject({ worktreeId: 'wt-2' }); // latest
   });
 
   it('nudges to create a worktree when the bot has none', async () => {
     const { factory, opened } = build({ worktrees: [] });
     const { tools } = factory.buildTools(nora(), CTX);
-    const out = await (tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }).invoke(
-      { question: 'research this' },
-      config,
-    );
+    const out = await (
+      tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }
+    ).invoke({ question: 'research this' }, config);
     expect(opened).toHaveLength(0);
     expect(out).toContain('create_worktree');
   });

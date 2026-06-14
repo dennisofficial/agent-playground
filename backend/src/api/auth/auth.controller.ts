@@ -26,10 +26,7 @@ export class AuthController {
   /** Exchange credentials for httpOnly access_token + refresh_token cookies. */
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(
-    @Body() dto: LoginDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     return this.auth.login(dto.email, dto.password, res);
   }
 
@@ -42,10 +39,7 @@ export class AuthController {
   /** Rotate tokens: consume refresh_token cookie, issue new access + refresh cookies. */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  refresh(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     return this.auth.refresh(req, res);
   }
 

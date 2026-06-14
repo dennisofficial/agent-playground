@@ -12,10 +12,7 @@ import type { ConductorEvent } from '../domain/conductor-events';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
-import type {
-  BoardEvent,
-  BoardEventsBus,
-} from '../memory/board-events.bus';
+import type { BoardEvent, BoardEventsBus } from '../memory/board-events.bus';
 import type { PlanStore } from '../memory/plan-store';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type {
@@ -291,7 +288,10 @@ describe('ConductorService scheduling', () => {
 
   it('records a drop only ONCE per burst even across rapid-fire messages', async () => {
     const { conductor, channel, metrics } = await buildConductor({
-      run: () => ({ deltas: [{ decision: 'ignore' }], cursorAfter: channel.length }),
+      run: () => ({
+        deltas: [{ decision: 'ignore' }],
+        cursorAfter: channel.length,
+      }),
     });
     conductor.submitFrom('dennis', 'Dennis', 'first');
     conductor.submitFrom('dennis', 'Dennis', 'second');

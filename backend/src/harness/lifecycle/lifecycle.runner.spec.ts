@@ -76,10 +76,7 @@ describe('LifecycleRunner', () => {
       handlerFor('self_review', async () => ({ planBody: 'should not run' })),
     ]);
     const emp = employeeWith([]); // no capabilities
-    const out = await runner.run(
-      LifecycleEvent.PlanFinished,
-      payloadFor(emp),
-    );
+    const out = await runner.run(LifecycleEvent.PlanFinished, payloadFor(emp));
     expect(out.planBody).toBe('original');
   });
 
@@ -150,7 +147,10 @@ describe('LifecycleRunner', () => {
     const runner = runnerWith([
       handlerFor(
         'slow',
-        () => new Promise((resolve) => setTimeout(() => resolve({ planBody: 'late' }), 50)),
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ planBody: 'late' }), 50),
+          ),
       ),
     ]);
     const emp = employeeWith([lifecycleCap('slow', { timeoutMs: 5 })]);

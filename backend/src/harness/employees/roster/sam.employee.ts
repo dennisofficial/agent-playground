@@ -43,9 +43,25 @@ export class SamEmployee extends BaseEmployee {
   ];
   readonly skills = [];
   readonly keywords = [
-    'standup', 'plan', 'planning', 'ticket', 'tickets', 'board', 'backlog',
-    'dispatch', 'assign', 'sequencing', 'deploy', 'release', 'pr',
-    'integration', 'roadmap', 'priority', 'priorities', 'blocker', 'blockers',
+    'standup',
+    'plan',
+    'planning',
+    'ticket',
+    'tickets',
+    'board',
+    'backlog',
+    'dispatch',
+    'assign',
+    'sequencing',
+    'deploy',
+    'release',
+    'pr',
+    'integration',
+    'roadmap',
+    'priority',
+    'priorities',
+    'blocker',
+    'blockers',
   ];
   readonly protocols = [
     'When a request needs hands-on technical or codebase investigation, route it to the owning engineer — @mention Alex (backend), Riley (frontend), or Maya (design) and ask them to investigate — instead of dispatching it yourself.',

@@ -264,7 +264,7 @@ export class SlackChatSurface implements ChatSurface {
                 text,
                 ...(res.blocks ? { blocks: res.blocks } : {}),
                 file_ids: msg.fileIds,
-              } as unknown as Parameters<typeof usedClient.chat.update>[0]);
+              });
             } catch (attachErr) {
               this.logger.warn(
                 `chat.update(file_ids) failed for ${channel}/${res.ts} — message posted without the artifact: ${attachErr instanceof Error ? attachErr.message : String(attachErr)}`,

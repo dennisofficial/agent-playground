@@ -134,13 +134,18 @@ describe('create_session × the approval gate', () => {
       refusal: null,
     });
     await tool.execute(
-      { worktreeId: 'wt-001', task: 'go execute #7', mode: 'execute', board_task_id: 7 },
+      {
+        worktreeId: 'wt-001',
+        task: 'go execute #7',
+        mode: 'execute',
+        board_task_id: 7,
+      },
       ctx,
     );
     // The stored session.task stays the brief (for list_sessions)...
     expect(created[0]?.task).toBe('go execute #7');
     // ...but the engine's opening message is the enriched plan handoff + the brief as a note.
-    const opening = runner.runSessionTurn.mock.calls[0]?.[1] as string;
+    const opening = runner.runSessionTurn.mock.calls[0]?.[1];
     expect(opening).toContain('PLAN: add the auth middleware.');
     expect(opening).toContain('Wire auth');
     expect(opening).toContain('go execute #7');
@@ -153,7 +158,12 @@ describe('create_session × the approval gate', () => {
       refusal: null,
     });
     await tool.execute(
-      { worktreeId: 'wt-001', task: 'just do it', mode: 'execute', board_task_id: 7 },
+      {
+        worktreeId: 'wt-001',
+        task: 'just do it',
+        mode: 'execute',
+        board_task_id: 7,
+      },
       ctx,
     );
     expect(runner.runSessionTurn.mock.calls[0]?.[1]).toBe('just do it');

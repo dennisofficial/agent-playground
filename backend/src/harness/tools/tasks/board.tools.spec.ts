@@ -208,7 +208,9 @@ describe('board tools authority', () => {
     ).resolves.toContain("team lead's call");
 
     // In-review work: same — they keep addressing feedback; the lead closes it.
-    board.get.mockResolvedValue(task({ assignee: 'alex', status: 'in_review' }));
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'in_review' }),
+    );
     await expect(
       tool.execute({ id: 7, status: 'done' }, identity('alex')),
     ).resolves.toContain('Dennis accepts');

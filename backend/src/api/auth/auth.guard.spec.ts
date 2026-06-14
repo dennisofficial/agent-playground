@@ -18,11 +18,13 @@ function makeReflector(isPublic = false): Reflector {
 function makeJwt(sub?: string): JwtService {
   return {
     verifyAccessToken: vi.fn().mockResolvedValue({ sub }),
-  } as unknown as JwtService;
+  };
 }
 
 function makeRepo(user: unknown = { id: 'u1', role: 'admin' }): AdminUserRepo {
-  return { findOne: vi.fn().mockResolvedValue(user) } as unknown as AdminUserRepo;
+  return {
+    findOne: vi.fn().mockResolvedValue(user),
+  } as unknown as AdminUserRepo;
 }
 
 function makeEnv(token?: string): EnvService {
@@ -35,7 +37,10 @@ function makeEnv(token?: string): EnvService {
   } as unknown as EnvService;
 }
 
-function makeCtx(authorization?: string, cookies: Record<string, string> = {}): ExecutionContext {
+function makeCtx(
+  authorization?: string,
+  cookies: Record<string, string> = {},
+): ExecutionContext {
   return {
     getHandler: vi.fn().mockReturnValue({}),
     getClass: vi.fn().mockReturnValue({}),
@@ -79,9 +84,9 @@ describe('AdminAuthGuard', () => {
 
   it('rejects a wrong M2M bearer and falls through to JWT (no cookie → 401)', async () => {
     const g = guard({ m2mToken: 'correct-token' });
-    await expect(
-      g.canActivate(makeCtx('Bearer wrong-token')),
-    ).rejects.toThrow(UnauthorizedException);
+    await expect(g.canActivate(makeCtx('Bearer wrong-token'))).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('grants access to a valid access_token cookie', async () => {

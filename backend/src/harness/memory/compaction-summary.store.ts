@@ -20,7 +20,12 @@ export class CompactionSummaryStore {
     summary: string,
   ): Promise<void> {
     await this.repo.save(
-      this.repo.create({ thread, version, covered_up_to: coveredUpTo, summary }),
+      this.repo.create({
+        thread,
+        version,
+        covered_up_to: coveredUpTo,
+        summary,
+      }),
     );
   }
 }

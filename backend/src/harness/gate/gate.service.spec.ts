@@ -198,7 +198,8 @@ describe('GateService dormancy', () => {
   // Text-sensitive registry double: '@alex'/bare 'alex' address Alex; keywordHit is configurable.
   const dormantEmployees = (opts: { keyword?: boolean } = {}) =>
     ({
-      mentionedBots: (t: string) => (t.includes('@alex') ? [{ id: 'alex' }] : []),
+      mentionedBots: (t: string) =>
+        t.includes('@alex') ? [{ id: 'alex' }] : [],
       addressedBots: (t: string) =>
         t.includes('@alex') || /\balex\b/i.test(t) ? [{ id: 'alex' }] : [],
       isBroadcast: (t: string) => t.includes('@here'),
@@ -208,7 +209,10 @@ describe('GateService dormancy', () => {
 
   // A soft-gate model double that records whether it was invoked and returns a canned verdict.
   const softModel = (
-    onCall: () => { action: 'respond' | 'acknowledge' | 'ignore'; reasoning: string },
+    onCall: () => {
+      action: 'respond' | 'acknowledge' | 'ignore';
+      reasoning: string;
+    },
   ) =>
     ({
       buildGateModel: () => ({

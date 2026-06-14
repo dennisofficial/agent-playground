@@ -334,8 +334,7 @@ export class SessionRunnerService {
     // only bites a future divergent config; it prevents silent wrong-engine execution.)
     if (mode && mode !== session.mode) {
       const bot =
-        this.employees.byId(session.ownerBot) ??
-        this.employees.fallbackOwner();
+        this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
       const ctx = this.persona.context();
       const targetEngine = (
         mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx)

@@ -93,7 +93,8 @@ export class ToolRegistry implements OnModuleInit {
     const m = new Map<string, readonly RefreshScope[]>();
     for (const cls of classes) {
       const impl = this.resolve(cls);
-      if (impl.refreshesContext?.length) m.set(impl.name, impl.refreshesContext);
+      if (impl.refreshesContext?.length)
+        m.set(impl.name, impl.refreshesContext);
     }
     return m;
   }

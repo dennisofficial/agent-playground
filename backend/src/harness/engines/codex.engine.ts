@@ -110,7 +110,10 @@ export class CodexEngine implements WorkerEngine {
     signal,
   }: RunWorkerArgs) {
     const client = this.getCodex(agentId, apiKey);
-    const opts = this.threadOptions(cwd, { model, readOnly: mode !== 'execute' });
+    const opts = this.threadOptions(cwd, {
+      model,
+      readOnly: mode !== 'execute',
+    });
     const thread = sessionId
       ? client.resumeThread(sessionId, opts)
       : client.startThread(opts);

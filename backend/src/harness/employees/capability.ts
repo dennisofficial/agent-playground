@@ -58,7 +58,8 @@ export interface ToolCapability extends BaseCapability {
 
 export type Capability = LifecycleCapability | ToolCapability;
 
-export const isLifecycleCapability = (c: Capability): c is LifecycleCapability =>
-  c.trigger.kind === 'lifecycle';
+export const isLifecycleCapability = (
+  c: Capability,
+): c is LifecycleCapability => c.trigger.kind === 'lifecycle';
 export const isToolCapability = (c: Capability): c is ToolCapability =>
   c.trigger.kind === 'tool';

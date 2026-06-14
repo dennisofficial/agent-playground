@@ -52,6 +52,6 @@ export const TRANSFORM_CONTRACT: {
 };
 
 /** What a blocking hook returns: a partial of the replaceable fields, or nothing (no transform). */
-export type LifecycleResult<E extends LifecycleEvent> =
-  | Partial<LifecyclePayloads[E]>
-  | void;
+export type LifecycleResult<E extends LifecycleEvent> = Partial<
+  LifecyclePayloads[E]
+> | void;

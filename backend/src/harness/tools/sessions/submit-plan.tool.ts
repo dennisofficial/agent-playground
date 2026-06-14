@@ -11,7 +11,9 @@ import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 const submitPlanSchema = z.object({
   sessionId: z
     .string()
-    .describe('The planning session whose finished, self-reviewed plan to submit.'),
+    .describe(
+      'The planning session whose finished, self-reviewed plan to submit.',
+    ),
 });
 
 /**
@@ -48,8 +50,7 @@ export class SubmitPlanTool implements IHarnessTool<typeof submitPlanSchema> {
       return `${sessionId}'s last report isn't a plan — only a finished plan can be submitted (reply_session if it still needs work).`;
     if (session.boardTaskId === undefined)
       return `${sessionId} isn't linked to a board task — open it with board_task_id so its plan has a ticket to attach to.`;
-    if (!session.lastReport)
-      return `${sessionId} has no plan text to submit.`;
+    if (!session.lastReport) return `${sessionId} has no plan text to submit.`;
 
     await this.plans.attach({
       team: session.team,

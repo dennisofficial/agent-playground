@@ -95,7 +95,12 @@ export class MarkPrReadyTool implements IHarnessTool<typeof markReadySchema> {
     if (task.status !== 'in_review')
       await this.board.update(id.team, board_task_id, { status: 'in_review' });
     await this.notes
-      .add(id.team, board_task_id, id.selfAgent, `PR ready for review: ${pr.url}`)
+      .add(
+        id.team,
+        board_task_id,
+        id.selfAgent,
+        `PR ready for review: ${pr.url}`,
+      )
       .catch(() => undefined);
 
     return `PR #${pr.number} marked ready for review: ${pr.url}. Board task #${board_task_id} → in_review — it's Dennis's to review now. Address any feedback in this same execute session (no re-approval); @Sam marks it done once Dennis accepts.`;

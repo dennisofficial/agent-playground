@@ -27,7 +27,11 @@ import { BotGraphFactory } from './bot-graph.factory';
  *  - a normal ignore still reaches reconcile (the reminder backstop is preserved).
  */
 
-const ALEX = makeEmployee({ id: 'alex', name: 'Alex', role: 'backend engineer' });
+const ALEX = makeEmployee({
+  id: 'alex',
+  name: 'Alex',
+  role: 'backend engineer',
+});
 
 class FakeChannel {
   readonly surfaceId = 'tui:test';
@@ -89,7 +93,14 @@ function buildFactory(
       reconcileMemory: () => Promise.resolve(),
       reconcileTasks,
     } as unknown as ReconcileService,
-    { buildModel: () => ({ bindTools: () => ({ invoke: () => Promise.reject(new Error('llm must not run on the ignore path')) }) }) } as unknown as ChatModelFactory,
+    {
+      buildModel: () => ({
+        bindTools: () => ({
+          invoke: () =>
+            Promise.reject(new Error('llm must not run on the ignore path')),
+        }),
+      }),
+    } as unknown as ChatModelFactory,
     { chatPromptFor: () => 'persona' } as unknown as PersonaService,
     { list: () => [] } as unknown as WorktreeService,
     { list: () => Promise.resolve([]) } as unknown as SessionRegistry,
@@ -103,7 +114,12 @@ async function drain(stream: AsyncIterable<unknown>): Promise<void> {
 }
 
 const seedHuman = (channel: FakeChannel) =>
-  channel.append({ id: 'h-1', author: 'Dennis', authorId: 'dennis', text: 'hello' });
+  channel.append({
+    id: 'h-1',
+    author: 'Dennis',
+    authorId: 'dennis',
+    text: 'hello',
+  });
 
 describe('bot graph — dormancy', () => {
   it('passes dormant=true to the gate at/above the ignore threshold', async () => {

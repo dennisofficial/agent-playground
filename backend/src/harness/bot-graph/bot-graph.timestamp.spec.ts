@@ -107,7 +107,10 @@ function buildFactory(channel: FakeChannel, gapMs?: number) {
       gate: async () => ({ action: 'respond' as const }),
     } as unknown as GateService,
     { isEnabled: () => false } as unknown as RecursionGuardService,
-    { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
+    {
+      fetchMemory: async () => '',
+      fetchTasks: async () => '',
+    } as unknown as FetchService,
     {
       reconcileMemory: async () => {},
       reconcileTasks: async () => {},

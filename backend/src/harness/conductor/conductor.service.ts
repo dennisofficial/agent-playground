@@ -511,7 +511,9 @@ export class ConductorService
       if (!settled) continue;
       this.awaitingResponse.delete(channelId);
       this.metrics.recordDroppedBurst();
-      this.bus.patchStatus({ dropped: this.metrics.snapshot().humanBurstDropped });
+      this.bus.patchStatus({
+        dropped: this.metrics.snapshot().humanBurstDropped,
+      });
       this.emit({
         id: `drop-${this.emitSeq++}`,
         kind: 'dropped',

@@ -121,13 +121,35 @@ function build(opts: {
 // ── Memory reconcile: scripted model output for suggestion tests ───────────────────────────────
 
 type MemorySuggestion =
-  | { op: 'add'; kind: 'correction' | 'decision' | 'preference'; fact: string; tier: string; authorId: string; supersedes?: number }
-  | { op: 'update'; kind: 'correction' | 'decision' | 'preference'; id: number; newFact: string }
+  | {
+      op: 'add';
+      kind: 'correction' | 'decision' | 'preference';
+      fact: string;
+      tier: string;
+      authorId: string;
+      supersedes?: number;
+    }
+  | {
+      op: 'update';
+      kind: 'correction' | 'decision' | 'preference';
+      id: number;
+      newFact: string;
+    }
   | { op: 'delete'; id: number };
 
 interface ScriptedMemoryResult {
-  add?: Array<{ kind: 'correction' | 'decision' | 'preference'; fact: string; tier: string; authorId: string; supersedes?: number }>;
-  update?: Array<{ kind: 'correction' | 'decision' | 'preference'; id: number; newFact: string }>;
+  add?: Array<{
+    kind: 'correction' | 'decision' | 'preference';
+    fact: string;
+    tier: string;
+    authorId: string;
+    supersedes?: number;
+  }>;
+  update?: Array<{
+    kind: 'correction' | 'decision' | 'preference';
+    id: number;
+    newFact: string;
+  }>;
   delete?: Array<{ id: number }>;
 }
 
@@ -270,7 +292,11 @@ describe('ReconcileService.reconcileMemory (Phase 2 — suggestion-only, no writ
 
   it('returns empty string for off-class turns (greeting)', async () => {
     const { service } = buildMemory({ add: [], update: [], delete: [] });
-    const result = await service.reconcileMemory(BOT, 'Dennis: hey team!', CHANNEL_ID);
+    const result = await service.reconcileMemory(
+      BOT,
+      'Dennis: hey team!',
+      CHANNEL_ID,
+    );
     expect(result).toBe('');
   });
 
@@ -307,7 +333,7 @@ describe('ReconcileService.reconcileMemory (Phase 2 — suggestion-only, no writ
     });
     const result = await service.reconcileMemory(
       BOT,
-      "Dennis: I always want PRs to target develop, not main.",
+      'Dennis: I always want PRs to target develop, not main.',
       CHANNEL_ID,
     );
     expect(result).not.toBe('');
@@ -356,7 +382,11 @@ describe('ReconcileService.reconcileMemory (Phase 2 — suggestion-only, no writ
     const { service } = buildMemory({
       delete: [{ id: 7 }],
     });
-    const result = await service.reconcileMemory(BOT, 'Dennis: That old fact is wrong now.', CHANNEL_ID);
+    const result = await service.reconcileMemory(
+      BOT,
+      'Dennis: That old fact is wrong now.',
+      CHANNEL_ID,
+    );
     expect(result).not.toBe('');
     expect(result).toContain('forget #7');
     expect(result).toContain('correction');
@@ -401,7 +431,11 @@ describe('ReconcileService.reconcileMemory (Phase 2 — suggestion-only, no writ
       update: [{ kind: 'correction', id: 1, newFact: 'Updated fact' }],
       delete: [{ id: 2 }],
     });
-    await service.reconcileMemory(BOT, 'Dennis: Always use strict mode.', CHANNEL_ID);
+    await service.reconcileMemory(
+      BOT,
+      'Dennis: Always use strict mode.',
+      CHANNEL_ID,
+    );
     expect(writes.rememberDeduped).not.toHaveBeenCalled();
     expect(writes.withLock).not.toHaveBeenCalled();
     expect(semantic.updateFactById).not.toHaveBeenCalled();
@@ -411,8 +445,18 @@ describe('ReconcileService.reconcileMemory (Phase 2 — suggestion-only, no writ
   it('records metrics with suggestion counts by class', async () => {
     const { service, metrics } = buildMemory({
       add: [
-        { kind: 'preference', fact: 'Dennis prefers X', tier: 'team', authorId: 'dennis' },
-        { kind: 'decision', fact: 'Backend uses Y', tier: 'project', authorId: 'dennis' },
+        {
+          kind: 'preference',
+          fact: 'Dennis prefers X',
+          tier: 'team',
+          authorId: 'dennis',
+        },
+        {
+          kind: 'decision',
+          fact: 'Backend uses Y',
+          tier: 'project',
+          authorId: 'dennis',
+        },
       ],
       delete: [{ id: 5 }],
     });
@@ -433,16 +477,24 @@ describe('ReconcileService.reconcileMemory (Phase 2 — suggestion-only, no writ
     } as unknown as SemanticMemory;
     const models = {
       buildExtractModel: () => ({
-        withStructuredOutput: () => RunnableLambda.from(async () => { throw new Error('never'); }),
+        withStructuredOutput: () =>
+          RunnableLambda.from(async () => {
+            throw new Error('never');
+          }),
       }),
     } as unknown as ChatModelFactory;
     const service = new ReconcileService(
       semantic,
       {} as TaskStore,
-      { recordTaskReconcile: vi.fn(), recordMemoryReconcile: vi.fn() } as unknown as MemoryMetricsService,
+      {
+        recordTaskReconcile: vi.fn(),
+        recordMemoryReconcile: vi.fn(),
+      } as unknown as MemoryMetricsService,
       { list: () => [] } as unknown as EmployeeRegistry,
       models,
     );
-    await expect(service.reconcileMemory(BOT, 'Dennis: hello', CHANNEL_ID)).resolves.toBe('');
+    await expect(
+      service.reconcileMemory(BOT, 'Dennis: hello', CHANNEL_ID),
+    ).resolves.toBe('');
   });
 });
