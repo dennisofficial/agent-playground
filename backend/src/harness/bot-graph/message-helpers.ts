@@ -207,12 +207,16 @@ export const dropLeadingOrphanToolResults = (
 };
 
 /**
- * Choose a compaction boundary that never splits a tool_use / tool_result group.
- * Returns B such that messages.slice(B) does NOT begin with an orphaned tool_result.
- *  - Walks the raw cut back over a contiguous trailing ToolMessage block onto its owning AIMessage.
+ * Choose a compaction boundary that never splits a tool_use / tool_result group and always
+ * lands at a HumanMessage so the verbatim tail is a well-formed conversation.
+ * Returns B such that messages[B] is a HumanMessage and messages.slice(B) begins a valid turn.
+ *  - (a) Walks the raw cut back over a contiguous leading ToolMessage block onto its owning AI.
+ *  - (b) Validates ownership: the AI at B must cover every tool_result that follows it.
+ *  - (c) Human-boundary guarantee: walks B back further until hitting a HumanMessage, ensuring
+ *        the verbatim tail always starts with a human turn (Anthropic's hard requirement).
  *  - Never lands at/below `floor` (the already-summarized boundary).
- *  - Conservative: if the landing message is NOT the rightful owner of the following tool block
- *    (source already corrupt), returns `floor` so the caller skips compaction this turn.
+ *  - Conservative: returns `floor` so the caller skips compaction whenever the window is too
+ *    narrow or the source history is corrupt.
  */
 export const pairSafeBoundary = (
   messages: BaseMessage[],
@@ -241,6 +245,10 @@ export const pairSafeBoundary = (
       if (!id || !callIds.has(id)) return floor;
     }
   }
+  // (c) Human-boundary guarantee: Anthropic requires conversations start with a human turn.
+  // Walk b back to the nearest HumanMessage; bail if none exists above floor.
+  while (b > floor && messages[b]?.getType() !== 'human') b--;
+  if (b <= floor) return floor; // no Human boundary in window → caller bails
   return b;
 };
 

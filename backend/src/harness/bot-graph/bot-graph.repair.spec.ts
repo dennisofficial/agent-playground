@@ -456,17 +456,18 @@ describe('bot graph — poisoned-history self-healing', () => {
     expect(final.values.summarizedUpTo).toBe(2);
   });
 
-  it('persists a pair-safe summarizedUpTo that never lands on a ToolMessage (write-path)', async () => {
+  it('persists a pair-safe summarizedUpTo that always lands on a HumanMessage (write-path)', async () => {
     /**
      * Regression: compactionNode used a positional cut (`messages.length - COMPACTION_TAIL`) that
-     * could land on a ToolMessage. This test verifies pairSafeBoundary walks the cut back to the
-     * owning AIMessage and that the corrected boundary is what gets persisted.
+     * could land on a ToolMessage or AIMessage. This test verifies pairSafeBoundary walks the cut
+     * back to a HumanMessage (the Human-boundary guarantee) and that value is what gets persisted.
      *
      * Setup (COMPACTION_TAIL = 20, COMPACTION_TOKEN_THRESHOLD = 80_000):
-     *   - Seed 20 messages; idx 1 = AI(tool_call tc-write-01), idx 2 = Tool(tc-write-01).
-     *   - stream() appends 1 Human (channel) + 1 AI response → total = 22 messages.
-     *   - Arithmetic cut = 22 − 20 = 2 → ToolMessage.
-     *   - pairSafeBoundary walks back to 1 → owning AIMessage.
+     *   - Seed 23 messages; idx 5 = AI(tool_call tc-write-01) with idx 4 = HumanMessage.
+     *   - stream() appends 1 Human (channel) + 1 AI response → total = 25 messages.
+     *   - Arithmetic cut = 25 − 20 = 5 → AIMessage(tool_call) — NOT a ToolMessage.
+     *   - pairSafeBoundary: (a) no tool walk, (b) ownership validates AI(5)→Tool(6), (c) Human
+     *     walk-back lands on Human(4) — proves the Human-boundary guarantee specifically.
      *   - Fake model returns 90 000 input tokens (triggers threshold) on the first call;
      *     returns summary text on the second call (compactionNode's summarisation invoke).
      */
@@ -539,15 +540,23 @@ describe('bot graph — poisoned-history self-healing', () => {
     const graph = factory.getBotGraph(ALEX);
     const config = { configurable: { thread_id: 'alex:compaction-write:root' } };
 
-    // Build 20 seeded messages where idx 2 is a ToolMessage.
-    //   idx 0 : HumanMessage — will land in the compacted window (slice 0..1)
-    //   idx 1 : AIMessage(tool_call id='tc-write-01') — owning AI; pairSafeBoundary must land here
-    //   idx 2 : ToolMessage(tc-write-01) — arithmetic rawCut (22 − 20 = 2) lands HERE
-    //   idx 3 : AIMessage — verbatim reply after the tool block
-    //   idx 4–19: alternating Human/AI padding to reach 20 total
+    // Build 23 seeded messages where idx 5 is an AIMessage(tool_call) and idx 4 is a HumanMessage.
+    //   idx 0 : HumanMessage — earlier context (will be compacted)
+    //   idx 1 : AIMessage — prior reply
+    //   idx 2 : HumanMessage — mid-history turn (will be compacted)
+    //   idx 3 : AIMessage — prior reply
+    //   idx 4 : HumanMessage — the Human boundary pairSafeBoundary must land on
+    //   idx 5 : AIMessage(tool_call id='tc-write-01') — arithmetic rawCut (25 − 20 = 5) lands HERE
+    //   idx 6 : ToolMessage(tc-write-01) — ownership validates AI(5) → Tool(6)
+    //   idx 7 : AIMessage — verbatim reply after the tool block
+    //   idx 8–22: alternating Human/AI padding to reach 23 total
     const tc = 'tc-write-01';
     const seededMessages: BaseMessage[] = [
       new HumanMessage('Dennis: what is the project status?'),
+      new AIMessage({ content: 'Let me check.' }),
+      new HumanMessage('Dennis: and any blockers?'),
+      new AIMessage({ content: 'Checking blockers.' }),
+      new HumanMessage('Dennis: thanks, one more question'),
       new AIMessage({
         content: '',
         tool_calls: [
@@ -566,16 +575,16 @@ describe('bot graph — poisoned-history self-healing', () => {
       }),
       new AIMessage({ content: 'Based on recall: all is on track.' }),
     ];
-    // Padding: indices 4–19, alternating Human/AI, to reach exactly 20 messages.
-    for (let i = 4; i < 20; i++) {
+    // Padding: indices 8–22, alternating Human/AI, to reach exactly 23 messages.
+    for (let i = 8; i < 23; i++) {
       seededMessages.push(
         i % 2 === 0
           ? new HumanMessage(`Dennis: follow-up ${i}`)
           : new AIMessage({ content: `Alex: noted ${i}` }),
       );
     }
-    // (sanity) 4 + 16 = 20 seeded messages
-    expect(seededMessages).toHaveLength(20);
+    // (sanity) 8 + 15 = 23 seeded messages
+    expect(seededMessages).toHaveLength(23);
 
     await graph.updateState(config, {
       messages: seededMessages,
@@ -603,11 +612,12 @@ describe('bot graph — poisoned-history self-healing', () => {
     const msgs = final.values.messages as BaseMessage[];
     const summarizedUpTo = final.values.summarizedUpTo as number;
 
-    // The boundary must have landed on the OWNING AIMessage, NOT the ToolMessage.
-    expect(msgs[summarizedUpTo].getType()).toBe('ai');
+    // The boundary must have landed on a HumanMessage — the Human-boundary guarantee.
+    // (Old behaviour was to stop at the owning AIMessage; this proves the extra walk-back.)
+    expect(msgs[summarizedUpTo].getType()).toBe('human');
 
-    // The pair-safe cut (1) must be strictly below the arithmetic cut (22 − 20 = 2),
-    // proving pairSafeBoundary actually walked the boundary back.
+    // The pair-safe cut (4) must be strictly below the arithmetic cut (25 − 20 = 5),
+    // proving pairSafeBoundary actually walked the boundary back past the AIMessage.
     expect(summarizedUpTo).toBeLessThan(msgs.length - 20);
 
     // The verbatim tail must NOT start with a tool_result.

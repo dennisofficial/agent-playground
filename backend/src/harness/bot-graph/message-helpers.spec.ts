@@ -495,19 +495,21 @@ describe('dropLeadingOrphanToolResults', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Unit tests for pairSafeBoundary — ensures the compaction cut never lands on a ToolMessage.
+ * Unit tests for pairSafeBoundary — ensures the compaction cut never splits a
+ * tool_use/tool_result group and always lands at a HumanMessage boundary.
  *
  * Contract:
- *  - Cut on a non-tool message → returned unchanged.
- *  - Cut on a single ToolMessage → walks back to owning AIMessage index.
- *  - Cut inside a parallel block (≥2 results) → walks across all to owner.
+ *  - Cut already on a HumanMessage → returned unchanged.
+ *  - Cut on a ToolMessage → walks back past the AI owner to the preceding Human.
+ *  - Cut inside a parallel block (≥2 results) → walks across all results and the owner AI to Human.
  *  - Walk crosses `floor` → returns `floor` (caller bails).
  *  - Corrupt source: preceding message is not AI → returns `floor`.
  *  - Corrupt source: preceding AI whose tool_calls don't cover all ids → returns `floor`.
- *  - Owner fully covers block → returns owner index.
+ *  - Cut on a final AIMessage (no following tool) → walks back to preceding Human.
+ *  - Cut inside tool results followed by more context → walks all the way to Human.
  */
 describe('pairSafeBoundary', () => {
-  it('returns rawCut unchanged when it does not land on a tool message', () => {
+  it('returns rawCut unchanged when it already lands on a HumanMessage', () => {
     const messages = [
       new HumanMessage('user'),
       new AIMessage({ content: 'reply' }),
@@ -516,20 +518,26 @@ describe('pairSafeBoundary', () => {
     expect(pairSafeBoundary(messages, 2, 0)).toBe(2);
   });
 
-  it('walks back a single tool_result to the owning AIMessage index', () => {
-    // idx: 0=Human, 1=AI(tool_use t1), 2=Tool(t1)
+  it('walks back a tool_result and its AI owner to the Human boundary', () => {
+    // idx: 0=Human(earlier), 1=AI(reply), 2=Human(h), 3=AI(tool_use t1), 4=Tool(t1)
+    // rawCut=4: (a) walks to AI(3), (b) ownership OK, (c) walks to Human(2)
     const ai = new AIMessage({
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
     });
     const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
-    const messages = [new HumanMessage('h'), ai, tool];
-    // rawCut=2 lands on the ToolMessage → should walk back to 1 (the AI owner)
-    expect(pairSafeBoundary(messages, 2, 0)).toBe(1);
+    const messages = [
+      new HumanMessage('earlier'),
+      new AIMessage({ content: 'prior reply' }),
+      new HumanMessage('h'),
+      ai,
+      tool,
+    ];
+    expect(pairSafeBoundary(messages, 4, 0)).toBe(2);
   });
 
-  it('walks back a parallel block of 2 results to the owning AIMessage', () => {
-    // idx: 0=Human, 1=AI(tool_use t1, t2), 2=Tool(t1), 3=Tool(t2), 4=Human
+  it('walks back a parallel block of 2 results all the way to the Human boundary', () => {
+    // idx: 0=Human(earlier), 1=AI(reply), 2=Human(h), 3=AI(t1,t2), 4=Tool(t1), 5=Tool(t2), 6=Human
     const ai = new AIMessage({
       content: '',
       tool_calls: [
@@ -539,56 +547,59 @@ describe('pairSafeBoundary', () => {
     });
     const tool1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
     const tool2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
-    const messages = [new HumanMessage('h'), ai, tool1, tool2, new HumanMessage('h2')];
-    // rawCut=3 lands on second ToolMessage → should walk back to 1
-    expect(pairSafeBoundary(messages, 3, 0)).toBe(1);
-    // rawCut=2 also inside the tool block → walks back to 1
-    expect(pairSafeBoundary(messages, 2, 0)).toBe(1);
+    const messages = [
+      new HumanMessage('earlier'),
+      new AIMessage({ content: 'prior reply' }),
+      new HumanMessage('h'),
+      ai,
+      tool1,
+      tool2,
+      new HumanMessage('next'),
+    ];
+    // rawCut=5 (second Tool) → tool walk-back to AI(3) → Human walk-back to Human(2)
+    expect(pairSafeBoundary(messages, 5, 0)).toBe(2);
+    // rawCut=4 (first Tool) → same path → Human(2)
+    expect(pairSafeBoundary(messages, 4, 0)).toBe(2);
   });
 
   it('returns floor when walking back would cross floor', () => {
-    // floor=1, rawCut=1 (same as floor), messages[1] is a ToolMessage
     const ai = new AIMessage({
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 't1', type: 'tool_call' }],
     });
     const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
     const messages = [new HumanMessage('h'), ai, tool];
-    // rawCut=2 (tool), floor=2 → already at/below floor
+    // rawCut=2 (tool), floor=2 → b<=floor immediately → floor
     expect(pairSafeBoundary(messages, 2, 2)).toBe(2);
-    // rawCut=2 (tool), floor=1 → walks to 1 (AI), returns 1
+    // rawCut=2 (tool), floor=1 → tool walk to b=1 (AI), b<=floor (1<=1) → floor=1
     expect(pairSafeBoundary(messages, 2, 1)).toBe(1);
   });
 
   it('returns floor when the message preceding the tool block is not an AI', () => {
-    // idx: 0=Human, 1=Human, 2=Tool — no AI owner before the tool block.
-    // With rawCut=2, floor=0: walk stops at b=1 (Human, b>floor) → non-AI check fires at :229,
-    // not the b<=floor collapse guard (which would fire at b=0). Exercises the right branch.
+    // idx: 0=Human, 1=Human, 2=Tool — no AI owner; ownership check fires early (b).
     const messages = [
       new HumanMessage('prior context'),
       new HumanMessage('more context'),
       new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' }),
     ];
-    // rawCut=2 on tool → walks to 1 → Human, not AI → returns floor (0)
+    // rawCut=2 on tool → (a) walks to b=1 (Human) → (b) messages[2]='tool', owner is Human → floor
     expect(pairSafeBoundary(messages, 2, 0)).toBe(0);
   });
 
   it('returns floor when the AI tool_calls do not cover the following tool ids', () => {
-    // idx: 0=Human, 1=AI(tool_call id='x'), 2=Tool(id='t1') — id mismatch → corrupt.
-    // With rawCut=2, floor=0: walk stops at b=1 (AI, b>floor) → id-mismatch loop fires at :235-242,
-    // not the b<=floor collapse guard (which would fire at b=0). Exercises the right branch.
+    // idx: 0=Human, 1=AI(id='x'), 2=Tool(id='t1') — id mismatch.
     const ai = new AIMessage({
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'x', type: 'tool_call' }],
     });
     const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
     const messages = [new HumanMessage('h'), ai, tool];
-    // rawCut=2 on tool → walks to 1 → AI, but ownership check fails (x ≠ t1) → floor (0)
+    // rawCut=2 on tool → (a) walks to b=1 (AI) → (b) id mismatch → floor
     expect(pairSafeBoundary(messages, 2, 0)).toBe(0);
   });
 
-  it('returns the owner index when the AI fully covers the tool block', () => {
-    // idx: 0=Human, 1=AI(t1, t2), 2=Tool(t1), 3=Tool(t2), 4=AI('reply')
+  it('walks back to the Human boundary when the AI fully covers the tool block', () => {
+    // idx: 0=Human(earlier), 1=AI(reply), 2=Human(h), 3=AI(t1,t2), 4=Tool(t1), 5=Tool(t2), 6=AI(done)
     const ai = new AIMessage({
       content: '',
       tool_calls: [
@@ -599,11 +610,69 @@ describe('pairSafeBoundary', () => {
     const t1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
     const t2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
     const reply = new AIMessage({ content: 'done' });
-    const messages = [new HumanMessage('h'), ai, t1, t2, reply];
-    // rawCut=4 (reply AI) — not on a tool, no look-ahead tool (4+1 is out of bounds) → 4
-    expect(pairSafeBoundary(messages, 4, 0)).toBe(4);
-    // rawCut=3 (t2) → walks to 1 (AI owner), fully covers → 1
-    expect(pairSafeBoundary(messages, 3, 0)).toBe(1);
+    const messages = [
+      new HumanMessage('earlier'),
+      new AIMessage({ content: 'prior reply' }),
+      new HumanMessage('h'),
+      ai,
+      t1,
+      t2,
+      reply,
+    ];
+    // rawCut=6 (final AI reply, no following tool): (c) walks 6→5→4→3→2 (Human) → 2
+    expect(pairSafeBoundary(messages, 6, 0)).toBe(2);
+    // rawCut=5 (t2): (a) walks to AI(3), (b) ownership OK, (c) walks to Human(2) → 2
+    expect(pairSafeBoundary(messages, 5, 0)).toBe(2);
+  });
+
+  // --- Three new cases proving the Human-boundary guarantee ---
+
+  it('walks back to the preceding Human when the raw cut lands on an AIMessage reply', () => {
+    // idx: 0=Human, 1=AI, 2=Human, 3=AI
+    // rawCut=3 (second AI): step (a) no walk, (b) no following tool, (c) walks 3→2 (Human) → 2
+    const messages = [
+      new HumanMessage('first prompt'),
+      new AIMessage({ content: 'first reply' }),
+      new HumanMessage('second prompt'),
+      new AIMessage({ content: 'second reply' }),
+    ];
+    expect(pairSafeBoundary(messages, 3, 0)).toBe(2);
+  });
+
+  it('returns floor when tool walk-back lands on an AI whose Human boundary is at floor', () => {
+    // idx: 0=Human, 1=AI(tool_call t1), 2=Tool(t1), 3=AI
+    // rawCut=2: (a) walks to AI(1), (b) ownership OK, (c) walks to Human(0)=floor → floor
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const messages = [
+      new HumanMessage('h'),
+      ai,
+      tool,
+      new AIMessage({ content: 'done' }),
+    ];
+    // Human(0) == floor(0) → b<=floor → return floor=0
+    expect(pairSafeBoundary(messages, 2, 0)).toBe(0);
+  });
+
+  it('returns floor when the final AI after a tool block has its Human boundary at floor', () => {
+    // idx: 0=Human, 1=AI(tool_call t1), 2=Tool(t1), 3=AI(final reply)
+    // rawCut=3: (a) no walk (AI), (b) no following tool, (c) walks 3→2→1→0 (Human=floor) → floor
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const messages = [
+      new HumanMessage('h'),
+      ai,
+      tool,
+      new AIMessage({ content: 'final reply' }),
+    ];
+    // Human(0) == floor(0) → floor
+    expect(pairSafeBoundary(messages, 3, 0)).toBe(0);
   });
 });
 
