@@ -5,6 +5,7 @@ import {
   type ChatTracePointer,
   traceSessionTurn,
 } from '@workspace/langfuse';
+import { INVESTIGATE_ESCALATION_MODEL } from '../engines/engine-presets';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
 import {
@@ -24,6 +25,7 @@ import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
+import { investigationConfidence } from './confidence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
@@ -55,6 +57,10 @@ function renderEvent(e: WorkerEvent): string {
 
 const TRANSCRIPT_PAGE_SIZE = 40;
 const TRANSCRIPT_MAX_MATCHES = 30;
+
+/** The re-ask sent into the engine session when an investigation reports LOW confidence (v2). */
+const ESCALATION_NUDGE =
+  'Your previous answer reported LOW confidence. Take another, deeper pass: re-read the relevant code, specifically verify the things you said you could not confirm, and correct anything you guessed or got wrong. End again with the exact Confidence and Couldn\'t-verify lines.';
 
 @Injectable()
 export class SessionRunnerService {
@@ -128,16 +134,23 @@ export class SessionRunnerService {
           : keys.anthropic;
       // Jail the in-process langgraph tools to the worktree for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
-      const runEngineTurn = () =>
+      // One engine run, parametrized by message / model / resume-id so the confidence escalation
+      // below can fire a SECOND run (deeper model, same engine session) within this one turn.
+      // `systemPrompt`/`effort`/`mode` are constant for the turn.
+      const runEngineTurn = (
+        turnMessage: string,
+        turnModel: string | undefined,
+        resumeId: string | undefined,
+      ) =>
         withActiveRoot(worktree.path, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
             this.engines.get(session.engine).run({
-              task: message,
+              task: turnMessage,
               cwd: worktree.path,
               systemPrompt,
               agentId: bot.id,
-              sessionId: session.engineSessionId,
-              model,
+              sessionId: resumeId,
+              model: turnModel,
               effort,
               mode: session.mode,
               apiKey: engineKey,
@@ -153,36 +166,77 @@ export class SessionRunnerService {
             }),
           ),
         );
-      // Langfuse: ONE observation per session turn (its own trace, grouped by the harness session
+      // Langfuse: ONE observation per engine run (its own trace, grouped by the harness session
       // id) — the engine work (system prompt, the real opening/reply message, the report) is
       // otherwise invisible (subprocess engines emit no spans; this turn is ALS-detached from the
       // chat stream). `parentChatTrace` links it back to the spawning chat turn. No-op when tracing
       // is off. NOTE: pass NO LangChain callbacks into the engine — that would re-bleed tokens into
       // the chat stream the detach exists to prevent.
-      const {
-        result,
-        sessionId: engineSessionId,
-        questions,
-        planText,
-      } = tracingEnabled
-        ? await traceSessionTurn(runEngineTurn, {
-            name: `session.turn:${session.engine}:${session.mode}`,
-            sessionId,
-            input: message,
-            metadata: {
-              systemPrompt,
-              model,
-              effort,
-              mode: session.mode,
-              engine: session.engine,
-              boardTaskId: session.boardTaskId,
-              agentId: bot.id,
-              worktree: worktree.id,
-              turn: session.turns + 1,
-              parentChatTrace,
-            },
+      const runTraced = (
+        turnMessage: string,
+        turnModel: string | undefined,
+        resumeId: string | undefined,
+      ) =>
+        tracingEnabled
+          ? traceSessionTurn(
+              () => runEngineTurn(turnMessage, turnModel, resumeId),
+              {
+                name: `session.turn:${session.engine}:${session.mode}`,
+                sessionId,
+                input: turnMessage,
+                metadata: {
+                  systemPrompt,
+                  model: turnModel,
+                  effort,
+                  mode: session.mode,
+                  engine: session.engine,
+                  boardTaskId: session.boardTaskId,
+                  agentId: bot.id,
+                  worktree: worktree.id,
+                  turn: session.turns + 1,
+                  parentChatTrace,
+                },
+              },
+            )
+          : runEngineTurn(turnMessage, turnModel, resumeId);
+
+      const first = await runTraced(message, model, session.engineSessionId);
+      let result = first.result;
+      let engineSessionId = first.sessionId;
+      const { questions, planText } = first;
+
+      // V2 — confidence-gated escalation. A read-only INVESTIGATE turn whose report self-declares
+      // LOW confidence gets ONE deeper pass on a higher-reasoning model, resuming the same engine
+      // session so it builds on and corrects the first attempt; that pass's report becomes what
+      // relays. Bounded to a single re-run. Skipped for: non-Claude engines (they route their own
+      // models), questions-turns (they need answers, not more reasoning), and aborts. Falls SAFE
+      // when no confidence marker is present (investigationConfidence → null ≠ 'low').
+      if (
+        session.mode === 'investigate' &&
+        session.engine === EWorkerEngineName.CLAUDE &&
+        !questions?.length &&
+        !ac.signal.aborted &&
+        investigationConfidence(result) === 'low'
+      ) {
+        this.logger.log(
+          `${sessionId} investigate confidence LOW — escalating one pass to ${INVESTIGATE_ESCALATION_MODEL}`,
+        );
+        await this.sessions
+          .appendProgress(sessionId, {
+            kind: 'text',
+            text: `Confidence was low — taking a second, deeper pass on ${INVESTIGATE_ESCALATION_MODEL}.`,
           })
-        : await runEngineTurn();
+          .catch(() => undefined);
+        const deeper = await runTraced(
+          ESCALATION_NUDGE,
+          INVESTIGATE_ESCALATION_MODEL,
+          engineSessionId,
+        );
+        if (!ac.signal.aborted) {
+          result = deeper.result;
+          engineSessionId = deeper.sessionId ?? engineSessionId;
+        }
+      }
       // Closed while we were finishing up: discard the result, don't go idle or relay. The abort
       // flag alone isn't enough — closeSession writes 'closed' BEFORE calling abort(), so an engine
       // that resolves inside that window would see aborted=false and overwrite the close with

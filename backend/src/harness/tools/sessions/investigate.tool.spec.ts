@@ -95,4 +95,33 @@ describe('investigate', () => {
     expect(out).toContain('No worktree "nope"');
     expect(openSession).not.toHaveBeenCalled();
   });
+
+  it('always requires the epistemic-output trailer, even with no intent', async () => {
+    const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+    await tool.execute({ question: 'does a Slack adapter exist?' }, ctx);
+    const task = openSession.mock.calls[0][0].openingTask as string;
+    expect(task).toContain('Confidence: high | medium | low');
+    expect(task).toContain("Couldn't verify:");
+    expect(task).not.toContain('FOCUS:'); // no intent → no emphasis line
+  });
+
+  it('injects a distinct emphasis line per intent', async () => {
+    const cases: Array<[
+      'trace' | 'debug' | 'review',
+      string,
+    ]> = [
+      ['trace', 'walk the exact path'],
+      ['debug', 'check whether the premise is even true'],
+      ['review', 'trade-offs'],
+    ];
+    for (const [intent, needle] of cases) {
+      const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+      await tool.execute({ question: 'q', intent }, ctx);
+      const task = openSession.mock.calls[0][0].openingTask as string;
+      expect(task).toContain('FOCUS:');
+      expect(task.toLowerCase()).toContain(needle);
+      // the required trailer rides along regardless of intent
+      expect(task).toContain('Confidence: high | medium | low');
+    }
+  });
 });

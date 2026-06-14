@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import type { Identity } from '../../domain/identity';
+import {
+  DEFAULT_INVESTIGATE_PROMPT,
+  INVESTIGATE_INTENTS,
+} from '../../engines/engine.prompts';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { WorktreeService } from '../../worktrees/worktree.service';
 import { HarnessTool } from '../harness-tool.decorator';
@@ -11,6 +15,12 @@ const investigateSchema = z.object({
     .string()
     .describe(
       'The code-grounded question to answer — be specific (e.g. "how does the conductor gate decide to respond?", "where is the board-claim race handled?", "does X already exist?").',
+    ),
+  intent: z
+    .enum(INVESTIGATE_INTENTS)
+    .optional()
+    .describe(
+      "Why you're investigating — sharpens what the worker focuses on. 'trace' = walk a known flow/path; 'debug' = chase unexpected behavior or check whether a premise is even true; 'review' = judge a design's trade-offs/risks. Omit if none fits.",
     ),
   worktreeId: z
     .string()
@@ -47,7 +57,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
   ) {}
 
   async execute(
-    { question, worktreeId }: z.infer<typeof investigateSchema>,
+    { question, intent, worktreeId }: z.infer<typeof investigateSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
@@ -61,7 +71,9 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     if ('error' in wt) return wt.error;
 
     const opening = question.trim();
-    const openingTask = `Answer this question by reading the codebase, then report back. This turn is READ-ONLY — do not modify, plan, or propose changes; just find the answer and give it concisely, citing the relevant file:line references.\n\nQuestion: ${opening}`;
+    // The shared investigate template adds the read-only/cite-file:line framing, the optional
+    // intent emphasis, and the REQUIRED Confidence/Couldn't-verify trailer (see engine.prompts.ts).
+    const openingTask = DEFAULT_INVESTIGATE_PROMPT({ question: opening, intent });
     const { sessionId } = await this.createSession.openSession({
       identity: id,
       worktreeId: wt.id,

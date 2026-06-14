@@ -31,6 +31,14 @@ export const REVIEW_CLAUDE: EnginePreset = {
   effort: 'high',
 };
 
+/**
+ * When a Claude investigation self-reports LOW confidence, the session runner re-runs it ONCE on
+ * this higher-reasoning model (resuming the same engine session, so it builds on and corrects the
+ * first pass). Kept here so the model-tier knowledge stays single-sourced. Claude-only: non-Claude
+ * investigate sessions route their own models and are never escalated.
+ */
+export const INVESTIGATE_ESCALATION_MODEL = 'claude-opus-4-8';
+
 // Codex resolves its own model/effort from its env/SDK; the preset just pins the engine.
 export const PLAN_CODEX: EnginePreset = { engine: EWorkerEngineName.CODEX };
 export const EXECUTE_CODEX: EnginePreset = { engine: EWorkerEngineName.CODEX };
