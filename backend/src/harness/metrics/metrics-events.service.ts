@@ -1,8 +1,8 @@
 import { MetricsEvent } from '@workspace/shared/schemas';
 import type {
-  AgentMetricsSummary,
-  InternalMetricsResponse,
-  MetricsEventType,
+  IAgentMetricsSummary,
+  IInternalMetricsResponse,
+  IMetricsEventType,
 } from '@workspace/shared';
 import {
   Between,
@@ -13,26 +13,20 @@ import {
   type Repository,
 } from 'typeorm';
 
-export interface RecordMetricsEventInput {
+// TODO: re-add public plan-lifecycle recorders when the Nest ticket board lands.
+export interface IRecordMetricsEventInput {
   teamId: string;
   ticketId?: string | null;
   agentId?: string | null;
   projectId?: string | null;
   sessionId?: string | null;
-  revisionNumber?: number | null;
   durationMs?: number | null;
-  timeToApprovalMs?: number | null;
   reason?: string | null;
   occurredAt?: Date;
   payload?: Record<string, unknown>;
 }
 
-export interface RecordPlanApprovedMetricsEventInput
-  extends RecordMetricsEventInput {
-  revisionNumber: number;
-}
-
-export interface SummarizeInternalMetricsInput {
+export interface ISummarizeInternalMetricsInput {
   teamId: string;
   projectId?: string;
   since?: Date;
@@ -41,9 +35,6 @@ export interface SummarizeInternalMetricsInput {
 
 interface AgentAccumulator {
   agentId: string;
-  approvedPlans: number;
-  approvedRevisionNumbers: number[];
-  firstPassApprovals: number;
   executionCompleted: number;
   executionBlocked: number;
 }
@@ -51,29 +42,17 @@ interface AgentAccumulator {
 export class MetricsEventsService {
   constructor(private readonly events: Repository<MetricsEvent>) {}
 
-  recordPlanSubmitted(input: RecordMetricsEventInput) {
-    return this.record('plan_submitted', input);
-  }
-
-  recordPlanApproved(input: RecordPlanApprovedMetricsEventInput) {
-    return this.record('plan_approved', input);
-  }
-
-  recordPlanChangesRequested(input: RecordMetricsEventInput) {
-    return this.record('plan_changes_requested', input);
-  }
-
-  recordExecutionCompleted(input: RecordMetricsEventInput) {
+  recordExecutionCompleted(input: IRecordMetricsEventInput) {
     return this.record('execution_completed', input);
   }
 
-  recordExecutionBlocked(input: RecordMetricsEventInput) {
+  recordExecutionBlocked(input: IRecordMetricsEventInput) {
     return this.record('execution_blocked', input);
   }
 
   async summarizeByAgent(
-    input: SummarizeInternalMetricsInput,
-  ): Promise<InternalMetricsResponse> {
+    input: ISummarizeInternalMetricsInput,
+  ): Promise<IInternalMetricsResponse> {
     const events = await this.events.find({
       where: this.summaryWhere(input),
       order: { occurred_at: 'ASC', id: 'ASC' },
@@ -82,17 +61,12 @@ export class MetricsEventsService {
 
     for (const event of events) {
       if (!event.agent_id) continue;
-      const agent = this.agentAccumulator(byAgent, event.agent_id);
 
-      if (event.event_type === 'plan_approved') {
-        if (event.revision_number != null) {
-          agent.approvedPlans++;
-          agent.approvedRevisionNumbers.push(event.revision_number);
-          if (event.revision_number === 0) agent.firstPassApprovals++;
-        }
-      } else if (event.event_type === 'execution_completed') {
+      if (event.event_type === 'execution_completed') {
+        const agent = this.agentAccumulator(byAgent, event.agent_id);
         agent.executionCompleted++;
       } else if (event.event_type === 'execution_blocked') {
+        const agent = this.agentAccumulator(byAgent, event.agent_id);
         agent.executionBlocked++;
       }
     }
@@ -104,20 +78,11 @@ export class MetricsEventsService {
       ...(input.until ? { until: input.until.toISOString() } : {}),
       generatedAt: new Date().toISOString(),
       agents: [...byAgent.values()]
-        .map((agent): AgentMetricsSummary => {
+        .map((agent): IAgentMetricsSummary => {
           const executionAttempts =
             agent.executionCompleted + agent.executionBlocked;
           return {
             agentId: agent.agentId,
-            approvedPlans: agent.approvedPlans,
-            firstPassApprovals: agent.firstPassApprovals,
-            firstPassApprovalRate:
-              agent.approvedPlans === 0
-                ? null
-                : agent.firstPassApprovals / agent.approvedPlans,
-            medianRevisionsBeforeApproval: median(
-              agent.approvedRevisionNumbers,
-            ),
             executionCompleted: agent.executionCompleted,
             executionBlocked: agent.executionBlocked,
             executionSuccessRate:
@@ -131,8 +96,8 @@ export class MetricsEventsService {
   }
 
   private async record(
-    eventType: MetricsEventType,
-    input: RecordMetricsEventInput,
+    eventType: IMetricsEventType,
+    input: IRecordMetricsEventInput,
   ): Promise<MetricsEvent> {
     return this.events.save(
       this.events.create({
@@ -142,9 +107,9 @@ export class MetricsEventsService {
         agent_id: input.agentId ?? null,
         project_id: input.projectId ?? null,
         session_id: input.sessionId ?? null,
-        revision_number: input.revisionNumber ?? null,
+        revision_number: null,
         duration_ms: input.durationMs ?? null,
-        time_to_approval_ms: input.timeToApprovalMs ?? null,
+        time_to_approval_ms: null,
         reason: input.reason ?? null,
         occurred_at: input.occurredAt ?? new Date(),
         payload: input.payload ?? {},
@@ -153,7 +118,7 @@ export class MetricsEventsService {
   }
 
   private summaryWhere(
-    input: SummarizeInternalMetricsInput,
+    input: ISummarizeInternalMetricsInput,
   ): FindOptionsWhere<MetricsEvent> {
     return {
       team_id: input.teamId,
@@ -170,9 +135,6 @@ export class MetricsEventsService {
     if (existing) return existing;
     const created: AgentAccumulator = {
       agentId,
-      approvedPlans: 0,
-      approvedRevisionNumbers: [],
-      firstPassApprovals: 0,
       executionCompleted: 0,
       executionBlocked: 0,
     };
@@ -189,12 +151,4 @@ function dateWhere(
   if (since) return { occurred_at: MoreThanOrEqual(since) };
   if (until) return { occurred_at: LessThanOrEqual(until) };
   return {};
-}
-
-function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid];
-  return (sorted[mid - 1] + sorted[mid]) / 2;
 }

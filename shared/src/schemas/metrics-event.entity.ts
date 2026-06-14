@@ -1,4 +1,4 @@
-import type { MetricsEventType } from '../types';
+import type { IMetricsEventType } from '../types';
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity({ name: 'metrics_events' })
@@ -13,7 +13,7 @@ export class MetricsEvent {
   team_id!: string;
 
   @Column({ type: 'text' })
-  event_type!: MetricsEventType;
+  event_type!: IMetricsEventType;
 
   @Column({ type: 'text', nullable: true })
   ticket_id!: string | null;

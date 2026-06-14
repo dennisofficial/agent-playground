@@ -66,7 +66,7 @@ describe('MetricsEventsService', () => {
     expect(saved[0].occurred_at).toBeInstanceOf(Date);
   });
 
-  it('summarizes first-pass approvals, median revisions, and execution success per agent', async () => {
+  it('summarizes execution success per agent and ignores plan lifecycle events', async () => {
     const { service, find } = buildService([
       event({
         agent_id: 'alex',
@@ -117,20 +117,12 @@ describe('MetricsEventsService', () => {
       agents: [
         {
           agentId: 'alex',
-          approvedPlans: 2,
-          firstPassApprovals: 1,
-          firstPassApprovalRate: 0.5,
-          medianRevisionsBeforeApproval: 1,
           executionCompleted: 2,
           executionBlocked: 1,
           executionSuccessRate: 2 / 3,
         },
         {
           agentId: 'riley',
-          approvedPlans: 1,
-          firstPassApprovals: 0,
-          firstPassApprovalRate: 0,
-          medianRevisionsBeforeApproval: 1,
           executionCompleted: 0,
           executionBlocked: 1,
           executionSuccessRate: 0,
@@ -139,44 +131,7 @@ describe('MetricsEventsService', () => {
     });
   });
 
-  it('computes even-number median from sorted non-adjacent revision values', async () => {
-    const { service } = buildService([
-      event({
-        agent_id: 'alex',
-        event_type: 'plan_approved',
-        revision_number: 10,
-      }),
-      event({
-        agent_id: 'alex',
-        event_type: 'plan_approved',
-        revision_number: 0,
-      }),
-      event({
-        agent_id: 'alex',
-        event_type: 'plan_approved',
-        revision_number: 8,
-      }),
-      event({
-        agent_id: 'alex',
-        event_type: 'plan_approved',
-        revision_number: 2,
-      }),
-    ]);
-
-    const summary = await service.summarizeByAgent({ teamId: 'T1' });
-
-    expect(summary.agents).toEqual([
-      expect.objectContaining({
-        agentId: 'alex',
-        approvedPlans: 4,
-        firstPassApprovals: 1,
-        firstPassApprovalRate: 0.25,
-        medianRevisionsBeforeApproval: 5,
-      }),
-    ]);
-  });
-
-  it('returns null execution success rate when an agent has no execution attempts', async () => {
+  it('omits agents that only have unwired plan lifecycle events', async () => {
     const { service } = buildService([
       event({
         agent_id: 'alex',
@@ -187,64 +142,6 @@ describe('MetricsEventsService', () => {
 
     const summary = await service.summarizeByAgent({ teamId: 'T1' });
 
-    expect(summary.agents).toEqual([
-      expect.objectContaining({
-        agentId: 'alex',
-        executionCompleted: 0,
-        executionBlocked: 0,
-        executionSuccessRate: null,
-      }),
-    ]);
-  });
-
-  it('returns null first-pass approval rate when an agent has no approvals with revisions', async () => {
-    const { service } = buildService([
-      event({ agent_id: 'alex', event_type: 'execution_completed' }),
-    ]);
-
-    const summary = await service.summarizeByAgent({ teamId: 'T1' });
-
-    expect(summary.agents).toEqual([
-      expect.objectContaining({
-        agentId: 'alex',
-        approvedPlans: 0,
-        firstPassApprovals: 0,
-        firstPassApprovalRate: null,
-        medianRevisionsBeforeApproval: null,
-      }),
-    ]);
-  });
-
-  it('excludes null and missing revision numbers from approval math', async () => {
-    const missingRevision = event({
-      agent_id: 'alex',
-      event_type: 'plan_approved',
-    });
-    missingRevision.revision_number = undefined as unknown as number | null;
-    const { service } = buildService([
-      event({
-        agent_id: 'alex',
-        event_type: 'plan_approved',
-        revision_number: null,
-      }),
-      missingRevision,
-      event({
-        agent_id: 'alex',
-        event_type: 'plan_approved',
-        revision_number: 0,
-      }),
-    ]);
-
-    const summary = await service.summarizeByAgent({ teamId: 'T1' });
-
-    expect(summary.agents).toEqual([
-      expect.objectContaining({
-        agentId: 'alex',
-        approvedPlans: 1,
-        firstPassApprovals: 1,
-        firstPassApprovalRate: 1,
-        medianRevisionsBeforeApproval: 0,
-      }),
-    ]);
+    expect(summary.agents).toEqual([]);
   });
 });

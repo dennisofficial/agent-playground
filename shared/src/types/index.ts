@@ -1,35 +1,31 @@
 // Shared TypeScript types (Employee, ConductorEvent, job-update payloads,
 // identity/scope types).
 
-export type MetricsEventType =
+export type IMetricsEventType =
   | 'plan_submitted'
   | 'plan_approved'
   | 'plan_changes_requested'
   | 'execution_completed'
   | 'execution_blocked';
 
-export interface AgentMetricsSummary {
+export interface IAgentMetricsSummary {
   agentId: string;
-  approvedPlans: number;
-  firstPassApprovals: number;
-  firstPassApprovalRate: number | null;
-  medianRevisionsBeforeApproval: number | null;
   executionCompleted: number;
   executionBlocked: number;
   executionSuccessRate: number | null;
 }
 
-export interface InternalMetricsQuery {
+export interface IInternalMetricsQuery {
   projectId?: string;
   since?: string;
   until?: string;
 }
 
-export interface InternalMetricsResponse {
+export interface IInternalMetricsResponse {
   teamId: string;
   projectId?: string;
   since?: string;
   until?: string;
   generatedAt: string;
-  agents: AgentMetricsSummary[];
+  agents: IAgentMetricsSummary[];
 }

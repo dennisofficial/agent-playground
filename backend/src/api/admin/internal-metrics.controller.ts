@@ -7,8 +7,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type {
-  InternalMetricsQuery,
-  InternalMetricsResponse,
+  IInternalMetricsQuery,
+  IInternalMetricsResponse,
 } from '@workspace/shared';
 import { MetricsEventsService } from '../../harness/metrics/metrics-events.service';
 import { AdminTokenGuard } from './admin-token.guard';
@@ -21,8 +21,8 @@ export class InternalMetricsController {
   @Get()
   summarize(
     @Param('teamId') teamId: string,
-    @Query() query: InternalMetricsQuery,
-  ): Promise<InternalMetricsResponse> {
+    @Query() query: IInternalMetricsQuery,
+  ): Promise<IInternalMetricsResponse> {
     return this.metrics.summarizeByAgent({
       teamId,
       projectId: query.projectId,
