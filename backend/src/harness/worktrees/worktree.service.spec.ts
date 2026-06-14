@@ -1,6 +1,13 @@
 import type { EnvService } from '@core/config/env/env.service';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -26,6 +33,26 @@ async function commit(
   await writeFile(join(checkout, file), content);
   await git(checkout, 'add', file);
   await git(checkout, 'commit', '-m', `edit ${file}`);
+}
+
+/** Push a new commit to a bare origin's `main` via a scratch clone — stands in for "Dennis merged
+ * a PR to main." Returns the new main tip sha. */
+async function advanceOrigin(
+  originDir: string,
+  file: string,
+  content: string,
+): Promise<string> {
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), 'wt-adv-')));
+  await git(scratch, 'clone', originDir, '.');
+  await git(scratch, 'config', 'user.email', 'adv@test');
+  await git(scratch, 'config', 'user.name', 'adv');
+  await writeFile(join(scratch, file), content);
+  await git(scratch, 'add', file);
+  await git(scratch, 'commit', '-m', `advance ${file}`);
+  await git(scratch, 'push', 'origin', 'main');
+  const sha = await git(scratch, 'rev-parse', 'HEAD');
+  await rm(scratch, { recursive: true, force: true });
+  return sha;
 }
 
 /** A throwaway real git repo — worktree behavior is git behavior, so the spec runs against git. */
@@ -854,6 +881,83 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     expect(adoptedA?.sharedBranch).toBe('shared/feat');
     expect(adoptedB?.project).toBe('');
     expect(adoptedB?.repoRoot).not.toBe(join(reposRoot, 'local', 'proj'));
+  });
+
+  it('cuts a NEW worktree from the latest base after origin advances (not the frozen clone HEAD)', async () => {
+    // First create materializes the managed clone.
+    await service.create({
+      name: 'a',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    // Dennis merges a PR to main while the clone sits frozen.
+    const newTip = await advanceOrigin(originDir, 'merged.txt', 'from main\n');
+    // A second worktree must start from the advanced base, not the stale local HEAD.
+    const second = await service.create({
+      name: 'b',
+      ownerBot: 'riley',
+      team: 'local',
+      project: 'proj',
+    });
+    expect(second.worktree.baseRef).toBe(newTip);
+    expect(
+      await readFile(join(second.worktree.checkout, 'merged.txt'), 'utf8'),
+    ).toBe('from main\n');
+  });
+
+  it('refreshFromBase merges origin base advances into an existing worktree', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    await commit(worktree.checkout, 'local.txt', 'local work\n');
+    const newTip = await advanceOrigin(originDir, 'merged.txt', 'from main\n');
+    const res = await service.refreshFromBase(worktree.id);
+    expect(res.refreshed).toBe(true);
+    expect(res.baseBranch).toBe('main');
+    // Both the local work and origin's change are present after the merge.
+    expect(await readFile(join(worktree.checkout, 'local.txt'), 'utf8')).toBe(
+      'local work\n',
+    );
+    expect(await readFile(join(worktree.checkout, 'merged.txt'), 'utf8')).toBe(
+      'from main\n',
+    );
+    expect(await git(worktree.checkout, 'log', '--format=%H')).toContain(newTip);
+  });
+
+  it('refreshFromBase leaves a conflict IN PROGRESS for a session to resolve', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    // The worktree and origin both change the SAME file from the seed → conflict.
+    await commit(worktree.checkout, 'README.md', 'worktree change\n');
+    await advanceOrigin(originDir, 'README.md', 'origin change\n');
+    const res = await service.refreshFromBase(worktree.id);
+    expect(res.refreshed).toBe(false);
+    expect(res.conflicted).toBe(true);
+    expect(res.files).toContain('README.md');
+    // The merge is left in progress (MERGE_HEAD present) for the next turn to finish.
+    await expect(
+      git(worktree.checkout, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refreshFromBase is a no-op for an unregistered worktree (no base to track)', async () => {
+    const { worktree } = await service.create({
+      name: 'l',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'local',
+    });
+    const res = await service.refreshFromBase(worktree.id);
+    expect(res.refreshed).toBe(false);
+    expect(res.detail).toMatch(/no registered GitHub repo/i);
   });
 });
 

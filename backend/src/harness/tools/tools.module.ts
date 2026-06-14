@@ -53,6 +53,7 @@ import {
   ListWorktreesTool,
   PublishWorktreeTool,
   PullWorktreeTool,
+  RefreshWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
 import { ListPullRequestsTool } from './projects/list-pull-requests.tool';
@@ -88,6 +89,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     ListWorktreesTool,
     PublishWorktreeTool,
     PullWorktreeTool,
+    RefreshWorktreeTool,
     RemoveWorktreeTool,
     OpenPrTool,
     MarkPrReadyTool,

@@ -16,6 +16,7 @@ import { GithubTokenStore } from '../projects/github-token-store';
 import { ProjectStore } from '../projects/project-store';
 import type { ProjectRecord } from '../projects/project.types';
 import type {
+  BaseRefreshResult,
   IntegrationResult,
   NewWorktree,
   Worktree,
@@ -321,16 +322,60 @@ export class WorktreeService implements OnApplicationBootstrap {
     return `shared/${slugify(input.replace(/^shared\//, ''))}`;
   }
 
-  /** Create the shared integration branch from committed HEAD if absent. "Already exists" is
-   * success — the branch can pre-exist from a prior process or a teammate's earlier create. (Only
-   * called inside the gitOps mutex, so no extra memoization is needed.) */
+  /** Create the shared integration branch from `startPoint` (the freshly-fetched base ref, so a
+   * first-time shared branch starts from the latest base — see `freshBaseRef`) if absent. "Already
+   * exists" is success — the branch can pre-exist from a prior process or a teammate's earlier
+   * create, and is NEVER re-based onto the new base (it advances via publish). (Only called inside
+   * the gitOps mutex, so no extra memoization is needed.) */
   private async ensureSharedBranch(
     shared: string,
     repoRoot: string,
+    startPoint: string,
   ): Promise<void> {
-    await this.git(['branch', shared, 'HEAD'], repoRoot).catch((e) => {
+    await this.git(['branch', shared, startPoint], repoRoot).catch((e) => {
       if (!/already exists/i.test(String(e))) throw e;
     });
+  }
+
+  /**
+   * The start point for a FRESH cut: the project's base branch (`defaultBranch`) fetched from
+   * origin, so new worktrees and first-time shared branches begin from the latest base instead of
+   * the managed clone's frozen HEAD (the clone is made once and never pulled). Returns a resolved
+   * commit sha (the worktree-add calls take a sha). Cutting from the remote-tracking ref
+   * `origin/<base>` sidesteps git's refusal to fetch into the clone's checked-out branch.
+   *
+   * Unregistered projects (WORKER_ROOT — no record, no token, ambiguous base) keep cutting from
+   * local HEAD. A fetch failure (origin missing the branch, auth/network) falls back to HEAD with a
+   * warning rather than failing the create.
+   */
+  private async freshBaseRef(
+    team: string,
+    project: string,
+    repoRoot: string,
+  ): Promise<{ ref: string; warning?: string }> {
+    const rec = project
+      ? await this.projects.get(team, project).catch(() => undefined)
+      : undefined;
+    if (!rec) return { ref: await this.git(['rev-parse', 'HEAD'], repoRoot) };
+    const base = rec.defaultBranch;
+    try {
+      await this.git(
+        ['fetch', 'origin', base],
+        repoRoot,
+        gitAuthEnv(rec.gitUrl, await this.tokenFor(rec)),
+      );
+      return {
+        ref: await this.git(['rev-parse', `origin/${base}`], repoRoot),
+      };
+    } catch (err) {
+      this.logger.warn(
+        `couldn't refresh base ${base} from origin for ${rec.projectId} — cutting from local state: ${err}`,
+      );
+      return {
+        ref: await this.git(['rev-parse', 'HEAD'], repoRoot),
+        warning: `Note: couldn't refresh base ${base} from origin — this worktree was cut from local state and may be behind.`,
+      };
+    }
   }
 
   /** True when the checkout has a merge in progress (MERGE_HEAD present). Both publish and pull
@@ -406,16 +451,27 @@ export class WorktreeService implements OnApplicationBootstrap {
           `live in a different repo (created before its registration changed) — their branches don't span repos.`;
       }
 
+      // Cut fresh from the project's base branch fetched from origin (not the managed clone's
+      // frozen HEAD) so new worktrees — and first-time shared branches — start current.
+      const { ref: freshBase, warning: baseWarning } = await this.freshBaseRef(
+        input.team,
+        input.project,
+        repoRoot,
+      );
+      if (baseWarning) warning = warning ? `${warning} ${baseWarning}` : baseWarning;
+
       let shared = input.shared
         ? this.sharedBranchName(input.shared)
         : undefined;
-      if (shared) await this.ensureSharedBranch(shared, repoRoot);
+      if (shared) await this.ensureSharedBranch(shared, repoRoot, freshBase);
 
       let branch: string;
       let baseRef: string;
       if (!input.branch) {
         branch = `agent/${input.ownerBot}/${id}-${slug}`;
-        baseRef = await this.git(['rev-parse', shared ?? 'HEAD'], repoRoot);
+        baseRef = shared
+          ? await this.git(['rev-parse', shared], repoRoot)
+          : freshBase;
         await this.git(
           ['worktree', 'add', '-b', branch, checkout, baseRef],
           repoRoot,
@@ -442,7 +498,9 @@ export class WorktreeService implements OnApplicationBootstrap {
           baseRef = await this.git(['rev-parse', branch], repoRoot);
           await this.git(['worktree', 'add', checkout, branch], repoRoot);
         } else {
-          baseRef = await this.git(['rev-parse', shared ?? 'HEAD'], repoRoot);
+          baseRef = shared
+            ? await this.git(['rev-parse', shared], repoRoot)
+            : freshBase;
           await this.git(
             ['worktree', 'add', '-b', branch, checkout, baseRef],
             repoRoot,
@@ -585,6 +643,57 @@ export class WorktreeService implements OnApplicationBootstrap {
         throw err;
       }
       return { integrated: true, sharedBranch: shared, originFetched };
+    });
+  }
+
+  /**
+   * Bring a worktree's branch up to date with its project's BASE branch: fetch `origin/<defaultBranch>`
+   * and merge it into the checkout. This is the "keep the worktree current" primitive — a worktree
+   * cut during stand-up planning is stale by the time it executes (base moved). Same conflict shape
+   * as publish/pull (the merge is left IN PROGRESS for a session's turn to resolve). Unregistered
+   * projects, an origin-guard refusal, or a fetch miss are no-ops (`refreshed:false` + detail), never
+   * errors — execution proceeds on local state rather than being blocked.
+   */
+  async refreshFromBase(id: string): Promise<BaseRefreshResult> {
+    return this.gitOps(async () => {
+      const wt = this.worktrees.get(id);
+      if (!wt) throw new Error(`No worktree "${id}".`);
+      await this.refuseMidMerge(wt.checkout);
+      const rec = await this.projectRecordFor(id);
+      if (!rec) {
+        return {
+          refreshed: false,
+          detail:
+            'no registered GitHub repo matches this worktree — base refresh skipped (working on local state).',
+        };
+      }
+      const guard = await this.originGuard(wt, rec);
+      if (guard) return { refreshed: false, detail: guard };
+      const base = rec.defaultBranch;
+      const auth = gitAuthEnv(rec.gitUrl, await this.tokenFor(rec));
+      try {
+        await this.git(['fetch', 'origin', base], wt.repoRoot, auth);
+      } catch (err) {
+        return {
+          refreshed: false,
+          baseBranch: base,
+          detail: `couldn't fetch ${base} from origin: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+      try {
+        await this.git(['merge', '--no-edit', `origin/${base}`], wt.checkout);
+      } catch (err) {
+        if (await this.mergeInProgress(wt.checkout)) {
+          return {
+            refreshed: false,
+            conflicted: true,
+            baseBranch: base,
+            files: await this.conflictedFiles(wt.checkout),
+          };
+        }
+        throw err;
+      }
+      return { refreshed: true, baseBranch: base };
     });
   }
 

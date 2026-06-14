@@ -187,10 +187,12 @@ export class CreateSessionTool implements IHarnessTool<
         : {}),
     });
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
+      // A fresh execute session starts execution for this work — refresh the worktree against base.
       void this.runner.runSessionTurn(
         session.id,
         opts.openingTask,
         opts.parentChatTrace,
+        opts.mode === 'execute',
       );
     });
     return { sessionId: session.id };

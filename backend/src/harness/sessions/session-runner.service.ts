@@ -91,6 +91,7 @@ export class SessionRunnerService {
     sessionId: string,
     message: string,
     parentChatTrace?: ChatTracePointer,
+    enteringExecute = false,
   ): Promise<void> {
     // Everything — including the registry read — runs inside the try: callers fire-and-forget
     // (`void runSessionTurn(...)`), so a rejection escaping this method would vanish and leave the
@@ -107,6 +108,43 @@ export class SessionRunnerService {
         throw new Error(
           `Worktree "${session.worktreeId}" no longer exists — the session has nowhere to run.`,
         );
+      }
+      // Entering execute (a fresh execute session, or a plan→execute flip): bring the worktree up
+      // to date with the base branch before the engine runs. A worktree cut during stand-up is
+      // stale by now (base moved while it sat idle / between sequential tickets). Skip if ANOTHER
+      // session is mid-turn in the same checkout (a merge would mutate files under it) — this
+      // session is already 'running', so it's excluded. Best-effort: a refresh failure logs and the
+      // turn proceeds; a CONFLICT is handed to the engine to resolve as its first act.
+      if (enteringExecute) {
+        const otherLive = (await this.sessions.list({
+          worktreeId: session.worktreeId,
+        })).some((s) => s.id !== sessionId && s.status === 'running');
+        if (otherLive) {
+          this.logger.warn(
+            `${sessionId}: another session is mid-turn in ${worktree.id} — skipping base refresh`,
+          );
+        } else {
+          try {
+            const r = await this.worktrees.refreshFromBase(session.worktreeId);
+            if (r.conflicted) {
+              this.logger.log(
+                `${sessionId}: base refresh hit conflicts (${r.baseBranch}) — handing them to the turn`,
+              );
+              message =
+                `Before anything else: a merge of the base branch \`${r.baseBranch}\` into this worktree is IN PROGRESS with conflicts in: ${(r.files ?? []).join(', ') || '(unknown files)'}. Resolve the conflicts, commit the merge, then continue.\n\n${message}`;
+            } else if (r.refreshed) {
+              this.logger.log(
+                `${sessionId}: refreshed ${worktree.id} from ${r.baseBranch}`,
+              );
+            } else if (r.detail) {
+              this.logger.log(`${sessionId}: base refresh no-op — ${r.detail}`);
+            }
+          } catch (err) {
+            this.logger.warn(
+              `${sessionId}: base refresh failed (${worktree.id}), proceeding on local state: ${err}`,
+            );
+          }
+        }
       }
       // Per-turn spec from the employee: a 'plan' turn runs on the plan engine recipe, 'execute' on
       // the execute one (model/effort/systemPrompt). Byte-stable across turns; `mode` also drives the
@@ -407,12 +445,20 @@ export class SessionRunnerService {
       session.lastReportKind === 'questions' && session.lastReport
         ? { qa: [...(session.qa ?? []), { q: session.lastReport, a: message }] }
         : {};
+    // A real transition INTO execute (plan→execute flip) starts execution for this work — refresh
+    // the worktree against base. `session.mode` is still the pre-update value here.
+    const enteringExecute = mode === 'execute' && session.mode !== 'execute';
     await this.sessions.update(sessionId, {
       status: 'running',
       ...(mode ? { mode } : {}),
       ...qaPatch,
     });
-    void this.runSessionTurn(sessionId, message, parentChatTrace);
+    void this.runSessionTurn(
+      sessionId,
+      message,
+      parentChatTrace,
+      enteringExecute,
+    );
     return { ok: true };
   }
 

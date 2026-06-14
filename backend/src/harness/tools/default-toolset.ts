@@ -42,6 +42,7 @@ import {
   ListWorktreesTool,
   PublishWorktreeTool,
   PullWorktreeTool,
+  RefreshWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
 import { OpenPrTool } from './worktrees/open-pr.tool';
@@ -57,6 +58,7 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   ListWorktreesTool,
   PublishWorktreeTool,
   PullWorktreeTool,
+  RefreshWorktreeTool,
   RemoveWorktreeTool,
   OpenPrTool,
   MarkPrReadyTool,

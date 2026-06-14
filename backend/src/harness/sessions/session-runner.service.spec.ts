@@ -53,6 +53,8 @@ function buildRunner(
     attachFails?: boolean;
     /** Simulate a `plan.finished` self-review hook transforming the plan body. */
     selfReview?: (planBody: string) => string;
+    /** What WorktreeService.refreshFromBase returns (default: a clean refresh). */
+    refreshResult?: Awaited<ReturnType<WorktreeService['refreshFromBase']>>;
   } = {},
 ) {
   const worktree = 'worktree' in opts ? opts.worktree : WT;
@@ -78,8 +80,13 @@ function buildRunner(
   const worklog = {
     logWork: async (e: unknown) => void worklogged.push(e),
   } as unknown as WorklogStore;
+  const refreshCalls: string[] = [];
   const worktrees = {
     get: () => worktree,
+    refreshFromBase: async (id: string) => {
+      refreshCalls.push(id);
+      return opts.refreshResult ?? { refreshed: true, baseBranch: 'main' };
+    },
   } as unknown as WorktreeService;
   const creds = {
     resolve: async () => ({}),
@@ -122,7 +129,7 @@ function buildRunner(
     plans,
     settings,
   );
-  return { runner, sessions, worklogged, attached };
+  return { runner, sessions, worklogged, attached, refreshCalls };
 }
 
 const newSession = {
@@ -831,5 +838,82 @@ describe('SessionRunnerService — coherence canary (name-echo check)', () => {
     const after = await sessions.get(session.id);
     expect(after?.lastReport).toBe('(no report)');
     expect(after?.lastReport).not.toContain('⚠️');
+  });
+});
+
+describe('SessionRunnerService — base refresh on entering execute', () => {
+  const execSession = { ...newSession, mode: 'execute' as const };
+  const okEngine: WorkerEngine = {
+    name: EWorkerEngineName.CLAUDE,
+    run: async () => ({ result: 'Alex — done.', sessionId: 'e1' }),
+  };
+
+  it('refreshes the worktree when a fresh execute session starts (enteringExecute)', async () => {
+    const { runner, sessions, refreshCalls } = buildRunner(okEngine);
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, session.task, undefined, true);
+    expect(refreshCalls).toEqual(['wt-001']);
+  });
+
+  it('does NOT refresh on a plan turn', async () => {
+    const { runner, sessions, refreshCalls } = buildRunner(okEngine);
+    const session = await sessions.create(newSession); // mode 'plan'
+    await runner.runSessionTurn(session.id, session.task);
+    expect(refreshCalls).toEqual([]);
+  });
+
+  it('refreshes on a plan→execute flip via replySession', async () => {
+    const { runner, sessions, refreshCalls } = buildRunner(okEngine);
+    const session = await sessions.create(newSession); // plan
+    await runner.runSessionTurn(session.id, session.task);
+    expect(refreshCalls).toEqual([]); // plan turn didn't refresh
+    await runner.replySession(session.id, 'approved — build it', 'execute');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(refreshCalls).toEqual(['wt-001']);
+  });
+
+  it('does NOT refresh again on a continuing execute→execute reply', async () => {
+    const { runner, sessions, refreshCalls } = buildRunner(okEngine);
+    const session = await sessions.create(newSession); // plan
+    await runner.runSessionTurn(session.id, session.task);
+    await runner.replySession(session.id, 'build it', 'execute'); // flip → refresh #1
+    await new Promise((r) => setTimeout(r, 20));
+    await runner.replySession(session.id, 'keep going', 'execute'); // execute→execute
+    await new Promise((r) => setTimeout(r, 20));
+    expect(refreshCalls).toEqual(['wt-001']); // only the flip refreshed
+  });
+
+  it('skips the refresh when another session is mid-turn in the same worktree', async () => {
+    const { runner, sessions, refreshCalls } = buildRunner(okEngine);
+    // A second session on the SAME worktree, left 'running' (create defaults to running).
+    await sessions.create(execSession);
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, session.task, undefined, true);
+    expect(refreshCalls).toEqual([]);
+  });
+
+  it('hands a base-merge conflict to the engine as the first act of the turn', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const recording: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      async run(args: RunWorkerArgs) {
+        seen.push(args);
+        return { result: 'Alex — resolved.', sessionId: 'e1' };
+      },
+    };
+    const { runner, sessions } = buildRunner(recording, {
+      refreshResult: {
+        refreshed: false,
+        conflicted: true,
+        baseBranch: 'main',
+        files: ['src/app.ts'],
+      },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/IN PROGRESS/);
+    expect(seen[0]?.task).toContain('main');
+    expect(seen[0]?.task).toContain('src/app.ts');
+    expect(seen[0]?.task).toContain('do the work'); // original task still there
   });
 });
