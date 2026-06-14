@@ -959,7 +959,7 @@ export class BotGraphNodes {
     /**
      * COMPACTION NODE — runs sequentially after `reconcile` on every path.
      *
-     * Checks whether the gate's reported input-token count has crossed COMPACTION_TOKEN_THRESHOLD.
+     * Checks whether the most recent AI message's input-token count has crossed COMPACTION_TOKEN_THRESHOLD.
      * Token count is a better proxy for context growth than message count: a single tool-heavy turn
      * can consume as many tokens as twenty plain turns. When the threshold is crossed, it:
      *   1. Slices the compactable window: `messages.slice(summarizedUpTo, messages.length - COMPACTION_TAIL)`
@@ -978,13 +978,17 @@ export class BotGraphNodes {
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
-      // Fast exit: context hasn't grown past the token threshold (or the gate was skipped this turn).
-      if (
-        !(
-          state.lastContextTokens > 0 &&
-          state.lastContextTokens > COMPACTION_TOKEN_THRESHOLD
-        )
-      ) {
+      // Fast exit: context hasn't grown past the token threshold.
+      // Read the actual full-context token count from the most recent AI message's usage metadata —
+      // the gate only sees a 16-message snippet (~5k tokens) so state.lastContextTokens never
+      // reaches the 80k threshold. The LLM message reports what was actually sent to the model.
+      // On ack/ignore turns (no new AI message this turn) this uses the prior turn's AI message,
+      // which is a good-enough approximation for compaction triggering.
+      const lastAiMsg = [...state.messages]
+        .reverse()
+        .find((m) => m.getType() === 'ai') as AIMessage | undefined;
+      const contextTokens = lastAiMsg?.usage_metadata?.input_tokens ?? 0;
+      if (!(contextTokens > 0 && contextTokens > COMPACTION_TOKEN_THRESHOLD)) {
         return {};
       }
       // Ensure we have at least `compactionTail` messages to keep verbatim — don't compact a tiny
