@@ -12,6 +12,7 @@ import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
+import { ToolLoopGuardService } from '../recursion-guard/tool-loop-guard.service';
 import {
   SESSION_REGISTRY,
   type SessionRegistry,
@@ -26,6 +27,7 @@ import {
   afterGuard,
   afterLlm,
   afterMarkSeen,
+  makeAfterToolLoopGuard,
   makeAfterTools,
   route,
 } from './routing';
@@ -39,10 +41,14 @@ export { MAX_REVISION_PASSES, revisionNote } from './read-the-room';
  * `${bot.id}:${project}:root` (Postgres checkpointer). The conductor invokes it whenever the channel
  * has grown past the bot's cursor.
  *
- *   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⟲ ⇄ tools → refreshContext? ─┐
- *                 │                        └─ pause ──────────────────────────────────────┤
- *                 └─ acknowledge / ignore → mark_seen ──────────────────────────────────┴→ reconcile → END
- *                                              └─ dormant off-lane skip ─────────────────────────────→ END
+ *   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⟲ ⇄ tools → tool_loop_guard → refreshContext? ─┐
+ *                 │                        └─ pause ───────────────────────────────────────────────────────┤
+ *                 └─ acknowledge / ignore → mark_seen ─────────────────────────────────────────────────────┴→ reconcile → END
+ *                                              └─ dormant off-lane skip ───────────────────────────────────────────────→ END
+ *
+ * (`tool_loop_guard` sits on the NON-TERMINAL continuation out of `tools`: a deterministic prefilter
+ * + Haiku judge that catches a single bot re-issuing the SAME tool call — corrects + refreshes once,
+ * then pauses if it persists. Terminal tool batches skip it, ending at reconcile/llm as before.)
  *
  * Memory is DETERMINISTIC, not agentic: `recall` reads the relevant facts + open tasks IN before the
  * bot thinks, and the single `reconcile` node writes tasks OUT after — on EVERY path EXCEPT the
@@ -103,6 +109,9 @@ export class BotGraphFactory {
     // Optional so the unit specs (which construct BotGraphFactory positionally) need no change; DI
     // always provides it in the app, so tool-capabilities bind in production.
     @Optional() private readonly engineTools?: EngineToolFactory,
+    // Same posture: appended last + optional so positional spec construction is untouched. DI always
+    // provides it in the app; absent → the `tool_loop_guard` node is inert (returns `pass`).
+    @Optional() private readonly toolLoopGuard?: ToolLoopGuardService,
   ) {
     const gapThresholdMs =
       env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
@@ -125,6 +134,7 @@ export class BotGraphFactory {
       dormancyEnabled,
       dormancyThreshold,
       this.engineTools,
+      this.toolLoopGuard,
     );
   }
 
@@ -146,6 +156,7 @@ export class BotGraphFactory {
       .addNode('recall', n.recall)
       .addNode('llm', n.llm)
       .addNode('tools', n.tools)
+      .addNode('tool_loop_guard', n.toolLoopGuard)
       .addNode('refreshContext', n.refreshContext)
       .addNode('mark_seen', n.markSeen)
       .addNode('reconcile', n.reconcile)
@@ -154,7 +165,14 @@ export class BotGraphFactory {
       .addConditionalEdges('loop_guard', afterGuard, ['recall', 'pause'])
       .addEdge('recall', 'llm')
       .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
-      .addConditionalEdges('tools', makeAfterTools(n.terminal, n.refresh), [
+      // Terminal decision stays in `makeAfterTools`; the non-terminal continuation goes through
+      // `tool_loop_guard`, which catches a repeated-tool-call loop before the llm/refresh route.
+      .addConditionalEdges('tools', makeAfterTools(n.terminal), [
+        'llm',
+        'tool_loop_guard',
+        'reconcile',
+      ])
+      .addConditionalEdges('tool_loop_guard', makeAfterToolLoopGuard(n.refresh), [
         'llm',
         'refreshContext',
         'reconcile',

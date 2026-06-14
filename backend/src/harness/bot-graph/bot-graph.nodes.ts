@@ -1,8 +1,10 @@
 import { EnvService } from '@core/config/env/env.service';
+import { dispatchCustomEvent } from '@langchain/core/callbacks/dispatch';
 import {
   AIMessage,
   HumanMessage,
   SystemMessage,
+  type ToolMessage,
 } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
@@ -17,6 +19,7 @@ import { ChatModelFactory } from '../llm/chat-model.factory';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
+import { ToolLoopGuardService } from '../recursion-guard/tool-loop-guard.service';
 import {
   SESSION_REGISTRY,
   type SessionRegistry,
@@ -24,6 +27,7 @@ import {
 import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
 import { EngineToolFactory } from '../tools/engine-tool.factory';
 import { ToolRegistry } from '../tools/tool.registry';
+import type { RefreshScope } from '../tools/tool.types';
 import { WorktreeService } from '../worktrees/worktree.service';
 import {
   GAP_THRESHOLD_DEFAULT_MS,
@@ -43,6 +47,37 @@ import {
   revisionNote,
 } from './read-the-room';
 import { makeRefreshScopesFromTurn } from './routing';
+
+/** One element of an AIMessage's `tool_calls` array. */
+type ToolCall = NonNullable<AIMessage['tool_calls']>[number];
+
+/**
+ * A stable, order-independent string key for a tool call's arguments — recursively sorts object
+ * keys so `{a,b}` and `{b,a}` hash identically. Used by `tool_loop_guard` to detect that the SAME
+ * call is being re-issued regardless of how the model happened to order its arg keys.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value))
+    return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  const body = Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`)
+    .join(',');
+  return `{${body}}`;
+}
+
+/** The signature `tool_loop_guard` counts on: tool name + stable-hashed args. */
+const callSignature = (c: ToolCall): string =>
+  `${c.name}::${stableStringify(c.args ?? {})}`;
+
+/** A short one-line summary of a tool result for the Haiku classifier (status + trimmed text). */
+function summarizeToolResult(m: ToolMessage): string {
+  const text = flattenContent(m.content).trim().replace(/\s+/g, ' ');
+  const head = text.length > 160 ? `${text.slice(0, 160)}…` : text;
+  return m.status === 'error' ? `error: ${head}` : `ok: ${head}`;
+}
 
 /**
  * The node IMPLEMENTATIONS of a bot's turn-graph — gate, loop_guard, recall, llm, tools,
@@ -75,6 +110,9 @@ export class BotGraphNodes {
     dormancyEnabled = true,
     dormancyThreshold = 3,
     private readonly engineTools?: EngineToolFactory,
+    // Appended last (optional) so existing positional spec construction needs no change; DI always
+    // provides it in the app. Absent → the tool-loop guard is inert (node returns `pass`).
+    private readonly toolLoopGuard?: ToolLoopGuardService,
   ) {
     this.gapThresholdMs = gapThresholdMs;
     this.dormancyEnabled = dormancyEnabled;
@@ -184,12 +222,35 @@ export class BotGraphNodes {
         draftUsage: undefined,
         revisionPasses: 0,
         dormantSkip: false,
+        // TOOL-LOOP guard per-turn reset (same trap as the rest: annotation defaults don't
+        // re-apply on an existing thread, so a stale verdict/correction-count/instruction would
+        // poison the next turn's `llm ⇄ tools` loop).
+        toolLoopVerdict: undefined,
+        toolLoopCorrections: 0,
+        toolLoopInstruction: undefined,
+        forcedRefreshScopes: undefined,
       };
       // DORMANCY accumulator (per (bot, room), via the checkpoint). Carried forward UNCHANGED on
       // the no-soft-call paths below; the gated path recomputes it. Written explicitly on every
       // path — annotation defaults only cover never-written threads.
       const softIgnores = state.consecutiveSoftIgnores ?? 0;
-      if (state.forced)
+      // A no-LLM gate decision leaves no generation in the trace, so mark it with a point-in-time
+      // Langfuse event nested under this `gate` span (via the handler's handleCustomEvent). `debug`
+      // demotes it below the default view for the high-frequency idle case. Best-effort: never block.
+      const traceGate = (
+        action: string,
+        reason: string,
+        debug = false,
+      ): Promise<void> =>
+        dispatchCustomEvent(
+          'gate.decision',
+          { action, reason },
+          debug
+            ? { ...config, tags: [...(config.tags ?? []), 'langsmith:hidden'] }
+            : config,
+        );
+      if (state.forced) {
+        await traceGate('respond', 'forced');
         return {
           decision: 'respond',
           pending: [],
@@ -197,11 +258,13 @@ export class BotGraphNodes {
           ...rtr,
           consecutiveSoftIgnores: 0, // a forced respond re-engages the bot
         }; // job relay: skip the gate
+      }
       const channelId = this.channelIdOf(config);
       const batch = channel
         .since(state.cursor, channelId)
         .filter((m) => m.authorBotId !== bot.id);
-      if (batch.length === 0)
+      if (batch.length === 0) {
+        await traceGate('ignore', 'no-batch', true);
         return {
           decision: 'ignore',
           pending: [],
@@ -209,9 +272,11 @@ export class BotGraphNodes {
           ...rtr,
           consecutiveSoftIgnores: softIgnores,
         }; // nothing for me
+      }
       const latest = batch[batch.length - 1];
       const capped = !!config.configurable?.capped;
-      if (capped && latest.authorBotId)
+      if (capped && latest.authorBotId) {
+        await traceGate('ignore', 'capped-loopbreak');
         return {
           decision: 'ignore',
           pending: batch,
@@ -219,6 +284,7 @@ export class BotGraphNodes {
           ...rtr,
           consecutiveSoftIgnores: softIgnores,
         }; // loop breaker
+      }
       const room = this.channelRegistry.get(channelId);
       const dormant = this.dormancyEnabled && softIgnores >= this.dormancyThreshold;
       const d = await this.gateService.gate(
@@ -240,6 +306,10 @@ export class BotGraphNodes {
         },
         config,
       );
+      // No LLM ran (a hard addressing rule or dormant-skip decided it) → mark the gate span. The soft
+      // path already shows its Haiku generation, so don't double-record it.
+      if (!d.softGate)
+        await traceGate(d.action, d.reason ?? 'hard-rule', d.action === 'ignore');
       // Next dormancy count: a respond/ack re-engages (→0); a SOFT ignore advances toward dormancy
       // (+1); a cheap dormant-skip or hard-rule ignore leaves it unchanged.
       const nextSoftIgnores =
@@ -384,6 +454,12 @@ export class BotGraphNodes {
         // the teammate messages that staled it arrived through `freshForModel` above (they sat
         // past the cursor, so the normal top-of-step read picked them up).
         ...(state.draft ? [new HumanMessage(revisionNote(state.draft))] : []),
+        // TOOL-LOOP correction: a one-shot authoritative nudge from `tool_loop_guard` telling the
+        // bot it's re-issuing an already-successful call. Rendered as a transient HumanMessage (like
+        // the draft note) — NEVER persisted into `messages`, so it's never committed to the channel.
+        ...(state.toolLoopInstruction
+          ? [new HumanMessage(state.toolLoopInstruction)]
+          : []),
       ];
       // Built per-invocation (not at graph-build) so it reads the CURRENT turn's tenant key from
       // the credential context — one compiled graph per bot serves every workspace.
@@ -412,6 +488,7 @@ export class BotGraphNodes {
           draft: aiText,
           draftUsage: usageOf(ai),
           revisionPasses: state.revisionPasses + 1,
+          toolLoopInstruction: undefined, // one-shot: consumed by this invoke's prompt
         };
       }
       // Fresh (or at the revision cap → post anyway; or a tool-call step; or a silent empty reply).
@@ -424,6 +501,7 @@ export class BotGraphNodes {
         cursor: newCursor,
         draft: undefined,
         draftUsage: undefined,
+        toolLoopInstruction: undefined, // one-shot: consumed by this invoke's prompt
       };
     };
 
@@ -667,7 +745,11 @@ export class BotGraphNodes {
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
-      const scopes = refreshScopesFromTurn(state);
+      // A tool-loop CORRECTION forces explicit scopes (decoupled from message order); otherwise
+      // discover them from the just-run tool batch as usual.
+      const scopes = state.forcedRefreshScopes
+        ? new Set<RefreshScope>(state.forcedRefreshScopes)
+        : refreshScopesFromTurn(state);
       const id = getIdentity(config);
       const next: ContextParts = { ...state.context };
       const refreshWork = scopes.has('work')
@@ -694,7 +776,118 @@ export class BotGraphNodes {
             .catch(() => {})
         : Promise.resolve();
       await Promise.all([refreshWork, refreshMemory, refreshTasks]);
-      return { context: next }; // recalled untouched — no second recall event
+      // Clear the forced scopes (one-shot) so a later organic refresh this turn discovers normally.
+      return { context: next, forcedRefreshScopes: undefined }; // recalled untouched — no 2nd recall event
+    };
+
+    /**
+     * TOOL_LOOP_GUARD NODE — catch a bot re-issuing the SAME tool call inside the `llm ⇄ tools`
+     * loop (the failure the turn-entry `loop_guard` can't see: it watches spoken messages at turn
+     * boundaries, not mid-turn tool calls). Sits only on the NON-TERMINAL continuation path
+     * (`makeAfterTools` routes terminal batches straight to reconcile/llm).
+     *
+     * Two stages:
+     *  1. DETERMINISTIC prefilter — count identical `tool+stable-args` signatures across this turn's
+     *     tool calls. Below `threshold()` → pass (no LLM cost on the common path).
+     *  2. Haiku judge (only when the prefilter trips) — tell a stuck loop from a legit poll/retry.
+     *
+     * Escalating intervention on a `stuck` verdict:
+     *  - first time (`toolLoopCorrections === 0`) → CORRECT: stage a one-shot `toolLoopInstruction`
+     *    (authoritative "it already succeeded, stop") + force a context refresh of the tool's scopes,
+     *    then let the bot continue. Mirrors the stale-context root cause (Alex hammering close_session).
+     *  - still stuck after a correction → PAUSE: append a first-person pause AIMessage (committed to
+     *    the channel, like `pauseNode`) and route to reconcile → END.
+     *
+     * EVERY exit writes `toolLoopVerdict` EXPLICITLY (the field rides the checkpoint) so a prior
+     * iteration's verdict can never re-route a later one.
+     */
+    const toolLoopGuardNode = async (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Promise<Partial<BotStateType>> => {
+      const PASS: Partial<BotStateType> = { toolLoopVerdict: 'pass' };
+      const tlg = this.toolLoopGuard;
+      if (!tlg?.isEnabled()) return PASS;
+      // The just-run tool-call AI message — we only act on a signature it actually re-issued.
+      const lastAi = [...state.messages]
+        .reverse()
+        .find((m) => m.getType() === 'ai') as AIMessage | undefined;
+      const lastCalls = lastAi?.tool_calls ?? [];
+      if (!lastCalls.length) return PASS;
+      // Count signatures across THIS turn's tool calls (from turnStart).
+      const turnAis = state.messages
+        .slice(state.turnStart)
+        .filter((m) => m.getType() === 'ai') as AIMessage[];
+      const counts = new Map<string, number>();
+      for (const ai of turnAis)
+        for (const c of ai.tool_calls ?? []) {
+          const sig = callSignature(c);
+          counts.set(sig, (counts.get(sig) ?? 0) + 1);
+        }
+      // Pick the most-repeated signature among the just-run calls that crossed the threshold.
+      const threshold = tlg.threshold();
+      let tripped: { call: ToolCall; sig: string; count: number } | undefined;
+      for (const c of lastCalls) {
+        const sig = callSignature(c);
+        const count = counts.get(sig) ?? 0;
+        if (count >= threshold && (!tripped || count > tripped.count))
+          tripped = { call: c, sig, count };
+      }
+      if (!tripped) return PASS;
+      // Collect this signature's results this turn (ToolMessages by tool_call_id), oldest first.
+      const callIds = new Set<string>();
+      for (const ai of turnAis)
+        for (const c of ai.tool_calls ?? [])
+          if (callSignature(c) === tripped.sig && c.id) callIds.add(c.id);
+      const results = state.messages
+        .slice(state.turnStart)
+        .filter(
+          (m) =>
+            m.getType() === 'tool' &&
+            callIds.has((m as ToolMessage).tool_call_id),
+        )
+        .map((m) => summarizeToolResult(m as ToolMessage));
+      const decision = await tlg.detect(
+        bot,
+        {
+          toolName: tripped.call.name,
+          args: stableStringify(tripped.call.args ?? {}),
+          results,
+        },
+        config,
+      );
+      if (decision.verdict === 'progressing')
+        return { toolLoopVerdict: 'pass', toolLoopReasoning: decision.reasoning };
+      // stuck
+      const corrections = state.toolLoopCorrections ?? 0;
+      if (corrections === 0) {
+        const scopes = [
+          ...((REFRESH.get(tripped.call.name) ?? []) as readonly RefreshScope[]),
+        ];
+        const lastResult = results[results.length - 1] ?? 'it already ran';
+        const because = decision.reasoning ? ` (${decision.reasoning})` : '';
+        const instruction =
+          `You've called \`${tripped.call.name}\` ${tripped.count}× this turn with the same arguments — ` +
+          `it already ran (latest result: ${lastResult}). Stop re-issuing it${because}. ` +
+          `Your context below has been refreshed to reflect the current state.`;
+        return {
+          toolLoopVerdict: 'correct',
+          toolLoopReasoning: decision.reasoning,
+          toolLoopCorrections: corrections + 1,
+          toolLoopInstruction: instruction,
+          forcedRefreshScopes: scopes,
+        };
+      }
+      // Persisted after a correction → pause (visible learning signal, like pauseNode).
+      const reason = decision.reasoning?.trim();
+      const pauseText = reason
+        ? `${PAUSE_TEXT}\n(What I kept repeating: ${reason})`
+        : PAUSE_TEXT;
+      return {
+        toolLoopVerdict: 'pause',
+        toolLoopReasoning: decision.reasoning,
+        messages: [new AIMessage(pauseText)],
+      };
     };
 
     return {
@@ -703,6 +896,7 @@ export class BotGraphNodes {
       recall: recallNode,
       llm: llmNode,
       tools: toolsNode,
+      toolLoopGuard: toolLoopGuardNode,
       markSeen: markSeenNode,
       pause: pauseNode,
       reconcile: reconcileNode,

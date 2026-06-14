@@ -28,7 +28,19 @@ export interface GateDecision {
   /** True when a DORMANT bot cheap-ignored an off-lane message (no wake trigger) — no LLM call.
    * The gate node routes this to `mark_seen → END`, skipping the reconcile pass too. */
   dormantSkip?: boolean;
+  /** Which hard rule produced this decision (no LLM). Absent for soft-gate decisions. Surfaced by
+   * the gate node as a Langfuse `gate.decision` event so a no-LLM turn still marks its own span. */
+  reason?: GateReason;
 }
+
+/** The hard-rule (no-LLM) paths through the gate, for trace annotation. */
+export type GateReason =
+  | 'own-message'
+  | 'dm'
+  | 'mention'
+  | 'broadcast'
+  | 'addressed-other'
+  | 'dormant-skip';
 
 const RESPOND: GateDecision = { action: 'respond' };
 const IGNORE: GateDecision = { action: 'ignore' };
@@ -150,8 +162,10 @@ export class GateService {
     /** Forwarded to the soft chain so its LLM call nests under the turn's Langfuse trace. */
     config?: RunnableConfig,
   ): Promise<GateDecision> {
-    if (opts.authorBotId === bot.id) return IGNORE; // never react to your own message
-    if (opts.channel?.kind === 'dm') return RESPOND; // a 1:1 is always yours to answer
+    if (opts.authorBotId === bot.id)
+      return { ...IGNORE, reason: 'own-message' }; // never react to your own message
+    if (opts.channel?.kind === 'dm')
+      return { ...RESPOND, reason: 'dm' }; // a 1:1 is always yours to answer
 
     const fromBot = !!opts.authorBotId;
     const batch = (
@@ -166,9 +180,10 @@ export class GateService {
     const addressed = this.employees.addressedBots(text); // @handles OR bare names — latest only
     const meAddressed = addressed.some((b) => b.id === bot.id);
 
-    if (meMentioned) return RESPOND;
-    if (anyBroadcast) return RESPOND;
-    if (addressed.length > 0 && !meAddressed) return IGNORE;
+    if (meMentioned) return { ...RESPOND, reason: 'mention' };
+    if (anyBroadcast) return { ...RESPOND, reason: 'broadcast' };
+    if (addressed.length > 0 && !meAddressed)
+      return { ...IGNORE, reason: 'addressed-other' };
 
     // DORMANCY: a dormant bot only earns the soft gate when something hails it — a bare-name/@
     // mention of itself (meAddressed; @handle already returned respond above) or a lane keyword
@@ -177,7 +192,7 @@ export class GateService {
     if (opts.dormant && !meAddressed) {
       const batchText = batch.map((m) => m.text).join('\n');
       if (!this.employees.keywordHit(bot, batchText))
-        return { action: 'ignore', dormantSkip: true };
+        return { action: 'ignore', dormantSkip: true, reason: 'dormant-skip' };
     }
 
     try {
