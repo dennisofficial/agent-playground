@@ -209,4 +209,23 @@ describe('ReviewPipelineService.reviewOwner', () => {
       status: 'self_review',
     });
   });
+
+  it('integration barrier fans pr-opened + pr-ready to EVERY owner, not just the anchor', async () => {
+    const f = build({
+      reviewVerdict: 'ok\nVERDICT: PASS',
+      ownerStatuses: { alex: 'complete', riley: 'complete' },
+    });
+    await f.svc.integrate('T1', 7);
+    const emittedFor = (kind: string) =>
+      f.boardEmit.mock.calls
+        .map((c: unknown[]) => c[0] as { kind: string; employee: string })
+        .filter((e) => e.kind === kind)
+        .map((e) => e.employee);
+    expect(emittedFor('pr-opened')).toEqual(
+      expect.arrayContaining(['alex', 'riley']),
+    );
+    expect(emittedFor('pr-ready')).toEqual(
+      expect.arrayContaining(['alex', 'riley']),
+    );
+  });
 });

@@ -247,6 +247,9 @@ export class ReviewPipelineService {
       return;
     }
     const worktreeId = anchor.executeWorktreeId;
+    // The integration-barrier milestones wake EVERY owner of the ticket (not just the anchor), each
+    // in their own session's room — resolved once here.
+    const owners = await this.resolveOwners(plans);
 
     // executing → self_review (the integration review is running). Idempotent: a no-op if a concurrent
     // trip already advanced it.
@@ -257,16 +260,26 @@ export class ReviewPipelineService {
     const rec = await this.worktrees.projectRecordFor(worktreeId);
     const task = await this.board.get(team, taskId);
     if (!rec || !task) {
-      this.emitFailedFor(team, taskId, anchor, worktreeId, undefined,
-        'no registered GitHub repo matches this worktree — open the PR manually');
+      this.notifyOwners(owners, {
+        kind: 'self-review-failed',
+        team,
+        taskId,
+        reason:
+          'no registered GitHub repo matches this worktree — open the PR manually',
+      });
       return;
     }
     const auth = await this.tokens
       .resolve(rec.teamId, rec.tokenName)
       .catch(() => undefined);
     if (!auth) {
-      this.emitFailedFor(team, taskId, anchor, worktreeId, undefined,
-        'no GitHub token is stored for this project — open the PR manually');
+      this.notifyOwners(owners, {
+        kind: 'self-review-failed',
+        team,
+        taskId,
+        reason:
+          'no GitHub token is stored for this project — open the PR manually',
+      });
       return;
     }
 
@@ -287,19 +300,14 @@ export class ReviewPipelineService {
       });
       prUrl = pr.url;
       await this.plans.setPrUrl(team, taskId, prUrl);
-      this.boardEvents.emit({
-        kind: 'pr-opened',
+      this.notifyOwners(owners, { kind: 'pr-opened', team, taskId, prUrl });
+    } catch (err) {
+      this.notifyOwners(owners, {
+        kind: 'self-review-failed',
         team,
         taskId,
-        employee: anchor.employee,
-        prUrl,
-        notifyThread: anchor.sessionId
-          ? (await this.sessions.get(anchor.sessionId))?.notifyThread
-          : undefined,
+        reason: `couldn't open the PR (${err instanceof Error ? err.message : String(err)}) — open it manually`,
       });
-    } catch (err) {
-      this.emitFailedFor(team, taskId, anchor, worktreeId, undefined,
-        `couldn't open the PR (${err instanceof Error ? err.message : String(err)}) — open it manually`);
       return;
     }
 
@@ -323,8 +331,13 @@ export class ReviewPipelineService {
         }),
       ).catch(() => '');
       if (reviewText && parseVerdict(reviewText) === 'changes') {
-        this.emitFailedFor(team, taskId, anchor, worktreeId, prUrl,
-          'the integration review flagged issues across the combined work — fix them and submit_for_review again');
+        this.notifyOwners(owners, {
+          kind: 'self-review-failed',
+          team,
+          taskId,
+          reason:
+            'the integration review flagged issues across the combined work — fix them and submit_for_review again',
+        });
         return;
       }
     }
@@ -351,16 +364,7 @@ export class ReviewPipelineService {
     await this.board
       .transition(team, taskId, 'self_review', { status: 'in_review' })
       .catch(() => undefined);
-    this.boardEvents.emit({
-      kind: 'pr-ready',
-      team,
-      taskId,
-      employee: anchor.employee,
-      prUrl,
-      notifyThread: anchor.sessionId
-        ? (await this.sessions.get(anchor.sessionId))?.notifyThread
-        : undefined,
-    });
+    this.notifyOwners(owners, { kind: 'pr-ready', team, taskId, prUrl });
   }
 
   /** Wake the owner (real seeded narration) that a per-owner step couldn't auto-clear. */
@@ -375,20 +379,35 @@ export class ReviewPipelineService {
     });
   }
 
-  private emitFailedFor(
-    team: string,
-    taskId: number,
-    anchor: TaskPlan,
-    _worktreeId: string,
-    _prUrl: string | undefined,
-    reason: string,
+  /** Resolve every owner of a task to (employee, their session's room) — the fan-out targets for the
+   * integration-barrier milestones, so each owner is woken where their work was opened. */
+  private async resolveOwners(
+    plans: TaskPlan[],
+  ): Promise<Array<{ employee: string; notifyThread?: string }>> {
+    return Promise.all(
+      plans.map(async (p) => ({
+        employee: p.employee,
+        notifyThread: p.sessionId
+          ? (await this.sessions.get(p.sessionId))?.notifyThread
+          : undefined,
+      })),
+    );
+  }
+
+  /** Emit an integration-barrier milestone to EVERY owner (not just the anchor) — one seed per owner,
+   * each woken in their own room. The per-owner reviewOwner failures still target the single owner
+   * (their conflict / exhausted fix loop is theirs to resolve). */
+  private notifyOwners(
+    owners: Array<{ employee: string; notifyThread?: string }>,
+    ev:
+      | { kind: 'pr-opened' | 'pr-ready'; team: string; taskId: number; prUrl: string }
+      | { kind: 'self-review-failed'; team: string; taskId: number; reason: string },
   ): void {
-    this.boardEvents.emit({
-      kind: 'self-review-failed',
-      team,
-      taskId,
-      employee: anchor.employee,
-      reason,
-    });
+    for (const o of owners)
+      this.boardEvents.emit({
+        ...ev,
+        employee: o.employee,
+        notifyThread: o.notifyThread,
+      });
   }
 }
