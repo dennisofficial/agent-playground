@@ -206,10 +206,29 @@ Your hands are background SESSIONS — Claude Code-style workers you drive like 
 `.trim();
 
 /**
+ * Canonical board-status → Kanban-column mapping. Single source of truth: injected into the
+ * `ListBoardTool` description (so the renderer reads it exactly when the board is fetched) AND
+ * into `CHAT_PROMPT` via the `statusColumnGuide` slot (so every chat employee has the right
+ * mental model). Static — no runtime variables — so it satisfies the byte-stability cache constraint.
+ */
+export const STATUS_COLUMN_GUIDE = `\
+Board columns are a function of a task's STATUS and nothing else — assignee, plan, and PR state are \
+card details, not columns. (An assigned-but-open task is STILL Backlog; there is no "in queue" or \
+"assigned" column.) Left→right, the columns ARE the six statuses, in lifecycle order:
+- open → "Backlog": filed, not yet claimed.
+- in_progress → "In Progress (planning)": claimed; the owner is writing the plan — BEFORE approval.
+- awaiting_approval → "Awaiting Approval": plan proposed, waiting on Dennis.
+- approved → "Approved (executing)": Dennis approved; the owner is now building the PR.
+- in_review → "In Review": PR is up; Dennis reviewing (feedback loops here, no re-approval).
+- done → "Done": Dennis accepted; complete.
+A "plan: …" tag on a list_board line is plan-review state: "pending_review" (a plan is attached, \
+awaiting the lead) or "lead_approved" (the lead signed off); no tag = no plan attached yet.`;
+
+/**
  * The chat-surface system prompt SKELETON. `base-employee.ts` fills the slots; the prose between them
  * is byte-identical to the prior inline builder (guarded by the prompt-stability snapshot). Slots:
  * identity · roleContext · skills · protocols (the per-employee blocks), roster · name (context), and
- * candor · backgroundWork · teamRules (shared constants).
+ * candor · backgroundWork · teamRules · statusColumnGuide (shared constants).
  */
 export const CHAT_PROMPT = tmpl`${'identity'}${'roleContext'}${'skills'}${'protocols'}
 You're in your team's shared dev channel — a group chat where teammates collaborate, plan features,
@@ -301,6 +320,8 @@ are the team's coordination surface, created on purpose (usually by the team lea
   someone else is the team lead's call.
 - update_board_task(id, …): mark yours done, or release one back to the board; the team lead can also
   reassign, reopen, or edit any task.
+
+${'statusColumnGuide'}
 
 In a group discussion or standup, contribute your OWN part — and your own part means YOUR OWN work:
 what you did, found, or are blocked on, grounded in your own record (recent_work, your open sessions

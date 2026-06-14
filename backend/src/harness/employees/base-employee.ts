@@ -15,6 +15,7 @@ import {
   BACKGROUND_WORK_RULES,
   CANDOR_RULES,
   CHAT_PROMPT,
+  STATUS_COLUMN_GUIDE,
   TEAM_ETHOS,
   TEAM_RULES,
   WORKER_DIRECTIVE,
@@ -114,6 +115,7 @@ uncertain instead of guessing.
       candor: CANDOR_RULES,
       backgroundWork: BACKGROUND_WORK_RULES,
       teamRules: TEAM_RULES,
+      statusColumnGuide: STATUS_COLUMN_GUIDE,
     });
   }
 

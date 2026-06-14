@@ -1,5 +1,7 @@
 import type { Identity } from '../../domain/identity';
 import type { BoardTask } from '../../memory/board-store';
+import type { PlanState } from '../../memory/plan-store';
+import { STATUS_COLUMN_GUIDE } from '../../employees/persona.prompts';
 import {
   AddBoardTaskTool,
   ClaimBoardTaskTool,
@@ -56,6 +58,9 @@ function makeFakes() {
     list: vi.fn(async () => [task()]),
     blockersOf: vi.fn(async () => new Map<number, number[]>()),
   };
+  const plans = {
+    planStatesOf: vi.fn(async () => new Map<number, PlanState>()),
+  };
   // Sam is the lead; alex/riley are teammates.
   const employees = {
     byId: (id: string) =>
@@ -63,7 +68,7 @@ function makeFakes() {
         ? { id, name: id, teamLead: id === 'sam' }
         : undefined,
   };
-  return { board, employees };
+  return { board, plans, employees };
 }
 
 describe('board tools authority', () => {
@@ -239,7 +244,7 @@ describe('board tools authority', () => {
   });
 
   it('list_board renders the live board with assignee, status, deps, and BLOCKED markers', async () => {
-    const { board } = makeFakes();
+    const { board, plans } = makeFakes();
     board.list.mockResolvedValue([
       task({ id: 1, title: 'Contract', status: 'done', assignee: 'maya' }),
       task({
@@ -251,12 +256,63 @@ describe('board tools authority', () => {
       task({ id: 3, title: 'Frontend', dependsOn: [2] }),
     ]);
     board.blockersOf.mockResolvedValue(new Map([[3, [2]]]));
-    const tool = new ListBoardTool(board as never);
+    // empty planStates → no plan tags rendered
+    const tool = new ListBoardTool(board as never, plans as never);
     const out = await tool.execute({}, identity('riley'));
     expect(out).not.toContain('Contract'); // done rows drop from the default live view
     expect(out).toContain('[#2] Backend (→ alex, in_progress)');
     expect(out).toContain(
       '[#3] Frontend (unassigned, open) after #2 — BLOCKED by #2',
     );
+  });
+
+  it('list_board includes plan: tags when planStatesOf returns data, omits tag for absent tasks', async () => {
+    const { board, plans } = makeFakes();
+    board.list.mockResolvedValue([
+      task({ id: 1, title: 'Alpha', status: 'in_progress', assignee: 'alex' }),
+      task({ id: 2, title: 'Beta', status: 'awaiting_approval', assignee: 'riley' }),
+      task({ id: 3, title: 'Gamma', status: 'open' }),
+    ]);
+    board.blockersOf.mockResolvedValue(new Map());
+    plans.planStatesOf.mockResolvedValue(
+      new Map<number, PlanState>([
+        [2, 'pending_review'],
+        [3, 'lead_approved'],
+      ]),
+    );
+    const tool = new ListBoardTool(board as never, plans as never);
+    const out = await tool.execute({}, identity('riley'));
+    // task 1: no plan state → no tag
+    expect(out).toContain('[#1] Alpha (→ alex, in_progress)');
+    // task 2: pending_review
+    expect(out).toContain('[#2] Beta (→ riley, awaiting_approval, plan: pending_review)');
+    // task 3: lead_approved
+    expect(out).toContain('[#3] Gamma (unassigned, open, plan: lead_approved)');
+  });
+
+  it('STATUS_COLUMN_GUIDE contains the canonical status→column mapping and lifecycle semantics', () => {
+    // Each status → column pair
+    expect(STATUS_COLUMN_GUIDE).toContain('open → "Backlog"');
+    expect(STATUS_COLUMN_GUIDE).toContain('in_progress → "In Progress (planning)"');
+    expect(STATUS_COLUMN_GUIDE).toContain('awaiting_approval → "Awaiting Approval"');
+    expect(STATUS_COLUMN_GUIDE).toContain('approved → "Approved (executing)"');
+    expect(STATUS_COLUMN_GUIDE).toContain('in_review → "In Review"');
+    expect(STATUS_COLUMN_GUIDE).toContain('done → "Done"');
+    // No bogus columns
+    expect(STATUS_COLUMN_GUIDE).toContain('STATUS and nothing else');
+    expect(STATUS_COLUMN_GUIDE).toContain('no "in queue"');
+    // Lifecycle corrections
+    expect(STATUS_COLUMN_GUIDE).toContain('In Progress (planning)');
+    expect(STATUS_COLUMN_GUIDE).toContain('Approved (executing)');
+    // Plan legend
+    expect(STATUS_COLUMN_GUIDE).toContain('pending_review');
+    expect(STATUS_COLUMN_GUIDE).toContain('lead_approved');
+    expect(STATUS_COLUMN_GUIDE).toContain('no tag = no plan attached yet');
+  });
+
+  it('ListBoardTool.description includes STATUS_COLUMN_GUIDE', () => {
+    const { board, plans } = makeFakes();
+    const tool = new ListBoardTool(board as never, plans as never);
+    expect(tool.description).toContain(STATUS_COLUMN_GUIDE);
   });
 });

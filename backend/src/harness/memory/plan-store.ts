@@ -12,6 +12,15 @@ import { rawRows, toIso } from './sql';
  */
 export type PlanLeadStatus = 'pending' | 'approved';
 
+/**
+ * The plan-review state of a board task — derived from `team_task_plans`, a pure plan-review axis
+ * entirely separate from the board status (Dennis-approval lives in `status`).
+ * - 'none'           — no plan attached yet.
+ * - 'pending_review' — at least one plan is attached but not yet lead-approved.
+ * - 'lead_approved'  — every attached plan has been lead-approved.
+ */
+export type PlanState = 'none' | 'pending_review' | 'lead_approved';
+
 export interface TaskPlan {
   id: number;
   taskId: number;
@@ -53,8 +62,8 @@ export class PlanStore {
     private readonly events?: BoardEventsBus,
   ) {}
 
-  private async q(sql: string, params: unknown[]): Promise<PlanRow[]> {
-    return rawRows<PlanRow>(await this.repo.manager.query(sql, params));
+  private async q<R = PlanRow>(sql: string, params: unknown[]): Promise<R[]> {
+    return rawRows<R>(await this.repo.manager.query(sql, params));
   }
 
   /** Upsert on (team, task, employee) — latest plan wins, and the lead's prior approval is reset. */
@@ -120,5 +129,29 @@ export class PlanStore {
       [team, taskId, employee],
     );
     return rows[0] ? toPlan(rows[0]) : undefined;
+  }
+
+  /**
+   * Batch plan-review state for a set of task ids — one grouped query, no N+1.
+   * Tasks with no plans are absent from the result (callers treat absent as 'none').
+   * Mirrors the `BoardStore.blockersOf` pattern.
+   */
+  async planStatesOf(
+    team: string,
+    taskIds: number[],
+  ): Promise<Map<number, PlanState>> {
+    const out = new Map<number, PlanState>();
+    const ids = [...new Set(taskIds)];
+    if (ids.length === 0) return out;
+    const rows = await this.q<{ task_id: number | string; pending: number | string }>(
+      `SELECT task_id, count(*) FILTER (WHERE lead_status <> 'approved') AS pending
+         FROM team_task_plans
+        WHERE team_id = $1 AND task_id = ANY($2)
+        GROUP BY task_id`,
+      [team, ids],
+    );
+    for (const r of rows)
+      out.set(Number(r.task_id), Number(r.pending) > 0 ? 'pending_review' : 'lead_approved');
+    return out;
   }
 }
