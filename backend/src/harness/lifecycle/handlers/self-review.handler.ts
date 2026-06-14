@@ -103,6 +103,7 @@ export class SelfReviewHandler implements LifecycleHandler {
         ),
       {
         name: `session.turn:${reviewSpec.engine}:review`,
+        asType: 'generation',
         sessionId: session.id,
         input: reviewPrompt,
         metadata: {
@@ -143,6 +144,7 @@ export class SelfReviewHandler implements LifecycleHandler {
         ),
       {
         name: `session.turn:${session.engine}:revision`,
+        asType: 'generation',
         sessionId: session.id,
         input: revisionPrompt,
         metadata: {

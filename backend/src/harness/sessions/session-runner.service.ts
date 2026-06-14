@@ -177,6 +177,7 @@ export class SessionRunnerService {
           () => runEngineTurn(turnMessage, turnModel, resumeId),
           {
             name: `session.turn:${session.engine}:${session.mode}`,
+            asType: 'generation',
             sessionId,
             input: turnMessage,
             metadata: {
