@@ -1,4 +1,5 @@
 import type { EnvService } from '@core/config/env/env.service';
+import { Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import {
   mkdtemp,
@@ -207,6 +208,63 @@ describe('WorktreeService (real git, temp repo)', () => {
       project: 'local',
     });
     expect(warning).toMatch(/uncommitted/i);
+  });
+
+  it('logs error and warns (without fail-hard) when submodule init fails', async () => {
+    // Build a standalone repo with a .gitmodules + gitlink pointing to a path that does not
+    // exist — no network call, deterministic. We never run `git submodule add`, so the
+    // .git/modules cache is empty and git must attempt a fresh clone on `submodule update`,
+    // which immediately fails. This mirrors the real agent-worktree failure shape.
+    const submodRepo = await realpath(
+      await mkdtemp(join(tmpdir(), 'wt-submod-spec-')),
+    );
+    try {
+      await git(submodRepo, 'init', '-b', 'main');
+      await git(submodRepo, 'config', 'user.email', 'spec@test');
+      await git(submodRepo, 'config', 'user.name', 'spec');
+      await writeFile(join(submodRepo, 'README.md'), 'hello\n');
+      await git(submodRepo, 'add', '.');
+      await git(submodRepo, 'commit', '-m', 'init');
+      // Register a submodule via .gitmodules pointing at a path that will never exist.
+      await writeFile(
+        join(submodRepo, '.gitmodules'),
+        '[submodule "vendor/stub"]\n\tpath = vendor/stub\n\turl = /tmp/wt-spec-no-such-submod\n',
+      );
+      await git(submodRepo, 'add', '.gitmodules');
+      // Add a gitlink entry (mode 160000) so the committed tree contains the submodule ref.
+      const sha = await git(submodRepo, 'rev-parse', 'HEAD');
+      await git(
+        submodRepo,
+        'update-index',
+        '--add',
+        '--cacheinfo',
+        `160000,${sha},vendor/stub`,
+      );
+      await git(submodRepo, 'commit', '-m', 'add submodule stub (unreachable url)');
+
+      const submodService = makeService(submodRepo);
+      const errorSpy = vi.spyOn(Logger.prototype, 'error');
+      try {
+        const { worktree, warning } = await submodService.create({
+          name: 'submod-test',
+          ownerBot: 'alex',
+          team: 'local',
+          project: 'local',
+        });
+        // create must succeed — no fail-hard on submodule init failure
+        expect(worktree.id).toBeTruthy();
+        // warning signals the failure and contains the remediation command
+        expect(warning).toMatch(/submodule init failed/i);
+        expect(warning).toContain('git submodule update --init --recursive');
+        // Logger.error was called with the failure message
+        expect(errorSpy).toHaveBeenCalled();
+        expect(String(errorSpy.mock.calls[0][0])).toMatch(/submodule init failed/i);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    } finally {
+      await rm(submodRepo, { recursive: true, force: true });
+    }
   });
 
   it('removes the checkout but keeps the branch', async () => {

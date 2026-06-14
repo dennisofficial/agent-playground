@@ -5,6 +5,7 @@
   "description": "AI Slack-employee workforce — pnpm monorepo (NestJS backend + Next.js admin web + shared + terminal playground).",
   "packageManager": "pnpm@11.1.2",
   "scripts": {
+    "setup": "git submodule update --init --recursive && pnpm install",
     "build:packages": "pnpm --filter \"./packages/**\" run build",
     "docker": "docker compose up",
     "test:unit": "pnpm --filter backend test:unit"
