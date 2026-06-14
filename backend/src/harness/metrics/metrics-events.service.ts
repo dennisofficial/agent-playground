@@ -27,6 +27,11 @@ export interface RecordMetricsEventInput {
   payload?: Record<string, unknown>;
 }
 
+export interface RecordPlanApprovedMetricsEventInput
+  extends RecordMetricsEventInput {
+  revisionNumber: number;
+}
+
 export interface SummarizeInternalMetricsInput {
   teamId: string;
   projectId?: string;
@@ -50,7 +55,7 @@ export class MetricsEventsService {
     return this.record('plan_submitted', input);
   }
 
-  recordPlanApproved(input: RecordMetricsEventInput) {
+  recordPlanApproved(input: RecordPlanApprovedMetricsEventInput) {
     return this.record('plan_approved', input);
   }
 
@@ -80,8 +85,8 @@ export class MetricsEventsService {
       const agent = this.agentAccumulator(byAgent, event.agent_id);
 
       if (event.event_type === 'plan_approved') {
-        agent.approvedPlans++;
-        if (event.revision_number !== null) {
+        if (event.revision_number != null) {
+          agent.approvedPlans++;
           agent.approvedRevisionNumbers.push(event.revision_number);
           if (event.revision_number === 0) agent.firstPassApprovals++;
         }
