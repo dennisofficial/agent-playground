@@ -1,7 +1,9 @@
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import {
   compactPriorToolResults,
+  dropLeadingOrphanToolResults,
   filterToolDispatchMessages,
+  pairSafeBoundary,
 } from './message-helpers';
 
 /**
@@ -414,6 +416,183 @@ describe('filterToolDispatchMessages', () => {
 
     const history = [human, aiWithText, toolMsg, lastAi];
     expect(filterToolDispatchMessages(history)).toBe(history);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dropLeadingOrphanToolResults
+// ---------------------------------------------------------------------------
+
+/**
+ * Unit tests for dropLeadingOrphanToolResults — READ-TIME heal that strips a contiguous
+ * leading ToolMessage block from a compacted tail.
+ *
+ * Contract:
+ *  - Returns the same reference when the first message is NOT a tool (nothing to drop).
+ *  - Strips one or more contiguous leading ToolMessages.
+ *  - Stops at the first non-tool message (does NOT remove ToolMessages mid-history).
+ *  - Returns [] when the entire history is tool messages.
+ */
+describe('dropLeadingOrphanToolResults', () => {
+  it('returns same reference when history does not start with a tool message', () => {
+    const history = [new HumanMessage('hi'), new AIMessage('hello')];
+    expect(dropLeadingOrphanToolResults(history)).toBe(history);
+  });
+
+  it('returns same reference for an empty array', () => {
+    expect(dropLeadingOrphanToolResults([])).toStrictEqual([]);
+  });
+
+  it('drops a single leading ToolMessage', () => {
+    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'orphan' });
+    const ai = new AIMessage({ content: 'reply' });
+    const history = [tool, ai];
+    const out = dropLeadingOrphanToolResults(history);
+    expect(out).not.toBe(history);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toBe(ai);
+  });
+
+  it('drops multiple contiguous leading ToolMessages', () => {
+    const t1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
+    const t2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const ai = new AIMessage({ content: 'next' });
+    const human = new HumanMessage('after');
+    const history = [t1, t2, ai, human];
+    const out = dropLeadingOrphanToolResults(history);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toBe(ai);
+    expect(out[1]).toBe(human);
+  });
+
+  it('returns [] when the entire array is ToolMessages', () => {
+    const history = [
+      new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' }),
+      new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' }),
+    ];
+    expect(dropLeadingOrphanToolResults(history)).toHaveLength(0);
+  });
+
+  it('does not remove ToolMessages that are NOT at the leading position', () => {
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 'a', args: {}, id: 't1', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'result' });
+    const history = [ai, tool];
+    expect(dropLeadingOrphanToolResults(history)).toBe(history);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pairSafeBoundary
+// ---------------------------------------------------------------------------
+
+/**
+ * Unit tests for pairSafeBoundary — ensures the compaction cut never lands on a ToolMessage.
+ *
+ * Contract:
+ *  - Cut on a non-tool message → returned unchanged.
+ *  - Cut on a single ToolMessage → walks back to owning AIMessage index.
+ *  - Cut inside a parallel block (≥2 results) → walks across all to owner.
+ *  - Walk crosses `floor` → returns `floor` (caller bails).
+ *  - Corrupt source: preceding message is not AI → returns `floor`.
+ *  - Corrupt source: preceding AI whose tool_calls don't cover all ids → returns `floor`.
+ *  - Owner fully covers block → returns owner index.
+ */
+describe('pairSafeBoundary', () => {
+  it('returns rawCut unchanged when it does not land on a tool message', () => {
+    const messages = [
+      new HumanMessage('user'),
+      new AIMessage({ content: 'reply' }),
+      new HumanMessage('next'),
+    ];
+    expect(pairSafeBoundary(messages, 2, 0)).toBe(2);
+  });
+
+  it('walks back a single tool_result to the owning AIMessage index', () => {
+    // idx: 0=Human, 1=AI(tool_use t1), 2=Tool(t1)
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const messages = [new HumanMessage('h'), ai, tool];
+    // rawCut=2 lands on the ToolMessage → should walk back to 1 (the AI owner)
+    expect(pairSafeBoundary(messages, 2, 0)).toBe(1);
+  });
+
+  it('walks back a parallel block of 2 results to the owning AIMessage', () => {
+    // idx: 0=Human, 1=AI(tool_use t1, t2), 2=Tool(t1), 3=Tool(t2), 4=Human
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [
+        { name: 'a', args: {}, id: 't1', type: 'tool_call' },
+        { name: 'b', args: {}, id: 't2', type: 'tool_call' },
+      ],
+    });
+    const tool1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
+    const tool2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const messages = [new HumanMessage('h'), ai, tool1, tool2, new HumanMessage('h2')];
+    // rawCut=3 lands on second ToolMessage → should walk back to 1
+    expect(pairSafeBoundary(messages, 3, 0)).toBe(1);
+    // rawCut=2 also inside the tool block → walks back to 1
+    expect(pairSafeBoundary(messages, 2, 0)).toBe(1);
+  });
+
+  it('returns floor when walking back would cross floor', () => {
+    // floor=1, rawCut=1 (same as floor), messages[1] is a ToolMessage
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 'a', args: {}, id: 't1', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
+    const messages = [new HumanMessage('h'), ai, tool];
+    // rawCut=2 (tool), floor=2 → already at/below floor
+    expect(pairSafeBoundary(messages, 2, 2)).toBe(2);
+    // rawCut=2 (tool), floor=1 → walks to 1 (AI), returns 1
+    expect(pairSafeBoundary(messages, 2, 1)).toBe(1);
+  });
+
+  it('returns floor when the message preceding the tool block is not an AI', () => {
+    // idx: 0=Human, 1=Tool(no owner AI before it)
+    const messages = [
+      new HumanMessage('orphan context'),
+      new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' }),
+    ];
+    // rawCut=1 on tool → walks to 0 → Human, not AI → returns floor (0)
+    expect(pairSafeBoundary(messages, 1, 0)).toBe(0);
+  });
+
+  it('returns floor when the AI tool_calls do not cover the following tool ids', () => {
+    // AI claims tool_call id 'x', but the ToolMessage has id 't1' — mismatch → corrupt
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 'a', args: {}, id: 'x', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
+    const messages = [ai, tool];
+    // rawCut=1 on tool → walks to 0 → AI, but ownership check fails → floor (0)
+    expect(pairSafeBoundary(messages, 1, 0)).toBe(0);
+  });
+
+  it('returns the owner index when the AI fully covers the tool block', () => {
+    // idx: 0=Human, 1=AI(t1, t2), 2=Tool(t1), 3=Tool(t2), 4=AI('reply')
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [
+        { name: 'a', args: {}, id: 't1', type: 'tool_call' },
+        { name: 'b', args: {}, id: 't2', type: 'tool_call' },
+      ],
+    });
+    const t1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
+    const t2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const reply = new AIMessage({ content: 'done' });
+    const messages = [new HumanMessage('h'), ai, t1, t2, reply];
+    // rawCut=4 (reply AI) — not on a tool, no look-ahead tool (4+1 is out of bounds) → 4
+    expect(pairSafeBoundary(messages, 4, 0)).toBe(4);
+    // rawCut=3 (t2) → walks to 1 (AI owner), fully covers → 1
+    expect(pairSafeBoundary(messages, 3, 0)).toBe(1);
   });
 });
 

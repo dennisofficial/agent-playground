@@ -193,6 +193,58 @@ export const filterToolDispatchMessages = (
 };
 
 /**
+ * READ-TIME heal (mirror of repairDanglingToolCalls). A checkpoint persisted before the pair-safe
+ * compaction fix can have `summarizedUpTo` pointing at a ToolMessage, so the verbatim tail begins
+ * with tool_result(s) whose tool_use was summarized away — Anthropic 400s. Any leading ToolMessage
+ * in a tail is orphaned by definition, so drop the contiguous leading tool block. Never persisted.
+ */
+export const dropLeadingOrphanToolResults = (
+  history: BaseMessage[],
+): BaseMessage[] => {
+  let i = 0;
+  while (i < history.length && history[i].getType() === 'tool') i++;
+  return i === 0 ? history : history.slice(i); // same ref when nothing to drop
+};
+
+/**
+ * Choose a compaction boundary that never splits a tool_use / tool_result group.
+ * Returns B such that messages.slice(B) does NOT begin with an orphaned tool_result.
+ *  - Walks the raw cut back over a contiguous trailing ToolMessage block onto its owning AIMessage.
+ *  - Never lands at/below `floor` (the already-summarized boundary).
+ *  - Conservative: if the landing message is NOT the rightful owner of the following tool block
+ *    (source already corrupt), returns `floor` so the caller skips compaction this turn.
+ */
+export const pairSafeBoundary = (
+  messages: BaseMessage[],
+  rawCut: number,
+  floor: number,
+): number => {
+  let b = rawCut;
+  // (a) tail can't START on a tool_result — walk back to its owner
+  while (b > floor && messages[b]?.getType() === 'tool') b--;
+  if (b <= floor) return floor; // window collapsed → caller bails
+  // (b) ownership check: if the message right after b is a tool, b must be the AI that owns it
+  if (messages[b + 1]?.getType() === 'tool') {
+    const owner = messages[b];
+    if (owner.getType() !== 'ai') return floor;
+    const callIds = new Set<string>(
+      ((owner as AIMessage).tool_calls ?? [])
+        .map((c) => c.id)
+        .filter((id): id is string => id != null),
+    );
+    for (
+      let j = b + 1;
+      j < messages.length && messages[j].getType() === 'tool';
+      j++
+    ) {
+      const id = (messages[j] as ToolMessage).tool_call_id;
+      if (!id || !callIds.has(id)) return floor;
+    }
+  }
+  return b;
+};
+
+/**
  * SELF-HEALING GUARD: repair dangling tool calls in the durable history before every model call.
  *
  * LangGraph checkpoints after EVERY node, so an interruption between the `llm` superstep (which

@@ -45,7 +45,9 @@ import {
 import {
   asInput,
   compactPriorToolResults,
+  dropLeadingOrphanToolResults,
   filterToolDispatchMessages,
+  pairSafeBoundary,
   repairDanglingToolCalls,
   usageOf,
   withCacheBreakpoint,
@@ -433,7 +435,7 @@ export class BotGraphNodes {
       // repair → compact prior tool results → filter text-less dispatches → cache breakpoints.
       const rawHistory =
         state.summarizedUpTo > 0
-          ? state.messages.slice(state.summarizedUpTo)
+          ? dropLeadingOrphanToolResults(state.messages.slice(state.summarizedUpTo))
           : state.messages;
       const history = filterToolDispatchMessages(
         compactPriorToolResults(
@@ -993,7 +995,11 @@ export class BotGraphNodes {
       }
       // Ensure we have at least `compactionTail` messages to keep verbatim — don't compact a tiny
       // history (this also guards against edge cases where threshold < tail).
-      const newSummarizedUpTo = state.messages.length - this.compactionTail;
+      const newSummarizedUpTo = pairSafeBoundary(
+        state.messages,
+        state.messages.length - this.compactionTail,
+        state.summarizedUpTo,
+      );
       if (newSummarizedUpTo <= state.summarizedUpTo) return {};
 
       try {
