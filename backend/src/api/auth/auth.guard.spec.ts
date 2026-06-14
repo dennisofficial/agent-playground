@@ -18,7 +18,7 @@ function makeReflector(isPublic = false): Reflector {
 function makeJwt(sub?: string): JwtService {
   return {
     verifyAccessToken: vi.fn().mockResolvedValue({ sub }),
-  };
+  } as unknown as JwtService;
 }
 
 function makeRepo(user: unknown = { id: 'u1', role: 'admin' }): AdminUserRepo {

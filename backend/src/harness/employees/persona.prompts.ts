@@ -214,12 +214,14 @@ Your hands are background SESSIONS — Claude Code-style workers you drive like 
 export const STATUS_COLUMN_GUIDE = `\
 Board columns are a function of a task's STATUS and nothing else — assignee, plan, and PR state are \
 card details, not columns. (An assigned-but-open task is STILL Backlog; there is no "in queue" or \
-"assigned" column.) Left→right, the columns ARE the six statuses, in lifecycle order:
+"assigned" column.) Left→right, the columns ARE the eight statuses, in lifecycle order:
 - open → "Backlog": filed, not yet claimed.
-- in_progress → "In Progress (planning)": claimed; the owner is writing the plan — BEFORE approval.
+- planning → "Planning": claimed; the owner is writing the plan — BEFORE approval.
 - awaiting_approval → "Awaiting Approval": plan proposed, waiting on Dennis.
-- approved → "Approved (executing)": Dennis approved; the owner is now building the PR.
-- in_review → "In Review": PR is up; Dennis reviewing (feedback loops here, no re-approval).
+- approved → "Approved": Dennis approved; ready to execute (execution starts deliberately, throttled).
+- executing → "Executing": the owner is building the PR in an execute session.
+- self_review → "Self-Review": all owners done; the harness runs the automated PR/code self-review.
+- in_review → "In Review": PR is up and marked ready; Dennis reviewing (feedback loops here, no re-approval).
 - done → "Done": Dennis accepted; complete.
 A "plan: …" tag on a list_board line is plan-review state: "pending_review" (a plan is attached, \
 awaiting the lead) or "lead_approved" (the lead signed off); no tag = no plan attached yet.`;

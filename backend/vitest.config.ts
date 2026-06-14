@@ -70,13 +70,15 @@ export default defineConfig((env) => {
   }
 
   // Fast unit tests only. Run with: pnpm test:unit
+  // No setupFiles: unit specs need zero credentials or DB — confirmed by grep (no process.env.*
+  // reads and no DB imports across all *.spec.ts files). Omitting setupFiles means the encrypted
+  // .env.test.enc is never touched, so this tier runs before credential injection lands.
   if (env.mode === 'unit') {
     return {
       ...base,
       test: {
         globals: true,
         environment: 'node',
-        setupFiles,
         include: ['src/**/*.spec.ts'],
         exclude: ['**/*.int.test.ts', '**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
       },

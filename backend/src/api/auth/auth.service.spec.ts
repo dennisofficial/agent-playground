@@ -31,7 +31,7 @@ function makeJwt(): JwtService {
     signRefreshToken: vi.fn().mockResolvedValue('refresh.token'),
     verifyAccessToken: vi.fn().mockResolvedValue({ sub: mockUser.id }),
     verifyRefreshToken: vi.fn().mockResolvedValue({ sub: mockUser.id }),
-  };
+  } as unknown as JwtService;
 }
 
 function makeEnv(nodeEnv = 'test'): EnvService {

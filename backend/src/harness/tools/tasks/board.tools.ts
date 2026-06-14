@@ -154,15 +154,17 @@ const updateSchema = z.object({
   status: z
     .enum([
       'open',
-      'in_progress',
+      'planning',
       'awaiting_approval',
       'approved',
+      'executing',
+      'self_review',
       'in_review',
       'done',
     ])
     .optional()
     .describe(
-      "New status. 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY (proposing normally happens via propose_plan; 'approved' records Dennis's verdict). 'in_review' is normally set by mark_pr_ready when the PR is up. 'done' completes it — but for APPROVED work that's the team lead recording Dennis's acceptance, not the assignee.",
+      "New status. 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY (proposing normally happens via propose_plan; 'approved' records Dennis's verdict). 'executing'/'self_review'/'in_review' are normally set by the harness as work moves through execution and the automated PR self-review. 'done' completes it — but for work that went through approval that's the team lead recording Dennis's acceptance, not the assignee.",
     ),
   assignee: z
     .string()
@@ -218,7 +220,10 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     // review feedback in their execute session; the lead marks it done once Dennis accepts the PR.
     if (
       status === 'done' &&
-      (task.status === 'approved' || task.status === 'in_review') &&
+      (task.status === 'approved' ||
+        task.status === 'executing' ||
+        task.status === 'self_review' ||
+        task.status === 'in_review') &&
       !isLead
     )
       return `Board task #${taskId} is '${task.status}' — completing approved work records Dennis's acceptance, which is the team lead's call. Keep addressing review feedback in your execute session; @Sam marks it 'done' once Dennis accepts the PR.`;
@@ -233,7 +238,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
       if (task.assignee !== id.selfAgent)
         return `Board task #${taskId} is ${task.assignee ? `${task.assignee}'s` : 'unassigned'} — only they or the team lead can change it.`;
       if (!status) return `Nothing to change on #${taskId}.`;
-      if (status === 'in_progress')
+      if (status === 'planning')
         return `Use claim_board_task to start a task — it checks dependencies atomically.`;
     }
     const newAssignee = assignee?.trim().toLowerCase();
@@ -278,9 +283,11 @@ const listSchema = z.object({
   status: z
     .enum([
       'open',
-      'in_progress',
+      'planning',
       'awaiting_approval',
       'approved',
+      'executing',
+      'self_review',
       'in_review',
       'done',
     ])
