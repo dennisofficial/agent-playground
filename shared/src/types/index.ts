@@ -1,5 +1,6 @@
 // Shared TypeScript types (Employee, ConductorEvent, job-update payloads,
-// identity/scope types).
+// identity/scope types). Populated during the harness-migration pass.
+export * from './admin';
 
 export type IMetricsEventType =
   | 'plan_submitted'

@@ -1,0 +1,127 @@
+import { makeEmployee } from '@harness/employees/employee.testing';
+import type { Identity } from '../../domain/identity';
+import { InvestigateTool } from './investigate.tool';
+
+/**
+ * The `investigate` tool: a fast read-only session on the EXECUTE engine recipe, opened in the new
+ * 'investigate' mode (never 'plan'/'execute'), with low-friction worktree resolution (given → latest
+ * → auto-create). The engine's read-only enforcement for the mode is covered at the engine seam; here
+ * we lock the tool's wiring with the session-open path mocked.
+ */
+
+const ctx: { identity: Identity } = {
+  identity: {
+    selfAgent: 'alex',
+    team: 'T1',
+    project: 'proj',
+    participants: ['dennis'],
+    speaker: 'dennis',
+    surface: 'chan',
+    isChannel: true,
+  },
+};
+
+function makeTool(opts: {
+  worktrees?: { id: string }[];
+  getById?: (id: string) => { id: string } | undefined;
+}) {
+  const openSession = vi.fn((_opts: Record<string, unknown>) =>
+    Promise.resolve({ sessionId: 'sess-001' }),
+  );
+  const createSession = { openSession };
+  const created: Record<string, unknown>[] = [];
+  const worktrees = {
+    get: opts.getById ?? ((id: string) => ({ id, path: '/tmp/wt' })),
+    list: vi.fn(() => opts.worktrees ?? []),
+    create: vi.fn((input: Record<string, unknown>) => {
+      created.push(input);
+      return Promise.resolve({
+        worktree: { id: 'wt-new', branch: 'investigate' },
+      });
+    }),
+  };
+  const alex = makeEmployee({ id: 'alex', name: 'Alex' });
+  const employees = {
+    byId: () => alex,
+    fallbackOwner: () => alex,
+    context: () => ({ team: 'local', roster: 'Alex' }),
+  };
+  const tool = new InvestigateTool(
+    createSession as never,
+    worktrees as never,
+    employees as never,
+  );
+  return { tool, openSession, worktrees, created };
+}
+
+describe('investigate', () => {
+  it('opens a read-only investigate session on the execute engine, reusing the latest worktree', async () => {
+    const { tool, openSession, worktrees } = makeTool({
+      worktrees: [{ id: 'wt-old' }, { id: 'wt-001' }],
+    });
+    const out = await tool.execute(
+      { question: 'how does the gate work?' },
+      ctx,
+    );
+    expect(worktrees.create).not.toHaveBeenCalled();
+    expect(openSession).toHaveBeenCalledTimes(1);
+    const call = openSession.mock.calls[0][0];
+    expect(call.mode).toBe('investigate');
+    expect(call.worktreeId).toBe('wt-001'); // the latest
+    expect(call.engine).toBe('claude'); // the execute recipe's engine
+    expect(call.openingTask).toContain('READ-ONLY');
+    expect(call.openingTask).toContain('how does the gate work?');
+    expect(out).toContain('sess-001');
+  });
+
+  it('auto-opens a fresh worktree when the bot has none', async () => {
+    const { tool, openSession, worktrees, created } = makeTool({
+      worktrees: [],
+    });
+    const out = await tool.execute({ question: 'where is X?' }, ctx);
+    expect(worktrees.create).toHaveBeenCalledTimes(1);
+    expect(created[0]).toMatchObject({
+      ownerBot: 'alex',
+      team: 'T1',
+      project: 'proj',
+    });
+    expect(openSession.mock.calls[0][0].worktreeId).toBe('wt-new');
+    expect(out).toContain('fresh worktree');
+  });
+
+  it('errors (and opens nothing) on an unknown explicit worktreeId', async () => {
+    const { tool, openSession } = makeTool({ getById: () => undefined });
+    const out = await tool.execute({ question: 'q', worktreeId: 'nope' }, ctx);
+    expect(out).toContain('No worktree "nope"');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('always requires the epistemic-output trailer, even with no intent', async () => {
+    const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+    await tool.execute({ question: 'does a Slack adapter exist?' }, ctx);
+    const task = openSession.mock.calls[0][0].openingTask as string;
+    expect(task).toContain('Confidence: high | medium | low');
+    expect(task).toContain("Couldn't verify:");
+    expect(task).not.toContain('FOCUS:'); // no intent → no emphasis line
+  });
+
+  it('injects a distinct emphasis line per intent', async () => {
+    const cases: Array<[
+      'trace' | 'debug' | 'review',
+      string,
+    ]> = [
+      ['trace', 'walk the exact path'],
+      ['debug', 'check whether the premise is even true'],
+      ['review', 'trade-offs'],
+    ];
+    for (const [intent, needle] of cases) {
+      const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+      await tool.execute({ question: 'q', intent }, ctx);
+      const task = openSession.mock.calls[0][0].openingTask as string;
+      expect(task).toContain('FOCUS:');
+      expect(task.toLowerCase()).toContain(needle);
+      // the required trailer rides along regardless of intent
+      expect(task).toContain('Confidence: high | medium | low');
+    }
+  });
+});

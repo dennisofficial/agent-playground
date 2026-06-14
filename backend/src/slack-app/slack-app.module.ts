@@ -8,6 +8,7 @@ import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { Tenant } from '@workspace/shared/schemas';
 import { DatabaseModule } from '../_lib/database/database.module';
 import { EsmModule } from '../_lib/esm/esm.module';
+import { SlackCommandsController } from './slack-commands.controller';
 import { SlackEventsController } from './slack-events.controller';
 import { SlackInteractivityController } from './slack-interactivity.controller';
 import { SlackOauthController } from './slack-oauth.controller';
@@ -42,6 +43,7 @@ import { TenantStore } from './tenant.store';
   controllers: [
     SlackEventsController,
     SlackInteractivityController,
+    SlackCommandsController,
     SlackOauthController,
     SlackPuppetOauthController,
   ],

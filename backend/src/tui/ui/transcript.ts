@@ -24,6 +24,8 @@ export function toPlainText(item: RenderItem): string {
       return `   ↳ ${item.by} reacted ${item.emoji}`;
     case 'recall':
       return `   ↳ ${item.by} recalled: ${item.text}`;
+    case 'draft':
+      return `   ↳ ${item.by} held a draft (read-the-room): ${item.text}`;
     case 'gate':
       return `   ▸ gate · ${item.by} → ${item.action}: ${item.reasoning}`;
     case 'note':

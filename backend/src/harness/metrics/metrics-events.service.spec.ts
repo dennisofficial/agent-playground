@@ -8,9 +8,7 @@ function event(
   return {
     id: 1,
     team_id: 'T1',
-    event_type: patch.event_type,
     ticket_id: null,
-    agent_id: patch.agent_id,
     project_id: 'proj',
     session_id: null,
     revision_number: null,

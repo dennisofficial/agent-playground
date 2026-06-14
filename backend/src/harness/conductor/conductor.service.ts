@@ -1,6 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
-import { type BaseMessage, HumanMessage } from '@langchain/core/messages';
+import { trace } from '@opentelemetry/api';
+import {
+  type BaseMessage,
+  HumanMessage,
+  ToolMessage,
+} from '@langchain/core/messages';
 import { GraphRecursionError } from '@langchain/langgraph';
+import { LangfuseCallbackHandler } from '@workspace/langfuse';
 import {
   Inject,
   Injectable,
@@ -15,6 +21,7 @@ import {
 import { ChannelService } from '../channel/channel.service';
 import { CursorStore } from '../channel/cursor.store';
 import type { ConductorEvent, MessageUsage } from '../domain/conductor-events';
+import { extractMessageUsage } from '../llm/usage-format';
 import {
   DEFAULT_PROJECT,
   DEFAULT_TEAM,
@@ -26,14 +33,29 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
+import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
+import { PlanStore } from '../memory/plan-store';
+import { BoardStore } from '../memory/board-store';
 import {
   SESSION_REGISTRY,
   type Session,
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { SessionRunnerService } from '../sessions/session-runner.service';
-import { type BotStateDelta, BotGraphFactory } from './bot-graph.factory';
+import {
+  type BotStateDelta,
+  BotGraphFactory,
+} from '../bot-graph/bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
+import { ConductorMetricsService } from './conductor-metrics.service';
+import {
+  planReadySeed,
+  prOpenedSeed,
+  prReadySeed,
+  selfReviewFailedSeed,
+  sessionRelayPrompt,
+  ticketApprovedSeed,
+} from './seed.prompts';
 
 /**
  * The dispatcher: a thin event loop around the shared channel. The human appends to the channel and
@@ -97,7 +119,22 @@ export class ConductorService
   /** Bot response-turns since the last human message, PER ROOM (loop breaker; uncapped today) —
    * one room's bot cascade must not throttle another's. */
   private botBurst = new Map<string, number>();
+  /** UNDER-RESPONSE telemetry: the latest human message in a room that has NOT yet drawn a
+   * respond-action turn. Set (before append) when a human speaks; the seq is patched in once the
+   * append assigns it; cleared the moment any bot responds. If a room goes quiescent with an entry
+   * still present, that burst was dropped (recorded once). One entry per room (latest burst). */
+  private awaitingResponse = new Map<string, { text: string; seq?: number }>();
   private relayQueue: Session[] = [];
+
+  /** Pending SILENT wake-ups injected from outside the conductor (e.g. a Slack approval-card
+   * verdict waking the proposing lead). Same delivery semantics as session relays: gate-bypassed
+   * seed turn, run when the bot is free; the seed is visible only to that bot — what (if anything)
+   * to say in the channel is the bot's own call. */
+  private seedQueue: Array<{
+    botId: string;
+    channelId: string;
+    prompt: string;
+  }> = [];
   /** Consecutive no-progress failures at a stuck cursor, keyed `${botId}|${channelId}` — the error
    * retry-cap loop breaker, scoped so one room's poison message can't skip another room's batch. */
   private failures = new Map<string, { cursor: number; count: number }>();
@@ -108,6 +145,9 @@ export class ConductorService
    * run and silently update it in place instead of appending. */
   private readonly mintTag = Date.now().toString(36);
   private stopping = false;
+  /** `team|taskId` of 'approved' tickets already nudged to execute — dedups the throttle's rescans so
+   * a still-pending owner isn't re-seeded every pass. Pruned against the live approved set per rescan. */
+  private readonly executionWoken = new Set<string>();
   private unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -123,6 +163,10 @@ export class ConductorService
     private readonly readiness: LlmReadinessService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly boardEvents: BoardEventsBus,
+    private readonly plans: PlanStore,
+    private readonly board: BoardStore,
+    private readonly metrics: ConductorMetricsService,
   ) {}
 
   /** runningBots is keyed per (tenant, bot): a bot works ONE turn at a time within a workspace, but
@@ -192,9 +236,143 @@ export class ConductorService
           this.relayQueue.push(session);
           this.schedule();
         }
+        // A closed session may have freed an execution slot — pull the next approved ticket in.
+        if (session.status === 'closed')
+          void this.rescanApproved(session.team).catch((err) =>
+            this.logger.warn(`approved rescan failed: ${err}`),
+          );
+      }),
+    );
+    // Board state transitions wake the right bot mechanically (instead of relying on an owner
+    // remembering to announce / the lead's gate firing). The callback is sync; resolution
+    // (plans → sessions → worktree, the lead) runs as detached async that ends in injectSeed.
+    this.unsubscribers.push(
+      this.boardEvents.onEvent((event) => {
+        void this.handleBoardEvent(event).catch((err) =>
+          this.logger.warn(`board event (${event.kind}) wake failed: ${err}`),
+        );
       }),
     );
     this.schedule();
+  }
+
+  /**
+   * Turn a board transition into a gate-bypassed wake-up. `plan-attached` → the lead reviews (skip
+   * self-plans). `ticket-approved` → a THROTTLED nudge to execute (never an auto-start): only up to
+   * MAX_CONCURRENT_EXECUTIONS owners are woken at once, the rest wait in 'approved' until a slot
+   * frees. The `pr-opened` / `pr-ready` / `self-review-failed` events narrate the harness's PR
+   * self-review in the owner's voice; `pr-ready` also frees a slot, so it rescans for the next ticket.
+   */
+  private async handleBoardEvent(event: BoardEvent): Promise<void> {
+    if (event.kind === 'plan-attached') {
+      const lead = this.employees.teamLead();
+      if (event.employee === lead.id) return; // the lead doesn't review their own plan
+      const channelId = await this.channelForSession(event.sessionId);
+      this.injectSeed(
+        lead.id,
+        channelId,
+        planReadySeed({ taskId: event.taskId, employee: event.employee }),
+      );
+      return;
+    }
+    if (event.kind === 'pr-opened') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        prOpenedSeed({ taskId: event.taskId, prUrl: event.prUrl }),
+      );
+      return;
+    }
+    if (event.kind === 'pr-ready') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        prReadySeed({ taskId: event.taskId, prUrl: event.prUrl }),
+      );
+      // The ticket reached in_review — a slot freed. Pull the next approved ticket into execution.
+      await this.rescanApproved(event.team);
+      return;
+    }
+    if (event.kind === 'self-review-failed') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        selfReviewFailedSeed({ taskId: event.taskId, reason: event.reason }),
+      );
+      return;
+    }
+    // ticket-approved: hand it to the throttle (which wakes it if a slot's free, else lets it wait).
+    await this.rescanApproved(event.team);
+  }
+
+  /** Per-team execution concurrency cap (the autonomy throttle). Default 3. */
+  private executionCap(): number {
+    const n = this.env.get('MAX_CONCURRENT_EXECUTIONS');
+    return typeof n === 'number' && n > 0 ? n : 3;
+  }
+
+  /**
+   * The execution throttle: wake owners of 'approved' tickets (oldest first) to open execute sessions,
+   * but only enough to bring in-flight execution (executing + self_review) up to the cap. The board
+   * itself is the durable pending queue — 'approved' tickets that don't fit wait here and are picked
+   * up by the next rescan (a slot frees on `pr-ready` or a session close). `executionWoken` dedups so
+   * a still-pending owner isn't re-nudged every rescan; stale keys (tickets no longer approved) are
+   * pruned each pass so a re-approved ticket can be woken again.
+   */
+  private async rescanApproved(team: string): Promise<void> {
+    const inFlight = await this.board.countInFlightExecution(team);
+    let slots = this.executionCap() - inFlight;
+    const approved = await this.board.list({ team, status: 'approved' });
+    const approvedKeys = new Set(approved.map((t) => `${team}|${t.id}`));
+    for (const key of [...this.executionWoken])
+      if (key.startsWith(`${team}|`) && !approvedKeys.has(key))
+        this.executionWoken.delete(key);
+    if (slots <= 0) return;
+    for (const t of approved) {
+      if (slots <= 0) break;
+      const key = `${team}|${t.id}`;
+      if (this.executionWoken.has(key)) continue; // already nudged; waiting on the owner
+      await this.wakeTicketOwners(team, t.id);
+      this.executionWoken.add(key);
+      slots--;
+    }
+  }
+
+  /** Nudge every teammate with a plan on the ticket to open a fresh execute session (Option B). */
+  private async wakeTicketOwners(team: string, taskId: number): Promise<void> {
+    const plans = await this.plans.listForTask(team, taskId);
+    for (const plan of plans) {
+      const session = plan.sessionId
+        ? await this.sessions.get(plan.sessionId)
+        : undefined;
+      const channelId = session
+        ? this.resolveRoom(session.notifyThread)
+        : this.channel.surfaceId;
+      this.injectSeed(
+        plan.employee,
+        channelId,
+        ticketApprovedSeed({ taskId, worktreeId: session?.worktreeId }),
+      );
+    }
+  }
+
+  /** The room for a review-pipeline narration seed (its notifyThread), or the default room. */
+  private roomFor(notifyThread?: string): string {
+    return notifyThread ? this.resolveRoom(notifyThread) : this.channel.surfaceId;
+  }
+
+  /** The room a session relays into (its notifyThread), or the default room when unknown. */
+  private resolveRoom(channelId: string): string {
+    return this.registry.get(channelId) ? channelId : this.channel.surfaceId;
+  }
+
+  /** The room for a board wake derived from a planning session, or the default room. */
+  private async channelForSession(sessionId?: string): Promise<string> {
+    if (!sessionId) return this.channel.surfaceId;
+    const session = await this.sessions.get(sessionId);
+    return session
+      ? this.resolveRoom(session.notifyThread)
+      : this.channel.surfaceId;
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -225,6 +403,17 @@ export class ConductorService
     );
   }
 
+  /**
+   * SILENTLY wake one bot with a gate-bypassed seed turn — the session-relay mechanism, exposed
+   * for out-of-band events (e.g. an approval-card verdict waking the proposing lead). Nothing is
+   * appended to the channel log: only the woken bot sees the seed, and whether anything gets said
+   * in the room is its decision — exactly how a session report-back wakes its owner.
+   */
+  injectSeed(botId: string, channelId: string, prompt: string): void {
+    this.seedQueue.push({ botId, channelId, prompt });
+    this.schedule();
+  }
+
   /** Append a human message from a known author (the ChatSurface inbound path). `opts.id` is the
    * surface-native message id (a Slack ts) — kept so reactions/edits target the surface's own
    * coordinate; minted only when the caller has none. */
@@ -244,8 +433,20 @@ export class ConductorService
     });
     this.registry.addMembers(channelId, [authorId]);
     this.botBurst.set(channelId, 0); // a human spoke → reset this room's bot-cascade budget
+    // UNDER-RESPONSE: mark the room awaiting a response BEFORE the append. `append` synchronously
+    // notifies subscribers → schedule(), so the pending entry must exist first; the seq is patched
+    // in from the append result. (Bot turns run async via claim(), so no respond can clear this
+    // synchronously — but setting it first is the safe ordering.)
+    this.awaitingResponse.set(channelId, { text });
     const id = opts.id ?? `u-${this.mintTag}-${this.emitSeq++}`;
-    this.channel.append({ id, channelId, author: authorName, authorId, text });
+    const appended = this.channel.append({
+      id,
+      channelId,
+      author: authorName,
+      authorId,
+      text,
+    });
+    this.awaitingResponse.set(channelId, { text, seq: appended.seq });
     // Surface the human's own message through the SAME event stream, keyed by the channel id — so
     // the UI renders it from one uniform path and a bot's reaction can fold onto it.
     this.emit({
@@ -326,6 +527,32 @@ export class ConductorService
       this.relayQueue.splice(i, 1);
       this.claim(this.botKey(team, owner), () => this.runSessionRelay(session));
     }
+    // Injected silent wake-ups — same discipline as session relays.
+    for (let i = 0; i < this.seedQueue.length; ) {
+      const seed = this.seedQueue[i];
+      const team = this.registry.teamIdOf(seed.channelId);
+      if (!this.readiness.isReady(team)) {
+        this.readiness.ensureChecked(team);
+        i++;
+        continue;
+      }
+      const bot = this.employees.byId(seed.botId);
+      if (!bot) {
+        this.seedQueue.splice(i, 1); // unknown bot — drop rather than wedge the queue
+        continue;
+      }
+      if (this.runningBots.has(this.botKey(team, bot.id))) {
+        i++;
+        continue;
+      }
+      this.seedQueue.splice(i, 1);
+      const channelId = this.registry.get(seed.channelId)
+        ? seed.channelId
+        : this.channel.surfaceId;
+      this.claim(this.botKey(team, bot.id), () =>
+        this.runBotGraph(bot, { seed: seed.prompt, channelId }),
+      );
+    }
     // Room deliveries: each idle member bot with undelivered non-own work, per room.
     for (const info of this.registry.list()) {
       if (!this.readiness.isReady(info.teamId)) {
@@ -341,7 +568,55 @@ export class ConductorService
         );
       }
     }
+    this.checkUnderResponse();
     this.maybeResolveIdle();
+  }
+
+  /**
+   * UNDER-RESPONSE detection (measure, not fix): a room that has settled — no member bot running,
+   * no member with unconsumed work — while still flagged as awaiting a response means the human's
+   * message drew ZERO respond-action turns. Record it once (the respond site clears the flag, so a
+   * picked-up message never reaches here) and clear it. Runs at the tail of every schedule pass;
+   * the map only holds entries after a human message, so it's a no-op otherwise.
+   */
+  private checkUnderResponse(): void {
+    for (const [channelId, pending] of this.awaitingResponse) {
+      const info = this.registry.get(channelId);
+      if (!info) continue; // can't evaluate an unknown room — leave it pending
+      const bots = this.botsIn(info);
+      const settled = bots.every(
+        (b) =>
+          !this.runningBots.has(this.botKey(info.teamId, b.id)) &&
+          !this.hasWork(b, channelId),
+      );
+      if (!settled) continue;
+      this.awaitingResponse.delete(channelId);
+      this.metrics.recordDroppedBurst();
+      this.bus.patchStatus({
+        dropped: this.metrics.snapshot().humanBurstDropped,
+      });
+      this.emit({
+        id: `drop-${this.emitSeq++}`,
+        kind: 'dropped',
+        channelId,
+        text: pending.text,
+        seq: pending.seq ?? -1,
+      });
+      this.logger.warn(
+        `under-response: no one responded to "${pending.text.slice(0, 80)}" in ${channelId}`,
+      );
+      // Standalone Langfuse trace (no active turn span at quiescence) — a top-level OTEL span the
+      // LangfuseSpanProcessor exports as its own `message_dropped` trace. No-op when tracing is off.
+      const span = trace.getTracer('conductor').startSpan('message_dropped', {
+        attributes: {
+          'langfuse.session.id': channelId,
+          teamId: info.teamId,
+          seq: pending.seq ?? -1,
+          text: pending.text.slice(0, 500),
+        },
+      });
+      span.end();
+    }
   }
 
   /** Mark a bot busy (before any async work), run `task`, then release + re-schedule. `key` is the
@@ -407,38 +682,74 @@ export class ConductorService
     const capped = (this.botBurst.get(channelId) ?? 0) >= MAX_BOT_BURST;
     let responded = false;
 
-    const commit = (msg: BaseMessage) => {
-      const um = (
-        msg as {
-          usage_metadata?: {
-            input_tokens?: number;
-            output_tokens?: number;
-            input_token_details?: {
-              cache_read?: number;
-              cache_creation?: number;
-            };
-          };
+    // ── share_artifact coordination ──────────────────────────────────────────────────────────────
+    // When an AIMessage contains both text AND share_artifact tool call(s), the message event is
+    // DEFERRED until the tool results arrive (so the Slack post happens AFTER the file_id is known
+    // and can be attached via chat.update). `resolvedFileIds` accumulates ids across all
+    // share_artifact results in the turn; they're spliced into the next text-bearing message event.
+    let deferredMsg:
+      | {
+          id: string;
+          text: string;
+          usage: MessageUsage | undefined;
+          pendingCallIds: Set<string>;
         }
-      ).usage_metadata;
-      const usage: MessageUsage | undefined = um
-        ? {
-            input: um.input_tokens ?? 0,
-            output: um.output_tokens ?? 0,
-            cacheRead: um.input_token_details?.cache_read || undefined,
-            cacheWrite: um.input_token_details?.cache_creation || undefined,
-          }
-        : undefined;
+      | undefined;
+    const resolvedFileIds: string[] = [];
+    // Every share_artifact tool_call id seen this turn — tracked INDEPENDENTLY of `deferredMsg` so a
+    // tool-call-only artifact upload (no accompanying text → no deferred message) still has its
+    // file_id collected and attached to the NEXT text-bearing message (Case B).
+    const artifactCallIds = new Set<string>();
+
+    const flushDeferred = (fileIds: string[]) => {
+      if (!deferredMsg) return;
+      const { id, text, usage } = deferredMsg;
+      deferredMsg = undefined;
+      this.emit({
+        id,
+        kind: 'message',
+        channelId,
+        authorId: bot.id,
+        authorName: bot.name,
+        fromHuman: false,
+        text,
+        usage,
+        fileIds: fileIds.length > 0 ? fileIds : undefined,
+        ts: clock(),
+      });
+    };
+
+    const commit = (msg: BaseMessage) => {
+      const usage = extractMessageUsage(msg);
       // Footer ctx tracks EVERY billed step — including tool-only ones, which carry usage but no
       // text and so emit no `message` event.
-      if (usage)
+      if (usage) {
         this.bus.patchStatus({
           ctx: { input: usage.input, output: usage.output },
         });
+        // Per-step usage event: emitted for EVERY billed step (text and tool-call-only), BEFORE the
+        // `message` event that triggers the Slack post — so the SurfaceBridge accumulator is always
+        // complete when it attaches the footer.
+        this.emit({
+          id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
+          kind: 'usage',
+          botId: bot.id,
+          role: 'chat',
+          usage,
+        });
+      }
 
       const text = flattenContent(msg.content).trim();
+      const calls = (msg as { tool_calls?: ToolCall[] }).tool_calls ?? [];
+      const shareArtifactCalls = calls.filter(
+        (c) => c.name === 'share_artifact',
+      );
+      // Track these ids turn-wide so their file_ids are collected even when this step has no text
+      // (Case B) — the ToolMessage handler keys off `artifactCallIds`, not `deferredMsg`.
+      for (const c of shareArtifactCalls) if (c.id) artifactCallIds.add(c.id);
+
       if (text) {
-        // The reply goes back onto the room's shared log so teammates + session relays see it, and the
-        // `message` event carries the SAME id so the channel message and its render row line up.
+        // The reply goes back onto the room's shared log so teammates + session relays see it.
         const id = `${bot.id}:${this.mintTag}:${this.emitSeq++}`;
         this.channel.append({
           id,
@@ -448,19 +759,39 @@ export class ConductorService
           authorBotId: bot.id,
           text,
         });
-        this.emit({
-          id,
-          kind: 'message',
-          channelId,
-          authorId: bot.id,
-          authorName: bot.name,
-          fromHuman: false,
-          text,
-          usage,
-          ts: clock(),
-        });
+
+        if (shareArtifactCalls.length > 0) {
+          // Defer the message event: the file upload happens in the tool node (next delta).
+          // After the ToolMessages arrive we'll flush with the collected file_ids.
+          deferredMsg = {
+            id,
+            text,
+            usage,
+            pendingCallIds: new Set(
+              shareArtifactCalls
+                .map((c) => c.id)
+                .filter((id): id is string => id != null),
+            ),
+          };
+        } else {
+          // No share_artifact — emit immediately, carrying any already-resolved file_ids from
+          // a PRIOR tool-call step (Case B: AI called share_artifact separately, then said text).
+          const ids = resolvedFileIds.splice(0);
+          this.emit({
+            id,
+            kind: 'message',
+            channelId,
+            authorId: bot.id,
+            authorName: bot.name,
+            fromHuman: false,
+            text,
+            usage,
+            fileIds: ids.length > 0 ? ids : undefined,
+            ts: clock(),
+          });
+        }
       }
-      const calls = (msg as { tool_calls?: ToolCall[] }).tool_calls ?? [];
+
       for (const c of calls) {
         this.emit({
           id: `${bot.id}:${this.emitSeq++}`,
@@ -481,11 +812,32 @@ export class ConductorService
     if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
 
     let failed = false;
+    // The transient "composing" reaction (💭) this turn placed, if any — removed in `finally` once
+    // the turn ends (success, error, or step-cap), so present = composing now, gone = replied.
+    let composing: { emoji: string; targetId: string } | undefined;
     try {
+      // Langfuse: a FRESH handler per turn — it holds per-run span state, so sharing one across
+      // concurrently-running bot turns would interleave their traces. `sessionId = channelId` groups
+      // every turn in a room into one Langfuse session (the conversation timeline); the gate, compose,
+      // tool, and read-the-room revision steps nest under it because LangGraph propagates these
+      // callbacks into each node's config. No-op when tracing is disabled.
       const stream = await this.graphs.getBotGraph(bot).stream(input, {
         configurable: { thread_id: thread, identity, capped, channelId },
         streamMode: 'updates',
         recursionLimit: MAX_TURN_STEPS,
+        callbacks: [
+          new LangfuseCallbackHandler({
+            sessionId: channelId,
+            userId: bot.id,
+            tags: [bot.name, info.teamId],
+            traceMetadata: {
+              teamId: info.teamId,
+              threadId: thread,
+              seed: !!opts.seed,
+            },
+          }),
+        ],
+        runName: `turn:${bot.name}`,
       });
       for await (const update of stream as AsyncIterable<
         Record<string, BotStateDelta>
@@ -510,10 +862,17 @@ export class ConductorService
               channelId,
               (this.botBurst.get(channelId) ?? 0) + 1,
             ); // a real reply counts toward this room's loop breaker
+            this.awaitingResponse.delete(channelId); // someone picked it up — not a drop
           }
           // Surface whatever reactions the graph decided — the conductor only renders; the brain decides.
-          if (delta.reaction)
+          if (delta.reaction) {
             this.react(bot, channelId, delta.reaction, delta.reactionTargetId);
+            // Remember it so we can clear it when the turn ends (the gate only sets this on respond).
+            composing = {
+              emoji: delta.reaction,
+              targetId: delta.reactionTargetId ?? '',
+            };
+          }
           if (delta.decision === 'acknowledge')
             this.react(
               bot,
@@ -531,8 +890,59 @@ export class ConductorService
               text: delta.recalled,
             });
           }
+          // READ-THE-ROOM: a suppressed draft never appears in delta.messages, so `commit` can't
+          // bill it — emit its usage here (same pipeline as tool-only steps: ctx footer + the
+          // SurfaceBridge accumulator that builds the per-post cost footer), then the debug event.
+          if (delta.draftUsage) {
+            this.bus.patchStatus({
+              ctx: {
+                input: delta.draftUsage.input,
+                output: delta.draftUsage.output,
+              },
+            });
+            this.emit({
+              id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
+              kind: 'usage',
+              botId: bot.id,
+              role: 'chat',
+              usage: delta.draftUsage,
+            });
+          }
+          if (delta.draft) {
+            this.emit({
+              id: `d-${this.emitSeq++}`,
+              kind: 'draft',
+              botId: bot.id,
+              botName: bot.name,
+              text: delta.draft,
+            });
+          }
           for (const msg of delta.messages ?? []) {
-            if (msg.getType() === 'ai') commit(msg); // skip injected Human messages (already in channel/UI)
+            if (msg.getType() === 'ai') {
+              commit(msg); // skip injected Human messages (already in channel/UI)
+            } else if (msg instanceof ToolMessage) {
+              // A share_artifact result — collect its file_id regardless of whether a message is
+              // currently deferred (Case B: the artifact was uploaded in a tool-call-only step).
+              const callId = msg.tool_call_id;
+              if (callId && artifactCallIds.has(callId)) {
+                artifactCallIds.delete(callId);
+                // Extract file_id from the tool result (format: "Uploaded (file_id: Fxxxxxxx).")
+                const content =
+                  typeof msg.content === 'string'
+                    ? msg.content
+                    : JSON.stringify(msg.content);
+                const m = content.match(/file_id:\s*(F[A-Z0-9]+)/i);
+                if (m?.[1]) resolvedFileIds.push(m[1]);
+                // If a text message is waiting on this call (Case A), flush once all its
+                // share_artifact calls have reported back.
+                if (deferredMsg?.pendingCallIds.has(callId)) {
+                  deferredMsg.pendingCallIds.delete(callId);
+                  if (deferredMsg.pendingCallIds.size === 0) {
+                    flushDeferred(resolvedFileIds.splice(0));
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -545,6 +955,15 @@ export class ConductorService
       }
       this.emitError(err);
       failed = true;
+    } finally {
+      // Clear the "composing" 💭 now the turn is over — runs on success, error, AND the step-cap
+      // early-return above (the bot has stopped composing in every case). Forced/relay turns set
+      // no reaction, so `composing` stays undefined and nothing is removed.
+      if (composing?.targetId)
+        this.unreact(bot, channelId, composing.emoji, composing.targetId);
+      // Safety-flush a deferred message (e.g. the graph ended/errored before the tool result
+      // arrived). Posts without file_ids rather than silently dropping the message.
+      if (deferredMsg) flushDeferred(resolvedFileIds.splice(0));
     }
 
     // The checkpoint is the cursor's source of truth; read it back, then persist it. MONOTONIC on
@@ -558,7 +977,7 @@ export class ConductorService
       const final = await this.graphs
         .getBotGraph(bot)
         .getState({ configurable: { thread_id: thread } });
-      const committed = final.values.cursor as number | undefined;
+      const committed = (final.values as { cursor?: number }).cursor;
       cursorAfter = Math.max(
         cursorBefore,
         typeof committed === 'number' ? committed : cursorBefore,
@@ -602,20 +1021,20 @@ export class ConductorService
 
   /** Relay a session's turn-end through its owner bot (gate-bypassed seed); its reply enters the
    * room the session was opened from — `session.notifyThread` carries that channel coordinate (it's
-   * set from `identity.surface` at creation). An unknown coordinate falls back to the default room. */
+   * set from `identity.surface` at creation). An unknown coordinate falls back to the default room.
+   * The seed text branches on what the turn produced (questions / plan / prose / failure) — see
+   * sessionRelayPrompt. */
   private async runSessionRelay(session: Session): Promise<void> {
     if (session.status !== 'idle' && session.status !== 'failed') return;
     const bot =
       this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-
-    const prompt =
-      session.status === 'failed'
-        ? `[Session ${session.id} — "${session.task}"] this turn FAILED: ${session.error ?? '(unknown)'}. The session is still open. Let the team know briefly, first person; reply_session("${session.id}", <message>) to retry or redirect it, or close_session("${session.id}") to drop it.`
-        : `[Session ${session.id} — "${session.task}"] reported back:\n${session.lastReport ?? '(no report)'}\n\nThis is your own background session — it's still open with full context. Decide what's next:\n- reply_session("${session.id}", <message>) to continue it — answer its question, ask a follow-up, or approve its plan into execution (mode: "execute").\n- Relay the outcome to the team in the first person when it's worth sharing.\n- close_session("${session.id}") when this thread of work is finished.\nAnything about WHAT to build or WHY is Dennis's call — surface it to him; technical HOW is yours (answer it, or @mention the teammate whose area it is).`;
     const channelId = this.registry.get(session.notifyThread)
       ? session.notifyThread
       : this.channel.surfaceId;
-    await this.runBotGraph(bot, { seed: prompt, channelId });
+    await this.runBotGraph(bot, {
+      seed: sessionRelayPrompt(session),
+      channelId,
+    });
   }
 
   /** Emit a reaction from a bot ON a target message, so the surface folds it into that message. */
@@ -633,6 +1052,25 @@ export class ConductorService
       botName: bot.name,
       emoji,
       targetId: targetId ?? '',
+    });
+  }
+
+  /** Remove a reaction this bot previously added — clears the transient "composing" 💭 at turn end. */
+  private unreact(
+    bot: EmployeeDefinition,
+    channelId: string,
+    emoji: string,
+    targetId: string,
+  ): void {
+    this.emit({
+      id: `r-${this.emitSeq++}`,
+      kind: 'reaction',
+      channelId,
+      botId: bot.id,
+      botName: bot.name,
+      emoji,
+      targetId,
+      remove: true,
     });
   }
 
@@ -721,6 +1159,7 @@ export class ConductorService
     return (
       this.runningBots.size === 0 &&
       this.relayQueue.length === 0 &&
+      this.seedQueue.length === 0 &&
       (this.stopping || !this.anyUndelivered())
     );
   }

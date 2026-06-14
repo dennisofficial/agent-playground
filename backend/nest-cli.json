@@ -36,15 +36,6 @@
       "compilerOptions": {
         "tsConfigPath": "src/slack-app/tsconfig.json"
       }
-    },
-    "gateway": {
-      "type": "application",
-      "root": "src/gateway",
-      "entryFile": "gateway/main",
-      "sourceRoot": "src/gateway",
-      "compilerOptions": {
-        "tsConfigPath": "src/gateway/tsconfig.json"
-      }
     }
   }
 }

@@ -60,7 +60,7 @@ describe('BoardStore (live Postgres)', () => {
     expect(wins).toHaveLength(1);
     expect(losses).toHaveLength(1);
     const after = await board.get('T1', t.id);
-    expect(after?.status).toBe('in_progress');
+    expect(after?.status).toBe('planning');
     expect(['alex', 'riley']).toContain(after?.assignee);
   });
 
@@ -77,7 +77,7 @@ describe('BoardStore (live Postgres)', () => {
     await board.update('T1', dep.id, { status: 'done' });
 
     const claimed = asTask(await board.claim('T1', t.id, 'alex'));
-    expect(claimed.status).toBe('in_progress');
+    expect(claimed.status).toBe('planning');
     expect(claimed.assignee).toBe('alex');
   });
 
@@ -85,7 +85,7 @@ describe('BoardStore (live Postgres)', () => {
     const t = asTask(await create({ assignee: 'riley' }));
     expect(await board.claim('T1', t.id, 'alex')).toBe('taken');
     const claimed = asTask(await board.claim('T1', t.id, 'riley'));
-    expect(claimed.status).toBe('in_progress');
+    expect(claimed.status).toBe('planning');
   });
 
   it('unknown dependency ids are rejected at create', async () => {
@@ -115,7 +115,7 @@ describe('BoardStore (live Postgres)', () => {
     expect(await board.list({ team: 'T1', assignee: 'alex' })).toHaveLength(1);
     asTask(await board.claim('T1', a.id, 'maya'));
     expect(
-      await board.list({ team: 'T1', status: 'in_progress' }),
+      await board.list({ team: 'T1', status: 'planning' }),
     ).toHaveLength(1);
   });
 
@@ -125,5 +125,73 @@ describe('BoardStore (live Postgres)', () => {
     await board.update('T1', t.id, { status: 'open', assignee: null });
     const claimed = asTask(await board.claim('T1', t.id, 'riley'));
     expect(claimed.assignee).toBe('riley');
+  });
+
+  it("the approval statuses round-trip (plain-text column), and claim() won't take them", async () => {
+    const t = asTask(await create({ assignee: 'alex' }));
+    asTask(await board.claim('T1', t.id, 'alex'));
+
+    await board.update('T1', t.id, { status: 'awaiting_approval' });
+    expect((await board.get('T1', t.id))?.status).toBe('awaiting_approval');
+    expect(await board.claim('T1', t.id, 'riley')).toBe('taken');
+
+    await board.update('T1', t.id, { status: 'approved' });
+    expect((await board.get('T1', t.id))?.status).toBe('approved');
+    expect(await board.claim('T1', t.id, 'riley')).toBe('taken');
+
+    expect(
+      await board.list({ team: 'T1', status: 'awaiting_approval' }),
+    ).toHaveLength(0);
+    expect(await board.list({ team: 'T1', status: 'approved' })).toHaveLength(
+      1,
+    );
+  });
+
+  it('transition() is an atomic CAS — two concurrent verdicts, exactly one wins', async () => {
+    const t = asTask(await create({ assignee: 'alex' }));
+    asTask(await board.claim('T1', t.id, 'alex'));
+    await board.update('T1', t.id, { status: 'awaiting_approval' });
+
+    const [a, b] = await Promise.all([
+      board.transition('T1', t.id, 'awaiting_approval', { status: 'approved' }),
+      board.transition('T1', t.id, 'awaiting_approval', {
+        status: 'open',
+        assignee: null,
+      }),
+    ]);
+    const wins = [a, b].filter(Boolean);
+    expect(wins).toHaveLength(1);
+    // Whichever verdict won is the durable one; the loser changed nothing.
+    const after = await board.get('T1', t.id);
+    expect(after?.status).toBe(wins[0]!.status);
+  });
+
+  it('a deny-release (transition to open, assignee cleared) leaves the task re-claimable', async () => {
+    const t = asTask(await create({ assignee: 'alex' }));
+    asTask(await board.claim('T1', t.id, 'alex'));
+    await board.update('T1', t.id, { status: 'awaiting_approval' });
+    const released = await board.transition('T1', t.id, 'awaiting_approval', {
+      status: 'open',
+      assignee: null,
+    });
+    expect(released?.status).toBe('open');
+    expect(released?.assignee).toBeUndefined();
+    const reclaimed = asTask(await board.claim('T1', t.id, 'riley'));
+    expect(reclaimed.assignee).toBe('riley');
+  });
+
+  it("an 'awaiting_approval' dependency still BLOCKS its dependents — only 'done' satisfies", async () => {
+    const dep = asTask(await create({ title: 'Plan first', assignee: 'alex' }));
+    const t = asTask(
+      await create({ title: 'Build on it', dependsOn: [dep.id] }),
+    );
+    asTask(await board.claim('T1', dep.id, 'alex'));
+    await board.update('T1', dep.id, { status: 'awaiting_approval' });
+
+    expect(await board.claim('T1', t.id, 'riley')).toBe('blocked');
+    expect((await board.blockersOf('T1', [t])).get(t.id)).toEqual([dep.id]);
+
+    await board.update('T1', dep.id, { status: 'done' });
+    expect(typeof (await board.claim('T1', t.id, 'riley'))).not.toBe('string');
   });
 });

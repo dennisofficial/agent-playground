@@ -1,7 +1,19 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { Inject } from '@nestjs/common';
+import type { ChatTracePointer } from '@workspace/langfuse';
 import { z } from 'zod';
+import type { Identity } from '../../domain/identity';
+import {
+  DEFAULT_EXECUTE_PROMPT,
+  DEFAULT_PLAN_PROMPT,
+} from '../../engines/engine.prompts';
+import {
+  EWorkerEngineName,
+  type WorkerMode,
+} from '../../engines/worker-engine.port';
 import { EmployeeRegistry } from '../../employees/employee.registry';
+import { BoardStore } from '../../memory/board-store';
+import { PlanStore } from '../../memory/plan-store';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -37,6 +49,13 @@ const createSessionSchema = z.object({
     .string()
     .describe('A clear, self-contained opening message for the session.'),
   mode: modeField,
+  board_task_id: z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      'The team-board task (#N from list_board) this session works. Link it for ANY board work: the plan→approval flow runs through the board, and an execute turn is refused until the task is approved.',
+    ),
 });
 
 @HarnessTool()
@@ -54,41 +73,145 @@ export class CreateSessionTool implements IHarnessTool<
     private readonly runner: SessionRunnerService,
     private readonly worktrees: WorktreeService,
     private readonly employees: EmployeeRegistry,
+    private readonly board: BoardStore,
+    private readonly plans: PlanStore,
   ) {}
 
   async execute(
-    { worktreeId, task, mode }: z.infer<typeof createSessionSchema>,
+    {
+      worktreeId,
+      task,
+      mode,
+      board_task_id,
+    }: z.infer<typeof createSessionSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
     const worktree = this.worktrees.get(worktreeId);
     if (!worktree)
-      return `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`;
-    // The engine is the employee's locked engine — there is no per-session override.
+      throw new Error(
+        `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`,
+      );
+    const boardTask =
+      board_task_id !== undefined
+        ? await this.board.get(id.team, board_task_id)
+        : undefined;
+    if (board_task_id !== undefined && !boardTask)
+      return `No board task #${board_task_id} — check list_board, or omit board_task_id.`;
+    // The same approval gate reply_session applies — a fresh execute-mode session can't bypass it.
+    if (mode === 'execute') {
+      const refusal = await this.runner.executeRefusal(id.team, board_task_id);
+      if (refusal) return `Can't open an execute session: ${refusal}`;
+    }
+    // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
+    // and an execute session on the same employee can run different engines (Option B). Fixed at
+    // create; a session never swaps engines mid-life (replySession refuses an engine-changing flip).
+    const bot =
+      this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner();
+    const engCtx = this.employees.context();
     const engineName = (
-      this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner()
+      mode === 'plan' ? bot.planEngine(engCtx) : bot.executeEngine(engCtx)
     ).engine;
-    const session = await this.sessions.create({
-      task,
+    // OPTION B handoff: a fresh execute session is seeded from the APPROVED PLAN (the durable ticket
+    // artifact), not the planning session's investigation noise. When this is an execute session on a
+    // board task with the owner's attached plan, the engine's first message IS the enriched plan
+    // (rendered through the employee's `execute` template); the chat-self's brief `task` rides along
+    // as a note. The stored session.task stays the brief (for list_sessions); the engine gets the full
+    // handoff. Falls back to the plain task when there's no attached plan (e.g. a non-plan execute).
+    let openingTask = task;
+    // Engines WITHOUT a native plan ceremony (everything but Claude, whose SDK plan mode enforces
+    // read-only + ExitPlanMode for us) need the plan posture in the PROMPT: a Codex/LangGraph plan
+    // turn is only read-only at the sandbox, so without this framing it would try to IMPLEMENT rather
+    // than draft. This mirrors the Codex CLI's own plan mode — investigate read-only, emit a structured
+    // plan, then stop for approval. Claude keeps the raw task: its native plan mode + ExitPlanMode
+    // capture already do this, and wrapping the task would muddy that capture.
+    if (mode === 'plan' && engineName !== EWorkerEngineName.CLAUDE) {
+      openingTask = DEFAULT_PLAN_PROMPT({ ticket: task });
+    }
+    if (mode === 'execute' && board_task_id !== undefined && boardTask) {
+      const plan = await this.plans.get(id.team, board_task_id, id.selfAgent);
+      if (plan) {
+        const ticketText =
+          `${boardTask.title}\n\n${boardTask.description}`.trim();
+        openingTask = DEFAULT_EXECUTE_PROMPT({
+          ticket: ticketText,
+          plan: plan.planMd,
+        });
+        if (task.trim()) openingTask += `\n\nTASK:\n${task.trim()}`;
+      }
+    }
+    const { sessionId } = await this.openSession({
+      identity: id,
       worktreeId,
-      notifyThread: id.surface,
-      engine: engineName,
-      ownerBot: id.selfAgent,
-      team: id.team,
-      project: id.project,
+      task,
+      openingTask,
       mode,
+      engine: engineName,
+      boardTaskId: board_task_id,
+      parentChatTrace: ctx.parentChatTrace,
     });
-    // Fire-and-forget: the turn runs in the background, the chat turn returns immediately.
-    //
-    // Detach the background turn from the conductor's streaming callback context. create_session
-    // runs inside the chat graph's `streamMode: 'messages'` run, and LangChain propagates that
-    // run's callbacks to nested runnables via AsyncLocalStorage. Without clearing the store, a
-    // LangGraph turn's invoke() inherits the chat stream's message handler and its tokens/
-    // tool-calls bleed into the main chat. run(undefined, …) roots the turn in a clean store.
+    // The board task starts EXECUTING once an execute session is live. CAS approved→executing AFTER
+    // the session registered (a failed create can't strand the task), idempotent across owners (only
+    // the first owner's start flips it; later owners find it already 'executing'). Stamp the execute
+    // worktree + shared branch on this owner's plan row so the integration barrier finds them later.
+    // Both best-effort — they must never fail the session that's already running.
+    if (mode === 'execute' && board_task_id !== undefined && boardTask) {
+      await this.board
+        .transition(id.team, board_task_id, 'approved', { status: 'executing' })
+        .catch(() => undefined);
+      await this.plans
+        .setExecuteContext(id.team, board_task_id, id.selfAgent, {
+          executeWorktreeId: worktreeId,
+          sharedBranch: worktree.sharedBranch,
+        })
+        .catch(() => undefined);
+    }
+    return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
+  }
+
+  /**
+   * The canonical create-session-and-fire-first-turn path, reused by `create_session` AND by
+   * engine-tool capabilities (`EngineToolFactory`) so they don't invent a parallel worker path. The
+   * engine is fixed at create. The first turn is fire-and-forget, detached from the conductor's
+   * streaming callback context (AsyncLocalStorage `run(undefined, …)`) — without that, a LangGraph
+   * turn's invoke() inherits the chat stream's message handler and its tokens bleed into the chat.
+   */
+  async openSession(opts: {
+    identity: Identity;
+    worktreeId: string;
+    /** Stored brief (titles list_sessions + the close-time worklog). */
+    task: string;
+    /** The actual first-turn message (may be enriched, e.g. the Option-B plan handoff). */
+    openingTask: string;
+    mode: WorkerMode;
+    engine: EWorkerEngineName;
+    boardTaskId?: number;
+    /** Best-effort link back to the spawning chat turn's trace (for Langfuse session linkage). */
+    parentChatTrace?: ChatTracePointer;
+  }): Promise<{ sessionId: string }> {
+    const session = await this.sessions.create({
+      task: opts.task,
+      worktreeId: opts.worktreeId,
+      notifyThread: opts.identity.surface,
+      engine: opts.engine,
+      ownerBot: opts.identity.selfAgent,
+      team: opts.identity.team,
+      project: opts.identity.project,
+      mode: opts.mode,
+      ...(opts.boardTaskId !== undefined
+        ? { boardTaskId: opts.boardTaskId }
+        : {}),
+    });
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.runner.runSessionTurn(session.id, task);
+      // A fresh execute session starts execution for this work — refresh the worktree against base.
+      void this.runner.runSessionTurn(
+        session.id,
+        opts.openingTask,
+        opts.parentChatTrace,
+        opts.mode === 'execute',
+      );
     });
-    return `Opened ${session.id} (${engineName}, ${mode}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
+    return { sessionId: session.id };
   }
 }
 
@@ -102,7 +225,7 @@ const replySessionSchema = z.object({
   mode: modeField
     .optional()
     .describe(
-      "Switch the session's mode from this turn on — approve a plan by replying with 'execute'.",
+      "Switch the session's mode from this turn on (e.g. a plan session into execution for quick non-board work). BOARD work does NOT switch here — approved tickets execute in a fresh execute session opened from the plan.",
     ),
 });
 
@@ -112,7 +235,7 @@ export class ReplySessionTool implements IHarnessTool<
 > {
   readonly name = 'reply_session';
   readonly description =
-    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. Also how a plan gets approved: reply with mode 'execute'. Calling this ENDS YOUR TURN; you're notified when the turn reports back.";
+    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. This is how you feed review/revision notes back into a still-open planning or execute session. Calling this ENDS YOUR TURN; you're notified when the turn reports back.";
   readonly schema = replySessionSchema;
   readonly terminal = true;
 
@@ -127,19 +250,24 @@ export class ReplySessionTool implements IHarnessTool<
   ): Promise<string> {
     const session = await this.sessions.get(sessionId);
     if (!session || session.ownerBot !== ctx.identity.selfAgent)
-      return `Couldn't reply to ${sessionId}: not your session.`;
+      throw new Error(`Couldn't reply to ${sessionId}: not your session.`);
     // The reply fires fire-and-forget and must run in a clean store so a LangGraph run's callbacks
     // don't bleed into the chat stream.
     let res: ActionResult = { ok: false };
     await AsyncLocalStorageProviderSingleton.getInstance().run(
       undefined,
       async () => {
-        res = await this.runner.replySession(sessionId, message, mode);
+        res = await this.runner.replySession(
+          sessionId,
+          message,
+          mode,
+          ctx.parentChatTrace,
+        );
       },
     );
-    return res.ok
-      ? `Sent to ${sessionId}${mode ? ` (mode → ${mode})` : ''}; it's working and will report back.`
-      : `Couldn't reply to ${sessionId}: ${res.reason}`;
+    if (!res.ok)
+      throw new Error(`Couldn't reply to ${sessionId}: ${res.reason}`);
+    return `Sent to ${sessionId}${mode ? ` (mode → ${mode})` : ''}; it's working and will report back.`;
   }
 }
 
@@ -152,6 +280,7 @@ export class CloseSessionTool implements IHarnessTool<
   typeof closeSessionSchema
 > {
   readonly name = 'close_session';
+  readonly refreshesContext = ['work'] as const;
   readonly description =
     "Close a session you're done with (stops it if it's mid-turn and discards that turn's result). Its completed work is logged. The worktree stays until you remove_worktree it.";
   readonly schema = closeSessionSchema;
@@ -212,12 +341,21 @@ export class CheckSessionTool implements IHarnessTool<
     }
     const bot =
       this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-    const { model, effort } = this.employees.resolveWorkerModel(
-      bot,
-      session.mode,
-    );
+    const specCtx = this.employees.context();
+    const { model, effort } =
+      session.mode === 'plan'
+        ? bot.planEngine(specCtx)
+        : bot.executeEngine(specCtx);
     const tier = `${session.mode} on ${model ?? `${session.engine} default`}${effort ? `, effort ${effort}` : ''}`;
-    const header = `${session.id} [${session.status}] (${tier}, ${session.worktreeId}, turn ${session.turns}): "${session.task}"`;
+    const board =
+      session.boardTaskId !== undefined
+        ? `, board #${session.boardTaskId}`
+        : '';
+    const waiting =
+      session.status === 'idle' && session.lastReportKind === 'questions'
+        ? ' — waiting on answers'
+        : '';
+    const header = `${session.id} [${session.status}]${waiting} (${tier}, ${session.worktreeId}${board}, turn ${session.turns}): "${session.task}"`;
     if (session.status === 'idle')
       return `${header}\nLast report: ${session.lastReport ?? '(none)'}`;
     if (session.status === 'failed')
@@ -260,7 +398,7 @@ export class ListSessionsTool implements IHarnessTool<
       .sort((a, b) => order[a.status] - order[b.status])
       .map(
         (s) =>
-          `- ${s.id} [${s.status}] (${s.mode}, ${s.worktreeId}, turn ${s.turns}): "${s.task}"`,
+          `- ${s.id} [${s.status}] (${s.mode}, ${s.worktreeId}${s.boardTaskId !== undefined ? `, board #${s.boardTaskId}` : ''}, turn ${s.turns}): "${s.task}"${s.status === 'idle' && s.lastReportKind === 'questions' ? ' — waiting on answers' : ''}`,
       )
       .join('\n');
   }

@@ -48,7 +48,7 @@ function makeFakes() {
         dependsOn: (t.dependsOn as number[]) ?? [],
       }),
     ),
-    claim: vi.fn(async () => task({ status: 'in_progress', assignee: 'alex' })),
+    claim: vi.fn(async () => task({ status: 'planning', assignee: 'alex' })),
     update: vi.fn(async (_t: string, _id: number, patch: Partial<BoardTask>) =>
       task(patch),
     ),
@@ -135,7 +135,7 @@ describe('board tools authority', () => {
     const tool = new UpdateBoardTaskTool(board as never, employees as never);
 
     board.get.mockResolvedValue(
-      task({ assignee: 'alex', status: 'in_progress' }),
+      task({ assignee: 'alex', status: 'planning' }),
     );
     await expect(
       tool.execute({ id: 7, status: 'done' }, identity('alex')),
@@ -156,8 +156,69 @@ describe('board tools authority', () => {
       tool.execute({ id: 7, title: 'renamed' }, identity('alex')),
     ).resolves.toContain("the team lead's call");
     await expect(
-      tool.execute({ id: 7, status: 'in_progress' }, identity('alex')),
+      tool.execute({ id: 7, status: 'planning' }, identity('alex')),
     ).resolves.toContain('claim_board_task');
+  });
+
+  it("the approval seam: 'awaiting_approval' and 'approved' are both lead-only", async () => {
+    const { board, employees } = makeFakes();
+    const tool = new UpdateBoardTaskTool(board as never, employees as never);
+
+    // A teammate can NOT post for approval — plans auto-attach; the lead proposes (propose_plan).
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'planning' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('alex')),
+    ).resolves.toContain('@Sam');
+    // …and cannot approve, even their own.
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'awaiting_approval' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'approved' }, identity('alex')),
+    ).resolves.toContain("the team lead's call");
+
+    // The lead approves a proposed ticket…
+    await expect(
+      tool.execute({ id: 7, status: 'approved' }, identity('sam')),
+    ).resolves.toContain('APPROVED');
+    // …but not one that was never proposed.
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'planning' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'approved' }, identity('sam')),
+    ).resolves.toContain("not 'awaiting_approval'");
+
+    // The lead's manual escape hatch still works.
+    await expect(
+      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('sam')),
+    ).resolves.toContain('posted for approval');
+  });
+
+  it("an assignee can't self-'done' APPROVED or in-review work — that acceptance is the lead's (Dennis's call)", async () => {
+    const { board, employees } = makeFakes();
+    const tool = new UpdateBoardTaskTool(board as never, employees as never);
+
+    // Approved work: the assignee can't complete it themselves.
+    board.get.mockResolvedValue(task({ assignee: 'alex', status: 'approved' }));
+    await expect(
+      tool.execute({ id: 7, status: 'done' }, identity('alex')),
+    ).resolves.toContain("team lead's call");
+
+    // In-review work: same — they keep addressing feedback; the lead closes it.
+    board.get.mockResolvedValue(
+      task({ assignee: 'alex', status: 'in_review' }),
+    );
+    await expect(
+      tool.execute({ id: 7, status: 'done' }, identity('alex')),
+    ).resolves.toContain('Dennis accepts');
+
+    // The lead records Dennis's acceptance.
+    await expect(
+      tool.execute({ id: 7, status: 'done' }, identity('sam')),
+    ).resolves.toContain('done');
   });
 
   it('the lead reassigns, reopens, and edits anything', async () => {
@@ -184,7 +245,7 @@ describe('board tools authority', () => {
       task({
         id: 2,
         title: 'Backend',
-        status: 'in_progress',
+        status: 'planning',
         assignee: 'alex',
       }),
       task({ id: 3, title: 'Frontend', dependsOn: [2] }),
@@ -193,7 +254,7 @@ describe('board tools authority', () => {
     const tool = new ListBoardTool(board as never);
     const out = await tool.execute({}, identity('riley'));
     expect(out).not.toContain('Contract'); // done rows drop from the default live view
-    expect(out).toContain('[#2] Backend (→ alex, in_progress)');
+    expect(out).toContain('[#2] Backend (→ alex, planning)');
     expect(out).toContain(
       '[#3] Frontend (unassigned, open) after #2 — BLOCKED by #2',
     );

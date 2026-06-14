@@ -17,6 +17,7 @@ oauth_config:
     bot:
       - chat:write
       - reactions:write
+      - files:write # upload own plan snippets to approval-card threads
       - channels:join # auto-join public channels on first post; private channels must invite the bot
 settings:
   socket_mode_enabled: false

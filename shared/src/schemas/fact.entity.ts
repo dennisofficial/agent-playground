@@ -19,7 +19,9 @@ export class Fact extends TimestampedEntity {
   fact!: string;
 
   // pgvector. TypeORM 0.3.30 has native `vector` support; dimension + HNSW index are set in the migration.
-  @Column({ type: 'vector', length: 1536 })
+  // select: false — 1536 floats (~19 KB) are never needed outside vector ops; explicit QB .addSelect()
+  // (e.g. via the embedding <=> distance expression) still works fine.
+  @Column({ type: 'vector', length: 1536, select: false })
   embedding!: string;
 
   /** The tenant (Slack team id) this fact belongs to. NULL = the SHARED/global tier: recalled in

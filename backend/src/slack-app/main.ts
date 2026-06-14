@@ -1,3 +1,5 @@
+import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before any LangChain run
+
 import { setupLogger } from '@core/setup-logger';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';

@@ -124,21 +124,31 @@ export class ChannelService implements OnModuleInit {
   }
 
   /** Append a message (or update one re-emitted with the same id). Synchronous, never blocks.
-   * `channelId` defaults to this process's default room; identity is (channelId, id). */
+   * `channelId` defaults to this process's default room; identity is (channelId, id).
+   * `createdAt` is intentionally OMITTED from the input type: callers never supply it — new rows
+   * are stamped with `Date.now()` here, and streaming re-emits preserve the original stamp. */
   append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'> & {
+      channelId?: string;
+    },
   ): ChannelMsg {
     const channelId = msg.channelId ?? this.surfaceId;
     const room = this.room(channelId);
     const existing = room.msgs.findIndex((m) => m.id === msg.id);
     if (existing >= 0) {
+      // Re-emit (streaming edit): update all fields EXCEPT createdAt — the original stamp holds.
       room.msgs[existing] = { ...room.msgs[existing], ...msg, channelId };
       const updated = room.msgs[existing];
       this.persist(updated);
       this.notify();
       return updated;
     }
-    const full: ChannelMsg = { ...msg, channelId, seq: room.nextSeq++ };
+    const full: ChannelMsg = {
+      ...msg,
+      channelId,
+      seq: room.nextSeq++,
+      createdAt: Date.now(),
+    };
     room.msgs.push(full);
     this.persist(full);
     this.notify();
@@ -174,6 +184,64 @@ export class ChannelService implements OnModuleInit {
     return this.write(async () => {});
   }
 
+  /**
+   * Full-text ILIKE search over persisted channel_messages, scoped to a team (via the channels
+   * registry join) and optionally narrowed to specific surfaces. Returns newest-first results capped
+   * at `limit` (default 20). `surfaceIds: []` searches all surfaces for the team.
+   */
+  async search(opts: {
+    teamId: string;
+    surfaceIds: string[];
+    query: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<
+    {
+      author: string;
+      authorBotId?: string;
+      surfaceId: string;
+      seq: number;
+      ts: number;
+      snippet: string;
+    }[]
+  > {
+    const { teamId, surfaceIds, query, limit = 20, offset = 0 } = opts;
+    // Raw ILIKE — the team join scopes results to the caller's tenant;
+    // $2::text[] IS NULL short-circuits the surface filter when the array is empty.
+    const rows: Array<{
+      author: string;
+      author_bot_id: string | null;
+      surface_id: string;
+      seq: string;
+      ts: Date;
+      snippet: string;
+    }> = await this.repo.query(
+      `SELECT m.author, m.author_bot_id, m.surface_id, m.seq,
+              m.created_at AS ts, m.text AS snippet
+       FROM channel_messages m
+       JOIN channels c ON c.channel_id = m.surface_id AND c.team_id = $1
+       WHERE ($2::text[] IS NULL OR m.surface_id = ANY($2::text[]))
+         AND m.text ILIKE $3
+       ORDER BY m.created_at DESC
+       LIMIT $4 OFFSET $5`,
+      [
+        teamId,
+        surfaceIds.length ? surfaceIds : null,
+        `%${query}%`,
+        limit,
+        offset,
+      ],
+    );
+    return rows.map((r) => ({
+      author: r.author,
+      authorBotId: r.author_bot_id ?? undefined,
+      surfaceId: r.surface_id,
+      seq: Number(r.seq),
+      ts: new Date(r.ts).getTime(),
+      snippet: r.snippet,
+    }));
+  }
+
   private room(channelId: string): RoomLog {
     let room = this.rooms.get(channelId);
     if (!room) {
@@ -185,6 +253,11 @@ export class ChannelService implements OnModuleInit {
 
   private persist(msg: ChannelMsg): void {
     // Serialized write-behind: ordering holds, and a failed write never surfaces into a turn.
+    // Note: `created_at` is NOT included in the upsert payload — it is DB-authoritative via the
+    // `DEFAULT now()` column (set once on INSERT, never touched on UPDATE because of `update:false`
+    // on the `@CreateDateColumn`). The in-memory `createdAt` (stamped by `Date.now()` in `append`)
+    // and the persisted `created_at` can therefore diverge by the write-behind queue latency, which
+    // is immaterial at the hour-scale granularity used for time-dividers. Intentional design choice.
     void this.write(() =>
       this.repo.upsert(
         {
@@ -216,4 +289,5 @@ const toChannelMsg = (r: ChannelMessage): ChannelMsg => ({
   authorId: r.author_id,
   authorBotId: r.author_bot_id ?? undefined,
   text: r.text,
+  createdAt: new Date(r.created_at).getTime(),
 });

@@ -1,0 +1,13 @@
+{
+  "name": "relevant-fact-recalls-irrelevant-stays-below-floor",
+  "kind": "recall",
+  "bot": "alex",
+  "query": "what indentation style does Dennis prefer in code",
+  "k": 5,
+  "seedFacts": [
+    { "fact": "Dennis prefers two-space indentation in code", "tier": "team", "ageDays": 10 },
+    { "fact": "The backend deploys to an OVH virtual machine", "ageDays": 2 }
+  ],
+  "shouldRecall": ["Dennis prefers two-space indentation in code"],
+  "shouldNotRecall": ["The backend deploys to an OVH virtual machine"]
+}

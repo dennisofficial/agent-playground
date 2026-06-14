@@ -1,10 +1,17 @@
 import type { Type } from '@nestjs/common';
+import { ShareArtifactTool } from './artifacts/share-artifact.tool';
 import {
   ForgetTool,
   RecallTool,
   RememberTool,
+  SearchConversationHistoryTool,
   UpdateMemoryTool,
 } from './memory/memory.tools';
+import {
+  AddSessionNoteTool,
+  ListSessionNotesTool,
+  ResolveSessionNoteTool,
+} from './memory/session-note.tools';
 import { ListRoomsTool, SendMessageTool } from './rooms/room.tools';
 import {
   CheckSessionTool,
@@ -25,6 +32,10 @@ import {
   CompleteTaskTool,
   ListTasksTool,
 } from './tasks/task.tools';
+import { AddNoteTool, GetTicketTool } from './tasks/ticket.tools';
+import { SubmitPlanTool } from './sessions/submit-plan.tool';
+import { SubmitForReviewTool } from './sessions/submit-for-review.tool';
+import { InvestigateTool } from './sessions/investigate.tool';
 import type { IHarnessTool } from './tool.types';
 import { EndTurnTool } from './turn/end-turn.tool';
 import {
@@ -32,9 +43,9 @@ import {
   ListWorktreesTool,
   PublishWorktreeTool,
   PullWorktreeTool,
+  RefreshWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
-import { OpenPrTool } from './worktrees/open-pr.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -46,10 +57,16 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   ListWorktreesTool,
   PublishWorktreeTool,
   PullWorktreeTool,
+  RefreshWorktreeTool,
   RemoveWorktreeTool,
-  OpenPrTool,
+  // No open_pr / mark_pr_ready for ICs — the review pipeline opens the draft PR and flips it to ready
+  // automatically when self-review clears (submit_for_review kicks it off). Sam keeps them as a manual
+  // lead override (see sam.employee.ts).
   CreateSessionTool,
   ReplySessionTool,
+  SubmitPlanTool,
+  SubmitForReviewTool,
+  InvestigateTool,
   CloseSessionTool,
   CheckSessionTool,
   ListSessionsTool,
@@ -60,6 +77,10 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   RecallTool,
   UpdateMemoryTool,
   ForgetTool,
+  SearchConversationHistoryTool,
+  AddSessionNoteTool,
+  ListSessionNotesTool,
+  ResolveSessionNoteTool,
   ListTasksTool,
   AddTaskTool,
   CompleteTaskTool,
@@ -67,6 +88,9 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   AddBoardTaskTool,
   ClaimBoardTaskTool,
   UpdateBoardTaskTool,
+  GetTicketTool,
+  AddNoteTool,
   ListRoomsTool,
   SendMessageTool,
+  ShareArtifactTool,
 ];

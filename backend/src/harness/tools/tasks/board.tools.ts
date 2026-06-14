@@ -147,10 +147,19 @@ export class ClaimBoardTaskTool implements IHarnessTool<typeof claimSchema> {
 const updateSchema = z.object({
   id: z.number().describe('The board task id (the #N from list_board).'),
   status: z
-    .enum(['open', 'in_progress', 'done'])
+    .enum([
+      'open',
+      'planning',
+      'awaiting_approval',
+      'approved',
+      'executing',
+      'self_review',
+      'in_review',
+      'done',
+    ])
     .optional()
     .describe(
-      "New status. 'done' completes it; 'open' releases it back to the board (clears the assignee).",
+      "New status. 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY (proposing normally happens via propose_plan; 'approved' records Dennis's verdict). 'executing'/'self_review'/'in_review' are normally set by the harness as work moves through execution and the automated PR self-review. 'done' completes it — but for work that went through approval that's the team lead recording Dennis's acceptance, not the assignee.",
     ),
   assignee: z
     .string()
@@ -167,7 +176,7 @@ const updateSchema = z.object({
 export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
   readonly name = 'update_board_task';
   readonly description =
-    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), or — team lead only — reassign/reopen/edit anything. Teammates can only complete or release their OWN tasks.";
+    "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), or — team lead only — reassign/reopen/edit anything, propose manually ('awaiting_approval'; normally propose_plan does this), and record Dennis's approval ('approved'). Teammates can only complete or release their OWN tasks.";
   readonly schema = updateSchema;
 
   constructor(
@@ -191,6 +200,29 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     const isLead = !!this.employees.byId(id.selfAgent)?.teamLead;
     const release = status === 'open';
 
+    // The approval seam: 'approved' is the record of DENNIS's decision, clerked by the lead, and
+    // 'awaiting_approval' is set by the lead's propose_plan (manual set = the lead's escape hatch).
+    if (status === 'approved') {
+      if (!isLead)
+        return `Marking a plan 'approved' is the team lead's call — and the lead records it only on Dennis's explicit approval.`;
+      if (task.status !== 'awaiting_approval')
+        return `Board task #${taskId} is '${task.status}', not 'awaiting_approval' — only a proposed ticket can be approved (propose_plan proposes it).`;
+    }
+    if (status === 'awaiting_approval' && !isLead)
+      return `Posting for approval isn't a status you set — your plan AUTO-ATTACHES to the ticket when your linked planning session finishes. Notify @Sam your plan on #${taskId} is ready for review; he proposes the ticket to Dennis (propose_plan) once every plan is lead-approved.`;
+    // Completing APPROVED work is Dennis's acceptance, clerked by the lead — an assignee can't
+    // self-'done' a ticket that went through approval (or is in review). They keep iterating on
+    // review feedback in their execute session; the lead marks it done once Dennis accepts the PR.
+    if (
+      status === 'done' &&
+      (task.status === 'approved' ||
+        task.status === 'executing' ||
+        task.status === 'self_review' ||
+        task.status === 'in_review') &&
+      !isLead
+    )
+      return `Board task #${taskId} is '${task.status}' — completing approved work records Dennis's acceptance, which is the team lead's call. Keep addressing review feedback in your execute session; @Sam marks it 'done' once Dennis accepts the PR.`;
+
     if (!isLead) {
       if (
         assignee !== undefined ||
@@ -201,7 +233,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
       if (task.assignee !== id.selfAgent)
         return `Board task #${taskId} is ${task.assignee ? `${task.assignee}'s` : 'unassigned'} — only they or the team lead can change it.`;
       if (!status) return `Nothing to change on #${taskId}.`;
-      if (status === 'in_progress')
+      if (status === 'planning')
         return `Use claim_board_task to start a task — it checks dependencies atomically.`;
     }
     const newAssignee = assignee?.trim().toLowerCase();
@@ -222,6 +254,10 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     if (!updated) return `No board task #${taskId} found.`;
     if (status === 'done')
       return `Board task #${taskId} done: ${updated.title}`;
+    if (status === 'awaiting_approval')
+      return `Board task #${taskId} posted for approval: ${updated.title} — it queues for Dennis's next planning sitting.`;
+    if (status === 'approved')
+      return `Board task #${taskId} APPROVED: ${updated.title} — ${updated.assignee ?? 'the assignee'} can flip its session to execute.`;
     if (release && !newAssignee)
       return `Board task #${taskId} released back to the board (unassigned, open).`;
     return `Updated board task #${taskId} (${fmtAssignee(updated)}, ${updated.status}).`;
@@ -240,10 +276,19 @@ const listSchema = z.object({
     .optional()
     .describe("Filter to one teammate's tasks (a roster id like 'alex')."),
   status: z
-    .enum(['open', 'in_progress', 'done'])
+    .enum([
+      'open',
+      'planning',
+      'awaiting_approval',
+      'approved',
+      'executing',
+      'self_review',
+      'in_review',
+      'done',
+    ])
     .optional()
     .describe(
-      'Filter by status; omit for open + in-progress (the live board).',
+      "Filter by status; omit for everything not done (the live board). 'awaiting_approval' lists the plans queued for Dennis's sign-off; 'in_review' lists the PRs up and waiting on him.",
     ),
 });
 

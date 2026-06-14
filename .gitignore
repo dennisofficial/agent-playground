@@ -2,10 +2,13 @@ node_modules
 dist
 *.log
 .DS_Store
-.idea/
 
 # Per-worker git worktrees (one full-repo checkout per execute job) — see playground/src/workspace.ts
 .worktrees/
+
+# Worker engines' isolated config/state homes (CLAUDE_CONFIG_DIR / CODEX_HOME) — runtime session
+# transcripts + per-engine config, never committed. See backend/src/harness/engines/engine-home.ts
+.agent-home/
 
 # dotenvx — encrypted .env.*.enc files ARE committed; keys / personal / plaintext-local are NOT
 .env

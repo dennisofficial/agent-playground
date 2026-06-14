@@ -9,6 +9,8 @@ export interface OpenPullRequestArgs {
   base: string;
   title: string;
   body?: string;
+  /** Open as a DRAFT PR (the default for in-progress work — `mark_pr_ready` un-drafts it). */
+  draft?: boolean;
 }
 
 export interface PullRequestResult {
@@ -16,6 +18,19 @@ export interface PullRequestResult {
   number: number;
   /** True when an open PR for this head already existed and was returned instead. */
   existing: boolean;
+}
+
+/** A single open PR returned by `listOpenPullRequests`. */
+export interface PullRequestSummary {
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  headBranch: string;
+  baseBranch: string;
+  draft: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 const API = 'https://api.github.com';
@@ -44,11 +59,17 @@ export class GithubApiService {
     token: string,
     args: OpenPullRequestArgs,
   ): Promise<PullRequestResult> {
-    const { owner, repo, head, base, title, body } = args;
+    const { owner, repo, head, base, title, body, draft } = args;
     const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls`, {
       method: 'POST',
       headers: this.headers(token),
-      body: JSON.stringify({ title, head, base, ...(body ? { body } : {}) }),
+      body: JSON.stringify({
+        title,
+        head,
+        base,
+        ...(body ? { body } : {}),
+        ...(draft ? { draft: true } : {}),
+      }),
     });
     if (res.ok) {
       const pr = (await res.json()) as { html_url: string; number: number };
@@ -85,6 +106,95 @@ export class GithubApiService {
     }
     throw new Error(
       `GitHub refused the pull request (${res.status}): ${detail || 'no detail'}`,
+    );
+  }
+
+  /**
+   * Flip a DRAFT PR to ready-for-review — the "it's your turn, Dennis" signal. GitHub exposes this
+   * ONLY via the GraphQL `markPullRequestReadyForReview` mutation, which needs the PR's node id, so
+   * we fetch that over REST first. Idempotent enough: marking an already-ready PR is a no-op error
+   * GitHub tolerates. Returns the resulting draft flag (false on success).
+   */
+  async markReadyForReview(
+    token: string,
+    { owner, repo, number }: { owner: string; repo: string; number: number },
+  ): Promise<{ isDraft: boolean }> {
+    const get = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}`,
+      { headers: this.headers(token) },
+    );
+    if (!get.ok)
+      throw new Error(`GitHub couldn't load PR #${number} (${get.status})`);
+    const { node_id: nodeId } = (await get.json()) as { node_id: string };
+    const res = await this.fetchImpl(`${API}/graphql`, {
+      method: 'POST',
+      headers: this.headers(token),
+      body: JSON.stringify({
+        query:
+          'mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }',
+        variables: { id: nodeId },
+      }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      data?: {
+        markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+    if (!res.ok || json.errors?.length)
+      throw new Error(
+        `GitHub refused mark-ready for PR #${number} (${res.status}): ${
+          json.errors
+            ?.map((e) => e.message)
+            .filter(Boolean)
+            .join('; ') || 'no detail'
+        }`,
+      );
+    return {
+      isDraft:
+        json.data?.markPullRequestReadyForReview?.pullRequest?.isDraft ?? false,
+    };
+  }
+
+  /** List the open PRs on a repo (up to 50, newest first). */
+  async listOpenPullRequests(
+    token: string,
+    { owner, repo }: { owner: string; repo: string },
+  ): Promise<PullRequestSummary[]> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls?state=open&per_page=50&sort=created&direction=desc`,
+      { headers: this.headers(token) },
+    );
+    if (res.ok) {
+      const prs = (await res.json()) as Array<{
+        number: number;
+        title: string;
+        html_url: string;
+        user: { login: string };
+        head: { ref: string };
+        base: { ref: string };
+        draft: boolean;
+        created_at: string;
+        updated_at: string;
+      }>;
+      return prs.map((pr) => ({
+        number: pr.number,
+        title: pr.title,
+        url: pr.html_url,
+        author: pr.user.login,
+        headBranch: pr.head.ref,
+        baseBranch: pr.base.ref,
+        draft: pr.draft,
+        createdAt: pr.created_at,
+        updatedAt: pr.updated_at,
+      }));
+    }
+    const errBody = (await res.json().catch(() => ({}))) as {
+      message?: string;
+    };
+    const detail = errBody.message ?? 'no detail';
+    throw new Error(
+      `GitHub refused the pull request list (${res.status}): ${detail}`,
     );
   }
 }

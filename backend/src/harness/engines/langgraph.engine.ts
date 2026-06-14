@@ -8,9 +8,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createAgent } from 'langchain';
 import { flattenContent } from '../domain/text';
 import { ChatModelFactory } from '../llm/chat-model.factory';
-import { CHECKPOINTER } from '../memory/memory.module';
+import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { planningTools, workerTools } from './worker-tools';
-import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
+import {
+  EWorkerEngineName,
+  RunWorkerArgs,
+  WorkerEngine,
+} from './worker-engine.port';
 
 /**
  * The original hand-rolled ReAct worker, one engine behind the WorkerEngine interface. Kept so the
@@ -18,7 +22,7 @@ import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
  */
 @Injectable()
 export class LanggraphEngine implements WorkerEngine {
-  readonly name = 'langgraph' as const;
+  readonly name = EWorkerEngineName.LANGGRAPH;
 
   // Two memoized agents, keyed by the planning flag. They share the checkpointer, so a session can
   // switch mode between turns (plan one turn, execute the next) and the other-mode agent resumes
@@ -31,18 +35,19 @@ export class LanggraphEngine implements WorkerEngine {
     private readonly models: ChatModelFactory,
   ) {}
 
-  private getAgent(planning: boolean) {
-    let a = this.agents.get(planning);
+  private getAgent(readOnly: boolean) {
+    let a = this.agents.get(readOnly);
     if (!a) {
-      // A plan turn gets a READ-ONLY tool set (no write_file/str_replace/bash) so a langgraph plan
-      // turn physically cannot mutate the worktree — matching the engine-enforced read-only of the
-      // claude/codex plan turns.
+      // A read-only turn (plan or investigate) gets a READ-ONLY tool set (no write_file/str_replace/
+      // bash) so it physically cannot mutate the worktree — matching the engine-enforced read-only of
+      // the claude/codex read-only turns. LangGraph has no separate plan ceremony, so plan and
+      // investigate share this read-only agent; only their opening-prompt framing differs.
       a = createAgent({
         model: this.models.buildModel(),
-        tools: planning ? planningTools : workerTools,
+        tools: readOnly ? planningTools : workerTools,
         checkpointer: this.checkpointer,
       });
-      this.agents.set(planning, a);
+      this.agents.set(readOnly, a);
     }
     return a;
   }
@@ -80,7 +85,7 @@ export class LanggraphEngine implements WorkerEngine {
     let lastText = '';
     // streamMode 'updates' yields complete messages per node step (not token chunks), which maps
     // cleanly onto WorkerEvents. The update keys are node names; we don't depend on them.
-    const stream = await this.getAgent(mode === 'plan').stream(
+    const stream = await this.getAgent(mode !== 'execute').stream(
       { messages },
       {
         configurable: { thread_id: threadId },

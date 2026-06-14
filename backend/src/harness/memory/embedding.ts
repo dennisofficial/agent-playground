@@ -46,6 +46,3 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     return this.client().embedQuery(text);
   }
 }
-
-/** Serialize a JS vector to the pgvector text form (`[0.1,0.2,…]`). */
-export const toPgVector = (v: number[]): string => `[${v.join(',')}]`;

@@ -20,10 +20,12 @@ syncInjectedDepsAfterScripts:
   - prepare
 allowBuilds:
   '@nestjs/core': true
+  '@node-rs/argon2': true
   '@swc/core': true
   better-sqlite3: true
   esbuild: true
   msgpackr-extract: true
+  protobufjs: true
   sharp: true
   unrs-resolver: true
 overrides:

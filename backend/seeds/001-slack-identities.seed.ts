@@ -2,14 +2,13 @@ import type { Seeder } from '@workspace/nestjs-core';
 import { registerPuppet } from '../cli/puppet-identity';
 
 /**
- * Re-seeds the dev workspace's puppet identities after a DB recreate, from the gitignored
- * `SLACK_PUPPET_SEED` in `.env.personal`:
+ * Re-seeds the dev workspace's puppet identities after a DB recreate, from `SLACK_PUPPET_SEED`
+ * in the committed, encrypted `.env.local.enc` (a `.env.personal` entry still overrides it):
  *
  *   SLACK_PUPPET_SEED={"teamId":"T0...","tokens":{"alex":"xoxb-…","sam":"xoxb-…"}}
  *
  * Idempotent (upsert), and each token round-trips auth.test, so user ids stay correct and a
- * revoked token fails loudly here instead of silently at runtime. Unset → skipped (the seed is
- * personal-machine config, not a fixture everyone must have).
+ * revoked token fails loudly here instead of silently at runtime. Unset → skipped.
  */
 export default (async (ds) => {
   const raw = process.env.SLACK_PUPPET_SEED;

@@ -1,5 +1,6 @@
 import { TeamTask as TeamTaskEntity } from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
+import type { BoardEventsBus } from './board-events.bus';
 import { rawRows, toIso } from './sql';
 
 /**
@@ -8,8 +9,44 @@ import { rawRows, toIso } from './sql';
  * claim unassigned items. Claiming is ATOMIC at the DB (one conditional UPDATE — the DB plays the
  * role of a claim lock), and `blocked` is DERIVED from `depends_on` inside that same statement, so
  * completing a task never fans out writes to its dependents.
+ *
+ * Lifecycle (the approval layer rides on status): open → claim → planning (the planning session +
+ * its Q&A) → awaiting_approval (plan posted for Dennis) → approved (TEAM LEAD only, recorded on
+ * Dennis's explicit word at a planning sitting) → executing (an execute session opened — the
+ * approved→executing CAS lives in CreateSessionTool) → self_review (all owners done; the harness's
+ * task-level integration review on the shared branch) → in_review (PR marked ready, waiting on
+ * Dennis) → done. An APPROVED ticket stays the owner's to execute and re-execute: review feedback
+ * loops in 'in_review' with NO re-approval (the original approval covers it), and only Dennis's
+ * acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only 'open' tasks,
+ * and only 'done' satisfies a dependency — both unchanged by the in-between states.
+ *
+ * Per-owner execution detail (which owner has finished its own self-review, the execute worktree,
+ * the shared branch) lives on the plan row (PlanStore), NOT the task: a multi-owner ticket stays
+ * 'executing' until every plan row is 'complete', then the integration barrier flips it.
  */
-export type BoardStatus = 'open' | 'in_progress' | 'done';
+export type BoardStatus =
+  | 'open'
+  | 'planning'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'executing'
+  | 'self_review'
+  | 'in_review'
+  | 'done';
+
+/** Task statuses that represent active, in-flight work — what FetchService injects into bot context
+ * and what the execution throttle counts. */
+export const ACTIVE_BOARD_STATUSES: readonly BoardStatus[] = [
+  'planning',
+  'executing',
+  'self_review',
+];
+
+/** The in-flight execution statuses the throttle counts against its concurrency cap. */
+export const IN_FLIGHT_EXECUTION_STATUSES: readonly BoardStatus[] = [
+  'executing',
+  'self_review',
+];
 
 export interface BoardTask {
   id: number;
@@ -38,7 +75,7 @@ export interface ListBoardQuery {
   team: string;
   project?: string;
   assignee?: string;
-  status?: BoardStatus;
+  status?: BoardStatus | readonly BoardStatus[];
   limit?: number;
 }
 
@@ -71,10 +108,23 @@ const toBoardTask = (r: BoardRow): BoardTask => ({
 });
 
 export class BoardStore {
-  constructor(private readonly repo: Repository<TeamTaskEntity>) {}
+  // `events` is optional so tests can `new BoardStore(repo)` without the bus; production wires it
+  // via the MemoryModule factory.
+  constructor(
+    private readonly repo: Repository<TeamTaskEntity>,
+    private readonly events?: BoardEventsBus,
+  ) {}
 
   private async q(sql: string, params: unknown[]): Promise<BoardRow[]> {
     return rawRows<BoardRow>(await this.repo.manager.query(sql, params));
+  }
+
+  /** Fire `ticket-approved` when a write lands a task in 'approved' — both the CAS path (the Slack
+   * approval card → transition) and the manual path (a lead's update_board_task → update) funnel
+   * through here, so the owner is woken to execute no matter how the verdict arrived. */
+  private announceIfApproved(team: string, task: BoardTask | undefined): void {
+    if (task?.status === 'approved')
+      this.events?.emit({ kind: 'ticket-approved', team, taskId: task.id });
   }
 
   /**
@@ -122,7 +172,7 @@ export class BoardStore {
     botId: string,
   ): Promise<BoardTask | ClaimRefusal> {
     const rows = await this.q(
-      `UPDATE team_tasks t SET assignee = $3, status = 'in_progress', updated_at = now()
+      `UPDATE team_tasks t SET assignee = $3, status = 'planning', updated_at = now()
        WHERE t.id = $1 AND t.team_id = $2 AND t.status = 'open'
          AND (t.assignee IS NULL OR t.assignee = $3)
          AND NOT EXISTS (SELECT 1 FROM team_tasks d
@@ -139,6 +189,32 @@ export class BoardStore {
     )
       return 'taken';
     return 'blocked';
+  }
+
+  /**
+   * Atomic compare-and-set status transition — the claim() idiom (one conditional UPDATE, the DB
+   * is the lock). The verdict handler's guard against double clicks and stale approval cards: two
+   * concurrent verdicts on one task, exactly one wins; the loser reads the task to say why.
+   */
+  async transition(
+    team: string,
+    id: number,
+    from: BoardStatus,
+    patch: { status: BoardStatus; assignee?: string | null },
+  ): Promise<BoardTask | undefined> {
+    const sets = ['status = $4', 'updated_at = now()'];
+    const args: unknown[] = [id, team, from, patch.status];
+    if (patch.assignee !== undefined) {
+      args.push(patch.assignee);
+      sets.push(`assignee = $${args.length}`);
+    }
+    const rows = await this.q(
+      `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 AND status = $3 RETURNING *`,
+      args,
+    );
+    const task = rows[0] ? toBoardTask(rows[0]) : undefined;
+    this.announceIfApproved(team, task);
+    return task;
   }
 
   /** Guarded field update — AUTHORITY IS THE TOOL'S JOB; this only enforces team + existence. */
@@ -166,7 +242,9 @@ export class BoardStore {
       `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 RETURNING *`,
       args,
     );
-    return rows[0] ? toBoardTask(rows[0]) : undefined;
+    const task = rows[0] ? toBoardTask(rows[0]) : undefined;
+    if (patch.status === 'approved') this.announceIfApproved(team, task);
+    return task;
   }
 
   /** A single board task by id within a team (for authority checks), or undefined. */
@@ -188,13 +266,26 @@ export class BoardStore {
     };
     if (query.project) and((n) => `project = $${n}`, query.project);
     if (query.assignee) and((n) => `assignee = $${n}`, query.assignee);
-    if (query.status) and((n) => `status = $${n}`, query.status);
+    if (query.status)
+      Array.isArray(query.status)
+        ? and((n) => `status = ANY($${n})`, [...query.status])
+        : and((n) => `status = $${n}`, query.status);
     args.push(query.limit ?? 50);
     const rows = await this.q(
       `SELECT * FROM team_tasks WHERE ${where.join(' AND ')} ORDER BY created_at ASC LIMIT $${args.length}`,
       args,
     );
     return rows.map(toBoardTask);
+  }
+
+  /** How many of this team's tasks are in-flight execution (executing + self_review) — the count the
+   * execution throttle weighs against its concurrency cap. */
+  async countInFlightExecution(team: string): Promise<number> {
+    const rows = await this.repo.manager.query(
+      `SELECT count(*)::int AS n FROM team_tasks WHERE team_id = $1 AND status = ANY($2)`,
+      [team, [...IN_FLIGHT_EXECUTION_STATUSES]],
+    );
+    return Number(rawRows<{ n: number }>(rows)[0]?.n ?? 0);
   }
 
   /**

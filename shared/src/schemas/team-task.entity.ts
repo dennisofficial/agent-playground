@@ -29,7 +29,7 @@ export class TeamTask extends TimestampedEntity {
   @Column({ type: 'text', default: '' })
   description!: string;
 
-  // open | in_progress | done
+  // open | planning | awaiting_approval | approved | executing | self_review | in_review | done
   @Column({ type: 'text', default: 'open' })
   status!: string;
 

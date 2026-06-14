@@ -16,6 +16,7 @@ import { SessionRunnerService } from './sessions/session-runner.service';
 import { ToolRegistry } from './tools/tool.registry';
 import { DEFAULT_CHAT_TOOLSET } from './tools/default-toolset';
 import { WorktreeService } from './worktrees/worktree.service';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
  * Proves the whole composition root assembles: every domain module's DI graph resolves against live
@@ -42,8 +43,11 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
     expect(bound.map((t) => t.name).sort()).toEqual(
       [
         'add_board_task',
+        'add_note',
+        'add_session_note',
         'add_task',
         'check_session',
+        'get_ticket',
         'claim_board_task',
         'close_session',
         'complete_task',
@@ -51,33 +55,46 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'create_worktree',
         'end_turn',
         'forget',
+        'investigate',
         'list_board',
         'list_rooms',
+        'list_session_notes',
         'list_sessions',
         'list_tasks',
         'list_worktrees',
-        'open_pr',
         'publish_worktree',
         'pull_worktree',
-        'recall',
+        'recall_facts',
         'recent_work',
+        'refresh_worktree',
         'remember',
         'remove_worktree',
         'reply_session',
+        'resolve_session_note',
+        'search_conversation_history',
         'search_session',
         'send_message',
+        'share_artifact',
+        'submit_for_review',
+        'submit_plan',
         'update_board_task',
         'update_memory',
       ].sort(),
     );
     expect(tools.terminalToolNames(DEFAULT_CHAT_TOOLSET)).toEqual(
-      new Set(['create_session', 'reply_session', 'end_turn']),
+      new Set([
+        'create_session',
+        'reply_session',
+        'submit_for_review',
+        'investigate',
+        'end_turn',
+      ]),
     );
 
     const engines = moduleRef.get(EngineRegistry);
-    expect(engines.get('claude').name).toBe('claude');
-    expect(engines.get('codex').name).toBe('codex');
-    expect(engines.get('langgraph').name).toBe('langgraph');
+    expect(engines.get(EWorkerEngineName.CLAUDE).name).toBe('claude');
+    expect(engines.get(EWorkerEngineName.CODEX).name).toBe('codex');
+    expect(engines.get(EWorkerEngineName.LANGGRAPH).name).toBe('langgraph');
 
     expect(moduleRef.get(GateService)).toBeDefined();
     expect(moduleRef.get(ChannelService)).toBeDefined();

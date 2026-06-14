@@ -1,17 +1,23 @@
 import type { Type } from '@nestjs/common';
-import type {
-  EffortLevel,
-  WorkerEngineName,
-} from '../engines/worker-engine.port';
+import type { EngineSpec } from '../engines/engine-spec';
 import type { McpServerConfig, SkillSource } from '../skills/skill.types';
 import type { IHarnessTool } from '../tools/tool.types';
+import type { Capability } from './capability';
+import type { EmployeeContext } from './employee-context';
 
 /**
- * An employee — one self-contained AI teammate, as a single class decorated with `@AIEmployee()`.
- * Everything that makes a teammate distinct lives in that one file: identity, the deep role
- * knowledge seeding its system prompt, the engine its background work runs on, its skills, and the
- * tools it may use. Adding a teammate = one new class in `roster/` + one providers entry in
- * `EmployeesModule` — nothing else in the harness changes.
+ * An employee — one self-contained AI teammate, as a single class decorated with `@AIEmployee()` and
+ * extending `BaseEmployee`. Everything that makes a teammate distinct lives in that one file and is
+ * the SINGLE source of truth for how it works: identity, the deep role knowledge seeding its prompts,
+ * the engines its plan/execute work runs on (`planEngine`/`executeEngine`), and its capabilities
+ * (`capabilities` — forced lifecycle hooks like self-review, and discretionary tools like deep
+ * research; membership differs per employee). Adding a teammate = one new class in `roster/` + one
+ * providers entry in `EmployeesModule`.
+ *
+ * BUILDERS, not constants: prompt/engine fields are FUNCTIONS of an injected `EmployeeContext`
+ * (static today, a DB row tomorrow as employees are edited live from Slack). They MUST return
+ * byte-stable output for a given employee — the chat prompt renders on every LLM step under a
+ * `cache_control: ephemeral` breakpoint, so per-call variation silently busts the prompt cache.
  */
 export interface EmployeeDefinition {
   /** Stable handle, lowercase (e.g. "alex"). Used for @mentions, scoping, and thread ids. */
@@ -20,57 +26,42 @@ export interface EmployeeDefinition {
   readonly name: string;
   /** Short role label (e.g. "backend engineer") — shown in the roster summary. */
   readonly role: string;
-  /**
-   * Roster position. Discovery order is non-deterministic, so ordering is explicit: lower sorts
-   * first. Groups the build team (backend → frontend → design) ahead of marketing + the lead, and the
-   * lowest-ordered employee is the fallback owner when a bot lookup misses.
-   */
+  /** Roster position — lower sorts first; the lowest-ordered employee is the fallback owner. */
   readonly sortOrder: number;
-  /**
-   * Team-lead clearance: triage, dispatch/staffing, team task board ownership, and cross-owner
-   * authority (sees every teammate's reminders; can assign + clear work across the team). Exactly
-   * one employee carries this. Read programmatically — never inferred from the `role` string.
-   */
+  /** Team-lead clearance (triage, dispatch, board ownership). Exactly one employee carries this. */
   readonly teamLead?: boolean;
   /**
-   * The deep role knowledge folded into this employee's chat system prompt. MUST be a static,
-   * byte-stable string: the chat prompt runs on every LLM step under a `cache_control: ephemeral`
-   * breakpoint, so any per-call variation here silently busts the prompt cache. No file reads, no
-   * volatile interpolation, no getters that compute.
-   */
-  readonly roleContext: string;
-  /**
-   * The engine this employee's dispatched background work runs on. An employee is LOCKED to its
-   * engine — no per-dispatch override; switch engines by changing this field.
-   */
-  readonly engine: WorkerEngineName;
-  /**
-   * Per-phase model tiering (optional overrides; per-engine defaults in
-   * `EmployeeRegistry.resolveWorkerModel` apply when unset). PLAN runs on a high-reasoning model,
-   * EXECUTE on a cheaper one.
-   */
-  readonly planModel?: string;
-  readonly planEffort?: EffortLevel;
-  readonly execModel?: string;
-  /**
-   * Chat-tool allowlist as CLASS REFERENCES — the decorated tool class IS the token
-   * (e.g. `tools: [DispatchJobTool, RecallTool]`). Unset → `DEFAULT_CHAT_TOOLSET`. Resolved by
-   * `ToolRegistry.toStructuredTools` at graph-build time; an unregistered class fails loudly.
+   * Chat-tool allowlist as CLASS REFERENCES — the decorated tool class IS the token. Unset →
+   * `DEFAULT_CHAT_TOOLSET`. Tool-triggered capabilities are folded in at graph-build time.
    */
   readonly tools?: ReadonlyArray<Type<IHarnessTool>>;
-  /**
-   * Per-employee flavor appended to the shared identity line. Same byte-stability constraint as
-   * `roleContext` (flows into the cached chat prompt).
-   */
+  /** Per-employee flavor appended to the shared identity line. Byte-stable (cache constraint). */
   readonly personality?: string;
-  /** Agent Skill sources this employee is equipped with (scaffold — loader is a no-op this pass). */
+  /** Agent Skill sources this employee is equipped with — materialized per-engine by the provisioner. */
   readonly skills?: ReadonlyArray<SkillSource>;
-  /** MCP servers this employee may use (scaffold — not wired into engines yet). */
+  /** MCP servers this employee may use — materialized per-engine by the provisioner. */
   readonly mcpServers?: ReadonlyArray<McpServerConfig>;
-  /**
-   * Standing, discipline-specific work rules, rendered into BOTH chat and worker prompts. Keep
-   * discipline-specific (shared team rules live in the persona builder). Static literals — same
-   * caching constraint as `roleContext`.
-   */
+  /** Standing, discipline-specific work rules, rendered into BOTH chat and worker prompts. */
   readonly protocols?: ReadonlyArray<string>;
+  /**
+   * Lane terms that WAKE this employee from dormancy. After K consecutive soft-gate ignores in a
+   * room a bot stops paying for the gate (see the conductor's dormancy mechanism); while dormant
+   * only free programmatic checks can rouse it — its name/@handle/a broadcast, OR one of these
+   * keywords. A keyword hit wakes the bot to RUN the soft gate (the keyword decides whether to
+   * SPEND the gate; the gate still makes the real respond/ignore call). Matched case-insensitively
+   * on word boundaries. Empty/unset → only name/@/broadcast can wake the bot. NOT part of any
+   * cache-stable prompt — safe to vary.
+   */
+  readonly keywords?: ReadonlyArray<string>;
+
+  /** The deep role knowledge folded into both surfaces' prompts (composes `ctx.team`). */
+  roleContext(ctx: EmployeeContext): string;
+  /** The full conversation-layer system prompt (cache-stable). */
+  chatPrompt(ctx: EmployeeContext): string;
+  /** The engine recipe for PLAN turns (engine + model + effort + worker system prompt). */
+  planEngine(ctx: EmployeeContext): EngineSpec;
+  /** The engine recipe for EXECUTE turns. */
+  executeEngine(ctx: EmployeeContext): EngineSpec;
+  /** This employee's capabilities — forced lifecycle hooks + discretionary tools (per-employee). */
+  capabilities(ctx: EmployeeContext): Capability[];
 }

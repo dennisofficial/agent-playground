@@ -3,7 +3,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { execFileSync } from 'node:child_process';
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { OPENAI_CODEX_SDK } from '../../_lib/esm/esm.module';
-import type { RunWorkerArgs, WorkerEngine } from './worker-engine.port';
+import { engineHomeDir } from './engine-home';
+import {
+  EWorkerEngineName,
+  RunWorkerArgs,
+  WorkerEngine,
+} from './worker-engine.port';
 
 /**
  * The repo's SHARED git dir for `cwd`. When the working directory is a subdir (or a linked
@@ -31,7 +36,7 @@ function gitCommonDir(cwd: string): string | undefined {
  * via the EsmModule's lazy-loaded DI token; the client itself is constructed lazily. */
 @Injectable()
 export class CodexEngine implements WorkerEngine {
-  readonly name = 'codex' as const;
+  readonly name = EWorkerEngineName.CODEX;
   // One client per API key (single-process multi-tenant: each workspace funds its own runs).
   private readonly clients = new Map<string, Codex>();
 
@@ -41,11 +46,25 @@ export class CodexEngine implements WorkerEngine {
     private readonly env: EnvService,
   ) {}
 
-  private getCodex(apiKey?: string): Codex {
-    const cacheKey = apiKey ?? 'default';
+  private getCodex(agentId: string, apiKey?: string): Codex {
+    // CODEX_HOME is per-employee, so the client cache must key on the employee too (two employees
+    // sharing one API key still need separate homes — separate skills/MCP/rollouts).
+    const cacheKey = `${apiKey ?? 'default'}:${agentId}`;
     let client = this.clients.get(cacheKey);
     if (!client) {
-      client = apiKey ? new this.sdk.Codex({ apiKey }) : new this.sdk.Codex();
+      // Isolate the codex CLI from the developer's personal ~/.codex (its config.toml, MCP servers,
+      // and rollouts) AND from other employees, so behavior is deterministic across dev and deploy
+      // and each employee owns its skills/MCP. The SDK's `env` REPLACES inheritance, so pass
+      // process.env through and just override CODEX_HOME.
+      const env = {
+        ...process.env,
+        CODEX_HOME: engineHomeDir(
+          this.env.get('AGENT_HOME_ROOT'),
+          'codex',
+          agentId,
+        ),
+      } as Record<string, string>;
+      client = new this.sdk.Codex(apiKey ? { apiKey, env } : { env });
       this.clients.set(cacheKey, client);
     }
     return client;
@@ -53,19 +72,21 @@ export class CodexEngine implements WorkerEngine {
 
   private threadOptions(
     cwd: string,
-    opts: { model?: string; planning?: boolean } = {},
+    opts: { model?: string; readOnly?: boolean } = {},
   ): ThreadOptions {
     const model = opts.model ?? this.env.get('CODEX_MODEL');
     // Grant write access to the shared git dir (it's outside cwd — doubly so in a linked worktree,
     // whose `.git` is a FILE pointing into the main repo) so an execute turn can commit/push/merge.
-    // Not needed on a read-only plan turn.
-    const gitDir = opts.planning ? undefined : gitCommonDir(cwd);
+    // Not needed on a read-only (plan or investigate) turn.
+    const gitDir = opts.readOnly ? undefined : gitCommonDir(cwd);
     return {
       workingDirectory: cwd,
       // Confine writes/shell to the worktree; run autonomously (no interactive approval surface).
-      // Codex's read-only sandbox IS its native plan posture — per turn, so a session can plan on
-      // one turn and execute on the next.
-      sandboxMode: opts.planning ? 'read-only' : 'workspace-write',
+      // Codex's read-only sandbox is how BOTH read-only modes (plan, investigate) are enforced — per
+      // turn, so a session can plan/investigate on one turn and execute on the next. (Codex has no
+      // separate plan ceremony beyond the read-only sandbox, so plan and investigate map identically
+      // here — the difference is only in the opening prompt's framing.)
+      sandboxMode: opts.readOnly ? 'read-only' : 'workspace-write',
       approvalPolicy: 'never',
       skipGitRepoCheck: true,
       // Live web search is the whole point of using Codex for research, and a model-side tool
@@ -80,6 +101,7 @@ export class CodexEngine implements WorkerEngine {
     task,
     cwd,
     systemPrompt,
+    agentId,
     sessionId,
     model,
     mode,
@@ -87,8 +109,11 @@ export class CodexEngine implements WorkerEngine {
     onEvent,
     signal,
   }: RunWorkerArgs) {
-    const client = this.getCodex(apiKey);
-    const opts = this.threadOptions(cwd, { model, planning: mode === 'plan' });
+    const client = this.getCodex(agentId, apiKey);
+    const opts = this.threadOptions(cwd, {
+      model,
+      readOnly: mode !== 'execute',
+    });
     const thread = sessionId
       ? client.resumeThread(sessionId, opts)
       : client.startThread(opts);

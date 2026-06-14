@@ -11,6 +11,8 @@ Two implementations of the same autonomous-AI-employee system coexist:
 
 Also: `shared/` (`@workspace/shared` — TypeORM entities under `./schemas` subpath), `web/` (Next.js admin skeleton), `packages/nestjs-core-essentials` (house Nest conventions: `@CreateModule`, `BaseEnvService`).
 
+**Submodule prerequisite:** `packages/nestjs-ai-essentials` (`@workspace/langfuse`) and `packages/jwt-auth` (`@workspace/auth`) are git submodules — run `git submodule update --init --recursive` (or `pnpm run setup` from repo root) before `pnpm install`, otherwise TS2307 "Cannot find module '@workspace/langfuse'" / '@workspace/auth'.
+
 ## Backend harness (`backend/src/harness/`)
 
 One Nest module per domain, all composed by `harness.module.ts` (import that one module to host the harness). **Only ONE process may compose it at a time** (no multi-conductor locking).
@@ -38,7 +40,7 @@ Deliberately NOT ported (playground-only): `/standup`-style commands. The playgr
 - Decorated classes (employees, tools) must be **plain class providers** — discovery can't see `useFactory` providers. Registries fail boot loudly on misconfiguration.
 - `roleContext`/`personality` must be **byte-stable string constants** (prompt-cache `cache_control` breakpoints — no interpolation or getters).
 - ESM-only deps (`@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, `ink`, `@inkjs/ui`) load via preserved dynamic `import()` (`module: nodenext`); everything LangChain is dual-published and statically imported. The TUI's Ink shim is `src/tui/ink.ts` — `await loadInk()` before rendering, and never destructure its exports in CJS.
-- Tests: `*.spec.ts` unit, `*.int.test.ts` integration (live Postgres via `docker compose up -d postgres`), `*.ai.test.ts` real-LLM (only `pnpm test:ai`). Migrations: NEVER hand-write — rebuild `shared/` first (the CLI loads entities from `dist/`), then `pnpm db:migration:generate <Name>` against the live Postgres, prune generator noise (it tries to drop the pgvector HNSW index and recreate partial indexes), then `pnpm db:migrate`.
+- Tests: `*.spec.ts` unit, `*.int.test.ts` integration (Postgres via `docker compose up -d postgres`, but a DEDICATED `agent_playground_test` database — auto-created + migrated by `vitest.global-setup.ts`; `vitest.setup.ts` hard-refuses any non-`*_test` `POSTGRES_DB` because int tests TRUNCATE tables, and `.env.test.enc` is authoritative over `.env.personal` in test runs), `*.ai.test.ts` real-LLM (only `pnpm test:ai`). Migrations: NEVER hand-write — rebuild `shared/` first (the CLI loads entities from `dist/`), then `pnpm db:migration:generate <Name>` against the live Postgres, prune generator noise (it tries to drop the pgvector HNSW index and recreate partial indexes), then `pnpm db:migrate`.
 
 ## Playground (`playground/src/`) — reference implementation
 

@@ -1,0 +1,66 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`engine role prompts byte-stability > DEFAULT_EXECUTE_PROMPT 1`] = `
+"Execute this approved plan. It was reviewed and approved — follow it; deviate only where it's clearly wrong, and say so in your report if you do.
+
+TICKET:
+TKT-1: do the thing
+
+With a multi-line { braces: true } description.
+
+APPROVED PLAN:
+1. step one
+2. step two \`{ json: example }\`"
+`;
+
+exports[`engine role prompts byte-stability > DEFAULT_PLAN_PROMPT (no context) 1`] = `
+"You are in PLAN MODE. Investigate the codebase READ-ONLY — read and search as much as you need to understand the work, but do NOT modify anything, run write/build commands, or start implementing. Your one deliverable this turn is the plan itself.
+
+TICKET:
+TKT-1: do the thing
+
+With a multi-line { braces: true } description.
+
+When you understand the work, write a concrete plan that a SEPARATE execute session could carry out from this text ALONE (it will NOT have your investigation context), then STOP and end your turn — the plan goes to review and approval before any code is written; do not implement it now. Structure the plan with these exact sections:
+- **Summary** — what's being changed and why, in a few lines.
+- **Files to touch** — the specific files/areas, each with what changes there.
+- **Constraints & gotchas** — anything you discovered that the executor must respect (invariants, patterns to match, traps).
+- **Steps** — the ordered implementation steps.
+- **Verify** — the exact commands / checks that prove it works (tests, typecheck, build)."
+`;
+
+exports[`engine role prompts byte-stability > DEFAULT_PLAN_PROMPT (with context) 1`] = `
+"You are in PLAN MODE. Investigate the codebase READ-ONLY — read and search as much as you need to understand the work, but do NOT modify anything, run write/build commands, or start implementing. Your one deliverable this turn is the plan itself.
+
+TICKET:
+TKT-1: do the thing
+
+With a multi-line { braces: true } description.
+
+CONTEXT:
+extra { ctx }
+
+When you understand the work, write a concrete plan that a SEPARATE execute session could carry out from this text ALONE (it will NOT have your investigation context), then STOP and end your turn — the plan goes to review and approval before any code is written; do not implement it now. Structure the plan with these exact sections:
+- **Summary** — what's being changed and why, in a few lines.
+- **Files to touch** — the specific files/areas, each with what changes there.
+- **Constraints & gotchas** — anything you discovered that the executor must respect (invariants, patterns to match, traps).
+- **Steps** — the ordered implementation steps.
+- **Verify** — the exact commands / checks that prove it works (tests, typecheck, build)."
+`;
+
+exports[`engine role prompts byte-stability > DEFAULT_REVIEW_PROMPT 1`] = `
+"You are a review agent. Adversarially review the plan below — your job is to find what's wrong, not to praise it. Read the relevant code to ground your critique (you are read-only).
+
+GOAL: ship it
+
+TICKET:
+TKT-1: do the thing
+
+With a multi-line { braces: true } description.
+
+PLAN UNDER REVIEW:
+1. step one
+2. step two \`{ json: example }\`
+
+Challenge it: missing steps, wrong assumptions, files it forgot, ordering/dependency risks, and where it fails against how this codebase actually works. If the plan is sound, say so plainly and briefly. Return a short, specific list of concrete objections (or "no blocking issues")."
+`;

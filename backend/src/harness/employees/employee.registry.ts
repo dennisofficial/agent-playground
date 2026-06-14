@@ -2,42 +2,14 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
 import { collectDecorated } from '../discovery.util';
 import { escapeRegExp } from '../domain/text';
-import type {
-  EffortLevel,
-  WorkerEngineName,
-  WorkerMode,
-} from '../engines/worker-engine.port';
 import { AI_EMPLOYEE_METADATA } from './ai-employee.decorator';
+import type { EmployeeContext } from './employee-context';
 import type { EmployeeDefinition } from './employee.types';
+import { TEAM_CONTEXT } from './roster/shared';
+import { LifecycleEvent } from '../lifecycle/lifecycle.types';
 
-const ENGINE_NAMES: ReadonlyArray<WorkerEngineName> = [
-  'claude',
-  'codex',
-  'langgraph',
-];
-
-/** The model + reasoning effort a worker run resolves to, by employee and phase. */
-export interface ResolvedWorkerModel {
-  /** Model id, or undefined to let the engine use its env/SDK default (e.g. Codex via CODEX_MODEL). */
-  model?: string;
-  /** Reasoning effort (Claude only). */
-  effort?: EffortLevel;
-}
-
-// Per-engine model tiers: a high-reasoning model for PLAN, a cheaper one for EXECUTE. Single source
-// of truth — an employee only sets planModel/execModel to deviate. Codex/LangGraph carry no fixed
-// ids here (Codex resolves via CODEX_MODEL; effort is Claude-only).
-const ENGINE_MODEL_TIERS: Record<
-  WorkerEngineName,
-  { plan: ResolvedWorkerModel; exec: ResolvedWorkerModel }
-> = {
-  claude: {
-    plan: { model: 'claude-opus-4-8', effort: 'max' },
-    exec: { model: 'claude-sonnet-4-6', effort: 'high' },
-  },
-  codex: { plan: {}, exec: {} },
-  langgraph: { plan: {}, exec: {} },
-};
+/** The lifecycle events a capability may legally hook (boot-validated). */
+const KNOWN_LIFECYCLE_EVENTS = new Set<string>(Object.values(LifecycleEvent));
 
 /**
  * The roster, assembled by discovery: every `@AIEmployee()` class provider, validated and sorted at
@@ -74,11 +46,6 @@ export class EmployeeRegistry implements OnModuleInit {
         throw new Error(`Employee id '${e.id}' must be non-empty lowercase`);
       if (ids.has(e.id)) throw new Error(`Duplicate employee id '${e.id}'`);
       ids.add(e.id);
-      if (!ENGINE_NAMES.includes(e.engine)) {
-        throw new Error(
-          `Employee '${e.id}' declares unknown engine '${e.engine as string}'`,
-        );
-      }
     }
     const leads = roster.filter((e) => e.teamLead);
     if (leads.length !== 1) {
@@ -87,6 +54,32 @@ export class EmployeeRegistry implements OnModuleInit {
       );
     }
     this.roster = roster;
+
+    // Validate each employee's declared capabilities once the roster (and thus context) exists:
+    // a lifecycle hook must name a known event; capability names must be unique per employee and not
+    // empty. Resolving each spec also surfaces a broken builder at boot rather than mid-turn.
+    const ctx = this.context();
+    for (const e of roster) {
+      const caps = e.capabilities(ctx);
+      const names = new Set<string>();
+      for (const cap of caps) {
+        if (!cap.name)
+          throw new Error(`Employee '${e.id}' has a capability with no name`);
+        if (names.has(cap.name))
+          throw new Error(
+            `Employee '${e.id}' has duplicate capability '${cap.name}'`,
+          );
+        names.add(cap.name);
+        cap.spec(ctx); // throws here (at boot) if the spec builder is broken
+        if (
+          cap.trigger.kind === 'lifecycle' &&
+          !KNOWN_LIFECYCLE_EVENTS.has(cap.trigger.on)
+        )
+          throw new Error(
+            `Employee '${e.id}' capability '${cap.name}' hooks unknown lifecycle event '${cap.trigger.on}'`,
+          );
+      }
+    }
   }
 
   /** The one team lead (validated exactly-one at boot). */
@@ -149,26 +142,41 @@ export class EmployeeRegistry implements OnModuleInit {
     return /@(here|channel|everyone)\b/i.test(text);
   }
 
+  /**
+   * True when `text` mentions one of this employee's lane keywords (case-insensitive, word
+   * boundary). The cheap programmatic wake-from-dormancy check — no LLM. Compiles one alternation
+   * RegExp per bot, cached by id (terms are escaped so a keyword like "go-to-market" matches
+   * literally). No keywords → always false.
+   */
+  keywordHit(bot: EmployeeDefinition, text: string): boolean {
+    const re = this.keywordRe(bot);
+    return re ? re.test(text) : false;
+  }
+
+  private readonly keywordRes = new Map<string, RegExp | null>();
+  private keywordRe(bot: EmployeeDefinition): RegExp | null {
+    let re = this.keywordRes.get(bot.id);
+    if (re === undefined) {
+      const terms = (bot.keywords ?? []).filter((k) => k.trim());
+      re = terms.length
+        ? new RegExp(`\\b(?:${terms.map(escapeRegExp).join('|')})\\b`, 'i')
+        : null;
+      this.keywordRes.set(bot.id, re);
+    }
+    return re;
+  }
+
   /** One-line roster summary for prompts ("Alex — backend engineer; Sam — team lead"). */
   rosterSummary(): string {
     return this.roster.map((b) => `${b.name} — ${b.role}`).join('; ');
   }
 
   /**
-   * Resolve the model + effort for a worker run: the employee's per-phase override if set, else the
-   * engine's default tier. PLAN → high-reasoning model + max effort; EXECUTE → the everyday model.
+   * The agnostic context the harness injects into an employee's builders (`roleContext`/`planEngine`/
+   * `capabilities`). Static today (team frame + roster summary), a DB row tomorrow. Single source so
+   * the lifecycle runner, session tools, and PersonaService all build identical bytes.
    */
-  resolveWorkerModel(
-    employee: EmployeeDefinition,
-    mode: WorkerMode,
-  ): ResolvedWorkerModel {
-    const tier = ENGINE_MODEL_TIERS[employee.engine];
-    if (mode === 'plan') {
-      return {
-        model: employee.planModel ?? tier.plan.model,
-        effort: employee.planEffort ?? tier.plan.effort,
-      };
-    }
-    return { model: employee.execModel ?? tier.exec.model };
+  context(): EmployeeContext {
+    return { team: TEAM_CONTEXT, roster: this.rosterSummary() };
   }
 }

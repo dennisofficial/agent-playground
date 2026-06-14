@@ -91,6 +91,7 @@ const addSchema = z.object({
 @HarnessTool()
 export class AddTaskTool implements IHarnessTool<typeof addSchema> {
   readonly name = 'add_task';
+  readonly refreshesContext = ['tasks'] as const;
   readonly description =
     "Log a reminder explicitly — a concrete thing to do later. Defaults to your own plate; pass a teammate's id to hand it to them. Most reminders get captured automatically; use this to be sure one is tracked.";
   readonly schema = addSchema;
@@ -131,6 +132,7 @@ const completeSchema = z.object({
 @HarnessTool()
 export class CompleteTaskTool implements IHarnessTool<typeof completeSchema> {
   readonly name = 'complete_task';
+  readonly refreshesContext = ['tasks'] as const;
   readonly description =
     "Mark a reminder done once it's actually finished — pass the reminder id (the #N from list_tasks). Normally one of your own; as team lead you can also clear a stale or misassigned reminder off any teammate's plate.";
   readonly schema = completeSchema;

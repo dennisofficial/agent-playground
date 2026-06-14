@@ -1,23 +1,33 @@
 import { EnvService } from '@core/config/env/env.service';
+import { PROPOSAL_PRESENTER } from '@harness/approvals/proposal-presenter.port';
 import { ChannelModule } from '@harness/channel/channel.module';
 import { ConductorModule } from '@harness/conductor/conductor.module';
 import { EmployeesModule } from '@harness/employees/employees.module';
 import { LlmKeysModule } from '@harness/llm-keys/llm-keys.module';
+import { MemoryModule } from '@harness/memory/memory.module';
 import { ProjectsModule } from '@harness/projects/projects.module';
 import { SecretCipher } from '@harness/projects/secret-cipher';
 import { SlackIdentitiesModule } from '@harness/slack-identities/slack-identities.module';
+import { ARTIFACT_SINK } from '@harness/surface/artifact-sink.port';
 import { CHAT_SURFACE } from '@harness/surface/chat-surface.port';
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SocketModeClient } from '@slack/socket-mode';
 import { Tenant } from '@workspace/shared/schemas';
+import { ApprovalCardsService } from './approvals/approval-cards.service';
 import { JarvisService } from './jarvis/jarvis.service';
 import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
+import { SlackCommandService } from './slack-commands.service';
 import { SlackDirectoryService } from './slack-directory.service';
+import { SlackFileUploadService } from './slack-file-upload.service';
 import { SlackIdentityRegistry } from './slack-identity.registry';
 import { SlackInboundRouter } from './slack-inbound.router';
-import { JARVIS_INTERCEPTOR } from './slack-inbound.types';
+import {
+  APPROVAL_INTERCEPTOR,
+  COMMAND_INTERCEPTOR,
+  JARVIS_INTERCEPTOR,
+} from './slack-inbound.types';
 import { SlackSocketTransport } from './slack-socket-transport';
 import { SLACK_SOCKET_MODE_CLIENT } from './slack.tokens';
 import { TenantStore } from './tenant.store';
@@ -37,6 +47,7 @@ import { TenantSlackClients } from './tenant-slack-clients';
     ChannelModule,
     EmployeesModule,
     LlmKeysModule,
+    MemoryModule,
     ProjectsModule,
     SlackIdentitiesModule,
     TypeOrmModule.forFeature([Tenant]),
@@ -61,14 +72,29 @@ import { TenantSlackClients } from './tenant-slack-clients';
     SlackIdentityRegistry,
     LeadPresenceService,
     SlackChatSurface,
+    SlackFileUploadService,
     SlackInboundRouter,
     SlackSocketTransport,
     JarvisService,
+    ApprovalCardsService,
+    SlackCommandService,
     { provide: JARVIS_INTERCEPTOR, useExisting: JarvisService },
+    { provide: APPROVAL_INTERCEPTOR, useExisting: ApprovalCardsService },
+    { provide: COMMAND_INTERCEPTOR, useExisting: SlackCommandService },
+    // The plan-proposal OUTBOUND PORT's Slack adapter (propose_plan → approval card) — bound here
+    // exactly like CHAT_SURFACE; headless/TUI hosts bind nothing and get the chat-words fallback.
+    { provide: PROPOSAL_PRESENTER, useExisting: ApprovalCardsService },
     { provide: CHAT_SURFACE, useExisting: SlackChatSurface },
+    // The artifact-upload port's Slack adapter (share_artifact → filesUploadV2 + chat.update).
+    { provide: ARTIFACT_SINK, useExisting: SlackFileUploadService },
   ],
   exports: [
     CHAT_SURFACE,
+    ARTIFACT_SINK,
+    // A @Global module shares ONLY what it exports — without this line the harness's
+    // propose_plan resolves no presenter and degrades to chat-words. (APPROVAL_INTERCEPTOR
+    // needs no export: its consumer, SlackInboundRouter, lives in this module.)
+    PROPOSAL_PRESENTER,
     SlackChatSurface,
     SlackInboundRouter,
     SlackSocketTransport,

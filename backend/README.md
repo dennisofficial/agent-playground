@@ -25,9 +25,46 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
-## Project setup
+## Local development setup
+
+Shared dev config — local Postgres creds, the Slack ears tokens, the puppet + tenant seeds,
+`SECRETS_ENCRYPTION_KEY`, `ADMIN_API_TOKEN`, `APPROVAL_BOSS_USER_ID` — lives **encrypted** in the
+committed `backend/.env.local.enc`. The only thing not in the repo is the private key that
+decrypts it. So onboarding a new teammate is:
 
 ```bash
+# 1. Initialize git submodules — required before pnpm install.
+#    packages/nestjs-ai-essentials (provides @workspace/langfuse) and packages/jwt-auth
+#    (provides @workspace/auth) are git submodules; pnpm can't link them until they exist.
+#    Either clone with: git clone --recurse-submodules <url>
+#    Or, on an existing clone: git submodule update --init --recursive
+#    Or, use the convenience script from the repo root: pnpm run setup
+# 2. Get backend/.env.keys (DOTENV_PRIVATE_KEY_LOCAL_ENC) from 1Password, drop it in backend/.
+#    .env.keys is git-ignored — it never lives in the repo.
+# 3. Copy the example for your personal secrets (LLM keys, machine paths):
+cp .env.example .env.personal       # then fill in ANTHROPIC_API_KEY / OPENAI_API_KEY / WORKER_ROOT
+# 4. Start Postgres and build the DB (drops → migrates → seeds Slack identities + tenant row):
+docker compose up -d postgres       # from the repo root
+pnpm install
+pnpm db:recreate
+```
+
+After this the 6 puppet bots and the workspace tenant row are seeded from the shared config — no
+manual Slack OAuth needed for local testing. `.env.personal` overrides `.env.local.enc`, so set a
+key there only to deviate from the shared dev workspace.
+
+## Project setup
+
+**Submodules must be initialized before `pnpm install`** — `@workspace/langfuse` and
+`@workspace/auth` live in git submodules (`packages/nestjs-ai-essentials`, `packages/jwt-auth`).
+Without them pnpm can't link the workspace packages and `tsc` throws TS2307.
+
+```bash
+# From the repo root — initializes submodules AND installs in one step:
+$ pnpm run setup
+
+# Or separately:
+$ git submodule update --init --recursive
 $ pnpm install
 ```
 

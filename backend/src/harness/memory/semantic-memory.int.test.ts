@@ -121,4 +121,34 @@ describe('SemanticMemory (pgvector, live Postgres)', () => {
     expect(await mem.forgetFactById(id, ID)).not.toBeNull();
     expect(await mem.recall('query about A', ID, 5)).toEqual([]);
   });
+
+  it('recallOtherProjects returns cross-project facts with the correct label and excludes own-project facts', async () => {
+    const OTHER_ID: Identity = { ...ID, project: 'other' };
+    // Insert the same fact in two projects
+    await mem.remember({ fact: 'A', tier: 'project', id: ID }); // scope: project:local
+    await mem.remember({ fact: 'A', tier: 'project', id: OTHER_ID }); // scope: project:other
+
+    const hits = await mem.recallOtherProjects('query about A', ID);
+    // Only project:other should surface — project:local is in the caller's own recall set
+    expect(hits).toHaveLength(1);
+    expect(hits[0].fact.fact).toBe('A');
+    expect(hits[0].project).toBe('other'); // projectLabel strips the 'project:' prefix
+    expect(hits[0].sim).toBeGreaterThan(0.9); // unit(0) · unit(0) = 1.0
+  });
+
+  it('updateFactById re-embeds and returns the updated StoredFact; returns null for out-of-scope id', async () => {
+    const { id } = await mem.remember({ fact: 'A', tier: 'project', id: ID });
+
+    // Update in-scope — should succeed and return the updated row
+    const updated = await mem.updateFactById(id, 'A', ID);
+    expect(updated).not.toBeNull();
+    expect(updated!.id).toBe(id);
+    expect(updated!.fact).toBe('A');
+    expect(updated!.scope).toBe('project:local');
+
+    // Different project — liveFactById can't see it, should return null
+    const OTHER_ID: Identity = { ...ID, project: 'other' };
+    const notFound = await mem.updateFactById(id, 'A', OTHER_ID);
+    expect(notFound).toBeNull();
+  });
 });

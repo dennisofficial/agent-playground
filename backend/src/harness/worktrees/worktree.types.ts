@@ -62,3 +62,20 @@ export interface IntegrationResult {
    * merge: no registered repo, or the fetch didn't land). */
   originFetched?: boolean;
 }
+
+/** The outcome of refreshing a worktree's branch against its project's base branch (merge of
+ * `origin/<defaultBranch>`). Distinct from IntegrationResult: base refresh applies to UNSHARED
+ * worktrees and reports the base branch, not a shared integration branch. */
+export interface BaseRefreshResult {
+  /** True = merged origin's base in, or already current. False = no-op (unregistered project,
+   * origin-guard refusal, or the fetch didn't land) or a conflict. */
+  refreshed: boolean;
+  /** The project's base branch (`<defaultBranch>`), when a registered record was found. */
+  baseBranch?: string;
+  /** The merge hit conflicts and is left IN PROGRESS in the checkout for a session to resolve. */
+  conflicted?: boolean;
+  /** Conflicted paths when `conflicted`. */
+  files?: string[];
+  /** Why this was a no-op: unregistered project, origin-guard refusal, or fetch failure. */
+  detail?: string;
+}

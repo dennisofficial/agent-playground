@@ -1,10 +1,15 @@
-import { PromptTemplate } from '@langchain/core/prompts';
-import { Runnable, RunnableSequence } from '@langchain/core/runnables';
+import { HumanMessage } from '@langchain/core/messages';
+import {
+  Runnable,
+  RunnableLambda,
+  RunnableSequence,
+} from '@langchain/core/runnables';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { createMutex } from '../domain/async';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { MemoryMetricsService } from './memory-metrics.service';
+import { JUDGE_PROMPT } from './memory.prompts';
 import { RememberInput, SemanticMemory } from './semantic-memory';
 
 /**
@@ -29,14 +34,6 @@ const JudgeSchema = z.object({
     ),
 });
 
-const JUDGE_PROMPT = `Two short facts from a team's long-term memory. Are they the SAME underlying fact —
-the same claim about the same thing, just possibly worded differently? Answer false if they differ in
-meaning in any material way, including opposites ("prefers X" vs "dislikes X") or a difference in
-specifics that actually matters.
-
-Existing: {existing}
-New: {candidate}`;
-
 @Injectable()
 export class MemoryWriteService {
   /** Serializes all durable-memory writes (adds/updates/deletes) so concurrent reconciles can't race. */
@@ -58,10 +55,9 @@ export class MemoryWriteService {
       Record<string, string>,
       z.infer<typeof JudgeSchema>
     >([
-      new PromptTemplate({
-        template: JUDGE_PROMPT,
-        inputVariables: ['existing', 'candidate'],
-      }),
+      RunnableLambda.from<Record<string, string>, HumanMessage[]>((v) => [
+        new HumanMessage(JUDGE_PROMPT(v)),
+      ]),
       this.models
         .buildExtractModel()
         .withStructuredOutput(JudgeSchema, { name: 'dedup_judge' }),

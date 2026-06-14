@@ -1,7 +1,10 @@
+import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before any LangChain run
+
 import { EnvService } from '@core/config/env/env.service';
 import { setupLogger } from '@core/setup-logger';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
 /**
@@ -11,6 +14,7 @@ import { AppModule } from './app.module';
  */
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { logger: setupLogger() });
+  app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
   // The admin web portal lives on a different origin and sends credentialed

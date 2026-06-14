@@ -1,3 +1,4 @@
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import type { EnvService } from '@core/config/env/env.service';
 import { Subject } from 'rxjs';
 import type {
@@ -11,15 +12,20 @@ import type { ConductorEvent } from '../domain/conductor-events';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
+import type { BoardEvent, BoardEventsBus } from '../memory/board-events.bus';
+import type { PlanStore } from '../memory/plan-store';
+import type { BoardStore } from '../memory/board-store';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type {
   Session,
   SessionRegistry,
 } from '../sessions/session-registry.port';
 import type { SessionRunnerService } from '../sessions/session-runner.service';
-import type { BotGraphFactory } from './bot-graph.factory';
+import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
+import { ConductorMetricsService } from './conductor-metrics.service';
 import { ConductorService } from './conductor.service';
+import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** Minimal synchronous channel double (same contract as ChannelService). */
 class FakeChannel {
@@ -28,12 +34,15 @@ class FakeChannel {
   private subs = new Set<() => void>();
   private nextSeq = 0;
   append(
-    msg: Omit<ChannelMsg, 'seq' | 'channelId'> & { channelId?: string },
+    msg: Omit<ChannelMsg, 'seq' | 'channelId' | 'createdAt'> & {
+      channelId?: string;
+    },
   ): ChannelMsg {
     const full = {
       ...msg,
       channelId: msg.channelId ?? this.surfaceId,
       seq: this.nextSeq++,
+      createdAt: Date.now(),
     };
     this.log.push(full);
     for (const cb of this.subs) cb();
@@ -92,7 +101,7 @@ const ALEX = {
   role: 'backend engineer',
   sortOrder: 10,
   roleContext: 'x',
-  engine: 'claude' as const,
+  engine: EWorkerEngineName.CLAUDE,
   teamLead: true,
 };
 
@@ -167,6 +176,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     list: () => [ALEX],
     byId: (id: string) => (id === 'alex' ? ALEX : undefined),
     fallbackOwner: () => ALEX,
+    teamLead: () => ALEX,
   } as unknown as EmployeeRegistry;
 
   const sessionUpdateCbs: Array<(s: Session) => void> = [];
@@ -194,6 +204,21 @@ async function buildConductor(behavior: FakeGraphBehavior) {
   const credCtx = {
     run: (_c: unknown, fn: () => unknown) => fn(),
   } as unknown as CredentialContext;
+  const boardEventCbs: Array<(e: BoardEvent) => void> = [];
+  const boardEvents = {
+    onEvent: (cb: (e: BoardEvent) => void) => {
+      boardEventCbs.push(cb);
+      return () => {};
+    },
+  } as unknown as BoardEventsBus;
+  const plans = {
+    listForTask: async () => [],
+  } as unknown as PlanStore;
+  const board = {
+    countInFlightExecution: async () => 0,
+    list: async () => [],
+  } as unknown as BoardStore;
+  const metrics = new ConductorMetricsService();
 
   const conductor = new ConductorService(
     channel as unknown as ChannelService,
@@ -208,6 +233,10 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     readiness,
     creds,
     credCtx,
+    boardEvents,
+    plans,
+    board,
+    metrics,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -215,7 +244,9 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     channel,
     cursors,
     events,
+    metrics,
     fireSessionUpdate: (s: Session) => sessionUpdateCbs.forEach((cb) => cb(s)),
+    fireBoardEvent: (e: BoardEvent) => boardEventCbs.forEach((cb) => cb(e)),
   };
 }
 
@@ -231,6 +262,48 @@ describe('ConductorService scheduling', () => {
     await conductor.whenIdle();
     expect(cursors.get('alex', 'tui:test')).toBe(1);
     expect(events.filter((e) => e.kind === 'message')).toHaveLength(1); // the human's own echo
+  });
+
+  it('records an under-response drop when a human message draws no respond-action turn', async () => {
+    const { conductor, channel, metrics, events } = await buildConductor({
+      run: () => ({
+        deltas: [{ decision: 'ignore' }],
+        cursorAfter: channel.length, // consumed everything, but nobody responded
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'anyone around?');
+    await conductor.whenIdle();
+    expect(metrics.snapshot().humanBurstDropped).toBe(1);
+    const drops = events.filter((e) => e.kind === 'dropped');
+    expect(drops).toHaveLength(1);
+    expect((drops[0] as { text: string }).text).toBe('anyone around?');
+  });
+
+  it('does NOT record a drop when a bot responds', async () => {
+    const { conductor, channel, metrics, events } = await buildConductor({
+      run: () => ({
+        deltas: [{ decision: 'respond' }],
+        cursorAfter: channel.length,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'ship it');
+    await conductor.whenIdle();
+    expect(metrics.snapshot().humanBurstDropped).toBe(0);
+    expect(events.filter((e) => e.kind === 'dropped')).toHaveLength(0);
+  });
+
+  it('records a drop only ONCE per burst even across rapid-fire messages', async () => {
+    const { conductor, channel, metrics } = await buildConductor({
+      run: () => ({
+        deltas: [{ decision: 'ignore' }],
+        cursorAfter: channel.length,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'first');
+    conductor.submitFrom('dennis', 'Dennis', 'second');
+    await conductor.whenIdle();
+    // The map holds one entry per room (latest burst), so at most one drop is recorded.
+    expect(metrics.snapshot().humanBurstDropped).toBe(1);
   });
 
   it('gives up after MAX_TURN_RETRIES no-progress failures and skips the wedged batch', async () => {
@@ -269,7 +342,7 @@ describe('ConductorService scheduling', () => {
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
-      engine: 'claude',
+      engine: EWorkerEngineName.CLAUDE,
       mode: 'plan',
       turns: 1,
       lastReport: 'here is what I found',
@@ -292,7 +365,7 @@ describe('ConductorService scheduling', () => {
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
-      engine: 'claude' as const,
+      engine: EWorkerEngineName.CLAUDE,
       mode: 'plan' as const,
       turns: 0,
     };
@@ -331,5 +404,177 @@ describe('ConductorService scheduling', () => {
     >;
     expect(reaction.emoji).toBe('👀');
     expect(reaction.targetId).toBe('u-0');
+  });
+
+  it('bills a suppressed read-the-room draft: full usage event (cache fields) + draft debug event', async () => {
+    const draftUsage = {
+      input: 1200,
+      output: 340,
+      cacheRead: 900,
+      cacheWrite1h: 120,
+    };
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          // The stale step: injected humans ride messages (none here), the suppressed reply rides
+          // the draft fields — never delta.messages, so commit() can't post it.
+          { draft: 'unposted duplicate answer', draftUsage, revisionPasses: 1 },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'status?');
+    await conductor.whenIdle();
+    // The suppressed step is billed through the SAME pipeline as tool-only steps: a `usage` event
+    // with the FULL MessageUsage (incl. cache fields) that the SurfaceBridge accumulates into the
+    // next real post's cost footer.
+    const usage = events.find((e) => e.kind === 'usage') as Extract<
+      ConductorEvent,
+      { kind: 'usage' }
+    >;
+    expect(usage.botId).toBe('alex');
+    expect(usage.role).toBe('chat');
+    expect(usage.usage).toEqual(draftUsage);
+    const draft = events.find((e) => e.kind === 'draft') as Extract<
+      ConductorEvent,
+      { kind: 'draft' }
+    >;
+    expect(draft.text).toBe('unposted duplicate answer');
+    expect(draft.botName).toBe('Alex');
+    // And nothing posted: no message event from the bot for this turn.
+    expect(events.some((e) => e.kind === 'message' && !e.fromHuman)).toBe(
+      false,
+    );
+  });
+});
+
+// ── share_artifact coordination ───────────────────────────────────────────────────────────────────
+
+describe('ConductorService share_artifact coordination', () => {
+  it('defers the message event until the tool result arrives, then emits with fileIds', async () => {
+    // Case A: text + share_artifact in the same AIMessage.
+    // Delta 1: AIMessage with text + share_artifact tool call.
+    // Delta 2: ToolMessage with the file_id result.
+    // Expected: ONE message event emitted AFTER delta 2, with fileIds.
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          {
+            decision: 'respond',
+            messages: [
+              new AIMessage({
+                content: 'Here is the analysis.',
+                tool_calls: [
+                  {
+                    id: 'call_abc',
+                    name: 'share_artifact',
+                    args: { content: '# Data', filename: 'data.md' },
+                  },
+                ],
+              }),
+              new ToolMessage({
+                content: 'Uploaded (file_id: F0ABCDEF).',
+                tool_call_id: 'call_abc',
+              }),
+            ],
+          },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'can you share your analysis?');
+    await conductor.whenIdle();
+
+    const botMessages = events.filter(
+      (e) => e.kind === 'message' && !e.fromHuman,
+    ) as Extract<ConductorEvent, { kind: 'message' }>[];
+
+    expect(botMessages).toHaveLength(1);
+    expect(botMessages[0].text).toBe('Here is the analysis.');
+    expect(botMessages[0].fileIds).toEqual(['F0ABCDEF']);
+  });
+
+  it('emits with fileIds collected from a prior tool-call step (Case B: no text in tool-call message)', async () => {
+    // Case B: AIMessage 1 has only tool_call (no text), ToolMessage brings file_id,
+    // AIMessage 2 has text — the text message should carry the fileIds.
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          {
+            decision: 'respond',
+            messages: [
+              // Step 1: tool call only, no text
+              new AIMessage({
+                content: '',
+                tool_calls: [
+                  {
+                    id: 'call_xyz',
+                    name: 'share_artifact',
+                    args: { content: 'data', filename: 'out.md' },
+                  },
+                ],
+              }),
+              new ToolMessage({
+                content: 'Uploaded (file_id: F1B2C3D4).',
+                tool_call_id: 'call_xyz',
+              }),
+              // Step 2: final text (no tool calls)
+              new AIMessage({ content: 'Here is the file.' }),
+            ],
+          },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'upload it');
+    await conductor.whenIdle();
+
+    const botMessages = events.filter(
+      (e) => e.kind === 'message' && !e.fromHuman,
+    ) as Extract<ConductorEvent, { kind: 'message' }>[];
+
+    // Only the text-bearing message should be emitted
+    expect(botMessages).toHaveLength(1);
+    expect(botMessages[0].text).toBe('Here is the file.');
+    expect(botMessages[0].fileIds).toEqual(['F1B2C3D4']);
+  });
+
+  it('safety-flushes a deferred message without fileIds if the turn ends before the tool result', async () => {
+    // Simulates a graph that produces an AIMessage with text+share_artifact but no ToolMessage
+    // (e.g. the graph errored or hit the step cap before running tools).
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          {
+            decision: 'respond',
+            messages: [
+              new AIMessage({
+                content: 'I attempted to share.',
+                tool_calls: [
+                  {
+                    id: 'call_fail',
+                    name: 'share_artifact',
+                    args: { content: 'x', filename: 'x.md' },
+                  },
+                ],
+              }),
+              // No ToolMessage — the tool result never arrives
+            ],
+          },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'share something');
+    await conductor.whenIdle();
+
+    const botMessages = events.filter(
+      (e) => e.kind === 'message' && !e.fromHuman,
+    ) as Extract<ConductorEvent, { kind: 'message' }>[];
+
+    // The message IS still emitted (safety flush), just without fileIds
+    expect(botMessages).toHaveLength(1);
+    expect(botMessages[0].text).toBe('I attempted to share.');
+    expect(botMessages[0].fileIds).toBeUndefined();
   });
 });

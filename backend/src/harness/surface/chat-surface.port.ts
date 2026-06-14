@@ -1,4 +1,5 @@
 import type { Observable } from 'rxjs';
+import type { AccumulatedUsage } from '../domain/conductor-events';
 
 /**
  * DI token a hosting app binds its surface adapter to
@@ -30,6 +31,13 @@ export interface OutboundChatMessage {
   authorName: string;
   text: string;
   surfaceId: string;
+  /** Aggregate token usage accumulated across all billed steps for this post (gate + LLM steps,
+   * including costs from prior ignore/ack turns). When present, a Slack surface renders it as a
+   * Block Kit context footer; the TUI already shows per-step usage inline. */
+  usage?: AccumulatedUsage;
+  /** Slack file IDs uploaded via share_artifact — attached to the message after the text post
+   * lands, via `chat.update(file_ids)`. Absent when no artifacts were uploaded this turn. */
+  fileIds?: string[];
 }
 
 /**
@@ -47,6 +55,14 @@ export interface ChatSurface {
   /** Add a bot's emoji reaction to a surface message (channelId = the message's coordinate —
    * surfaces like Slack address reactions by channel + message ts, not by message id alone). */
   react(
+    targetMessageId: string,
+    emoji: string,
+    asBot: { id: string; name: string },
+    channelId: string,
+  ): Promise<void>;
+  /** Remove a bot's emoji reaction (same coordinate semantics as react). Used to clear the
+   * transient "composing" marker when a turn ends. */
+  unreact(
     targetMessageId: string,
     emoji: string,
     asBot: { id: string; name: string },

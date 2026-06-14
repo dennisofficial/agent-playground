@@ -6,15 +6,29 @@
  */
 
 /** The interchangeable worker backends. */
-export type WorkerEngineName = 'claude' | 'codex' | 'langgraph';
+export enum EWorkerEngineName {
+  CLAUDE = 'claude',
+  CODEX = 'codex',
+  LANGGRAPH = 'langgraph',
+}
 
 /**
  * The mode of one session turn. 'plan' = the engine's native read-only planning posture (agents
- * plan deeper when the engine itself enforces look-don't-touch); 'execute' = write-capable within
- * the session's worktree. Chosen per turn by the owning employee — approving a plan is simply the
- * next turn arriving with mode 'execute'.
+ * plan deeper when the engine itself enforces look-don't-touch, ending in a plan artifact);
+ * 'execute' = write-capable within the session's worktree; 'investigate' = read-only like plan but
+ * WITHOUT the native plan ceremony (no ExitPlanMode / plan artifact) — a fast, direct answer FROM the
+ * codebase. Chosen per turn by the owning employee — approving a plan is simply the next turn
+ * arriving with mode 'execute'. Both 'plan' and 'investigate' are read-only at the engine seam.
  */
-export type WorkerMode = 'plan' | 'execute';
+export type WorkerMode = 'plan' | 'execute' | 'investigate';
+
+/**
+ * The ROLE a worker run plays — the key for per-employee engine/model/prompt bindings
+ * (`EmployeeDefinition.roles`). 'plan'/'execute' are also session modes; 'review' is a one-shot
+ * adversarial pass (the plan self-review, and the lead's peer review) that never becomes a long-lived
+ * session mode. (The 'investigate' session mode reuses the 'execute' recipe — it isn't its own role.)
+ */
+export type WorkerRole = 'plan' | 'execute' | 'review';
 
 /**
  * Reasoning-effort level for a worker run. Mirrors the Claude Agent SDK's `effort` option (the seam
@@ -22,6 +36,23 @@ export type WorkerMode = 'plan' | 'execute';
  * honors it today; Codex/LangGraph ignore it.
  */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/**
+ * One clarifying question a worker asked mid-plan, normalized from the engine's native shape (the
+ * Claude SDK's AskUserQuestion input; the seam stays SDK-agnostic by re-declaring it, like
+ * EffortLevel). A turn that asks ends with the questions as its report instead of a plan.
+ */
+export interface WorkerQuestionOption {
+  label: string;
+  description?: string;
+}
+export interface WorkerQuestion {
+  question: string;
+  /** Short topic label (the SDK caps it at 12 chars). */
+  header?: string;
+  options: WorkerQuestionOption[];
+  multiSelect?: boolean;
+}
 
 /**
  * A normalized progress event, emitted by every engine regardless of its native event shape. This
@@ -39,6 +70,10 @@ export interface RunWorkerArgs {
   cwd: string;
   /** The composed worker persona for this engine (correct tool names per engine). */
   systemPrompt: string;
+  /** The owning employee's id — namespaces the engine's isolated config/state HOME so each employee
+   * owns their own CLAUDE_CONFIG_DIR / CODEX_HOME (skills and MCP servers are granted PER EMPLOYEE,
+   * not team-wide, so the homes must not be shared). See engine-home.ts. */
+  agentId: string;
   /** A prior engine session/thread id to resume, if any. */
   sessionId?: string;
   /** Override the engine's model for this run (e.g. a high-reasoning model for planning, a cheaper
@@ -47,8 +82,9 @@ export interface RunWorkerArgs {
   /** Reasoning effort for this run (Claude only). Unset → the model's default. */
   effort?: EffortLevel;
   /** This turn's mode. REQUIRED (no default): a missing mode must never silently grant writes.
-   * 'plan' restricts the worker to read-only at the engine seam, so "look, don't touch" is
-   * structurally enforced, not just requested. */
+   * 'plan' and 'investigate' both restrict the worker to read-only at the engine seam, so "look,
+   * don't touch" is structurally enforced, not just requested ('plan' adds the native plan ceremony;
+   * 'investigate' skips it for a fast direct answer). Only 'execute' may write. */
   mode: WorkerMode;
   /** The owning workspace's LLM API key for this run (single-process multi-tenant: each tenant
    * funds its own engine runs). Passed into the engine's subprocess env, NOT the shared process.env.
@@ -62,8 +98,16 @@ export interface RunWorkerArgs {
 }
 
 export interface WorkerEngine {
-  readonly name: WorkerEngineName;
+  readonly name: EWorkerEngineName;
   /** Run one turn to completion (the engine loops internally until it has a report). Returns the
-   * final report and the engine's session id — the resume handle for the session's next turn. */
-  run(args: RunWorkerArgs): Promise<{ result: string; sessionId?: string }>;
+   * final report and the engine's session id — the resume handle for the session's next turn.
+   * `questions` is set when the turn ended by ASKING (the runner renders them as the report and
+   * the owner answers on the next turn); `planText` when a plan was captured (Claude engines set
+   * result to the plan today). Both optional so Codex/LangGraph compile unchanged. */
+  run(args: RunWorkerArgs): Promise<{
+    result: string;
+    sessionId?: string;
+    questions?: WorkerQuestion[];
+    planText?: string;
+  }>;
 }

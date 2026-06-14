@@ -1,7 +1,7 @@
-import type { AIMessage } from '@langchain/core/messages';
-import { PromptTemplate } from '@langchain/core/prompts';
+import { type AIMessage, HumanMessage } from '@langchain/core/messages';
 import {
   Runnable,
+  type RunnableConfig,
   RunnableLambda,
   RunnableSequence,
 } from '@langchain/core/runnables';
@@ -9,8 +9,9 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
-import { TEAM_RULES } from '../employees/persona.service';
+import { TEAM_RULES } from '../employees/persona.prompts';
 import { ChatModelFactory } from '../llm/chat-model.factory';
+import { GATE_PROMPT } from './gate.prompts';
 
 /** The three-tier response gate: reply, react ("got it" without noise), or stay silent. */
 export interface GateDecision {
@@ -21,7 +22,25 @@ export interface GateDecision {
   reasoning?: string;
   /** Debug only: exact token usage for this gate call (from the API). Absent for hard-rule decisions. */
   usage?: { input: number; output: number };
+  /** True when the soft (LLM) gate actually ran — drives the dormancy counter (only soft ignores
+   * push a bot toward dormancy). Absent/false for every hard-rule and dormant-skip decision. */
+  softGate?: boolean;
+  /** True when a DORMANT bot cheap-ignored an off-lane message (no wake trigger) — no LLM call.
+   * The gate node routes this to `mark_seen → END`, skipping the reconcile pass too. */
+  dormantSkip?: boolean;
+  /** Which hard rule produced this decision (no LLM). Absent for soft-gate decisions. Surfaced by
+   * the gate node as a Langfuse `gate.decision` event so a no-LLM turn still marks its own span. */
+  reason?: GateReason;
 }
+
+/** The hard-rule (no-LLM) paths through the gate, for trace annotation. */
+export type GateReason =
+  | 'own-message'
+  | 'dm'
+  | 'mention'
+  | 'broadcast'
+  | 'addressed-other'
+  | 'dormant-skip';
 
 const RESPOND: GateDecision = { action: 'respond' };
 const IGNORE: GateDecision = { action: 'ignore' };
@@ -63,44 +82,6 @@ const Decision = z.object({
 });
 type DecisionT = z.infer<typeof Decision>;
 
-// NOTE: no few-shot worked examples on purpose. They reused the real teammates' names, and on Haiku
-// that bled into the model's self-identity — it would reason "as James" while gating FOR Alex.
-// Identity comes only from {botName}/{botRole} at the top. Re-add examples only with neutral names.
-const PROMPT = `You are {botName}, the {botRole} on a small team, in {room}.
-Team: {roster}.
-
-${TEAM_RULES}
-
-{protocols}
-
-You share this channel with teammates and the boss. You are ONE of several people who could reply — the
-others can answer too. Decide ONLY whether YOU should speak up about the latest message, given the
-conversation so far. Read the room.
-
-Conversation so far (oldest first):
-{history}
-
-Latest message — from {author}{teammateNote}:
-"{text}"
-
-Pick one action. Each one triggers something different AFTER you choose it — so pick by what the message
-needs from you, not just by tone:
-- "respond": you take the floor — you read context, think, then ACT: you answer, or use your tools to
-  actually DO the work being asked. This is the ONLY action that does real work; the other two just react
-  or stay quiet. Pick it when the message is addressed to you, hands you a task or a go-ahead to start
-  work in your lane ({botRole}), asks you a question, or is an open question to the whole team you can add
-  real substance to. If it needs you to act or reply, it's respond.
-- "acknowledge": you drop a single emoji and the turn ENDS right there — no words, no work, nothing else
-  runs. ONLY for a message that needs nothing active from you: a pure FYI/announcement, or a note that
-  just adjusts what's already on your plate (you've seen it — there's nothing to DO). If the message asks
-  you to start, build, run, execute, ship, produce, or answer something, "acknowledge" would silently
-  drop that on the floor — use "respond" instead.
-- "ignore": NOT yours. This is the default when unsure. IGNORE when the latest message continues a
-  back-and-forth between {author} and another teammate, sits in someone else's lane, or is a thanks,
-  dismissal, or small talk not aimed at you. NEVER speak up just to defer ("that's their area"), to
-  agree, to encourage, to volunteer for later, or to be polite — staying silent IS the right move; the
-  teammate it belongs to will pick it up on their own.`;
-
 const cleanEmoji = (e?: string): string => {
   const s = (e ?? '').trim();
   return s && s.length <= 8 ? s : '👍';
@@ -122,20 +103,11 @@ export class GateService {
 
   private soft() {
     return (this.chain ??= RunnableSequence.from<GateInput, GateDecision>([
-      new PromptTemplate<GateInput>({
-        template: PROMPT,
-        inputVariables: [
-          'botName',
-          'botRole',
-          'roster',
-          'room',
-          'history',
-          'author',
-          'teammateNote',
-          'text',
-          'protocols',
-        ],
-      }),
+      // Render the prompt to a single HumanMessage — the same role the prior PromptTemplate's
+      // StringPromptValue produced. TEAM_RULES is spliced into its slot here (static).
+      RunnableLambda.from<GateInput, HumanMessage[]>((v) => [
+        new HumanMessage(GATE_PROMPT({ ...v, teamRules: TEAM_RULES })),
+      ]),
       // includeRaw keeps the raw AIMessage so we can read its usage_metadata (exact token counts).
       this.models.buildGateModel().withStructuredOutput(Decision, {
         name: 'gate_decision',
@@ -154,7 +126,12 @@ export class GateService {
                   emoji: cleanEmoji(parsed.emoji),
                 }
               : { action: parsed.action };
-          return { ...base, reasoning: parsed.reasoning, usage };
+          return {
+            ...base,
+            reasoning: parsed.reasoning,
+            usage,
+            softGate: true,
+          };
         },
       ),
     ]).withConfig({ runName: 'Response Gate' }));
@@ -181,10 +158,19 @@ export class GateService {
       channel?: GateChannelContext;
       /** The bot's full unconsumed batch (oldest first), when it consumed more than `text`. */
       batch?: { text: string; authorBotId?: string }[];
+      /** DORMANCY: when true, this bot has gone dormant in the room (K consecutive soft ignores).
+       * An off-lane message with no wake trigger (its name/@/broadcast already short-circuit to
+       * respond above; a bare-name hail or a lane keyword still wakes it) is cheap-ignored without
+       * the soft LLM call. */
+      dormant?: boolean;
     } = {},
+    /** Forwarded to the soft chain so its LLM call nests under the turn's Langfuse trace. */
+    config?: RunnableConfig,
   ): Promise<GateDecision> {
-    if (opts.authorBotId === bot.id) return IGNORE; // never react to your own message
-    if (opts.channel?.kind === 'dm') return RESPOND; // a 1:1 is always yours to answer
+    if (opts.authorBotId === bot.id)
+      return { ...IGNORE, reason: 'own-message' }; // never react to your own message
+    if (opts.channel?.kind === 'dm')
+      return { ...RESPOND, reason: 'dm' }; // a 1:1 is always yours to answer
 
     const fromBot = !!opts.authorBotId;
     const batch = (
@@ -199,27 +185,41 @@ export class GateService {
     const addressed = this.employees.addressedBots(text); // @handles OR bare names — latest only
     const meAddressed = addressed.some((b) => b.id === bot.id);
 
-    if (meMentioned) return RESPOND;
-    if (anyBroadcast) return RESPOND;
-    if (addressed.length > 0 && !meAddressed) return IGNORE;
+    if (meMentioned) return { ...RESPOND, reason: 'mention' };
+    if (anyBroadcast) return { ...RESPOND, reason: 'broadcast' };
+    if (addressed.length > 0 && !meAddressed)
+      return { ...IGNORE, reason: 'addressed-other' };
+
+    // DORMANCY: a dormant bot only earns the soft gate when something hails it — a bare-name/@
+    // mention of itself (meAddressed; @handle already returned respond above) or a lane keyword
+    // anywhere in the batch. An off-lane message is a free ignore (no LLM; the graph also skips
+    // reconcile via dormantSkip). When not dormant, behaves exactly as before.
+    if (opts.dormant && !meAddressed) {
+      const batchText = batch.map((m) => m.text).join('\n');
+      if (!this.employees.keywordHit(bot, batchText))
+        return { action: 'ignore', dormantSkip: true, reason: 'dormant-skip' };
+    }
 
     try {
-      return await this.soft().invoke({
-        botName: bot.name,
-        botRole: bot.role,
-        roster: this.employees.rosterSummary(),
-        room:
-          opts.channel?.kind === 'group-dm'
-            ? `a small group DM ("${opts.channel.name}")`
-            : `the shared #${opts.channel?.name ?? 'dev'} channel`,
-        history: opts.history ?? '(no earlier messages)',
-        author: opts.authorName ?? (fromBot ? 'a teammate' : 'the boss'),
-        teammateNote: fromBot ? ' (a teammate)' : ' (the boss)',
-        text,
-        protocols: bot.protocols?.length
-          ? `Your standing protocols:\n${bot.protocols.map((p) => `- ${p}`).join('\n')}`
-          : '',
-      });
+      return await this.soft().invoke(
+        {
+          botName: bot.name,
+          botRole: bot.role,
+          roster: this.employees.rosterSummary(),
+          room:
+            opts.channel?.kind === 'group-dm'
+              ? `a small group DM ("${opts.channel.name}")`
+              : `the shared #${opts.channel?.name ?? 'dev'} channel`,
+          history: opts.history ?? '(no earlier messages)',
+          author: opts.authorName ?? (fromBot ? 'a teammate' : 'the boss'),
+          teammateNote: fromBot ? ' (a teammate)' : ' (the boss)',
+          text,
+          protocols: bot.protocols?.length
+            ? `Your standing protocols:\n${bot.protocols.map((p) => `- ${p}`).join('\n')}`
+            : '',
+        },
+        config,
+      );
     } catch {
       return IGNORE; // a gate failure must never crash the channel — default to quiet
     }

@@ -1,25 +1,38 @@
-import { EnvService } from '@core/config/env/env.service';
-import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
-import { Fact, Task, TeamTask, Worklog } from '@workspace/shared/schemas';
+import {
+  CompactionSummary,
+  Fact,
+  SessionNote,
+  Task,
+  TeamSetting,
+  TeamTask,
+  TeamTaskNote,
+  TeamTaskPlan,
+  Worklog,
+} from '@workspace/shared/schemas';
 import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
+import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
+import { MemoryConsolidationService } from './memory-consolidation.service';
+import { BoardEventsBus } from './board-events.bus';
 import { BoardStore } from './board-store';
-import { createCheckpointer, pgConnString } from './checkpointer';
+import { CheckpointerModule } from './checkpointer.module';
+import { CompactionSummaryStore } from './compaction-summary.store';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
+import { SessionNoteStore } from './session-note.store';
+import { PlanStore } from './plan-store';
 import { ReconcileService } from './reconcile.service';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
+import { TeamSettingsStore } from './team-settings-store';
+import { TicketNoteStore } from './ticket-note-store';
 import { WorklogStore } from './worklog-store';
-
-/** DI token for the working-memory LangGraph checkpointer (PostgresSaver), set up at module init. */
-export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
 
 /**
  * Long-term + working memory for the harness: the framework-light memory ports (semantic facts,
@@ -30,15 +43,30 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
  */
 @CreateModule({
   imports: [
-    TypeOrmModule.forFeature([Fact, Task, TeamTask, Worklog]),
+    TypeOrmModule.forFeature([
+      CompactionSummary,
+      Fact,
+      SessionNote,
+      Task,
+      TeamTask,
+      TeamTaskPlan,
+      TeamTaskNote,
+      TeamSetting,
+      Worklog,
+    ]),
     LlmModule,
+    LlmKeysModule,
     EmployeesModule,
   ],
+  // CHECKPOINTER lives in its own junction module (see checkpointer.module.ts for why);
+  // re-exported here so existing importers of MemoryModule keep resolving the token.
+  modules: [CheckpointerModule],
   services: [
     MemoryMetricsService,
     MemoryWriteService,
     FetchService,
     ReconcileService,
+    BoardEventsBus,
     {
       provide: SemanticMemory,
       inject: [getRepositoryToken(Fact), CredentialContext],
@@ -55,8 +83,9 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
     },
     {
       provide: BoardStore,
-      inject: [getRepositoryToken(TeamTask)],
-      useFactory: (board: Repository<TeamTask>) => new BoardStore(board),
+      inject: [getRepositoryToken(TeamTask), BoardEventsBus],
+      useFactory: (board: Repository<TeamTask>, events: BoardEventsBus) =>
+        new BoardStore(board, events),
     },
     {
       provide: WorklogStore,
@@ -64,19 +93,38 @@ export const CHECKPOINTER = Symbol('HARNESS_CHECKPOINTER');
       useFactory: (worklog: Repository<Worklog>) => new WorklogStore(worklog),
     },
     {
-      provide: CHECKPOINTER,
-      inject: [EnvService],
-      useFactory: (env: EnvService): Promise<PostgresSaver> =>
-        createCheckpointer(
-          pgConnString({
-            host: env.get('POSTGRES_HOST'),
-            port: env.get('POSTGRES_PORT'),
-            user: env.get('POSTGRES_USER'),
-            password: env.get('POSTGRES_PASSWORD'),
-            database: env.get('POSTGRES_DB'),
-          }),
-        ),
+      provide: PlanStore,
+      inject: [getRepositoryToken(TeamTaskPlan), BoardEventsBus],
+      useFactory: (plans: Repository<TeamTaskPlan>, events: BoardEventsBus) =>
+        new PlanStore(plans, events),
+    },
+    {
+      provide: TicketNoteStore,
+      inject: [getRepositoryToken(TeamTaskNote)],
+      useFactory: (notes: Repository<TeamTaskNote>) =>
+        new TicketNoteStore(notes),
+    },
+    {
+      provide: TeamSettingsStore,
+      inject: [getRepositoryToken(TeamSetting)],
+      useFactory: (settings: Repository<TeamSetting>) =>
+        new TeamSettingsStore(settings),
+    },
+    {
+      provide: SessionNoteStore,
+      inject: [getRepositoryToken(SessionNote)],
+      useFactory: (sessionNotes: Repository<SessionNote>) =>
+        new SessionNoteStore(sessionNotes),
+    },
+    {
+      provide: CompactionSummaryStore,
+      inject: [getRepositoryToken(CompactionSummary)],
+      useFactory: (repo: Repository<CompactionSummary>) =>
+        new CompactionSummaryStore(repo),
     },
   ],
+  // Nightly memory consolidation — dedup, drop-stale, flag contradictions.
+  // ScheduleModule.forRoot() is imported by HarnessModule (the single composition root).
+  cronJobs: [MemoryConsolidationService],
 })
 export class MemoryModule {}

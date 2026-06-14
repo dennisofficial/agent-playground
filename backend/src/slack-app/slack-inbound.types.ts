@@ -50,6 +50,17 @@ export interface SlackInteractivityPayload {
   [key: string]: unknown;
 }
 
+/** A slash-command invocation (`/metrics …`). Form-encoded over HTTP / a `slash_commands` socket
+ * envelope — both normalize to this. `respond` returns the immediate reply (ephemeral by default). */
+export interface SlackCommandPayload {
+  command: string;
+  text?: string;
+  team_id?: string;
+  user_id?: string;
+  channel_id?: string;
+  response_url?: string;
+}
+
 export type SlackInbound =
   | {
       kind: 'event';
@@ -60,12 +71,23 @@ export type SlackInbound =
       kind: 'interactivity';
       payload: SlackInteractivityPayload;
       respond: (body?: unknown) => Promise<void>;
+    }
+  | {
+      kind: 'command';
+      command: SlackCommandPayload;
+      respond: (body?: unknown) => Promise<void>;
     };
 
 /** The router's deterministic pre-conductor interceptor slot (Jarvis). Optional — absent, the
  * router goes straight to the chat surface. Return true = consumed (never reaches the conductor
  * or the channel log). */
 export const JARVIS_INTERCEPTOR = Symbol('JARVIS_INTERCEPTOR');
+/** Second interceptor slot, tried AFTER Jarvis: the plan-approval cards' verdict handling
+ * (`approval:*` action_ids / callback_ids — namespaced, so the two never overlap). */
+export const APPROVAL_INTERCEPTOR = Symbol('APPROVAL_INTERCEPTOR');
+/** Slash-command handler slot — the router dispatches `kind: 'command'` items straight here
+ * (commands never reach the conductor or the chat surface). */
+export const COMMAND_INTERCEPTOR = Symbol('COMMAND_INTERCEPTOR');
 export interface SlackInboundInterceptor {
   maybeHandle(item: SlackInbound): Promise<boolean>;
 }
