@@ -1,14 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { traceSessionTurn } from '@workspace/langfuse';
 import { EngineRegistry } from '../../engines/engine.registry';
 import type { EngineSpec } from '../../engines/engine-spec';
 import { withActiveRoot } from '../../engines/guard';
 import { DEFAULT_REVIEW_PROMPT } from '../../engines/engine.prompts';
 import { REVISION_PROMPT } from '../lifecycle.prompts';
-import { EWorkerEngineName, type WorkerEvent } from '../../engines/worker-engine.port';
+import {
+  EWorkerEngineName,
+  type WorkerEvent,
+} from '../../engines/worker-engine.port';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { SELF_REVIEW } from '../../employees/capabilities/self-review.capability';
 import { CredentialContext } from '../../llm-keys/credential-context';
 import { BoardStore } from '../../memory/board-store';
+import { toGenerationUsage } from '../../llm/usage-format';
 import type { LifecycleHandler } from '../lifecycle.handler';
 import {
   LifecycleEvent,
@@ -77,22 +82,38 @@ export class SelfReviewHandler implements LifecycleHandler {
       ticket: ticketText,
       plan: planBody,
     });
-    const review = await withActiveRoot(worktreePath, () =>
-      this.credCtx.run({ teamId: session.team, keys }, () =>
-        this.engines.get(reviewSpec.engine).run({
-          task: reviewPrompt,
-          cwd: worktreePath,
-          systemPrompt: reviewSpec.systemPrompt,
-          agentId: employee.id,
-          sessionId: undefined,
+    const review = await traceSessionTurn(
+      () =>
+        withActiveRoot(worktreePath, () =>
+          this.credCtx.run({ teamId: session.team, keys }, () =>
+            this.engines.get(reviewSpec.engine).run({
+              task: reviewPrompt,
+              cwd: worktreePath,
+              systemPrompt: reviewSpec.systemPrompt,
+              agentId: employee.id,
+              sessionId: undefined,
+              model: reviewSpec.model,
+              effort: reviewSpec.effort,
+              mode: 'investigate',
+              apiKey: keyFor(reviewSpec.engine),
+              onEvent,
+              signal,
+            }),
+          ),
+        ),
+      {
+        name: `session.turn:${reviewSpec.engine}:review`,
+        sessionId: session.id,
+        input: reviewPrompt,
+        metadata: {
+          phase: 'review',
           model: reviewSpec.model,
-          effort: reviewSpec.effort,
-          mode: 'investigate',
-          apiKey: keyFor(reviewSpec.engine),
-          onEvent,
-          signal,
-        }),
-      ),
+          engine: reviewSpec.engine,
+          boardTaskId: session.boardTaskId,
+          agentId: employee.id,
+        },
+        usage: (r) => toGenerationUsage(r.usage),
+      },
     );
     if (signal.aborted) return;
     const critique = review.result?.trim();
@@ -101,22 +122,38 @@ export class SelfReviewHandler implements LifecycleHandler {
     // 2. Revise ONCE on the PLANNING engine, resuming its session (keeps investigation context).
     const planSpec = employee.planEngine(this.employees.context());
     const revisionPrompt = REVISION_PROMPT({ critique });
-    const revision = await withActiveRoot(worktreePath, () =>
-      this.credCtx.run({ teamId: session.team, keys }, () =>
-        this.engines.get(session.engine).run({
-          task: revisionPrompt,
-          cwd: worktreePath,
-          systemPrompt: planSpec.systemPrompt,
-          agentId: employee.id,
-          sessionId: engineSessionId,
+    const revision = await traceSessionTurn(
+      () =>
+        withActiveRoot(worktreePath, () =>
+          this.credCtx.run({ teamId: session.team, keys }, () =>
+            this.engines.get(session.engine).run({
+              task: revisionPrompt,
+              cwd: worktreePath,
+              systemPrompt: planSpec.systemPrompt,
+              agentId: employee.id,
+              sessionId: engineSessionId,
+              model: planSpec.model,
+              effort: planSpec.effort,
+              mode: 'plan',
+              apiKey: keyFor(session.engine),
+              onEvent,
+              signal,
+            }),
+          ),
+        ),
+      {
+        name: `session.turn:${session.engine}:revision`,
+        sessionId: session.id,
+        input: revisionPrompt,
+        metadata: {
+          phase: 'revision',
           model: planSpec.model,
-          effort: planSpec.effort,
-          mode: 'plan',
-          apiKey: keyFor(session.engine),
-          onEvent,
-          signal,
-        }),
-      ),
+          engine: session.engine,
+          boardTaskId: session.boardTaskId,
+          agentId: employee.id,
+        },
+        usage: (r) => toGenerationUsage(r.usage),
+      },
     );
     if (signal.aborted) return;
     const revisedBody = (revision.planText ?? revision.result)?.trim();

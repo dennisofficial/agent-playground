@@ -97,17 +97,41 @@ export interface RunWorkerArgs {
   signal?: AbortSignal;
 }
 
+/**
+ * Vendor-neutral token-usage shape returned by every engine. All fields are optional so existing
+ * engines compile unchanged before they start populating it.
+ *
+ * Token convention (uniform across engines):
+ * - `inputTokens`  = grand total input INCLUDING cache (fresh + cacheRead + cacheWrite).
+ * - `outputTokens` = grand total output INCLUDING reasoning.
+ * - `cacheReadTokens` / `cacheWriteTokens` = sub-slices of `inputTokens`.
+ * - `reasoningTokens` = sub-slice of `outputTokens` (informational only).
+ * - `costUsd` = exact cost when the SDK provides it (Claude SDK); absent when inferred server-side (Codex).
+ * - `model` = the real model id used for the run (important when the engine ignores `turnModel`).
+ */
+export interface IWorkerUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  costUsd?: number;
+  model?: string;
+}
+
 export interface WorkerEngine {
   readonly name: EWorkerEngineName;
   /** Run one turn to completion (the engine loops internally until it has a report). Returns the
    * final report and the engine's session id — the resume handle for the session's next turn.
    * `questions` is set when the turn ended by ASKING (the runner renders them as the report and
    * the owner answers on the next turn); `planText` when a plan was captured (Claude engines set
-   * result to the plan today). Both optional so Codex/LangGraph compile unchanged. */
+   * result to the plan today). `usage` carries token/cost counts for Langfuse generation tracking.
+   * All optional so Codex/LangGraph compile unchanged before they populate usage. */
   run(args: RunWorkerArgs): Promise<{
     result: string;
     sessionId?: string;
     questions?: WorkerQuestion[];
     planText?: string;
+    usage?: IWorkerUsage;
   }>;
 }

@@ -9,6 +9,7 @@ import {
   WorkerEvent,
   WorkerMode,
 } from '../engines/worker-engine.port';
+import { toGenerationUsage } from '../llm/usage-format';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { PersonaService } from '../employees/persona.service';
 import { LifecycleRunner } from '../lifecycle/lifecycle.runner';
@@ -25,7 +26,6 @@ import { investigationConfidence } from './confidence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
-  type Session,
   type SessionRegistry,
 } from './session-registry.port';
 
@@ -191,6 +191,7 @@ export class SessionRunnerService {
               turn: session.turns + 1,
               parentChatTrace,
             },
+            usage: (r) => toGenerationUsage(r.usage),
           },
         );
 

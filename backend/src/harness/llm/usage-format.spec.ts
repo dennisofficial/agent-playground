@@ -2,6 +2,7 @@ import {
   CHAT_MODEL,
   extractMessageUsage,
   formatUsageLine,
+  toGenerationUsage,
 } from './usage-format';
 
 /** Minimal valid AccumulatedUsage with all fields. */
@@ -229,5 +230,107 @@ describe('extractMessageUsage', () => {
     expect(result.cacheWrite5m).toBeUndefined();
     // falls back to flat total treated as 1h
     expect(result.cacheWrite1h).toBe(900);
+  });
+});
+
+describe('toGenerationUsage', () => {
+  it('returns undefined for undefined input', () => {
+    expect(toGenerationUsage(undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when no input or output tokens present', () => {
+    expect(toGenerationUsage({})).toBeUndefined();
+    expect(toGenerationUsage({ model: 'gpt-4' })).toBeUndefined();
+  });
+
+  it('maps token-only usage (no cost): fresh input, output, total', () => {
+    const result = toGenerationUsage({ inputTokens: 1000, outputTokens: 80 })!;
+    expect(result).toBeDefined();
+    expect(result.usageDetails).toBeDefined();
+    expect(result.usageDetails!.input).toBe(1000); // fresh = grand − 0 cache
+    expect(result.usageDetails!.output).toBe(80);
+    expect(result.usageDetails!.total).toBe(1080);
+    expect(result.costDetails).toBeUndefined();
+    expect(result.model).toBeUndefined();
+  });
+
+  it('computes fresh input correctly when cache slices are present', () => {
+    const result = toGenerationUsage({
+      inputTokens: 1000,
+      outputTokens: 80,
+      cacheReadTokens: 400,
+      cacheWriteTokens: 200,
+    })!;
+    // fresh = 1000 − 400 − 200 = 400
+    expect(result.usageDetails!.input).toBe(400);
+    expect(result.usageDetails!.cache_read_input_tokens).toBe(400);
+    expect(result.usageDetails!.cache_creation_input_tokens).toBe(200);
+    expect(result.usageDetails!.output).toBe(80);
+    expect(result.usageDetails!.total).toBe(1080);
+  });
+
+  it('clamps fresh to 0 when cache > grand total (defensive)', () => {
+    const result = toGenerationUsage({
+      inputTokens: 500,
+      outputTokens: 40,
+      cacheReadTokens: 400,
+      cacheWriteTokens: 200, // total cache = 600 > 500
+    })!;
+    expect(result.usageDetails!.input).toBe(0); // max(0, 500 − 600)
+    expect(result.usageDetails!.total).toBe(540);
+  });
+
+  it('includes reasoningTokens as output_reasoning_tokens when present', () => {
+    const result = toGenerationUsage({
+      inputTokens: 500,
+      outputTokens: 200,
+      reasoningTokens: 80,
+    })!;
+    expect(result.usageDetails!.output_reasoning_tokens).toBe(80);
+  });
+
+  it('omits cache/reasoning keys when values are falsy', () => {
+    const result = toGenerationUsage({ inputTokens: 100, outputTokens: 50 })!;
+    expect('cache_read_input_tokens' in result.usageDetails!).toBe(false);
+    expect('cache_creation_input_tokens' in result.usageDetails!).toBe(false);
+    expect('output_reasoning_tokens' in result.usageDetails!).toBe(false);
+  });
+
+  it('includes costDetails.total when costUsd is provided', () => {
+    const result = toGenerationUsage({
+      inputTokens: 1000,
+      outputTokens: 80,
+      costUsd: 0.0042,
+    })!;
+    expect(result.costDetails).toEqual({ total: 0.0042 });
+  });
+
+  it('passes model through when provided', () => {
+    const result = toGenerationUsage({
+      inputTokens: 500,
+      outputTokens: 40,
+      model: 'claude-sonnet-4-6',
+    })!;
+    expect(result.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('full round-trip: all fields populated', () => {
+    const result = toGenerationUsage({
+      inputTokens: 2000,
+      outputTokens: 300,
+      cacheReadTokens: 800,
+      cacheWriteTokens: 400,
+      reasoningTokens: 60,
+      costUsd: 0.0123,
+      model: 'claude-sonnet-4-6',
+    })!;
+    expect(result.usageDetails!.input).toBe(800); // 2000 − 800 − 400
+    expect(result.usageDetails!.output).toBe(300);
+    expect(result.usageDetails!.cache_read_input_tokens).toBe(800);
+    expect(result.usageDetails!.cache_creation_input_tokens).toBe(400);
+    expect(result.usageDetails!.output_reasoning_tokens).toBe(60);
+    expect(result.usageDetails!.total).toBe(2300);
+    expect(result.costDetails).toEqual({ total: 0.0123 });
+    expect(result.model).toBe('claude-sonnet-4-6');
   });
 });
