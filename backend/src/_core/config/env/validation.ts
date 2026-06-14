@@ -145,11 +145,6 @@ export interface IEnvConfig {
   AVATAR_BASE_URL?: string;
   AVATAR_STYLE?: string; // 'illustrated' (default) | 'realistic' — the feature toggle
 
-  // LangSmith tracing (optional — LangChain reads these from env automatically)
-  LANGSMITH_TRACING?: string;
-  LANGSMITH_API_KEY?: string;
-  LANGSMITH_PROJECT?: string;
-
   // Langfuse observability (optional — pending-keys mode; @core/tracing self-disables when absent).
   // The Langfuse OTEL SDK reads all four directly from process.env at bootstrap.
   LANGFUSE_PUBLIC_KEY?: string;
@@ -255,11 +250,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   TENANT_PORT_BASE: Joi.number().port().optional(),
   AVATAR_BASE_URL: Joi.string().uri().optional(),
   AVATAR_STYLE: Joi.string().valid('illustrated', 'realistic').optional(),
-
-  // LangSmith tracing
-  LANGSMITH_TRACING: Joi.string().optional(),
-  LANGSMITH_API_KEY: Joi.string().optional(),
-  LANGSMITH_PROJECT: Joi.string().optional(),
 
   // Langfuse observability
   LANGFUSE_PUBLIC_KEY: Joi.string().optional(),
