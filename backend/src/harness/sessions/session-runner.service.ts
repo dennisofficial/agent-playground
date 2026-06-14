@@ -9,6 +9,7 @@ import {
   WorkerEvent,
   WorkerMode,
 } from '../engines/worker-engine.port';
+import { toGenerationUsage } from '../llm/usage-format';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { PersonaService } from '../employees/persona.service';
 import { LifecycleRunner } from '../lifecycle/lifecycle.runner';
@@ -218,6 +219,7 @@ export class SessionRunnerService {
           () => runEngineTurn(turnMessage, turnModel, resumeId),
           {
             name: `session.turn:${session.engine}:${session.mode}`,
+            asType: 'generation',
             sessionId,
             input: turnMessage,
             metadata: {
@@ -231,6 +233,7 @@ export class SessionRunnerService {
               turn: session.turns + 1,
               parentChatTrace,
             },
+            usage: (r) => toGenerationUsage(r.usage),
           },
         );
 

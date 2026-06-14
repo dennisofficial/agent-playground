@@ -8,10 +8,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createAgent } from 'langchain';
 import { flattenContent } from '../domain/text';
 import { ChatModelFactory } from '../llm/chat-model.factory';
+import { calculateCost, extractMessageUsage } from '../llm/usage-format';
+import type { MessageUsage } from '../domain/conductor-events';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { planningTools, workerTools } from './worker-tools';
 import {
   EWorkerEngineName,
+  IWorkerUsage,
   RunWorkerArgs,
   WorkerEngine,
 } from './worker-engine.port';
@@ -83,6 +86,9 @@ export class LanggraphEngine implements WorkerEngine {
         ];
 
     let lastText = '';
+    // Accumulate token usage across all AI messages in this turn.
+    const accUsage: MessageUsage = { input: 0, output: 0 };
+
     // streamMode 'updates' yields complete messages per node step (not token chunks), which maps
     // cleanly onto WorkerEvents. The update keys are node names; we don't depend on them.
     const stream = await this.getAgent(mode !== 'execute').stream(
@@ -109,12 +115,49 @@ export class LanggraphEngine implements WorkerEngine {
             .tool_calls ?? []) {
             onEvent({ kind: 'tool', name: c.name });
           }
+          // Accumulate token usage from every AI message (each step has usage_metadata).
+          const u = extractMessageUsage(m);
+          if (u) {
+            accUsage.input += u.input;
+            accUsage.output += u.output;
+            accUsage.cacheRead = (accUsage.cacheRead ?? 0) + (u.cacheRead ?? 0);
+            accUsage.cacheWrite5m =
+              (accUsage.cacheWrite5m ?? 0) + (u.cacheWrite5m ?? 0);
+            accUsage.cacheWrite1h =
+              (accUsage.cacheWrite1h ?? 0) + (u.cacheWrite1h ?? 0);
+          }
         }
       }
     }
 
     const result = lastText || '(no summary)';
     onEvent({ kind: 'result', text: result });
-    return { result, sessionId: threadId };
+
+    // Build IWorkerUsage from the accumulated counts. LangGraph always uses the chat model (the
+    // engine ignores `turnModel` — `getAgent` calls `this.models.buildModel()` unconditionally).
+    let workerUsage: IWorkerUsage | undefined;
+    if (accUsage.input > 0 || accUsage.output > 0) {
+      const modelId = this.models.chatModelId();
+      const cacheRead = accUsage.cacheRead ?? 0;
+      const cacheWrite5m = accUsage.cacheWrite5m ?? 0;
+      const cacheWrite1h = accUsage.cacheWrite1h ?? 0;
+      const cacheWrite = cacheWrite5m + cacheWrite1h;
+      const costUsd = calculateCost(modelId, accUsage);
+      workerUsage = {
+        // LangChain's usage_metadata already folds cache tokens into `input_tokens` (grand total).
+        inputTokens: accUsage.input,
+        outputTokens: accUsage.output,
+        ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
+        ...(cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {}),
+        costUsd,
+        model: modelId,
+      };
+    }
+
+    return {
+      result,
+      sessionId: threadId,
+      ...(workerUsage ? { usage: workerUsage } : {}),
+    };
   }
 }

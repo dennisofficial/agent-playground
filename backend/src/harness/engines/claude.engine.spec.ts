@@ -37,6 +37,7 @@ const QUESTION_INPUT = {
 function stubSdk(
   script: (canUseTool: CanUseTool, options: CapturedOptions) => Promise<void>,
   result = 'closing summary',
+  extraResultFields: Record<string, unknown> = {},
 ) {
   const captured: { options?: CapturedOptions } = {};
   const sdk = {
@@ -49,6 +50,7 @@ function stubSdk(
           subtype: 'success',
           result,
           session_id: 'engine-1',
+          ...extraResultFields,
         };
       })();
     },
@@ -152,5 +154,63 @@ describe('ClaudeEngine — AskUserQuestion capture', () => {
     expect(out.questions).toEqual([
       { question: 'Real one?', options: [{ label: 'A' }] },
     ]);
+  });
+});
+
+describe('ClaudeEngine — token usage extraction', () => {
+  it('returns usage with cache tokens folded into inputTokens', async () => {
+    const { sdk } = stubSdk(async () => {}, 'summary', {
+      usage: {
+        input_tokens: 600, // fresh only (SDK convention)
+        output_tokens: 80,
+        cache_read_input_tokens: 300,
+        cache_creation_input_tokens: 100,
+      },
+      total_cost_usd: 0.0055,
+      modelUsage: { 'claude-sonnet-4-6': {} },
+    });
+    const out = await makeEngine(sdk).run(baseArgs('execute'));
+    expect(out.usage).toBeDefined();
+    // inputTokens = fresh + cacheRead + cacheWrite = 600 + 300 + 100 = 1000
+    expect(out.usage!.inputTokens).toBe(1000);
+    expect(out.usage!.outputTokens).toBe(80);
+    expect(out.usage!.cacheReadTokens).toBe(300);
+    expect(out.usage!.cacheWriteTokens).toBe(100);
+    expect(out.usage!.costUsd).toBe(0.0055);
+    expect(out.usage!.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('returns usage without cache fields when cache counts are zero', async () => {
+    const { sdk } = stubSdk(async () => {}, 'summary', {
+      usage: {
+        input_tokens: 500,
+        output_tokens: 60,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+      total_cost_usd: 0.002,
+      modelUsage: { 'claude-haiku-4-5-20251001': {} },
+    });
+    const out = await makeEngine(sdk).run(baseArgs('execute'));
+    expect(out.usage!.inputTokens).toBe(500);
+    expect(out.usage!.cacheReadTokens).toBeUndefined();
+    expect(out.usage!.cacheWriteTokens).toBeUndefined();
+    expect(out.usage!.model).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('falls back to resolvedModel when modelUsage is empty', async () => {
+    const { sdk } = stubSdk(async () => {}, 'summary', {
+      usage: { input_tokens: 100, output_tokens: 20 },
+      modelUsage: {},
+    });
+    // engine has no WORKER_MODEL env, so resolvedModel === undefined → model absent
+    const out = await makeEngine(sdk).run(baseArgs('execute'));
+    expect(out.usage!.model).toBeUndefined();
+  });
+
+  it('returns undefined usage when result has no usage field', async () => {
+    const { sdk } = stubSdk(async () => {}, 'summary');
+    const out = await makeEngine(sdk).run(baseArgs('execute'));
+    expect(out.usage).toBeUndefined();
   });
 });

@@ -11,6 +11,7 @@ import { bashDenyReason, bashWriteReason, isInsideRoot } from './guard';
 import { CLAUDE_DENIALS } from './engine.prompts';
 import {
   EWorkerEngineName,
+  IWorkerUsage,
   RunWorkerArgs,
   WorkerEngine,
   WorkerQuestion,
@@ -113,7 +114,10 @@ const makeCanUseTool =
       const command = typeof input.command === 'string' ? input.command : '';
       const reason = bashDenyReason(command);
       if (reason)
-        return { behavior: 'deny', message: CLAUDE_DENIALS.bashRefused(reason) };
+        return {
+          behavior: 'deny',
+          message: CLAUDE_DENIALS.bashRefused(reason),
+        };
       if (readOnly) {
         const write = bashWriteReason(command);
         if (write)
@@ -228,6 +232,7 @@ export class ClaudeEngine implements WorkerEngine {
 
     let result = '';
     let resolvedSession = sessionId;
+    let workerUsage: IWorkerUsage | undefined;
     for await (const message of this.sdk.query({ prompt: task, options })) {
       if (message.type === 'system' && message.subtype === 'init') {
         resolvedSession = message.session_id;
@@ -244,8 +249,45 @@ export class ClaudeEngine implements WorkerEngine {
         }
       } else if (message.type === 'result') {
         resolvedSession = message.session_id;
-        if (message.subtype === 'success') result = message.result;
-        else throw new Error(`Claude worker ended: ${message.subtype}`);
+        if (message.subtype === 'success') {
+          result = message.result;
+          // Extract token usage from the SDK result. Convention: inputTokens = grand total
+          // INCLUDING cache (fresh + cacheRead + cacheWrite); the SDK's `input_tokens` field
+          // excludes cache, so we add the cache slices back in.
+          const u = (message as Record<string, unknown>).usage as
+            | {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_read_input_tokens?: number;
+                cache_creation_input_tokens?: number;
+              }
+            | undefined;
+          const costUsd = (message as Record<string, unknown>)
+            .total_cost_usd as number | undefined;
+          const modelUsage = (message as Record<string, unknown>).modelUsage as
+            | Record<string, unknown>
+            | undefined;
+          if (u) {
+            const cacheRead = u.cache_read_input_tokens ?? 0;
+            const cacheWrite = u.cache_creation_input_tokens ?? 0;
+            const freshInput = u.input_tokens ?? 0;
+            const inputTokens = freshInput + cacheRead + cacheWrite;
+            const outputTokens = u.output_tokens;
+            // Use the modelUsage key as the real model id (the SDK records the actual id there,
+            // which differs from `resolvedModel` when the caller passed an alias or undefined).
+            const usedModel =
+              (modelUsage ? Object.keys(modelUsage)[0] : undefined) ??
+              resolvedModel;
+            workerUsage = {
+              inputTokens,
+              ...(outputTokens !== undefined ? { outputTokens } : {}),
+              ...(cacheRead > 0 ? { cacheReadTokens: cacheRead } : {}),
+              ...(cacheWrite > 0 ? { cacheWriteTokens: cacheWrite } : {}),
+              ...(costUsd !== undefined ? { costUsd } : {}),
+              ...(usedModel ? { model: usedModel } : {}),
+            };
+          }
+        } else throw new Error(`Claude worker ended: ${message.subtype}`);
       }
     }
 
@@ -261,6 +303,7 @@ export class ClaudeEngine implements WorkerEngine {
       sessionId: resolvedSession,
       ...(capturedQuestions.length ? { questions: capturedQuestions } : {}),
       ...(planText ? { planText } : {}),
+      ...(workerUsage ? { usage: workerUsage } : {}),
     };
   }
 }
