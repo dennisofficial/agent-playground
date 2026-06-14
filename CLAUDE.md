@@ -11,7 +11,7 @@ Two implementations of the same autonomous-AI-employee system coexist:
 
 Also: `shared/` (`@workspace/shared` — TypeORM entities under `./schemas` subpath), `web/` (Next.js admin skeleton), `packages/nestjs-core-essentials` (house Nest conventions: `@CreateModule`, `BaseEnvService`).
 
-**Submodule prerequisite:** `packages/nestjs-ai-essentials` (`@workspace/langfuse`) and `packages/jwt-auth` (`@workspace/auth`) are git submodules — run `git submodule update --init --recursive` (or `pnpm setup` from repo root) before `pnpm install`, otherwise TS2307 "Cannot find module '@workspace/langfuse'" / '@workspace/auth'.
+**Submodule prerequisite:** `packages/nestjs-ai-essentials` (`@workspace/langfuse`) and `packages/jwt-auth` (`@workspace/auth`) are git submodules — run `git submodule update --init --recursive` (or `pnpm run setup` from repo root) before `pnpm install`, otherwise TS2307 "Cannot find module '@workspace/langfuse'" / '@workspace/auth'.
 
 ## Backend harness (`backend/src/harness/`)
 

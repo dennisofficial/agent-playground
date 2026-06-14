@@ -38,7 +38,7 @@ decrypts it. So onboarding a new teammate is:
 #    (provides @workspace/auth) are git submodules; pnpm can't link them until they exist.
 #    Either clone with: git clone --recurse-submodules <url>
 #    Or, on an existing clone: git submodule update --init --recursive
-#    Or, use the convenience script from the repo root: pnpm setup
+#    Or, use the convenience script from the repo root: pnpm run setup
 # 2. Get backend/.env.keys (DOTENV_PRIVATE_KEY_LOCAL_ENC) from 1Password, drop it in backend/.
 #    .env.keys is git-ignored — it never lives in the repo.
 # 3. Copy the example for your personal secrets (LLM keys, machine paths):
@@ -61,7 +61,7 @@ Without them pnpm can't link the workspace packages and `tsc` throws TS2307.
 
 ```bash
 # From the repo root — initializes submodules AND installs in one step:
-$ pnpm setup
+$ pnpm run setup
 
 # Or separately:
 $ git submodule update --init --recursive
