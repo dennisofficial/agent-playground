@@ -7,8 +7,12 @@ import {
 import {
   compactPriorToolResults,
   dropLeadingOrphanToolResults,
+  estimateMessageTokens,
+  estimateTokens,
   filterToolDispatchMessages,
+  findCompactionCutPoint,
   pairSafeBoundary,
+  sumMessageTokens,
 } from './message-helpers';
 
 /**
@@ -673,6 +677,185 @@ describe('pairSafeBoundary', () => {
     ];
     // Human(0) == floor(0) → floor
     expect(pairSafeBoundary(messages, 3, 0)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// estimateTokens / estimateMessageTokens / sumMessageTokens
+// ---------------------------------------------------------------------------
+
+describe('estimateTokens', () => {
+  it('returns 0 for an empty string', () => {
+    expect(estimateTokens('')).toBe(0);
+  });
+
+  it('rounds up: 1 char → 1 token', () => {
+    expect(estimateTokens('x')).toBe(1);
+  });
+
+  it('exactly divisible: 4 chars → 1 token', () => {
+    expect(estimateTokens('abcd')).toBe(1);
+  });
+
+  it('5 chars → 2 tokens (ceil)', () => {
+    expect(estimateTokens('abcde')).toBe(2);
+  });
+
+  it('400 chars → 100 tokens', () => {
+    expect(estimateTokens('x'.repeat(400))).toBe(100);
+  });
+});
+
+describe('estimateMessageTokens', () => {
+  it('HumanMessage: counts text content only', () => {
+    const m = new HumanMessage('hello!'); // 6 chars → ceil(6/4) = 2
+    expect(estimateMessageTokens(m)).toBe(2);
+  });
+
+  it('AIMessage without tool_calls: counts text only', () => {
+    const m = new AIMessage({ content: 'abcd' }); // 4 chars → 1 token
+    expect(estimateMessageTokens(m)).toBe(1);
+  });
+
+  it('AIMessage with tool_calls: adds JSON length of calls', () => {
+    const calls = [{ name: 'recall', args: { q: 'x' }, id: 't1', type: 'tool_call' as const }];
+    const m = new AIMessage({ content: '', tool_calls: calls });
+    const callsLen = JSON.stringify(calls).length;
+    expect(estimateMessageTokens(m)).toBe(Math.ceil(callsLen / 4));
+  });
+
+  it('empty AIMessage with no tool_calls: 0 tokens', () => {
+    const m = new AIMessage({ content: '' });
+    expect(estimateMessageTokens(m)).toBe(0);
+  });
+});
+
+describe('sumMessageTokens', () => {
+  it('returns 0 for an empty array', () => {
+    expect(sumMessageTokens([])).toBe(0);
+  });
+
+  it('sums tokens across all messages', () => {
+    const messages = [
+      new HumanMessage('aaaa'),  // 4 chars → 1 token
+      new AIMessage({ content: 'bbbbbbbb' }), // 8 chars → 2 tokens
+    ];
+    expect(sumMessageTokens(messages)).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findCompactionCutPoint
+// ---------------------------------------------------------------------------
+
+/**
+ * Unit tests for findCompactionCutPoint.
+ *
+ * Contract:
+ *  - Walks backward from the end of messages[from..] accumulating estimated tokens.
+ *  - Stops (break) when adding the next message would exceed verbatimBudgetTokens,
+ *    provided it is NOT the very last message (which is always kept).
+ *  - Delegates pair-safety to pairSafeBoundary: the raw cut may be walked back further
+ *    to a HumanMessage boundary, or returned as `from` if the window is too narrow.
+ *
+ * Cases:
+ *  1. Budget respected: all messages fit within budget → cut = from (full window).
+ *  2. Budget exceeded: last message kept even if it alone exceeds budget.
+ *  3. Pair-safety: a budget cut landing on a ToolMessage walks back to the owning AI
+ *     then to the preceding HumanMessage (via pairSafeBoundary).
+ *  4. Returns `from` when pair-safety walk collapses (no HumanMessage above floor).
+ */
+describe('findCompactionCutPoint', () => {
+  it('returns `from` when all messages fit within the verbatim budget', () => {
+    // 3 short messages, total ≈ 3 tokens, budget = 1000 → everything fits
+    const messages = [
+      new HumanMessage('hi'),
+      new AIMessage({ content: 'hello' }),
+      new HumanMessage('ok'),
+    ];
+    // All messages fit → cut never moves past messages.length, then pairSafeBoundary(_, 3, 0).
+    // But messages.length=3, so rawCut=0 (from). pairSafeBoundary(messages, 0, 0) → floor=0.
+    expect(findCompactionCutPoint(messages, 0, 1000)).toBe(0);
+  });
+
+  it('always keeps at least the last message even if it alone exceeds the budget', () => {
+    // Single large message whose tokens exceed the budget — still must not return messages.length.
+    const huge = 'x'.repeat(40_000); // 10 000 tokens
+    const messages = [
+      new HumanMessage('prefix'),
+      new HumanMessage(huge),
+    ];
+    // Walk: i=1 (huge): acc + 10000 > 100 BUT i=1 === messages.length-1=1 → keep it. cut=1.
+    // pairSafeBoundary(messages, 1, 0): messages[1] is Human → (c) it IS Human → return 1.
+    expect(findCompactionCutPoint(messages, 0, 100)).toBe(1);
+  });
+
+  it('respects `from` as the floor — does not walk below it', () => {
+    // budget = 50 tokens, from = 2, messages[2..] = one tiny message.
+    const messages = [
+      new HumanMessage('x'.repeat(400)),  // large — before floor
+      new AIMessage({ content: 'x'.repeat(400) }),  // large — before floor
+      new HumanMessage('short'),           // idx 2, after floor
+    ];
+    // Walk from i=2 (the only message in [from..end]): 5 chars → 2 tokens ≤ 50 → cut=2.
+    // pairSafeBoundary(messages, 2, 2) → floor=2 (b<=floor immediately) → 2.
+    expect(findCompactionCutPoint(messages, 2, 50)).toBe(2);
+  });
+
+  it('pair-safety: a cut on a ToolMessage walks back to the preceding HumanMessage', () => {
+    // Design:
+    //   idx 0: HumanMessage (400 chars = 100 tokens) — before verbatim buffer
+    //   idx 1: HumanMessage "h2" — the Human boundary pairSafeBoundary returns
+    //   idx 2: AIMessage(tool_call) ≈ small
+    //   idx 3: ToolMessage ≈ small
+    //   idx 4: HumanMessage (400 chars = 100 tokens) — verbatim portion, fills budget
+    //
+    // verbatimBudgetTokens = 101. Walk from i=4: 100 tokens, cut=4.
+    // i=3 (ToolMessage): acc+t=100+1=101, 101 > 101? No. So include it, acc=101, cut=3.
+    // i=2 (AIMessage, small): acc+t=101+small>101 → BREAK. cut=3.
+    // Raw cut = 3 (ToolMessage).
+    // pairSafeBoundary(messages, 3, 0):
+    //   (a) tool → walk to b=2 (AI owner)
+    //   (b) ownership: AI[2].tool_calls covers ToolMessage[3] ✓
+    //   (c) Human boundary: b=2 is AI → b=1 (HumanMessage) → return 1
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 'recall', args: {}, id: 'cut-t1', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 'cut-t1', name: 'recall', content: 'r' });
+    const bigHuman = new HumanMessage('x'.repeat(400)); // 100 tokens
+    const messages = [
+      new HumanMessage('x'.repeat(400)),  // idx 0, before window
+      new HumanMessage('h2'),              // idx 1, Human boundary target
+      ai,                                  // idx 2
+      tool,                                // idx 3
+      bigHuman,                            // idx 4
+    ];
+    // With budget=101: idx4=100 fits, idx3 (ToolMessage,1 token) fits at acc=101,
+    // idx2 (AI, ~small) → acc+small > 101 → break, raw cut=3.
+    // pairSafeBoundary walks to Human(1).
+    const result = findCompactionCutPoint(messages, 0, 101);
+    expect(result).toBe(1);
+    expect(messages[result].getType()).toBe('human');
+  });
+
+  it('returns `from` when pair-safety collapses (no HumanMessage above floor)', () => {
+    // All messages from `from` are too narrow for a valid pair-safe cut.
+    // Design: floor=0, only one HumanMessage at idx 0 (== floor). pairSafeBoundary returns floor.
+    const ai = new AIMessage({
+      content: '',
+      tool_calls: [{ name: 't', args: {}, id: 'c1', type: 'tool_call' }],
+    });
+    const tool = new ToolMessage({ tool_call_id: 'c1', name: 't', content: 'x'.repeat(400) });
+    const messages = [
+      new HumanMessage('h'),  // idx 0
+      ai,                      // idx 1
+      tool,                    // idx 2
+    ];
+    // Walk: tool(2)=100 tokens fits in 1000 budget, AI(1) + tool_call JSON fits, Human(0) stays too.
+    // raw cut = 0. pairSafeBoundary(messages, 0, 0) → b=0 ≤ floor=0 → return 0.
+    const result = findCompactionCutPoint(messages, 0, 1000);
+    expect(result).toBe(0);
   });
 });
 

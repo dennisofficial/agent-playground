@@ -401,7 +401,12 @@ describe('bot graph — poisoned-history self-healing', () => {
         new AIMessage({ content: 'Here is the status.' }),
       ],
       summarizedUpTo: 2,
-      summary: 'Prior conversation: Dennis asked a question; Alex ran recall and replied.',
+      // `summary` (old single-string field) is gone; `summaries` defaults to [].
+      // A legacy checkpoint (summarizedUpTo > 0, summaries = []) is self-healed at read
+      // time: llmNode treats it as uncompacted and shows the full history — so the
+      // "orphan" ToolMessage[2] is not orphaned when the full history is used (its owner
+      // AIMessage[1] is still present). filterToolDispatchMessages then removes both
+      // AIMessage[1] (empty dispatch) and ToolMessage[2] from the model input.
       cursor: 1,
     });
 
@@ -458,18 +463,43 @@ describe('bot graph — poisoned-history self-healing', () => {
 
   it('persists a pair-safe summarizedUpTo that always lands on a HumanMessage (write-path)', async () => {
     /**
-     * Regression: compactionNode used a positional cut (`messages.length - COMPACTION_TAIL`) that
-     * could land on a ToolMessage or AIMessage. This test verifies pairSafeBoundary walks the cut
-     * back to a HumanMessage (the Human-boundary guarantee) and that value is what gets persisted.
+     * Three-block compaction write-path test.
      *
-     * Setup (COMPACTION_TAIL = 20, COMPACTION_TOKEN_THRESHOLD = 80_000):
-     *   - Seed 23 messages; idx 5 = AI(tool_call tc-write-01) with idx 4 = HumanMessage.
-     *   - stream() appends 1 Human (channel) + 1 AI response → total = 25 messages.
-     *   - Arithmetic cut = 25 − 20 = 5 → AIMessage(tool_call) — NOT a ToolMessage.
-     *   - pairSafeBoundary: (a) no tool walk, (b) ownership validates AI(5)→Tool(6), (c) Human
-     *     walk-back lands on Human(4) — proves the Human-boundary guarantee specifically.
-     *   - Fake model returns 90 000 input tokens (triggers threshold) on the first call;
-     *     returns summary text on the second call (compactionNode's summarisation invoke).
+     * Verifies that `findCompactionCutPoint` (token-budget walk-back) plus `pairSafeBoundary`
+     * always persist a `summarizedUpTo` that points at a HumanMessage, never a ToolMessage or
+     * AIMessage, and that `summaries[]` is populated correctly.
+     *
+     * Token budget design (VERBATIM_BUFFER_TOKENS = 10 000, COMPACTION_TRIGGER_TOKENS = 20 000,
+     * token estimate = ceil(chars / 4)):
+     *
+     *   After the turn there are 25 messages (23 seeded + 1 Human channel + 1 AI reply):
+     *
+     *   idx 0–3 : HumanMessages, each 10 000 chars (2 500 est. tokens each → 10 000 total)
+     *   idx 4   : HumanMessage, ~34 chars (~9 tokens)   ← target HumanMessage boundary
+     *   idx 5   : AIMessage(tool_call 'tc-write-01'), content='' + tool JSON (~25 tokens)
+     *   idx 6   : ToolMessage('tc-write-01'), short (~5 tokens)
+     *   idx 7   : AIMessage reply, short (~8 tokens)
+     *   idx 8–22: 15 padding Human/AI messages, each 2 656 chars (664 tokens each = 9 960 total)
+     *   idx 23  : HumanMessage "Any updates?" (~3 tokens) — added by channel this turn
+     *   idx 24  : AIMessage "Status looks good." (~5 tokens) — added by llmNode this turn
+     *
+     *   Total est. tokens ≈ 10 000 (idx 0–3) + 9 + 25 + 5 + 8 + 9 960 + 3 + 5 = ~20 015
+     *   → triggers COMPACTION_TRIGGER_TOKENS = 20 000 ✓
+     *
+     *   verbatim walk-back from end:
+     *     acc accumulates idx 24→8: ~9 976 tokens (fits in 10 000 budget), cut=8
+     *     idx 7 (AI, 8): acc=9 984, cut=7
+     *     idx 6 (Tool, 5): acc=9 989, cut=6
+     *     idx 5 (AI+tool, 25): acc+25=10 014 > 10 000, i<24 → BREAK, cut stays 6
+     *   raw cut = 6 (ToolMessage)
+     *   pairSafeBoundary(messages, 6, 0):
+     *     (a) messages[6] is tool → walk back to b=5 (AI owner)
+     *     (b) ownership: AI[5].tool_calls covers ToolMessage[6].tool_call_id ✓
+     *     (c) Human boundary: b=5 is AI → b=4 (HumanMessage) → return 4
+     *   summarizedUpTo = 4 ✓
+     *
+     *   NOTE: 25 − 20 = 5 was the OLD arithmetic cut; the new token-budget cut (6) is > 5,
+     *   and the final value (4) is still < 5, so the assertion < msgs.length − 20 still holds.
      */
     const channel = new FakeChannel();
     channel.append({
@@ -487,15 +517,8 @@ describe('bot graph — poisoned-history self-healing', () => {
       async invoke(_convo: BaseMessage[]) {
         callCount++;
         if (callCount === 1) {
-          // llmNode: return a high-token reply so compactionNode fires this turn.
-          return new AIMessage({
-            content: 'Status looks good.',
-            usage_metadata: {
-              input_tokens: 90_000,
-              output_tokens: 50,
-              total_tokens: 90_050,
-            },
-          });
+          // llmNode: return a plain AI reply — token estimation, not usage_metadata, triggers compaction.
+          return new AIMessage({ content: 'Status looks good.' });
         }
         // compactionNode's summarisation call.
         return new AIMessage({
@@ -540,22 +563,21 @@ describe('bot graph — poisoned-history self-healing', () => {
     const graph = factory.getBotGraph(ALEX);
     const config = { configurable: { thread_id: 'alex:compaction-write:root' } };
 
-    // Build 23 seeded messages where idx 5 is an AIMessage(tool_call) and idx 4 is a HumanMessage.
-    //   idx 0 : HumanMessage — earlier context (will be compacted)
-    //   idx 1 : AIMessage — prior reply
-    //   idx 2 : HumanMessage — mid-history turn (will be compacted)
-    //   idx 3 : AIMessage — prior reply
-    //   idx 4 : HumanMessage — the Human boundary pairSafeBoundary must land on
-    //   idx 5 : AIMessage(tool_call id='tc-write-01') — arithmetic rawCut (25 − 20 = 5) lands HERE
-    //   idx 6 : ToolMessage(tc-write-01) — ownership validates AI(5) → Tool(6)
-    //   idx 7 : AIMessage — verbatim reply after the tool block
-    //   idx 8–22: alternating Human/AI padding to reach 23 total
+    // Build 23 seeded messages (see budget design in the docblock above).
+    //   idx 0–3 : large HumanMessages (10 000 chars each) — pushed before the verbatim window
+    //   idx 4   : HumanMessage — the Human boundary pairSafeBoundary lands on
+    //   idx 5   : AIMessage(tool_call tc-write-01) — raw budget cut lands here → pair-safety fires
+    //   idx 6   : ToolMessage(tc-write-01) — ToolMessage walk-back in pairSafeBoundary step (a)
+    //   idx 7   : AIMessage — reply after the tool block
+    //   idx 8–22: padding (each 2 656 chars = 664 est. tokens), fills up the verbatim buffer
+    const LARGE = 'x'.repeat(10_000); // 10 000 chars → 2 500 est. tokens per message
+    const PAD = 'p'.repeat(2_656); // 2 656 chars → 664 est. tokens per message
     const tc = 'tc-write-01';
     const seededMessages: BaseMessage[] = [
-      new HumanMessage('Dennis: what is the project status?'),
-      new AIMessage({ content: 'Let me check.' }),
-      new HumanMessage('Dennis: and any blockers?'),
-      new AIMessage({ content: 'Checking blockers.' }),
+      new HumanMessage(LARGE),
+      new HumanMessage(LARGE),
+      new HumanMessage(LARGE),
+      new HumanMessage(LARGE),
       new HumanMessage('Dennis: thanks, one more question'),
       new AIMessage({
         content: '',
@@ -575,12 +597,12 @@ describe('bot graph — poisoned-history self-healing', () => {
       }),
       new AIMessage({ content: 'Based on recall: all is on track.' }),
     ];
-    // Padding: indices 8–22, alternating Human/AI, to reach exactly 23 messages.
+    // Padding: indices 8–22 (15 messages, alternating Human/AI), each 2 656 chars.
     for (let i = 8; i < 23; i++) {
       seededMessages.push(
         i % 2 === 0
-          ? new HumanMessage(`Dennis: follow-up ${i}`)
-          : new AIMessage({ content: `Alex: noted ${i}` }),
+          ? new HumanMessage(PAD)
+          : new AIMessage({ content: PAD }),
       );
     }
     // (sanity) 8 + 15 = 23 seeded messages
@@ -591,8 +613,9 @@ describe('bot graph — poisoned-history self-healing', () => {
       cursor: 1, // state has consumed seq=0 (u-0); next turn picks up seq≥1
     });
 
-    // Trigger a turn: new channel message (seq=1) → llmNode adds [Human, AI(90k tokens)] →
-    // compactionNode sees 22 messages, rawCut=2 (Tool), walks back to 1 (AI owner).
+    // Trigger a turn: new channel message (seq=1) → llmNode adds [Human(23), AI(24)] →
+    // compactionNode: est. total tokens > 20 000, raw cut = 6 (ToolMessage),
+    // pairSafeBoundary walks to Human(4).
     channel.append({
       id: 'u-1',
       author: 'Dennis',
@@ -613,11 +636,11 @@ describe('bot graph — poisoned-history self-healing', () => {
     const summarizedUpTo = final.values.summarizedUpTo as number;
 
     // The boundary must have landed on a HumanMessage — the Human-boundary guarantee.
-    // (Old behaviour was to stop at the owning AIMessage; this proves the extra walk-back.)
+    // Raw cut was 6 (ToolMessage); pairSafeBoundary stepped back to AI(5), then to Human(4).
     expect(msgs[summarizedUpTo].getType()).toBe('human');
 
-    // The pair-safe cut (4) must be strictly below the arithmetic cut (25 − 20 = 5),
-    // proving pairSafeBoundary actually walked the boundary back past the AIMessage.
+    // The final cut (4) is strictly below the OLD arithmetic cut (25 − 20 = 5), confirming
+    // pairSafeBoundary added value beyond the raw budget calculation.
     expect(summarizedUpTo).toBeLessThan(msgs.length - 20);
 
     // The verbatim tail must NOT start with a tool_result.
@@ -626,8 +649,10 @@ describe('bot graph — poisoned-history self-healing', () => {
     // Compaction fired for the first time on this thread.
     expect(final.values.compactionVersion).toBe(1);
 
-    // Summary text was written — non-empty.
-    expect(final.values.summary).toBeTruthy();
+    // `summaries` queue has exactly one entry and it is non-empty.
+    const summaries = final.values.summaries as string[];
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toBeTruthy();
   });
 
   it('leaves a healthy history (tool_use followed by its result) untouched', async () => {
