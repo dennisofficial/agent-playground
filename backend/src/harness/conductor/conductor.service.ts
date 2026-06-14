@@ -1,5 +1,4 @@
 import { EnvService } from '@core/config/env/env.service';
-import { tracingEnabled } from '@core/tracing';
 import { trace } from '@opentelemetry/api';
 import {
   type BaseMessage,
@@ -42,7 +41,10 @@ import {
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { SessionRunnerService } from '../sessions/session-runner.service';
-import { type BotStateDelta, BotGraphFactory } from '../bot-graph/bot-graph.factory';
+import {
+  type BotStateDelta,
+  BotGraphFactory,
+} from '../bot-graph/bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorMetricsService } from './conductor-metrics.service';
 import {
@@ -526,17 +528,15 @@ export class ConductorService
       );
       // Standalone Langfuse trace (no active turn span at quiescence) — a top-level OTEL span the
       // LangfuseSpanProcessor exports as its own `message_dropped` trace. No-op when tracing is off.
-      if (tracingEnabled) {
-        const span = trace.getTracer('conductor').startSpan('message_dropped', {
-          attributes: {
-            'langfuse.session.id': channelId,
-            teamId: info.teamId,
-            seq: pending.seq ?? -1,
-            text: pending.text.slice(0, 500),
-          },
-        });
-        span.end();
-      }
+      const span = trace.getTracer('conductor').startSpan('message_dropped', {
+        attributes: {
+          'langfuse.session.id': channelId,
+          teamId: info.teamId,
+          seq: pending.seq ?? -1,
+          text: pending.text.slice(0, 500),
+        },
+      });
+      span.end();
     }
   }
 
@@ -742,25 +742,22 @@ export class ConductorService
       // every turn in a room into one Langfuse session (the conversation timeline); the gate, compose,
       // tool, and read-the-room revision steps nest under it because LangGraph propagates these
       // callbacks into each node's config. No-op when tracing is disabled.
-      const callbacks = tracingEnabled
-        ? [
-            new LangfuseCallbackHandler({
-              sessionId: channelId,
-              userId: bot.id,
-              tags: [bot.name, info.teamId],
-              traceMetadata: {
-                teamId: info.teamId,
-                threadId: thread,
-                seed: !!opts.seed,
-              },
-            }),
-          ]
-        : undefined;
       const stream = await this.graphs.getBotGraph(bot).stream(input, {
         configurable: { thread_id: thread, identity, capped, channelId },
         streamMode: 'updates',
         recursionLimit: MAX_TURN_STEPS,
-        callbacks,
+        callbacks: [
+          new LangfuseCallbackHandler({
+            sessionId: channelId,
+            userId: bot.id,
+            tags: [bot.name, info.teamId],
+            traceMetadata: {
+              teamId: info.teamId,
+              threadId: thread,
+              seed: !!opts.seed,
+            },
+          }),
+        ],
         runName: `turn:${bot.name}`,
       });
       for await (const update of stream as AsyncIterable<

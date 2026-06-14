@@ -1,10 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
-import { tracingEnabled } from '@core/tracing';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import {
-  type ChatTracePointer,
-  traceSessionTurn,
-} from '@workspace/langfuse';
+import { type ChatTracePointer, traceSessionTurn } from '@workspace/langfuse';
 import { INVESTIGATE_ESCALATION_MODEL } from '../engines/engine-presets';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
@@ -60,7 +56,7 @@ const TRANSCRIPT_MAX_MATCHES = 30;
 
 /** The re-ask sent into the engine session when an investigation reports LOW confidence (v2). */
 const ESCALATION_NUDGE =
-  'Your previous answer reported LOW confidence. Take another, deeper pass: re-read the relevant code, specifically verify the things you said you could not confirm, and correct anything you guessed or got wrong. End again with the exact Confidence and Couldn\'t-verify lines.';
+  "Your previous answer reported LOW confidence. Take another, deeper pass: re-read the relevant code, specifically verify the things you said you could not confirm, and correct anything you guessed or got wrong. End again with the exact Confidence and Couldn't-verify lines.";
 
 @Injectable()
 export class SessionRunnerService {
@@ -177,28 +173,26 @@ export class SessionRunnerService {
         turnModel: string | undefined,
         resumeId: string | undefined,
       ) =>
-        tracingEnabled
-          ? traceSessionTurn(
-              () => runEngineTurn(turnMessage, turnModel, resumeId),
-              {
-                name: `session.turn:${session.engine}:${session.mode}`,
-                sessionId,
-                input: turnMessage,
-                metadata: {
-                  systemPrompt,
-                  model: turnModel,
-                  effort,
-                  mode: session.mode,
-                  engine: session.engine,
-                  boardTaskId: session.boardTaskId,
-                  agentId: bot.id,
-                  worktree: worktree.id,
-                  turn: session.turns + 1,
-                  parentChatTrace,
-                },
-              },
-            )
-          : runEngineTurn(turnMessage, turnModel, resumeId);
+        traceSessionTurn(
+          () => runEngineTurn(turnMessage, turnModel, resumeId),
+          {
+            name: `session.turn:${session.engine}:${session.mode}`,
+            sessionId,
+            input: turnMessage,
+            metadata: {
+              systemPrompt,
+              model: turnModel,
+              effort,
+              mode: session.mode,
+              engine: session.engine,
+              boardTaskId: session.boardTaskId,
+              agentId: bot.id,
+              worktree: worktree.id,
+              turn: session.turns + 1,
+              parentChatTrace,
+            },
+          },
+        );
 
       const first = await runTraced(message, model, session.engineSessionId);
       let result = first.result;

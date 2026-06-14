@@ -13,17 +13,9 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
  * EnvService exists) is correct. `LANGFUSE_BASE_URL` and `LANGFUSE_TRACING_ENVIRONMENT`
  * are read automatically by the processor from the environment.
  */
-export const tracingEnabled =
-  !!process.env.LANGFUSE_PUBLIC_KEY && !!process.env.LANGFUSE_SECRET_KEY;
+export const langfuseProcessor = new LangfuseSpanProcessor();
 
-export const langfuseProcessor = tracingEnabled
-  ? new LangfuseSpanProcessor()
-  : undefined;
-
-export const langfuseSdk =
-  tracingEnabled && langfuseProcessor
-    ? new NodeSDK({ spanProcessors: [langfuseProcessor] })
-    : undefined;
+export const langfuseSdk = new NodeSDK({ spanProcessors: [langfuseProcessor] });
 
 langfuseSdk?.start();
 
@@ -34,7 +26,7 @@ let flushed = false;
  * shutdown hook (LangfuseFlushService); a no-op when tracing is disabled.
  */
 export async function flushTracing(): Promise<void> {
-  if (flushed || !tracingEnabled) return;
+  if (flushed) return;
   flushed = true;
   await langfuseProcessor?.forceFlush();
   await langfuseProcessor?.shutdown();
