@@ -457,14 +457,24 @@ export class WorktreeService implements OnApplicationBootstrap {
       }
       await this.setWorktreeIdentity(checkout, repoRoot, input.ownerBot);
       // A repo with submodules needs them populated before the worktree builds (a fresh checkout
-      // gets empty submodule dirs). Best-effort: a failure must never fail the create.
+      // gets empty submodule dirs). Best-effort: a failure must never fail the create, but it must
+      // be loud — a silent init failure produces empty submodule dirs which causes TS2307
+      // "Cannot find module '@workspace/langfuse'" (and @workspace/auth) at install/typecheck time.
       if (await exists(join(checkout, '.gitmodules'))) {
         await this.git(
           ['submodule', 'update', '--init', '--recursive'],
           checkout,
-        ).catch((err) =>
-          this.logger.warn(`${id}: submodule init failed: ${err}`),
-        );
+        ).catch((err) => {
+          const remediation = `cd ${checkout} && git submodule update --init --recursive`;
+          this.logger.error(
+            `${id}: submodule init failed — workspace packages (e.g. @workspace/langfuse, ` +
+              `@workspace/auth) will be unresolved until you run: ${remediation}. Error: ${err}`,
+          );
+          const initMsg =
+            `Submodule init failed: workspace packages (@workspace/langfuse, @workspace/auth) ` +
+            `will be unresolved. Run: ${remediation}`;
+          warning = warning ? `${warning} ${initMsg}` : initMsg;
+        });
       }
 
       const worktree: Worktree = {
