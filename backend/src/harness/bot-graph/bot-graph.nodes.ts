@@ -978,6 +978,9 @@ export class BotGraphNodes {
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
+      this.logger.log(
+        `[CompactionNode] lastContextTokens=${state.lastContextTokens} summarizedUpTo=${state.summarizedUpTo} messagesLength=${state.messages.length} threshold=${COMPACTION_TOKEN_THRESHOLD}`,
+      );
       // Fast exit: context hasn't grown past the token threshold (or the gate was skipped this turn).
       if (
         !(
