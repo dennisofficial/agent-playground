@@ -232,8 +232,9 @@ export const BotState = Annotation.Root({
   /**
    * Index into `messages[]` of the first verbatim-tail message. 0 = no compaction.
    * When > 0, `llmNode` uses `messages.slice(summarizedUpTo)` as the live history, prefixed by
-   * the `summary` HumanMessage. `compactionNode` sets this to `messages.length − COMPACTION_TAIL`
-   * whenever it triggers.
+   * the `summary` HumanMessage. `compactionNode` sets this to the output of
+   * `pairSafeBoundary(messages, messages.length − COMPACTION_TAIL, summarizedUpTo)`, which may sit
+   * earlier than the arithmetic cut to avoid splitting a tool_use/tool_result group.
    */
   summarizedUpTo: Annotation<number>({
     reducer: (_: number, b: number) => b ?? 0,
