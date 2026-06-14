@@ -111,7 +111,10 @@ const makeFactory = (
       windowSize: () => 12,
       detect: () => Promise.resolve({ looping: false }),
     } as unknown as RecursionGuardService,
-    { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
+    {
+      fetchMemory: async () => '',
+      fetchTasks: async () => '',
+    } as unknown as FetchService,
     {
       reconcileMemory: async () => {},
       reconcileTasks: async () => {},

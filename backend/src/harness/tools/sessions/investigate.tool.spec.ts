@@ -35,7 +35,9 @@ function makeTool(opts: {
     list: vi.fn(() => opts.worktrees ?? []),
     create: vi.fn((input: Record<string, unknown>) => {
       created.push(input);
-      return Promise.resolve({ worktree: { id: 'wt-new', branch: 'investigate' } });
+      return Promise.resolve({
+        worktree: { id: 'wt-new', branch: 'investigate' },
+      });
     }),
   };
   const alex = makeEmployee({ id: 'alex', name: 'Alex' });
@@ -57,7 +59,10 @@ describe('investigate', () => {
     const { tool, openSession, worktrees } = makeTool({
       worktrees: [{ id: 'wt-old' }, { id: 'wt-001' }],
     });
-    const out = await tool.execute({ question: 'how does the gate work?' }, ctx);
+    const out = await tool.execute(
+      { question: 'how does the gate work?' },
+      ctx,
+    );
     expect(worktrees.create).not.toHaveBeenCalled();
     expect(openSession).toHaveBeenCalledTimes(1);
     const call = openSession.mock.calls[0][0];
@@ -70,20 +75,23 @@ describe('investigate', () => {
   });
 
   it('auto-opens a fresh worktree when the bot has none', async () => {
-    const { tool, openSession, worktrees, created } = makeTool({ worktrees: [] });
+    const { tool, openSession, worktrees, created } = makeTool({
+      worktrees: [],
+    });
     const out = await tool.execute({ question: 'where is X?' }, ctx);
     expect(worktrees.create).toHaveBeenCalledTimes(1);
-    expect(created[0]).toMatchObject({ ownerBot: 'alex', team: 'T1', project: 'proj' });
+    expect(created[0]).toMatchObject({
+      ownerBot: 'alex',
+      team: 'T1',
+      project: 'proj',
+    });
     expect(openSession.mock.calls[0][0].worktreeId).toBe('wt-new');
     expect(out).toContain('fresh worktree');
   });
 
   it('errors (and opens nothing) on an unknown explicit worktreeId', async () => {
     const { tool, openSession } = makeTool({ getById: () => undefined });
-    const out = await tool.execute(
-      { question: 'q', worktreeId: 'nope' },
-      ctx,
-    );
+    const out = await tool.execute({ question: 'q', worktreeId: 'nope' }, ctx);
     expect(out).toContain('No worktree "nope"');
     expect(openSession).not.toHaveBeenCalled();
   });

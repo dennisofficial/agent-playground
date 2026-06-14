@@ -71,7 +71,9 @@ function build(opts: {
   } as unknown as GithubTokenStore;
   const github = {
     listOpenPullRequests: async () =>
-      opts.prs ?? [{ number: 9, url: 'https://gh/pull/9', headBranch: 'shared/feat' }],
+      opts.prs ?? [
+        { number: 9, url: 'https://gh/pull/9', headBranch: 'shared/feat' },
+      ],
     markReadyForReview: markReady,
   } as unknown as GithubApiService;
   const boardUpdates: unknown[] = [];
@@ -91,7 +93,14 @@ function build(opts: {
     byId: (id: string) => ({ id, teamLead: !!opts.isLead && id === 'sam' }),
   } as unknown as EmployeeRegistry;
   return {
-    tool: new MarkPrReadyTool(worktrees, tokens, github, board, notes, employees),
+    tool: new MarkPrReadyTool(
+      worktrees,
+      tokens,
+      github,
+      board,
+      notes,
+      employees,
+    ),
     markReady,
     board,
     boardUpdates,

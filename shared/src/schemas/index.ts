@@ -3,6 +3,7 @@
 export * from './admin-user.entity';
 export * from './classes/base.entity';
 export * from './bot-cursor.entity';
+export * from './compaction-summary.entity';
 export * from './channel-message.entity';
 export * from './channel.entity';
 export * from './employee-skill.entity';
@@ -12,6 +13,7 @@ export * from './project.entity';
 export * from './provider-key.entity';
 export * from './session.entity';
 export * from './session-event.entity';
+export * from './session-note.entity';
 export * from './slack-identity.entity';
 export * from './task.entity';
 export * from './team-setting.entity';
@@ -24,6 +26,7 @@ export * from './worklog.entity';
 import { AdminUser } from './admin-user.entity';
 import { BotCursor } from './bot-cursor.entity';
 import { ChannelMessage } from './channel-message.entity';
+import { CompactionSummary } from './compaction-summary.entity';
 import { Channel } from './channel.entity';
 import { EmployeeSkill } from './employee-skill.entity';
 import { Fact } from './fact.entity';
@@ -32,6 +35,7 @@ import { Project } from './project.entity';
 import { ProviderKey } from './provider-key.entity';
 import { Session } from './session.entity';
 import { SessionEvent } from './session-event.entity';
+import { SessionNote } from './session-note.entity';
 import { SlackIdentity } from './slack-identity.entity';
 import { Task } from './task.entity';
 import { TeamSetting } from './team-setting.entity';
@@ -45,6 +49,7 @@ import { Worklog } from './worklog.entity';
  * Single DB: the `tenants` workspace registry lives here too (no separate control datasource). */
 export const ENTITIES = [
   AdminUser,
+  CompactionSummary,
   Fact,
   Task,
   TeamTask,
@@ -60,6 +65,7 @@ export const ENTITIES = [
   ProviderKey,
   Session,
   SessionEvent,
+  SessionNote,
   SlackIdentity,
   Tenant,
   EmployeeSkill,

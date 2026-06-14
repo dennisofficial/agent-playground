@@ -165,16 +165,20 @@ describe('bot graph — post-tools context refresh', () => {
       {
         toStructuredTools: () => [pokeTool],
         terminalToolNames: () => new Set<string>(),
-        refreshScopesByName: () =>
-          new Map([['poke', ['work'] as const]]),
+        refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
       } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       {
         isEnabled: () => false,
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
+      {
+        fetchMemory: async () => '',
+        fetchTasks: async () => '',
+      } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
@@ -202,7 +206,9 @@ describe('bot graph — post-tools context refresh', () => {
     const final = await graph.getState({
       configurable: { thread_id: 'alex:refresh-work:root' },
     });
-    expect((final.values as { context: { work: string } }).context.work).toContain('wt-new');
+    expect(
+      (final.values as { context: { work: string } }).context.work,
+    ).toContain('wt-new');
     // recalled is the pre-LLM snapshot written by recallNode — NOT updated by refreshContext.
     expect((final.values as { recalled: string }).recalled).toBe('');
   });
@@ -258,10 +264,11 @@ describe('bot graph — post-tools context refresh', () => {
       {
         toStructuredTools: () => [pokeTool],
         terminalToolNames: () => new Set<string>(),
-        refreshScopesByName: () =>
-          new Map([['poke', ['memory'] as const]]),
+        refreshScopesByName: () => new Map([['poke', ['memory'] as const]]),
       } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       {
         isEnabled: () => false,
         windowSize: () => 12,
@@ -331,16 +338,20 @@ describe('bot graph — post-tools context refresh', () => {
         toStructuredTools: () => [terminalPoke],
         // poke is BOTH terminal AND tagged ['work'] — terminal must win.
         terminalToolNames: () => new Set(['poke']),
-        refreshScopesByName: () =>
-          new Map([['poke', ['work'] as const]]),
+        refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
       } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       {
         isEnabled: () => false,
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
+      {
+        fetchMemory: async () => '',
+        fetchTasks: async () => '',
+      } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
@@ -411,13 +422,18 @@ describe('bot graph — post-tools context refresh', () => {
         // Empty map → poke has NO refresh scope → routes straight to llm after tools.
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       {
         isEnabled: () => false,
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
+      {
+        fetchMemory: async () => '',
+        fetchTasks: async () => '',
+      } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},
@@ -497,16 +513,20 @@ describe('bot graph — post-tools context refresh', () => {
       {
         toStructuredTools: () => [pokeTool],
         terminalToolNames: () => new Set<string>(),
-        refreshScopesByName: () =>
-          new Map([['poke', ['work'] as const]]),
+        refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
       } as unknown as ToolRegistry,
-      { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
       {
         isEnabled: () => false,
         windowSize: () => 12,
         detect: () => Promise.resolve({ looping: false }),
       } as unknown as RecursionGuardService,
-      { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
+      {
+        fetchMemory: async () => '',
+        fetchTasks: async () => '',
+      } as unknown as FetchService,
       {
         reconcileMemory: async () => {},
         reconcileTasks: async () => {},

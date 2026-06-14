@@ -121,7 +121,9 @@ export function formatUsageLine(
  *
  * Returns `undefined` when `usage_metadata` is absent (no model call, e.g. a tool message).
  */
-export function extractMessageUsage(msg: BaseMessage): MessageUsage | undefined {
+export function extractMessageUsage(
+  msg: BaseMessage,
+): MessageUsage | undefined {
   const um = (
     msg as {
       usage_metadata?: {
@@ -145,16 +147,21 @@ export function extractMessageUsage(msg: BaseMessage): MessageUsage | undefined 
   let cacheWrite5m: number | undefined;
   let cacheWrite1h: number | undefined;
 
-  const rawCC =
-    rmUsage?.cache_creation ?? rmUsage?.cache_creation_input_tokens;
+  const rawCC = rmUsage?.cache_creation ?? rmUsage?.cache_creation_input_tokens;
   if (typeof rawCC === 'object' && rawCC !== null) {
+    // Anthropic SDK key names (extended-cache-ttl-2025-04-11 beta):
+    // { ephemeral_5m_input_tokens: N, ephemeral_1h_input_tokens: N }
     const cc = rawCC as Record<string, unknown>;
-    const v5m = cc['5m'];
-    const v1h = cc['1h'];
-    cacheWrite5m =
-      typeof v5m === 'number' && v5m > 0 ? v5m : undefined;
-    cacheWrite1h =
-      typeof v1h === 'number' && v1h > 0 ? v1h : undefined;
+    const v5m = cc['ephemeral_5m_input_tokens'];
+    const v1h = cc['ephemeral_1h_input_tokens'];
+    cacheWrite5m = typeof v5m === 'number' && v5m > 0 ? v5m : undefined;
+    cacheWrite1h = typeof v1h === 'number' && v1h > 0 ? v1h : undefined;
+    // Defensive fallback: if neither bucket was extracted (e.g. future key rename),
+    // treat the flat total from usage_metadata as 1h rather than silently losing writes.
+    if (cacheWrite5m === undefined && cacheWrite1h === undefined) {
+      const legacy = um.input_token_details?.cache_creation;
+      if (legacy) cacheWrite1h = legacy;
+    }
   } else {
     // Numeric total or absent — treat as 1h (fallback for non-TTL-beta or pre-split responses).
     const legacy = um.input_token_details?.cache_creation;

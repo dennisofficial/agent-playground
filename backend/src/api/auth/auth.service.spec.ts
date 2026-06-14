@@ -31,7 +31,7 @@ function makeJwt(): JwtService {
     signRefreshToken: vi.fn().mockResolvedValue('refresh.token'),
     verifyAccessToken: vi.fn().mockResolvedValue({ sub: mockUser.id }),
     verifyRefreshToken: vi.fn().mockResolvedValue({ sub: mockUser.id }),
-  } as unknown as JwtService;
+  };
 }
 
 function makeEnv(nodeEnv = 'test'): EnvService {
@@ -83,9 +83,9 @@ describe('AuthService', () => {
     it('throws UnauthorizedException on wrong password', async () => {
       vi.spyOn(pwUtil, 'verifyPassword').mockResolvedValue(false);
       const svc = new AuthService(makeRepo(), makeJwt(), makeEnv());
-      await expect(svc.login('admin@example.com', 'wrong', makeRes())).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        svc.login('admin@example.com', 'wrong', makeRes()),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 
@@ -101,7 +101,9 @@ describe('AuthService', () => {
     it('throws when no cookie is present', async () => {
       const req = { cookies: {} };
       const svc = new AuthService(makeRepo(), makeJwt(), makeEnv());
-      await expect(svc.getSession(req as any)).rejects.toThrow(UnauthorizedException);
+      await expect(svc.getSession(req as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('throws when the JWT is invalid', async () => {
@@ -111,7 +113,9 @@ describe('AuthService', () => {
       } as unknown as JwtService;
       const req = { cookies: { access_token: 'bad.jwt' } };
       const svc = new AuthService(makeRepo(), badJwt, makeEnv());
-      await expect(svc.getSession(req as any)).rejects.toThrow(UnauthorizedException);
+      await expect(svc.getSession(req as any)).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 
@@ -128,7 +132,9 @@ describe('AuthService', () => {
     it('throws when no refresh cookie is present', async () => {
       const req = { cookies: {} };
       const svc = new AuthService(makeRepo(), makeJwt(), makeEnv());
-      await expect(svc.refresh(req as any, makeRes())).rejects.toThrow(UnauthorizedException);
+      await expect(svc.refresh(req as any, makeRes())).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
   });
 

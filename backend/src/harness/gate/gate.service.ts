@@ -126,7 +126,12 @@ export class GateService {
                   emoji: cleanEmoji(parsed.emoji),
                 }
               : { action: parsed.action };
-          return { ...base, reasoning: parsed.reasoning, usage, softGate: true };
+          return {
+            ...base,
+            reasoning: parsed.reasoning,
+            usage,
+            softGate: true,
+          };
         },
       ),
     ]).withConfig({ runName: 'Response Gate' }));
@@ -196,22 +201,25 @@ export class GateService {
     }
 
     try {
-      return await this.soft().invoke({
-        botName: bot.name,
-        botRole: bot.role,
-        roster: this.employees.rosterSummary(),
-        room:
-          opts.channel?.kind === 'group-dm'
-            ? `a small group DM ("${opts.channel.name}")`
-            : `the shared #${opts.channel?.name ?? 'dev'} channel`,
-        history: opts.history ?? '(no earlier messages)',
-        author: opts.authorName ?? (fromBot ? 'a teammate' : 'the boss'),
-        teammateNote: fromBot ? ' (a teammate)' : ' (the boss)',
-        text,
-        protocols: bot.protocols?.length
-          ? `Your standing protocols:\n${bot.protocols.map((p) => `- ${p}`).join('\n')}`
-          : '',
-      }, config);
+      return await this.soft().invoke(
+        {
+          botName: bot.name,
+          botRole: bot.role,
+          roster: this.employees.rosterSummary(),
+          room:
+            opts.channel?.kind === 'group-dm'
+              ? `a small group DM ("${opts.channel.name}")`
+              : `the shared #${opts.channel?.name ?? 'dev'} channel`,
+          history: opts.history ?? '(no earlier messages)',
+          author: opts.authorName ?? (fromBot ? 'a teammate' : 'the boss'),
+          teammateNote: fromBot ? ' (a teammate)' : ' (the boss)',
+          text,
+          protocols: bot.protocols?.length
+            ? `Your standing protocols:\n${bot.protocols.map((p) => `- ${p}`).join('\n')}`
+            : '',
+        },
+        config,
+      );
     } catch {
       return IGNORE; // a gate failure must never crash the channel — default to quiet
     }

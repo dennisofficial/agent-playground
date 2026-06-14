@@ -148,7 +148,8 @@ function buildFactory(
     new MemorySaver() as unknown as PostgresSaver,
     { get: () => undefined } as unknown as EnvService,
     undefined, // engineTools
-    toolLoopGuard, // the 15th (optional) arg under test
+    undefined, // compactionStore
+    toolLoopGuard, // toolLoopGuard
   );
 }
 

@@ -115,8 +115,7 @@ export class AuthService {
 
   /** Rotate refresh → new access + new refresh, set both cookies. */
   async refresh(req: Request, res: Response): Promise<LoginResponse> {
-    const token: string | undefined =
-      (req as any).cookies?.['refresh_token'];
+    const token: string | undefined = (req as any).cookies?.['refresh_token'];
     if (!token) throw new UnauthorizedException('No refresh token');
 
     let sub: string;

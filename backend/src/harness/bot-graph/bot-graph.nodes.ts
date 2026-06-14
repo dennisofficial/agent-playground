@@ -8,6 +8,7 @@ import {
 } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
+import { Logger } from '@nestjs/common';
 import { ChannelRegistryService } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
 import { getIdentity } from '../domain/identity';
@@ -16,6 +17,8 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
 import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
+import { CompactionSummaryStore } from '../memory/compaction-summary.store';
+import { COMPACTION_TOKEN_THRESHOLD } from '../memory/memory-constants';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
@@ -34,9 +37,15 @@ import {
   buildTimeContext,
   withDividers,
 } from './channel-render';
-import { type BotStateType, type ContextParts, renderContext } from './bot-state';
+import {
+  type BotStateType,
+  type ContextParts,
+  renderContext,
+} from './bot-state';
 import {
   asInput,
+  compactPriorToolResults,
+  filterToolDispatchMessages,
   repairDanglingToolCalls,
   usageOf,
   withCacheBreakpoint,
@@ -89,10 +98,13 @@ function summarizeToolResult(m: ToolMessage): string {
  * constructor — the services it injects are handed straight through here.
  */
 export class BotGraphNodes {
+  private readonly logger = new Logger(BotGraphNodes.name);
   private readonly gapThresholdMs: number;
   /** DORMANCY: master switch + the consecutive-soft-ignore count at which a bot goes dormant. */
   private readonly dormancyEnabled: boolean;
   private readonly dormancyThreshold: number;
+  /** COMPACTION tail: verbatim messages kept verbatim at the end of a compacted history. */
+  private readonly compactionTail: number;
 
   constructor(
     private readonly channel: ChannelService,
@@ -110,13 +122,15 @@ export class BotGraphNodes {
     dormancyEnabled = true,
     dormancyThreshold = 3,
     private readonly engineTools?: EngineToolFactory,
-    // Appended last (optional) so existing positional spec construction needs no change; DI always
-    // provides it in the app. Absent → the tool-loop guard is inert (node returns `pass`).
+    // Appended last + optional so existing positional spec construction needs no change.
+    compactionTail = 20,
+    private readonly compactionStore?: CompactionSummaryStore,
     private readonly toolLoopGuard?: ToolLoopGuardService,
   ) {
     this.gapThresholdMs = gapThresholdMs;
     this.dormancyEnabled = dormancyEnabled;
     this.dormancyThreshold = dormancyThreshold;
+    this.compactionTail = compactionTail;
   }
 
   /**
@@ -257,6 +271,7 @@ export class BotGraphNodes {
           turnStart,
           ...rtr,
           consecutiveSoftIgnores: 0, // a forced respond re-engages the bot
+          lastContextTokens: 0, // no gate call on the forced path
         }; // job relay: skip the gate
       }
       const channelId = this.channelIdOf(config);
@@ -271,6 +286,7 @@ export class BotGraphNodes {
           turnStart,
           ...rtr,
           consecutiveSoftIgnores: softIgnores,
+          lastContextTokens: 0, // no gate call when batch is empty
         }; // nothing for me
       }
       const latest = batch[batch.length - 1];
@@ -283,10 +299,12 @@ export class BotGraphNodes {
           turnStart,
           ...rtr,
           consecutiveSoftIgnores: softIgnores,
+          lastContextTokens: 0, // no gate call on the capped loop-breaker path
         }; // loop breaker
       }
       const room = this.channelRegistry.get(channelId);
-      const dormant = this.dormancyEnabled && softIgnores >= this.dormancyThreshold;
+      const dormant =
+        this.dormancyEnabled && softIgnores >= this.dormancyThreshold;
       const d = await this.gateService.gate(
         bot,
         latest.text,
@@ -325,6 +343,7 @@ export class BotGraphNodes {
         reactionTargetId: latest.id,
         reasoning: d.reasoning,
         gateUsage: d.usage,
+        lastContextTokens: d.usage?.input ?? 0,
         pending: batch,
         turnStart,
         ...rtr,
@@ -335,7 +354,7 @@ export class BotGraphNodes {
 
     /**
      * The pre-LLM context read: assemble the standing-context core + working-state slots into
-     * `recalled`. Phase 3: FetchService.fetchContext no longer does semantic recall (no embedding)
+     * `recalled`. FetchService.fetchContext no longer does semantic recall (no embedding)
      * — it returns the tiny always-on core (role, project, team prefs) + active board tasks +
      * reminders. The live work state (worktrees + sessions) is joined in from `workContext`.
      * Always set recalled (even to '') so a stale recall from a prior turn never lingers.
@@ -359,8 +378,17 @@ export class BotGraphNodes {
       const id = getIdentity(config);
       // Three independent reads — run in parallel. Each degrades to '' on error so a service
       // outage never aborts the turn.
+      // Pass the previous turn's memorySuggestions so the assembler can inject them (Phase 2).
+      // Pass a compaction note so the assembler surfaces a brief meta-note when the
+      // session has been compacted (the full summary is injected in llmNode as history).
+      const compactionNote =
+        state.summarizedUpTo > 0
+          ? `Earlier conversation has been summarized (covers messages 1–${state.summarizedUpTo}). See session summary in conversation history above.`
+          : undefined;
       const [memory, tasks, work] = await Promise.all([
-        this.fetchService.fetchMemory(bot, id).catch(() => ''),
+        this.fetchService
+          .fetchMemory(bot, id, state.memorySuggestions, compactionNote)
+          .catch(() => ''),
         this.fetchService.fetchTasks(bot, id).catch(() => ''),
         this.workContext(bot).catch(() => ''),
       ]);
@@ -401,7 +429,17 @@ export class BotGraphNodes {
       //   4. time context — VOLATILE (current time + gap note). Placed after recalled so it always
       //      lands outside the cached prefix. Never persisted into `messages`.
       //   5. this turn's new channel messages (with inline time-dividers for any within-batch gaps).
-      const history = repairDanglingToolCalls(state.messages);
+      // When compacted, use only the verbatim tail; the summary is prepended below.
+      // repair → compact prior tool results → filter text-less dispatches → cache breakpoints.
+      const rawHistory =
+        state.summarizedUpTo > 0
+          ? state.messages.slice(state.summarizedUpTo)
+          : state.messages;
+      const history = filterToolDispatchMessages(
+        compactPriorToolResults(
+          repairDanglingToolCalls(rawHistory),
+        ),
+      );
       const cachedHistory = history.length
         ? [
             ...history.slice(0, -1),
@@ -428,6 +466,16 @@ export class BotGraphNodes {
       // Render from the LIVE context (may have been refreshed by `refreshContext` after tools ran),
       // not from `state.recalled` (which is the one-shot pre-LLM snapshot for the conductor).
       const liveContext = renderContext(state.context);
+      // When compacted, prepend the summary HumanMessage before the verbatim tail.
+      // Position: [persona] → [summary (if any)] → [verbatim tail] → [memory] → [time] → [fresh] → [draft]
+      const summaryMessages =
+        state.summarizedUpTo > 0 && state.summary
+          ? [
+              new HumanMessage(
+                `(Conversation summary up to this point:\n${state.summary})`,
+              ),
+            ]
+          : [];
       const convo = [
         new SystemMessage({
           content: [
@@ -438,6 +486,7 @@ export class BotGraphNodes {
             },
           ],
         }),
+        ...summaryMessages,
         ...cachedHistory,
         ...(liveContext
           ? [
@@ -683,30 +732,41 @@ export class BotGraphNodes {
         .join('\n');
 
     /**
-     * RECONCILE NODE — the single post-turn write, reached on every path (respond, ack/ignore,
-     * pause). Today it reconciles only the reminders/board plate (add/complete/drop) against the
-     * turn's transcript.
+     * RECONCILE NODE — the single post-turn pass, reached on every path (respond, ack/ignore,
+     * pause). Runs two passes concurrently:
      *
-     * Durable-FACT auto-capture stays DISABLED (Dennis, 2026-06-12) — too credulous: the inline
-     * pass stored anticipatory chatter ("ready to execute when the standup closes") as accomplished
-     * fact. The replacement is the suggestion-mode reconcile + periodic hygiene pass designed in
-     * board ticket #10 (read-only suggestions, not auto-writes); explicit remember()/recall() are
-     * unaffected. `ReconcileService.reconcileMemory` remains for the memory eval baseline only.
+     *  1. `reconcileMemory`: read-only suggestion pass — returns a short human-readable
+     *     block stored in `memorySuggestions`. NEVER writes to the store; the agent commits via
+     *     its own remember / update_memory / forget tools. Returns '' for off-class turns.
+     *
+     *  2. `reconcileTasks`: captures new forward commitments, completes finished ones, drops stale.
+     *     Still auto-writing — Dennis's consent decision applies to durable facts, not reminders.
+     *
+     * Both are fire-and-forget: an error in one must not abort the turn.
      */
     const reconcileNode = async (
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
       const transcript = turnTranscript(state);
-      if (transcript.trim())
-        await this.reconcile.reconcileTasks(
-          bot,
-          transcript,
-          getIdentity(config),
-          state.decision,
-          config,
-        );
-      return {};
+      const id = getIdentity(config);
+      // Run both passes concurrently. memorySuggestions is always written (even '') so a stale
+      // value from a prior turn never lingers in the checkpoint.
+      const [memorySuggestions] = await Promise.all([
+        transcript.trim()
+          ? this.reconcile.reconcileMemory(bot, transcript, id, state.decision)
+          : Promise.resolve(''),
+        transcript.trim()
+          ? this.reconcile.reconcileTasks(
+              bot,
+              transcript,
+              id,
+              state.decision,
+              config,
+            )
+          : Promise.resolve(),
+      ]);
+      return { memorySuggestions };
     };
 
     /** Record the gated batch in the checkpoint without a model call (the ack/ignore path). */
@@ -759,9 +819,15 @@ export class BotGraphNodes {
             })
             .catch(() => {})
         : Promise.resolve();
+      // Preserve the compaction note on mid-turn refreshes so the assembler slot stays
+      // consistent. memorySuggestions is intentionally omitted (unchanged during a refresh).
+      const refreshCompactionNote =
+        state.summarizedUpTo > 0
+          ? `Earlier conversation has been summarized (covers messages 1–${state.summarizedUpTo}). See session summary in conversation history above.`
+          : undefined;
       const refreshMemory = scopes.has('memory')
         ? this.fetchService
-            .fetchMemory(bot, id)
+            .fetchMemory(bot, id, undefined, refreshCompactionNote)
             .then((m) => {
               next.memory = m;
             })
@@ -890,6 +956,127 @@ export class BotGraphNodes {
       };
     };
 
+    /**
+     * COMPACTION NODE — runs sequentially after `reconcile` on every path.
+     *
+     * Checks whether the gate's reported input-token count has crossed COMPACTION_TOKEN_THRESHOLD.
+     * Token count is a better proxy for context growth than message count: a single tool-heavy turn
+     * can consume as many tokens as twenty plain turns. When the threshold is crossed, it:
+     *   1. Slices the compactable window: `messages.slice(summarizedUpTo, messages.length - COMPACTION_TAIL)`
+     *   2. Calls `buildModel()` to produce a human-readable rolling summary.
+     *   3. Persists an audit row to `compaction_summaries`.
+     *   4. Returns `{ summary, summarizedUpTo, compactionVersion }` which the checkpoint stores.
+     *
+     * On subsequent turns, `llmNode` reconstructs the convo as:
+     *   [persona, summaryHumanMessage, messages.slice(summarizedUpTo), recalled, time, fresh, draft]
+     *
+     * Most turns: a no-op returning `{}` — the threshold check is cheap (no LLM call).
+     * Fire-and-forget on failure: a compaction error must never abort a turn (the raw history is
+     * still correct; the next turn will retry). Returns `{}` on error to be safe.
+     */
+    const compactionNode = async (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Promise<Partial<BotStateType>> => {
+      // Fast exit: context hasn't grown past the token threshold (or the gate was skipped this turn).
+      if (
+        !(
+          state.lastContextTokens > 0 &&
+          state.lastContextTokens > COMPACTION_TOKEN_THRESHOLD
+        )
+      ) {
+        return {};
+      }
+      // Ensure we have at least `compactionTail` messages to keep verbatim — don't compact a tiny
+      // history (this also guards against edge cases where threshold < tail).
+      const newSummarizedUpTo = state.messages.length - this.compactionTail;
+      if (newSummarizedUpTo <= state.summarizedUpTo) return {};
+
+      try {
+        const toSummarize = state.messages.slice(
+          state.summarizedUpTo,
+          newSummarizedUpTo,
+        );
+        // Render the compactable window as a readable transcript (tool results omitted — they are
+        // bulky and already compressed by compactPriorToolResults in live context).
+        const transcript = toSummarize
+          .flatMap((m): string[] => {
+            const type = m.getType();
+            if (type === 'human') {
+              const text = flattenContent(m.content).trim();
+              return text ? [`User: ${text}`] : [];
+            }
+            if (type === 'ai') {
+              const lines: string[] = [];
+              const text = flattenContent(m.content).trim();
+              if (text) lines.push(`${bot.name}: ${text}`);
+              const calls = (m as AIMessage).tool_calls ?? [];
+              if (calls.length) {
+                lines.push(
+                  `${bot.name}: [used tools: ${calls.map((c) => c.name).join(', ')}]`,
+                );
+              }
+              return lines;
+            }
+            return [];
+          })
+          .join('\n');
+
+        if (!transcript.trim()) return {};
+
+        // Build the summarization prompt. Prepend the previous summary for continuity so each
+        // compaction accumulates rolling context rather than losing it.
+        const previousSummarySection = state.summary
+          ? `Previous summary (earlier conversation context):\n${state.summary}\n\n`
+          : '';
+        const prompt = `You are summarizing a conversation for ${bot.name} (${bot.role}).
+
+${previousSummarySection}Messages to summarize:
+${transcript}
+
+Write a rolling summary covering:
+- Current state: what has been established, decided, or accomplished
+- Work in progress: ongoing tasks and active efforts
+- Key decisions and important facts learned
+- Open items and next steps
+
+Be thorough but concise. Preserve specific names, project names, technical details, and numeric references that matter for future context. Aim for 3–5 paragraphs.`;
+
+        const model = this.models.buildModel();
+        const result = await model.invoke([new HumanMessage(prompt)], config);
+        const newSummary = flattenContent(result.content).trim();
+        if (!newSummary) return {};
+
+        const nextVersion = (state.compactionVersion ?? 0) + 1;
+        const threadId =
+          (config.configurable?.thread_id as string | undefined) ?? 'unknown';
+
+        // Persist audit row — fire-and-forget (a store failure must not abort the turn).
+        if (this.compactionStore) {
+          this.compactionStore
+            .record(threadId, nextVersion, newSummarizedUpTo, newSummary)
+            .catch((err) =>
+              this.logger.warn(
+                `compaction audit record failed (thread=${threadId}): ${err}`,
+              ),
+            );
+        }
+
+        this.logger.debug(
+          `compaction ${bot.name} thread=${threadId} v${nextVersion} covered_up_to=${newSummarizedUpTo} (${toSummarize.length} msgs summarized)`,
+        );
+        return {
+          summary: newSummary,
+          summarizedUpTo: newSummarizedUpTo,
+          compactionVersion: nextVersion,
+        };
+      } catch (err) {
+        // Fire-and-forget: a compaction failure is non-fatal; the raw history is still intact.
+        this.logger.warn(`compaction failed for ${bot.name}: ${err}`);
+        return {};
+      }
+    };
+
     return {
       gate: gateNode,
       loopGuard: loopGuardNode,
@@ -900,6 +1087,7 @@ export class BotGraphNodes {
       markSeen: markSeenNode,
       pause: pauseNode,
       reconcile: reconcileNode,
+      compact: compactionNode,
       terminal,
       refresh: REFRESH,
       refreshContext: refreshContextNode,

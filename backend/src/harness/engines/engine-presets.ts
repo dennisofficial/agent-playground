@@ -37,5 +37,9 @@ export const EXECUTE_CODEX: EnginePreset = { engine: EWorkerEngineName.CODEX };
 export const REVIEW_CODEX: EnginePreset = { engine: EWorkerEngineName.CODEX };
 
 // LangGraph (in-process LangChain worker) — no model id pinned here.
-export const PLAN_LANGGRAPH: EnginePreset = { engine: EWorkerEngineName.LANGGRAPH };
-export const EXECUTE_LANGGRAPH: EnginePreset = { engine: EWorkerEngineName.LANGGRAPH };
+export const PLAN_LANGGRAPH: EnginePreset = {
+  engine: EWorkerEngineName.LANGGRAPH,
+};
+export const EXECUTE_LANGGRAPH: EnginePreset = {
+  engine: EWorkerEngineName.LANGGRAPH,
+};

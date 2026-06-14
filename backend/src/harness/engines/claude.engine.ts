@@ -188,7 +188,11 @@ export class ClaudeEngine implements WorkerEngine {
       systemPrompt,
       // SDK isolation: do NOT inherit the user's global ~/.claude config, skills, or hooks.
       settingSources: [],
-      tools: planMode ? PLAN_TOOLS : readOnly ? INVESTIGATE_TOOLS : WORKER_TOOLS,
+      tools: planMode
+        ? PLAN_TOOLS
+        : readOnly
+          ? INVESTIGATE_TOOLS
+          : WORKER_TOOLS,
       allowedTools: AUTO_APPROVE,
       canUseTool: makeCanUseTool(
         readOnly,

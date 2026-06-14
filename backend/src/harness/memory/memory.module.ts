@@ -1,7 +1,9 @@
 import { getRepositoryToken, TypeOrmModule } from '@nestjs/typeorm';
 import { CreateModule } from '@workspace/nestjs-core';
 import {
+  CompactionSummary,
   Fact,
+  SessionNote,
   Task,
   TeamSetting,
   TeamTask,
@@ -12,14 +14,18 @@ import {
 import { Repository } from 'typeorm';
 import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
+import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
+import { MemoryConsolidationService } from './memory-consolidation.service';
 import { BoardEventsBus } from './board-events.bus';
 import { BoardStore } from './board-store';
 import { CheckpointerModule } from './checkpointer.module';
+import { CompactionSummaryStore } from './compaction-summary.store';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
+import { SessionNoteStore } from './session-note.store';
 import { PlanStore } from './plan-store';
 import { ReconcileService } from './reconcile.service';
 import { SemanticMemory } from './semantic-memory';
@@ -38,7 +44,9 @@ import { WorklogStore } from './worklog-store';
 @CreateModule({
   imports: [
     TypeOrmModule.forFeature([
+      CompactionSummary,
       Fact,
+      SessionNote,
       Task,
       TeamTask,
       TeamTaskPlan,
@@ -47,6 +55,7 @@ import { WorklogStore } from './worklog-store';
       Worklog,
     ]),
     LlmModule,
+    LlmKeysModule,
     EmployeesModule,
   ],
   // CHECKPOINTER lives in its own junction module (see checkpointer.module.ts for why);
@@ -101,6 +110,21 @@ import { WorklogStore } from './worklog-store';
       useFactory: (settings: Repository<TeamSetting>) =>
         new TeamSettingsStore(settings),
     },
+    {
+      provide: SessionNoteStore,
+      inject: [getRepositoryToken(SessionNote)],
+      useFactory: (sessionNotes: Repository<SessionNote>) =>
+        new SessionNoteStore(sessionNotes),
+    },
+    {
+      provide: CompactionSummaryStore,
+      inject: [getRepositoryToken(CompactionSummary)],
+      useFactory: (repo: Repository<CompactionSummary>) =>
+        new CompactionSummaryStore(repo),
+    },
   ],
+  // Nightly memory consolidation — dedup, drop-stale, flag contradictions.
+  // ScheduleModule.forRoot() is imported by HarnessModule (the single composition root).
+  cronJobs: [MemoryConsolidationService],
 })
 export class MemoryModule {}

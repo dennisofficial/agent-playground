@@ -37,7 +37,8 @@ export const makeEmployee = (
 ): EmployeeDefinition => {
   const name = over.name ?? 'Alex';
   const engine = over.engine ?? EWorkerEngineName.CLAUDE;
-  const planPreset = engine === EWorkerEngineName.CODEX ? PLAN_CODEX : PLAN_CLAUDE;
+  const planPreset =
+    engine === EWorkerEngineName.CODEX ? PLAN_CODEX : PLAN_CLAUDE;
   const execPreset =
     engine === EWorkerEngineName.CODEX ? EXECUTE_CODEX : EXECUTE_CLAUDE;
   const roleContext = over.roleContext ?? 'ctx';

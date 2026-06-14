@@ -7,8 +7,12 @@ import { tmpl } from '../_shared/tmpl';
  * use `${'var'}`; no literal braces in the bodies, so the rendered text is byte-identical to the f-string.
  */
 
-export const MEMORY_PROMPT = tmpl`You are ${'botName'}, the team's ${'botRole'}, reconciling your MEMORY after a turn in
-${'room'}. People and their ids: ${'people'}.
+// Narrowed to exactly three qualifying classes (Phase 2). Everything else is filtered out:
+// greetings, questions, task instructions, coding-style notes, inferred preferences, generic
+// project/stack facts not framed as a decision, status narration, anticipatory chatter,
+// routine "I'll do X later" — none of these qualify.
+export const MEMORY_PROMPT = tmpl`You are ${'botName'}, the team's ${'botRole'}, reviewing a turn in ${'room'} for memory suggestions.
+People and their ids: ${'people'}.
 
 What you currently know (existing facts, each with its #id):
 ${'currentFacts'}
@@ -16,23 +20,38 @@ ${'currentFacts'}
 This turn:
 ${'transcript'}
 
-Decide what should change (be conservative — most turns change nothing). Reference existing facts ONLY
-by the #id shown above — never invent an id:
-- add: NEW durable facts worth keeping long-term — a stable preference, decision, role, or project fact.
-  ONLY from what the HUMANS said (not teammates' replies). NOT chatter, greetings, questions, task
-  instructions, or coding-style. State each as the BARE atomic claim ONLY — the decision/preference
-  itself, with no interpretation, consequences, rationale, or "what this means for X" elaboration (store
-  "Backend standardizes on PostgreSQL", NOT a paragraph about migrations and future work); elaborated
-  facts pile up as near-duplicates that never dedup. Set "tier": project = DEFAULT for work facts (about THIS project — its
-  repo, stack, goals, or a decision made here); team = roles, who does what, and the boss's STANDING
-  preferences that hold across every project; private = personal/sensitive; bot = only you. Set "authorId"
-  = the human who said it. Do NOT re-add something already above — even if worded differently. If the new
-  fact CONTRADICTS or replaces an existing one, set "supersedes" to that fact's #id (so the stale one is
-  overwritten, not kept alongside it).${'tierNote'}
-- update: an existing fact (by #id) whose wording/value CHANGED — give "id" and "newFact".
-- delete: an existing fact (by #id) now contradicted or no longer true — give "id".
+Surface a memory suggestion ONLY when the turn contains one of exactly THREE qualifying classes.
+Filter out EVERYTHING else — greetings, questions, task instructions, coding-style notes, roles,
+inferred preferences, generic project/stack facts not framed as a decision, status narration,
+anticipatory chatter ("ready to execute when X closes"), routine "I'll do X later" commitments
+(those go to reminders, not memory).
 
-Return empty arrays when nothing changed.`;
+THREE qualifying classes (with example triggers):
+1. EXPLICIT CORRECTION — the human corrected something previously said or something in stored memory.
+   Example: "Actually, we use MySQL now, not Postgres" when Postgres appears in the known facts.
+   kind = "correction" → suggest update or forget on the contradicted #id.
+
+2. STATED DECISION — a named outcome with clear parties: "We've decided X", "We're going with Y",
+   "The team has agreed to Z". Must be explicitly framed as a decision, not inferred from context.
+   kind = "decision" → suggest add with a bare atomic statement of the outcome.
+
+3. EXPLICIT USER PREFERENCE — directly and clearly stated: "I prefer X", "I always want Y",
+   "please always do Z", "I never want…". Must be stated, not inferred from behavior or choices.
+   kind = "preference" → suggest add.
+
+If this turn contains NONE of these three classes, return empty arrays and say "nothing qualifies"
+in the reasoning field. Most turns contain nothing — returning [] is the correct and expected answer.
+
+For add suggestions:
+- Bare atomic claim ONLY — the decision/preference itself, no elaboration, consequences, or rationale.
+  ("Backend standardizes on PostgreSQL" — NOT a paragraph about migrations and future work.)
+- tier: project = work fact about THIS project (default); team = standing preferences / roles that
+  hold across every project; private = personal/sensitive; bot = only you.
+- authorId = the human who stated it.
+- supersedes = #id of an existing fact this contradicts (so the stale one isn't kept alongside it).${'tierNote'}
+
+Reference existing facts by their shown #id ONLY — never invent an id.
+Return empty arrays when nothing qualifies.`;
 
 export const TASK_PROMPT = tmpl`You are ${'botName'}, keeping the team's personal REMINDERS straight after a turn in
 ${'room'}. People and their ids: ${'people'}.

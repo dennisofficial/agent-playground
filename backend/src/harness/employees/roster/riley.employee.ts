@@ -16,8 +16,19 @@ export class RileyEmployee extends BaseEmployee {
   readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
-    'frontend', 'front-end', 'ui', 'client', 'component', 'components', 'react',
-    'css', 'styling', 'layout', 'render', 'page', 'responsive',
+    'frontend',
+    'front-end',
+    'ui',
+    'client',
+    'component',
+    'components',
+    'react',
+    'css',
+    'styling',
+    'layout',
+    'render',
+    'page',
+    'responsive',
   ];
 
   roleContext(ctx: EmployeeContext): string {

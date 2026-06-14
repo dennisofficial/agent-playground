@@ -167,9 +167,9 @@ const searchConversationHistorySchema = z.object({
 });
 
 @HarnessTool()
-export class SearchConversationHistoryTool
-  implements IHarnessTool<typeof searchConversationHistorySchema>
-{
+export class SearchConversationHistoryTool implements IHarnessTool<
+  typeof searchConversationHistorySchema
+> {
   readonly name = 'search_conversation_history';
   readonly description =
     'Search through past channel messages for exact words, decisions, or context — returns who said what and when.';

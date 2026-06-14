@@ -14,9 +14,23 @@ export class JamesEmployee extends BaseEmployee {
   readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
-    'marketing', 'analytics', 'posthog', 'utm', 'campaign', 'campaigns',
-    'funnel', 'attribution', 'conversion', 'positioning', 'messaging', 'gtm',
-    'go-to-market', 'instrumentation', 'tracking', 'growth', 'seo',
+    'marketing',
+    'analytics',
+    'posthog',
+    'utm',
+    'campaign',
+    'campaigns',
+    'funnel',
+    'attribution',
+    'conversion',
+    'positioning',
+    'messaging',
+    'gtm',
+    'go-to-market',
+    'instrumentation',
+    'tracking',
+    'growth',
+    'seo',
   ];
   protected readonly planPreset = PLAN_CODEX;
   protected readonly executePreset = EXECUTE_CODEX;

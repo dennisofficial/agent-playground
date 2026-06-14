@@ -14,79 +14,97 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { Decision, MemoryMetricsService } from './memory-metrics.service';
 import { MEMORY_PROMPT, TASK_PROMPT } from './memory.prompts';
-import { MemoryWriteService } from './memory-write.service';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
 
 /**
- * The post-LLM RECONCILE — the write half of deterministic memory. After a bot's turn, two cheap
- * Haiku passes look at the turn + the CURRENT state and emit explicit ops: memory (add/update/
- * delete) and tasks (add/complete/drop). State-aware by design — they're shown what's already
- * stored — so they reconcile ON TOP of whatever the bot did with its own tools, and run on every
- * gate path without minting duplicates.
+ * The post-LLM RECONCILE — after a bot's turn, two cheap Haiku passes look at the turn + the
+ * CURRENT state and emit ops: memory (suggestion-only — no writes) and tasks (add/complete/drop).
+ * State-aware by design — they're shown what's already stored.
+ *
+ * Consent model: `reconcileMemory` is READ-ONLY — it surfaces a short human-readable
+ * suggestion block (returned, stored in `memorySuggestions`) instead of writing to the store.
+ * The agent commits via its own `remember` / `update_memory` / `forget` tools — the only write path.
  * (Ported from playground/src/memory/reconcile.ts; logBus debug rows became Logger lines.)
  */
 
-// How many accessible facts to show the memory-reconcile model as "what you currently know". Wider
-// than the recall-tool default so the dedup/supersede judgment sees most of the relevant store.
+// How many accessible facts to show the memory-reconcile model as "what you currently know".
+// Wide enough to detect contradictions / supersedes without reading the whole store.
 const RECONCILE_RECALL_LIMIT = 25;
-// Reconcile uses a LOWER recall floor than fetch: fetch suppresses junk (MIN_RECALL_SIM), but
-// reconcile wants to SEE marginal neighbors so it can spot a fact this turn contradicts/supersedes.
+// Lower floor than fetch: reconcile wants to SEE marginal neighbors so it can spot contradictions.
 const RECONCILE_FLOOR = 0.15;
 
+// Narrowed schema. add/update carry `kind` to force a self-check (the model must name
+// which of the three qualifying classes each suggestion falls into). delete is always a correction.
 const MemorySchema = z.object({
   reasoning: z
     .string()
-    .describe('one short sentence on what changed in memory, if anything'),
+    .describe(
+      'one short sentence: which qualifying class triggered the suggestion, or "nothing qualifies" if the turn contains none of the three classes',
+    ),
   add: z
     .array(
       z.object({
-        fact: z.string(),
+        kind: z
+          .enum(['correction', 'decision', 'preference'])
+          .describe(
+            'which of the three qualifying classes justifies this suggestion — the model must name one',
+          ),
+        fact: z
+          .string()
+          .describe(
+            'the bare atomic claim — the decision/preference itself, no interpretation, consequences, or rationale',
+          ),
         tier: z.enum(['team', 'project', 'bot', 'private']),
         project: z
           .string()
           .optional()
           .describe(
-            'ONLY for tier "project" in a DM: which project the fact belongs to (one of the projects listed in the note). A DM is not bound to a project; an un-named or unknown project keeps the fact private to the pair.',
+            'ONLY for tier "project" in a DM: which project the fact belongs to (one of the projects listed in the note)',
           ),
-        authorId: z.string().describe('id of the HUMAN who asserted it'),
+        authorId: z.string().describe('id of the HUMAN who stated it'),
         supersedes: z
           .number()
           .optional()
           .describe(
-            'the #id of an existing fact this one CONTRADICTS or replaces (e.g. "we use MySQL now" vs an existing "we use Postgres") — set it so the old fact is overwritten, not kept alongside. Omit for a genuinely new fact.',
+            'the #id of an existing fact this one contradicts/replaces — set it so the stale fact is not kept alongside',
           ),
       }),
     )
-    .describe('NEW durable facts to remember; [] if none'),
+    .describe(
+      'facts to suggest remembering; ONLY for the three qualifying classes; [] if none',
+    ),
   update: z
     .array(
       z.object({
+        kind: z
+          .enum(['correction', 'decision', 'preference'])
+          .describe('which qualifying class this update falls into'),
         id: z
           .number()
           .describe(
-            'the #id of the existing fact (from the list above) that changed',
+            'the #id of the existing fact (from the list above) to update',
           ),
         newFact: z
           .string()
           .describe(
-            'the corrected fact, stated minimally — one bare atomic claim, no elaboration',
+            'the corrected statement, stated minimally — one bare atomic claim',
           ),
       }),
     )
-    .describe('existing facts (by #id) that CHANGED; [] if none'),
+    .describe('existing facts (by #id) to suggest updating; [] if none'),
   delete: z
     .array(
       z.object({
         id: z
           .number()
           .describe(
-            'the #id of the existing fact (from the list above) to remove',
+            'the #id of the existing fact (from the list above) that is now explicitly contradicted',
           ),
       }),
     )
     .describe(
-      'existing facts (by #id) contradicted/no longer true; [] if none',
+      'existing facts (by #id) to suggest forgetting — ONLY when an explicit correction contradicts them; [] if none',
     ),
 });
 type MemoryResult = z.infer<typeof MemorySchema>;
@@ -135,7 +153,6 @@ export class ReconcileService {
   constructor(
     private readonly semantic: SemanticMemory,
     private readonly tasks: TaskStore,
-    private readonly writes: MemoryWriteService,
     private readonly metrics: MemoryMetricsService,
     private readonly employees: EmployeeRegistry,
     private readonly models: ChatModelFactory,
@@ -195,123 +212,97 @@ export class ReconcileService {
   }
 
   /**
-   * Reconcile this bot's memory against the turn: add new facts, update changed ones, delete
-   * contradicted ones. Concurrent across bots — writes serialize through MemoryWriteService.
-   * Fire-and-forget — errors swallowed (reconciliation must never break a turn).
+   * READ-ONLY suggestion pass. Reviews the turn and returns a short human-readable block
+   * of memory suggestions (never writes to the store). The bot commits via its own
+   * `remember` / `update_memory` / `forget` tools — the only write path.
+   *
+   * Returns '' when nothing qualifies (off-class turns: greetings, questions, task instructions,
+   * coding-style, inferred preferences, status narration). Fire-and-forget (errors → '').
    */
   async reconcileMemory(
     bot: EmployeeDefinition,
     transcript: string,
     id: Identity,
     decision: Decision = 'respond',
-  ): Promise<void> {
+  ): Promise<string> {
     try {
-      // Show a wide slice of the accessible store so the "is this a duplicate / does this supersede
-      // something" judgment isn't blind to most of memory.
+      // Show a wide slice of the accessible store so the model can detect contradictions and
+      // suggest supersedes / updates against the correct #id.
       const current = await this.semantic.recall(
         transcript,
         id,
         RECONCILE_RECALL_LIMIT,
         RECONCILE_FLOOR,
       );
-      const shownIds = new Set(current.map((f) => f.id));
       const result = await this.memory().invoke({
         botName: bot.name,
         botRole: bot.role,
         room: id.isChannel
           ? `the team channel '${id.surface}'`
           : `a PRIVATE 1:1 DM with ${titleCase(id.speaker)}`,
-        // The write-side leak guard, mirrored into the reconcile pass: DM confidences default to the
-        // pair tier so they never surface in group chat. A DM is project-less — a project fact
-        // there must NAME one of the projects this pair shares.
         tierNote: id.isChannel
           ? ''
-          : '\n  NOTE — this turn happened in a PRIVATE 1:1 DM: default to "private" for anything this person told' +
-            ' you about themselves or in confidence; use project/team ONLY for clearly work-wide facts they would' +
-            ' state openly in the team channel. A DM is not tied to one project — for tier "project" you MUST' +
-            ` also set "project" to the project the fact is about (your shared projects: ${recallProjects(id).join(', ') || '(none)'});` +
-            ' without it the fact stays private to the two of you.',
+          : '\n  NOTE — this turn happened in a PRIVATE 1:1 DM: default to "private" for anything' +
+            ' this person told you about themselves or in confidence; use project/team ONLY for' +
+            ' clearly work-wide facts they would state openly in the team channel. For tier' +
+            ` "project" you MUST also set "project" (your shared projects: ${recallProjects(id).join(', ') || '(none)'}).`,
         people: this.peopleHint(id),
         currentFacts: current.length
           ? current.map((f) => `- [#${f.id}] ${f.fact}`).join('\n')
           : '(none)',
         transcript,
       });
-      await this.applyMemoryResult(bot, result, id, shownIds, decision);
+      const block = this.renderSuggestions(result);
+      // Count suggestions by class — no write counters (writes go through agent tools + recordWrite).
+      const corrections =
+        result.add.filter((s) => s.kind === 'correction').length +
+        result.update.filter((s) => s.kind === 'correction').length +
+        result.delete.length;
+      const decisions =
+        result.add.filter((s) => s.kind === 'decision').length +
+        result.update.filter((s) => s.kind === 'decision').length;
+      const preferences =
+        result.add.filter((s) => s.kind === 'preference').length +
+        result.update.filter((s) => s.kind === 'preference').length;
+      this.metrics.recordMemoryReconcile(decision, {
+        corrections,
+        decisions,
+        preferences,
+      });
+      if (block) {
+        this.logger.debug(
+          `memory suggestions ${bot.name} [${decision}] corrections=${corrections} decisions=${decisions} preferences=${preferences}`,
+        );
+      }
+      return block;
     } catch {
       /* fire-and-forget: reconciliation must never break a turn */
+      return '';
     }
   }
 
   /**
-   * Apply a MemoryResult's ops, used by the reconcile pass. Each
-   * mutation is serialized through MemoryWriteService's lock (the model.invoke stays OUTSIDE it).
-   * update/delete/supersede act ONLY on ids actually shown to the model; updateFactById additionally
-   * scope-checks each id. Tallies what ACTUALLY landed (an add can dedup-merge; an update/delete
-   * no-ops when its id isn't live/accessible) and records the per-path metric for EVERY pass.
+   * Render the suggestion result into a short human-readable block, e.g.:
+   *   • remember: "Dennis wants PRs to target develop, not main" (preference · team)
+   *   • update_memory #12 → "Backend uses MySQL" (correction)
+   *   • forget #7 (correction — contradicted)
+   * Returns '' when the result has no suggestions.
    */
-  private async applyMemoryResult(
-    bot: EmployeeDefinition,
-    result: MemoryResult,
-    id: Identity,
-    shownIds: Set<number>,
-    decision: Decision,
-  ): Promise<void> {
-    const ids = this.knownIds(id);
-    let inserted = 0;
-    let deduped = 0;
-    let updated = 0;
-    let deleted = 0;
+  private renderSuggestions(result: MemoryResult): string {
+    const lines: string[] = [];
     for (const a of result.add) {
       if (!a.fact?.trim()) continue;
-      // A contradicting/replacing add overwrites the named fact in place instead of co-storing the
-      // opposite (the dedup judge treats opposites as distinct, so a plain add would keep both).
-      if (typeof a.supersedes === 'number' && shownIds.has(a.supersedes)) {
-        const r = await this.writes.withLock(() =>
-          this.semantic.updateFactById(a.supersedes as number, a.fact, id),
-        );
-        if (r) updated++;
-        continue;
-      }
-      const speaker = this.realId(a.authorId, ids) ?? id.speaker;
-      const r = await this.writes.rememberDeduped({
-        fact: a.fact,
-        tier: a.tier,
-        id: { ...id, speaker },
-        project: a.project,
-      });
-      if (r.action === 'inserted') inserted++;
-      else deduped++;
+      const scope = a.tier !== 'project' ? ` · ${a.tier}` : '';
+      lines.push(`• remember: "${a.fact}" (${a.kind}${scope})`);
     }
     for (const u of result.update) {
-      if (shownIds.has(u.id) && u.newFact?.trim()) {
-        const r = await this.writes.withLock(() =>
-          this.semantic.updateFactById(u.id, u.newFact, id),
-        );
-        if (r) updated++;
-      }
+      if (!u.newFact?.trim()) continue;
+      lines.push(`• update_memory #${u.id} → "${u.newFact}" (${u.kind})`);
     }
     for (const d of result.delete) {
-      if (shownIds.has(d.id)) {
-        const r = await this.writes.withLock(() =>
-          this.semantic.forgetFactById(d.id, id),
-        );
-        if (r) deleted++;
-      }
+      lines.push(`• forget #${d.id} (correction — contradicted)`);
     }
-    // Record EVERY pass (even all-zero) so ignore/acknowledge attempts form the denominator for
-    // "do silent reconciles ever write?" The debug line fires only when something changed.
-    this.metrics.recordMemoryReconcile(decision, {
-      inserted,
-      deduped,
-      updated,
-      deleted,
-    });
-    if (inserted || deduped || updated || deleted) {
-      this.logger.debug(
-        `memory ${bot.name} [${decision}] +${inserted} ≈${deduped} ✎${updated} -${deleted}`,
-      );
-    }
+    return lines.join('\n');
   }
 
   /**

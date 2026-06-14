@@ -136,14 +136,18 @@ export class GithubApiService {
       }),
     });
     const json = (await res.json().catch(() => ({}))) as {
-      data?: { markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } } };
+      data?: {
+        markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } };
+      };
       errors?: Array<{ message?: string }>;
     };
     if (!res.ok || json.errors?.length)
       throw new Error(
         `GitHub refused mark-ready for PR #${number} (${res.status}): ${
-          json.errors?.map((e) => e.message).filter(Boolean).join('; ') ||
-          'no detail'
+          json.errors
+            ?.map((e) => e.message)
+            .filter(Boolean)
+            .join('; ') || 'no detail'
         }`,
       );
     return {

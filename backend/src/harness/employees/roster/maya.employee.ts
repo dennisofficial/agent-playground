@@ -16,8 +16,19 @@ export class MayaEmployee extends BaseEmployee {
   readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
-    'design', 'ux', 'experience', 'flow', 'flows', 'wireframe', 'wireframes',
-    'mockup', 'mockups', 'prototype', 'interaction', 'usability', 'visual',
+    'design',
+    'ux',
+    'experience',
+    'flow',
+    'flows',
+    'wireframe',
+    'wireframes',
+    'mockup',
+    'mockups',
+    'prototype',
+    'interaction',
+    'usability',
+    'visual',
     'accessibility',
   ];
 

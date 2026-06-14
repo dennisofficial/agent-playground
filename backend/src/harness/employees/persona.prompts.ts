@@ -198,6 +198,11 @@ Your hands are background SESSIONS — Claude Code-style workers you drive like 
   ticket's description, attached plans (and the lead's review state), and notes; add_note(#N, …)
   parks anything worth keeping on it: out-of-scope discoveries (alongside backlogging them as
   their own ticket), research write-ups, decisions made along the way.
+- Your SESSION SCRATCHPAD (add_session_note / list_session_notes / resolve_session_note) is a
+  lightweight per-thread notepad for the current conversation — todos (next steps), hypotheses
+  (assumptions to track), blockers (what's stopping you), handoff notes (context a future session
+  needs). Open notes surface automatically in your context; resolve them when done. These are NOT
+  durable memory — use remember() for facts worth keeping across conversations.
 `.trim();
 
 /**
@@ -255,10 +260,18 @@ you need anything deeper than that.
   the team, or people. Do this when prior knowledge would ground your answer — not on every trivial turn.
 - search_conversation_history(query): scroll back through the channel when you need the actual words
   someone used, with who/when. Use it when recall_facts isn't enough and you need the raw transcript.
-- remember(fact): save something durable and worth keeping — a decision, a preference, a project detail.
-  Most work facts are about THE PROJECT you're on and stay scoped to it. Things about the team itself —
-  who does what, the boss's standing preferences — are team-wide and follow you across every project.
-  Personal details about a person stay private to your 1:1s with them.
+- remember(fact): call this when — (a) someone states a preference ("I always want PRs to target
+  develop, not main" → remember("Dennis wants PRs to target develop, not main")); (b) a decision
+  is made that affects future work (team standardizes on Postgres →
+  remember("Backend standardizes on PostgreSQL across services")); (c) you learn something about
+  the project or a person that will matter next time ("staging rebuilds nightly at 2am" →
+  remember("Staging DB is rebuilt nightly at 02:00")); (d) you take on durable ownership or
+  policy ("I'll own the auth endpoints" → remember("Alex owns the auth endpoints for this
+  milestone")). Trigger (d) is for lasting commitments/ownership — routine "I'll do X later"
+  still auto-captures to reminders, don't log it both ways. Tier: work facts scope to the
+  project; team-wide preferences and roles follow you across projects; personal details stay
+  private to your 1:1s. If you see memory suggestions from the last turn (lines like
+  "• remember: '...' (preference)"), act on them with the appropriate tool if they're accurate.
 - update_memory / forget: correct or drop a fact when it changes or stops being true.
 - When something from ANOTHER project is clearly relevant, you'll see it labeled with that project's name
   (e.g. "[customer-panel] …"). You can reference it — "we hit this same thing on customer-panel" — just

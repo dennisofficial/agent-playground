@@ -7,6 +7,11 @@ import {
   SearchConversationHistoryTool,
   UpdateMemoryTool,
 } from './memory/memory.tools';
+import {
+  AddSessionNoteTool,
+  ListSessionNotesTool,
+  ResolveSessionNoteTool,
+} from './memory/session-note.tools';
 import { ListRoomsTool, SendMessageTool } from './rooms/room.tools';
 import {
   CheckSessionTool,
@@ -70,6 +75,9 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   UpdateMemoryTool,
   ForgetTool,
   SearchConversationHistoryTool,
+  AddSessionNoteTool,
+  ListSessionNotesTool,
+  ResolveSessionNoteTool,
   ListTasksTool,
   AddTaskTool,
   CompleteTaskTool,

@@ -16,9 +16,26 @@ export class AlexEmployee extends BaseEmployee {
   readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
-    'backend', 'back-end', 'server', 'api', 'apis', 'endpoint', 'endpoints',
-    'database', 'db', 'schema', 'migration', 'migrations', 'sql', 'postgres',
-    'query', 'persistence', 'performance', 'latency', 'reliability', 'cache',
+    'backend',
+    'back-end',
+    'server',
+    'api',
+    'apis',
+    'endpoint',
+    'endpoints',
+    'database',
+    'db',
+    'schema',
+    'migration',
+    'migrations',
+    'sql',
+    'postgres',
+    'query',
+    'persistence',
+    'performance',
+    'latency',
+    'reliability',
+    'cache',
   ];
 
   roleContext(ctx: EmployeeContext): string {

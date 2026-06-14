@@ -16,9 +16,23 @@ export class NoraEmployee extends BaseEmployee {
   readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
-    'research', 'competitor', 'competitors', 'market', 'benchmark',
-    'benchmarks', 'docs', 'documentation', 'source', 'sources', 'cite',
-    'citation', 'verify', 'fact-check', 'library', 'pricing', 'spec',
+    'research',
+    'competitor',
+    'competitors',
+    'market',
+    'benchmark',
+    'benchmarks',
+    'docs',
+    'documentation',
+    'source',
+    'sources',
+    'cite',
+    'citation',
+    'verify',
+    'fact-check',
+    'library',
+    'pricing',
+    'spec',
   ];
   protected readonly planPreset = PLAN_CODEX;
   protected readonly executePreset = EXECUTE_CODEX;

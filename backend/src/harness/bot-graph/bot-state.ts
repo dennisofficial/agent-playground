@@ -28,6 +28,15 @@ export interface BotStateDelta {
   cursor?: number;
   decision?: GateAction;
   ackEmoji?: string;
+  /** Suggestion block from the previous turn's memory reconcile — injected into the next turn's
+   * context so the agent can act on it with remember / update_memory / forget. '' = nothing. */
+  memorySuggestions?: string;
+  /** Rolling compaction summary — replaces compacted history in llmNode. */
+  summary?: string;
+  /** messages[] index of the first verbatim-tail message. 0 = no compaction. */
+  summarizedUpTo?: number;
+  /** Monotonically incrementing compaction event count per thread. */
+  compactionVersion?: number;
   /** A reaction emoji to surface immediately — the gate's "seen, working" 👀 on a real respond. */
   reaction?: string;
   /** The channel-message id this turn's reaction (👀 or ack) is ON — chosen HERE in the graph so the
@@ -41,6 +50,10 @@ export interface BotStateDelta {
   reasoning?: string;
   /** Debug only: token usage for this turn's gate call. Absent for hard rules. */
   gateUsage?: { input: number; output: number };
+  /** The gate's input-token count for this turn — the best proxy for total context size. Written
+   * by `gateNode` on every path (0 when the gate call was skipped). Used by `compactionNode` to
+   * decide whether to compact. Last-write-wins (same as all non-message state). */
+  lastContextTokens?: number;
   /** Set by the `loop_guard` node when a no-progress loop is detected — routes to `pause`. */
   loopBreak?: boolean;
   /** Debug only: the guard's one-line rationale. NOT named `reasoning` to avoid conflation with
@@ -106,6 +119,12 @@ export const BotState = Annotation.Root({
     reducer: (_: unknown, b: { input: number; output: number } | undefined) =>
       b,
     default: () => undefined,
+  }),
+  /** The gate's input-token count for this turn — last-write-wins proxy for context size.
+   * Written by `gateNode` on every path; read by `compactionNode`. 0 = gate was skipped. */
+  lastContextTokens: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
   }),
   /** The non-own batch the gate decided on — consumed by `mark_seen` on the ack/ignore path. */
   pending: Annotation<ChannelMsg[]>({
@@ -188,6 +207,46 @@ export const BotState = Annotation.Root({
   dormantSkip: Annotation<boolean>({
     reducer: (_: boolean, b: boolean) => b ?? false,
     default: () => false,
+  }),
+  /**
+   * Suggestion block from the previous turn's memory reconcile. Written by
+   * `reconcileNode` (possibly '' when nothing qualifies); read by `recallNode` the NEXT turn and
+   * injected into the context so the agent sees and acts on it. Overwritten every turn — no stale
+   * lifecycle. Empty string → no suggestions slot injected.
+   */
+  memorySuggestions: Annotation<string>({
+    reducer: (_: string, b: string) => b ?? '',
+    default: () => '',
+  }),
+  /**
+   * Rolling compaction summary. Written by `compactionNode` when
+   * `lastContextTokens > COMPACTION_TOKEN_THRESHOLD`. The text is a human-readable rolling summary
+   * (state, decisions, next steps, learnings) covering the compacted portion.
+   * '' = no compaction has occurred yet. In `llmNode`, when non-empty, this replaces the
+   * compacted messages: the convo becomes [persona, summaryMsg, tail, recalled, ...].
+   */
+  summary: Annotation<string>({
+    reducer: (_: string, b: string) => b ?? '',
+    default: () => '',
+  }),
+  /**
+   * Index into `messages[]` of the first verbatim-tail message. 0 = no compaction.
+   * When > 0, `llmNode` uses `messages.slice(summarizedUpTo)` as the live history, prefixed by
+   * the `summary` HumanMessage. `compactionNode` sets this to `messages.length − COMPACTION_TAIL`
+   * whenever it triggers.
+   */
+  summarizedUpTo: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
+  }),
+  /**
+   * Monotonically incrementing compaction event count for this thread. Incremented each
+   * time `compactionNode` fires; used as the `version` field in the `compaction_summaries` audit
+   * table. 0 = no compaction has occurred.
+   */
+  compactionVersion: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
   }),
   /** TOOL-LOOP guard: this iteration's verdict, driving the conditional edge out of
    * `tool_loop_guard` (`pause` → reconcile, `correct` → refreshContext, else the normal
