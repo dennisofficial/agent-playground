@@ -27,6 +27,7 @@ import { investigationConfidence } from './confidence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
+  type Session,
   type SessionRegistry,
 } from './session-registry.port';
 
