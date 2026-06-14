@@ -1,4 +1,9 @@
-import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  HumanMessage,
+  ToolMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 import {
   compactPriorToolResults,
   dropLeadingOrphanToolResults,
@@ -440,7 +445,8 @@ describe('dropLeadingOrphanToolResults', () => {
   });
 
   it('returns same reference for an empty array', () => {
-    expect(dropLeadingOrphanToolResults([])).toStrictEqual([]);
+    const history: BaseMessage[] = [];
+    expect(dropLeadingOrphanToolResults(history)).toBe(history);
   });
 
   it('drops a single leading ToolMessage', () => {
@@ -555,25 +561,30 @@ describe('pairSafeBoundary', () => {
   });
 
   it('returns floor when the message preceding the tool block is not an AI', () => {
-    // idx: 0=Human, 1=Tool(no owner AI before it)
+    // idx: 0=Human, 1=Human, 2=Tool — no AI owner before the tool block.
+    // With rawCut=2, floor=0: walk stops at b=1 (Human, b>floor) → non-AI check fires at :229,
+    // not the b<=floor collapse guard (which would fire at b=0). Exercises the right branch.
     const messages = [
-      new HumanMessage('orphan context'),
+      new HumanMessage('prior context'),
+      new HumanMessage('more context'),
       new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' }),
     ];
-    // rawCut=1 on tool → walks to 0 → Human, not AI → returns floor (0)
-    expect(pairSafeBoundary(messages, 1, 0)).toBe(0);
+    // rawCut=2 on tool → walks to 1 → Human, not AI → returns floor (0)
+    expect(pairSafeBoundary(messages, 2, 0)).toBe(0);
   });
 
   it('returns floor when the AI tool_calls do not cover the following tool ids', () => {
-    // AI claims tool_call id 'x', but the ToolMessage has id 't1' — mismatch → corrupt
+    // idx: 0=Human, 1=AI(tool_call id='x'), 2=Tool(id='t1') — id mismatch → corrupt.
+    // With rawCut=2, floor=0: walk stops at b=1 (AI, b>floor) → id-mismatch loop fires at :235-242,
+    // not the b<=floor collapse guard (which would fire at b=0). Exercises the right branch.
     const ai = new AIMessage({
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'x', type: 'tool_call' }],
     });
     const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
-    const messages = [ai, tool];
-    // rawCut=1 on tool → walks to 0 → AI, but ownership check fails → floor (0)
-    expect(pairSafeBoundary(messages, 1, 0)).toBe(0);
+    const messages = [new HumanMessage('h'), ai, tool];
+    // rawCut=2 on tool → walks to 1 → AI, but ownership check fails (x ≠ t1) → floor (0)
+    expect(pairSafeBoundary(messages, 2, 0)).toBe(0);
   });
 
   it('returns the owner index when the AI fully covers the tool block', () => {

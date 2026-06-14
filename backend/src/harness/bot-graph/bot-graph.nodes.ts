@@ -964,7 +964,8 @@ export class BotGraphNodes {
      * Checks whether the most recent AI message's input-token count has crossed COMPACTION_TOKEN_THRESHOLD.
      * Token count is a better proxy for context growth than message count: a single tool-heavy turn
      * can consume as many tokens as twenty plain turns. When the threshold is crossed, it:
-     *   1. Slices the compactable window: `messages.slice(summarizedUpTo, messages.length - COMPACTION_TAIL)`
+     *   1. Calls `pairSafeBoundary(messages, messages.length − COMPACTION_TAIL, summarizedUpTo)` for
+     *      a pair-safe cut (walks back if the arithmetic cut lands on a ToolMessage).
      *   2. Calls `buildModel()` to produce a human-readable rolling summary.
      *   3. Persists an audit row to `compaction_summaries`.
      *   4. Returns `{ summary, summarizedUpTo, compactionVersion }` which the checkpoint stores.

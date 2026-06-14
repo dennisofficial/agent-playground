@@ -456,6 +456,170 @@ describe('bot graph — poisoned-history self-healing', () => {
     expect(final.values.summarizedUpTo).toBe(2);
   });
 
+  it('persists a pair-safe summarizedUpTo that never lands on a ToolMessage (write-path)', async () => {
+    /**
+     * Regression: compactionNode used a positional cut (`messages.length - COMPACTION_TAIL`) that
+     * could land on a ToolMessage. This test verifies pairSafeBoundary walks the cut back to the
+     * owning AIMessage and that the corrected boundary is what gets persisted.
+     *
+     * Setup (COMPACTION_TAIL = 20, COMPACTION_TOKEN_THRESHOLD = 80_000):
+     *   - Seed 20 messages; idx 1 = AI(tool_call tc-write-01), idx 2 = Tool(tc-write-01).
+     *   - stream() appends 1 Human (channel) + 1 AI response → total = 22 messages.
+     *   - Arithmetic cut = 22 − 20 = 2 → ToolMessage.
+     *   - pairSafeBoundary walks back to 1 → owning AIMessage.
+     *   - Fake model returns 90 000 input tokens (triggers threshold) on the first call;
+     *     returns summary text on the second call (compactionNode's summarisation invoke).
+     */
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Alex, project status?',
+    }); // seq=0 — drives cursor seeding below
+
+    let callCount = 0;
+    const fakeModel = {
+      bindTools() {
+        return this;
+      },
+      async invoke(_convo: BaseMessage[]) {
+        callCount++;
+        if (callCount === 1) {
+          // llmNode: return a high-token reply so compactionNode fires this turn.
+          return new AIMessage({
+            content: 'Status looks good.',
+            usage_metadata: {
+              input_tokens: 90_000,
+              output_tokens: 50,
+              total_tokens: 90_050,
+            },
+          });
+        }
+        // compactionNode's summarisation call.
+        return new AIMessage({
+          content:
+            'Rolling summary: Dennis requested project status; Alex confirmed all is on track.',
+        });
+      },
+    };
+
+    const factory = new BotGraphFactory(
+      channel as unknown as ChannelService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
+      {
+        toStructuredTools: () => [],
+        terminalToolNames: () => new Set<string>(),
+        refreshScopesByName: () => new Map(),
+      } as unknown as ToolRegistry,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
+      {
+        fetchMemory: async () => '',
+        fetchTasks: async () => '',
+      } as unknown as FetchService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
+      { buildModel: () => fakeModel } as unknown as ChatModelFactory,
+      { chatPromptFor: () => 'persona' } as unknown as PersonaService,
+      { list: () => [] } as unknown as WorktreeService,
+      { list: async () => [] } as unknown as SessionRegistry,
+      new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
+    );
+
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:compaction-write:root' } };
+
+    // Build 20 seeded messages where idx 2 is a ToolMessage.
+    //   idx 0 : HumanMessage — will land in the compacted window (slice 0..1)
+    //   idx 1 : AIMessage(tool_call id='tc-write-01') — owning AI; pairSafeBoundary must land here
+    //   idx 2 : ToolMessage(tc-write-01) — arithmetic rawCut (22 − 20 = 2) lands HERE
+    //   idx 3 : AIMessage — verbatim reply after the tool block
+    //   idx 4–19: alternating Human/AI padding to reach 20 total
+    const tc = 'tc-write-01';
+    const seededMessages: BaseMessage[] = [
+      new HumanMessage('Dennis: what is the project status?'),
+      new AIMessage({
+        content: '',
+        tool_calls: [
+          {
+            name: 'recall',
+            args: { query: 'status' },
+            id: tc,
+            type: 'tool_call',
+          },
+        ],
+      }),
+      new ToolMessage({
+        tool_call_id: tc,
+        name: 'recall',
+        content: 'Project is on track.',
+      }),
+      new AIMessage({ content: 'Based on recall: all is on track.' }),
+    ];
+    // Padding: indices 4–19, alternating Human/AI, to reach exactly 20 messages.
+    for (let i = 4; i < 20; i++) {
+      seededMessages.push(
+        i % 2 === 0
+          ? new HumanMessage(`Dennis: follow-up ${i}`)
+          : new AIMessage({ content: `Alex: noted ${i}` }),
+      );
+    }
+    // (sanity) 4 + 16 = 20 seeded messages
+    expect(seededMessages).toHaveLength(20);
+
+    await graph.updateState(config, {
+      messages: seededMessages,
+      cursor: 1, // state has consumed seq=0 (u-0); next turn picks up seq≥1
+    });
+
+    // Trigger a turn: new channel message (seq=1) → llmNode adds [Human, AI(90k tokens)] →
+    // compactionNode sees 22 messages, rawCut=2 (Tool), walks back to 1 (AI owner).
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Any updates?',
+    }); // seq=1
+    const stream = await graph.stream(
+      { cursor: 1, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    // -- Invariant-based assertions on the persisted checkpoint --
+    const final = await graph.getState(config);
+    const msgs = final.values.messages as BaseMessage[];
+    const summarizedUpTo = final.values.summarizedUpTo as number;
+
+    // The boundary must have landed on the OWNING AIMessage, NOT the ToolMessage.
+    expect(msgs[summarizedUpTo].getType()).toBe('ai');
+
+    // The pair-safe cut (1) must be strictly below the arithmetic cut (22 − 20 = 2),
+    // proving pairSafeBoundary actually walked the boundary back.
+    expect(summarizedUpTo).toBeLessThan(msgs.length - 20);
+
+    // The verbatim tail must NOT start with a tool_result.
+    expect(msgs.slice(summarizedUpTo)[0].getType()).not.toBe('tool');
+
+    // Compaction fired for the first time on this thread.
+    expect(final.values.compactionVersion).toBe(1);
+
+    // Summary text was written — non-empty.
+    expect(final.values.summary).toBeTruthy();
+  });
+
   it('leaves a healthy history (tool_use followed by its result) untouched', async () => {
     const channel = new FakeChannel();
     channel.append({
