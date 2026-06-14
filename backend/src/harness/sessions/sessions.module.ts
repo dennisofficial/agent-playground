@@ -3,6 +3,7 @@ import { EmployeesModule } from '../employees/employees.module';
 import { EnginesModule } from '../engines/engines.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
+import { MetricsModule } from '../metrics/metrics.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
 import { InMemorySessionRegistry } from './in-memory-session.registry';
 import { SESSION_REGISTRY } from './session-registry.port';
@@ -19,6 +20,7 @@ import { SessionRunnerService } from './session-runner.service';
     EnginesModule,
     LlmKeysModule,
     MemoryModule,
+    MetricsModule,
     WorktreesModule,
   ],
   services: [

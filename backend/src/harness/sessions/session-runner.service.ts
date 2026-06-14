@@ -7,6 +7,7 @@ import { PersonaService } from '../employees/persona.service';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import { WorklogStore } from '../memory/worklog-store';
+import { MetricsEventsService } from '../metrics/metrics-events.service';
 import { WorktreeService } from '../worktrees/worktree.service';
 import {
   SESSION_REGISTRY,
@@ -55,6 +56,7 @@ export class SessionRunnerService {
     private readonly worktrees: WorktreeService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly metrics: MetricsEventsService,
   ) {}
 
   /**
@@ -67,6 +69,7 @@ export class SessionRunnerService {
     // (`void runSessionTurn(...)`), so a rejection escaping this method would vanish and leave the
     // session stuck in 'running' forever with no failure relay.
     const ac = new AbortController();
+    const startedAt = Date.now();
     this.controllers.set(sessionId, ac);
     try {
       const session = await this.sessions.get(sessionId);
@@ -137,19 +140,48 @@ export class SessionRunnerService {
         lastReport: result || '(no report)',
         turns: session.turns + 1,
       });
+      if (session.mode === 'execute') {
+        await this.metrics
+          .recordExecutionCompleted({
+            teamId: session.team,
+            agentId: session.ownerBot,
+            projectId: session.project,
+            sessionId,
+            durationMs: Date.now() - startedAt,
+          })
+          .catch((metricsErr) =>
+            this.logger.warn(
+              `recordExecutionCompleted(${sessionId}) failed: ${metricsErr}`,
+            ),
+          );
+      }
     } catch (err) {
       // An abort surfaces here as a thrown error — that's a close, not a failure; closeSession
       // already finalized the status. The updates are themselves guarded (a registry rejection here
       // must not escape the fire-and-forget caller) and never overwrite a status closeSession wrote.
       try {
-        if (
-          !ac.signal.aborted &&
-          (await this.sessions.get(sessionId))?.status === 'running'
-        ) {
+        const live = await this.sessions.get(sessionId);
+        if (!ac.signal.aborted && live?.status === 'running') {
           await this.sessions.update(sessionId, {
             status: 'failed',
             error: err instanceof Error ? err.message : String(err),
           });
+          if (live.mode === 'execute') {
+            await this.metrics
+              .recordExecutionBlocked({
+                teamId: live.team,
+                agentId: live.ownerBot,
+                projectId: live.project,
+                sessionId,
+                durationMs: Date.now() - startedAt,
+                reason: err instanceof Error ? err.message : String(err),
+              })
+              .catch((metricsErr) =>
+                this.logger.warn(
+                  `recordExecutionBlocked(${sessionId}) failed: ${metricsErr}`,
+                ),
+              );
+          }
         }
       } catch (updateErr) {
         this.logger.error(
