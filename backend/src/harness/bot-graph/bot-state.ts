@@ -2,6 +2,7 @@ import type { BaseMessage } from '@langchain/core/messages';
 import { Annotation, messagesStateReducer } from '@langchain/langgraph';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { GateAction, MessageUsage } from '../domain/conductor-events';
+import type { RefreshScope } from '../tools/tool.types';
 
 /**
  * The three independently-refreshable slices of the pre-LLM context. Stored separately so the
@@ -66,6 +67,10 @@ export interface BotStateDelta {
   draftUsage?: MessageUsage;
   /** Read-the-room revision passes taken this turn (debug only in the delta). */
   revisionPasses?: number;
+  /** TOOL-LOOP guard verdict for this iteration — routes out of `tool_loop_guard` (debug only). */
+  toolLoopVerdict?: 'pass' | 'correct' | 'pause';
+  /** Debug only: the tool-loop guard's one-line rationale when it fired. */
+  toolLoopReasoning?: string;
 }
 
 export const BotState = Annotation.Root({
@@ -242,6 +247,42 @@ export const BotState = Annotation.Root({
   compactionVersion: Annotation<number>({
     reducer: (_: number, b: number) => b ?? 0,
     default: () => 0,
+  }),
+  /** TOOL-LOOP guard: this iteration's verdict, driving the conditional edge out of
+   * `tool_loop_guard` (`pause` → reconcile, `correct` → refreshContext, else the normal
+   * refresh-scope route). Written explicitly every pass through the node; reset by `gate` each run
+   * (annotation defaults don't re-apply on an existing checkpoint thread). */
+  toolLoopVerdict: Annotation<'pass' | 'correct' | 'pause' | undefined>({
+    reducer: (_: unknown, b: 'pass' | 'correct' | 'pause' | undefined) => b,
+    default: () => undefined,
+  }),
+  /** TOOL-LOOP guard: how many times a stuck tool-loop has been CORRECTED this turn. The first
+   * stuck verdict corrects (nudge + forced refresh); a subsequent one escalates to a pause. Reset
+   * by `gate` each run. */
+  toolLoopCorrections: Annotation<number>({
+    reducer: (_: number, b: number) => b ?? 0,
+    default: () => 0,
+  }),
+  /** Debug only: the tool-loop guard's one-line rationale when it fired. Rides in the checkpoint;
+   * never surfaced in the event stream. */
+  toolLoopReasoning: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
+    default: () => undefined,
+  }),
+  /** TOOL-LOOP guard: a transient one-shot instruction injected into the NEXT `llm` invoke as a
+   * HumanMessage (mirrors `draft`), telling the bot the action already succeeded — STOP retrying.
+   * NEVER persisted into `messages` (so it's never committed to the channel); cleared by `llmNode`
+   * after it renders, and reset by `gate` each run. */
+  toolLoopInstruction: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
+    default: () => undefined,
+  }),
+  /** TOOL-LOOP guard: context scopes the guard forces `refreshContext` to recompute on a correction
+   * (so the refresh is explicit, not rediscovered from message order). Consumed + cleared by
+   * `refreshContextNode`; reset by `gate` each run. */
+  forcedRefreshScopes: Annotation<RefreshScope[] | undefined>({
+    reducer: (_: unknown, b: RefreshScope[] | undefined) => b,
+    default: () => undefined,
   }),
 });
 

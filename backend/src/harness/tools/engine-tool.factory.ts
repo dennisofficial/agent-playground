@@ -1,6 +1,7 @@
 import { tool } from '@langchain/core/tools';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import { Injectable } from '@nestjs/common';
+import { captureParentChatTrace } from '@workspace/langfuse';
 import { isToolCapability, type ToolCapability } from '../employees/capability';
 import type { EmployeeContext } from '../employees/employee-context';
 import type { EmployeeDefinition } from '../employees/employee.types';
@@ -63,6 +64,7 @@ export class EngineToolFactory {
           openingTask: opening || cap.name,
           mode: cap.mode,
           engine,
+          parentChatTrace: captureParentChatTrace(),
         });
         return `Opened ${cap.name} session ${sessionId} (${engine}, ${cap.mode}) in ${wt.id}. You're notified when it reports back; it stays open for follow-ups (reply_session).`;
       },

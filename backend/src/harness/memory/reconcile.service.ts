@@ -1,7 +1,8 @@
-import { PromptTemplate } from '@langchain/core/prompts';
+import { HumanMessage } from '@langchain/core/messages';
 import {
   Runnable,
   type RunnableConfig,
+  RunnableLambda,
   RunnableSequence,
 } from '@langchain/core/runnables';
 import { Injectable, Logger } from '@nestjs/common';
@@ -12,6 +13,7 @@ import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { Decision, MemoryMetricsService } from './memory-metrics.service';
+import { MEMORY_PROMPT, TASK_PROMPT } from './memory.prompts';
 import { SemanticMemory } from './semantic-memory';
 import { TaskStore } from './task-store';
 
@@ -107,52 +109,6 @@ const MemorySchema = z.object({
 });
 type MemoryResult = z.infer<typeof MemorySchema>;
 
-// Narrowed to exactly three qualifying classes. Everything else is filtered out.
-// Greetings, questions, task instructions, coding-style notes, inferred preferences, generic
-// project/stack facts not framed as a decision, status narration, anticipatory chatter,
-// routine "I'll do X later" — none of these qualify.
-const MEMORY_PROMPT = `You are {botName}, the team's {botRole}, reviewing a turn in {room} for memory suggestions.
-People and their ids: {people}.
-
-What you currently know (existing facts, each with its #id):
-{currentFacts}
-
-This turn:
-{transcript}
-
-Surface a memory suggestion ONLY when the turn contains one of exactly THREE qualifying classes.
-Filter out EVERYTHING else — greetings, questions, task instructions, coding-style notes, roles,
-inferred preferences, generic project/stack facts not framed as a decision, status narration,
-anticipatory chatter ("ready to execute when X closes"), routine "I'll do X later" commitments
-(those go to reminders, not memory).
-
-THREE qualifying classes (with example triggers):
-1. EXPLICIT CORRECTION — the human corrected something previously said or something in stored memory.
-   Example: "Actually, we use MySQL now, not Postgres" when Postgres appears in the known facts.
-   kind = "correction" → suggest update or forget on the contradicted #id.
-
-2. STATED DECISION — a named outcome with clear parties: "We've decided X", "We're going with Y",
-   "The team has agreed to Z". Must be explicitly framed as a decision, not inferred from context.
-   kind = "decision" → suggest add with a bare atomic statement of the outcome.
-
-3. EXPLICIT USER PREFERENCE — directly and clearly stated: "I prefer X", "I always want Y",
-   "please always do Z", "I never want…". Must be stated, not inferred from behavior or choices.
-   kind = "preference" → suggest add.
-
-If this turn contains NONE of these three classes, return empty arrays and say "nothing qualifies"
-in the reasoning field. Most turns contain nothing — returning [] is the correct and expected answer.
-
-For add suggestions:
-- Bare atomic claim ONLY — the decision/preference itself, no elaboration, consequences, or rationale.
-  ("Backend standardizes on PostgreSQL" — NOT a paragraph about migrations and future work.)
-- tier: project = work fact about THIS project (default); team = standing preferences / roles that
-  hold across every project; private = personal/sensitive; bot = only you.
-- authorId = the human who stated it.
-- supersedes = #id of an existing fact this contradicts (so the stale one isn't kept alongside it).{tierNote}
-
-Reference existing facts by their shown #id ONLY — never invent an id.
-Return empty arrays when nothing qualifies.`;
-
 const TaskSchema = z.object({
   reasoning: z
     .string()
@@ -187,29 +143,6 @@ const TaskSchema = z.object({
     .describe('open reminders (by #id above) no longer relevant; [] if none'),
 });
 type TaskResult = z.infer<typeof TaskSchema>;
-
-const TASK_PROMPT = `You are {botName}, keeping the team's personal REMINDERS straight after a turn in
-{room}. People and their ids: {people}.
-
-Open reminders right now (with #ids — yours, and ones you raised for others):
-{openTasks}
-
-This turn:
-{transcript}
-
-A reminder is a concrete commitment to FUTURE work, captured so it isn't lost in a long, summarized work
-session — ESPECIALLY a deferred one ("got it, I'll do that after I finish this", "I'll send the spec
-later", "once the API's up I'll wire the hooks"). Decide (be conservative — most turns add nothing):
-{projectNote}- add: a NEW such commitment made THIS turn. {ownershipNote}Do NOT re-add work already a reminder
-  above — even reworded; one open reminder per piece of work, never a second copy. Do NOT capture status
-  narration about work already underway ("publishing now", "still running", "I'll push once X lands" about
-  an effort already in motion) — a reminder is for work that would otherwise be FORGOTTEN, not a play-by-play.
-  Do NOT capture anything this same turn also reports finished, and NOT chit-chat, finished replies, or
-  vague non-commitments.
-- complete: an open reminder (by #id above) this turn shows is finished.
-- drop: an open reminder (by #id above) no longer relevant.
-
-Return empty arrays when nothing changed.`;
 
 @Injectable()
 export class ReconcileService {
@@ -255,18 +188,9 @@ export class ReconcileService {
       Record<string, string>,
       MemoryResult
     >([
-      new PromptTemplate({
-        template: MEMORY_PROMPT,
-        inputVariables: [
-          'botName',
-          'botRole',
-          'room',
-          'tierNote',
-          'people',
-          'currentFacts',
-          'transcript',
-        ],
-      }),
+      RunnableLambda.from<Record<string, string>, HumanMessage[]>((v) => [
+        new HumanMessage(MEMORY_PROMPT(v)),
+      ]),
       this.models
         .buildExtractModel()
         .withStructuredOutput(MemorySchema, { name: 'reconcile_memory' }),
@@ -278,18 +202,9 @@ export class ReconcileService {
       Record<string, string>,
       TaskResult
     >([
-      new PromptTemplate({
-        template: TASK_PROMPT,
-        inputVariables: [
-          'botName',
-          'room',
-          'projectNote',
-          'ownershipNote',
-          'people',
-          'openTasks',
-          'transcript',
-        ],
-      }),
+      RunnableLambda.from<Record<string, string>, HumanMessage[]>((v) => [
+        new HumanMessage(TASK_PROMPT(v)),
+      ]),
       this.models
         .buildExtractModel()
         .withStructuredOutput(TaskSchema, { name: 'reconcile_tasks' }),

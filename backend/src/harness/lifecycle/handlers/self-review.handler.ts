@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EngineRegistry } from '../../engines/engine.registry';
 import type { EngineSpec } from '../../engines/engine-spec';
 import { withActiveRoot } from '../../engines/guard';
-import { DEFAULT_REVIEW_PROMPT } from '../../engines/role-prompts';
+import { DEFAULT_REVIEW_PROMPT } from '../../engines/engine.prompts';
+import { REVISION_PROMPT } from '../lifecycle.prompts';
 import { EWorkerEngineName, type WorkerEvent } from '../../engines/worker-engine.port';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { SELF_REVIEW } from '../../employees/capabilities/self-review.capability';
@@ -22,7 +23,8 @@ import {
  * so the revision keeps full investigation context). Returns the revised plan body (with a self-review
  * note) + the planning engine's new session id; returns void to keep the un-reviewed plan (no
  * critique, empty revision, or abort — the runner also isolates a throw). Both runs are jailed to the
- * worktree and read-only.
+ * worktree and read-only, but in different modes: the critique runs in 'investigate' (read-only,
+ * non-planning — it just returns objections), the revision in 'plan' (it re-emits the structured plan).
  */
 @Injectable()
 export class SelfReviewHandler implements LifecycleHandler {
@@ -66,7 +68,10 @@ export class SelfReviewHandler implements LifecycleHandler {
       : session.task;
     const goal = task?.title ?? session.task;
 
-    // 1. Adversarial review on the REVIEW spec's engine (stateless one-shot, cross-engine).
+    // 1. Adversarial review on the REVIEW spec's engine (stateless one-shot, cross-engine). Runs in
+    // 'investigate' mode, NOT 'plan': this is a read-only CRITIQUE, not a plan-drafting turn, so it
+    // wants read-only enforcement WITHOUT the native plan ceremony — no ExitPlanMode/plan artifact to
+    // muddy the prose objections the handler reads back from `result`.
     const reviewPrompt = DEFAULT_REVIEW_PROMPT({
       goal,
       ticket: ticketText,
@@ -82,7 +87,7 @@ export class SelfReviewHandler implements LifecycleHandler {
           sessionId: undefined,
           model: reviewSpec.model,
           effort: reviewSpec.effort,
-          mode: 'plan',
+          mode: 'investigate',
           apiKey: keyFor(reviewSpec.engine),
           onEvent,
           signal,
@@ -95,10 +100,7 @@ export class SelfReviewHandler implements LifecycleHandler {
 
     // 2. Revise ONCE on the PLANNING engine, resuming its session (keeps investigation context).
     const planSpec = employee.planEngine(this.employees.context());
-    const revisionPrompt =
-      `A reviewer reviewed your plan and raised these points:\n\n${critique}\n\n` +
-      `Revise your plan ONCE, folding in the valid points (ignore any that are wrong, noting why ` +
-      `in a line). Output the FULL revised plan with the same structured sections.`;
+    const revisionPrompt = REVISION_PROMPT({ critique });
     const revision = await withActiveRoot(worktreePath, () =>
       this.credCtx.run({ teamId: session.team, keys }, () =>
         this.engines.get(session.engine).run({

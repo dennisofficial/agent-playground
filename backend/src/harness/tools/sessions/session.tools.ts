@@ -1,11 +1,15 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { Inject } from '@nestjs/common';
+import type { ChatTracePointer } from '@workspace/langfuse';
 import { z } from 'zod';
 import type { Identity } from '../../domain/identity';
-import { DEFAULT_EXECUTE_PROMPT } from '../../engines/role-prompts';
-import type {
+import {
+  DEFAULT_EXECUTE_PROMPT,
+  DEFAULT_PLAN_PROMPT,
+} from '../../engines/engine.prompts';
+import {
   EWorkerEngineName,
-  WorkerMode,
+  type WorkerMode,
 } from '../../engines/worker-engine.port';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { BoardStore } from '../../memory/board-store';
@@ -102,7 +106,8 @@ export class CreateSessionTool implements IHarnessTool<
     // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
     // and an execute session on the same employee can run different engines (Option B). Fixed at
     // create; a session never swaps engines mid-life (replySession refuses an engine-changing flip).
-    const bot = this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner();
+    const bot =
+      this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner();
     const engCtx = this.employees.context();
     const engineName = (
       mode === 'plan' ? bot.planEngine(engCtx) : bot.executeEngine(engCtx)
@@ -114,16 +119,25 @@ export class CreateSessionTool implements IHarnessTool<
     // as a note. The stored session.task stays the brief (for list_sessions); the engine gets the full
     // handoff. Falls back to the plain task when there's no attached plan (e.g. a non-plan execute).
     let openingTask = task;
+    // Engines WITHOUT a native plan ceremony (everything but Claude, whose SDK plan mode enforces
+    // read-only + ExitPlanMode for us) need the plan posture in the PROMPT: a Codex/LangGraph plan
+    // turn is only read-only at the sandbox, so without this framing it would try to IMPLEMENT rather
+    // than draft. This mirrors the Codex CLI's own plan mode — investigate read-only, emit a structured
+    // plan, then stop for approval. Claude keeps the raw task: its native plan mode + ExitPlanMode
+    // capture already do this, and wrapping the task would muddy that capture.
+    if (mode === 'plan' && engineName !== EWorkerEngineName.CLAUDE) {
+      openingTask = DEFAULT_PLAN_PROMPT({ ticket: task });
+    }
     if (mode === 'execute' && board_task_id !== undefined && boardTask) {
       const plan = await this.plans.get(id.team, board_task_id, id.selfAgent);
       if (plan) {
-        const ticketText = `${boardTask.title}\n\n${boardTask.description}`.trim();
+        const ticketText =
+          `${boardTask.title}\n\n${boardTask.description}`.trim();
         openingTask = DEFAULT_EXECUTE_PROMPT({
           ticket: ticketText,
           plan: plan.planMd,
         });
-        if (task.trim())
-          openingTask += `\n\nNote from your chat-self: ${task.trim()}`;
+        if (task.trim()) openingTask += `\n\nTASK:\n${task.trim()}`;
       }
     }
     const { sessionId } = await this.openSession({
@@ -134,6 +148,7 @@ export class CreateSessionTool implements IHarnessTool<
       mode,
       engine: engineName,
       boardTaskId: board_task_id,
+      parentChatTrace: ctx.parentChatTrace,
     });
     return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
   }
@@ -155,6 +170,8 @@ export class CreateSessionTool implements IHarnessTool<
     mode: WorkerMode;
     engine: EWorkerEngineName;
     boardTaskId?: number;
+    /** Best-effort link back to the spawning chat turn's trace (for Langfuse session linkage). */
+    parentChatTrace?: ChatTracePointer;
   }): Promise<{ sessionId: string }> {
     const session = await this.sessions.create({
       task: opts.task,
@@ -170,7 +187,11 @@ export class CreateSessionTool implements IHarnessTool<
         : {}),
     });
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.runner.runSessionTurn(session.id, opts.openingTask);
+      void this.runner.runSessionTurn(
+        session.id,
+        opts.openingTask,
+        opts.parentChatTrace,
+      );
     });
     return { sessionId: session.id };
   }
@@ -218,7 +239,12 @@ export class ReplySessionTool implements IHarnessTool<
     await AsyncLocalStorageProviderSingleton.getInstance().run(
       undefined,
       async () => {
-        res = await this.runner.replySession(sessionId, message, mode);
+        res = await this.runner.replySession(
+          sessionId,
+          message,
+          mode,
+          ctx.parentChatTrace,
+        );
       },
     );
     if (!res.ok)

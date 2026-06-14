@@ -43,10 +43,13 @@ import {
 } from '../sessions/session-registry.port';
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import { type BotStateDelta, BotGraphFactory } from '../bot-graph/bot-graph.factory';
-import { planReadySeed, ticketApprovedSeed } from './board-seed-prompt';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorMetricsService } from './conductor-metrics.service';
-import { sessionRelayPrompt } from './session-relay-prompt';
+import {
+  planReadySeed,
+  sessionRelayPrompt,
+  ticketApprovedSeed,
+} from './seed.prompts';
 
 /**
  * The dispatcher: a thin event loop around the shared channel. The human appends to the channel and

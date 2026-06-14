@@ -1,7 +1,7 @@
 import { RunnableLambda } from '@langchain/core/runnables';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { EmployeeRegistry } from '../employees/employee.registry';
-import { TEAM_RULES } from '../employees/persona.service';
+import { TEAM_RULES } from '../employees/persona.prompts';
 import { GateService } from './gate.service';
 import { makeEmployee } from '@harness/employees/employee.testing';
 
@@ -43,6 +43,7 @@ describe('GateService hard rules — channel context', () => {
       channel: { kind: 'dm', name: 'dennis ↔ alex' },
     });
     expect(d.action).toBe('respond');
+    expect(d.reason).toBe('dm'); // surfaced as a Langfuse gate.decision event (no LLM ran)
   });
 
   it('still ignores its own message in a DM', async () => {
@@ -52,6 +53,30 @@ describe('GateService hard rules — channel context', () => {
       channel: { kind: 'dm', name: 'dennis ↔ alex' },
     });
     expect(d.action).toBe('ignore');
+    expect(d.reason).toBe('own-message');
+  });
+
+  it('ignores someone else’s thread, tagged for the trace', async () => {
+    const gate = buildGate();
+    // '@alex' addresses Alex; here a DIFFERENT bot is addressed in the latest message.
+    const employees = {
+      mentionedBots: () => [],
+      addressedBots: () => [{ id: 'riley' }], // someone else, not Alex
+      isBroadcast: () => false,
+      rosterSummary: () => 'Alex (backend engineer)',
+    } as unknown as EmployeeRegistry;
+    const models = {
+      buildGateModel: () => {
+        throw new Error('soft gate must not run for an addressed-other ignore');
+      },
+    } as unknown as ChatModelFactory;
+    const d = await new GateService(employees, models).gate(
+      ALEX,
+      'riley can you take this?',
+      { authorName: 'Dennis', channel: { kind: 'channel', name: 'dev' } },
+    );
+    expect(d.action).toBe('ignore');
+    expect(d.reason).toBe('addressed-other');
   });
 });
 
@@ -67,8 +92,10 @@ describe('GateService soft gate — prompt enrichment', () => {
     const models = {
       buildGateModel: () => ({
         withStructuredOutput: () =>
-          RunnableLambda.from((promptValue: { toString(): string }) => {
-            captured.push(promptValue.toString());
+          // The gate now feeds the model a single HumanMessage (the rendered prompt) rather than a
+          // PromptTemplate's StringPromptValue — read its content.
+          RunnableLambda.from((messages: { content: string }[]) => {
+            captured.push(messages.map((m) => m.content).join(''));
             return {
               raw: { usage_metadata: null },
               parsed: { action: 'respond', reasoning: 'mocked' },
@@ -138,6 +165,7 @@ describe('GateService hard rules — batch scanning', () => {
       },
     );
     expect(d.action).toBe('respond');
+    expect(d.reason).toBe('broadcast');
   });
 
   it('responds to an @mention buried in the batch', async () => {
@@ -149,6 +177,7 @@ describe('GateService hard rules — batch scanning', () => {
       ],
     });
     expect(d.action).toBe('respond');
+    expect(d.reason).toBe('mention');
   });
 
   it('does NOT hard-respond to its OWN broadcast in the batch', async () => {
@@ -206,6 +235,7 @@ describe('GateService dormancy', () => {
     expect(d.action).toBe('ignore');
     expect(d.dormantSkip).toBe(true);
     expect(d.softGate).toBeUndefined();
+    expect(d.reason).toBe('dormant-skip');
   });
 
   it('wakes (runs the soft gate) on a lane-keyword hit while dormant', async () => {
