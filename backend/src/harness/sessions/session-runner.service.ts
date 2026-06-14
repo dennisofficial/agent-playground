@@ -494,8 +494,57 @@ export class SessionRunnerService {
         ? null
         : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
     }
-    if (task!.status === 'approved' || task!.status === 'done') return null;
+    // 'approved' (first execute session — the approved→executing CAS in CreateSessionTool flips it),
+    // 'executing' (work in flight — continuing turns and additional owners), and 'done' all execute.
+    // 'self_review' is NOT here: the integration barrier's bounded fix loop reaches a self_review
+    // session only through SessionRunner.resumeInternal (harness-initiated), never a bot tool call.
+    if (
+      task!.status === 'approved' ||
+      task!.status === 'executing' ||
+      task!.status === 'done'
+    )
+      return null;
     return `board task #${boardTaskId} is '${task!.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; @Sam reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
+  }
+
+  /**
+   * Resume a session for ONE awaited turn, HARNESS-INITIATED — deliberately bypasses executeRefusal
+   * (that gate guards a bot's own tool calls, not the harness's review pipeline). The review
+   * pipeline's bounded fix loop and conflict-resolution call this; the bot never reaches a
+   * 'self_review' session through a tool. Sets the session running in `mode`, awaits the turn, and
+   * returns the resulting session ('idle' with lastReport, or 'failed'). A timeout aborts the turn.
+   * `enteringExecute` is false — the work already lives in the worktree; an internal fix/resolve turn
+   * must NOT trigger a base refresh that could clobber an in-progress merge.
+   */
+  async resumeInternal(
+    sessionId: string,
+    prompt: string,
+    opts: { mode?: WorkerMode; timeoutMs?: number } = {},
+  ): Promise<Session | undefined> {
+    const mode: WorkerMode = opts.mode ?? 'execute';
+    const session = await this.sessions.get(sessionId);
+    if (!session) return undefined;
+    if (session.status === 'closed') return session;
+    if (session.status === 'running')
+      throw new Error(
+        `session ${sessionId} is mid-turn — cannot resume it internally`,
+      );
+    await this.sessions.update(sessionId, { status: 'running', mode });
+    const turn = this.runSessionTurn(sessionId, prompt, undefined, false);
+    if (opts.timeoutMs) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          this.controllers.get(sessionId)?.abort();
+          resolve();
+        }, opts.timeoutMs);
+      });
+      await Promise.race([turn, timeout]);
+      if (timer) clearTimeout(timer);
+    } else {
+      await turn;
+    }
+    return this.sessions.get(sessionId);
   }
 
   /**

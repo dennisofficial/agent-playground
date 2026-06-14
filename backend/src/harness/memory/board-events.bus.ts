@@ -17,6 +17,15 @@ import { Subject } from 'rxjs';
  *                       Fired from BOTH the CAS path (the Slack approval card → BoardStore.transition)
  *                       and the manual path (a lead's update_board_task → BoardStore.update), so it
  *                       fires no matter how the verdict arrives.
+ *
+ * The review-pipeline events narrate the harness-driven PR self-review in the OWNER'S voice: each
+ * wakes the owner with a seed so the step reads as the employee's own update (Dennis chose real
+ * seeded narration over silent/synthetic). `notifyThread` carries the room the work was opened in.
+ *  - `pr-opened`        → the integration barrier opened the shared-branch DRAFT PR and is running
+ *                         the final review.
+ *  - `self-review-failed`→ a per-owner or integration review couldn't be auto-cleared (fix loop
+ *                         exhausted, a publish conflict, or a GitHub failure) and needs the owner.
+ *  - `pr-ready`         → self-review cleared, the PR is flipped to ready, the ticket is in_review.
  */
 export type BoardEvent =
   | {
@@ -28,7 +37,32 @@ export type BoardEvent =
       /** The planning session the plan came from — resolves the room to wake the lead in. */
       sessionId?: string;
     }
-  | { kind: 'ticket-approved'; team: string; taskId: number };
+  | { kind: 'ticket-approved'; team: string; taskId: number }
+  | {
+      kind: 'pr-opened';
+      team: string;
+      taskId: number;
+      employee: string;
+      prUrl: string;
+      notifyThread?: string;
+    }
+  | {
+      kind: 'self-review-failed';
+      team: string;
+      taskId: number;
+      employee: string;
+      /** What blocked auto-clearing — surfaced to the owner so they know what to fix. */
+      reason: string;
+      notifyThread?: string;
+    }
+  | {
+      kind: 'pr-ready';
+      team: string;
+      taskId: number;
+      employee: string;
+      prUrl: string;
+      notifyThread?: string;
+    };
 
 @Injectable()
 export class BoardEventsBus {

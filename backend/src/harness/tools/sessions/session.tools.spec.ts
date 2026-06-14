@@ -49,8 +49,14 @@ function makeTool(opts: {
     fallbackOwner: () => alex,
     context: () => ({ team: 'local', roster: 'Alex — backend engineer' }),
   };
-  const board = { get: vi.fn(() => Promise.resolve(opts.boardTask)) };
-  const plans = { get: vi.fn(() => Promise.resolve(opts.plan)) };
+  const board = {
+    get: vi.fn(() => Promise.resolve(opts.boardTask)),
+    transition: vi.fn(() => Promise.resolve(undefined)),
+  };
+  const plans = {
+    get: vi.fn(() => Promise.resolve(opts.plan)),
+    setExecuteContext: vi.fn(() => Promise.resolve(undefined)),
+  };
   const tool = new CreateSessionTool(
     sessions as never,
     runner as never,

@@ -30,6 +30,7 @@ import {
   SearchSessionTool,
 } from './sessions/session.tools';
 import { SubmitPlanTool } from './sessions/submit-plan.tool';
+import { SubmitForReviewTool } from './sessions/submit-for-review.tool';
 import { InvestigateTool } from './sessions/investigate.tool';
 import { EngineToolFactory } from './engine-tool.factory';
 import {
@@ -99,6 +100,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     CreateSessionTool,
     ReplySessionTool,
     SubmitPlanTool,
+    SubmitForReviewTool,
     InvestigateTool,
     CloseSessionTool,
     CheckSessionTool,

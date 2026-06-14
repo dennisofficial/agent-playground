@@ -150,6 +150,22 @@ export class CreateSessionTool implements IHarnessTool<
       boardTaskId: board_task_id,
       parentChatTrace: ctx.parentChatTrace,
     });
+    // The board task starts EXECUTING once an execute session is live. CAS approved→executing AFTER
+    // the session registered (a failed create can't strand the task), idempotent across owners (only
+    // the first owner's start flips it; later owners find it already 'executing'). Stamp the execute
+    // worktree + shared branch on this owner's plan row so the integration barrier finds them later.
+    // Both best-effort — they must never fail the session that's already running.
+    if (mode === 'execute' && board_task_id !== undefined && boardTask) {
+      await this.board
+        .transition(id.team, board_task_id, 'approved', { status: 'executing' })
+        .catch(() => undefined);
+      await this.plans
+        .setExecuteContext(id.team, board_task_id, id.selfAgent, {
+          executeWorktreeId: worktreeId,
+          sharedBranch: worktree.sharedBranch,
+        })
+        .catch(() => undefined);
+    }
     return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
   }
 

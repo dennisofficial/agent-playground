@@ -81,6 +81,11 @@ export interface IEnvConfig {
   // 'linked' = only board-linked sessions are gated (unlinked ad-hoc work stays autonomous);
   // 'off' = no mechanical gate (prompt-governed only). Tone down as trust builds.
   EXECUTION_APPROVAL_MODE: 'all' | 'linked' | 'off';
+  // Max board tasks per team allowed in in-flight execution (executing + self_review) at once. The
+  // autonomy throttle: approval never auto-starts execution, and when N tickets are approved at once
+  // only this many owners are woken to execute — the rest wait in 'approved' and are picked up as
+  // slots free (gradual token usage, no spike). Default: 3.
+  MAX_CONCURRENT_EXECUTIONS?: number;
   // Slack user id allowed to rule on approval cards when the workspace has no OAuth installer
   // (tenant.installed_by is null on env-token dev workspaces). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
@@ -220,6 +225,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
     .valid('all', 'linked', 'off')
     .optional()
     .default('all'),
+  MAX_CONCURRENT_EXECUTIONS: Joi.number().integer().min(1).optional(),
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),

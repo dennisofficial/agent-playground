@@ -298,7 +298,7 @@ export class ApprovalCardsService
         ? { status: 'approved' as const }
         : v.verdict === 'deny'
           ? { status: 'open' as const, assignee: null }
-          : { status: 'in_progress' as const };
+          : { status: 'planning' as const };
     const flipped = await this.board.transition(
       v.teamId,
       v.taskId,

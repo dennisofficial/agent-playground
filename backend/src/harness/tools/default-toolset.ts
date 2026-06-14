@@ -34,6 +34,7 @@ import {
 } from './tasks/task.tools';
 import { AddNoteTool, GetTicketTool } from './tasks/ticket.tools';
 import { SubmitPlanTool } from './sessions/submit-plan.tool';
+import { SubmitForReviewTool } from './sessions/submit-for-review.tool';
 import { InvestigateTool } from './sessions/investigate.tool';
 import type { IHarnessTool } from './tool.types';
 import { EndTurnTool } from './turn/end-turn.tool';
@@ -45,8 +46,6 @@ import {
   RefreshWorktreeTool,
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
-import { OpenPrTool } from './worktrees/open-pr.tool';
-import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -60,11 +59,13 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   PullWorktreeTool,
   RefreshWorktreeTool,
   RemoveWorktreeTool,
-  OpenPrTool,
-  MarkPrReadyTool,
+  // No open_pr / mark_pr_ready for ICs — the review pipeline opens the draft PR and flips it to ready
+  // automatically when self-review clears (submit_for_review kicks it off). Sam keeps them as a manual
+  // lead override (see sam.employee.ts).
   CreateSessionTool,
   ReplySessionTool,
   SubmitPlanTool,
+  SubmitForReviewTool,
   InvestigateTool,
   CloseSessionTool,
   CheckSessionTool,

@@ -506,7 +506,7 @@ describe('SessionRunnerService — the execute-approval gate', () => {
   it("dial 'linked': unlinked sessions stay autonomous; linked ones are still gated", async () => {
     const { runner, sessions } = buildRunner(echo, {
       approvalMode: 'linked',
-      boardTasks: { 7: { status: 'in_progress' } },
+      boardTasks: { 7: { status: 'planning' } },
     });
     const unlinked = await idleSession(runner, sessions);
     expect((await runner.replySession(unlinked.id, 'go', 'execute')).ok).toBe(
@@ -515,7 +515,7 @@ describe('SessionRunnerService — the execute-approval gate', () => {
     const linked = await idleSession(runner, sessions, 7);
     const res = await runner.replySession(linked.id, 'go', 'execute');
     expect(res.ok).toBe(false);
-    expect(res.reason).toContain("#7 is 'in_progress'");
+    expect(res.reason).toContain("#7 is 'planning'");
   });
 
   it("dial 'off': nothing is gated", async () => {
@@ -611,7 +611,7 @@ describe('SessionRunnerService — the execute-approval gate', () => {
   it('plan-mode replies are never standup-gated', async () => {
     const { runner, sessions } = buildRunner(echo, {
       approvalMode: 'all',
-      boardTasks: { 7: { status: 'in_progress' } },
+      boardTasks: { 7: { status: 'planning' } },
       standupOpen: true,
     });
     const session = await idleSession(runner, sessions, 7);

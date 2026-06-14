@@ -6,8 +6,10 @@ import { EnginesModule } from '../engines/engines.module';
 import { LifecycleModule } from '../lifecycle/lifecycle.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
+import { ProjectsModule } from '../projects/projects.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
 import { PostgresSessionRegistry } from './postgres-session.registry';
+import { ReviewPipelineService } from './review-pipeline.service';
 import { SESSION_REGISTRY } from './session-registry.port';
 import { SessionRunnerService } from './session-runner.service';
 
@@ -26,11 +28,13 @@ import { SessionRunnerService } from './session-runner.service';
     LifecycleModule,
     LlmKeysModule,
     MemoryModule,
+    ProjectsModule,
     WorktreesModule,
   ],
   services: [
     { provide: SESSION_REGISTRY, useClass: PostgresSessionRegistry },
     SessionRunnerService,
+    ReviewPipelineService,
   ],
 })
 export class SessionsModule {}

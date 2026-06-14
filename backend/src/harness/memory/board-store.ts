@@ -10,21 +10,43 @@ import { rawRows, toIso } from './sql';
  * role of a claim lock), and `blocked` is DERIVED from `depends_on` inside that same statement, so
  * completing a task never fans out writes to its dependents.
  *
- * Lifecycle (the approval layer rides on status): open → claim → in_progress (planning) →
- * awaiting_approval (plan + its Q&A posted for Dennis) → approved (TEAM LEAD only, recorded on
- * Dennis's explicit word at a planning sitting) → execution → in_review (the PR is up and marked
- * ready, waiting on Dennis) → done. An APPROVED ticket stays the owner's to execute and re-execute:
- * review feedback loops in 'in_review' with NO re-approval (the original approval covers it), and
- * only Dennis's acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only
- * 'open' tasks, and only 'done' satisfies a dependency — both unchanged by the in-between states.
+ * Lifecycle (the approval layer rides on status): open → claim → planning (the planning session +
+ * its Q&A) → awaiting_approval (plan posted for Dennis) → approved (TEAM LEAD only, recorded on
+ * Dennis's explicit word at a planning sitting) → executing (an execute session opened — the
+ * approved→executing CAS lives in CreateSessionTool) → self_review (all owners done; the harness's
+ * task-level integration review on the shared branch) → in_review (PR marked ready, waiting on
+ * Dennis) → done. An APPROVED ticket stays the owner's to execute and re-execute: review feedback
+ * loops in 'in_review' with NO re-approval (the original approval covers it), and only Dennis's
+ * acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only 'open' tasks,
+ * and only 'done' satisfies a dependency — both unchanged by the in-between states.
+ *
+ * Per-owner execution detail (which owner has finished its own self-review, the execute worktree,
+ * the shared branch) lives on the plan row (PlanStore), NOT the task: a multi-owner ticket stays
+ * 'executing' until every plan row is 'complete', then the integration barrier flips it.
  */
 export type BoardStatus =
   | 'open'
-  | 'in_progress'
+  | 'planning'
   | 'awaiting_approval'
   | 'approved'
+  | 'executing'
+  | 'self_review'
   | 'in_review'
   | 'done';
+
+/** Task statuses that represent active, in-flight work — what FetchService injects into bot context
+ * and what the execution throttle counts. */
+export const ACTIVE_BOARD_STATUSES: readonly BoardStatus[] = [
+  'planning',
+  'executing',
+  'self_review',
+];
+
+/** The in-flight execution statuses the throttle counts against its concurrency cap. */
+export const IN_FLIGHT_EXECUTION_STATUSES: readonly BoardStatus[] = [
+  'executing',
+  'self_review',
+];
 
 export interface BoardTask {
   id: number;
@@ -53,7 +75,7 @@ export interface ListBoardQuery {
   team: string;
   project?: string;
   assignee?: string;
-  status?: BoardStatus;
+  status?: BoardStatus | readonly BoardStatus[];
   limit?: number;
 }
 
@@ -150,7 +172,7 @@ export class BoardStore {
     botId: string,
   ): Promise<BoardTask | ClaimRefusal> {
     const rows = await this.q(
-      `UPDATE team_tasks t SET assignee = $3, status = 'in_progress', updated_at = now()
+      `UPDATE team_tasks t SET assignee = $3, status = 'planning', updated_at = now()
        WHERE t.id = $1 AND t.team_id = $2 AND t.status = 'open'
          AND (t.assignee IS NULL OR t.assignee = $3)
          AND NOT EXISTS (SELECT 1 FROM team_tasks d
@@ -244,13 +266,26 @@ export class BoardStore {
     };
     if (query.project) and((n) => `project = $${n}`, query.project);
     if (query.assignee) and((n) => `assignee = $${n}`, query.assignee);
-    if (query.status) and((n) => `status = $${n}`, query.status);
+    if (query.status)
+      Array.isArray(query.status)
+        ? and((n) => `status = ANY($${n})`, [...query.status])
+        : and((n) => `status = $${n}`, query.status);
     args.push(query.limit ?? 50);
     const rows = await this.q(
       `SELECT * FROM team_tasks WHERE ${where.join(' AND ')} ORDER BY created_at ASC LIMIT $${args.length}`,
       args,
     );
     return rows.map(toBoardTask);
+  }
+
+  /** How many of this team's tasks are in-flight execution (executing + self_review) — the count the
+   * execution throttle weighs against its concurrency cap. */
+  async countInFlightExecution(team: string): Promise<number> {
+    const rows = await this.repo.manager.query(
+      `SELECT count(*)::int AS n FROM team_tasks WHERE team_id = $1 AND status = ANY($2)`,
+      [team, [...IN_FLIGHT_EXECUTION_STATUSES]],
+    );
+    return Number(rawRows<{ n: number }>(rows)[0]?.n ?? 0);
   }
 
   /**

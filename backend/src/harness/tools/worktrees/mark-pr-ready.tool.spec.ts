@@ -142,13 +142,13 @@ describe('mark_pr_ready tool', () => {
 
   it('refuses unapproved work (nothing to mark ready)', async () => {
     const { tool, markReady } = build({
-      boardTask: task({ status: 'in_progress', assignee: 'alex' }),
+      boardTask: task({ status: 'planning', assignee: 'alex' }),
     });
     const out = await tool.execute(
       { worktreeId: 'wt-001', board_task_id: 7 },
       ctx('alex'),
     );
-    expect(out).toContain('not approved/in-review');
+    expect(out).toContain('not in execution');
     expect(markReady).not.toHaveBeenCalled();
   });
 

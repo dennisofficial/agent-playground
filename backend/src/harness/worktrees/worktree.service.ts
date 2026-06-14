@@ -798,6 +798,41 @@ export class WorktreeService implements OnApplicationBootstrap {
     return wt;
   }
 
+  /**
+   * The current tip sha of a worktree's shared integration branch — captured by the review pipeline
+   * BEFORE publish, so an owner's self-review can diff `<sharedRef>...<ownerBranch>` (three-dot:
+   * changes on the owner's branch since it diverged from shared) and never re-review a prior owner's
+   * already-integrated work. Undefined if the worktree has no shared branch.
+   */
+  async sharedRef(id: string): Promise<string | undefined> {
+    const wt = this.worktrees.get(id);
+    if (!wt?.sharedBranch) return undefined;
+    return this.git(['rev-parse', wt.sharedBranch], wt.repoRoot).catch(
+      () => undefined,
+    );
+  }
+
+  /**
+   * The git range that isolates an owner's own contribution for self-review: changed files in
+   * `<sinceRef>...<ownerBranch>`. Returns the range string + the changed file list (empty when the
+   * owner added nothing since `sinceRef`). The review engine runs git itself in the checkout; the
+   * file list is for the pipeline's own "nothing to review" short-circuit and logging.
+   */
+  async ownerDiff(
+    id: string,
+    sinceRef: string,
+  ): Promise<{ range: string; files: string[] }> {
+    const wt = this.worktrees.get(id);
+    if (!wt) throw new Error(`No worktree "${id}".`);
+    const range = `${sinceRef}...${wt.branch}`;
+    const out = await this.git(
+      ['diff', '--name-only', range],
+      wt.checkout,
+    ).catch(() => '');
+    const files = out.split('\n').map((f) => f.trim()).filter(Boolean);
+    return { range, files };
+  }
+
   private async refuseMidMerge(checkout: string): Promise<void> {
     if (await this.mergeInProgress(checkout)) {
       throw new Error(
