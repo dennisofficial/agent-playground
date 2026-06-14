@@ -16,6 +16,7 @@ import type { BoardStatus, BoardStore } from '../memory/board-store';
 import type { PlanStore } from '../memory/plan-store';
 import type { TeamSettingsStore } from '../memory/team-settings-store';
 import type { WorklogStore } from '../memory/worklog-store';
+import type { MetricsEventsService } from '../metrics/metrics-events.service';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { InMemorySessionRegistry } from './in-memory-session.registry';
 import type { Session } from './session-registry.port';
@@ -94,6 +95,13 @@ function buildRunner(
   const credCtx = {
     run: (_c: unknown, fn: () => unknown) => fn(),
   } as unknown as CredentialContext;
+  const completedEvents: unknown[] = [];
+  const blockedEvents: unknown[] = [];
+  const metrics = {
+    recordExecutionCompleted: async (e: unknown) =>
+      void completedEvents.push(e),
+    recordExecutionBlocked: async (e: unknown) => void blockedEvents.push(e),
+  } as unknown as MetricsEventsService;
   const board = {
     get: (_team: string, id: number) =>
       Promise.resolve(
@@ -124,12 +132,21 @@ function buildRunner(
     worktrees,
     creds,
     credCtx,
+    metrics,
     board,
     env,
     plans,
     settings,
   );
-  return { runner, sessions, worklogged, attached, refreshCalls };
+  return {
+    runner,
+    sessions,
+    worklogged,
+    completedEvents,
+    blockedEvents,
+    attached,
+    refreshCalls,
+  };
 }
 
 const newSession = {
@@ -211,6 +228,62 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     expect(after?.mode).toBe('execute');
     expect(after?.turns).toBe(2);
     expect(modes).toEqual(['plan', 'execute']);
+  });
+
+  it('records execute-mode turn completion metrics', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run: async () => ({ result: 'Built it.', sessionId: 'e1' }),
+    };
+    const { runner, sessions, completedEvents, blockedEvents } =
+      buildRunner(fake);
+    const session = await sessions.create({
+      ...newSession,
+      mode: 'execute',
+    });
+
+    await runner.runSessionTurn(session.id, session.task);
+
+    expect(completedEvents).toEqual([
+      expect.objectContaining({
+        teamId: 'local',
+        agentId: 'alex',
+        projectId: 'local',
+        sessionId: session.id,
+        durationMs: expect.any(Number),
+      }),
+    ]);
+    expect(blockedEvents).toHaveLength(0);
+  });
+
+  it('records execute-mode turn failure metrics', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      async run() {
+        throw new Error('engine exploded');
+      },
+    };
+    const { runner, sessions, completedEvents, blockedEvents } =
+      buildRunner(fake);
+    const session = await sessions.create({
+      ...newSession,
+      mode: 'execute',
+    });
+
+    await runner.runSessionTurn(session.id, session.task);
+
+    expect((await sessions.get(session.id))?.status).toBe('failed');
+    expect(completedEvents).toHaveLength(0);
+    expect(blockedEvents).toEqual([
+      expect.objectContaining({
+        teamId: 'local',
+        agentId: 'alex',
+        projectId: 'local',
+        sessionId: session.id,
+        durationMs: expect.any(Number),
+        reason: 'engine exploded',
+      }),
+    ]);
   });
 
   it('refuses replySession mid-turn and on a closed session', async () => {
