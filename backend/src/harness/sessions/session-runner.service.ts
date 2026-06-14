@@ -180,7 +180,6 @@ export class SessionRunnerService {
             sessionId,
             input: turnMessage,
             metadata: {
-              systemPrompt,
               model: turnModel,
               effort,
               mode: session.mode,
