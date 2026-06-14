@@ -27,8 +27,9 @@ export class CompactionSummary extends TimestampedEntity {
   @Column({ type: 'int' })
   version!: number;
 
-  /** state.messages index of the first verbatim-tail message at trigger time
-   * (= messages.length − COMPACTION_TAIL). The verbatim tail starts here. */
+  /** state.messages index of the first verbatim-tail message at trigger time; at or before
+   * `messages.length − COMPACTION_TAIL` (pairSafeBoundary may walk the cut back to avoid
+   * splitting a tool_use/tool_result group). The verbatim tail starts here. */
   @Column({ type: 'int' })
   covered_up_to!: number;
 
