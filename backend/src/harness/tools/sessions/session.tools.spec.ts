@@ -42,7 +42,10 @@ function makeTool(opts: {
         Promise.resolve(),
     ),
   };
-  const worktrees = { get: () => ({ id: 'wt-001', path: '/tmp/wt' }) };
+  const worktrees = {
+    get: () => ({ id: 'wt-001', path: '/tmp/wt' }),
+    ensureShared: vi.fn(async () => 'shared/ticket-7'),
+  };
   const alex = makeEmployee({ id: 'alex', name: 'Alex', engine: opts.engine });
   const employees = {
     byId: () => alex,

@@ -56,6 +56,8 @@ function buildRunner(
     selfReview?: (planBody: string) => string;
     /** What WorktreeService.refreshFromBase returns (default: a clean refresh). */
     refreshResult?: Awaited<ReturnType<WorktreeService['refreshFromBase']>>;
+    /** Make WorktreeService.refreshFromBase reject (the thrown-error path). */
+    refreshThrows?: boolean;
   } = {},
 ) {
   const worktree = 'worktree' in opts ? opts.worktree : WT;
@@ -86,6 +88,7 @@ function buildRunner(
     get: () => worktree,
     refreshFromBase: async (id: string) => {
       refreshCalls.push(id);
+      if (opts.refreshThrows) throw new Error('git merge blew up');
       return opts.refreshResult ?? { refreshed: true, baseBranch: 'main' };
     },
   } as unknown as WorktreeService;
@@ -988,5 +991,91 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     expect(seen[0]?.task).toContain('main');
     expect(seen[0]?.task).toContain('src/app.ts');
     expect(seen[0]?.task).toContain('do the work'); // original task still there
+  });
+
+  // The engine's `task` is what the bot actually reads — assert the heads-up reaches it (or doesn't).
+  const recordingEngine = (seen: Partial<RunWorkerArgs>[]): WorkerEngine => ({
+    name: EWorkerEngineName.CLAUDE,
+    async run(args: RunWorkerArgs) {
+      seen.push(args);
+      return { result: 'Alex — done.', sessionId: 'e1' };
+    },
+  });
+
+  it('does NOT prepend anything on a CLEAN refresh', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: { refreshed: true, baseBranch: 'main' },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toBe('do the work'); // untouched
+  });
+
+  it('tells the bot when the tree is DIRTY (commit + refresh_worktree)', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: {
+        refreshed: false,
+        dirty: true,
+        baseBranch: 'main',
+        detail: 'the worktree has uncommitted changes',
+      },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/uncommitted changes/);
+    expect(seen[0]?.task).toContain('refresh_worktree');
+    expect(seen[0]?.task).toContain('do the work');
+  });
+
+  it('tells the bot when the refresh did not land (e.g. fetch miss)', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: {
+        refreshed: false,
+        baseBranch: 'main',
+        detail: "couldn't fetch main from origin: network",
+      },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/may be behind/);
+    expect(seen[0]?.task).toContain('refresh_worktree');
+  });
+
+  it('tells the bot when the refresh THREW', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshThrows: true,
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/an error occurred/);
+    expect(seen[0]?.task).toContain('refresh_worktree');
+    expect(seen[0]?.task).toContain('do the work');
+  });
+
+  it('tells the bot when refresh was skipped for a mid-turn sibling session', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen));
+    await sessions.create(execSession); // a sibling, left 'running'
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/another session is mid-turn/);
+    expect(seen[0]?.task).toContain('do the work');
+  });
+
+  it('stays QUIET when there is no base branch to track (unregistered)', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: {
+        refreshed: false,
+        detail: 'no registered GitHub repo matches this worktree',
+      },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toBe('do the work'); // no noise when there's nothing to refresh against
   });
 });

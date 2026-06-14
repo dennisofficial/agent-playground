@@ -74,8 +74,12 @@ export interface BaseRefreshResult {
   baseBranch?: string;
   /** The merge hit conflicts and is left IN PROGRESS in the checkout for a session to resolve. */
   conflicted?: boolean;
+  /** The working tree had uncommitted tracked changes — git would refuse the merge, so the refresh
+   * was skipped (the base wasn't merged in). The owner must commit, then refresh again. */
+  dirty?: boolean;
   /** Conflicted paths when `conflicted`. */
   files?: string[];
-  /** Why this was a no-op: unregistered project, origin-guard refusal, or fetch failure. */
+  /** Why this was a no-op / didn't land: unregistered project, origin-guard refusal, dirty tree,
+   * or fetch failure. */
   detail?: string;
 }

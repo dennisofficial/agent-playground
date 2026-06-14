@@ -152,6 +152,43 @@ describe('WorktreeService (real git, temp repo)', () => {
     expect(service.list({ ownerBot: 'alex' })).toHaveLength(1);
   });
 
+  it('ensureShared promotes a solo worktree to shared/<slug> and records the association', async () => {
+    const { worktree } = await service.create({
+      name: 'solo work',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'local',
+    });
+    expect(worktree.sharedBranch).toBeUndefined();
+
+    const shared = await service.ensureShared(worktree.id, 'ticket-7');
+    expect(shared).toBe('shared/ticket-7');
+    expect(service.get(worktree.id)?.sharedBranch).toBe('shared/ticket-7');
+    // The shared branch exists as a ref and the personal branch records the association durably.
+    expect(await git(repo, 'rev-parse', 'shared/ticket-7')).toBe(
+      await git(repo, 'rev-parse', worktree.branch),
+    );
+    expect(
+      await git(repo, 'config', `branch.${worktree.branch}.agent-shared`),
+    ).toBe('shared/ticket-7');
+  });
+
+  it('ensureShared is idempotent and respects an explicitly-joined shared branch', async () => {
+    // A worktree that already joined a shared branch keeps it (no re-promotion to the ticket name).
+    const { worktree } = await service.create({
+      name: 'feature',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'local',
+      shared: 'big-feature',
+    });
+    expect(worktree.sharedBranch).toBe('shared/big-feature');
+    expect(await service.ensureShared(worktree.id, 'ticket-7')).toBe(
+      'shared/big-feature',
+    );
+    expect(service.get(worktree.id)?.sharedBranch).toBe('shared/big-feature');
+  });
+
   it('maps a subdir WORKER_ROOT to the same subpath inside the checkout', async () => {
     const sub = makeService(join(repo, 'app'));
     const { worktree } = await sub.create({
@@ -1004,6 +1041,29 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     await expect(
       git(worktree.checkout, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'),
     ).resolves.toBeTruthy();
+  });
+
+  it('refreshFromBase reports a DIRTY tree and skips the merge (no clobber)', async () => {
+    const { worktree } = await service.create({
+      name: 'a',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    // Uncommitted tracked change in the checkout — git would refuse to merge over it.
+    await writeFile(join(worktree.checkout, 'README.md'), 'uncommitted edit\n');
+    await advanceOrigin(originDir, 'merged.txt', 'from main\n');
+    const res = await service.refreshFromBase(worktree.id);
+    expect(res.refreshed).toBe(false);
+    expect(res.dirty).toBe(true);
+    expect(res.baseBranch).toBe('main');
+    // The uncommitted edit survives and the merge never happened (origin's file is absent).
+    expect(await readFile(join(worktree.checkout, 'README.md'), 'utf8')).toBe(
+      'uncommitted edit\n',
+    );
+    await expect(
+      readFile(join(worktree.checkout, 'merged.txt'), 'utf8'),
+    ).rejects.toThrow();
   });
 
   it('refreshFromBase is a no-op for an unregistered worktree (no base to track)', async () => {

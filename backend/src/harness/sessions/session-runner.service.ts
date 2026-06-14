@@ -86,6 +86,68 @@ export class SessionRunnerService {
   ) {}
 
   /**
+   * Refresh a worktree against its base branch when execution starts, and return a PREAMBLE to
+   * prepend to the turn's opening message. Empty string on a clean refresh (or a benign "no base to
+   * track" — unregistered local dev); otherwise a one-line heads-up so the bot knows it may be on a
+   * stale base. A merge conflict gets the strongest preamble (resolve it first); a dirty tree / fetch
+   * miss / contention / error each get an actionable note pointing at `refresh_worktree`. Never
+   * throws — staleness must not block the turn.
+   */
+  private async baseRefreshPreamble(
+    sessionId: string,
+    worktree: { id: string },
+  ): Promise<string> {
+    const end = '\n\n';
+    const otherLive = (
+      await this.sessions.list({ worktreeId: worktree.id })
+    ).some((s) => s.id !== sessionId && s.status === 'running');
+    if (otherLive) {
+      this.logger.warn(
+        `${sessionId}: another session is mid-turn in ${worktree.id} — skipping base refresh`,
+      );
+      return `Heads up: this worktree wasn't updated against the base branch because another session is mid-turn in it — your base may be behind. Run \`refresh_worktree\` once it's free if you need the latest.${end}`;
+    }
+    try {
+      const r = await this.worktrees.refreshFromBase(worktree.id);
+      const base = r.baseBranch ?? 'the base branch';
+      if (r.conflicted) {
+        this.logger.log(
+          `${sessionId}: base refresh hit conflicts (${r.baseBranch}) — handing them to the turn`,
+        );
+        return `Before anything else: a merge of the base branch \`${base}\` into this worktree is IN PROGRESS with conflicts in: ${(r.files ?? []).join(', ') || '(unknown files)'}. Resolve the conflicts, commit the merge, then continue.${end}`;
+      }
+      if (r.refreshed) {
+        this.logger.log(
+          `${sessionId}: refreshed ${worktree.id} from ${r.baseBranch}`,
+        );
+        return '';
+      }
+      if (r.dirty) {
+        this.logger.warn(
+          `${sessionId}: base refresh skipped (${worktree.id}) — dirty working tree`,
+        );
+        return `Heads up: this worktree wasn't updated against \`${base}\` because it has uncommitted changes — your base may be behind. Commit your work, then run \`refresh_worktree\` before relying on it.${end}`;
+      }
+      if (r.baseBranch) {
+        // Has a base to track but it didn't land (e.g. fetch miss) — actionable staleness.
+        this.logger.warn(
+          `${sessionId}: base refresh did not land (${worktree.id}) — ${r.detail ?? 'unknown reason'}`,
+        );
+        return `Heads up: this worktree wasn't updated against \`${base}\` (${r.detail ?? 'the refresh did not land'}) — your base may be behind. Run \`refresh_worktree\` to retry when ready.${end}`;
+      }
+      // No base branch to track at all (unregistered / guard) — working on local state is expected;
+      // a heads-up would be noise (and `refresh_worktree` would no-op too).
+      this.logger.log(`${sessionId}: base refresh no-op — ${r.detail}`);
+      return '';
+    } catch (err) {
+      this.logger.warn(
+        `${sessionId}: base refresh failed (${worktree.id}), proceeding on local state: ${err}`,
+      );
+      return `Heads up: this worktree couldn't be updated against the base branch (an error occurred) — your base may be behind. Run \`refresh_worktree\` to retry; if it keeps failing, flag it to Dennis.${end}`;
+    }
+  }
+
+  /**
    * Run one session turn to its report. `message` is the opening task on the first turn, or the
    * owner's reply on later ones. Fire-and-forget — errors are caught here so there's never an
    * unhandled rejection.
@@ -117,38 +179,12 @@ export class SessionRunnerService {
       // to date with the base branch before the engine runs. A worktree cut during stand-up is
       // stale by now (base moved while it sat idle / between sequential tickets). Skip if ANOTHER
       // session is mid-turn in the same checkout (a merge would mutate files under it) — this
-      // session is already 'running', so it's excluded. Best-effort: a refresh failure logs and the
-      // turn proceeds; a CONFLICT is handed to the engine to resolve as its first act.
+      // session is already 'running', so it's excluded. The base merge never blocks the turn: a
+      // CONFLICT is handed to the engine to resolve as its first act, and every OTHER non-clean
+      // outcome (dirty tree, fetch miss, contention, error) is surfaced to the bot as a heads-up so
+      // it knows it may be on a stale base and can `refresh_worktree` after committing.
       if (enteringExecute) {
-        const otherLive = (await this.sessions.list({
-          worktreeId: session.worktreeId,
-        })).some((s) => s.id !== sessionId && s.status === 'running');
-        if (otherLive) {
-          this.logger.warn(
-            `${sessionId}: another session is mid-turn in ${worktree.id} — skipping base refresh`,
-          );
-        } else {
-          try {
-            const r = await this.worktrees.refreshFromBase(session.worktreeId);
-            if (r.conflicted) {
-              this.logger.log(
-                `${sessionId}: base refresh hit conflicts (${r.baseBranch}) — handing them to the turn`,
-              );
-              message =
-                `Before anything else: a merge of the base branch \`${r.baseBranch}\` into this worktree is IN PROGRESS with conflicts in: ${(r.files ?? []).join(', ') || '(unknown files)'}. Resolve the conflicts, commit the merge, then continue.\n\n${message}`;
-            } else if (r.refreshed) {
-              this.logger.log(
-                `${sessionId}: refreshed ${worktree.id} from ${r.baseBranch}`,
-              );
-            } else if (r.detail) {
-              this.logger.log(`${sessionId}: base refresh no-op — ${r.detail}`);
-            }
-          } catch (err) {
-            this.logger.warn(
-              `${sessionId}: base refresh failed (${worktree.id}), proceeding on local state: ${err}`,
-            );
-          }
-        }
+        message = (await this.baseRefreshPreamble(sessionId, worktree)) + message;
       }
       // Per-turn spec from the employee: a 'plan' turn runs on the plan engine recipe, 'execute' on
       // the execute one (model/effort/systemPrompt). Byte-stable across turns; `mode` also drives the

@@ -661,8 +661,9 @@ export class WorktreeService implements OnApplicationBootstrap {
    * and merge it into the checkout. This is the "keep the worktree current" primitive — a worktree
    * cut during stand-up planning is stale by the time it executes (base moved). Same conflict shape
    * as publish/pull (the merge is left IN PROGRESS for a session's turn to resolve). Unregistered
-   * projects, an origin-guard refusal, or a fetch miss are no-ops (`refreshed:false` + detail), never
-   * errors — execution proceeds on local state rather than being blocked.
+   * projects, an origin-guard refusal, a DIRTY working tree (git would refuse the merge), or a fetch
+   * miss are no-ops (`refreshed:false` + detail), never errors — execution proceeds on local state
+   * rather than being blocked. The caller surfaces non-clean outcomes to the owner.
    */
   async refreshFromBase(id: string): Promise<BaseRefreshResult> {
     return this.gitOps(async () => {
@@ -680,6 +681,22 @@ export class WorktreeService implements OnApplicationBootstrap {
       const guard = await this.originGuard(wt, rec);
       if (guard) return { refreshed: false, detail: guard };
       const base = rec.defaultBranch;
+      // Uncommitted tracked changes make `git merge` refuse outright (it would clobber them) — return
+      // a structured result, not a thrown error, so the caller can tell the owner to commit + refresh.
+      const dirty = !!(
+        await this.git(
+          ['status', '--porcelain', '--untracked-files=no'],
+          wt.checkout,
+        ).catch(() => '')
+      ).trim();
+      if (dirty) {
+        return {
+          refreshed: false,
+          dirty: true,
+          baseBranch: base,
+          detail: `the worktree has uncommitted changes — commit them, then refresh against ${base}`,
+        };
+      }
       const auth = gitAuthEnv(rec.gitUrl, await this.tokenFor(rec));
       try {
         await this.git(['fetch', 'origin', base], wt.repoRoot, auth);
@@ -806,6 +823,36 @@ export class WorktreeService implements OnApplicationBootstrap {
       );
     }
     return wt;
+  }
+
+  /**
+   * Promote a worktree to a shared integration branch if it isn't on one already — so the review
+   * pipeline always has a `shared/<slug>` to publish + open/ready the PR through, for SOLO work as
+   * well as multi-employee. Without this, a solo engineer's personal-branch work can't be readied by
+   * the harness (mark_pr_ready / the pipeline only reach shared branches). Idempotent: a worktree that
+   * already joined a shared branch (explicit multi-employee work) keeps it. The caller derives `name`
+   * from the TICKET at execute-session start, so every owner of a ticket converges on the SAME shared
+   * branch with no name coordination. Returns the shared branch name, or undefined for an unknown
+   * worktree. Cuts the shared branch from the worktree's current branch tip (refreshed from base at
+   * execute start, so ≈ origin/base) — a later publish fast-forwards / merges the personal work in.
+   */
+  async ensureShared(id: string, name: string): Promise<string | undefined> {
+    return this.gitOps(async () => {
+      const wt = this.worktrees.get(id);
+      if (!wt) return undefined;
+      if (wt.sharedBranch) return wt.sharedBranch; // already shared — respect it
+      const shared = this.sharedBranchName(name);
+      const startPoint = await this.git(['rev-parse', wt.branch], wt.repoRoot);
+      await this.ensureSharedBranch(shared, wt.repoRoot, startPoint);
+      // Record the personal branch's association so it survives restarts (re-adopted like create()).
+      await this.git(
+        ['config', `branch.${wt.branch}.${SHARED_CONFIG_KEY}`, shared],
+        wt.repoRoot,
+      );
+      wt.sharedBranch = shared;
+      this.logger.log(`${id}: promoted ${wt.branch} to shared branch ${shared}`);
+      return shared;
+    });
   }
 
   /**

@@ -156,13 +156,19 @@ export class CreateSessionTool implements IHarnessTool<
     // worktree + shared branch on this owner's plan row so the integration barrier finds them later.
     // Both best-effort — they must never fail the session that's already running.
     if (mode === 'execute' && board_task_id !== undefined && boardTask) {
+      // Ensure the worktree is on a shared branch derived from the TICKET, so the review pipeline can
+      // open + ready the PR through it for SOLO work too (not only multi-employee), and every owner of
+      // this ticket converges on the same shared branch. No-op if it already joined one explicitly.
+      const sharedBranch = await this.worktrees
+        .ensureShared(worktreeId, `ticket-${board_task_id}`)
+        .catch(() => worktree.sharedBranch);
       await this.board
         .transition(id.team, board_task_id, 'approved', { status: 'executing' })
         .catch(() => undefined);
       await this.plans
         .setExecuteContext(id.team, board_task_id, id.selfAgent, {
           executeWorktreeId: worktreeId,
-          sharedBranch: worktree.sharedBranch,
+          sharedBranch: sharedBranch ?? worktree.sharedBranch,
         })
         .catch(() => undefined);
     }
