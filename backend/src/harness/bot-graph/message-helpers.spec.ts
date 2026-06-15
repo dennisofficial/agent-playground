@@ -857,5 +857,33 @@ describe('findCompactionCutPoint', () => {
     const result = findCompactionCutPoint(messages, 0, 1000);
     expect(result).toBe(0);
   });
+
+  it('regression: returns `from` when pairSafeBoundary walk-back makes tail stay above the compaction trigger', () => {
+    // Safety net for the "compaction stuck" scenario: a HumanMessage so large (alone > budget)
+    // that pairSafeBoundary collapses every candidate back to floor. There is no valid cut;
+    // findCompactionCutPoint must return `from` so compactionNode's `cutPoint <= from` guard
+    // fires and returns {} — no LLM call, no infinite retry loop despite trigger re-firing.
+    //
+    //  messages[0]: HumanMessage 80_000 chars ≈ 20_000 est. tokens
+    //  messages[1]: AIMessage 'reply'          ≈ 2 est. tokens
+    //  Total ≈ 20_002 tokens — above COMPACTION_TRIGGER_TOKENS (20k), so trigger fires.
+    //
+    // Walk i=1: 2 tokens fits in budget=10_000. cut=1.
+    // Walk i=0: acc+20_000=20_002 > 10_000, AND i=0 < messages.length-1=1 → break. raw cut=1 (AI).
+    // pairSafeBoundary(messages, 1, 0):
+    //   (a) messages[1]=AI, not tool → skip.
+    //   (b) messages[2] undefined → skip.
+    //   (c) b=1 is AI → b-- → b=0 (Human). b=0 ≤ floor=0 → return 0.
+    // Result = 0 = from → compactionNode's `cutPoint <= from` guard fires → returns {} safely.
+    const messages = [
+      new HumanMessage('x'.repeat(80_000)), // ~20_000 tokens — alone fills/exceeds budget
+      new AIMessage({ content: 'reply' }),
+    ];
+    const result = findCompactionCutPoint(messages, 0, 10_000);
+    expect(result).toBe(0); // pairSafeBoundary collapsed → no progress → caller must bail
+    // Confirm the tail from `result` is still above the compaction trigger (20k tokens),
+    // proving this is the stuck scenario: trigger fires but compaction makes no progress.
+    expect(sumMessageTokens(messages.slice(result))).toBeGreaterThan(20_000);
+  });
 });
 
