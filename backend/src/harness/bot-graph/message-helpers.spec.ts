@@ -65,11 +65,14 @@ describe('compactPriorToolResults', () => {
         },
       ],
     });
+    // Content must be >200 chars so the 200-char truncation fires; the unique sentinel
+    // is placed after position 200 so .not.toContain verifies it was cut off.
+    // (Short results ≤200 chars are included verbatim — see "does not truncate" test.)
     const priorTool = new ToolMessage({
       tool_call_id: 'old',
       name: 'search',
-      content:
-        'A large result that should be replaced by a compact evidence record',
+      content: 'A large result: ' + 'x'.repeat(184) + 'TRUNCATED_SENTINEL',
+      //        ← 16 chars →          ← 184 chars →    at position 200+
     });
     // Current turn — last AI message, no tool calls pending
     const currentAi = new AIMessage({ content: 'Done.' });
@@ -92,10 +95,10 @@ describe('compactPriorToolResults', () => {
     expect(body).toContain('Args:');
     expect(body).toContain('Result:');
     expect(body).toContain('(full result in transcript)');
-    // Original bulky content is gone
-    expect(body).not.toContain(
-      'A large result that should be replaced by a compact evidence record',
-    );
+    // Truncation ellipsis present (result was >200 chars)
+    expect(body).toContain('…');
+    // Content beyond the 200-char cut is gone
+    expect(body).not.toContain('TRUNCATED_SENTINEL');
   });
 
   it('compacts prior-turn results but keeps the current-turn result full when both are present', () => {
@@ -104,10 +107,14 @@ describe('compactPriorToolResults', () => {
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 'old', type: 'tool_call' }],
     });
+    // Content must be >200 chars so the 200-char truncation fires; the unique sentinel
+    // is placed after position 200 so .not.toContain verifies it was cut off.
+    // (Short results ≤200 chars are included verbatim — see "does not truncate" test.)
     const priorTool = new ToolMessage({
       tool_call_id: 'old',
       name: 'recall',
-      content: 'prior result — should be compacted',
+      content: 'Prior result: ' + 'x'.repeat(186) + 'PRIOR_SENTINEL',
+      //        ← 14 chars →        ← 186 chars →   at position 200+
     });
     // Current turn (model just called a tool, results are in-flight)
     const currAi = new AIMessage({
@@ -135,13 +142,12 @@ describe('compactPriorToolResults', () => {
     expect((out[3] as ToolMessage).content).toBe(
       'current result — must stay full',
     );
-    // Prior-turn result compacted
+    // Prior-turn result compacted: sentinel beyond 200-char cut is gone
     const compacted = out[1] as ToolMessage;
     expect(compacted.content).toContain('[Tool: recall]');
     expect(compacted.content).toContain('(full result in transcript)');
-    expect(compacted.content).not.toContain(
-      'prior result — should be compacted',
-    );
+    expect(compacted.content).toContain('…');
+    expect(compacted.content).not.toContain('PRIOR_SENTINEL');
   });
 
   it('truncates args JSON to 100 chars with an ellipsis', () => {
