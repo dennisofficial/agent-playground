@@ -60,12 +60,13 @@ key there only to deviate from the shared dev workspace.
 Without them pnpm can't link the workspace packages and `tsc` throws TS2307.
 
 ```bash
-# From the repo root — initializes submodules AND installs in one step:
+# From the repo root — initializes submodules, installs, AND builds packages in one step:
 $ pnpm run setup
 
 # Or separately:
 $ git submodule update --init --recursive
 $ pnpm install
+$ pnpm build:packages   # required: builds @workspace/langfuse and @workspace/auth dist/
 ```
 
 ## Compile and run the project
