@@ -2,10 +2,11 @@ import type { Type } from '@nestjs/common';
 import type { EngineSpec } from '../engines/engine-spec';
 import {
   EXECUTE_CLAUDE,
+  INVESTIGATE_CLAUDE_MODEL,
   PLAN_CLAUDE,
   type EnginePreset,
 } from '../engines/engine-presets';
-import type { EWorkerEngineName } from '../engines/worker-engine.port';
+import { EWorkerEngineName } from '../engines/worker-engine.port';
 import type { McpServerConfig, SkillSource } from '../skills/skill.types';
 import type { IHarnessTool } from '../tools/tool.types';
 import type { Capability } from './capability';
@@ -64,6 +65,17 @@ export abstract class BaseEmployee implements EmployeeDefinition {
 
   executeEngine(ctx: EmployeeContext): EngineSpec {
     return this.engineSpec(ctx, this.executePreset);
+  }
+
+  investigateEngine(ctx: EmployeeContext): EngineSpec {
+    const spec = this.executeEngine(ctx);
+    // INVARIANT: investigate is execute's engine with a model-only override — the ENGINE never
+    // changes. EngineHomeProvisioner's [plan, execute] home set + replySession's engine guard rely on
+    // this. Claude investigations run a top-tier reasoning model (they exist to BACK facts/decisions
+    // with the real code, not answer from memory); Codex/LangGraph route their own models.
+    return spec.engine === EWorkerEngineName.CLAUDE
+      ? { ...spec, model: INVESTIGATE_CLAUDE_MODEL }
+      : spec;
   }
 
   /**

@@ -770,10 +770,10 @@ describe('SessionRunnerService — plan relay (no auto-attach) + plan.finished h
   });
 });
 
-describe('SessionRunnerService — investigate confidence escalation (v2)', () => {
+describe('SessionRunnerService — investigate runs on the Opus recipe', () => {
   const investigate = { ...newSession, mode: 'investigate' as const };
 
-  it('re-runs ONCE on the deeper model when an investigate report is LOW confidence, and relays that pass', async () => {
+  it('runs a Claude investigate turn ONCE on claude-opus-4-8, regardless of reported confidence', async () => {
     const models: Array<string | undefined> = [];
     let calls = 0;
     const fake: WorkerEngine = {
@@ -781,58 +781,23 @@ describe('SessionRunnerService — investigate confidence escalation (v2)', () =
       async run(args: RunWorkerArgs) {
         calls++;
         models.push(args.model);
-        return calls === 1
-          ? {
-              result: 'Alex — partial answer.\nConfidence: low — could not find it.',
-              sessionId: 'engine-1',
-            }
-          : {
-              result: 'Alex — deeper answer.\nConfidence: high — verified.',
-              sessionId: 'engine-1',
-            };
+        // Even a LOW-confidence report no longer triggers a second pass — Opus is already the base.
+        return {
+          result: 'Alex — answer.\nConfidence: low — could not find it.',
+          sessionId: 'engine-1',
+        };
       },
     };
     const { runner, sessions } = buildRunner(fake);
     const session = await sessions.create(investigate);
     await runner.runSessionTurn(session.id, session.task);
 
-    expect(calls).toBe(2);
-    expect(models[1]).toBe('claude-opus-4-8'); // the second pass used the escalation model
-    expect(models[1]).not.toBe(models[0]);
+    expect(calls).toBe(1); // single pass — no escalation re-run
+    expect(models[0]).toBe('claude-opus-4-8'); // investigate recipe = Opus, not the Sonnet execute model
     const after = await sessions.get(session.id);
     expect(after?.status).toBe('idle');
-    expect(after?.lastReport).toContain('deeper answer'); // the escalated pass is what relays
-    expect(after?.turns).toBe(1); // still ONE logical turn
-  });
-
-  it('does NOT escalate when confidence is not low (or no marker)', async () => {
-    let calls = 0;
-    const fake: WorkerEngine = {
-      name: EWorkerEngineName.CLAUDE,
-      async run() {
-        calls++;
-        return { result: 'Alex — solid.\nConfidence: high — verified.', sessionId: 'e1' };
-      },
-    };
-    const { runner, sessions } = buildRunner(fake);
-    const session = await sessions.create(investigate);
-    await runner.runSessionTurn(session.id, session.task);
-    expect(calls).toBe(1);
-  });
-
-  it('does NOT escalate a non-investigate (plan/execute) turn, even on low confidence', async () => {
-    let calls = 0;
-    const fake: WorkerEngine = {
-      name: EWorkerEngineName.CLAUDE,
-      async run() {
-        calls++;
-        return { result: 'Alex — plan.\nConfidence: low — unsure.', sessionId: 'e1' };
-      },
-    };
-    const { runner, sessions } = buildRunner(fake);
-    const session = await sessions.create(newSession); // mode: 'plan'
-    await runner.runSessionTurn(session.id, session.task);
-    expect(calls).toBe(1);
+    expect(after?.lastReport).toContain('answer');
+    expect(after?.turns).toBe(1);
   });
 });
 

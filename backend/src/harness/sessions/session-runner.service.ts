@@ -1,7 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type ChatTracePointer, traceSessionTurn } from '@workspace/langfuse';
-import { INVESTIGATE_ESCALATION_MODEL } from '../engines/engine-presets';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
 import {
@@ -10,6 +9,7 @@ import {
   WorkerMode,
 } from '../engines/worker-engine.port';
 import { toGenerationUsage } from '../llm/usage-format';
+import { engineSpecForMode } from '../employees/engine-for-mode';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { PersonaService } from '../employees/persona.service';
 import { LifecycleRunner } from '../lifecycle/lifecycle.runner';
@@ -23,7 +23,6 @@ import { WorklogStore } from '../memory/worklog-store';
 import { MetricsEventsService } from '../metrics/metrics-events.service';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
-import { investigationConfidence } from './confidence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
@@ -55,10 +54,6 @@ function renderEvent(e: WorkerEvent): string {
 
 const TRANSCRIPT_PAGE_SIZE = 40;
 const TRANSCRIPT_MAX_MATCHES = 30;
-
-/** The re-ask sent into the engine session when an investigation reports LOW confidence (v2). */
-const ESCALATION_NUDGE =
-  "Your previous answer reported LOW confidence. Take another, deeper pass: re-read the relevant code, specifically verify the things you said you could not confirm, and correct anything you guessed or got wrong. End again with the exact Confidence and Couldn't-verify lines.";
 
 @Injectable()
 export class SessionRunnerService {
@@ -186,14 +181,14 @@ export class SessionRunnerService {
       if (enteringExecute) {
         message = (await this.baseRefreshPreamble(sessionId, worktree)) + message;
       }
-      // Per-turn spec from the employee: a 'plan' turn runs on the plan engine recipe, 'execute' on
-      // the execute one (model/effort/systemPrompt). Byte-stable across turns; `mode` also drives the
-      // engine's read-only posture at the seam. `session.engine` (fixed at create) is the source of
-      // truth for WHICH engine — an engine-changing mode flip is refused at replySession, so the
-      // resolved spec's engine always matches it.
+      // Per-turn spec from the employee, by mode: 'plan' → plan recipe, 'investigate' → investigate
+      // recipe (execute's engine on a top-tier model), else the execute recipe (model/effort/
+      // systemPrompt). Byte-stable across turns; `mode` also drives the engine's read-only posture at
+      // the seam. `session.engine` (fixed at create) is the source of truth for WHICH engine — an
+      // engine-changing mode flip is refused at replySession, so the resolved spec's engine always
+      // matches it (investigate keeps execute's engine, so the flip into it is never engine-changing).
       const ctx = this.persona.context();
-      const spec =
-        session.mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx);
+      const spec = engineSpecForMode(bot, ctx, session.mode);
       const { model, effort, systemPrompt } = spec;
 
       this.logger.log(
@@ -208,8 +203,7 @@ export class SessionRunnerService {
           : keys.anthropic;
       // Jail the in-process langgraph tools to the worktree for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
-      // One engine run, parametrized by message / model / resume-id so the confidence escalation
-      // below can fire a SECOND run (deeper model, same engine session) within this one turn.
+      // The single engine run for this turn, parametrized by message / model / resume-id.
       // `systemPrompt`/`effort`/`mode` are constant for the turn.
       const runEngineTurn = (
         turnMessage: string,
@@ -274,42 +268,10 @@ export class SessionRunnerService {
         );
 
       const first = await runTraced(message, model, session.engineSessionId);
-      let result = first.result;
-      let engineSessionId = first.sessionId;
+      const result = first.result;
+      const engineSessionId = first.sessionId;
       const { questions, planText } = first;
 
-      // V2 — confidence-gated escalation. A read-only INVESTIGATE turn whose report self-declares
-      // LOW confidence gets ONE deeper pass on a higher-reasoning model, resuming the same engine
-      // session so it builds on and corrects the first attempt; that pass's report becomes what
-      // relays. Bounded to a single re-run. Skipped for: non-Claude engines (they route their own
-      // models), questions-turns (they need answers, not more reasoning), and aborts. Falls SAFE
-      // when no confidence marker is present (investigationConfidence → null ≠ 'low').
-      if (
-        session.mode === 'investigate' &&
-        session.engine === EWorkerEngineName.CLAUDE &&
-        !questions?.length &&
-        !ac.signal.aborted &&
-        investigationConfidence(result) === 'low'
-      ) {
-        this.logger.log(
-          `${sessionId} investigate confidence LOW — escalating one pass to ${INVESTIGATE_ESCALATION_MODEL}`,
-        );
-        await this.sessions
-          .appendProgress(sessionId, {
-            kind: 'text',
-            text: `Confidence was low — taking a second, deeper pass on ${INVESTIGATE_ESCALATION_MODEL}.`,
-          })
-          .catch(() => undefined);
-        const deeper = await runTraced(
-          ESCALATION_NUDGE,
-          INVESTIGATE_ESCALATION_MODEL,
-          engineSessionId,
-        );
-        if (!ac.signal.aborted) {
-          result = deeper.result;
-          engineSessionId = deeper.sessionId ?? engineSessionId;
-        }
-      }
       // Closed while we were finishing up: discard the result, don't go idle or relay. The abort
       // flag alone isn't enough — closeSession writes 'closed' BEFORE calling abort(), so an engine
       // that resolves inside that window would see aborted=false and overwrite the close with
@@ -492,9 +454,7 @@ export class SessionRunnerService {
       const bot =
         this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
       const ctx = this.persona.context();
-      const targetEngine = (
-        mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx)
-      ).engine;
+      const targetEngine = engineSpecForMode(bot, ctx, mode).engine;
       if (targetEngine !== session.engine) {
         return {
           ok: false,

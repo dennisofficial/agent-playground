@@ -1,7 +1,7 @@
 import { makeEmployee } from '@harness/employees/employee.testing';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 import type { Identity } from '../../domain/identity';
-import { CreateSessionTool } from './session.tools';
+import { CheckSessionTool, CreateSessionTool } from './session.tools';
 
 /**
  * The create_session side of the approval gate: an execute-mode session is checked against the
@@ -187,5 +187,44 @@ describe('create_session × the approval gate', () => {
     );
     // 3rd arg of runSessionTurn is the parent-chat-trace pointer (for the session-turn observation).
     expect(runner.runSessionTurn.mock.calls[0]?.[2]).toEqual(parentChatTrace);
+  });
+});
+
+describe('check_session × the displayed engine tier', () => {
+  function makeCheckTool(session: Record<string, unknown>) {
+    const sessions = {
+      get: vi.fn(() => Promise.resolve(session)),
+      latest: vi.fn(() => Promise.resolve(session)),
+    };
+    const runner = { getSessionActivity: vi.fn(() => Promise.resolve('')) };
+    const alex = makeEmployee({ id: 'alex', name: 'Alex' }); // Claude
+    const employees = {
+      byId: () => alex,
+      fallbackOwner: () => alex,
+      context: () => ({ team: 'local', roster: 'Alex — backend engineer' }),
+    };
+    return new CheckSessionTool(
+      sessions as never,
+      runner as never,
+      employees as never,
+    );
+  }
+
+  it('renders a Claude investigate session on the Opus tier (not the Sonnet execute model)', async () => {
+    const tool = makeCheckTool({
+      id: 'sess-001',
+      ownerBot: 'alex',
+      mode: 'investigate',
+      engine: EWorkerEngineName.CLAUDE,
+      status: 'idle',
+      lastReport: 'the answer',
+      lastReportKind: 'text',
+      worktreeId: 'wt-001',
+      turns: 1,
+      task: 'how does the gate work?',
+    });
+    const out = await tool.execute({ sessionId: 'sess-001' }, ctx);
+    expect(out).toContain('investigate on claude-opus-4-8');
+    expect(out).not.toContain('claude-sonnet-4-6');
   });
 });

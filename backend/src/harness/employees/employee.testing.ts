@@ -2,6 +2,7 @@ import type { Type } from '@nestjs/common';
 import {
   EXECUTE_CLAUDE,
   EXECUTE_CODEX,
+  INVESTIGATE_CLAUDE_MODEL,
   PLAN_CLAUDE,
   PLAN_CODEX,
 } from '../engines/engine-presets';
@@ -56,6 +57,14 @@ export const makeEmployee = (
     chatPrompt: () => `persona for ${name}`,
     planEngine: () => ({ ...planPreset, systemPrompt: `worker:${name}` }),
     executeEngine: () => ({ ...execPreset, systemPrompt: `worker:${name}` }),
+    investigateEngine: () => ({
+      ...execPreset,
+      // Mirror BaseEmployee: Claude investigations override model only; Codex keeps the exec preset.
+      ...(engine === EWorkerEngineName.CODEX
+        ? {}
+        : { model: INVESTIGATE_CLAUDE_MODEL }),
+      systemPrompt: `worker:${name}`,
+    }),
     capabilities: () => caps,
   };
 };

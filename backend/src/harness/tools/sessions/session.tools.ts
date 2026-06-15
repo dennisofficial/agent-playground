@@ -11,6 +11,7 @@ import {
   EWorkerEngineName,
   type WorkerMode,
 } from '../../engines/worker-engine.port';
+import { engineSpecForMode } from '../../employees/engine-for-mode';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { BoardStore } from '../../memory/board-store';
 import { PlanStore } from '../../memory/plan-store';
@@ -348,10 +349,7 @@ export class CheckSessionTool implements IHarnessTool<
     const bot =
       this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
     const specCtx = this.employees.context();
-    const { model, effort } =
-      session.mode === 'plan'
-        ? bot.planEngine(specCtx)
-        : bot.executeEngine(specCtx);
+    const { model, effort } = engineSpecForMode(bot, specCtx, session.mode);
     const tier = `${session.mode} on ${model ?? `${session.engine} default`}${effort ? `, effort ${effort}` : ''}`;
     const board =
       session.boardTaskId !== undefined

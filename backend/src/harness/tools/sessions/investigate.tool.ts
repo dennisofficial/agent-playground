@@ -31,22 +31,22 @@ const investigateSchema = z.object({
 });
 
 /**
- * The fast read-only "look at the code and tell me" tool — every employee has it (whenever they
- * answer a question, it almost always needs grounding in the real codebase). It opens a session in
- * the new `investigate` mode: read-only at the engine seam (like plan, so it can never modify
- * anything and needs no approval) but WITHOUT the engine's slow native plan ceremony — the worker
- * reads/greps and answers directly in one turn instead of producing a plan artifact.
+ * The fact-grounding tool — every employee has it. It's how an employee BACKS a fact or decision with
+ * the real codebase instead of answering from memory: it opens a session in the `investigate` mode
+ * (read-only at the engine seam, like plan, so it can never modify anything and needs no approval; but
+ * WITHOUT the engine's native plan ceremony — the worker reads/greps and answers directly in one turn
+ * instead of producing a plan artifact).
  *
  * It reuses `CreateSessionTool.openSession` (the shared worktree/ownership/ALS-detached path) on the
- * employee's EXECUTE engine recipe (fast enough — the win is skipping planning, not effort). The
- * session stays open for read-only follow-ups (reply_session). Like `create_session`, calling it
- * ENDS THE TURN — the answer relays back when the turn reports.
+ * employee's INVESTIGATE engine recipe (execute's engine on a top-tier reasoning model — grounding
+ * facts is worth the better model). The session stays open for read-only follow-ups (reply_session).
+ * Like `create_session`, calling it ENDS THE TURN — the answer relays back when the turn reports.
  */
 @HarnessTool()
 export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
   readonly name = 'investigate';
   readonly description =
-    "Spin up a FAST read-only worker to answer a question from the ACTUAL codebase — it reads/greps the repo and reports back, without the slow native plan ceremony. Reach for this whenever a question needs grounding in real code (how does X work, where is Y, does Z already exist) instead of guessing. It's read-only: it never modifies anything and needs no approval. Calling this ENDS YOUR TURN, so put any brief first-person heads-up in THIS message's text; you're notified when it reports back, and it stays open for read-only follow-ups (reply_session).";
+    "Ground your answer in the ACTUAL codebase before you commit to it — spins up a read-only worker that reads/greps the real repo and reports what's actually true. Reach for it ANY time your reply, decision, or recommendation rests on a checkable fact about the code (how does X work, where is Y, does Z already exist, is this premise even true): back it with the code instead of answering from memory or assumption. It never modifies anything and needs no approval. Calling this ENDS YOUR TURN, so put any brief first-person heads-up in THIS message's text; you're notified when it reports back, and it stays open for read-only follow-ups (reply_session).";
   readonly schema = investigateSchema;
   readonly terminal = true;
 
@@ -63,9 +63,10 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     const id = ctx.identity;
     const bot =
       this.employees.byId(id.selfAgent) ?? this.employees.fallbackOwner();
-    // Investigate runs on the EXECUTE recipe (the session-runner resolves any non-plan mode to it);
-    // pin the create-time engine to match so the per-turn spec's engine never disagrees.
-    const engine = bot.executeEngine(this.employees.context()).engine;
+    // Investigate runs on the INVESTIGATE recipe (the session-runner resolves the mode to it); pin the
+    // create-time engine to match so the per-turn spec's engine never disagrees. (Same engine as
+    // execute — investigate is a model-only override — so this is just sourcing it from one builder.)
+    const engine = bot.investigateEngine(this.employees.context()).engine;
 
     const wt = await this.resolveWorktree(id, worktreeId);
     if ('error' in wt) return wt.error;
@@ -73,7 +74,10 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     const opening = question.trim();
     // The shared investigate template adds the read-only/cite-file:line framing, the optional
     // intent emphasis, and the REQUIRED Confidence/Couldn't-verify trailer (see engine.prompts.ts).
-    const openingTask = DEFAULT_INVESTIGATE_PROMPT({ question: opening, intent });
+    const openingTask = DEFAULT_INVESTIGATE_PROMPT({
+      question: opening,
+      intent,
+    });
     const { sessionId } = await this.createSession.openSession({
       identity: id,
       worktreeId: wt.id,
