@@ -93,6 +93,13 @@ describe('submit_for_review', () => {
     expect(reviewOwner).not.toHaveBeenCalled();
   });
 
+  it('accepts a resubmit from self_review (the fix-and-resubmit path)', async () => {
+    const { tool, reviewOwner } = makeTool({ taskStatus: 'self_review' });
+    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx as never);
+    expect(reviewOwner).toHaveBeenCalledTimes(1);
+    expect(msg).toMatch(/submitted sess-1 \(#7\) for review/i);
+  });
+
   it('rejects a session owned by someone else', async () => {
     const { tool, reviewOwner } = makeTool({
       session: makeSession({ ownerBot: 'riley' }),

@@ -22,3 +22,7 @@ dist
 /.docker/
 # Slack app credentials captured at app-creation time (apps.manifest.create) — NEVER commit
 backend/slack-manifests/.app-credentials.json
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+# Graphify knowledge-graph artifacts
+/graphify-out/

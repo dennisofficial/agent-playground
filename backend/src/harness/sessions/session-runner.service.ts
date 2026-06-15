@@ -527,11 +527,13 @@ export class SessionRunnerService {
     }
     // 'approved' (first execute session — the approved→executing CAS in CreateSessionTool flips it),
     // 'executing' (work in flight — continuing turns and additional owners), and 'done' all execute.
-    // 'self_review' is NOT here: the integration barrier's bounded fix loop reaches a self_review
-    // session only through SessionRunner.resumeInternal (harness-initiated), never a bot tool call.
+    // 'self_review' is HERE too: after the integration self-review hands the owner the ship-or-fix
+    // decision, a legitimate fix pass runs in their execute session (reply_session, or a fresh execute
+    // session for the closed-session fallback) while the ticket sits in self_review.
     if (
       task!.status === 'approved' ||
       task!.status === 'executing' ||
+      task!.status === 'self_review' ||
       task!.status === 'done'
     )
       return null;

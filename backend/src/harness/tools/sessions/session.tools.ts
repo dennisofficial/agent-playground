@@ -15,6 +15,7 @@ import { engineSpecForMode } from '../../employees/engine-for-mode';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { BoardStore } from '../../memory/board-store';
 import { PlanStore } from '../../memory/plan-store';
+import { TicketNoteStore } from '../../memory/ticket-note-store';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -44,6 +45,19 @@ const modeField = z
     "'plan' = read-only (the engine's native planning posture — investigation, review, planning a change); 'execute' = can change the worktree.",
   );
 
+const reviewNoteField = z
+  .number()
+  .int()
+  .optional()
+  .describe(
+    "A self-review findings note (#X from the self-review heads-up) to load into this session — the harness inlines the full findings so you don't retype them. Use it when addressing self-review feedback.",
+  );
+
+/** The findings block the harness inlines when a tool is handed a review note id. */
+function reviewFindingsBlock(noteId: number, body: string): string {
+  return `SELF-REVIEW FINDINGS TO ADDRESS (note #${noteId}):\n${body}`;
+}
+
 const createSessionSchema = z.object({
   worktreeId: z.string().describe('The worktree this session runs in.'),
   task: z
@@ -57,6 +71,7 @@ const createSessionSchema = z.object({
     .describe(
       'The team-board task (#N from list_board) this session works. Link it for ANY board work: the plan→approval flow runs through the board, and an execute turn is refused until the task is approved.',
     ),
+  review_note_id: reviewNoteField,
 });
 
 @HarnessTool()
@@ -76,6 +91,7 @@ export class CreateSessionTool implements IHarnessTool<
     private readonly employees: EmployeeRegistry,
     private readonly board: BoardStore,
     private readonly plans: PlanStore,
+    private readonly notes: TicketNoteStore,
   ) {}
 
   async execute(
@@ -84,6 +100,7 @@ export class CreateSessionTool implements IHarnessTool<
       task,
       mode,
       board_task_id,
+      review_note_id,
     }: z.infer<typeof createSessionSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
@@ -140,6 +157,15 @@ export class CreateSessionTool implements IHarnessTool<
         });
         if (task.trim()) openingTask += `\n\nTASK:\n${task.trim()}`;
       }
+    }
+    // Inline self-review findings by id so the owner doesn't retype them (the closed-session fallback;
+    // the recommended path is reply_session into the still-open execute session).
+    if (review_note_id !== undefined && board_task_id !== undefined) {
+      const note = await this.notes
+        .get(id.team, board_task_id, review_note_id)
+        .catch(() => undefined);
+      if (note)
+        openingTask += `\n\n${reviewFindingsBlock(note.id, note.body)}`;
     }
     const { sessionId } = await this.openSession({
       identity: id,
@@ -234,6 +260,7 @@ const replySessionSchema = z.object({
     .describe(
       "Switch the session's mode from this turn on (e.g. a plan session into execution for quick non-board work). BOARD work does NOT switch here — approved tickets execute in a fresh execute session opened from the plan.",
     ),
+  review_note_id: reviewNoteField,
 });
 
 @HarnessTool()
@@ -249,15 +276,26 @@ export class ReplySessionTool implements IHarnessTool<
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     private readonly runner: SessionRunnerService,
+    private readonly notes: TicketNoteStore,
   ) {}
 
   async execute(
-    { sessionId, message, mode }: z.infer<typeof replySessionSchema>,
+    { sessionId, message, mode, review_note_id }: z.infer<typeof replySessionSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const session = await this.sessions.get(sessionId);
     if (!session || session.ownerBot !== ctx.identity.selfAgent)
       throw new Error(`Couldn't reply to ${sessionId}: not your session.`);
+    // Inline self-review findings by id (the recommended fix path: feed the notes into this still-open
+    // execute session). The harness loads the full note so the owner only writes how to proceed.
+    let outgoing = message;
+    if (review_note_id !== undefined && session.boardTaskId !== undefined) {
+      const note = await this.notes
+        .get(session.team, session.boardTaskId, review_note_id)
+        .catch(() => undefined);
+      if (note)
+        outgoing = `${reviewFindingsBlock(note.id, note.body)}\n\n${message}`;
+    }
     // The reply fires fire-and-forget and must run in a clean store so a LangGraph run's callbacks
     // don't bleed into the chat stream.
     let res: ActionResult = { ok: false };
@@ -266,7 +304,7 @@ export class ReplySessionTool implements IHarnessTool<
       async () => {
         res = await this.runner.replySession(
           sessionId,
-          message,
+          outgoing,
           mode,
           ctx.parentChatTrace,
         );

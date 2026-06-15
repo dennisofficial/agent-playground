@@ -18,6 +18,7 @@ import {
 import { BoardStore } from '../memory/board-store';
 import { BoardEventsBus } from '../memory/board-events.bus';
 import { PlanStore, type TaskPlan } from '../memory/plan-store';
+import { TicketNoteStore } from '../memory/ticket-note-store';
 import { parseGithubRepo } from '../projects/git-auth';
 import { GithubApiService } from '../projects/github-api.service';
 import { GithubTokenStore } from '../projects/github-token-store';
@@ -78,6 +79,7 @@ export class ReviewPipelineService {
     private readonly github: GithubApiService,
     private readonly board: BoardStore,
     private readonly plans: PlanStore,
+    private readonly notes: TicketNoteStore,
     private readonly boardEvents: BoardEventsBus,
     private readonly runner: SessionRunnerService,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
@@ -352,13 +354,17 @@ export class ReviewPipelineService {
       return;
     }
 
-    // Final integration review over the whole shared branch.
+    // Final integration review over the whole shared branch — a fresh-eyes, different-engine pass.
+    // The harness does NOT judge pass/fail here: a stateless adversarial review forced to a binary
+    // verdict loops forever on non-deterministic output (the #49 bug). Instead it parks the FULL
+    // findings under a ticket-note id and hands the ship-or-fix decision to the owner.
     const bot = this.employees.byId(anchor.employee);
+    let reviewText = '';
     if (bot) {
       const ctx = this.employees.context();
       const keys = await this.creds.resolve(team);
       const wt = this.worktrees.get(worktreeId);
-      const reviewText = await this.runReview(
+      reviewText = await this.runReview(
         bot,
         this.reviewSpec(bot, ctx),
         wt?.path ?? '',
@@ -371,40 +377,65 @@ export class ReviewPipelineService {
           base: rec.defaultBranch,
         }),
       ).catch(() => '');
-      if (reviewText && parseVerdict(reviewText) === 'changes') {
-        await this.failIntegration(
-          team,
-          taskId,
-          owners,
-          'the integration review flagged issues across the combined work — fix them and submit_for_review again',
-        );
-        return;
-      }
     }
 
-    // Clean — flip the PR out of draft and the ticket into review.
-    try {
-      const { owner, repo } = parseGithubRepo(rec.gitUrl);
-      const open = await this.github.listOpenPullRequests(auth.token, {
-        owner,
-        repo,
-      });
-      const pr = open.find(
-        (p) => p.headBranch === (anchor.sharedBranch ?? ''),
-      );
-      if (pr)
-        await this.github.markReadyForReview(auth.token, {
-          owner,
-          repo,
-          number: pr.number,
-        });
-    } catch (err) {
-      this.logger.warn(`mark-ready(#${taskId}) failed: ${err}`);
-    }
-    await this.board
-      .transition(team, taskId, 'self_review', { status: 'in_review' })
+    // Park the findings under an id and wake the DECISION OWNER. The ticket stays in self_review (PR
+    // a draft) until they mark_pr_ready or fix-and-resubmit — never a harness rollback/retry. A failed
+    // note write is a recoverable infra dead end (rolls back to executing so a resubmit retries).
+    const findings =
+      reviewText.trim() || 'Self-review completed — no issues surfaced.';
+    const note = await this.notes
+      .add(team, taskId, anchor.employee, findings)
       .catch(() => undefined);
-    this.notifyOwners(owners, { kind: 'pr-ready', team, taskId, prUrl });
+    if (!note) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owners,
+        "couldn't save the self-review findings to the ticket — submit_for_review again to retry",
+      );
+      return;
+    }
+    const decider = await this.decisionOwner(plans, task.assignee, anchor);
+    this.boardEvents.emit({
+      kind: 'self-review-ready',
+      team,
+      taskId,
+      employee: decider.employee,
+      prUrl,
+      noteId: note.id,
+      worktreeId: decider.worktreeId,
+      sessionId: decider.sessionId,
+      notifyThread: decider.notifyThread,
+    });
+  }
+
+  /** The single ship-or-fix decider for the integration PR: the board assignee when they own an
+   * execute plan row on this ticket, else the anchor. mark_pr_ready only authorizes the board
+   * assignee or the lead, so the decide seed goes to exactly one owner (co-owners got pr-opened). */
+  private async decisionOwner(
+    plans: TaskPlan[],
+    assignee: string | undefined,
+    anchor: TaskPlan,
+  ): Promise<{
+    employee: string;
+    worktreeId: string;
+    sessionId?: string;
+    notifyThread?: string;
+  }> {
+    const row =
+      (assignee &&
+        plans.find((p) => p.employee === assignee && p.executeWorktreeId)) ||
+      anchor;
+    const notifyThread = row.sessionId
+      ? (await this.sessions.get(row.sessionId))?.notifyThread
+      : undefined;
+    return {
+      employee: row.employee,
+      worktreeId: row.executeWorktreeId ?? anchor.executeWorktreeId!,
+      sessionId: row.sessionId,
+      notifyThread,
+    };
   }
 
   /** Wake the owner (real seeded narration) that a per-owner step couldn't auto-clear. */

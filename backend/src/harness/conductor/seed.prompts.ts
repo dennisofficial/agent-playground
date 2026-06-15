@@ -120,9 +120,14 @@ export function ticketApprovedSeed(p: {
 
 const PR_OPENED_SEED = tmpl`[Board] Your work on ticket #${'taskId'} is published and its DRAFT pull request is open (${'prUrl'}). The harness is running the final self-review now — nothing for you to do. Give the team a brief first-person heads-up that #${'taskId'} is up as a draft and self-review is running, if it's worth sharing.`;
 
-const PR_READY_SEED = tmpl`[Board] Self-review passed on ticket #${'taskId'} — the harness flipped its PR out of draft and it's READY for Dennis (${'prUrl'}); the ticket is now in_review. Nothing more to do unless Dennis comes back with feedback. Let the team/Dennis know the PR is ready, first person, if it's worth a line.`;
+const PR_READY_SEED = tmpl`[Board] Ticket #${'taskId'} is shipped — its PR is out of draft and READY for Dennis (${'prUrl'}); the ticket is now in_review. Nothing more to do unless Dennis comes back with feedback. Let the team/Dennis know the PR is ready, first person, if it's worth a line.`;
 
 const SELF_REVIEW_FAILED_SEED = tmpl`[Board] The harness couldn't auto-finish the self-review on ticket #${'taskId'}: ${'reason'}. This needs YOU — pick it up in your execute session, address it, and submit_for_review again. Give a short first-person heads-up if the team should know it's held up.`;
+
+const SELF_REVIEW_READY_SEED = tmpl`[Board] The self-review on ticket #${'taskId'} is done — a fresh-eyes pass on a different engine. Its FULL findings are saved as ticket note #${'noteId'} (read it with get_ticket), and the DRAFT PR is open (${'prUrl'}). It's YOUR call now:
+- If the work looks good, ship it: mark_pr_ready(worktreeId: "${'worktreeId'}", board_task_id: ${'taskId'}) — flips the PR out of draft and the ticket to in_review for Dennis.
+- If something in note #${'noteId'} is worth fixing first, feed it straight into your open execute session: reply_session("${'sessionId'}", <how to proceed>, review_note_id: ${'noteId'}) — the harness loads the full findings for you. Fix + commit, then submit_for_review again (it re-publishes and re-reviews). Skip anything that's wrong or not worth it.
+Either way, give the team a short first-person heads-up on where #${'taskId'} stands.`;
 
 /** Wake the owner that their draft PR is open and the final review is running. */
 export function prOpenedSeed(p: { taskId: number; prUrl: string }): string {
@@ -140,4 +145,21 @@ export function selfReviewFailedSeed(p: {
   reason: string;
 }): string {
   return SELF_REVIEW_FAILED_SEED({ taskId: String(p.taskId), reason: p.reason });
+}
+
+/** Wake the decision owner that the integration self-review is done — ship it or fix from the note. */
+export function selfReviewReadySeed(p: {
+  taskId: number;
+  prUrl: string;
+  noteId: number;
+  worktreeId: string;
+  sessionId?: string;
+}): string {
+  return SELF_REVIEW_READY_SEED({
+    taskId: String(p.taskId),
+    prUrl: p.prUrl,
+    noteId: String(p.noteId),
+    worktreeId: p.worktreeId,
+    sessionId: p.sessionId ?? '(your open execute session — see list_sessions)',
+  });
 }

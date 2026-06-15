@@ -59,7 +59,7 @@ export class SubmitForReviewTool implements IHarnessTool<
     const task = await this.board.get(session.team, session.boardTaskId);
     if (!task)
       return `Linked board task #${session.boardTaskId} no longer exists.`;
-    if (task.status !== 'executing')
+    if (task.status !== 'executing' && task.status !== 'self_review')
       return `Board task #${session.boardTaskId} is '${task.status}', not 'executing' — only in-flight execution work can be submitted for review.`;
 
     // Fire-and-forget the pipeline, detached from the chat stream (same as create_session's first

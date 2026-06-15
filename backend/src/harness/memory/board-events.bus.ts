@@ -23,6 +23,11 @@ import { Subject } from 'rxjs';
  * seeded narration over silent/synthetic). `notifyThread` carries the room the work was opened in.
  *  - `pr-opened`        → the integration barrier opened the shared-branch DRAFT PR and is running
  *                         the final review.
+ *  - `self-review-ready`→ the integration review finished; its full findings are parked as a ticket
+ *                         note and the DECISION OWNER is woken to decide — ship it (mark_pr_ready) or
+ *                         feed the notes into their open execute session and fix. The harness no longer
+ *                         judges pass/fail here; the owner does. Carries the note id + mechanical
+ *                         handles (the PR url, the owner's execute session + worktree).
  *  - `self-review-failed`→ a per-owner or integration review couldn't be auto-cleared (fix loop
  *                         exhausted, a publish conflict, or a GitHub failure) and needs the owner.
  *  - `pr-ready`         → self-review cleared, the PR is flipped to ready, the ticket is in_review.
@@ -44,6 +49,20 @@ export type BoardEvent =
       taskId: number;
       employee: string;
       prUrl: string;
+      notifyThread?: string;
+    }
+  | {
+      kind: 'self-review-ready';
+      team: string;
+      taskId: number;
+      /** The single decision owner woken to ship-or-fix (the board assignee, fallback the anchor). */
+      employee: string;
+      prUrl: string;
+      /** The ticket note (#id) holding the full review findings — fed into a fix turn by id. */
+      noteId: number;
+      /** Mechanical handles so the owner can act without hunting: their execute worktree + session. */
+      worktreeId: string;
+      sessionId?: string;
       notifyThread?: string;
     }
   | {
