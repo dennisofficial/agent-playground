@@ -436,6 +436,10 @@ export class BotGraphNodes {
       //      lands outside the cached prefix. Never persisted into `messages`.
       //   5. this turn's new channel messages (with inline time-dividers for any within-batch gaps).
       // Three-block context: (1) system prompt, (2) summary queue if compacted, (3) verbatim tail.
+      // "Verbatim" = durable-verbatim: block-3 messages live in the checkpoint and are NEVER
+      // promoted to a rolling summary (that is compactionNode's job). Read-time transforms
+      // (repairDanglingToolCalls, compactPriorToolResults, filterToolDispatchMessages) still
+      // apply at model-call time; they do not mutate the checkpoint.
       // Back-compat: a legacy checkpoint carries `summary` (string) + `summarizedUpTo > 0` but
       // `summaries = []`. Derive `effectiveSummaries` from the old field so the thread is treated
       // as compacted and its full durable history is NOT replayed (which could blow the context
@@ -987,8 +991,8 @@ export class BotGraphNodes {
      *   - Block 2: rolling summary queue (`summaries`); max MAX_SUMMARIES entries, FIFO.
      *   - Block 3: verbatim tail — from `summarizedUpTo` to the end of `messages`.
      *
-     * Trigger: block 3 estimated tokens ≥ COMPACTION_TRIGGER_TOKENS. Estimation uses
-     * Math.ceil(chars / 4) — fast, no tokenizer dependency.
+     * Trigger: block 3 estimated tokens > COMPACTION_TRIGGER_TOKENS (strictly greater).
+     * Estimation uses Math.ceil(chars / 4) — fast, no tokenizer dependency.
      *
      * When the trigger fires:
      *   1. Calls `findCompactionCutPoint` (which delegates pair-safety to `pairSafeBoundary`)
@@ -1018,7 +1022,7 @@ export class BotGraphNodes {
             : [];
       const from = effectiveSummaries.length > 0 ? state.summarizedUpTo : 0;
       const tailTokens = sumMessageTokens(state.messages.slice(from));
-      if (tailTokens < COMPACTION_TRIGGER_TOKENS) return {};
+      if (tailTokens <= COMPACTION_TRIGGER_TOKENS) return {}; // strict: "exceeds" → not at-threshold
 
       const cutPoint = findCompactionCutPoint(
         state.messages,

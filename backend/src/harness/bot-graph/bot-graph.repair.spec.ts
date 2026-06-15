@@ -791,6 +791,103 @@ describe('bot graph — poisoned-history self-healing', () => {
     expect(summaries[0]).toBeTruthy();
   });
 
+  it('does not compact when block 3 is at exactly COMPACTION_TRIGGER_TOKENS (boundary)', async () => {
+    /**
+     * Boundary regression: compaction fires only when tailTokens > COMPACTION_TRIGGER_TOKENS
+     * (strictly greater than), NOT at exactly 20 000. The guard is `tailTokens <= threshold → {}`.
+     *
+     * Token budget (token = ceil(chars / 4)):
+     *   Seeded : HumanMessage('x' × 79 960) → ceil(79960/4) = 19 990 tokens
+     *   Turn adds:
+     *     HumanMessage("Dennis: Any updates?") = 20 chars → 5 tokens  (via asInput)
+     *     AIMessage("Status looks good.")       = 18 chars → 5 tokens
+     *   Total at compactionNode: 19 990 + 5 + 5 = 20 000 tokens (exactly COMPACTION_TRIGGER_TOKENS)
+     *   → 20 000 ≤ 20 000 → compactionNode returns {} immediately; no LLM compaction call.
+     */
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Alex, project status?',
+    });
+
+    let callCount = 0;
+    const fakeModel = {
+      bindTools() {
+        return this;
+      },
+      async invoke(_convo: BaseMessage[]) {
+        callCount++;
+        return new AIMessage({ content: 'Status looks good.' }); // 18 chars → 5 tokens
+      },
+    };
+
+    const factory = new BotGraphFactory(
+      channel as unknown as ChannelService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
+      {
+        toStructuredTools: () => [],
+        terminalToolNames: () => new Set<string>(),
+        refreshScopesByName: () => new Map(),
+      } as unknown as ToolRegistry,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
+      {
+        fetchMemory: async () => '',
+        fetchTasks: async () => '',
+      } as unknown as FetchService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
+      { buildModel: () => fakeModel } as unknown as ChatModelFactory,
+      { chatPromptFor: () => 'persona' } as unknown as PersonaService,
+      { list: () => [] } as unknown as WorktreeService,
+      { list: async () => [] } as unknown as SessionRegistry,
+      new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
+    );
+
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:boundary-no-compact:root' } };
+
+    // Seed 19 990 tokens; the turn will add exactly 10 more → 20 000 total (at-threshold, no fire).
+    await graph.updateState(config, {
+      messages: [new HumanMessage('x'.repeat(79_960))],
+      cursor: 1, // consumed seq=0 (u-0); next turn picks up seq≥1
+    });
+
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Any updates?', // asInput → "Dennis: Any updates?" = 20 chars → 5 tokens
+    });
+
+    const stream = await graph.stream(
+      { cursor: 1, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    const final = await graph.getState(config);
+
+    // Compaction must NOT have fired.
+    expect(final.values.summaries).toHaveLength(0);
+    expect(final.values.compactionVersion).toBe(0);
+    // LLM was called exactly once (llmNode only; no compaction summarisation call).
+    expect(callCount).toBe(1);
+  });
+
   it('leaves a healthy history (tool_use followed by its result) untouched', async () => {
     const channel = new FakeChannel();
     channel.append({
