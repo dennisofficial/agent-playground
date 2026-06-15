@@ -31,6 +31,12 @@ export interface BotStateDelta {
   /** Suggestion block from the previous turn's memory reconcile — injected into the next turn's
    * context so the agent can act on it with remember / update_memory / forget. '' = nothing. */
   memorySuggestions?: string;
+  /** @deprecated Legacy single-string compaction summary written by pre-TKT-38 code.
+   * Read-only compat shim: checkpoints that carry a `summary` string are deserialized into
+   * this field so `llmNode` / `compactionNode` can derive `effectiveSummaries` from it.
+   * Never written by TKT-38+ code; remove once all active threads have cycled through at
+   * least one new compaction pass. */
+  summary?: string;
   /** Rolling compaction summary queue (block 2). [] = no compaction has occurred yet. */
   summaries?: string[];
   /** messages[] index of the first verbatim-tail message. 0 = no compaction. */
@@ -215,6 +221,19 @@ export const BotState = Annotation.Root({
    * lifecycle. Empty string → no suggestions slot injected.
    */
   memorySuggestions: Annotation<string>({
+    reducer: (_: string, b: string) => b ?? '',
+    default: () => '',
+  }),
+  /**
+   * @deprecated Legacy single-string compaction summary written by pre-TKT-38 code.
+   * Registered as a channel so LangGraph deserializes old checkpoints that carry a `summary`
+   * field into `state.summary`. `llmNode` and `compactionNode` derive `effectiveSummaries`
+   * from this field when `summaries` is empty and `summarizedUpTo > 0`, preserving the
+   * previously-compacted context instead of replaying full durable history. NEVER written by
+   * TKT-38+ code. Remove once all active threads have cycled through at least one new
+   * compaction pass under the TKT-38 architecture.
+   */
+  summary: Annotation<string>({
     reducer: (_: string, b: string) => b ?? '',
     default: () => '',
   }),

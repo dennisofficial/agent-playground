@@ -383,10 +383,14 @@ export class BotGraphNodes {
       // Pass the previous turn's memorySuggestions so the assembler can inject them (Phase 2).
       // Pass a compaction note so the assembler surfaces a brief meta-note when the
       // session has been compacted (the full summaries block is injected in llmNode as history).
-      const compactionNote =
-        state.summaries.length > 0
-          ? `Earlier conversation has been summarized (${state.summaries.length} summary block${state.summaries.length > 1 ? 's' : ''}, covers messages 1–${state.summarizedUpTo}). See session summaries in conversation history above.`
-          : undefined;
+      // Check the new summaries queue first; fall back to the legacy single-string `summary`
+      // field for pre-TKT-38 checkpoints (read-only compat — never written by new code).
+      const isCompacted =
+        state.summaries.length > 0 ||
+        (state.summarizedUpTo > 0 && !!state.summary);
+      const compactionNote = isCompacted
+        ? `Earlier conversation has been summarized (${state.summaries.length || 1} summary block${(state.summaries.length || 1) > 1 ? 's' : ''}, covers messages 1–${state.summarizedUpTo}). See session summaries in conversation history above.`
+        : undefined;
       const [memory, tasks, work] = await Promise.all([
         this.fetchService
           .fetchMemory(bot, id, state.memorySuggestions, compactionNote)
@@ -432,11 +436,19 @@ export class BotGraphNodes {
       //      lands outside the cached prefix. Never persisted into `messages`.
       //   5. this turn's new channel messages (with inline time-dividers for any within-batch gaps).
       // Three-block context: (1) system prompt, (2) summary queue if compacted, (3) verbatim tail.
-      // `summaries.length > 0` is the single source of truth for "this thread has been compacted".
-      // A legacy checkpoint (summarizedUpTo > 0, summaries = []) is treated as uncompacted —
-      // full durable history is shown once; the next compaction re-cuts from 0 (self-heal).
+      // Back-compat: a legacy checkpoint carries `summary` (string) + `summarizedUpTo > 0` but
+      // `summaries = []`. Derive `effectiveSummaries` from the old field so the thread is treated
+      // as compacted and its full durable history is NOT replayed (which could blow the context
+      // window for heavily-compacted threads). Once compactionNode runs it appends to `summaries`
+      // (seeded from effectiveSummaries), so the thread auto-upgrades on the next compaction pass.
       // repair → compact prior tool results → filter text-less dispatches → cache breakpoints.
-      const compacted = state.summaries.length > 0;
+      const effectiveSummaries =
+        state.summaries.length > 0
+          ? state.summaries
+          : state.summarizedUpTo > 0 && state.summary
+            ? [state.summary]
+            : [];
+      const compacted = effectiveSummaries.length > 0;
       const rawHistory = compacted
         ? dropLeadingOrphanToolResults(state.messages.slice(state.summarizedUpTo))
         : state.messages;
@@ -477,8 +489,8 @@ export class BotGraphNodes {
         ? [
             new HumanMessage(
               `(Conversation summary so far — oldest first, each block covers an earlier span:\n\n` +
-                state.summaries
-                  .map((s, i) => `[Summary ${i + 1}/${state.summaries.length}]\n${s}`)
+                effectiveSummaries
+                  .map((s, i) => `[Summary ${i + 1}/${effectiveSummaries.length}]\n${s}`)
                   .join('\n\n') +
                 `)`,
             ),
@@ -829,10 +841,13 @@ export class BotGraphNodes {
         : Promise.resolve();
       // Preserve the compaction note on mid-turn refreshes so the assembler slot stays
       // consistent. memorySuggestions is intentionally omitted (unchanged during a refresh).
-      const refreshCompactionNote =
-        state.summaries.length > 0
-          ? `Earlier conversation has been summarized (${state.summaries.length} summary block${state.summaries.length > 1 ? 's' : ''}, covers messages 1–${state.summarizedUpTo}). See session summaries in conversation history above.`
-          : undefined;
+      // Check both the new summaries queue and the legacy single-string summary field.
+      const refreshIsCompacted =
+        state.summaries.length > 0 ||
+        (state.summarizedUpTo > 0 && !!state.summary);
+      const refreshCompactionNote = refreshIsCompacted
+        ? `Earlier conversation has been summarized (${state.summaries.length || 1} summary block${(state.summaries.length || 1) > 1 ? 's' : ''}, covers messages 1–${state.summarizedUpTo}). See session summaries in conversation history above.`
+        : undefined;
       const refreshMemory = scopes.has('memory')
         ? this.fetchService
             .fetchMemory(bot, id, undefined, refreshCompactionNote)
@@ -991,10 +1006,17 @@ export class BotGraphNodes {
       state: BotStateType,
       config: RunnableConfig,
     ): Promise<Partial<BotStateType>> => {
-      // `summaries.length > 0` is the source of truth for "this thread has been compacted".
-      // A legacy checkpoint (summarizedUpTo > 0, summaries = []) is treated as uncompacted:
-      // `from = 0`, which means the next compaction will re-cut from the beginning.
-      const from = state.summaries.length > 0 ? state.summarizedUpTo : 0;
+      // Back-compat: see llmNode comment — effectiveSummaries treats a legacy `summary` string
+      // as [summary] so a previously-compacted thread isn't re-cut from 0 on the next pass.
+      // On the first new-style compaction pass, `summaries` is seeded from effectiveSummaries
+      // and the thread auto-upgrades; future passes use state.summaries directly.
+      const effectiveSummaries =
+        state.summaries.length > 0
+          ? state.summaries
+          : state.summarizedUpTo > 0 && state.summary
+            ? [state.summary]
+            : [];
+      const from = effectiveSummaries.length > 0 ? state.summarizedUpTo : 0;
       const tailTokens = sumMessageTokens(state.messages.slice(from));
       if (tailTokens < COMPACTION_TRIGGER_TOKENS) return {};
 
@@ -1037,8 +1059,8 @@ export class BotGraphNodes {
         // Prepend only the most recent existing summary for continuity (not the full queue)
         // so the model summarizes ONLY the new messages, not the already-summarised past.
         const previousSummarySection =
-          state.summaries.length > 0
-            ? `Previous summary (earlier conversation context — do NOT re-summarize; use only for continuity):\n${state.summaries[state.summaries.length - 1]}\n\n`
+          effectiveSummaries.length > 0
+            ? `Previous summary (earlier conversation context — do NOT re-summarize; use only for continuity):\n${effectiveSummaries[effectiveSummaries.length - 1]}\n\n`
             : '';
         const prompt = `You are summarizing a conversation for ${bot.name} (${bot.role}).
 
@@ -1065,7 +1087,8 @@ Be thorough but concise. Preserve specific names, project names, technical detai
         }
 
         // FIFO queue: append new summary, evict oldest if over the limit.
-        const summaries = [...state.summaries, newSummary];
+        // Seed from effectiveSummaries so a legacy checkpoint's `summary` string becomes entry 0.
+        const summaries = [...effectiveSummaries, newSummary];
         if (summaries.length > MAX_SUMMARIES) summaries.shift();
 
         const nextVersion = (state.compactionVersion ?? 0) + 1;

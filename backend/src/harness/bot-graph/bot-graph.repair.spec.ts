@@ -461,6 +461,142 @@ describe('bot graph — poisoned-history self-healing', () => {
     expect(final.values.summarizedUpTo).toBe(2);
   });
 
+  it('legacy checkpoint: `summary` string is shown in model input and verbatim tail is used (not full history)', async () => {
+    /**
+     * Migration regression: a pre-TKT-38 checkpoint carries `summary: string` + `summarizedUpTo > 0`
+     * but `summaries = []`. Without the compat shim, llmNode would treat it as uncompacted, replay
+     * the full durable history (potentially blowing the context window), and ignore the saved summary.
+     *
+     * With the shim, `effectiveSummaries = [state.summary]` so:
+     *   1. The summary block is injected as a HumanMessage before the verbatim tail.
+     *   2. The model only receives messages from `summarizedUpTo` onward (not from 0).
+     *
+     * Setup:
+     *   messages[0]: HumanMessage  ← compacted (before summarizedUpTo=2)
+     *   messages[1]: AIMessage     ← compacted (before summarizedUpTo=2)
+     *   messages[2]: HumanMessage  ← verbatim tail starts here
+     *   messages[3]: AIMessage     ← verbatim tail
+     *
+     * summary = 'LEGACY_SUMMARY: Dennis asked about status; Alex said all is on track.'
+     * summarizedUpTo = 2 (tail starts at idx 2)
+     */
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Any updates?',
+    });
+
+    const invocations: BaseMessage[][] = [];
+    const fakeModel = {
+      bindTools() {
+        return this;
+      },
+      async invoke(convo: BaseMessage[]) {
+        invocations.push(convo);
+        return new AIMessage({ content: 'All good.' });
+      },
+    };
+
+    const factory = new BotGraphFactory(
+      channel as unknown as ChannelService,
+      { get: () => undefined } as unknown as ChannelRegistryService,
+      {
+        toStructuredTools: () => [],
+        terminalToolNames: () => new Set<string>(),
+        refreshScopesByName: () => new Map(),
+      } as unknown as ToolRegistry,
+      {
+        gate: async () => ({ action: 'respond' as const }),
+      } as unknown as GateService,
+      {
+        isEnabled: () => false,
+        windowSize: () => 12,
+        detect: () => Promise.resolve({ looping: false }),
+      } as unknown as RecursionGuardService,
+      {
+        fetchMemory: async () => '',
+        fetchTasks: async () => '',
+      } as unknown as FetchService,
+      {
+        reconcileMemory: async () => {},
+        reconcileTasks: async () => {},
+      } as unknown as ReconcileService,
+      { buildModel: () => fakeModel } as unknown as ChatModelFactory,
+      { chatPromptFor: () => 'persona' } as unknown as PersonaService,
+      { list: () => [] } as unknown as WorktreeService,
+      { list: async () => [] } as unknown as SessionRegistry,
+      new MemorySaver() as unknown as PostgresSaver,
+      { get: () => undefined } as unknown as EnvService,
+    );
+
+    const graph = factory.getBotGraph(ALEX);
+    const config = { configurable: { thread_id: 'alex:legacy-summary-compat:root' } };
+
+    const LEGACY_SUMMARY =
+      'LEGACY_SUMMARY: Dennis asked about status; Alex said all is on track.';
+
+    // Seed a pre-TKT-38 checkpoint: old-style `summary` string + summarizedUpTo, no `summaries`.
+    await graph.updateState(config, {
+      messages: [
+        new HumanMessage('Dennis: what is the project status?'), // idx 0 — compacted
+        new AIMessage({ content: 'All is on track.' }),           // idx 1 — compacted
+        new HumanMessage('Dennis: great, keep going.'),           // idx 2 — verbatim tail start
+        new AIMessage({ content: 'Will do.' }),                   // idx 3 — verbatim tail
+      ],
+      summary: LEGACY_SUMMARY,   // pre-TKT-38 field
+      summarizedUpTo: 2,         // tail starts at idx 2
+      // summaries intentionally absent → defaults to []
+      cursor: 1,
+    });
+
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Any final updates?',
+    });
+
+    const stream = await graph.stream(
+      { cursor: 1, forced: false },
+      { ...config, streamMode: 'updates' as const },
+    );
+    for await (const _ of stream) {
+      /* drain */
+    }
+
+    expect(invocations).toHaveLength(1);
+    const convo = invocations[0];
+
+    // 1. The legacy summary MUST appear as a HumanMessage in the model input.
+    const summaryMsg = convo.find(
+      (m) => m.getType() === 'human' && String(m.content).includes(LEGACY_SUMMARY),
+    );
+    expect(summaryMsg).toBeDefined();
+
+    // 2. The compacted messages (idx 0–1) must NOT appear in the model input.
+    //    "what is the project status?" is unique to the compacted region.
+    const compactedLeaked = convo.find(
+      (m) =>
+        m.getType() === 'human' &&
+        String(m.content).includes('what is the project status?'),
+    );
+    expect(compactedLeaked).toBeUndefined();
+
+    // 3. The verbatim tail message (idx 2) MUST appear.
+    const tailMsg = convo.find(
+      (m) =>
+        m.getType() === 'human' &&
+        String(m.content).includes('great, keep going.'),
+    );
+    expect(tailMsg).toBeDefined();
+
+    // Turn completed.
+    const final = await graph.getState(config);
+    expect(final.values.cursor).toBe(2);
+  });
+
   it('persists a pair-safe summarizedUpTo that always lands on a HumanMessage (write-path)', async () => {
     /**
      * Three-block compaction write-path test.
