@@ -88,7 +88,7 @@ export class FetchService {
     // ── 1. Standing context core ────────────────────────────────────────────────────────────────
     // Role + active project is always rendered for grounding (it's nearly free and restates
     // identity compactly). Team-scope standing prefs are appended when present.
-    const prefs = await this.semantic.standingContext(id).catch(() => '');
+    const prefs = await this.semantic.standingContext(id, 5).catch(() => '');
     const coreLines: string[] = [`Role: ${bot.role}, project: ${id.project}.`];
     if (prefs) coreLines.push(prefs);
     parts.push(`Standing context:\n${coreLines.join('\n')}`);

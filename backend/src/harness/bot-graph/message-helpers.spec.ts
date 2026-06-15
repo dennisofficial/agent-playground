@@ -65,7 +65,9 @@ describe('compactPriorToolResults', () => {
       tool_call_id: 'old',
       name: 'search',
       content:
-        'A large result that should be replaced by a compact evidence record',
+        'A large result that should be replaced by a compact evidence record. ' +
+        'filler '.repeat(40) +
+        'TAIL_BEYOND_200',
     });
     // Current turn — last AI message, no tool calls pending
     const currentAi = new AIMessage({ content: 'Done.' });
@@ -88,10 +90,9 @@ describe('compactPriorToolResults', () => {
     expect(body).toContain('Args:');
     expect(body).toContain('Result:');
     expect(body).toContain('(full result in transcript)');
-    // Original bulky content is gone
-    expect(body).not.toContain(
-      'A large result that should be replaced by a compact evidence record',
-    );
+    // Content past the 200-char cap is truncated
+    expect(body).toContain('…');
+    expect(body).not.toContain('TAIL_BEYOND_200');
   });
 
   it('compacts prior-turn results but keeps the current-turn result full when both are present', () => {
@@ -103,7 +104,10 @@ describe('compactPriorToolResults', () => {
     const priorTool = new ToolMessage({
       tool_call_id: 'old',
       name: 'recall',
-      content: 'prior result — should be compacted',
+      content:
+        'prior result — should be compacted. ' +
+        'filler '.repeat(40) +
+        'TAIL_BEYOND_200',
     });
     // Current turn (model just called a tool, results are in-flight)
     const currAi = new AIMessage({
@@ -135,9 +139,8 @@ describe('compactPriorToolResults', () => {
     const compacted = out[1] as ToolMessage;
     expect(compacted.content).toContain('[Tool: recall]');
     expect(compacted.content).toContain('(full result in transcript)');
-    expect(compacted.content).not.toContain(
-      'prior result — should be compacted',
-    );
+    expect(compacted.content).toContain('…');
+    expect(compacted.content).not.toContain('TAIL_BEYOND_200');
   });
 
   it('truncates args JSON to 100 chars with an ellipsis', () => {
@@ -312,10 +315,7 @@ describe('compactPriorToolResults', () => {
  */
 describe('filterToolDispatchMessages', () => {
   it('returns the same reference when there are no tool-dispatch messages', () => {
-    const history = [
-      new HumanMessage('hi'),
-      new AIMessage('hello'),
-    ];
+    const history = [new HumanMessage('hi'), new AIMessage('hello')];
     expect(filterToolDispatchMessages(history)).toBe(history);
   });
 
@@ -332,7 +332,9 @@ describe('filterToolDispatchMessages', () => {
   it('filters a prior-turn text-less dispatch and its tool result', () => {
     const dispatch = new AIMessage({
       content: '',
-      tool_calls: [{ name: 'recall', args: { query: 'foo' }, id: 'd1', type: 'tool_call' }],
+      tool_calls: [
+        { name: 'recall', args: { query: 'foo' }, id: 'd1', type: 'tool_call' },
+      ],
     });
     const toolResult = new ToolMessage({
       tool_call_id: 'd1',
@@ -373,7 +375,11 @@ describe('filterToolDispatchMessages', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'p1', type: 'tool_call' }],
     });
-    const priorTool = new ToolMessage({ tool_call_id: 'p1', name: 'a', content: 'r1' });
+    const priorTool = new ToolMessage({
+      tool_call_id: 'p1',
+      name: 'a',
+      content: 'r1',
+    });
     const currentDispatch = new AIMessage({
       content: '',
       tool_calls: [{ name: 'b', args: {}, id: 'c1', type: 'tool_call' }],
@@ -393,12 +399,20 @@ describe('filterToolDispatchMessages', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'id1', type: 'tool_call' }],
     });
-    const t1 = new ToolMessage({ tool_call_id: 'id1', name: 'a', content: 'r1' });
+    const t1 = new ToolMessage({
+      tool_call_id: 'id1',
+      name: 'a',
+      content: 'r1',
+    });
     const d2 = new AIMessage({
       content: '',
       tool_calls: [{ name: 'b', args: {}, id: 'id2', type: 'tool_call' }],
     });
-    const t2 = new ToolMessage({ tool_call_id: 'id2', name: 'b', content: 'r2' });
+    const t2 = new ToolMessage({
+      tool_call_id: 'id2',
+      name: 'b',
+      content: 'r2',
+    });
     const final = new AIMessage({ content: 'Done.' });
 
     const history = [d1, t1, d2, t2, final];
@@ -416,7 +430,11 @@ describe('filterToolDispatchMessages', () => {
       content: 'Checking…',
       tool_calls: [{ name: 'search', args: {}, id: 's1', type: 'tool_call' }],
     });
-    const toolMsg = new ToolMessage({ tool_call_id: 's1', name: 'search', content: 'result' });
+    const toolMsg = new ToolMessage({
+      tool_call_id: 's1',
+      name: 'search',
+      content: 'result',
+    });
     const lastAi = new AIMessage({ content: 'Answer.' });
 
     const history = [human, aiWithText, toolMsg, lastAi];
@@ -450,7 +468,11 @@ describe('dropLeadingOrphanToolResults', () => {
   });
 
   it('drops a single leading ToolMessage', () => {
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'orphan' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'orphan',
+    });
     const ai = new AIMessage({ content: 'reply' });
     const history = [tool, ai];
     const out = dropLeadingOrphanToolResults(history);
@@ -460,8 +482,16 @@ describe('dropLeadingOrphanToolResults', () => {
   });
 
   it('drops multiple contiguous leading ToolMessages', () => {
-    const t1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
-    const t2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const t1 = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r1',
+    });
+    const t2 = new ToolMessage({
+      tool_call_id: 't2',
+      name: 'b',
+      content: 'r2',
+    });
     const ai = new AIMessage({ content: 'next' });
     const human = new HumanMessage('after');
     const history = [t1, t2, ai, human];
@@ -484,7 +514,11 @@ describe('dropLeadingOrphanToolResults', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'result' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'result',
+    });
     const history = [ai, tool];
     expect(dropLeadingOrphanToolResults(history)).toBe(history);
   });
@@ -525,7 +559,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'r',
+    });
     const messages = [
       new HumanMessage('earlier'),
       new AIMessage({ content: 'prior reply' }),
@@ -545,8 +583,16 @@ describe('pairSafeBoundary', () => {
         { name: 'b', args: {}, id: 't2', type: 'tool_call' },
       ],
     });
-    const tool1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
-    const tool2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const tool1 = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r1',
+    });
+    const tool2 = new ToolMessage({
+      tool_call_id: 't2',
+      name: 'b',
+      content: 'r2',
+    });
     const messages = [
       new HumanMessage('earlier'),
       new AIMessage({ content: 'prior reply' }),
@@ -567,7 +613,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r',
+    });
     const messages = [new HumanMessage('h'), ai, tool];
     // rawCut=2 (tool), floor=2 → b<=floor immediately → floor
     expect(pairSafeBoundary(messages, 2, 2)).toBe(2);
@@ -592,7 +642,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'x', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r',
+    });
     const messages = [new HumanMessage('h'), ai, tool];
     // rawCut=2 on tool → (a) walks to b=1 (AI) → (b) id mismatch → floor
     expect(pairSafeBoundary(messages, 2, 0)).toBe(0);
@@ -607,8 +661,16 @@ describe('pairSafeBoundary', () => {
         { name: 'b', args: {}, id: 't2', type: 'tool_call' },
       ],
     });
-    const t1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
-    const t2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const t1 = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r1',
+    });
+    const t2 = new ToolMessage({
+      tool_call_id: 't2',
+      name: 'b',
+      content: 'r2',
+    });
     const reply = new AIMessage({ content: 'done' });
     const messages = [
       new HumanMessage('earlier'),
@@ -646,7 +708,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'r',
+    });
     const messages = [
       new HumanMessage('h'),
       ai,
@@ -664,7 +730,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'r',
+    });
     const messages = [
       new HumanMessage('h'),
       ai,
@@ -675,4 +745,3 @@ describe('pairSafeBoundary', () => {
     expect(pairSafeBoundary(messages, 3, 0)).toBe(0);
   });
 });
-
