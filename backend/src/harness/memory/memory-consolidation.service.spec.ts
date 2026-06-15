@@ -106,13 +106,27 @@ function makeCredCtx() {
 }
 
 /**
- * Build a Repository<Fact> stub whose manager.query returns a configurable sequence of results.
- * `queryResults` is consumed in order: first call → first result, etc.
+ * Build a Repository<Fact> stub that supports the TypeORM QueryBuilder API used by
+ * MemoryConsolidationService. Each call to `createQueryBuilder` consumes the next result
+ * from `qbResults` and returns a chainable QB object whose `getRawMany` resolves it.
  */
-function makeFactRepo(queryResults: unknown[][]) {
+function makeFactRepo(qbResults: unknown[][]) {
   let call = 0;
-  const query = vi.fn(() => Promise.resolve(queryResults[call++] ?? []));
-  return { manager: { query } } as unknown as Repository<Fact>;
+  const createQueryBuilder = vi.fn((_alias?: string) => {
+    const result = qbResults[call++] ?? [];
+    return {
+      select: vi.fn().mockReturnThis(),
+      addSelect: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      andWhere: vi.fn().mockReturnThis(),
+      groupBy: vi.fn().mockReturnThis(),
+      having: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      getRawMany: vi.fn(() => Promise.resolve(result)),
+    };
+  });
+  return { createQueryBuilder } as unknown as Repository<Fact>;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -436,21 +450,31 @@ describe('MemoryConsolidationService', () => {
 
   describe('re-entrancy guard', () => {
     it('skips a second overlapping tick', async () => {
-      const facts = [
-        makeFact(70, 'a', SCOPE_A),
-        makeFact(71, 'b', SCOPE_A),
-        makeFact(72, 'c', SCOPE_A),
-      ];
-      // Use a repo that never resolves to simulate a long-running first tick
-      let resolveFirst!: () => void;
+      // Use a repo whose first QB.getRawMany never resolves to simulate a long-running first tick.
+      let resolveFirst!: (rows: Array<{ team_id: string }>) => void;
       const firstQuery = new Promise<Array<{ team_id: string }>>((res) => {
-        resolveFirst = () => res([{ team_id: TEAM_ID }]);
+        resolveFirst = res;
       });
-      const factRepo = {
-        manager: { query: vi.fn(() => firstQuery) },
-      } as unknown as Repository<Fact>;
+      let qbCallIndex = 0;
+      const createQueryBuilder = vi.fn(() => {
+        const callIdx = qbCallIndex++;
+        return {
+          select: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          andWhere: vi.fn().mockReturnThis(),
+          groupBy: vi.fn().mockReturnThis(),
+          having: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          // First call (tenants) blocks until resolveFirst; subsequent calls (scopes) return []
+          getRawMany: vi.fn(() =>
+            callIdx === 0 ? firstQuery : Promise.resolve([]),
+          ),
+        };
+      });
+      const factRepo = { createQueryBuilder } as unknown as Repository<Fact>;
 
-      const semantic = makeSemantic({ [SCOPE_A]: facts });
+      const semantic = makeSemantic({});
       const write = makeWrite();
       const metrics = makeMetrics();
       const models = makeModels({
@@ -472,19 +496,19 @@ describe('MemoryConsolidationService', () => {
         factRepo,
       );
 
-      // Start first tick (doesn't complete yet)
+      // Start first tick (doesn't complete yet — blocked on tenant QB query)
       const first = svc.consolidate();
       // Immediately fire a second tick
       const second = svc.consolidate();
 
-      // Second tick resolves instantly (skipped)
+      // Second tick resolves instantly (skipped because this.running = true)
       await second;
-      // Unblock the first
-      resolveFirst();
-      await first;
+      // Only the first tick's tenant QB has been initiated at this point
+      expect(createQueryBuilder).toHaveBeenCalledTimes(1);
 
-      // The repo was only queried once (first tick); second tick was no-op
-      expect(factRepo.manager.query).toHaveBeenCalledTimes(1);
+      // Unblock the first tick (tenant query resolves → runTenant → empty scopes → done)
+      resolveFirst([{ team_id: TEAM_ID }]);
+      await first;
     });
   });
 
