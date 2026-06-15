@@ -149,9 +149,10 @@ function build(opts: {
     };
   });
   const markReadyForReview = vi.fn(async () => ({ isDraft: false }));
+  const listOpenPullRequests = vi.fn(async () => [{ number: 1, headBranch: SHARED }]);
   const github = {
     openPullRequest,
-    listOpenPullRequests: async () => [{ number: 1, headBranch: SHARED }],
+    listOpenPullRequests,
     markReadyForReview,
   } as never;
 
@@ -198,6 +199,7 @@ function build(opts: {
     transition,
     publish,
     openPullRequest,
+    listOpenPullRequests,
     markReadyForReview,
     boardEmit,
     resumeInternal,
@@ -444,5 +446,25 @@ describe('ReviewPipelineService.integrate (loud + recoverable dead ends)', () =>
     expect(f.boardEmit).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'self-review-ready' }),
     );
+  });
+
+  it('REGRESSION (#3/PR #38): integrate() never auto-readies — no list/markReady calls, no self_review→in_review', async () => {
+    // The deleted auto-ready block (pre-d43e94d) would have called listOpenPullRequests,
+    // markReadyForReview, and transitioned self_review→in_review without owner input.
+    // If any of those come back, this test fails loudly.
+    const f = build({
+      ownerStatuses: { alex: 'complete', riley: 'complete' },
+      reviewVerdict: 'ok\nVERDICT: PASS',
+    });
+    await f.svc.integrate('T1', 7);
+    // The deleted auto-ready block would have done all three of these:
+    expect(f.listOpenPullRequests).not.toHaveBeenCalled();
+    expect(f.markReadyForReview).not.toHaveBeenCalled();
+    expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'in_review',
+    });
+    // Instead it opens the DRAFT PR and hands the ship decision to one owner.
+    expect(f.openPullRequest).toHaveBeenCalled();
+    expect(emittedFor(f.boardEmit, 'self-review-ready')).toHaveLength(1);
   });
 });

@@ -170,8 +170,8 @@ describe('mark_pr_ready tool', () => {
     expect(markReady).not.toHaveBeenCalled();
   });
 
-  it('reports when no open PR matches the shared branch', async () => {
-    const { tool } = build({
+  it('reports when no open PR matches the shared branch (no silent flip)', async () => {
+    const { tool, markReady, boardUpdates, noted, emitted } = build({
       boardTask: task({ status: 'approved', assignee: 'alex' }),
       prs: [{ number: 1, url: 'x', headBranch: 'other/branch' }],
     });
@@ -180,6 +180,10 @@ describe('mark_pr_ready tool', () => {
       ctx('alex'),
     );
     expect(out).toContain('No open PR found for shared/feat');
+    expect(markReady).not.toHaveBeenCalled();      // never attempted ready
+    expect(boardUpdates).toEqual([]);               // CRITICAL: no silent in_review flip
+    expect(noted).toEqual([]);                      // no PR note written
+    expect(emitted.filter((e) => e.kind === 'pr-ready')).toEqual([]); // no pr-ready event
   });
 
   it('already in_review: marks ready again without a redundant board write', async () => {
@@ -216,5 +220,24 @@ describe('mark_pr_ready tool', () => {
     await tool.execute({ worktreeId: 'wt-001', board_task_id: 7 }, ctx('alex'));
     expect(markReady).toHaveBeenCalled();
     expect(boardUpdates).toEqual([{ status: 'in_review' }]);
+  });
+
+  it('does NOT flip in_review / note / emit when markReadyForReview throws', async () => {
+    // Bug 2 guard: a throw from markReadyForReview must block the in_review transition.
+    // Pre-d43e94d, the catch only logger.warn'd and execution fell through to the board flip.
+    const { tool, markReady, boardUpdates, noted, emitted } = build({
+      boardTask: task({ status: 'self_review', assignee: 'alex' }),
+      markReadyError: 'github 500',
+    });
+    const out = await tool.execute(
+      { worktreeId: 'wt-001', board_task_id: 7 },
+      ctx('alex'),
+    );
+    expect(markReady).toHaveBeenCalled();          // it attempted to ready the PR
+    expect(out).toContain("Couldn't mark PR");     // surfaces the failure
+    expect(out).toContain('github 500');            // ...with the underlying cause
+    expect(boardUpdates).toEqual([]);              // CRITICAL: ticket NOT flipped to in_review
+    expect(noted).toEqual([]);                      // no PR note written
+    expect(emitted.filter((e) => e.kind === 'pr-ready')).toEqual([]); // no pr-ready event
   });
 });
