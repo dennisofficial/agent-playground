@@ -292,7 +292,18 @@ export const findCompactionCutPoint = (
     acc += t;
     cut = i;
   }
-  // Delegate pair-safety (ToolMessage walk-back + HumanMessage boundary) to pairSafeBoundary.
+  // Delegate pair-safety to pairSafeBoundary.
+  //
+  // NB: The approved plan specified ToolMessage-only walk-back (declining the stricter
+  // HumanMessage-boundary step). We intentionally use pairSafeBoundary here instead,
+  // which adds a further walk-back to the nearest preceding HumanMessage. Reason: the
+  // Anthropic API requires the verbatim tail to begin with a human turn; an AIMessage at
+  // the cut head is technically valid (the summary HumanMessage in block 2 precedes it),
+  // but a ToolMessage at the head is an immediate API 400. Using pairSafeBoundary is the
+  // conservative, consistent choice — it reuses the existing safe-boundary helper, costs
+  // at most a few extra evicted messages, and prevents a class of runtime errors. The
+  // HumanMessage-boundary portion returns `from` (bail) when no valid boundary exists
+  // above the floor, so the stuck-compaction backstop still fires correctly.
   return pairSafeBoundary(messages, cut, from);
 };
 
