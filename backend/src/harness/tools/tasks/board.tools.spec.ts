@@ -318,3 +318,170 @@ describe('board tools authority', () => {
     expect(tool.description).toContain(STATUS_COLUMN_GUIDE);
   });
 });
+
+describe('UpdateBoardTaskTool — description-change notification', () => {
+  /** Surface id that looks like a Slack coordinate so the adapter can parse it. */
+  const slackIdentity = (selfAgent: string): { identity: Identity } => ({
+    identity: {
+      selfAgent,
+      team: 'T1',
+      project: 'proj',
+      participants: ['dennis'],
+      speaker: 'dennis',
+      surface: 'slack:T1:C99',
+      isChannel: true,
+    },
+  });
+
+  const makeNotifierFakes = () => {
+    const { board, employees } = makeFakes();
+    const notifier = { notifyDescriptionChange: vi.fn(async () => {}) };
+    return { board, employees, notifier };
+  };
+
+  it.each([
+    'approved',
+    'executing',
+    'self_review',
+    'in_review',
+  ] as const)(
+    'calls notifyDescriptionChange when description changes on a %s ticket',
+    async (status) => {
+      const { board, employees, notifier } = makeNotifierFakes();
+      board.get.mockResolvedValue(
+        task({ status, description: 'old text', assignee: 'alex' }),
+      );
+      board.update.mockResolvedValue(
+        task({ status, description: 'new text', assignee: 'alex' }),
+      );
+      const tool = new UpdateBoardTaskTool(
+        board as never,
+        employees as never,
+        notifier as never,
+      );
+      await tool.execute(
+        { id: 7, description: 'new text' },
+        slackIdentity('sam'),
+      );
+      expect(notifier.notifyDescriptionChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          team: 'T1',
+          taskId: 7,
+          title: 'Wire the API',
+          changedBy: 'sam',
+          oldDescription: 'old text',
+          newDescription: 'new text',
+          surfaceId: 'slack:T1:C99',
+        }),
+      );
+    },
+  );
+
+  it.each([
+    'open',
+    'planning',
+    'awaiting_approval',
+    'done',
+  ] as const)(
+    'does NOT notify when description changes on a %s ticket',
+    async (status) => {
+      const { board, employees, notifier } = makeNotifierFakes();
+      board.get.mockResolvedValue(
+        task({ status, description: 'old', assignee: 'alex' }),
+      );
+      board.update.mockResolvedValue(task({ status, description: 'new' }));
+      const tool = new UpdateBoardTaskTool(
+        board as never,
+        employees as never,
+        notifier as never,
+      );
+      // non-lead can't change description, so use sam for all statuses
+      await tool.execute({ id: 7, description: 'new' }, slackIdentity('sam'));
+      expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does NOT notify when the description text is unchanged (no-op write)', async () => {
+    const { board, employees, notifier } = makeNotifierFakes();
+    board.get.mockResolvedValue(
+      task({ status: 'executing', description: 'same text' }),
+    );
+    board.update.mockResolvedValue(
+      task({ status: 'executing', description: 'same text' }),
+    );
+    const tool = new UpdateBoardTaskTool(
+      board as never,
+      employees as never,
+      notifier as never,
+    );
+    await tool.execute({ id: 7, description: 'same text' }, slackIdentity('sam'));
+    expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it('does NOT notify on a status-only update (no description provided)', async () => {
+    const { board, employees, notifier } = makeNotifierFakes();
+    board.get.mockResolvedValue(
+      task({ status: 'executing', description: 'some text', assignee: 'alex' }),
+    );
+    board.update.mockResolvedValue(task({ status: 'done' }));
+    const tool = new UpdateBoardTaskTool(
+      board as never,
+      employees as never,
+      notifier as never,
+    );
+    await tool.execute({ id: 7, status: 'done' }, slackIdentity('sam'));
+    expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it('does NOT notify on a title-only update', async () => {
+    const { board, employees, notifier } = makeNotifierFakes();
+    board.get.mockResolvedValue(
+      task({ status: 'approved', description: 'some text' }),
+    );
+    board.update.mockResolvedValue(task({ status: 'approved', title: 'New title' }));
+    const tool = new UpdateBoardTaskTool(
+      board as never,
+      employees as never,
+      notifier as never,
+    );
+    await tool.execute({ id: 7, title: 'New title' }, slackIdentity('sam'));
+    expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it('a throwing notifier does NOT fail the tool — error is swallowed', async () => {
+    const { board, employees, notifier } = makeNotifierFakes();
+    notifier.notifyDescriptionChange.mockRejectedValue(
+      new Error('non-Slack room'),
+    );
+    board.get.mockResolvedValue(
+      task({ status: 'approved', description: 'old', assignee: 'alex' }),
+    );
+    board.update.mockResolvedValue(
+      task({ status: 'approved', description: 'new' }),
+    );
+    const tool = new UpdateBoardTaskTool(
+      board as never,
+      employees as never,
+      notifier as never,
+    );
+    // Should resolve (not throw) despite the notifier rejecting.
+    await expect(
+      tool.execute({ id: 7, description: 'new' }, slackIdentity('sam')),
+    ).resolves.not.toThrow();
+  });
+
+  it('no notifier bound (TUI/headless) silently no-ops', async () => {
+    const { board, employees } = makeFakes();
+    board.get.mockResolvedValue(
+      task({ status: 'approved', description: 'old' }),
+    );
+    board.update.mockResolvedValue(
+      task({ status: 'approved', description: 'new' }),
+    );
+    // No notifier injected (undefined).
+    const tool = new UpdateBoardTaskTool(board as never, employees as never);
+    await expect(
+      tool.execute({ id: 7, description: 'new' }, slackIdentity('sam')),
+    ).resolves.not.toThrow();
+  });
+});
