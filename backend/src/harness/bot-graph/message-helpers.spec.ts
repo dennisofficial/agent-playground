@@ -65,7 +65,9 @@ describe('compactPriorToolResults', () => {
       tool_call_id: 'old',
       name: 'search',
       content:
-        'A large result that should be replaced by a compact evidence record',
+        'A large result that should be replaced by a compact evidence record. ' +
+        'filler '.repeat(40) +
+        'TAIL_BEYOND_200',
     });
     // Current turn — last AI message, no tool calls pending
     const currentAi = new AIMessage({ content: 'Done.' });
@@ -88,10 +90,9 @@ describe('compactPriorToolResults', () => {
     expect(body).toContain('Args:');
     expect(body).toContain('Result:');
     expect(body).toContain('(full result in transcript)');
-    // Original bulky content is gone
-    expect(body).not.toContain(
-      'A large result that should be replaced by a compact evidence record',
-    );
+    // Content past the 200-char cap is truncated
+    expect(body).toContain('…');
+    expect(body).not.toContain('TAIL_BEYOND_200');
   });
 
   it('compacts prior-turn results but keeps the current-turn result full when both are present', () => {
@@ -103,7 +104,10 @@ describe('compactPriorToolResults', () => {
     const priorTool = new ToolMessage({
       tool_call_id: 'old',
       name: 'recall',
-      content: 'prior result — should be compacted',
+      content:
+        'prior result — should be compacted. ' +
+        'filler '.repeat(40) +
+        'TAIL_BEYOND_200',
     });
     // Current turn (model just called a tool, results are in-flight)
     const currAi = new AIMessage({
@@ -135,9 +139,8 @@ describe('compactPriorToolResults', () => {
     const compacted = out[1] as ToolMessage;
     expect(compacted.content).toContain('[Tool: recall]');
     expect(compacted.content).toContain('(full result in transcript)');
-    expect(compacted.content).not.toContain(
-      'prior result — should be compacted',
-    );
+    expect(compacted.content).toContain('…');
+    expect(compacted.content).not.toContain('TAIL_BEYOND_200');
   });
 
   it('truncates args JSON to 100 chars with an ellipsis', () => {
