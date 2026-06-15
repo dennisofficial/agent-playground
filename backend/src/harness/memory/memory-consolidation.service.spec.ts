@@ -1,5 +1,5 @@
 import { RunnableLambda } from '@langchain/core/runnables';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Fact } from '@workspace/shared/schemas';
 import type { Repository } from 'typeorm';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
@@ -114,7 +114,15 @@ function makeFactRepo(rawManyResults: unknown[][]) {
   const createQueryBuilder = vi.fn(() => {
     const qb: Record<string, any> = {};
     const chain = () => qb;
-    for (const m of ['select', 'where', 'andWhere', 'groupBy', 'having', 'orderBy', 'limit'])
+    for (const m of [
+      'select',
+      'where',
+      'andWhere',
+      'groupBy',
+      'having',
+      'orderBy',
+      'limit',
+    ])
       qb[m] = vi.fn(chain);
     qb.getRawMany = vi.fn(() => Promise.resolve(rawManyResults[call++] ?? []));
     return qb;
@@ -458,7 +466,15 @@ describe('MemoryConsolidationService', () => {
         createQueryBuilder: vi.fn(() => {
           const qb: Record<string, any> = {};
           const chain = () => qb;
-          for (const m of ['select', 'where', 'andWhere', 'groupBy', 'having', 'orderBy', 'limit'])
+          for (const m of [
+            'select',
+            'where',
+            'andWhere',
+            'groupBy',
+            'having',
+            'orderBy',
+            'limit',
+          ])
             qb[m] = vi.fn(chain);
           qb.getRawMany = getRawMany;
           return qb;

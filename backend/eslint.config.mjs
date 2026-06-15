@@ -28,7 +28,23 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-floating-promises': 'warn',
-      '@typescript-eslint/no-unsafe-argument': 'warn'
+      '@typescript-eslint/no-unsafe-argument': 'warn',
+    },
+  },
+  // Test files: relax rules that fire as false positives on vi.fn() mock objects.
+  // @typescript-eslint/unbound-method fires on `expect(mock.method).toHaveBeenCalled()` even
+  // though vi.fn() mocks have no meaningful `this` binding — the rule doesn't understand Vitest
+  // spy semantics.  The no-unsafe-* rules fire because mocks are typed via `as unknown as T`,
+  // which strips the precise return types.  Neither indicates a real bug in test code.
+  {
+    files: ['**/*.spec.ts', '**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
     },
   },
 );

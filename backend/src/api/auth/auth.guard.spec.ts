@@ -62,7 +62,11 @@ function guard(opts: {
   return new AdminAuthGuard(
     makeReflector(opts.isPublic ?? false),
     makeJwt(opts.sub),
-    makeRepo(opts.user !== undefined ? opts.user : { id: opts.sub ?? 'u1', role: 'admin' }),
+    makeRepo(
+      opts.user !== undefined
+        ? opts.user
+        : { id: opts.sub ?? 'u1', role: 'admin' },
+    ),
     makeEnv(opts.m2mToken),
   );
 }
