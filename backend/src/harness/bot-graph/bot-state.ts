@@ -127,7 +127,8 @@ export const BotState = Annotation.Root({
     default: () => undefined,
   }),
   /** The gate's input-token count for this turn — last-write-wins proxy for context size.
-   * Written by `gateNode` on every path; read by `compactionNode`. 0 = gate was skipped. */
+   * Written by `gateNode` on every path (0 when the gate call was skipped). Retained for
+   * observability; no longer the compaction trigger (TKT-38 uses token-estimation instead). */
   lastContextTokens: Annotation<number>({
     reducer: (_: number, b: number) => b ?? 0,
     default: () => 0,
