@@ -136,15 +136,50 @@ export class ReviewPipelineService {
       return { kind: 'blocked', reason: 'session is not linked to a board task' };
 
     const bot = this.employees.byId(employee);
-    if (!bot)
+    if (!bot) {
+      await this.failOwner(
+        session,
+        taskId,
+        `unknown employee '${employee}' — can't run self-review`,
+      );
       return { kind: 'blocked', reason: `unknown employee '${employee}'` };
+    }
     const ctx = this.employees.context();
     const worktree = this.worktrees.get(worktreeId);
-    if (!worktree?.sharedBranch)
-      return {
-        kind: 'blocked',
-        reason: `worktree ${worktreeId} has no shared branch to publish through`,
-      };
+    if (!worktree) {
+      await this.failOwner(
+        session,
+        taskId,
+        `worktree ${worktreeId} no longer exists — can't run self-review`,
+      );
+      return { kind: 'blocked', reason: 'worktree gone' };
+    }
+    // Self-heal: the worktree never joined a shared branch at execute start (the stamping no-op'd or
+    // these sessions predate it). Promote it at the base divergence point so the owner's own diff is
+    // reviewable, instead of silently giving up. Any failure here is a loud, recoverable dead end.
+    if (!worktree.sharedBranch) {
+      const healed = await this.worktrees.ensureSharedAtBase(
+        worktreeId,
+        `ticket-${taskId}`,
+      );
+      if (!healed.ok) {
+        await this.failOwner(
+          session,
+          taskId,
+          `couldn't prepare a shared branch for review: ${healed.reason}`,
+        );
+        return { kind: 'blocked', reason: healed.reason };
+      }
+    }
+    // Backfill the plan row's execute context (idempotent) so the integration barrier's anchor lookup
+    // (`executeWorktreeId && sharedBranch`) can find this owner — a row promoted-but-never-stamped
+    // would otherwise mark 'complete' and then strand integrate() with no anchor.
+    await this.plans
+      .setExecuteContext(team, taskId, employee, {
+        executeWorktreeId: worktreeId,
+        sharedBranch: worktree.sharedBranch,
+      })
+      .catch(() => undefined);
     const keys = await this.creds.resolve(team);
     const task = await this.board.get(team, taskId);
     const ticketText = task
@@ -174,8 +209,7 @@ export class ReviewPipelineService {
         );
         if (parseVerdict(reviewText) === 'pass') break;
         if (pass === MAX_FIX_PASSES) {
-          await this.plans.setOwnerStatus(team, taskId, employee, 'blocked');
-          this.emitFailed(
+          await this.failOwner(
             session,
             taskId,
             `self-review still flagged issues after ${MAX_FIX_PASSES} fix passes — take it from here`,
@@ -239,20 +273,29 @@ export class ReviewPipelineService {
    */
   async integrate(team: string, taskId: number): Promise<void> {
     const plans = await this.plans.listForTask(team, taskId);
+    // The integration-barrier milestones wake EVERY owner of the ticket (not just the anchor), each
+    // in their own session's room — resolved once here (also the fan-out for any failure).
+    const owners = await this.resolveOwners(plans);
     const anchor = plans.find((p) => p.executeWorktreeId && p.sharedBranch);
     if (!anchor?.executeWorktreeId) {
       this.logger.warn(
         `integrate(#${taskId}): no plan row carries an execute worktree — cannot open the PR`,
       );
+      // The ticket is still 'executing' at this point (we haven't transitioned yet), so it's already
+      // resubmittable — just narrate the miss so it isn't swallowed.
+      this.notifyOwners(owners, {
+        kind: 'self-review-failed',
+        team,
+        taskId,
+        reason:
+          'no execute worktree is recorded for this ticket — re-run submit_for_review to retry',
+      });
       return;
     }
     const worktreeId = anchor.executeWorktreeId;
-    // The integration-barrier milestones wake EVERY owner of the ticket (not just the anchor), each
-    // in their own session's room — resolved once here.
-    const owners = await this.resolveOwners(plans);
 
     // executing → self_review (the integration review is running). Idempotent: a no-op if a concurrent
-    // trip already advanced it.
+    // trip already advanced it. Every dead end past this point rolls it back via failIntegration().
     await this.board
       .transition(team, taskId, 'executing', { status: 'self_review' })
       .catch(() => undefined);
@@ -260,26 +303,24 @@ export class ReviewPipelineService {
     const rec = await this.worktrees.projectRecordFor(worktreeId);
     const task = await this.board.get(team, taskId);
     if (!rec || !task) {
-      this.notifyOwners(owners, {
-        kind: 'self-review-failed',
+      await this.failIntegration(
         team,
         taskId,
-        reason:
-          'no registered GitHub repo matches this worktree — open the PR manually',
-      });
+        owners,
+        'no registered GitHub repo matches this worktree — open the PR manually',
+      );
       return;
     }
     const auth = await this.tokens
       .resolve(rec.teamId, rec.tokenName)
       .catch(() => undefined);
     if (!auth) {
-      this.notifyOwners(owners, {
-        kind: 'self-review-failed',
+      await this.failIntegration(
         team,
         taskId,
-        reason:
-          'no GitHub token is stored for this project — open the PR manually',
-      });
+        owners,
+        'no GitHub token is stored for this project — open the PR manually',
+      );
       return;
     }
 
@@ -302,12 +343,12 @@ export class ReviewPipelineService {
       await this.plans.setPrUrl(team, taskId, prUrl);
       this.notifyOwners(owners, { kind: 'pr-opened', team, taskId, prUrl });
     } catch (err) {
-      this.notifyOwners(owners, {
-        kind: 'self-review-failed',
+      await this.failIntegration(
         team,
         taskId,
-        reason: `couldn't open the PR (${err instanceof Error ? err.message : String(err)}) — open it manually`,
-      });
+        owners,
+        `couldn't open the PR (${err instanceof Error ? err.message : String(err)}) — open it manually`,
+      );
       return;
     }
 
@@ -331,13 +372,12 @@ export class ReviewPipelineService {
         }),
       ).catch(() => '');
       if (reviewText && parseVerdict(reviewText) === 'changes') {
-        this.notifyOwners(owners, {
-          kind: 'self-review-failed',
+        await this.failIntegration(
           team,
           taskId,
-          reason:
-            'the integration review flagged issues across the combined work — fix them and submit_for_review again',
-        });
+          owners,
+          'the integration review flagged issues across the combined work — fix them and submit_for_review again',
+        );
         return;
       }
     }
@@ -377,6 +417,45 @@ export class ReviewPipelineService {
       reason,
       notifyThread: session.notifyThread,
     });
+  }
+
+  /** A LOUD per-owner dead end: persist `owner_status='blocked'` AND narrate it, so a bot can never
+   * be told "review is running" and then silently loop. The single funnel for every reviewOwner
+   * failure that isn't auto-recoverable. */
+  private async failOwner(
+    session: Session,
+    taskId: number,
+    reason: string,
+  ): Promise<void> {
+    await this.plans
+      .setOwnerStatus(session.team, taskId, session.ownerBot, 'blocked')
+      .catch(() => undefined);
+    this.emitFailed(session, taskId, reason);
+  }
+
+  /** Public entry for the `submit_for_review` fire-and-forget `.catch()`: an UNEXPECTED throw out of
+   * reviewOwner (its known dead ends already self-report) must not vanish as an unhandled rejection —
+   * mark the owner blocked + narrate so the bot hears about it. */
+  async reportOwnerCrash(session: Session, reason: string): Promise<void> {
+    if (session.boardTaskId === undefined) return;
+    await this.failOwner(session, session.boardTaskId, reason);
+  }
+
+  /** A LOUD + RECOVERABLE integration dead end (everything past the executing→self_review flip): roll
+   * the ticket BACK to 'executing' so the standard submit_for_review path can re-trip the barrier
+   * after the human/config fix (owners stay 'complete', so a single resubmit re-runs reviewOwner →
+   * integrate), and narrate the reason to EVERY owner. Without the rollback the ticket would strand in
+   * self_review, where submit_for_review's status guard rejects every resubmit. */
+  private async failIntegration(
+    team: string,
+    taskId: number,
+    owners: Array<{ employee: string; notifyThread?: string }>,
+    reason: string,
+  ): Promise<void> {
+    await this.board
+      .transition(team, taskId, 'self_review', { status: 'executing' })
+      .catch(() => undefined);
+    this.notifyOwners(owners, { kind: 'self-review-failed', team, taskId, reason });
   }
 
   /** Resolve every owner of a task to (employee, their session's room) — the fan-out targets for the

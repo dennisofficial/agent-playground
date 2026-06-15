@@ -1077,6 +1077,91 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     expect(res.refreshed).toBe(false);
     expect(res.detail).toMatch(/no registered GitHub repo/i);
   });
+
+  it('ensureSharedAtBase cuts the shared branch at the base divergence point, so the owner diff is non-empty', async () => {
+    const { worktree } = await service.create({
+      name: 'late',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    expect(worktree.sharedBranch).toBeUndefined();
+    await commit(worktree.checkout, 'alex.txt', 'owner work\n');
+    const base = await git(worktree.repoRoot, 'rev-parse', 'origin/main');
+
+    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    expect(res).toEqual({ ok: true, sharedBranch: 'shared/ticket-9' });
+    // Cut at the merge-base (origin/main) — NOT the branch tip (which would make the diff empty).
+    expect(await git(worktree.repoRoot, 'rev-parse', 'shared/ticket-9')).toBe(
+      base,
+    );
+    const range = await git(
+      worktree.checkout,
+      'diff',
+      '--name-only',
+      `shared/ticket-9...${worktree.branch}`,
+    );
+    expect(range).toContain('alex.txt');
+    expect(service.get(worktree.id)?.sharedBranch).toBe('shared/ticket-9');
+    expect(
+      await git(worktree.repoRoot, 'config', `branch.${worktree.branch}.agent-shared`),
+    ).toBe('shared/ticket-9');
+  });
+
+  it('ensureSharedAtBase excludes base-refresh merge commits from the owner range', async () => {
+    const { worktree } = await service.create({
+      name: 'refresh',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'proj',
+    });
+    await commit(worktree.checkout, 'alex.txt', 'owner work\n');
+    // Dennis merges something on main; the worktree refreshes (merges origin/main in) before review.
+    await advanceOrigin(originDir, 'trunk.txt', 'trunk moved\n');
+    await git(worktree.repoRoot, 'fetch', 'origin', 'main');
+    await git(worktree.checkout, 'merge', '--no-edit', 'origin/main');
+
+    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    expect(res.ok).toBe(true);
+    const range = await git(
+      worktree.checkout,
+      'diff',
+      '--name-only',
+      `shared/ticket-9...${worktree.branch}`,
+    );
+    // The owner's own file is in range; the base-refresh content (trunk.txt) is NOT.
+    expect(range).toContain('alex.txt');
+    expect(range).not.toContain('trunk.txt');
+  });
+
+  it('ensureSharedAtBase returns a typed failure for an unregistered worktree (no PR possible)', async () => {
+    const { worktree } = await service.create({
+      name: 'solo',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'local',
+    });
+    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/no registered GitHub repo/i);
+    expect(service.get(worktree.id)?.sharedBranch).toBeUndefined();
+  });
+
+  it('ensureSharedAtBase runs the origin identity guard before any authenticated fetch/promotion', async () => {
+    // 'late' is unregistered at create → the worktree lives in WORKER_ROOT (origin ≠ the project repo).
+    const { worktree } = await service.create({
+      name: 'early',
+      ownerBot: 'alex',
+      team: 'local',
+      project: 'late',
+    });
+    // Now register 'late' pointing at the project origin — the worktree's repo origin still doesn't match.
+    registry.map.set('late', record('late', ORIGIN_URL()));
+    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/origin|recreate/i);
+    expect(service.get(worktree.id)?.sharedBranch).toBeUndefined();
+  });
 });
 
 describe('WorktreeService per-worktree git identity (real git)', () => {

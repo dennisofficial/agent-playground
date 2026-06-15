@@ -63,9 +63,16 @@ export class SubmitForReviewTool implements IHarnessTool<
       return `Board task #${session.boardTaskId} is '${task.status}', not 'executing' — only in-flight execution work can be submitted for review.`;
 
     // Fire-and-forget the pipeline, detached from the chat stream (same as create_session's first
-    // turn): it runs long engine review/fix turns and narrates its milestones via board events.
+    // turn): it runs long engine review/fix turns and narrates its milestones via board events. Its
+    // known dead ends self-report (blocked + seeded), but an UNEXPECTED throw must not vanish as an
+    // unhandled rejection — catch it and mark the owner blocked + narrate so the bot still hears back.
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.reviewPipeline.reviewOwner(session);
+      void this.reviewPipeline.reviewOwner(session).catch((err) => {
+        void this.reviewPipeline.reportOwnerCrash(
+          session,
+          `self-review crashed before it could finish (${err instanceof Error ? err.message : String(err)}) — take it from here`,
+        );
+      });
     });
     return `Submitted ${sessionId} (#${session.boardTaskId}) for review — self-review is running; I'll report back when the PR is ready or if something needs you.`;
   }

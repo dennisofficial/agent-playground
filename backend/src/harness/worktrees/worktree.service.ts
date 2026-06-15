@@ -836,14 +836,21 @@ export class WorktreeService implements OnApplicationBootstrap {
    * worktree. Cuts the shared branch from the worktree's current branch tip (refreshed from base at
    * execute start, so ≈ origin/base) — a later publish fast-forwards / merges the personal work in.
    */
-  async ensureShared(id: string, name: string): Promise<string | undefined> {
+  async ensureShared(
+    id: string,
+    name: string,
+    startPoint?: string,
+  ): Promise<string | undefined> {
     return this.gitOps(async () => {
       const wt = this.worktrees.get(id);
       if (!wt) return undefined;
       if (wt.sharedBranch) return wt.sharedBranch; // already shared — respect it
       const shared = this.sharedBranchName(name);
-      const startPoint = await this.git(['rev-parse', wt.branch], wt.repoRoot);
-      await this.ensureSharedBranch(shared, wt.repoRoot, startPoint);
+      // Default start point is the branch tip (fresh-worktree case ≈ origin/base). A caller can pass
+      // an explicit start point (see `ensureSharedAtBase`) to cut the shared branch elsewhere.
+      const start =
+        startPoint ?? (await this.git(['rev-parse', wt.branch], wt.repoRoot));
+      await this.ensureSharedBranch(shared, wt.repoRoot, start);
       // Record the personal branch's association so it survives restarts (re-adopted like create()).
       await this.git(
         ['config', `branch.${wt.branch}.${SHARED_CONFIG_KEY}`, shared],
@@ -853,6 +860,63 @@ export class WorktreeService implements OnApplicationBootstrap {
       this.logger.log(`${id}: promoted ${wt.branch} to shared branch ${shared}`);
       return shared;
     });
+  }
+
+  /**
+   * Retroactively promote a worktree that ALREADY has owner commits to a shared branch, cut at the
+   * branch's DIVERGENCE POINT from the base (`merge-base`), not its tip. The review pipeline uses this
+   * to self-heal a worktree that never joined a shared branch at execute start: cutting at the tip
+   * (plain `ensureShared`) would make the owner's self-review range `<sharedRef>...<branch>` empty, so
+   * their real code would never be reviewed. The merge-base start point yields exactly the owner's own
+   * commits — any execute-start base-refresh merge sits BELOW it and is excluded. Works for adopted
+   * worktrees too (no stored `baseRef` needed). Returns a typed failure (rather than throwing) when the
+   * worktree is gone, unregistered (can't open a PR anyway), the origin guard refuses, or the base
+   * divergence point can't be resolved — the pipeline surfaces these loud upstream.
+   */
+  async ensureSharedAtBase(
+    id: string,
+    name: string,
+  ): Promise<{ ok: true; sharedBranch: string } | { ok: false; reason: string }> {
+    const wt = this.worktrees.get(id);
+    if (!wt) return { ok: false, reason: `worktree ${id} no longer exists` };
+    if (wt.sharedBranch) return { ok: true, sharedBranch: wt.sharedBranch };
+    const rec = await this.projectRecordFor(id);
+    if (!rec)
+      return {
+        ok: false,
+        reason: `no registered GitHub repo matches worktree ${id} — it can't open a PR`,
+      };
+    // Mirror the remote-op identity guard BEFORE any authenticated network op: projectRecordFor's
+    // `wt.project` fast-path returns a record without verifying the actual remote, so a stale or
+    // misregistered worktree could otherwise fetch the wrong origin with the project's token.
+    const guard = await this.originGuard(wt, rec);
+    if (guard) return { ok: false, reason: guard };
+    const base = rec.defaultBranch;
+    // Best-effort: refresh origin/<base> so the merge-base is against the latest base. A miss still
+    // lets us fall back to whatever origin/<base> we already have locally.
+    await this.git(
+      ['fetch', 'origin', base],
+      wt.repoRoot,
+      gitAuthEnv(rec.gitUrl, await this.tokenFor(rec)),
+    ).catch(() => undefined);
+    const startPoint = (
+      await this.git(
+        ['merge-base', wt.branch, `origin/${base}`],
+        wt.repoRoot,
+      ).catch(() => '')
+    ).trim();
+    if (!startPoint)
+      return {
+        ok: false,
+        reason: `couldn't resolve the base divergence point (merge-base ${wt.branch}..origin/${base}) to cut a shared branch`,
+      };
+    const shared = await this.ensureShared(id, name, startPoint);
+    if (!shared)
+      return {
+        ok: false,
+        reason: `couldn't promote worktree ${id} to a shared branch`,
+      };
+    return { ok: true, sharedBranch: shared };
   }
 
   /**

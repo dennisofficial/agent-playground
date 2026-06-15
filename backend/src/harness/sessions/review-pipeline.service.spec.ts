@@ -32,8 +32,17 @@ function build(opts: {
   reviewVerdict?: string; // text the review engine returns
   publishIntegrated?: boolean;
   ownerStatuses?: Record<string, string>; // employee -> owner_status across the task
+  worktreeShared?: string | null; // worktree's current sharedBranch (null → not yet promoted)
+  selfHeal?: // result of ensureSharedAtBase when the worktree has no shared branch
+    | { ok: true; sharedBranch: string }
+    | { ok: false; reason: string };
+  noAnchor?: boolean; // plan rows carry no executeWorktreeId/sharedBranch
+  recNull?: boolean; // projectRecordFor returns undefined (unregistered)
+  openPrThrows?: boolean; // openPullRequest rejects
 }) {
   const ownerStatuses = opts.ownerStatuses ?? { alex: 'executing' };
+  const worktreeShared =
+    opts.worktreeShared === undefined ? SHARED : opts.worktreeShared;
   const engineRun = vi.fn(async () => ({
     result: opts.reviewVerdict ?? 'Looks good.\nVERDICT: PASS',
   }));
@@ -62,18 +71,20 @@ function build(opts: {
       return undefined;
     },
   );
+  const setExecuteContext = vi.fn(async () => undefined);
   const plans = {
     listForTask: async () =>
       Object.entries(ownerStatuses).map(([employee, ownerStatus]) => ({
         employee,
         ownerStatus,
-        executeWorktreeId: 'wt-1',
-        sharedBranch: SHARED,
+        executeWorktreeId: opts.noAnchor ? undefined : 'wt-1',
+        sharedBranch: opts.noAnchor ? undefined : SHARED,
         sessionId: 'sess-1',
       })),
     allOwnersComplete: async () =>
       Object.values(ownerStatuses).every((s) => s === 'complete'),
     setOwnerStatus,
+    setExecuteContext,
     setPrUrl: vi.fn(async () => undefined),
   } as never;
 
@@ -88,26 +99,45 @@ function build(opts: {
     sharedBranch: SHARED,
     files: opts.publishIntegrated === false ? ['a.ts'] : undefined,
   }));
+  // A single worktree instance so a self-heal mutation (set sharedBranch) is visible to the captured ref.
+  const worktree: { sharedBranch: string | null } & Record<string, unknown> = {
+    id: 'wt-1',
+    path: '/tmp/wt',
+    sharedBranch: worktreeShared,
+    branch: 'agent/alex/7',
+  };
+  const ensureSharedAtBase = vi.fn(async () => {
+    const r = opts.selfHeal ?? { ok: true, sharedBranch: SHARED };
+    if (r.ok) worktree.sharedBranch = r.sharedBranch;
+    return r;
+  });
   const worktrees = {
-    get: () => ({ id: 'wt-1', path: '/tmp/wt', sharedBranch: SHARED, branch: 'agent/alex/7' }),
+    get: () => worktree,
+    ensureSharedAtBase,
     sharedRef: async () => 'deadbeef',
     ownerDiff: async () => ({ range: 'deadbeef...agent/alex/7', files: ['a.ts'] }),
     publish,
-    projectRecordFor: async () => ({
-      teamId: 'T1',
-      tokenName: undefined,
-      gitUrl: 'https://github.com/o/r',
-      defaultBranch: 'main',
-    }),
+    projectRecordFor: async () =>
+      opts.recNull
+        ? undefined
+        : {
+            teamId: 'T1',
+            tokenName: undefined,
+            gitUrl: 'https://github.com/o/r',
+            defaultBranch: 'main',
+          },
     pushSharedToOrigin: async () => ({ sharedBranch: SHARED, gitUrl: 'https://github.com/o/r' }),
   } as never;
 
   const tokens = { resolve: async () => ({ name: 'default', token: 'tok' }) } as never;
-  const openPullRequest = vi.fn(async () => ({
-    url: 'https://github.com/o/r/pull/1',
-    number: 1,
-    existing: false,
-  }));
+  const openPullRequest = vi.fn(async () => {
+    if (opts.openPrThrows) throw new Error('github 500');
+    return {
+      url: 'https://github.com/o/r/pull/1',
+      number: 1,
+      existing: false,
+    };
+  });
   const markReadyForReview = vi.fn(async () => ({ isDraft: false }));
   const github = {
     openPullRequest,
@@ -139,6 +169,8 @@ function build(opts: {
     svc,
     engineRun,
     setOwnerStatus,
+    setExecuteContext,
+    ensureSharedAtBase,
     transition,
     publish,
     openPullRequest,
@@ -147,6 +179,14 @@ function build(opts: {
     resumeInternal,
     ownerStatuses,
   };
+}
+
+/** All employee names that received a board event of `kind`. */
+function emittedFor(boardEmit: { mock: { calls: unknown[][] } }, kind: string) {
+  return boardEmit.mock.calls
+    .map((c) => c[0] as { kind: string; employee: string })
+    .filter((e) => e.kind === kind)
+    .map((e) => e.employee);
 }
 
 describe('ReviewPipelineService.reviewOwner', () => {
@@ -216,16 +256,107 @@ describe('ReviewPipelineService.reviewOwner', () => {
       ownerStatuses: { alex: 'complete', riley: 'complete' },
     });
     await f.svc.integrate('T1', 7);
-    const emittedFor = (kind: string) =>
-      f.boardEmit.mock.calls
-        .map((c: unknown[]) => c[0] as { kind: string; employee: string })
-        .filter((e) => e.kind === kind)
-        .map((e) => e.employee);
-    expect(emittedFor('pr-opened')).toEqual(
+    expect(emittedFor(f.boardEmit, 'pr-opened')).toEqual(
       expect.arrayContaining(['alex', 'riley']),
     );
-    expect(emittedFor('pr-ready')).toEqual(
+    expect(emittedFor(f.boardEmit, 'pr-ready')).toEqual(
       expect.arrayContaining(['alex', 'riley']),
+    );
+  });
+
+  it('no shared branch → self-heals at the base, reviews, and completes (not a silent block)', async () => {
+    const f = build({
+      reviewVerdict: 'ok\nVERDICT: PASS',
+      worktreeShared: null,
+      selfHeal: { ok: true, sharedBranch: SHARED },
+    });
+    const out = await f.svc.reviewOwner(makeSession());
+    expect(out).toEqual({ kind: 'complete' });
+    expect(f.ensureSharedAtBase).toHaveBeenCalledWith('wt-1', 'ticket-7');
+    expect(f.setOwnerStatus).toHaveBeenCalledWith('T1', 7, 'alex', 'complete');
+    expect(f.setOwnerStatus).not.toHaveBeenCalledWith('T1', 7, 'alex', 'blocked');
+  });
+
+  it('self-heal failure → blocks the owner AND narrates (never silent)', async () => {
+    const f = build({
+      worktreeShared: null,
+      selfHeal: { ok: false, reason: 'no registered GitHub repo matches worktree wt-1' },
+    });
+    const out = await f.svc.reviewOwner(makeSession());
+    expect(out.kind).toBe('blocked');
+    expect(f.setOwnerStatus).toHaveBeenCalledWith('T1', 7, 'alex', 'blocked');
+    expect(f.boardEmit).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'self-review-failed', employee: 'alex' }),
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+
+  it('backfills the plan row execute context before publishing (so integrate finds an anchor)', async () => {
+    const f = build({ reviewVerdict: 'ok\nVERDICT: PASS' });
+    await f.svc.reviewOwner(makeSession());
+    expect(f.setExecuteContext).toHaveBeenCalledWith('T1', 7, 'alex', {
+      executeWorktreeId: 'wt-1',
+      sharedBranch: SHARED,
+    });
+  });
+});
+
+describe('ReviewPipelineService.integrate (loud + recoverable dead ends)', () => {
+  it('no anchor → narrates to all owners; ticket stays executing (no self_review flip)', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete', riley: 'complete' },
+      noAnchor: true,
+    });
+    await f.svc.integrate('T1', 7);
+    expect(emittedFor(f.boardEmit, 'self-review-failed')).toEqual(
+      expect.arrayContaining(['alex', 'riley']),
+    );
+    expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'executing', {
+      status: 'self_review',
+    });
+  });
+
+  it('unregistered repo → rolls self_review back to executing AND narrates to all owners', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete', riley: 'complete' },
+      recNull: true,
+    });
+    await f.svc.integrate('T1', 7);
+    expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'executing',
+    });
+    expect(emittedFor(f.boardEmit, 'self-review-failed')).toEqual(
+      expect.arrayContaining(['alex', 'riley']),
+    );
+    expect(f.markReadyForReview).not.toHaveBeenCalled();
+  });
+
+  it('PR-open failure → rolls back to executing AND narrates (resubmittable)', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete' },
+      openPrThrows: true,
+    });
+    await f.svc.integrate('T1', 7);
+    expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'executing',
+    });
+    expect(f.boardEmit).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'self-review-failed' }),
+    );
+  });
+
+  it('integration review flags changes → rolls back to executing AND narrates', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete' },
+      reviewVerdict: 'Combined work breaks X\nVERDICT: CHANGES',
+    });
+    await f.svc.integrate('T1', 7);
+    expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'executing',
+    });
+    expect(f.markReadyForReview).not.toHaveBeenCalled();
+    expect(f.boardEmit).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'self-review-failed' }),
     );
   });
 });
