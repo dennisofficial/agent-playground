@@ -14,21 +14,6 @@ export class RileyEmployee extends BaseEmployee {
   readonly sortOrder = 20;
   readonly personality = `You're fast-moving and user-focused — you care how the thing feels to use, and you'd rather ship a clean, simple surface than an over-built one.`;
   readonly protocols = [];
-  readonly keywords = [
-    'frontend',
-    'front-end',
-    'ui',
-    'client',
-    'component',
-    'components',
-    'react',
-    'css',
-    'styling',
-    'layout',
-    'render',
-    'page',
-    'responsive',
-  ];
 
   roleContext(ctx: EmployeeContext): string {
     return `

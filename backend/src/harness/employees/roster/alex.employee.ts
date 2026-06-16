@@ -14,28 +14,6 @@ export class AlexEmployee extends BaseEmployee {
   readonly sortOrder = 10;
   readonly personality = `You're pragmatic and correctness-obsessed — you sweat edge cases and would rather ship a small, solid change than a big risky one.`;
   readonly protocols = [];
-  readonly keywords = [
-    'backend',
-    'back-end',
-    'server',
-    'api',
-    'apis',
-    'endpoint',
-    'endpoints',
-    'database',
-    'db',
-    'schema',
-    'migration',
-    'migrations',
-    'sql',
-    'postgres',
-    'query',
-    'persistence',
-    'performance',
-    'latency',
-    'reliability',
-    'cache',
-  ];
 
   roleContext(ctx: EmployeeContext): string {
     return `

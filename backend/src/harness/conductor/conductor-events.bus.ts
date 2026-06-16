@@ -11,7 +11,6 @@ const INITIAL_STATUS: ConductorStatus = {
   running: 0,
   speaker: 'dennis',
   thinking: [],
-  dropped: 0,
 };
 
 /** How many events a late subscriber can catch up on. Covers the boot window comfortably; bounded

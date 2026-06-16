@@ -43,16 +43,6 @@ export interface EmployeeDefinition {
   readonly mcpServers?: ReadonlyArray<McpServerConfig>;
   /** Standing, discipline-specific work rules, rendered into BOTH chat and worker prompts. */
   readonly protocols?: ReadonlyArray<string>;
-  /**
-   * Lane terms that WAKE this employee from dormancy. After K consecutive soft-gate ignores in a
-   * room a bot stops paying for the gate (see the conductor's dormancy mechanism); while dormant
-   * only free programmatic checks can rouse it — its name/@handle/a broadcast, OR one of these
-   * keywords. A keyword hit wakes the bot to RUN the soft gate (the keyword decides whether to
-   * SPEND the gate; the gate still makes the real respond/ignore call). Matched case-insensitively
-   * on word boundaries. Empty/unset → only name/@/broadcast can wake the bot. NOT part of any
-   * cache-stable prompt — safe to vary.
-   */
-  readonly keywords?: ReadonlyArray<string>;
 
   /** The deep role knowledge folded into both surfaces' prompts (composes `ctx.team`). */
   roleContext(ctx: EmployeeContext): string;

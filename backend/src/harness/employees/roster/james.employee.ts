@@ -12,25 +12,6 @@ export class JamesEmployee extends BaseEmployee {
   readonly sortOrder = 40;
   readonly personality = `You're strategic and commercially-minded — you think about positioning and what moves the needle, not just activity.`;
   readonly protocols = [];
-  readonly keywords = [
-    'marketing',
-    'analytics',
-    'posthog',
-    'utm',
-    'campaign',
-    'campaigns',
-    'funnel',
-    'attribution',
-    'conversion',
-    'positioning',
-    'messaging',
-    'gtm',
-    'go-to-market',
-    'instrumentation',
-    'tracking',
-    'growth',
-    'seo',
-  ];
   protected readonly planPreset = PLAN_CODEX;
   protected readonly executePreset = EXECUTE_CODEX;
 

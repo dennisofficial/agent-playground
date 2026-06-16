@@ -1,5 +1,4 @@
 import { EnvService } from '@core/config/env/env.service';
-import { ConductorMetricsService } from '@harness/conductor/conductor-metrics.service';
 import { MemoryMetricsService } from '@harness/memory/memory-metrics.service';
 import { describe, expect, it, vi } from 'vitest';
 import { SlackCommandService } from './slack-commands.service';
@@ -18,12 +17,7 @@ const tenants = (): TenantStore =>
 const make = (boss?: string) => {
   const metrics = new MemoryMetricsService();
   return {
-    svc: new SlackCommandService(
-      metrics,
-      new ConductorMetricsService(),
-      tenants(),
-      env(boss),
-    ),
+    svc: new SlackCommandService(metrics, tenants(), env(boss)),
     metrics,
   };
 };

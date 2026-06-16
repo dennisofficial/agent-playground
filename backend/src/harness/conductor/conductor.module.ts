@@ -6,14 +6,13 @@ import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { ConductorEventsModule } from './conductor-events.module';
-import { ConductorMetricsService } from './conductor-metrics.service';
 import { ConductorService } from './conductor.service';
 
 /**
  * The event loop (ConductorService) + the presentation seam (ConductorEventsBus, via
- * ConductorEventsModule so tools can emit without a module cycle). The per-bot turn graphs live in
- * BotGraphModule — the conductor just dispatches turns onto them and relays their streamed deltas;
- * the graph's node-only dependencies (gate, recursion guard, tools, worktrees, llm) stay in
+ * ConductorEventsModule so tools can emit without a module cycle). Atlas's turn graph lives in
+ * BotGraphModule — the conductor just dispatches turns onto it and relays their streamed deltas;
+ * the graph's node-only dependencies (recursion guard, tools, worktrees, llm) stay in
  * BotGraphModule, not here. UI-agnostic — surfaces subscribe to the bus.
  */
 @CreateModule({
@@ -26,7 +25,7 @@ import { ConductorService } from './conductor.service';
     MemoryModule,
     SessionsModule,
   ],
-  services: [ConductorService, ConductorMetricsService],
-  exports: [ConductorEventsModule, ConductorMetricsService],
+  services: [ConductorService],
+  exports: [ConductorEventsModule],
 })
 export class ConductorModule {}

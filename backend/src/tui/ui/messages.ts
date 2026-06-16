@@ -156,12 +156,6 @@ export function renderEvent(e: ConductorEvent): RenderItem | null {
       };
     case 'error':
       return { id: e.id, kind: 'error', text: e.message };
-    case 'dropped':
-      return {
-        id: e.id,
-        kind: 'note',
-        text: `⚠ under-response: no one responded to "${e.text.slice(0, 80)}"`,
-      };
     case 'usage':
       // Per-step usage events are consumed by the SurfaceBridge for the Slack footer; the TUI
       // already renders per-message usage inline on the `assistant` row. Return null so the App

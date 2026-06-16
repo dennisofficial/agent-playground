@@ -1,5 +1,4 @@
 import { EnvService } from '@core/config/env/env.service';
-import { ConductorMetricsService } from '@harness/conductor/conductor-metrics.service';
 import { MemoryMetricsService } from '@harness/memory/memory-metrics.service';
 import { Injectable, Logger } from '@nestjs/common';
 import type {
@@ -25,7 +24,6 @@ export class SlackCommandService implements SlackInboundInterceptor {
 
   constructor(
     private readonly metrics: MemoryMetricsService,
-    private readonly conductorMetrics: ConductorMetricsService,
     private readonly tenants: TenantStore,
     private readonly env: EnvService,
   ) {}
@@ -62,14 +60,12 @@ export class SlackCommandService implements SlackInboundInterceptor {
     const sumAttempts = (t: Record<string, { attempts: number }>) =>
       Object.values(t).reduce((a, p) => a + p.attempts, 0);
     const r = m.recall;
-    const c = this.conductorMetrics.snapshot();
     return [
       '*Memory health* (this session)',
       `• recall: ${r.attempts} attempts · ${pct(r.hits, r.attempts)} surfaced ≥1 fact · ` +
         `${r.attempts ? (r.factsInjected / r.attempts).toFixed(1) : '0'} facts/pass avg`,
       `• writes: ${m.insertCount} new · ${m.dedupCount} merged · ${m.judgeCallCount} judge calls`,
       `• reconcile passes: ${sumAttempts(m.memByPath)} memory · ${sumAttempts(m.taskByPath)} task`,
-      `• under-response: ${c.humanBurstDropped} dropped (no one responded)`,
     ].join('\n');
   }
 }

@@ -99,16 +99,6 @@ export type ConductorEvent =
       note?: string;
     }
   | { id: string; kind: 'error'; message: string }
-  // Observability: a human message (burst) reached room quiescence with ZERO respond-action turns
-  // — nobody picked it up. The under-response signal (measured, not yet auto-fixed). One per burst.
-  | {
-      id: string;
-      kind: 'dropped';
-      channelId: string;
-      /** The dropped human message text + its channel seq. */
-      text: string;
-      seq: number;
-    }
   // Observability: per-step token usage for the chat LLM path (one event per billed AI step).
   // Consumed by the SurfaceBridge to build the per-post aggregate footer; not rendered by the TUI.
   | {
@@ -151,6 +141,4 @@ export interface ConductorStatus {
   speaker: string;
   /** Display names of bots currently working a turn. */
   thinking: string[];
-  /** Cumulative under-response drops this session (human bursts that got no respond-action turn). */
-  dropped: number;
 }

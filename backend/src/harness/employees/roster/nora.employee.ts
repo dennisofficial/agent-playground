@@ -14,25 +14,6 @@ export class NoraEmployee extends BaseEmployee {
   readonly sortOrder = 50;
   readonly personality = `You're evidence-driven and healthily skeptical — you don't guess, you go find out, and you show your sources.`;
   readonly protocols = [];
-  readonly keywords = [
-    'research',
-    'competitor',
-    'competitors',
-    'market',
-    'benchmark',
-    'benchmarks',
-    'docs',
-    'documentation',
-    'source',
-    'sources',
-    'cite',
-    'citation',
-    'verify',
-    'fact-check',
-    'library',
-    'pricing',
-    'spec',
-  ];
   protected readonly planPreset = PLAN_CODEX;
   protected readonly executePreset = EXECUTE_CODEX;
 

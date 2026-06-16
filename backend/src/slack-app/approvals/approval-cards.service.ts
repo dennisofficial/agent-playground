@@ -379,21 +379,28 @@ export class ApprovalCardsService
       })
       .catch((err) => this.logger.warn(`card repaint failed: ${err}`));
 
-    // SILENT wake-up for the proposing lead — the session-relay pattern, not a channel message.
-    // The card edit is the public record (everyone sees ✅/❌ on the card itself); the board and
-    // the ticket note are the durable ones. The lead just gets nudged with the facts and decides
-    // what, if anything, to say — usually nothing until the standup wraps.
-    const lead = this.employees.teamLead();
+    // SILENT wake-up for Atlas (the orchestrator) — a gate-bypassed seed, not a channel message.
+    // The card edit is the public record (Dennis sees ✅/❌ on the card itself); the board and the
+    // ticket note are the durable ones. On approval the board CAS already fired `ticket-approved`,
+    // so the pipeline runner resumes the paused run on its own — this seed just lets Atlas narrate
+    // the verdict if it's worth a line. Atlas decides what, if anything, to say.
+    const atlas = this.employees.teamLead();
     const verdictNote =
       v.verdict === 'approve'
         ? `${boss.authorName} APPROVED ticket #${v.taskId} via the approval card.`
         : v.verdict === 'deny'
-          ? `${boss.authorName} DENIED ticket #${v.taskId} via the approval card — released back to the board (open, unassigned).`
+          ? `${boss.authorName} DENIED ticket #${v.taskId} via the approval card — released back to the backlog (open, unassigned).`
           : `${boss.authorName} requested CHANGES on ticket #${v.taskId} via the approval card: "${v.notesText || '(no notes given)'}".`;
+    const nextStep =
+      v.verdict === 'approve'
+        ? 'The pipeline resumes its remaining stages on its own — nothing for you to do.'
+        : v.verdict === 'deny'
+          ? 'The ticket is back in the backlog and its pipeline run is parked.'
+          : 'The ticket is back in planning for a revision pass.';
     this.conductor.injectSeed(
-      lead.id,
+      atlas.id,
       `slack:${v.teamId}:${v.channel}`,
-      `[Approval card] ${verdictNote} The board is already updated and the card shows the verdict — this is a silent heads-up, not a message in the channel. Decide what's next yourself: usually NOTHING needs saying right now (don't re-announce the verdict — everyone can see the card); route change-request notes to the owning teammate's session when there are any, and save the roll-up of verdicts and next steps for when the standup closes.`,
+      `[Approval card] ${verdictNote} The board is already updated and the card shows the verdict — this is a silent heads-up, not a message in the channel. ${nextStep} Decide what's next yourself: usually NOTHING needs saying right now (don't re-announce the verdict — Dennis can already see the card).`,
     );
   }
 

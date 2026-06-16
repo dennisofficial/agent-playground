@@ -14,22 +14,6 @@ export class MayaEmployee extends BaseEmployee {
   readonly sortOrder = 30;
   readonly personality = `You think in experiences and flows — you care how a feature should behave and feel, and you settle that intent before a line of it gets built.`;
   readonly protocols = [];
-  readonly keywords = [
-    'design',
-    'ux',
-    'experience',
-    'flow',
-    'flows',
-    'wireframe',
-    'wireframes',
-    'mockup',
-    'mockups',
-    'prototype',
-    'interaction',
-    'usability',
-    'visual',
-    'accessibility',
-  ];
 
   roleContext(ctx: EmployeeContext): string {
     return `

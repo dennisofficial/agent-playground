@@ -20,8 +20,8 @@ interface RoomLog {
 /**
  * The conversation logs — one per room — with durable history. The in-memory logs stay the
  * SYNCHRONOUS source of truth: `append()` never blocks a turn, because the bot-graph's llm node
- * reads `since(cursor, channelId)` at the top of every step (mid-thought collaboration) and the
- * gate reads `historyBefore` windows. Postgres is write-behind durability: every append/update is
+ * reads `since(cursor, channelId)` at the top of every step (mid-thought collaboration). Postgres
+ * is write-behind durability: every append/update is
  * queued onto a serialized persist chain (ordering holds; failures are logged, never thrown into a
  * turn), and boot re-hydrates the tail of every room's log + its seq counter so cursors and history
  * survive restarts.

@@ -143,7 +143,7 @@ export function App({ deps }: { deps: AppDeps }) {
     if (key.downArrow) return scrollByLines(1);
   });
 
-  const { ctx, running, speaker, thinking, dropped } = status;
+  const { ctx, running, speaker, thinking } = status;
   const who = speaker.charAt(0).toUpperCase() + speaker.slice(1);
 
   function handleSubmit(value: string) {
@@ -181,7 +181,6 @@ export function App({ deps }: { deps: AppDeps }) {
   const footer = [
     ctxLabel,
     running > 0 ? `${running} job${running === 1 ? '' : 's'} running` : '',
-    dropped > 0 ? `${dropped} dropped` : '',
     offset < maxOffset ? '↑ scrolled · ↓/PgDn for latest' : '',
     hiddenDebug > 0 ? `${hiddenDebug} hidden · /debug` : '',
   ]

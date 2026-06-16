@@ -142,31 +142,7 @@ export class EmployeeRegistry implements OnModuleInit {
     return /@(here|channel|everyone)\b/i.test(text);
   }
 
-  /**
-   * True when `text` mentions one of this employee's lane keywords (case-insensitive, word
-   * boundary). The cheap programmatic wake-from-dormancy check — no LLM. Compiles one alternation
-   * RegExp per bot, cached by id (terms are escaped so a keyword like "go-to-market" matches
-   * literally). No keywords → always false.
-   */
-  keywordHit(bot: EmployeeDefinition, text: string): boolean {
-    const re = this.keywordRe(bot);
-    return re ? re.test(text) : false;
-  }
-
-  private readonly keywordRes = new Map<string, RegExp | null>();
-  private keywordRe(bot: EmployeeDefinition): RegExp | null {
-    let re = this.keywordRes.get(bot.id);
-    if (re === undefined) {
-      const terms = (bot.keywords ?? []).filter((k) => k.trim());
-      re = terms.length
-        ? new RegExp(`\\b(?:${terms.map(escapeRegExp).join('|')})\\b`, 'i')
-        : null;
-      this.keywordRes.set(bot.id, re);
-    }
-    return re;
-  }
-
-  /** One-line roster summary for prompts ("Alex — backend engineer; Sam — team lead"). */
+  /** One-line roster summary for prompts ("Alex — backend engineer; Atlas — team lead"). */
   rosterSummary(): string {
     return this.roster.map((b) => `${b.name} — ${b.role}`).join('; ');
   }
