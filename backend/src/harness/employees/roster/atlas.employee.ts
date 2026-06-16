@@ -15,17 +15,20 @@ import { OpenPrTool } from '../../tools/worktrees/open-pr.tool';
 import { EXECUTE_CODEX, PLAN_CODEX } from '../../engines/engine-presets';
 
 /**
- * Sam — the team lead. Plans/executes (and runs his peer-review sessions) on Codex — a DIFFERENT
- * engine from the Claude-planning teammates whose plans he reviews, so his pass is genuinely
- * independent. He has NO self-review capability: his review IS the second, adversarial pass on others'
- * plans (each teammate self-reviews their own plan before it reaches him).
- * Carries the one `teamLead` flag: triage, dispatch/staffing, team board ownership, cross-owner
- * task authority, and Slack presence in every group chat (enforced by LeadPresenceService).
+ * Atlas — the orchestrator / team lead, and the single voice you talk to. Plans/executes (and runs
+ * peer-review sessions) on Codex — a DIFFERENT engine from the Claude-planning specialists whose plans
+ * it reviews, so the pass is genuinely independent. Carries the one `teamLead` flag: triage,
+ * dispatch/staffing, team-board ownership, cross-owner task authority, and Slack presence.
+ *
+ * (The Atlas-orchestrator migration collapses the specialists into pipeline dispatch targets; the
+ * pipeline review stage replaces the old persona-level "Sam's reviewer role". The full orchestrator
+ * persona + the gate-less conductor graph wire in at the conductor cutover — for now Atlas inherits
+ * the prior team-lead behavior so the harness stays bootable.)
  */
 @AIEmployee()
-export class SamEmployee extends BaseEmployee {
-  readonly id = 'sam';
-  readonly name = 'Sam';
+export class AtlasEmployee extends BaseEmployee {
+  readonly id = 'atlas';
+  readonly name = 'Atlas';
   readonly role = 'team lead';
   /** Lead clearance: sees every plate, owns the team board, assigns + clears work across the team. */
   readonly teamLead = true;
@@ -37,8 +40,8 @@ export class SamEmployee extends BaseEmployee {
     ...DEFAULT_CHAT_TOOLSET,
     ListPullRequestsTool,
     // Lead-only manual override: open a PR by hand. mark_pr_ready is now in DEFAULT_CHAT_TOOLSET (every
-    // owner ships their own PR after the self-review hands them the decision), so Sam inherits it there
-    // — re-listing it would double-register (the allowlist→tools mapping doesn't dedup).
+    // owner ships their own PR after the self-review hands them the decision), so Atlas inherits it
+    // there — re-listing it would double-register (the allowlist→tools mapping doesn't dedup).
     OpenPrTool,
     // Lead-only approval pipeline + standup switch.
     ApprovePlanTool,

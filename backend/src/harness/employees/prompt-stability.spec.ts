@@ -7,7 +7,7 @@ import { JamesEmployee } from './roster/james.employee';
 import { MayaEmployee } from './roster/maya.employee';
 import { NoraEmployee } from './roster/nora.employee';
 import { RileyEmployee } from './roster/riley.employee';
-import { SamEmployee } from './roster/sam.employee';
+import { AtlasEmployee } from './roster/atlas.employee';
 import { TEAM_CONTEXT } from './roster/shared';
 
 /**
@@ -23,7 +23,7 @@ const CTX: EmployeeContext = {
   team: TEAM_CONTEXT,
   roster:
     'Alex — backend engineer; Riley — frontend engineer; Maya — product designer; ' +
-    'James — marketing & analytics; Nora — researcher; Sam — team lead',
+    'James — marketing & analytics; Nora — researcher; Atlas — team lead',
 };
 
 const EMPLOYEES: Array<new () => BaseEmployee> = [
@@ -32,7 +32,7 @@ const EMPLOYEES: Array<new () => BaseEmployee> = [
   MayaEmployee,
   NoraEmployee,
   RileyEmployee,
-  SamEmployee,
+  AtlasEmployee,
 ];
 
 const ENGINES = [

@@ -9,7 +9,9 @@ services:
       POSTGRES_PASSWORD: agent
       POSTGRES_DB: agent_playground
     ports:
-      - '5432:5432'
+      # Host 5433 (container stays 5432) so this project's Postgres runs alongside another project's
+      # Postgres bound to the default 5432. POSTGRES_PORT in .env.local.enc/.env.test.enc matches 5433.
+      - '5433:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

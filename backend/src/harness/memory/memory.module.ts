@@ -3,6 +3,7 @@ import { CreateModule } from '@workspace/nestjs-core';
 import {
   CompactionSummary,
   Fact,
+  PipelineRun,
   SessionNote,
   Task,
   TeamSetting,
@@ -23,6 +24,7 @@ import { CheckpointerModule } from './checkpointer.module';
 import { CompactionSummaryStore } from './compaction-summary.store';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
+import { PipelineRunStore } from './pipeline-run-store';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
 import { SessionNoteStore } from './session-note.store';
@@ -53,6 +55,7 @@ import { WorklogStore } from './worklog-store';
       TeamTaskNote,
       TeamSetting,
       Worklog,
+      PipelineRun,
     ]),
     LlmModule,
     LlmKeysModule,
@@ -91,6 +94,11 @@ import { WorklogStore } from './worklog-store';
       provide: WorklogStore,
       inject: [getRepositoryToken(Worklog)],
       useFactory: (worklog: Repository<Worklog>) => new WorklogStore(worklog),
+    },
+    {
+      provide: PipelineRunStore,
+      inject: [getRepositoryToken(PipelineRun)],
+      useFactory: (repo: Repository<PipelineRun>) => new PipelineRunStore(repo),
     },
     {
       provide: PlanStore,

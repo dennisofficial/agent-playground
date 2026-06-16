@@ -89,6 +89,12 @@ export class BotGraphFactory {
   // One compiled graph per bot, lazy + memoized. Tenant-agnostic: the model is built per-invocation
   // inside the llm node (from the turn's credential context), so one graph serves every workspace.
   private graphs = new Map<string, ReturnType<BotGraphFactory['build']>>();
+  // Gate-less conductor graphs (one per bot), kept in a separate map to avoid conflating the two
+  // topologies (different node sets → incompatible compiled-graph types).
+  private conductorGraphs = new Map<
+    string,
+    ReturnType<BotGraphFactory['buildConductorGraph']>
+  >();
   /** The node implementations, handed the same services this factory injects. */
   private readonly nodes: BotGraphNodes;
 
@@ -147,6 +153,46 @@ export class BotGraphFactory {
       this.graphs.set(bot.id, g);
     }
     return g;
+  }
+
+  /**
+   * A gate-less conductor graph: START → recall → llm ⇄ tools → tool_loop_guard → refreshContext?
+   * → reconcile → compact → END. Used by Atlas (the orchestrator) for a turn the caller has already
+   * decided to run — no GateService soft-classify, no dormancy/mark_seen. Memoized per bot id,
+   * separate from the per-bot gated graph cache. (Wired into the conductor at the cutover phase.)
+   */
+  getConductorGraph(bot: EmployeeDefinition) {
+    let g = this.conductorGraphs.get(bot.id);
+    if (!g) {
+      g = this.buildConductorGraph(bot);
+      this.conductorGraphs.set(bot.id, g);
+    }
+    return g;
+  }
+
+  private buildConductorGraph(bot: EmployeeDefinition) {
+    const n = this.nodes.forBot(bot);
+    return new StateGraph(BotState)
+      .addNode('recall', n.recall)
+      .addNode('llm', n.llm)
+      .addNode('tools', n.tools)
+      .addNode('tool_loop_guard', n.toolLoopGuard)
+      .addNode('refreshContext', n.refreshContext)
+      .addNode('reconcile', n.reconcile)
+      .addNode('compact', n.compact)
+      .addEdge(START, 'recall')
+      .addEdge('recall', 'llm')
+      .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
+      .addEdge('tools', 'tool_loop_guard')
+      .addConditionalEdges('tool_loop_guard', makeAfterToolLoopGuard(n.refresh), [
+        'llm',
+        'refreshContext',
+        'reconcile',
+      ])
+      .addEdge('refreshContext', 'llm')
+      .addEdge('reconcile', 'compact')
+      .addEdge('compact', END)
+      .compile({ checkpointer: this.checkpointer });
   }
 
   private build(bot: EmployeeDefinition) {

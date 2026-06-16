@@ -1,3 +1,4 @@
+import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type ChatTracePointer, traceSessionTurn } from '@workspace/langfuse';
@@ -79,6 +80,56 @@ export class SessionRunnerService {
     private readonly plans: PlanStore,
     private readonly settings: TeamSettingsStore,
   ) {}
+
+  /**
+   * Open a background session for a PIPELINE STAGE, owned by the specialist `role` (so it resolves
+   * THAT employee's engine/persona for the mode), but relaying turn-end to `notifyThread` (the
+   * orchestrator's surface). Distinct from the chat `create_session` tool, which is owner-scoped to
+   * the calling bot. Fire-and-forget, ALS-detached so the stage's engine tokens never bleed into the
+   * orchestrator's chat stream.
+   */
+  async openStageSession(opts: {
+    role: string;
+    team: string;
+    project: string;
+    worktreeId: string;
+    task: string;
+    mode: WorkerMode;
+    notifyThread: string;
+    boardTaskId?: number;
+    parentChatTrace?: ChatTracePointer;
+  }): Promise<Session> {
+    const bot =
+      this.employees.byId(opts.role) ?? this.employees.fallbackOwner();
+    const ctx = this.persona.context();
+    // Engine fixed at create, by mode: plan→planEngine, execute/investigate→executeEngine
+    // (investigate keeps execute's engine, read-only at the seam). Mirrors CreateSessionTool.
+    const engine = (
+      opts.mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx)
+    ).engine;
+    const session = await this.sessions.create({
+      task: opts.task,
+      worktreeId: opts.worktreeId,
+      notifyThread: opts.notifyThread,
+      engine,
+      ownerBot: bot.id,
+      team: opts.team,
+      project: opts.project,
+      mode: opts.mode,
+      ...(opts.boardTaskId !== undefined
+        ? { boardTaskId: opts.boardTaskId }
+        : {}),
+    });
+    AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
+      void this.runSessionTurn(
+        session.id,
+        opts.task,
+        opts.parentChatTrace,
+        opts.mode === 'execute',
+      );
+    });
+    return session;
+  }
 
   /**
    * Refresh a worktree against its base branch when execution starts, and return a PREAMBLE to

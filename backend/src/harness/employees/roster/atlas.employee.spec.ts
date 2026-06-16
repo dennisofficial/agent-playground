@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { SamEmployee } from './sam.employee';
+import { AtlasEmployee } from './atlas.employee';
 import { MarkPrReadyTool } from '../../tools/worktrees/mark-pr-ready.tool';
 import { OpenPrTool } from '../../tools/worktrees/open-pr.tool';
 
 /**
- * Sam spreads DEFAULT_CHAT_TOOLSET and then adds lead-only tools. The allowlist→tools mapping does
+ * Atlas spreads DEFAULT_CHAT_TOOLSET and then adds lead-only tools. The allowlist→tools mapping does
  * NOT dedup (tool.registry.ts), so a tool listed in BOTH the spread and the explicit additions would
  * register twice and hand the model a duplicate-named tool. mark_pr_ready moved into the default
- * toolset (every owner ships their own PR), so re-listing it on Sam is the regression to guard.
+ * toolset (every owner ships their own PR), so re-listing it on Atlas is the regression to guard.
  */
-describe('Sam roster tools', () => {
-  const tools = new SamEmployee().tools ?? [];
+describe('Atlas roster tools', () => {
+  const tools = new AtlasEmployee().tools ?? [];
 
   it('registers every tool class at most once (no double-registration)', () => {
     expect(new Set(tools).size).toBe(tools.length);

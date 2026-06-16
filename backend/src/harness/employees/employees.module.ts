@@ -7,7 +7,7 @@ import { JamesEmployee } from './roster/james.employee';
 import { MayaEmployee } from './roster/maya.employee';
 import { NoraEmployee } from './roster/nora.employee';
 import { RileyEmployee } from './roster/riley.employee';
-import { SamEmployee } from './roster/sam.employee';
+import { AtlasEmployee } from './roster/atlas.employee';
 
 /**
  * The team. Every `@AIEmployee()` roster class is registered here as a PLAIN CLASS provider
@@ -23,7 +23,7 @@ import { SamEmployee } from './roster/sam.employee';
     MayaEmployee,
     JamesEmployee,
     NoraEmployee,
-    SamEmployee,
+    AtlasEmployee,
   ],
 })
 export class EmployeesModule {}
