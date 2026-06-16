@@ -329,9 +329,10 @@ export class ConductorService
 
   /**
    * The execution throttle: wake owners of 'approved' tickets (oldest first) to open execute sessions,
-   * but only enough to bring in-flight execution (executing + self_review) up to the cap. The board
-   * itself is the durable pending queue — 'approved' tickets that don't fit wait here and are picked
-   * up by the next rescan (a slot frees on `pr-ready` or a session close). `executionWoken` dedups so
+   * but only enough to bring in-flight execution (status 'executing'; self_review tickets are published
+   * + waiting and don't count — see IN_FLIGHT_EXECUTION_STATUSES) up to the cap. The board itself is the
+   * durable pending queue — 'approved' tickets that don't fit wait here and are picked up by the next
+   * rescan (a slot frees on `pr-ready` or a session close). `executionWoken` dedups so
    * a still-pending owner isn't re-nudged every rescan; stale keys (tickets no longer approved) are
    * pruned each pass so a re-approved ticket can be woken again.
    */

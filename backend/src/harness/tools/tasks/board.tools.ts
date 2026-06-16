@@ -59,6 +59,12 @@ const addSchema = z.object({
     .describe(
       'Board task ids (the #N) that must be done before this one can be claimed.',
     ),
+  shared_slug: z
+    .string()
+    .optional()
+    .describe(
+      '(TEAM LEAD ONLY) Group this ticket into a shared feature: all tickets with the SAME slug land on one `shared/<slug>` branch + one PR and ship together once all are done. Omit for standalone work.',
+    ),
 });
 
 @HarnessTool()
@@ -80,6 +86,7 @@ export class AddBoardTaskTool implements IHarnessTool<typeof addSchema> {
       project,
       assignee,
       depends_on,
+      shared_slug,
     }: z.infer<typeof addSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
@@ -87,14 +94,15 @@ export class AddBoardTaskTool implements IHarnessTool<typeof addSchema> {
     const owner = assignee?.trim().toLowerCase() || undefined;
     if (owner && !this.employees.byId(owner))
       return `No teammate '${owner}' on the roster — leave it unassigned or use a roster id.`;
+    const isLead = !!this.employees.byId(id.selfAgent)?.teamLead;
     // Cross-assignment is the lead's call — mirrors the personal-plate cross-owner rule.
-    if (
-      owner &&
-      owner !== id.selfAgent &&
-      !this.employees.byId(id.selfAgent)?.teamLead
-    ) {
+    if (owner && owner !== id.selfAgent && !isLead) {
       return `Only the team lead assigns board tasks to someone else — file it unassigned (or for yourself) and flag it to the lead.`;
     }
+    // Grouping tickets onto a shared feature branch/PR is the lead's call.
+    const slug = shared_slug?.trim().toLowerCase() || undefined;
+    if (slug && !isLead)
+      return `Grouping tickets onto a shared feature (shared_slug) is the team lead's call — file it standalone and flag it to @Sam.`;
     const named = project?.trim().toLowerCase();
     const target =
       named && recallProjects(id).includes(named) ? named : id.project;
@@ -106,6 +114,7 @@ export class AddBoardTaskTool implements IHarnessTool<typeof addSchema> {
       assignee: owner,
       createdBy: id.selfAgent,
       dependsOn: depends_on,
+      sharedSlug: slug,
     });
     if ('unknownDeps' in created)
       return `Unknown dependency id(s) #${created.unknownDeps.join(', #')} — check list_board and retry.`;
@@ -189,6 +198,12 @@ const updateSchema = z.object({
     .string()
     .optional()
     .describe('Rewrite the description (team lead only).'),
+  shared_slug: z
+    .string()
+    .optional()
+    .describe(
+      '(TEAM LEAD ONLY) Set/change the shared feature slug — tickets sharing it land on one PR. Set before execution starts; pass an empty string to clear it.',
+    ),
 });
 
 @HarnessTool()
@@ -215,6 +230,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
       assignee,
       title,
       description,
+      shared_slug,
     }: z.infer<typeof updateSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
@@ -223,6 +239,13 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     if (!task) return `No board task #${taskId} found.`;
     const isLead = !!this.employees.byId(id.selfAgent)?.teamLead;
     const release = status === 'open';
+    // Shared-feature grouping is the lead's call (empty string clears it).
+    if (shared_slug !== undefined && !isLead)
+      return `Setting a shared feature slug is the team lead's call.`;
+    const sharedSlug =
+      shared_slug === undefined
+        ? undefined
+        : shared_slug.trim().toLowerCase() || null;
 
     // The approval seam: 'approved' is the record of DENNIS's decision, clerked by the lead, and
     // 'awaiting_approval' is set by the lead's propose_plan (manual set = the lead's escape hatch).
@@ -274,6 +297,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
           : {}),
       ...(title !== undefined ? { title } : {}),
       ...(description !== undefined ? { description } : {}),
+      ...(sharedSlug !== undefined ? { sharedSlug } : {}),
     });
     if (!updated) return `No board task #${taskId} found.`;
 

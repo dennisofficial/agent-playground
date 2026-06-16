@@ -77,16 +77,12 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
     expect(plan?.sharedBranch).toBe('shared/x');
   });
 
-  it('integration barrier gate: allOwnersComplete is false until EVERY owner is complete', async () => {
+  it('owner_status walks executing → complete on the single plan row', async () => {
     const t = await approvedTask();
     await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'a' });
-    await plans.attach({ team: 'T1', taskId: t.id, employee: 'riley', planMd: 'r' });
-
-    expect(await plans.allOwnersComplete('T1', t.id)).toBe(false);
+    expect((await plans.get('T1', t.id, 'alex'))?.ownerStatus).toBe('executing');
     await plans.setOwnerStatus('T1', t.id, 'alex', 'complete');
-    expect(await plans.allOwnersComplete('T1', t.id)).toBe(false); // riley still executing
-    await plans.setOwnerStatus('T1', t.id, 'riley', 'complete');
-    expect(await plans.allOwnersComplete('T1', t.id)).toBe(true);
+    expect((await plans.get('T1', t.id, 'alex'))?.ownerStatus).toBe('complete');
   });
 
   it('re-attaching a plan resets owner_status back to executing', async () => {
@@ -106,14 +102,15 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
     expect((await board.get('T1', t.id))?.status).toBe('in_review');
   });
 
-  it('countInFlightExecution counts executing + self_review, per team', async () => {
+  it('countInFlightExecution counts ONLY executing (self_review frees its slot, per team)', async () => {
     const a = await approvedTask('alex');
     const b = await approvedTask('riley');
     const c = await approvedTask('maya');
     await board.transition('T1', a.id, 'approved', { status: 'executing' });
+    // A self_review ticket is published + waiting (e.g. on shared-feature siblings) — it must NOT
+    // hold an execution slot, or a sibling group larger than the cap would deadlock.
     await board.transition('T1', b.id, 'approved', { status: 'self_review' });
-    // c stays approved (not yet in flight)
-    expect(await board.countInFlightExecution('T1')).toBe(2);
+    expect(await board.countInFlightExecution('T1')).toBe(1);
     void c;
   });
 });

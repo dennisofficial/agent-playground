@@ -28,10 +28,13 @@ const ctx: { identity: Identity } = {
 
 function makeTool(opts: {
   refusal?: string | null;
-  boardTask?: { id: number; title?: string; description?: string } | undefined;
+  boardTask?:
+    | { id: number; title?: string; description?: string; sharedSlug?: string }
+    | undefined;
   plan?: { planMd: string } | undefined;
   engine?: EWorkerEngineName;
   note?: { id: number; body: string } | undefined;
+  worktreeShared?: string; // the worktree's existing sharedBranch (for the drift guard)
 }) {
   const created: Record<string, unknown>[] = [];
   const sessions = {
@@ -47,9 +50,15 @@ function makeTool(opts: {
         Promise.resolve(),
     ),
   };
+  const ensureShared = vi.fn(async (_id: string, name: string) => `shared/${name}`);
   const worktrees = {
-    get: () => ({ id: 'wt-001', path: '/tmp/wt' }),
-    ensureShared: vi.fn(async () => 'shared/ticket-7'),
+    get: () => ({
+      id: 'wt-001',
+      path: '/tmp/wt',
+      sharedBranch: opts.worktreeShared,
+    }),
+    ensureShared,
+    sharedBranchName: (s: string) => `shared/${s}`,
   };
   const alex = makeEmployee({ id: 'alex', name: 'Alex', engine: opts.engine });
   const employees = {
@@ -75,7 +84,7 @@ function makeTool(opts: {
     plans as never,
     notes as never,
   );
-  return { tool, created, runner, board, plans, notes };
+  return { tool, created, runner, board, plans, notes, ensureShared };
 }
 
 describe('create_session × the approval gate', () => {
@@ -169,6 +178,45 @@ describe('create_session × the approval gate', () => {
     expect(opening).toContain('PLAN: add the auth middleware.');
     expect(opening).toContain('Wire auth');
     expect(opening).toContain('go execute #7');
+  });
+
+  it('derives the shared branch from the ticket slug when set', async () => {
+    const { tool, ensureShared } = makeTool({
+      boardTask: { id: 7, title: 'API', sharedSlug: 'payment-flow' },
+      refusal: null,
+    });
+    await tool.execute(
+      { worktreeId: 'wt-001', task: 'go', mode: 'execute', board_task_id: 7 },
+      ctx,
+    );
+    expect(ensureShared).toHaveBeenCalledWith('wt-001', 'payment-flow');
+  });
+
+  it('defaults the shared branch to ticket-N for standalone work', async () => {
+    const { tool, ensureShared } = makeTool({
+      boardTask: { id: 7, title: 'API' },
+      refusal: null,
+    });
+    await tool.execute(
+      { worktreeId: 'wt-001', task: 'go', mode: 'execute', board_task_id: 7 },
+      ctx,
+    );
+    expect(ensureShared).toHaveBeenCalledWith('wt-001', 'ticket-7');
+  });
+
+  it('drift guard: refuses an execute open when the worktree is on a different shared branch than the ticket lands on', async () => {
+    const { tool, created } = makeTool({
+      boardTask: { id: 7, title: 'API', sharedSlug: 'payment-flow' },
+      refusal: null,
+      worktreeShared: 'shared/something-else',
+    });
+    const out = await tool.execute(
+      { worktreeId: 'wt-001', task: 'go', mode: 'execute', board_task_id: 7 },
+      ctx,
+    );
+    expect(out).toContain('shared/something-else');
+    expect(out).toContain('shared/payment-flow');
+    expect(created).toHaveLength(0); // never opened
   });
 
   it('falls back to the plain task when an execute session has no attached plan', async () => {

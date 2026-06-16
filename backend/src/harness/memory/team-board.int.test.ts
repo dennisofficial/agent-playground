@@ -119,6 +119,32 @@ describe('BoardStore (live Postgres)', () => {
     ).toHaveLength(1);
   });
 
+  it('shared_slug round-trips through create/update and list({sharedSlug}) is project-scoped', async () => {
+    const a = asTask(await create({ title: 'A', sharedSlug: 'feat' }));
+    expect((await board.get('T1', a.id))?.sharedSlug).toBe('feat');
+    // a same-slug ticket in ANOTHER project must not group with it
+    await create({ title: 'B', sharedSlug: 'feat', project: 'other' });
+    const b = asTask(await create({ title: 'C' }));
+    await board.update('T1', b.id, { sharedSlug: 'feat' });
+
+    const group = await board.list({ team: 'T1', project: 'p', sharedSlug: 'feat' });
+    expect(group.map((t) => t.title).sort()).toEqual(['A', 'C']);
+    // clearing the slug drops it from the group
+    await board.update('T1', b.id, { sharedSlug: null });
+    expect(
+      (await board.list({ team: 'T1', project: 'p', sharedSlug: 'feat' })).map((t) => t.title),
+    ).toEqual(['A']);
+  });
+
+  it('countInFlightExecution counts only executing (a waiting self_review ticket frees its slot)', async () => {
+    const a = asTask(await create({ title: 'A' }));
+    const b = asTask(await create({ title: 'B' }));
+    await board.update('T1', a.id, { status: 'executing' });
+    await board.update('T1', b.id, { status: 'self_review' });
+    // self_review must NOT count — otherwise a shared-feature group larger than the cap deadlocks.
+    expect(await board.countInFlightExecution('T1')).toBe(1);
+  });
+
   it('release puts a claimed task back up for grabs', async () => {
     const t = asTask(await create());
     asTask(await board.claim('T1', t.id, 'alex'));
