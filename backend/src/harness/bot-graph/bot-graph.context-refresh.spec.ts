@@ -8,11 +8,9 @@ import type { ChannelRegistryService } from '../channel/channel-registry.service
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { PersonaService } from '../employees/persona.service';
-import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
-import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -91,7 +89,7 @@ async function runTurn(
   factory: BotGraphFactory,
   threadId: string,
 ): Promise<void> {
-  const graph = factory.getBotGraph(ALEX);
+  const graph = factory.getConductorGraph(ALEX);
   const config = { configurable: { thread_id: threadId } };
   const stream = await graph.stream(
     { cursor: 0, forced: false },
@@ -166,14 +164,6 @@ describe('bot graph — post-tools context refresh', () => {
         refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
       } as unknown as ToolRegistry,
       {
-        gate: async () => ({ action: 'respond' as const }),
-      } as unknown as GateService,
-      {
-        isEnabled: () => false,
-        windowSize: () => 12,
-        detect: () => Promise.resolve({ looping: false }),
-      } as unknown as RecursionGuardService,
-      {
         fetchMemory: async () => '',
         fetchTasks: async () => '',
       } as unknown as FetchService,
@@ -200,7 +190,7 @@ describe('bot graph — post-tools context refresh', () => {
     expect(step2).toContain('wt-new');
 
     // Final state: context.work updated, recalled still the original (empty) snapshot.
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const final = await graph.getState({
       configurable: { thread_id: 'alex:refresh-work:root' },
     });
@@ -263,14 +253,6 @@ describe('bot graph — post-tools context refresh', () => {
         toStructuredTools: () => [pokeTool],
         refreshScopesByName: () => new Map([['poke', ['memory'] as const]]),
       } as unknown as ToolRegistry,
-      {
-        gate: async () => ({ action: 'respond' as const }),
-      } as unknown as GateService,
-      {
-        isEnabled: () => false,
-        windowSize: () => 12,
-        detect: () => Promise.resolve({ looping: false }),
-      } as unknown as RecursionGuardService,
       fetchService,
       {
         reconcileMemory: async () => {},
@@ -347,14 +329,6 @@ describe('bot graph — post-tools context refresh', () => {
         // Empty map → poke has NO refresh scope → routes straight to llm after tools.
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
-      {
-        gate: async () => ({ action: 'respond' as const }),
-      } as unknown as GateService,
-      {
-        isEnabled: () => false,
-        windowSize: () => 12,
-        detect: () => Promise.resolve({ looping: false }),
-      } as unknown as RecursionGuardService,
       {
         fetchMemory: async () => '',
         fetchTasks: async () => '',
@@ -440,14 +414,6 @@ describe('bot graph — post-tools context refresh', () => {
         refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
       } as unknown as ToolRegistry,
       {
-        gate: async () => ({ action: 'respond' as const }),
-      } as unknown as GateService,
-      {
-        isEnabled: () => false,
-        windowSize: () => 12,
-        detect: () => Promise.resolve({ looping: false }),
-      } as unknown as RecursionGuardService,
-      {
         fetchMemory: async () => '',
         fetchTasks: async () => '',
       } as unknown as FetchService,
@@ -465,7 +431,7 @@ describe('bot graph — post-tools context refresh', () => {
 
     await runTurn(factory, 'alex:refresh-single-recall:root');
 
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const final = await graph.getState({
       configurable: { thread_id: 'alex:refresh-single-recall:root' },
     });

@@ -155,12 +155,33 @@ export class ReviewPipelineService {
   }
 
   /**
-   * Per-owner: review THIS owner's diff, fix-loop in-session, then publish onto the shared branch.
-   * Marks the plan row 'complete' on success (and triggers integrate() when it's the last owner), or
-   * 'blocked' + seeds the owner on a conflict / exhausted fix loop. Best-effort and self-contained:
-   * it owns the owner_status writes so a partial run never strands the task silently.
+   * Per-owner PEER entry (submit_for_review): run the review STAGE, then — on a clean publish — mark
+   * the plan row 'complete' and trip the integration barrier (which ships once every sibling is
+   * published). A blocked stage already narrated + persisted owner_status='blocked'; pass it through.
    */
   async reviewOwner(session: Session): Promise<OwnerReviewOutcome> {
+    const outcome = await this.reviewStage(session);
+    if (outcome.kind !== 'complete') return outcome;
+    const { team, ownerBot: employee } = session;
+    const taskId = session.boardTaskId!;
+    await this.plans.setOwnerStatus(team, taskId, employee, 'complete');
+    // This owner published — trip the integration barrier. For a shared feature it only ships once
+    // every sibling ticket is published too (the gate lives in integrate()).
+    await this.integrate(team, taskId).catch((err) =>
+      this.logger.warn(`integrate(#${taskId}) failed: ${err}`),
+    );
+    return { kind: 'complete' };
+  }
+
+  /**
+   * The reusable review STAGE — review THIS session's own diff, run a bounded in-session fix loop,
+   * then publish the reviewed work onto the shared branch. Returns {kind:'complete'} on a clean
+   * publish (the CALLER owns the mark-complete / integrate / ship tail), or {kind:'blocked'} after a
+   * LOUD, recoverable owner_status='blocked' write + narration (missing worktree, exhausted fix loop,
+   * or a publish conflict left in-progress for the owner to resolve). Shared by the peer reviewOwner()
+   * and the Atlas pipeline's review stage.
+   */
+  async reviewStage(session: Session): Promise<OwnerReviewOutcome> {
     const { team, ownerBot: employee, worktreeId } = session;
     const taskId = session.boardTaskId;
     if (taskId === undefined)
@@ -290,13 +311,6 @@ export class ReviewPipelineService {
       return { kind: 'blocked', reason: 'publish conflict' };
     }
 
-    await this.plans.setOwnerStatus(team, taskId, employee, 'complete');
-
-    // This owner published — trip the integration barrier. For a shared feature it only ships once
-    // every sibling ticket is published too (the gate lives in integrate()).
-    await this.integrate(team, taskId).catch((err) =>
-      this.logger.warn(`integrate(#${taskId}) failed: ${err}`),
-    );
     return { kind: 'complete' };
   }
 
@@ -566,6 +580,112 @@ export class ReviewPipelineService {
       });
     }
     return { ok: true };
+  }
+
+  /**
+   * The single-task PR ship for the Atlas pipeline's PR gate — open (or find) the PR for THIS task's
+   * worktree and mark it ready, with NO sibling/sharedSlug fan-out (the peer `integrate`/`shipSharedPr`
+   * path stays untouched). Self-heals a missing shared branch (the ticket's slug or `ticket-N`),
+   * publishes the accumulated pipeline work, pushes to origin, opens a READY PR (base = the project's
+   * default branch), flips the ticket → in_review, stamps the PR url, and narrates pr-ready. Loud-fail
+   * ({ok:false}) on any infra miss so the caller never reports a ship that didn't happen.
+   */
+  async shipTask(opts: {
+    team: string;
+    taskId: number;
+    worktreeId: string;
+    notifyThread?: string;
+  }): Promise<{ ok: boolean; reason?: string; prUrl?: string }> {
+    const { team, taskId, worktreeId } = opts;
+    const task = await this.board.get(team, taskId);
+    if (!task) return { ok: false, reason: `board task #${taskId} is gone` };
+    let worktree = this.worktrees.get(worktreeId);
+    if (!worktree)
+      return { ok: false, reason: `worktree ${worktreeId} no longer exists` };
+    // The PR opens off the worktree's shared branch; self-heal one at the base divergence point when
+    // the pipeline worktree never joined one (solo task → `ticket-N`, or the ticket's slug).
+    if (!worktree.sharedBranch) {
+      const healed = await this.worktrees.ensureSharedAtBase(
+        worktreeId,
+        task.sharedSlug ?? `ticket-${taskId}`,
+      );
+      if (!healed.ok)
+        return {
+          ok: false,
+          reason: `couldn't prepare a branch for the PR: ${healed.reason}`,
+        };
+      worktree = this.worktrees.get(worktreeId);
+      if (!worktree)
+        return { ok: false, reason: `worktree ${worktreeId} disappeared` };
+    }
+    const wt = worktree; // const for the publish catch closure
+    // Publish the accumulated pipeline work onto the shared branch; a conflict is left in-progress.
+    const publish = await this.worktrees.publish(worktreeId).catch((err) => ({
+      integrated: false as const,
+      sharedBranch: wt.sharedBranch ?? '(unknown)',
+      files: [String(err instanceof Error ? err.message : err)],
+    }));
+    if (!publish.integrated)
+      return {
+        ok: false,
+        reason: `publishing onto ${publish.sharedBranch} hit a merge conflict (${(publish.files ?? []).join(', ') || 'see git status'}) — resolve it`,
+      };
+
+    const rec = await this.worktrees.projectRecordFor(worktreeId);
+    if (!rec)
+      return {
+        ok: false,
+        reason: 'no registered GitHub repo matches this worktree',
+      };
+    const auth = await this.tokens
+      .resolve(rec.teamId, rec.tokenName)
+      .catch(() => undefined);
+    if (!auth)
+      return { ok: false, reason: 'no GitHub token is stored for this project' };
+    const { owner: ghOwner, repo } = parseGithubRepo(rec.gitUrl);
+    let prUrl: string;
+    try {
+      const { sharedBranch } =
+        await this.worktrees.pushSharedToOrigin(worktreeId);
+      const pr = await this.github.openPullRequest(auth.token, {
+        owner: ghOwner,
+        repo,
+        head: sharedBranch,
+        base: rec.defaultBranch,
+        title: task.title,
+        body: task.description || undefined,
+        draft: false,
+      });
+      prUrl = pr.url;
+      // openPullRequest opens ready (draft:false); flip an already-open DRAFT to ready too (idempotent).
+      await this.github
+        .markReadyForReview(auth.token, {
+          owner: ghOwner,
+          repo,
+          number: pr.number,
+        })
+        .catch(() => undefined);
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `couldn't open the PR (${err instanceof Error ? err.message : String(err)})`,
+      };
+    }
+
+    await this.plans.setPrUrl(team, taskId, prUrl).catch(() => undefined);
+    // → in_review (PR open). Non-CAS update: a pipeline task may sit in any pre-ship status.
+    await this.board
+      .update(team, taskId, { status: 'in_review' })
+      .catch(() => undefined);
+    this.boardEvents.emit({
+      kind: 'pr-ready',
+      team,
+      taskId,
+      employee: task.assignee ?? this.employees.fallbackOwner().id,
+      prUrl,
+      notifyThread: opts.notifyThread,
+    });
+    return { ok: true, prUrl };
   }
 
   /** gated mode: park the findings under a ticket-note id and wake the OWNER to decide — ship it

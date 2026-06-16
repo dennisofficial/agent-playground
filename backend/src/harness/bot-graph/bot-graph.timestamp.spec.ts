@@ -10,11 +10,9 @@ import type { ChannelRegistryService } from '../channel/channel-registry.service
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { PersonaService } from '../employees/persona.service';
-import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
-import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -103,10 +101,6 @@ function buildFactory(channel: FakeChannel, gapMs?: number) {
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {
-      gate: async () => ({ action: 'respond' as const }),
-    } as unknown as GateService,
-    { isEnabled: () => false } as unknown as RecursionGuardService,
-    {
       fetchMemory: async () => '',
       fetchTasks: async () => '',
     } as unknown as FetchService,
@@ -135,7 +129,7 @@ describe('bot graph — time context injection', () => {
       text: 'hey',
     });
     const { factory, invocations } = buildFactory(channel);
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     await graph.invoke(
       { cursor: 0, forced: false },
       { configurable: { thread_id: 'alex:ts-test:root' } },
@@ -177,7 +171,7 @@ describe('bot graph — time context injection', () => {
     // Two fresh messages with a 2h gap between them (both > cursor=0 so they're fresh).
     // For this test we advance the cursor manually via a prior "consume" run.
     const { factory, invocations } = buildFactory(channel, HOUR);
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const cfg = { configurable: { thread_id: 'alex:ts-div:root' } };
 
     // Turn 1: bot responds to u-0 (cursor starts at 0). Advance cursor to 1.
@@ -245,7 +239,7 @@ describe('bot graph — time context injection', () => {
     });
 
     const { factory } = buildFactory(channel, HOUR);
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const cfg = { configurable: { thread_id: 'alex:ts-persist:root' } };
     await graph.invoke({ cursor: 0, forced: false }, cfg);
 

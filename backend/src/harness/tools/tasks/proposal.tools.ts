@@ -1,9 +1,5 @@
-import { Inject, Optional } from '@nestjs/common';
 import { z } from 'zod';
-import {
-  PROPOSAL_PRESENTER,
-  type PlanProposalPresenter,
-} from '../../approvals/proposal-presenter.port';
+import { ProposalService } from '../../approvals/proposal.service';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { BoardStore } from '../../memory/board-store';
 import { PlanStore } from '../../memory/plan-store';
@@ -79,11 +75,8 @@ export class ProposePlanTool implements IHarnessTool<typeof proposeSchema> {
 
   constructor(
     private readonly board: BoardStore,
-    private readonly plans: PlanStore,
     private readonly employees: EmployeeRegistry,
-    @Optional()
-    @Inject(PROPOSAL_PRESENTER)
-    private readonly presenter?: PlanProposalPresenter,
+    private readonly proposals: ProposalService,
   ) {}
 
   async execute(
@@ -93,53 +86,34 @@ export class ProposePlanTool implements IHarnessTool<typeof proposeSchema> {
     const id = ctx.identity;
     if (!this.employees.byId(id.selfAgent)?.teamLead)
       return `Proposing plans to Dennis is the team lead's call.`;
-    const task = await this.board.get(id.team, task_id);
-    if (!task) return `No board task #${task_id} found.`;
-    if (task.status !== 'planning' && task.status !== 'awaiting_approval')
-      return `Board task #${task_id} is '${task.status}' — only planning work with finished plans can be proposed (or re-proposed while awaiting approval).`;
-    const plans = await this.plans.listForTask(id.team, task_id);
-    if (plans.length === 0)
-      return `No plans are attached to #${task_id} yet — employees attach plans by finishing a plan turn on a session linked to the ticket (board_task_id).`;
-    const pending = plans
-      .filter((p) => p.leadStatus !== 'approved')
-      .map((p) => p.employee);
-    if (pending.length)
-      return `These plans on #${task_id} aren't lead-approved yet: ${pending.join(', ')} — review (get_ticket) and approve_plan each first.`;
-
-    // Normal path: CAS planning → awaiting_approval (a concurrent double-propose loses).
-    // Re-propose path (already awaiting_approval): skip the flip, just re-present — the recovery
-    // for a card that never landed; a duplicate card is harmless (first verdict wins the CAS).
-    if (task.status === 'planning') {
-      const flipped = await this.board.transition(
-        id.team,
-        task_id,
-        'planning',
-        {
-          status: 'awaiting_approval',
-        },
-      );
-      if (!flipped) {
-        const now = await this.board.get(id.team, task_id);
-        return `Board task #${task_id} changed under you (now '${now?.status ?? 'gone'}') — check list_board and retry if it still makes sense.`;
+    // The guard ladder + CAS planning→awaiting_approval + the outbound card live in ProposalService
+    // (shared with the Atlas pipeline runner); this tool maps the outcome to the lead's chat reply.
+    const r = await this.proposals.propose({
+      team: id.team,
+      taskId: task_id,
+      summary,
+      proposedBy: id.selfAgent,
+      surfaceId: id.surface,
+    });
+    if (!r.ok) {
+      switch (r.kind) {
+        case 'missing':
+          return `No board task #${task_id} found.`;
+        case 'bad-status':
+          return `Board task #${task_id} is '${r.status}' — only planning work with finished plans can be proposed (or re-proposed while awaiting approval).`;
+        case 'no-plans':
+          return `No plans are attached to #${task_id} yet — employees attach plans by finishing a plan turn on a session linked to the ticket (board_task_id).`;
+        case 'pending-approval':
+          return `These plans on #${task_id} aren't lead-approved yet: ${r.pending.join(', ')} — review (get_ticket) and approve_plan each first.`;
+        case 'cas-lost':
+          return `Board task #${task_id} changed under you (now '${r.now ?? 'gone'}') — check list_board and retry if it still makes sense.`;
       }
     }
-
-    if (!this.presenter) {
-      return `Proposed #${task_id} to Dennis (awaiting_approval, ${plans.length} plan(s)). No approval-card surface is bound here — walk Dennis through your summary in this channel and record his verdict the usual way ('approved' only on his explicit word, quoting him).`;
-    }
-    try {
-      await this.presenter.present({
-        team: id.team,
-        taskId: task_id,
-        title: task.title,
-        summary,
-        proposedBy: id.selfAgent,
-        surfaceId: id.surface,
-        plans: plans.map((p) => ({ employee: p.employee, planMd: p.planMd })),
-      });
-      return `Proposed #${task_id} to Dennis (awaiting_approval, ${plans.length} plan(s)) — approval card posted; his verdict will arrive in the channel. Give the team a one-line heads-up that #${task_id} is with Dennis.`;
-    } catch (err) {
-      return `Proposed #${task_id} to Dennis (awaiting_approval, ${plans.length} plan(s)), but posting the approval card FAILED (${err instanceof Error ? err.message : String(err)}) — walk Dennis through your summary in this channel instead, or retry propose_plan to re-post the card.`;
-    }
+    const base = `Proposed #${task_id} to Dennis (awaiting_approval, ${r.planCount} plan(s))`;
+    if (r.presented === 'no-surface')
+      return `${base}. No approval-card surface is bound here — walk Dennis through your summary in this channel and record his verdict the usual way ('approved' only on his explicit word, quoting him).`;
+    if (r.presented === 'failed')
+      return `${base}, but posting the approval card FAILED (${r.error}) — walk Dennis through your summary in this channel instead, or retry propose_plan to re-post the card.`;
+    return `${base} — approval card posted; his verdict will arrive in the channel. Give the team a one-line heads-up that #${task_id} is with Dennis.`;
   }
 }

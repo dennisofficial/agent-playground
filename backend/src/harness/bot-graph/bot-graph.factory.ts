@@ -6,13 +6,11 @@ import { ChannelRegistryService } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
-import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { CompactionSummaryStore } from '../memory/compaction-summary.store';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
-import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import { ToolLoopGuardService } from '../recursion-guard/tool-loop-guard.service';
 import {
   SESSION_REGISTRY,
@@ -24,73 +22,44 @@ import { WorktreeService } from '../worktrees/worktree.service';
 import { GAP_THRESHOLD_DEFAULT_MS } from './channel-render';
 import { BotState } from './bot-state';
 import { BotGraphNodes } from './bot-graph.nodes';
-import {
-  afterGuard,
-  afterLlm,
-  afterMarkSeen,
-  makeAfterToolLoopGuard,
-  route,
-} from './routing';
+import { afterLlm, makeAfterToolLoopGuard } from './routing';
 
 // Public surface re-exported from the graph modules so existing importers keep one entry point.
 export type { BotStateDelta } from './bot-state';
 export { MAX_REVISION_PASSES, revisionNote } from './read-the-room';
 
 /**
- * A bot's TURN, as an explicit LangGraph state machine. One graph per bot, persisted on thread
- * `${bot.id}:${project}:root` (Postgres checkpointer). The conductor invokes it whenever the channel
- * has grown past the bot's cursor.
+ * The orchestrator's TURN, as an explicit LangGraph state machine. Atlas (the single voice you talk
+ * to) drives ONE gate-less graph, persisted on thread `${bot.id}:${channelId}:root` (Postgres
+ * checkpointer). The conductor invokes it whenever the human thread has grown past Atlas's cursor (or
+ * a silent seed wakes it).
  *
- *   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⟲ ⇄ tools → tool_loop_guard → refreshContext? ─┐
- *                 │                        └─ pause ───────────────────────────────────────────────────────┤
- *                 └─ acknowledge / ignore → mark_seen ─────────────────────────────────────────────────────┴→ reconcile → END
- *                                              └─ dormant off-lane skip ───────────────────────────────────────────────→ END
+ *   START → prelude → recall → llm ⇄ tools → tool_loop_guard → refreshContext? → reconcile → compact → END
  *
- * (`tool_loop_guard` sits on the continuation out of `tools`: a deterministic prefilter + Haiku
- * judge that catches a single bot re-issuing the SAME tool call — corrects + refreshes once, then
- * pauses if it persists. No tool ends the turn directly; every batch flows through here.)
+ * There is no gate / dormancy / read-the-room peer self-loop: the one DM/thread is always addressed
+ * to Atlas, so `prelude` just runs the per-turn reset the old gate node did (turnStart + draft /
+ * tool-loop field resets). (`tool_loop_guard` still sits on the continuation out of `tools`: a
+ * deterministic prefilter + Haiku judge that catches a single bot re-issuing the SAME tool call —
+ * corrects + refreshes once, then pauses if it persists. No tool ends the turn directly.)
  *
  * Memory is DETERMINISTIC, not agentic: `recall` reads the relevant facts + open tasks IN before the
- * bot thinks, and the single `reconcile` node writes tasks OUT after — on EVERY path EXCEPT the
- * dormant off-lane skip (a dormant bot cheap-ignoring a message that named no one and hit no lane
- * keyword ends at `mark_seen` with zero LLM calls; anything about its work wakes it and reconciles
- * normally). (`llm` ⟲ is the read-the-room revision self-loop.)
- * The llm step keeps its memory/task tools too; reconcile is the state-aware backstop on top.
+ * bot thinks, and the single `reconcile` node writes tasks OUT after. The llm step keeps its
+ * memory/task tools too; reconcile is the state-aware backstop on top.
  *
  * THE HEART (mid-thought collaboration): the `llm` node consumes `channel.since(cursor)` at the TOP
- * of EVERY step, so a teammate's message that lands WHILE this bot is looping is folded into its
- * very next model call.
+ * of EVERY step, so a message that lands WHILE this bot is looping is folded into its next model call.
  *
- * READ-THE-ROOM (the `llm ⟲` self-loop): a final text reply is composed BLIND for one
- * model-invoke latency — a teammate answering the same broadcast can post during that window, which
- * is how four bots chorus the same news. So after `model.invoke` returns, the node synchronously
- * checks whether teammate-bot messages landed past the cursor this step consumed. If so, the reply
- * is demoted to a DRAFT (never posted, never in durable history) and the graph loops back through
- * `llm`: the teammate messages fold in via the NORMAL top-of-step read, plus a note carrying the
- * draft — post only if it still adds something, else trim or stay silent. The synchronous channel
- * makes check-then-return atomic per JS tick, so at most one bot "wins" each race round; capped at
- * MAX_REVISION_PASSES, after which the draft posts anyway (worst case = the old blind behavior).
+ * Node IMPLEMENTATIONS live in `bot-graph.nodes.ts` (BotGraphNodes); the routing predicates in
+ * `routing.ts`; the state shape + helpers in `bot-state.ts` + `message-helpers.ts`. This factory owns
+ * only DI, the per-bot graph cache, and the topology wiring below.
  *
- * Cursor coordinate note: the `cursor` field rides in graph state ONLY so it threads across `llm`
- * steps within a single run. It is overwritten every invocation from the conductor's durable cursor
- * (CursorStore) passed as input. Unlike the playground (whose in-memory channel restarted at seq 0,
- * making the persisted value DEAD), the channel log + cursors are now both durable and share one
- * coordinate space — but the conductor still owns the cursor; the graph only borrows it for
- * within-run threading.
- *
- * Node IMPLEMENTATIONS live in `graph/bot-graph.nodes.ts` (BotGraphNodes); the routing predicates in
- * `graph/routing.ts`; the state shape + helpers in `graph/bot-state.ts` + `graph/message-helpers.ts`.
- * This factory owns only DI, the per-bot graph cache, and the topology wiring below.
- *
- * (Ported from playground/src/bot-graph.ts.)
+ * (Ported from playground/src/bot-graph.ts; collapsed to the single Atlas orchestrator.)
  */
 @Injectable()
 export class BotGraphFactory {
-  // One compiled graph per bot, lazy + memoized. Tenant-agnostic: the model is built per-invocation
-  // inside the llm node (from the turn's credential context), so one graph serves every workspace.
-  private graphs = new Map<string, ReturnType<BotGraphFactory['build']>>();
-  // Gate-less conductor graphs (one per bot), kept in a separate map to avoid conflating the two
-  // topologies (different node sets → incompatible compiled-graph types).
+  // One compiled gate-less graph per bot, lazy + memoized. Tenant-agnostic: the model is built
+  // per-invocation inside the llm node (from the turn's credential context), so one graph serves
+  // every workspace.
   private conductorGraphs = new Map<
     string,
     ReturnType<BotGraphFactory['buildConductorGraph']>
@@ -102,8 +71,6 @@ export class BotGraphFactory {
     private readonly channel: ChannelService,
     private readonly channelRegistry: ChannelRegistryService,
     private readonly toolRegistry: ToolRegistry,
-    private readonly gateService: GateService,
-    private readonly recursionGuard: RecursionGuardService,
     private readonly fetchService: FetchService,
     private readonly reconcile: ReconcileService,
     private readonly models: ChatModelFactory,
@@ -122,15 +89,10 @@ export class BotGraphFactory {
   ) {
     const gapThresholdMs =
       env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
-    // DORMANCY: default-on (kill-switch via DORMANCY_ENABLED=false), threshold default 3.
-    const dormancyEnabled = env.get('DORMANCY_ENABLED') !== false;
-    const dormancyThreshold = env.get('DORMANCY_IGNORE_THRESHOLD') ?? 3;
     this.nodes = new BotGraphNodes(
       this.channel,
       this.channelRegistry,
       this.toolRegistry,
-      this.gateService,
-      this.recursionGuard,
       this.fetchService,
       this.reconcile,
       this.models,
@@ -138,28 +100,15 @@ export class BotGraphFactory {
       this.worktrees,
       this.sessions,
       gapThresholdMs,
-      dormancyEnabled,
-      dormancyThreshold,
       this.engineTools,
       this.compactionStore,
       this.toolLoopGuard,
     );
   }
 
-  getBotGraph(bot: EmployeeDefinition) {
-    let g = this.graphs.get(bot.id);
-    if (!g) {
-      g = this.build(bot);
-      this.graphs.set(bot.id, g);
-    }
-    return g;
-  }
-
   /**
-   * A gate-less conductor graph: START → recall → llm ⇄ tools → tool_loop_guard → refreshContext?
-   * → reconcile → compact → END. Used by Atlas (the orchestrator) for a turn the caller has already
-   * decided to run — no GateService soft-classify, no dormancy/mark_seen. Memoized per bot id,
-   * separate from the per-bot gated graph cache. (Wired into the conductor at the cutover phase.)
+   * The gate-less orchestrator graph: START → prelude → recall → llm ⇄ tools → tool_loop_guard →
+   * refreshContext? → reconcile → compact → END. Memoized per bot id (Atlas in production).
    */
   getConductorGraph(bot: EmployeeDefinition) {
     let g = this.conductorGraphs.get(bot.id);
@@ -173,6 +122,7 @@ export class BotGraphFactory {
   private buildConductorGraph(bot: EmployeeDefinition) {
     const n = this.nodes.forBot(bot);
     return new StateGraph(BotState)
+      .addNode('prelude', n.prelude)
       .addNode('recall', n.recall)
       .addNode('llm', n.llm)
       .addNode('tools', n.tools)
@@ -180,65 +130,19 @@ export class BotGraphFactory {
       .addNode('refreshContext', n.refreshContext)
       .addNode('reconcile', n.reconcile)
       .addNode('compact', n.compact)
-      .addEdge(START, 'recall')
+      .addEdge(START, 'prelude')
+      .addEdge('prelude', 'recall')
       .addEdge('recall', 'llm')
       .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
       .addEdge('tools', 'tool_loop_guard')
-      .addConditionalEdges('tool_loop_guard', makeAfterToolLoopGuard(n.refresh), [
-        'llm',
-        'refreshContext',
-        'reconcile',
-      ])
+      .addConditionalEdges(
+        'tool_loop_guard',
+        makeAfterToolLoopGuard(n.refresh),
+        ['llm', 'refreshContext', 'reconcile'],
+      )
       .addEdge('refreshContext', 'llm')
       .addEdge('reconcile', 'compact')
       .addEdge('compact', END)
       .compile({ checkpointer: this.checkpointer });
-  }
-
-  private build(bot: EmployeeDefinition) {
-    const n = this.nodes.forBot(bot);
-    // `compact` runs sequentially after `reconcile` on every path (a cheap token-estimate
-    // check first — no LLM call unless COMPACTION_TRIGGER_TOKENS is exceeded). Both checkpoint
-    // their state changes before END.
-    //
-    // Topology (updated):
-    //   START → gate ─┬─ respond → loop_guard ─┬─ recall → llm ⇄ tools → refreshContext? ─┐
-    //                 │                        └─ pause ──────────────────────────────────┤
-    //                 └─ acknowledge / ignore → mark_seen ──────────────────────────────┴→ reconcile → compact → END
-    //                                              └─ dormant off-lane skip ───────────────────────────────────────→ END
-    return (
-      new StateGraph(BotState)
-        .addNode('gate', n.gate)
-        .addNode('loop_guard', n.loopGuard)
-        .addNode('pause', n.pause)
-        .addNode('recall', n.recall)
-        .addNode('llm', n.llm)
-        .addNode('tools', n.tools)
-        .addNode('tool_loop_guard', n.toolLoopGuard)
-        .addNode('refreshContext', n.refreshContext)
-        .addNode('mark_seen', n.markSeen)
-        .addNode('reconcile', n.reconcile)
-        .addNode('compact', n.compact)
-        .addEdge(START, 'gate')
-        .addConditionalEdges('gate', route, ['loop_guard', 'mark_seen'])
-        .addConditionalEdges('loop_guard', afterGuard, ['recall', 'pause'])
-        .addEdge('recall', 'llm')
-        .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
-        // No tool ends the turn directly: every tool batch flows through `tool_loop_guard`, which
-        // catches a repeated-tool-call loop before the llm/refresh route. The turn ends only when the
-        // bot's next llm step produces no tool call (afterLlm → reconcile).
-        .addEdge('tools', 'tool_loop_guard')
-        .addConditionalEdges(
-          'tool_loop_guard',
-          makeAfterToolLoopGuard(n.refresh),
-          ['llm', 'refreshContext', 'reconcile'],
-        )
-        .addEdge('refreshContext', 'llm')
-        .addConditionalEdges('mark_seen', afterMarkSeen, ['reconcile', END])
-        .addEdge('pause', 'reconcile')
-        .addEdge('reconcile', 'compact')
-        .addEdge('compact', END)
-        .compile({ checkpointer: this.checkpointer })
-    );
   }
 }

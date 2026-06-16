@@ -1,5 +1,4 @@
 import { EnvService } from '@core/config/env/env.service';
-import { dispatchCustomEvent } from '@langchain/core/callbacks/dispatch';
 import {
   AIMessage,
   HumanMessage,
@@ -15,7 +14,6 @@ import { getIdentity } from '../domain/identity';
 import { flattenContent } from '../domain/text';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
-import { GateService } from '../gate/gate.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CompactionSummaryStore } from '../memory/compaction-summary.store';
 import {
@@ -26,7 +24,6 @@ import {
 } from '../memory/memory-constants';
 import { FetchService } from '../memory/fetch.service';
 import { ReconcileService } from '../memory/reconcile.service';
-import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import { ToolLoopGuardService } from '../recursion-guard/tool-loop-guard.service';
 import {
   SESSION_REGISTRY,
@@ -96,10 +93,12 @@ function summarizeToolResult(m: ToolMessage): string {
 }
 
 /**
- * The node IMPLEMENTATIONS of a bot's turn-graph — gate, loop_guard, recall, llm, tools,
- * mark_seen, pause, reconcile. `BotGraphFactory` owns the DI + the graph TOPOLOGY (which node goes
- * where); this owns what each node DOES. `forBot(bot)` returns the per-bot node functions plus the
- * bot's context-refresh scope map (which the routing predicates in routing.ts close over).
+ * The node IMPLEMENTATIONS of the orchestrator's (Atlas's) gate-less turn-graph — prelude, recall,
+ * llm, tools, tool_loop_guard, refreshContext, reconcile, compact. `BotGraphFactory` owns the DI +
+ * the graph TOPOLOGY (which node goes where); this owns what each node DOES. `forBot(bot)` returns
+ * the per-bot node functions plus the bot's context-refresh scope map (which the routing predicates
+ * in routing.ts close over). There is no gate/dormancy/loop-guard: the one human thread is always
+ * addressed to Atlas, so `prelude` just runs the per-turn reset the old gate node did on every path.
  *
  * Constructed manually by the factory (not a Nest provider) so the factory keeps its existing
  * constructor — the services it injects are handed straight through here.
@@ -107,15 +106,10 @@ function summarizeToolResult(m: ToolMessage): string {
 export class BotGraphNodes {
   private readonly logger = new Logger(BotGraphNodes.name);
   private readonly gapThresholdMs: number;
-  /** DORMANCY: master switch + the consecutive-soft-ignore count at which a bot goes dormant. */
-  private readonly dormancyEnabled: boolean;
-  private readonly dormancyThreshold: number;
   constructor(
     private readonly channel: ChannelService,
     private readonly channelRegistry: ChannelRegistryService,
     private readonly toolRegistry: ToolRegistry,
-    private readonly gateService: GateService,
-    private readonly recursionGuard: RecursionGuardService,
     private readonly fetchService: FetchService,
     private readonly reconcile: ReconcileService,
     private readonly models: ChatModelFactory,
@@ -123,15 +117,11 @@ export class BotGraphNodes {
     private readonly worktrees: WorktreeService,
     private readonly sessions: SessionRegistry,
     gapThresholdMs: number,
-    dormancyEnabled = true,
-    dormancyThreshold = 3,
     private readonly engineTools?: EngineToolFactory,
     private readonly compactionStore?: CompactionSummaryStore,
     private readonly toolLoopGuard?: ToolLoopGuardService,
   ) {
     this.gapThresholdMs = gapThresholdMs;
-    this.dormancyEnabled = dormancyEnabled;
-    this.dormancyThreshold = dormancyThreshold;
   }
 
   /**
@@ -216,141 +206,26 @@ export class BotGraphNodes {
     const REFRESH = this.toolRegistry.refreshScopesByName(allowlist);
     const refreshScopesFromTurn = makeRefreshScopesFromTurn(REFRESH);
 
-    /** Peek the channel (read-only — never touches messages/cursor) and pick respond/ack/ignore. */
-    const gateNode = async (
-      state: BotStateType,
-      config: RunnableConfig,
-    ): Promise<Partial<BotStateType>> => {
-      // Mark where this turn's messages begin, so the reconcile nodes can slice just this turn out
-      // of the full persisted history (set on every path — reconcile runs on all of them).
-      const turnStart = state.messages.length;
-      // Per-turn read-the-room reset, on EVERY path: Annotation defaults don't re-apply on an
-      // existing thread, and a draft orphaned by a crash mid-revision must drop, not replay.
-      // `dormantSkip` resets here too (same trap: a stale `true` would skip reconcile next turn).
-      const rtr = {
-        draft: undefined,
-        draftUsage: undefined,
-        revisionPasses: 0,
-        dormantSkip: false,
-        // TOOL-LOOP guard per-turn reset (same trap as the rest: annotation defaults don't
-        // re-apply on an existing thread, so a stale verdict/correction-count/instruction would
-        // poison the next turn's `llm ⇄ tools` loop).
-        toolLoopVerdict: undefined,
-        toolLoopCorrections: 0,
-        toolLoopInstruction: undefined,
-        forcedRefreshScopes: undefined,
-      };
-      // DORMANCY accumulator (per (bot, room), via the checkpoint). Carried forward UNCHANGED on
-      // the no-soft-call paths below; the gated path recomputes it. Written explicitly on every
-      // path — annotation defaults only cover never-written threads.
-      const softIgnores = state.consecutiveSoftIgnores ?? 0;
-      // A no-LLM gate decision leaves no generation in the trace, so mark it with a point-in-time
-      // Langfuse event nested under this `gate` span (via the handler's handleCustomEvent). `debug`
-      // demotes it below the default view for the high-frequency idle case. Best-effort: never block.
-      const traceGate = (
-        action: string,
-        reason: string,
-        debug = false,
-      ): Promise<void> =>
-        dispatchCustomEvent(
-          'gate.decision',
-          { action, reason },
-          debug
-            ? { ...config, tags: [...(config.tags ?? []), 'langsmith:hidden'] }
-            : config,
-        );
-      if (state.forced) {
-        await traceGate('respond', 'forced');
-        return {
-          decision: 'respond',
-          pending: [],
-          turnStart,
-          ...rtr,
-          consecutiveSoftIgnores: 0, // a forced respond re-engages the bot
-          lastContextTokens: 0, // no gate call on the forced path
-        }; // job relay: skip the gate
-      }
-      const channelId = this.channelIdOf(config);
-      const batch = channel
-        .since(state.cursor, channelId)
-        .filter((m) => m.authorBotId !== bot.id);
-      if (batch.length === 0) {
-        await traceGate('ignore', 'no-batch', true);
-        return {
-          decision: 'ignore',
-          pending: [],
-          turnStart,
-          ...rtr,
-          consecutiveSoftIgnores: softIgnores,
-          lastContextTokens: 0, // no gate call when batch is empty
-        }; // nothing for me
-      }
-      const latest = batch[batch.length - 1];
-      const capped = !!config.configurable?.capped;
-      if (capped && latest.authorBotId) {
-        await traceGate('ignore', 'capped-loopbreak');
-        return {
-          decision: 'ignore',
-          pending: batch,
-          turnStart,
-          ...rtr,
-          consecutiveSoftIgnores: softIgnores,
-          lastContextTokens: 0, // no gate call on the capped loop-breaker path
-        }; // loop breaker
-      }
-      const room = this.channelRegistry.get(channelId);
-      const dormant =
-        this.dormancyEnabled && softIgnores >= this.dormancyThreshold;
-      const d = await this.gateService.gate(
-        bot,
-        latest.text,
-        {
-          authorBotId: latest.authorBotId,
-          authorName: latest.author,
-          history: this.historyBefore(latest.seq, channelId),
-          channel: room
-            ? { kind: room.kind, name: room.displayName }
-            : undefined,
-          // The WHOLE unconsumed batch — a hail buried behind a teammate's faster reply still hard-fires.
-          batch: batch.map((m) => ({
-            text: m.text,
-            authorBotId: m.authorBotId,
-          })),
-          dormant,
-        },
-        config,
-      );
-      // No LLM ran (a hard addressing rule or dormant-skip decided it) → mark the gate span. The soft
-      // path already shows its Haiku generation, so don't double-record it.
-      if (!d.softGate)
-        await traceGate(
-          d.action,
-          d.reason ?? 'hard-rule',
-          d.action === 'ignore',
-        );
-      // Next dormancy count: a respond/ack re-engages (→0); a SOFT ignore advances toward dormancy
-      // (+1); a cheap dormant-skip or hard-rule ignore leaves it unchanged.
-      const nextSoftIgnores =
-        d.action !== 'ignore' ? 0 : d.softGate ? softIgnores + 1 : softIgnores;
-      // reasoning + gateUsage ride the delta so the conductor can emit them (debug only).
-      return {
-        decision: d.action,
-        ackEmoji: d.emoji,
-        // Fire the transient "composing" 💭 the moment we commit to responding — surfaced before
-        // recall/llm/tools run, and REMOVED by the conductor when the turn ends (so present =
-        // composing now, gone = replied). Only on a real gated respond; the forced path returned above.
-        reaction: d.action === 'respond' ? '💭' : undefined,
-        reactionTargetId: latest.id,
-        reasoning: d.reasoning,
-        gateUsage: d.usage,
-        lastContextTokens: d.usage?.input ?? 0,
-        pending: batch,
-        turnStart,
-        ...rtr,
-        consecutiveSoftIgnores: nextSoftIgnores,
-        dormantSkip: !!d.dormantSkip, // overrides rtr's false on the cheap-ignore path
-      };
-    };
+    /**
+     * PRELUDE NODE — the gate-less turn entry. Atlas always responds (the one human thread is always
+     * addressed to it), so there's no respond/ack/ignore classify; this just runs the per-turn reset
+     * the old gate node did on every path. `turnStart` marks where this turn's messages begin so
+     * `reconcile` slices just this exchange; the read-the-room / tool-loop fields reset because
+     * Annotation defaults don't re-apply on an existing checkpoint thread — a stale draft / verdict /
+     * revision count from a prior turn would otherwise poison this one. `decision: 'respond'` keeps
+     * the reconcile passes on their respond-class path.
+     */
+    const preludeNode = (state: BotStateType): Partial<BotStateType> => ({
+      decision: 'respond',
+      turnStart: state.messages.length,
+      draft: undefined,
+      draftUsage: undefined,
+      revisionPasses: 0,
+      toolLoopVerdict: undefined,
+      toolLoopCorrections: 0,
+      toolLoopInstruction: undefined,
+      forcedRefreshScopes: undefined,
+    });
 
     /**
      * The pre-LLM context read: assemble the standing-context core + working-state slots into
@@ -581,141 +456,10 @@ export class BotGraphNodes {
 
     const toolsNode = new ToolNode(tools);
 
-    // ── Recursion guard constants ──────────────────────────────────────────────────────────────────
-    /** Minimum number of the bot's own AI messages in history before the guard is worth running. A
-     * shorter history can't show a meaningful repetition pattern — skip to avoid false positives. */
-    const GUARD_FLOOR = 6;
-    /** The first-person pause message emitted when a loop is confirmed. Used as both the pause-node
-     * payload and the anti-spam sentinel (startsWith check so future rewording stays consistent). */
+    /** The first-person pause message `tool_loop_guard` emits when a stuck tool-loop persists past a
+     * correction — a learning signal, not just a fuse (the conductor surfaces the AIMessage). */
     const PAUSE_TEXT =
       "I think I'm going in circles here — pausing so I don't spin. Ping me when you want me to pick this back up.";
-    const PAUSE_SENTINEL = "I think I'm going in circles here";
-
-    /**
-     * LOOP_GUARD NODE — decide whether the bot is stuck in a no-progress loop.
-     *
-     * Runs on the respond path between `gate` and `recall`. Returns `{ loopBreak: true }` when a
-     * loop is detected; the conditional edge `afterGuard` routes to `pause` instead of `recall`.
-     *
-     * EVERY exit writes `loopBreak` EXPLICITLY — never `{}`. The flag rides in the CHECKPOINT, so
-     * a skip that "changes nothing" would leave a previous turn's `true` in place and the
-     * conditional edge would re-break forever on a stale verdict (observed live: pauses kept
-     * firing on direct human pings, carrying an hour-old reasoning line, with every skip working
-     * "correctly"). The annotation default only covers never-written threads.
-     *
-     * Fast-path skips (no Haiku call, all clearing the flag):
-     *   - forced turn (job relay — synthetic message, loop detection irrelevant)
-     *   - guard disabled via env
-     *   - triggering message is human-authored (loops are bot-origin phenomena)
-     *   - a human spoke ANYWHERE in the batch — a batch with a human in it deserves a real turn,
-     *     never a fuse check (also closes the race where a teammate's fast reply lands after the
-     *     human's and steals the "latest" slot)
-     *   - last SPOKEN AI message is already the pause sentinel (anti break-spam: once paused, the
-     *     guard re-arms only after the bot says something substantive again)
-     *   - fewer than GUARD_FLOOR substantive SPOKEN own messages in history (not enough signal)
-     *
-     * The judged window counts only SPOKEN messages (non-empty chat text). A tool-only turn —
-     * gate passed, but the employee only used a tool (or stayed silent), posting no chat text — is
-     * never loop evidence; it's a deliberate "second gate" decline, not a
-     * stall. (Without this, a quiet teammate woken by bot-only chatter accumulates identical
-     * empty-text "Name: [tools: list_sessions]" lines that the judge reads as a no-progress loop.)
-     *
-     * The judged window also EXCLUDES prior pause lines: the breaker's own output must never count
-     * as loop evidence — a pause-polluted window otherwise re-confirms "looping" forever (observed:
-     * eight consecutive self-confirming re-fires).
-     */
-    /** The skip verdict — clears any checkpointed break from a prior turn (see docstring). */
-    const GUARD_SKIP: Partial<BotStateType> = {
-      loopBreak: false,
-      guardReasoning: undefined,
-    };
-    const loopGuardNode = async (
-      state: BotStateType,
-      config: RunnableConfig,
-    ): Promise<Partial<BotStateType>> => {
-      if (state.forced) return GUARD_SKIP;
-      if (!this.recursionGuard.isEnabled()) return GUARD_SKIP;
-      // Only fire on bot-authored triggers — human messages don't form bot loops
-      const latest = state.pending[state.pending.length - 1];
-      if (!latest?.authorBotId) return GUARD_SKIP;
-      // A human anywhere in the batch → real turn, no fuse check.
-      if (state.pending.some((m) => !m.authorBotId)) return GUARD_SKIP;
-      const ownMessages = state.messages.filter((m) => m.getType() === 'ai');
-      // Only the bot's SPOKEN messages are loop evidence. A silent turn (gate passed, but the
-      // employee only used a tool or said nothing) is a deliberate "second gate" decline, not a
-      // stall — it must not count toward the floor or appear in the window.
-      const spoken = ownMessages.filter(
-        (m) => flattenContent(m.content).trim() !== '',
-      );
-      // Anti break-spam: once paused, stay paused on bot-only chatter; the guard re-arms when the
-      // bot next SPEAKS a substantive (non-pause) message of its own.
-      const lastSpoken = spoken.length
-        ? flattenContent(spoken[spoken.length - 1].content).trim()
-        : '';
-      if (lastSpoken.startsWith(PAUSE_SENTINEL)) return GUARD_SKIP;
-      // Need enough SUBSTANTIVE history for a meaningful window — pause lines don't count.
-      const substantive = spoken.filter(
-        (m) => !flattenContent(m.content).trim().startsWith(PAUSE_SENTINEL),
-      );
-      if (substantive.length < GUARD_FLOOR) return GUARD_SKIP;
-      // Render the rolling window: the bot's own last N substantive AI messages (text + tool-call note)
-      const N = this.recursionGuard.windowSize();
-      const windowText = substantive
-        .slice(-N)
-        .map((m) => {
-          const text = flattenContent(m.content).trim();
-          const calls = (m as AIMessage).tool_calls ?? [];
-          const toolNote = calls.length
-            ? ` [tools: ${calls.map((c) => c.name).join(', ')}]`
-            : '';
-          const line = `${bot.name}: ${text}${toolNote}`.trim();
-          return line !== `${bot.name}:` ? line : null;
-        })
-        .filter((s): s is string => s !== null)
-        .join('\n');
-      if (!windowText.trim()) return GUARD_SKIP;
-      const result = await this.recursionGuard.detect(bot, windowText, config);
-      return {
-        loopBreak: result.looping,
-        guardReasoning: result.reasoning,
-      };
-    };
-
-    /**
-     * PAUSE NODE — end the turn cleanly when a loop is confirmed.
-     *
-     * Mirrors `markSeenNode`: consumes the pending batch (records the triggering messages in
-     * history so the checkpoint stays honest), advances the cursor past them, appends a
-     * first-person pause AIMessage, and clears `recalled`. Routes to `reconcile → END`.
-     *
-     * The pause carries the judge's REASONING — the diagnosis of what looped — so the breaker is
-     * a learning signal, not just a fuse: the bot (and the channel) sees WHAT it was repeating,
-     * and reconcile can keep the lesson. The text still starts with PAUSE_SENTINEL, so the
-     * anti-spam/window checks keep matching.
-     *
-     * The conductor's existing stream handler surfaces the pause AIMessage automatically
-     * (`if (msg.getType() === 'ai') commit(msg)`) — zero conductor changes required.
-     */
-    const pauseNode = (
-      state: BotStateType,
-      config: RunnableConfig,
-    ): Partial<BotStateType> => {
-      const pending = state.pending;
-      const newCursor = pending.length
-        ? pending[pending.length - 1].seq + 1
-        : channel.lengthOf(this.channelIdOf(config));
-      const reason = state.guardReasoning?.trim();
-      const pauseText = reason
-        ? `${PAUSE_TEXT}\n(What I kept repeating: ${reason})`
-        : PAUSE_TEXT;
-      return {
-        messages: [...pending.map(asInput), new AIMessage(pauseText)],
-        cursor: newCursor,
-        recalled: '',
-        context: { work: '', memory: '', tasks: '' },
-        recallQuery: '',
-      };
-    };
 
     /** A compact note of a turn-ending action worth reconciling against (an opened or continued
      * session is a commitment being acted on), else undefined. Tool RESULTS stay hidden. */
@@ -792,26 +536,6 @@ export class BotGraphNodes {
           : Promise.resolve(),
       ]);
       return { memorySuggestions };
-    };
-
-    /** Record the gated batch in the checkpoint without a model call (the ack/ignore path). */
-    const markSeenNode = (
-      state: BotStateType,
-      config: RunnableConfig,
-    ): Partial<BotStateType> => {
-      const pending = state.pending;
-      const newCursor = pending.length
-        ? pending[pending.length - 1].seq + 1
-        : channel.lengthOf(this.channelIdOf(config));
-      // recalled, context, and recallQuery are all reset here — this path skips `recall`, and
-      // un-cleared values would ride the checkpoint as a stale recall until the next respond.
-      return {
-        messages: pending.map(asInput),
-        cursor: newCursor,
-        recalled: '',
-        context: { work: '', memory: '', tasks: '' },
-        recallQuery: '',
-      };
     };
 
     /**
@@ -1128,14 +852,11 @@ Be thorough but concise. Preserve specific names, project names, technical detai
     };
 
     return {
-      gate: gateNode,
-      loopGuard: loopGuardNode,
+      prelude: preludeNode,
       recall: recallNode,
       llm: llmNode,
       tools: toolsNode,
       toolLoopGuard: toolLoopGuardNode,
-      markSeen: markSeenNode,
-      pause: pauseNode,
       reconcile: reconcileNode,
       compact: compactionNode,
       refresh: REFRESH,

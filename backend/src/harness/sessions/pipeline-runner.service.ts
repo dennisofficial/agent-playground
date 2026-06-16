@@ -4,11 +4,15 @@ import {
   Logger,
   OnApplicationBootstrap,
 } from '@nestjs/common';
+import { ProposalService } from '../approvals/proposal.service';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { BoardStore } from '../memory/board-store';
+import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
+import { PlanStore } from '../memory/plan-store';
 import { PipelineRunStore, type PipelineRun } from '../memory/pipeline-run-store';
 import { PipelineRegistry } from '../pipelines/pipeline.registry';
-import type { PipelineDefinition } from '../pipelines/pipeline.types';
+import type { PipelineDefinition, PipelineStage } from '../pipelines/pipeline.types';
+import { ReviewPipelineService } from './review-pipeline.service';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -36,6 +40,10 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     private readonly board: BoardStore,
     private readonly employees: EmployeeRegistry,
+    private readonly plans: PlanStore,
+    private readonly proposals: ProposalService,
+    private readonly review: ReviewPipelineService,
+    private readonly boardEvents: BoardEventsBus,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -43,6 +51,12 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     this.sessions.onUpdate((s) => {
       void this.onSessionUpdate(s).catch((err) =>
         this.logger.warn(`pipeline onSessionUpdate(${s.id}) failed: ${err}`),
+      );
+    });
+    // The plan gate resumes when the human approves the proposed ticket (board CAS → ticket-approved).
+    this.boardEvents.onEvent((event) => {
+      void this.onBoardEvent(event).catch((err) =>
+        this.logger.warn(`pipeline board-event (${event.kind}) failed: ${err}`),
       );
     });
     void this.resumePipelines().catch((err) =>
@@ -137,13 +151,23 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       return;
     }
 
-    // A gate stage produces something a human must clear (plan approval, PR review) before the run
-    // continues — pause here. The gate-resolution wiring (approval card / PR ship) resumes it.
-    if (stage.gate) {
+    // A gate stage produces something a human must clear before the run continues.
+    //  - plan gate → propose the produced plan to the human (ProposalService posts the approval card)
+    //    and PAUSE; the run resumes from `onBoardEvent` when the ticket is approved.
+    //  - PR gate → ship the accumulated work as a PR (ReviewPipelineService.shipTask) and finish; the
+    //    human reviews/merges on GitHub.
+    if (stage.gate === 'plan') {
       this.logger.log(
-        `pipeline ${run.id}: stage ${run.stageIndex} hit '${stage.gate}' gate — pausing for review`,
+        `pipeline ${run.id}: stage ${run.stageIndex} hit the plan gate — proposing for review`,
       );
-      await this.runs.update(run.team, run.id, { status: 'paused' });
+      await this.handlePlanGate(run, session, stage);
+      return;
+    }
+    if (stage.gate === 'pr') {
+      this.logger.log(
+        `pipeline ${run.id}: stage ${run.stageIndex} hit the PR gate — shipping`,
+      );
+      await this.handlePrGate(run, session);
       return;
     }
 
@@ -159,6 +183,121 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     }
     // Advance: the next stage runs in the SAME worktree (it carries the accumulated work).
     await this.openStage(run, def, next, session.project, session.notifyThread);
+  }
+
+  /**
+   * Plan gate: attach the stage's produced plan to the board task, auto-clear the lead-review layer
+   * (Atlas IS the orchestrator — there's no separate lead), move the ticket into 'planning', and
+   * propose it to the human via ProposalService (the SHARED guard+CAS+present path — never present()
+   * raw). Then PAUSE the run; `onBoardEvent` resumes it when the ticket is approved.
+   */
+  private async handlePlanGate(
+    run: PipelineRun,
+    session: Session,
+    stage: PipelineStage,
+  ): Promise<void> {
+    const planMd = session.lastReport?.trim() || '(no plan produced)';
+    await this.plans
+      .attach({
+        team: run.team,
+        taskId: run.taskId,
+        employee: stage.role,
+        planMd,
+        sessionId: session.id,
+      })
+      .catch((err) =>
+        this.logger.warn(`pipeline ${run.id}: plan attach failed: ${err}`),
+      );
+    // Atlas auto-clears the lead-review layer (the pipeline has no separate lead pass).
+    await this.plans
+      .approve(run.team, run.taskId, stage.role)
+      .catch(() => undefined);
+    // Land in 'planning' so ProposalService's CAS planning→awaiting_approval holds.
+    await this.board
+      .update(run.team, run.taskId, { status: 'planning' })
+      .catch(() => undefined);
+    const outcome = await this.proposals.propose({
+      team: run.team,
+      taskId: run.taskId,
+      summary: `Pipeline '${run.pipeline}' reached the plan gate for #${run.taskId}. Review the attached plan and approve to run the remaining stages.`,
+      proposedBy: this.employees.teamLead().id,
+      surfaceId: session.notifyThread,
+    });
+    if (!outcome.ok)
+      this.logger.warn(
+        `pipeline ${run.id}: propose failed (${outcome.kind}) — the run stays paused`,
+      );
+    await this.runs.update(run.team, run.id, { status: 'paused' });
+  }
+
+  /**
+   * PR gate: ship the accumulated pipeline work as a single-task PR (open + mark ready) via
+   * ReviewPipelineService.shipTask — NO sibling/sharedSlug fan-out — then finish the run. A ship
+   * failure fails the run loudly so it never reports a PR that didn't open.
+   */
+  private async handlePrGate(run: PipelineRun, session: Session): Promise<void> {
+    if (!run.worktreeId) {
+      this.logger.warn(`pipeline ${run.id}: PR gate with no worktree — failing`);
+      await this.runs.update(run.team, run.id, { status: 'failed' });
+      return;
+    }
+    const shipped = await this.review.shipTask({
+      team: run.team,
+      taskId: run.taskId,
+      worktreeId: run.worktreeId,
+      notifyThread: session.notifyThread,
+    });
+    if (!shipped.ok) {
+      this.logger.warn(
+        `pipeline ${run.id}: shipTask failed — ${shipped.reason}`,
+      );
+      await this.runs.update(run.team, run.id, { status: 'failed' });
+      return;
+    }
+    this.logger.log(
+      `pipeline ${run.id} (${run.pipeline}) shipped #${run.taskId}: ${shipped.prUrl}`,
+    );
+    await this.runs.update(run.team, run.id, {
+      status: 'done',
+      currentRole: null,
+      mode: null,
+    });
+  }
+
+  /**
+   * Resume a plan-gated run when the human approves the proposed ticket — the board CAS
+   * (awaiting_approval→approved) fires `ticket-approved`, and we advance the paused run to its next
+   * stage in the SAME worktree. Only the plan gate resumes on approval; the PR gate is terminal.
+   */
+  private async onBoardEvent(event: BoardEvent): Promise<void> {
+    if (event.kind !== 'ticket-approved') return;
+    const run = await this.runs.getByTask(event.team, event.taskId);
+    if (!run || run.status !== 'paused') return;
+    const def = this.pipelines.get(run.pipeline);
+    const stage = def.stages[run.stageIndex];
+    if (stage?.gate !== 'plan') return;
+    const session = run.sessionId
+      ? await this.sessions.get(run.sessionId)
+      : undefined;
+    const project =
+      session?.project ?? (await this.board.get(run.team, run.taskId))?.project;
+    const notifyThread = session?.notifyThread;
+    if (!project || !notifyThread) {
+      this.logger.warn(
+        `pipeline ${run.id}: can't resume after approval — missing project/thread`,
+      );
+      return;
+    }
+    const next = run.stageIndex + 1;
+    if (next >= def.stages.length) {
+      await this.runs.update(run.team, run.id, {
+        status: 'done',
+        currentRole: null,
+        mode: null,
+      });
+      return;
+    }
+    await this.openStage(run, def, next, project, notifyThread);
   }
 
   /**

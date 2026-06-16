@@ -1,24 +1,6 @@
 import type { AIMessage } from '@langchain/core/messages';
-import { END } from '@langchain/langgraph';
 import type { RefreshScope } from '../tools/tool.types';
 import type { BotStateType } from './bot-state';
-
-/** Out of `gate`: the respond path flows through the loop guard first; ack/ignore goes straight
- * to `mark_seen`. */
-export const route = (state: BotStateType): 'loop_guard' | 'mark_seen' =>
-  state.decision === 'respond' ? 'loop_guard' : 'mark_seen';
-
-/** Out of `mark_seen`: normally reconcile (the reminder backstop), but a DORMANT off-lane
- * cheap-ignore (`dormantSkip`) ends the turn here — `mark_seen` already recorded the batch and
- * advanced the cursor, so skipping reconcile saves its LLM call. Safe because that path fires only
- * when nothing named this bot or hit a lane keyword; anything about its work wakes it (name/@/
- * keyword) and runs reconcile normally. */
-export const afterMarkSeen = (state: BotStateType): 'reconcile' | typeof END =>
-  state.dormantSkip ? END : 'reconcile';
-
-/** Out of `loop_guard`: a confirmed loop routes to `pause`, otherwise proceeds to `recall`. */
-export const afterGuard = (state: BotStateType): 'recall' | 'pause' =>
-  state.loopBreak ? 'pause' : 'recall';
 
 /** Out of `llm`: revision loop, tool calls, or done. */
 export const afterLlm = (

@@ -8,11 +8,9 @@ import type { ChannelRegistryService } from '../channel/channel-registry.service
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { PersonaService } from '../employees/persona.service';
-import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
-import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -103,14 +101,6 @@ const makeFactory = (
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {
-      gate: async () => ({ action: 'respond' as const }),
-    } as unknown as GateService,
-    {
-      isEnabled: () => false,
-      windowSize: () => 12,
-      detect: () => Promise.resolve({ looping: false }),
-    } as unknown as RecursionGuardService,
-    {
       fetchMemory: async () => '',
       fetchTasks: async () => '',
     } as unknown as FetchService,
@@ -131,7 +121,7 @@ const runTurn = async (
   factory: BotGraphFactory,
   thread: string,
 ): Promise<BotStateDelta[]> => {
-  const graph = factory.getBotGraph(ALEX);
+  const graph = factory.getConductorGraph(ALEX);
   const stream = await graph.stream(
     { cursor: 0, forced: false },
     { configurable: { thread_id: thread }, streamMode: 'updates' as const },
@@ -176,7 +166,7 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
     expect(invocations).toHaveLength(1);
     expect(aiTexts(deltas)).toEqual(['Working on the cost footer.']);
     const final = await factory
-      .getBotGraph(ALEX)
+      .getConductorGraph(ALEX)
       .getState({ configurable: { thread_id: 'alex:rtr-quiet:root' } });
     expect(final.values.draft).toBeUndefined();
     expect(final.values.revisionPasses).toBe(0);
@@ -232,7 +222,7 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
 
     // …and never in durable history; Riley's message is in history exactly once.
     const final = await factory
-      .getBotGraph(ALEX)
+      .getConductorGraph(ALEX)
       .getState({ configurable: { thread_id: 'alex:rtr-stale:root' } });
     const history = (final.values.messages as BaseMessage[]).map((m) =>
       flat(m.content),
@@ -278,7 +268,7 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
     expect(invocations).toHaveLength(1 + MAX_REVISION_PASSES);
     expect(aiTexts(deltas)).toEqual([`answer v${1 + MAX_REVISION_PASSES}`]);
     const final = await factory
-      .getBotGraph(ALEX)
+      .getConductorGraph(ALEX)
       .getState({ configurable: { thread_id: 'alex:rtr-cap:root' } });
     expect(final.values.draft).toBeUndefined();
     expect(final.values.revisionPasses).toBe(MAX_REVISION_PASSES);
@@ -371,13 +361,13 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
     expect(invocations).toHaveLength(1);
     expect(aiTexts(deltas)).toEqual(['Footer work is done.']);
     const final = await factory
-      .getBotGraph(ALEX)
+      .getConductorGraph(ALEX)
       .getState({ configurable: { thread_id: 'alex:rtr-human:root' } });
     // The human's mid-compose message stays unconsumed — the next turn GATES it normally.
     expect(final.values.cursor).toBe(channel.lengthOf() - 1);
   });
 
-  it('the next turn’s gate resets draft state (no replay of an orphaned draft)', async () => {
+  it('the next turn’s prelude resets draft state (no replay of an orphaned draft)', async () => {
     const channel = new FakeChannel();
     channel.append({
       id: 'u-0',
@@ -386,6 +376,10 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
       text: 'Status?',
     });
     const invocations: BaseMessage[][] = [];
+    // Turn 1 appends a teammate message on every invoke (forcing read-the-room suppression up to the
+    // cap); turn 2 stops appending so it can post cleanly — proving the prelude cleared the stale
+    // revisionPasses/draft the cap left in the checkpoint.
+    let appendTeammates = true;
     const fakeModel: FakeModel = {
       bindTools() {
         return this;
@@ -393,27 +387,36 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
       async invoke(convo) {
         invocations.push(convo);
         const n = invocations.length;
-        channel.append({
-          id: `riley:${n}`,
-          author: 'Riley',
-          authorId: 'riley',
-          authorBotId: 'riley',
-          text: `update ${n}`,
-        });
+        if (appendTeammates)
+          channel.append({
+            id: `riley:${n}`,
+            author: 'Riley',
+            authorId: 'riley',
+            authorBotId: 'riley',
+            text: `update ${n}`,
+          });
         return new AIMessage({ content: `answer v${n}` });
       },
     };
     const factory = makeFactory(channel, fakeModel);
     await runTurn(factory, 'alex:rtr-reset:root');
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const config = { configurable: { thread_id: 'alex:rtr-reset:root' } };
-    expect((await graph.getState(config)).values.revisionPasses).toBe(
-      MAX_REVISION_PASSES,
-    );
+    const afterTurn1 = await graph.getState(config);
+    expect(afterTurn1.values.revisionPasses).toBe(MAX_REVISION_PASSES);
+    const cursorAfterTurn1 = afterTurn1.values.cursor as number;
 
-    // Second turn — even an empty/ignore turn passes through `gate`, which resets the counters.
+    // Second turn — a fresh human message, no teammate interleave: the prelude resets the stale
+    // MAX revisionPasses (and any orphaned draft) before the clean post.
+    appendTeammates = false;
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'Again?',
+    });
     const stream = await graph.stream(
-      { cursor: channel.lengthOf(), forced: false },
+      { cursor: cursorAfterTurn1, forced: false },
       { ...config, streamMode: 'updates' as const },
     );
     for await (const _ of stream) {

@@ -8,11 +8,9 @@ import type { ChannelRegistryService } from '../channel/channel-registry.service
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { PersonaService } from '../employees/persona.service';
-import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
-import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type {
   ToolLoopDecision,
   ToolLoopGuardService,
@@ -130,14 +128,6 @@ function buildFactory(
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {
-      gate: async () => ({ action: 'respond' as const }),
-    } as unknown as GateService,
-    {
-      isEnabled: () => false,
-      windowSize: () => 12,
-      detect: () => Promise.resolve({ looping: false }),
-    } as unknown as RecursionGuardService,
-    {
       fetchMemory: async () => '',
       fetchTasks: async () => '',
     } as unknown as FetchService,
@@ -179,7 +169,7 @@ async function runTurn(
   factory: BotGraphFactory,
   threadId: string,
 ): Promise<void> {
-  const graph = factory.getBotGraph(ALEX);
+  const graph = factory.getConductorGraph(ALEX);
   const config = { configurable: { thread_id: threadId } };
   const stream = await graph.stream(
     { cursor: 0, forced: false },
@@ -256,7 +246,7 @@ describe('bot graph — tool-loop guard', () => {
     expect(step4).toContain('Stop re-issuing');
     expect(step4).toContain('poke');
 
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const final = await graph.getState({
       configurable: { thread_id: 'alex:tlg-correct:root' },
     });
@@ -292,7 +282,7 @@ describe('bot graph — tool-loop guard', () => {
     expect(invocations).toHaveLength(4);
     expect(detectCalls).toHaveLength(2);
 
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const final = await graph.getState({
       configurable: { thread_id: 'alex:tlg-pause:root' },
     });
@@ -330,7 +320,7 @@ describe('bot graph — tool-loop guard', () => {
     expect(detectCalls).toHaveLength(1); // judged once on the 3rd call…
     expect(invocations).toHaveLength(4); // …and allowed to continue to the final reply
 
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const final = await graph.getState({
       configurable: { thread_id: 'alex:tlg-progressing:root' },
     });

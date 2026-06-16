@@ -1,6 +1,7 @@
 import { CreateModule } from '@workspace/nestjs-core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Session, SessionEvent } from '@workspace/shared/schemas';
+import { ProposalModule } from '../approvals/proposal.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { EnginesModule } from '../engines/engines.module';
 import { LifecycleModule } from '../lifecycle/lifecycle.module';
@@ -34,6 +35,7 @@ import { SessionRunnerService } from './session-runner.service';
     MetricsModule,
     PipelinesModule,
     ProjectsModule,
+    ProposalModule,
     WorktreesModule,
   ],
   services: [

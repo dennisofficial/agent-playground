@@ -1,5 +1,6 @@
 import type { Identity } from '../../domain/identity';
 import type { PlanProposalEvent } from '../../approvals/proposal-presenter.port';
+import { ProposalService } from '../../approvals/proposal.service';
 import type { TaskPlan } from '../../memory/plan-store';
 import { ApprovePlanTool, ProposePlanTool } from './proposal.tools';
 
@@ -133,11 +134,16 @@ describe('propose_plan', () => {
     presenter?: { present: (e: PlanProposalEvent) => Promise<void> };
   }) {
     const f = makeFakes(opts);
-    const tool = new ProposePlanTool(
+    // The guard ladder + CAS + present now live in ProposalService; the tool maps its outcome.
+    const proposals = new ProposalService(
       f.board as never,
       f.plans as never,
+      opts.presenter as never,
+    );
+    const tool = new ProposePlanTool(
+      f.board as never,
       f.employees as never,
-      opts.presenter,
+      proposals,
     );
     return { tool, ...f };
   }

@@ -12,9 +12,6 @@ import type { ConductorEvent } from '../domain/conductor-events';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
-import type { BoardEvent, BoardEventsBus } from '../memory/board-events.bus';
-import type { PlanStore } from '../memory/plan-store';
-import type { BoardStore } from '../memory/board-store';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import type {
   Session,
@@ -23,7 +20,6 @@ import type {
 import type { SessionRunnerService } from '../sessions/session-runner.service';
 import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import { ConductorEventsBus } from './conductor-events.bus';
-import { ConductorMetricsService } from './conductor-metrics.service';
 import { ConductorService } from './conductor.service';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
@@ -143,7 +139,7 @@ class FakeRegistry {
 
 interface FakeGraphBehavior {
   /** Called per stream; returns deltas to yield and the cursor getState should report. */
-  run: (input: { cursor: number; forced: boolean }) => {
+  run: (input: { cursor: number }) => {
     deltas: object[];
     cursorAfter: number;
     throw?: Error;
@@ -159,8 +155,8 @@ async function buildConductor(behavior: FakeGraphBehavior) {
 
   let lastCursor = 0;
   const graphs = {
-    getBotGraph: () => ({
-      stream: async (input: { cursor: number; forced: boolean }) => {
+    getConductorGraph: () => ({
+      stream: async (input: { cursor: number }) => {
         const { deltas, cursorAfter, throw: err } = behavior.run(input);
         lastCursor = cursorAfter;
         return (async function* () {
@@ -172,6 +168,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     }),
   } as unknown as BotGraphFactory;
 
+  // ALEX is the single orchestrator (teamLead) in these specs.
   const employees = {
     list: () => [ALEX],
     byId: (id: string) => (id === 'alex' ? ALEX : undefined),
@@ -204,21 +201,6 @@ async function buildConductor(behavior: FakeGraphBehavior) {
   const credCtx = {
     run: (_c: unknown, fn: () => unknown) => fn(),
   } as unknown as CredentialContext;
-  const boardEventCbs: Array<(e: BoardEvent) => void> = [];
-  const boardEvents = {
-    onEvent: (cb: (e: BoardEvent) => void) => {
-      boardEventCbs.push(cb);
-      return () => {};
-    },
-  } as unknown as BoardEventsBus;
-  const plans = {
-    listForTask: async () => [],
-  } as unknown as PlanStore;
-  const board = {
-    countInFlightExecution: async () => 0,
-    list: async () => [],
-  } as unknown as BoardStore;
-  const metrics = new ConductorMetricsService();
 
   const conductor = new ConductorService(
     channel as unknown as ChannelService,
@@ -233,10 +215,6 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     readiness,
     creds,
     credCtx,
-    boardEvents,
-    plans,
-    board,
-    metrics,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -244,17 +222,15 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     channel,
     cursors,
     events,
-    metrics,
     fireSessionUpdate: (s: Session) => sessionUpdateCbs.forEach((cb) => cb(s)),
-    fireBoardEvent: (e: BoardEvent) => boardEventCbs.forEach((cb) => cb(e)),
   };
 }
 
 describe('ConductorService scheduling', () => {
-  it('claims a bot on channel growth, streams deltas, persists the advanced cursor', async () => {
+  it('claims Atlas on channel growth, streams deltas, persists the advanced cursor', async () => {
     const { conductor, channel, cursors, events } = await buildConductor({
-      run: ({ cursor }) => ({
-        deltas: [{ decision: 'ignore' }],
+      run: () => ({
+        deltas: [{}],
         cursorAfter: channel.length, // consumed everything
       }),
     });
@@ -262,48 +238,6 @@ describe('ConductorService scheduling', () => {
     await conductor.whenIdle();
     expect(cursors.get('alex', 'tui:test')).toBe(1);
     expect(events.filter((e) => e.kind === 'message')).toHaveLength(1); // the human's own echo
-  });
-
-  it('records an under-response drop when a human message draws no respond-action turn', async () => {
-    const { conductor, channel, metrics, events } = await buildConductor({
-      run: () => ({
-        deltas: [{ decision: 'ignore' }],
-        cursorAfter: channel.length, // consumed everything, but nobody responded
-      }),
-    });
-    conductor.submitFrom('dennis', 'Dennis', 'anyone around?');
-    await conductor.whenIdle();
-    expect(metrics.snapshot().humanBurstDropped).toBe(1);
-    const drops = events.filter((e) => e.kind === 'dropped');
-    expect(drops).toHaveLength(1);
-    expect((drops[0] as { text: string }).text).toBe('anyone around?');
-  });
-
-  it('does NOT record a drop when a bot responds', async () => {
-    const { conductor, channel, metrics, events } = await buildConductor({
-      run: () => ({
-        deltas: [{ decision: 'respond' }],
-        cursorAfter: channel.length,
-      }),
-    });
-    conductor.submitFrom('dennis', 'Dennis', 'ship it');
-    await conductor.whenIdle();
-    expect(metrics.snapshot().humanBurstDropped).toBe(0);
-    expect(events.filter((e) => e.kind === 'dropped')).toHaveLength(0);
-  });
-
-  it('records a drop only ONCE per burst even across rapid-fire messages', async () => {
-    const { conductor, channel, metrics } = await buildConductor({
-      run: () => ({
-        deltas: [{ decision: 'ignore' }],
-        cursorAfter: channel.length,
-      }),
-    });
-    conductor.submitFrom('dennis', 'Dennis', 'first');
-    conductor.submitFrom('dennis', 'Dennis', 'second');
-    await conductor.whenIdle();
-    // The map holds one entry per room (latest burst), so at most one drop is recorded.
-    expect(metrics.snapshot().humanBurstDropped).toBe(1);
   });
 
   it('gives up after MAX_TURN_RETRIES no-progress failures and skips the wedged batch', async () => {
@@ -325,33 +259,7 @@ describe('ConductorService scheduling', () => {
     );
   });
 
-  it("relays a session's turn-end through its owner gate-bypassed (forced seed)", async () => {
-    const forcedInputs: boolean[] = [];
-    const { conductor, channel, fireSessionUpdate } = await buildConductor({
-      run: ({ forced }) => {
-        forcedInputs.push(forced);
-        return { deltas: [], cursorAfter: channel.length };
-      },
-    });
-    fireSessionUpdate({
-      id: 'sess-001',
-      task: 'investigate',
-      worktreeId: 'wt-001',
-      status: 'idle',
-      notifyThread: 'tui:test',
-      ownerBot: 'alex',
-      team: 'local',
-      project: 'local',
-      engine: EWorkerEngineName.CLAUDE,
-      mode: 'plan',
-      turns: 1,
-      lastReport: 'here is what I found',
-    });
-    await conductor.whenIdle();
-    expect(forcedInputs).toEqual([true]); // the relay ran as a forced (gate-bypassed) turn
-  });
-
-  it('never relays running or closed session updates', async () => {
+  it('session updates only refresh the running-count UI — they never run a chat turn', async () => {
     const { conductor, channel, fireSessionUpdate } = await buildConductor({
       run: () => {
         throw new Error('no turn should run');
@@ -369,41 +277,11 @@ describe('ConductorService scheduling', () => {
       mode: 'plan' as const,
       turns: 0,
     };
+    fireSessionUpdate({ ...base, status: 'idle', lastReport: 'done' });
     fireSessionUpdate({ ...base, status: 'running' });
     fireSessionUpdate({ ...base, status: 'closed' });
     await conductor.whenIdle();
     expect(channel.snapshot()).toHaveLength(0); // nothing ran, nothing posted
-  });
-
-  it('emits gate observability and folds reactions onto the gated message', async () => {
-    const { conductor, events } = await buildConductor({
-      run: () => ({
-        deltas: [
-          {
-            decision: 'respond',
-            reasoning: 'mine to answer',
-            gateUsage: { input: 100, output: 10 },
-            reaction: '👀',
-            reactionTargetId: 'u-0',
-          },
-        ],
-        cursorAfter: 1,
-      }),
-    });
-    conductor.submitFrom('dennis', 'Dennis', 'alex, can you look?');
-    await conductor.whenIdle();
-    const gate = events.find((e) => e.kind === 'gate') as Extract<
-      ConductorEvent,
-      { kind: 'gate' }
-    >;
-    expect(gate.action).toBe('respond');
-    expect(gate.reasoning).toBe('mine to answer');
-    const reaction = events.find((e) => e.kind === 'reaction') as Extract<
-      ConductorEvent,
-      { kind: 'reaction' }
-    >;
-    expect(reaction.emoji).toBe('👀');
-    expect(reaction.targetId).toBe('u-0');
   });
 
   it('bills a suppressed read-the-room draft: full usage event (cache fields) + draft debug event', async () => {

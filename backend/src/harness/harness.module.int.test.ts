@@ -5,8 +5,8 @@ import { EnvModule } from '@workspace/nestjs-core';
 import { DatabaseModule } from '../_lib/database/database.module';
 import { EsmModule } from '../_lib/esm/esm.module';
 import { ChannelService } from './channel/channel.service';
+import { EmployeeRegistry } from './employees/employee.registry';
 import { EngineRegistry } from './engines/engine.registry';
-import { GateService } from './gate/gate.service';
 import { HarnessModule } from './harness.module';
 import {
   SESSION_REGISTRY,
@@ -40,7 +40,8 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
 
     const tools = moduleRef.get(ToolRegistry);
     const bound = tools.toStructuredTools(DEFAULT_CHAT_TOOLSET);
-    expect(bound.map((t) => t.name).sort()).toEqual(
+    const boundNames = bound.map((t) => t.name);
+    expect(boundNames.slice().sort()).toEqual(
       [
         'add_board_task',
         'add_note',
@@ -82,12 +83,33 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
       ].sort(),
     );
 
+    // Atlas (the single orchestrator) resolves the default chat toolset PLUS its lead-only +
+    // orchestrator tools — including the pipeline dispatch/enqueue tools bound at the cutover.
+    const atlas = moduleRef.get(EmployeeRegistry).byId('atlas');
+    expect(atlas).toBeDefined();
+    const atlasNames = tools
+      .toStructuredTools(atlas!.tools!)
+      .map((t) => t.name)
+      .sort();
+    expect(atlasNames).toEqual(
+      [
+        ...boundNames,
+        'open_pr',
+        'list_pull_requests',
+        'approve_plan',
+        'propose_plan',
+        'open_standup',
+        'close_standup',
+        'dispatch_pipeline',
+        'enqueue_finding',
+      ].sort(),
+    );
+
     const engines = moduleRef.get(EngineRegistry);
     expect(engines.get(EWorkerEngineName.CLAUDE).name).toBe('claude');
     expect(engines.get(EWorkerEngineName.CODEX).name).toBe('codex');
     expect(engines.get(EWorkerEngineName.LANGGRAPH).name).toBe('langgraph');
 
-    expect(moduleRef.get(GateService)).toBeDefined();
     expect(moduleRef.get(ChannelService)).toBeDefined();
     expect(moduleRef.get(SessionRunnerService)).toBeDefined();
     expect(moduleRef.get(WorktreeService)).toBeDefined();

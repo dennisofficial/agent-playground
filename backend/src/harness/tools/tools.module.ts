@@ -1,5 +1,6 @@
 import { DiscoveryModule } from '@nestjs/core';
 import { CreateModule } from '@workspace/nestjs-core';
+import { ProposalModule } from '../approvals/proposal.module';
 import { ChannelModule } from '../channel/channel.module';
 import { ConductorEventsModule } from '../conductor/conductor-events.module';
 import { EmployeesModule } from '../employees/employees.module';
@@ -80,6 +81,7 @@ import {
     MemoryModule,
     PipelinesModule,
     ProjectsModule,
+    ProposalModule,
     SessionsModule,
     WorktreesModule,
   ],

@@ -8,11 +8,9 @@ import type { ChannelRegistryService } from '../channel/channel-registry.service
 import type { ChannelService } from '../channel/channel.service';
 import type { ChannelMsg } from '../channel/channel.types';
 import type { PersonaService } from '../employees/persona.service';
-import type { GateService } from '../gate/gate.service';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
-import type { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
 import type { WorktreeService } from '../worktrees/worktree.service';
@@ -132,14 +130,6 @@ describe('bot graph — mid-thought message injection', () => {
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
-        gate: async () => ({ action: 'respond' as const }),
-      } as unknown as GateService,
-      {
-        isEnabled: () => false,
-        windowSize: () => 12,
-        detect: () => Promise.resolve({ looping: false }),
-      } as unknown as RecursionGuardService,
-      {
         fetchMemory: async () => '',
         fetchTasks: async () => '',
       } as unknown as FetchService,
@@ -155,7 +145,7 @@ describe('bot graph — mid-thought message injection', () => {
       { get: () => undefined } as unknown as EnvService,
     );
 
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const config = { configurable: { thread_id: 'alex:test:root' } };
     const stream = await graph.stream(
       { cursor: 0, forced: false },
@@ -241,14 +231,6 @@ describe('bot graph — mid-thought message injection', () => {
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
-        gate: async () => ({ action: 'respond' as const }),
-      } as unknown as GateService,
-      {
-        isEnabled: () => false,
-        windowSize: () => 12,
-        detect: () => Promise.resolve({ looping: false }),
-      } as unknown as RecursionGuardService,
-      {
         fetchMemory: async () => '',
         fetchTasks: async () => '',
       } as unknown as FetchService,
@@ -264,7 +246,7 @@ describe('bot graph — mid-thought message injection', () => {
       { get: () => undefined } as unknown as EnvService,
     );
 
-    const graph = factory.getBotGraph(ALEX);
+    const graph = factory.getConductorGraph(ALEX);
     const config = { configurable: { thread_id: 'alex:test2:root' } };
     const stream = await graph.stream(
       { cursor: 0, forced: false },

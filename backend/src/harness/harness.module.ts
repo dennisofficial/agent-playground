@@ -4,7 +4,6 @@ import { ChannelModule } from './channel/channel.module';
 import { ConductorModule } from './conductor/conductor.module';
 import { EmployeesModule } from './employees/employees.module';
 import { EnginesModule } from './engines/engines.module';
-import { GateModule } from './gate/gate.module';
 import { CredentialModule } from './llm-keys/credential.module';
 import { LlmModule } from './llm/llm.module';
 import { MemoryModule } from './memory/memory.module';
@@ -45,7 +44,6 @@ import { WorktreesModule } from './worktrees/worktrees.module';
     EmployeesModule,
     ToolsModule,
     SkillsModule,
-    GateModule,
     LlmModule,
     EnginesModule,
     WorktreesModule,

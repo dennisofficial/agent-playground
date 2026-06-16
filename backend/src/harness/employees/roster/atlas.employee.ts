@@ -3,6 +3,10 @@ import { BaseEmployee } from '../base-employee';
 import type { EmployeeContext } from '../employee-context';
 import { ListPullRequestsTool } from '../../tools/projects/list-pull-requests.tool';
 import {
+  DispatchPipelineTool,
+  EnqueueFindingTool,
+} from '../../tools/pipelines/pipeline.tools';
+import {
   ApprovePlanTool,
   ProposePlanTool,
 } from '../../tools/tasks/proposal.tools';
@@ -48,6 +52,9 @@ export class AtlasEmployee extends BaseEmployee {
     ProposePlanTool,
     OpenStandupTool,
     CloseStandupTool,
+    // Orchestrator pipeline dispatch + backlog enqueue.
+    DispatchPipelineTool,
+    EnqueueFindingTool,
   ];
   readonly keywords = [
     'standup',
