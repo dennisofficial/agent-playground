@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Identity, recallProjects } from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
-import { BoardStore } from './board-store';
+import { ACTIVE_BOARD_STATUSES, BoardStore } from './board-store';
 import { SemanticMemory } from './semantic-memory';
 import { SessionNoteStore } from './session-note.store';
 import type { SessionNote } from './session-note.store';
@@ -88,15 +88,16 @@ export class FetchService {
     // ── 1. Standing context core ────────────────────────────────────────────────────────────────
     // Role + active project is always rendered for grounding (it's nearly free and restates
     // identity compactly). Team-scope standing prefs are appended when present.
-    const prefs = await this.semantic.standingContext(id).catch(() => '');
+    const prefs = await this.semantic.standingContext(id, 5).catch(() => '');
     const coreLines: string[] = [`Role: ${bot.role}, project: ${id.project}.`];
     if (prefs) coreLines.push(prefs);
     parts.push(`Standing context:\n${coreLines.join('\n')}`);
 
-    // ── 2. Active board tasks (in_progress) ─────────────────────────────────────────────────────
-    // Directly-actionable working state: what the bot is currently executing on the team board.
+    // ── 2. Active board tasks (planning / executing / self_review) ──────────────────────────────
+    // Directly-actionable working state: what the bot is currently planning or executing on the team
+    // board (the in-flight set — see ACTIVE_BOARD_STATUSES).
     const boardTasks = await this.board
-      .list({ team: id.team, assignee: bot.id, status: 'in_progress' })
+      .list({ team: id.team, assignee: bot.id, status: ACTIVE_BOARD_STATUSES })
       .catch(() => []);
     if (boardTasks.length > 0) {
       const shown = boardTasks.slice(0, BOARD_TASK_CAP);

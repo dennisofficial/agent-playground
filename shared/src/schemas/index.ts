@@ -9,6 +9,7 @@ export * from './channel.entity';
 export * from './employee-skill.entity';
 export * from './fact.entity';
 export * from './github-token.entity';
+export * from './metrics-event.entity';
 export * from './project.entity';
 export * from './provider-key.entity';
 export * from './session.entity';
@@ -31,6 +32,7 @@ import { Channel } from './channel.entity';
 import { EmployeeSkill } from './employee-skill.entity';
 import { Fact } from './fact.entity';
 import { GithubToken } from './github-token.entity';
+import { MetricsEvent } from './metrics-event.entity';
 import { Project } from './project.entity';
 import { ProviderKey } from './provider-key.entity';
 import { Session } from './session.entity';
@@ -62,6 +64,7 @@ export const ENTITIES = [
   Channel,
   Project,
   GithubToken,
+  MetricsEvent,
   ProviderKey,
   Session,
   SessionEvent,

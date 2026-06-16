@@ -50,13 +50,16 @@ const task = (p: Partial<BoardTask>): BoardTask => ({
 });
 
 const ctx = (selfAgent: string): HarnessToolContext =>
-  ({ identity: { team: 'local', selfAgent, project: 'proj' } }) as never;
+  ({
+    identity: { team: 'local', selfAgent, project: 'proj', surface: 'chan' },
+  }) as never;
 
 function build(opts: {
   boardTask?: BoardTask;
   prs?: Array<{ number: number; url: string; headBranch: string }>;
   isLead?: boolean;
   markReadyError?: string;
+  owners?: Array<{ employee: string; sessionId?: string }>;
 }) {
   const markReady = vi.fn(async () => {
     if (opts.markReadyError) throw new Error(opts.markReadyError);
@@ -92,6 +95,17 @@ function build(opts: {
   const employees = {
     byId: (id: string) => ({ id, teamLead: !!opts.isLead && id === 'sam' }),
   } as unknown as EmployeeRegistry;
+  const emitted: Array<Record<string, unknown>> = [];
+  const boardEvents = {
+    emit: (e: Record<string, unknown>) => void emitted.push(e),
+  } as never;
+  const plans = {
+    listForTask: async () =>
+      opts.owners ?? [{ employee: 'alex', sessionId: 'sess-1' }],
+  } as never;
+  const sessions = {
+    get: async (sid: string) => ({ notifyThread: `room-${sid}` }),
+  } as never;
   return {
     tool: new MarkPrReadyTool(
       worktrees,
@@ -100,11 +114,15 @@ function build(opts: {
       board,
       notes,
       employees,
+      plans,
+      boardEvents,
+      sessions,
     ),
     markReady,
     board,
     boardUpdates,
     noted,
+    emitted,
   };
 }
 
@@ -142,18 +160,18 @@ describe('mark_pr_ready tool', () => {
 
   it('refuses unapproved work (nothing to mark ready)', async () => {
     const { tool, markReady } = build({
-      boardTask: task({ status: 'in_progress', assignee: 'alex' }),
+      boardTask: task({ status: 'planning', assignee: 'alex' }),
     });
     const out = await tool.execute(
       { worktreeId: 'wt-001', board_task_id: 7 },
       ctx('alex'),
     );
-    expect(out).toContain('not approved/in-review');
+    expect(out).toContain('not in execution');
     expect(markReady).not.toHaveBeenCalled();
   });
 
-  it('reports when no open PR matches the shared branch', async () => {
-    const { tool } = build({
+  it('reports when no open PR matches the shared branch (no silent flip)', async () => {
+    const { tool, markReady, boardUpdates, noted, emitted } = build({
       boardTask: task({ status: 'approved', assignee: 'alex' }),
       prs: [{ number: 1, url: 'x', headBranch: 'other/branch' }],
     });
@@ -162,6 +180,10 @@ describe('mark_pr_ready tool', () => {
       ctx('alex'),
     );
     expect(out).toContain('No open PR found for shared/feat');
+    expect(markReady).not.toHaveBeenCalled();      // never attempted ready
+    expect(boardUpdates).toEqual([]);               // CRITICAL: no silent in_review flip
+    expect(noted).toEqual([]);                      // no PR note written
+    expect(emitted.filter((e) => e.kind === 'pr-ready')).toEqual([]); // no pr-ready event
   });
 
   it('already in_review: marks ready again without a redundant board write', async () => {
@@ -170,5 +192,52 @@ describe('mark_pr_ready tool', () => {
     });
     await tool.execute({ worktreeId: 'wt-001', board_task_id: 7 }, ctx('alex'));
     expect(boardUpdates).toEqual([]); // already in_review → no update
+  });
+
+  it('emits pr-ready to EVERY owner (narration + the conductor slot-free rescan)', async () => {
+    const { tool, emitted } = build({
+      boardTask: task({ status: 'self_review', assignee: 'alex' }),
+      owners: [
+        { employee: 'alex', sessionId: 'sess-a' },
+        { employee: 'riley', sessionId: 'sess-r' },
+      ],
+    });
+    await tool.execute({ worktreeId: 'wt-001', board_task_id: 7 }, ctx('alex'));
+    const ready = emitted.filter((e) => e.kind === 'pr-ready');
+    expect(ready.map((e) => e.employee)).toEqual(['alex', 'riley']);
+    expect(ready[0]).toMatchObject({
+      team: 'local',
+      taskId: 7,
+      prUrl: 'https://gh/pull/9',
+      notifyThread: 'room-sess-a',
+    });
+  });
+
+  it('ships from self_review (the post-self-review ship decision)', async () => {
+    const { tool, markReady, boardUpdates } = build({
+      boardTask: task({ status: 'self_review', assignee: 'alex' }),
+    });
+    await tool.execute({ worktreeId: 'wt-001', board_task_id: 7 }, ctx('alex'));
+    expect(markReady).toHaveBeenCalled();
+    expect(boardUpdates).toEqual([{ status: 'in_review' }]);
+  });
+
+  it('does NOT flip in_review / note / emit when markReadyForReview throws', async () => {
+    // Bug 2 guard: a throw from markReadyForReview must block the in_review transition.
+    // Pre-d43e94d, the catch only logger.warn'd and execution fell through to the board flip.
+    const { tool, markReady, boardUpdates, noted, emitted } = build({
+      boardTask: task({ status: 'self_review', assignee: 'alex' }),
+      markReadyError: 'github 500',
+    });
+    const out = await tool.execute(
+      { worktreeId: 'wt-001', board_task_id: 7 },
+      ctx('alex'),
+    );
+    expect(markReady).toHaveBeenCalled();          // it attempted to ready the PR
+    expect(out).toContain("Couldn't mark PR");     // surfaces the failure
+    expect(out).toContain('github 500');            // ...with the underlying cause
+    expect(boardUpdates).toEqual([]);              // CRITICAL: ticket NOT flipped to in_review
+    expect(noted).toEqual([]);                      // no PR note written
+    expect(emitted.filter((e) => e.kind === 'pr-ready')).toEqual([]); // no pr-ready event
   });
 });

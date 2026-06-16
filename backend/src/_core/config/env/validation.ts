@@ -81,6 +81,16 @@ export interface IEnvConfig {
   // 'linked' = only board-linked sessions are gated (unlinked ad-hoc work stays autonomous);
   // 'off' = no mechanical gate (prompt-governed only). Tone down as trust builds.
   EXECUTION_APPROVAL_MODE: 'all' | 'linked' | 'off';
+  // How the integration self-review (the PR-level pass after the draft PR opens) hands off:
+  // 'advisory' (default) = the harness ALWAYS ships the PR to ready-for-Dennis and attaches any
+  // findings as a PR comment — never gates, never loops, no employee in the ship path (max autonomy);
+  // 'gated' = the harness parks the findings and seeds the decision owner to ship-or-fix themselves.
+  INTEGRATION_REVIEW_MODE: 'advisory' | 'gated';
+  // Max board tasks per team allowed in in-flight execution (executing + self_review) at once. The
+  // autonomy throttle: approval never auto-starts execution, and when N tickets are approved at once
+  // only this many owners are woken to execute — the rest wait in 'approved' and are picked up as
+  // slots free (gradual token usage, no spike). Default: 3.
+  MAX_CONCURRENT_EXECUTIONS?: number;
   // Slack user id allowed to rule on approval cards when the workspace has no OAuth installer
   // (tenant.installed_by is null on env-token dev workspaces). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
@@ -144,11 +154,6 @@ export interface IEnvConfig {
   // Convention: <base>/<style>/<botId>.png
   AVATAR_BASE_URL?: string;
   AVATAR_STYLE?: string; // 'illustrated' (default) | 'realistic' — the feature toggle
-
-  // LangSmith tracing (optional — LangChain reads these from env automatically)
-  LANGSMITH_TRACING?: string;
-  LANGSMITH_API_KEY?: string;
-  LANGSMITH_PROJECT?: string;
 
   // Langfuse observability (optional — pending-keys mode; @core/tracing self-disables when absent).
   // The Langfuse OTEL SDK reads all four directly from process.env at bootstrap.
@@ -220,6 +225,11 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
     .valid('all', 'linked', 'off')
     .optional()
     .default('all'),
+  INTEGRATION_REVIEW_MODE: Joi.string()
+    .valid('advisory', 'gated')
+    .optional()
+    .default('advisory'),
+  MAX_CONCURRENT_EXECUTIONS: Joi.number().integer().min(1).optional(),
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
@@ -255,11 +265,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   TENANT_PORT_BASE: Joi.number().port().optional(),
   AVATAR_BASE_URL: Joi.string().uri().optional(),
   AVATAR_STYLE: Joi.string().valid('illustrated', 'realistic').optional(),
-
-  // LangSmith tracing
-  LANGSMITH_TRACING: Joi.string().optional(),
-  LANGSMITH_API_KEY: Joi.string().optional(),
-  LANGSMITH_PROJECT: Joi.string().optional(),
 
   // Langfuse observability
   LANGFUSE_PUBLIC_KEY: Joi.string().optional(),

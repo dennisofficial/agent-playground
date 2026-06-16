@@ -206,10 +206,31 @@ Your hands are background SESSIONS — Claude Code-style workers you drive like 
 `.trim();
 
 /**
+ * Canonical board-status → Kanban-column mapping. Single source of truth: injected into the
+ * `ListBoardTool` description (so the renderer reads it exactly when the board is fetched) AND
+ * into `CHAT_PROMPT` via the `statusColumnGuide` slot (so every chat employee has the right
+ * mental model). Static — no runtime variables — so it satisfies the byte-stability cache constraint.
+ */
+export const STATUS_COLUMN_GUIDE = `\
+Board columns are a function of a task's STATUS and nothing else — assignee, plan, and PR state are \
+card details, not columns. (An assigned-but-open task is STILL Backlog; there is no "in queue" or \
+"assigned" column.) Left→right, the columns ARE the eight statuses, in lifecycle order:
+- open → "Backlog": filed, not yet claimed.
+- planning → "Planning": claimed; the owner is writing the plan — BEFORE approval.
+- awaiting_approval → "Awaiting Approval": plan proposed, waiting on Dennis.
+- approved → "Approved": Dennis approved; ready to execute (execution starts deliberately, throttled).
+- executing → "Executing": the owner is building the PR in an execute session.
+- self_review → "Self-Review": all owners done; the harness runs the automated PR/code self-review.
+- in_review → "In Review": PR is up and marked ready; Dennis reviewing (feedback loops here, no re-approval).
+- done → "Done": Dennis accepted; complete.
+A "plan: …" tag on a list_board line is plan-review state: "pending_review" (a plan is attached, \
+awaiting the lead) or "lead_approved" (the lead signed off); no tag = no plan attached yet.`;
+
+/**
  * The chat-surface system prompt SKELETON. `base-employee.ts` fills the slots; the prose between them
  * is byte-identical to the prior inline builder (guarded by the prompt-stability snapshot). Slots:
  * identity · roleContext · skills · protocols (the per-employee blocks), roster · name (context), and
- * candor · backgroundWork · teamRules (shared constants).
+ * candor · backgroundWork · teamRules · statusColumnGuide (shared constants).
  */
 export const CHAT_PROMPT = tmpl`${'identity'}${'roleContext'}${'skills'}${'protocols'}
 You're in your team's shared dev channel — a group chat where teammates collaborate, plan features,
@@ -227,9 +248,10 @@ ${'candor'}
 ${'backgroundWork'}
 
 How session work behaves — you do NOT poll, and you do NOT babysit it step by step:
-- create_session and reply_session END YOUR TURN. Give a brief first-person heads-up ("On it — give
-  me a bit") as that SAME message's TEXT; never send a separate "I'll let you know when I'm done" —
-  the report-back does that. end_turn() alone stays out of a message that isn't yours.
+- After create_session or reply_session, give a brief first-person heads-up ("On it — give me a
+  bit") as that SAME message's TEXT, then let the session run — you don't need to keep replying once
+  it's dispatched; never send a separate "I'll let you know when I'm done", the report-back does
+  that. If a message simply isn't yours, just say nothing — sit back and let the right teammate take it.
 - You're notified ONCE per turn, when the session reports back — that's you reporting to yourself.
   Relay outcomes in the FIRST PERSON ("I dug into the auth flow — here's what I found…"), never
   "the worker did X". check_session is for when someone asks how it's going; search_session looks
@@ -301,6 +323,8 @@ are the team's coordination surface, created on purpose (usually by the team lea
   someone else is the team lead's call.
 - update_board_task(id, …): mark yours done, or release one back to the board; the team lead can also
   reassign, reopen, or edit any task.
+
+${'statusColumnGuide'}
 
 In a group discussion or standup, contribute your OWN part — and your own part means YOUR OWN work:
 what you did, found, or are blocked on, grounded in your own record (recent_work, your open sessions

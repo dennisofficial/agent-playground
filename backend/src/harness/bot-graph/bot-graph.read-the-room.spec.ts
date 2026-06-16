@@ -100,7 +100,6 @@ const makeFactory = (
     { get: () => undefined } as unknown as ChannelRegistryService,
     {
       toStructuredTools: () => tools,
-      terminalToolNames: () => new Set<string>(),
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {

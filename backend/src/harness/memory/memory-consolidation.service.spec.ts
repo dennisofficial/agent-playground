@@ -1,5 +1,5 @@
 import { RunnableLambda } from '@langchain/core/runnables';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Fact } from '@workspace/shared/schemas';
 import type { Repository } from 'typeorm';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
@@ -106,13 +106,28 @@ function makeCredCtx() {
 }
 
 /**
- * Build a Repository<Fact> stub whose manager.query returns a configurable sequence of results.
- * `queryResults` is consumed in order: first call → first result, etc.
+ * Build a Repository<Fact> stub whose createQueryBuilder returns a chainable query builder.
+ * `rawManyResults` is consumed in order: first getRawMany() call → first result, etc.
  */
-function makeFactRepo(queryResults: unknown[][]) {
+function makeFactRepo(rawManyResults: unknown[][]) {
   let call = 0;
-  const query = vi.fn(() => Promise.resolve(queryResults[call++] ?? []));
-  return { manager: { query } } as unknown as Repository<Fact>;
+  const createQueryBuilder = vi.fn(() => {
+    const qb: Record<string, any> = {};
+    const chain = () => qb;
+    for (const m of [
+      'select',
+      'where',
+      'andWhere',
+      'groupBy',
+      'having',
+      'orderBy',
+      'limit',
+    ])
+      qb[m] = vi.fn(chain);
+    qb.getRawMany = vi.fn(() => Promise.resolve(rawManyResults[call++] ?? []));
+    return qb;
+  });
+  return { createQueryBuilder } as unknown as Repository<Fact>;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -446,8 +461,24 @@ describe('MemoryConsolidationService', () => {
       const firstQuery = new Promise<Array<{ team_id: string }>>((res) => {
         resolveFirst = () => res([{ team_id: TEAM_ID }]);
       });
+      const getRawMany = vi.fn(() => firstQuery);
       const factRepo = {
-        manager: { query: vi.fn(() => firstQuery) },
+        createQueryBuilder: vi.fn(() => {
+          const qb: Record<string, any> = {};
+          const chain = () => qb;
+          for (const m of [
+            'select',
+            'where',
+            'andWhere',
+            'groupBy',
+            'having',
+            'orderBy',
+            'limit',
+          ])
+            qb[m] = vi.fn(chain);
+          qb.getRawMany = getRawMany;
+          return qb;
+        }),
       } as unknown as Repository<Fact>;
 
       const semantic = makeSemantic({ [SCOPE_A]: facts });
@@ -479,12 +510,12 @@ describe('MemoryConsolidationService', () => {
 
       // Second tick resolves instantly (skipped)
       await second;
+      // BEFORE unblocking: only the first tick's tenant-discovery getRawMany ran;
+      // second tick was a no-op (re-entrancy guard fired).
+      expect(getRawMany).toHaveBeenCalledTimes(1);
       // Unblock the first
       resolveFirst();
       await first;
-
-      // The repo was only queried once (first tick); second tick was no-op
-      expect(factRepo.manager.query).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -129,7 +129,6 @@ describe('bot graph — mid-thought message injection', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [pokeTool],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -239,7 +238,6 @@ describe('bot graph — mid-thought message injection', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [pokeTool],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {

@@ -18,7 +18,7 @@ function makeReflector(isPublic = false): Reflector {
 function makeJwt(sub?: string): JwtService {
   return {
     verifyAccessToken: vi.fn().mockResolvedValue({ sub }),
-  };
+  } as unknown as JwtService;
 }
 
 function makeRepo(user: unknown = { id: 'u1', role: 'admin' }): AdminUserRepo {
@@ -62,7 +62,11 @@ function guard(opts: {
   return new AdminAuthGuard(
     makeReflector(opts.isPublic ?? false),
     makeJwt(opts.sub),
-    makeRepo(opts.user ?? { id: opts.sub ?? 'u1', role: 'admin' }),
+    makeRepo(
+      opts.user !== undefined
+        ? opts.user
+        : { id: opts.sub ?? 'u1', role: 'admin' },
+    ),
     makeEnv(opts.m2mToken),
   );
 }
@@ -114,9 +118,9 @@ describe('AdminAuthGuard', () => {
   it('throws ForbiddenException when @Roles check fails', async () => {
     const reflector: Reflector = {
       getAllAndOverride: vi.fn((key: string) => {
-        if (key === 'IS_PUBLIC_KEY') return false;
-        if (key === 'IS_AUTH_ONLY_KEY') return false;
-        if (key === 'ROLES_KEY') return ['superadmin'];
+        if (key === 'auth:isPublic') return false;
+        if (key === 'auth:isAuthOnly') return false;
+        if (key === 'auth:roles') return ['superadmin'];
         return undefined;
       }),
     } as unknown as Reflector;

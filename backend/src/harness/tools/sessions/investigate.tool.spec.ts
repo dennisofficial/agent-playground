@@ -3,10 +3,11 @@ import type { Identity } from '../../domain/identity';
 import { InvestigateTool } from './investigate.tool';
 
 /**
- * The `investigate` tool: a fast read-only session on the EXECUTE engine recipe, opened in the new
- * 'investigate' mode (never 'plan'/'execute'), with low-friction worktree resolution (given → latest
- * → auto-create). The engine's read-only enforcement for the mode is covered at the engine seam; here
- * we lock the tool's wiring with the session-open path mocked.
+ * The `investigate` tool: a read-only fact-grounding session on the INVESTIGATE engine recipe (the
+ * execute engine, so the create-time engine pin matches), opened in the 'investigate' mode (never
+ * 'plan'/'execute'), with low-friction worktree resolution (given → latest → auto-create). The
+ * engine's read-only enforcement for the mode is covered at the engine seam; here we lock the tool's
+ * wiring with the session-open path mocked.
  */
 
 const ctx: { identity: Identity } = {
@@ -55,7 +56,7 @@ function makeTool(opts: {
 }
 
 describe('investigate', () => {
-  it('opens a read-only investigate session on the execute engine, reusing the latest worktree', async () => {
+  it('opens a read-only investigate session on the investigate engine, reusing the latest worktree', async () => {
     const { tool, openSession, worktrees } = makeTool({
       worktrees: [{ id: 'wt-old' }, { id: 'wt-001' }],
     });
@@ -68,7 +69,7 @@ describe('investigate', () => {
     const call = openSession.mock.calls[0][0];
     expect(call.mode).toBe('investigate');
     expect(call.worktreeId).toBe('wt-001'); // the latest
-    expect(call.engine).toBe('claude'); // the execute recipe's engine
+    expect(call.engine).toBe('claude'); // investigate keeps the execute engine (model-only override)
     expect(call.openingTask).toContain('READ-ONLY');
     expect(call.openingTask).toContain('how does the gate work?');
     expect(out).toContain('sess-001');

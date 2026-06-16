@@ -1,4 +1,4 @@
-import type { AIMessage, ToolMessage } from '@langchain/core/messages';
+import type { AIMessage } from '@langchain/core/messages';
 import { END } from '@langchain/langgraph';
 import type { RefreshScope } from '../tools/tool.types';
 import type { BotStateType } from './bot-state';
@@ -36,10 +36,10 @@ export const afterLlm = (
 };
 
 /**
- * Derive the set of context scopes dirtied by the last tool batch. Used both by `makeAfterTools`
- * (to decide whether to insert a `refreshContext` superstep) and by `refreshContextNode` (to know
- * which slices to recompute). Name-based and idempotent: a failed tool still triggers a harmless
- * recompute — same posture as terminal detection.
+ * Derive the set of context scopes dirtied by the last tool batch. Used both by
+ * `makeAfterToolLoopGuard` (to decide whether to insert a `refreshContext` superstep) and by
+ * `refreshContextNode` (to know which slices to recompute). Name-based and idempotent: a failed
+ * tool still triggers a harmless recompute.
  */
 export const makeRefreshScopesFromTurn =
   (refresh: Map<string, readonly RefreshScope[]>) =>
@@ -55,53 +55,13 @@ export const makeRefreshScopesFromTurn =
   };
 
 /**
- * Out of `tools` (built per-bot — closes over the bot's terminal-tool set). The TERMINAL decision
- * stays here; the non-terminal continuation is handed to `tool_loop_guard`, which checks for a
- * repeated-tool-call loop before the refresh-scope/llm route is taken (see `makeAfterToolLoopGuard`).
- *
- * Priority order:
- *  1. All calls are terminal AND none failed → end the turn (reconcile).
- *  2. Any terminal call failed → loop back to llm (bot sees the error ToolMessage). UNCHANGED — the
- *     tool-loop guard never sits on the terminal path.
- *  3. Non-terminal batch → `tool_loop_guard` (which then decides refreshContext vs llm vs pause).
- *
- * `every` (not `some`) is load-bearing for terminal: a message mixing a terminal tool with a
- * fallible one loops back so the result is relayed.
- */
-export const makeAfterTools =
-  (terminal: Set<string>) =>
-  (state: BotStateType): 'llm' | 'tool_loop_guard' | 'reconcile' => {
-    const lastAi = [...state.messages]
-      .reverse()
-      .find((m) => m.getType() === 'ai') as AIMessage | undefined;
-    const calls = lastAi?.tool_calls ?? [];
-    const allTerminal =
-      calls.length > 0 && calls.every((c) => terminal.has(c.name));
-    if (allTerminal) {
-      // Route back to llm when any terminal call failed — scan for ToolMessages whose call_id
-      // belongs to the current AI message and whose status is 'error'.
-      const callIds = new Set(
-        calls.map((c) => c.id).filter(Boolean) as string[],
-      );
-      const anyFailed = state.messages.some(
-        (m) =>
-          m.getType() === 'tool' &&
-          callIds.has((m as ToolMessage).tool_call_id) &&
-          (m as ToolMessage).status === 'error',
-      );
-      return anyFailed ? 'llm' : 'reconcile';
-    }
-    // Non-terminal continuation → the tool-loop guard decides what happens next.
-    return 'tool_loop_guard';
-  };
-
-/**
- * Out of `tool_loop_guard` (built per-bot — closes over the bot's refresh map). The guard node has
- * already written `toolLoopVerdict`:
+ * Out of `tool_loop_guard` (built per-bot — closes over the bot's refresh map). EVERY tool batch
+ * flows through here (a plain edge out of `tools`); no tool ends the turn directly. The guard node
+ * has already written `toolLoopVerdict`:
  *  - `pause`   → a stuck loop persisted after a correction; end the turn (reconcile).
  *  - `correct` → first stuck verdict; force a context refresh so the bot sees reality.
- *  - else (`pass`/undefined) → the SAME refresh-scope decision the old `makeAfterTools` made for a
- *    non-terminal batch: refreshContext if any call dirtied context, otherwise straight to llm.
+ *  - else (`pass`/undefined) → refreshContext if any call dirtied context, otherwise straight to llm
+ *    (where the bot sees any tool result — including an error ToolMessage — and decides what's next).
  */
 export const makeAfterToolLoopGuard =
   (refresh: Map<string, readonly RefreshScope[]>) =>

@@ -95,8 +95,8 @@ export class ProposePlanTool implements IHarnessTool<typeof proposeSchema> {
       return `Proposing plans to Dennis is the team lead's call.`;
     const task = await this.board.get(id.team, task_id);
     if (!task) return `No board task #${task_id} found.`;
-    if (task.status !== 'in_progress' && task.status !== 'awaiting_approval')
-      return `Board task #${task_id} is '${task.status}' — only in-progress work with finished plans can be proposed (or re-proposed while awaiting approval).`;
+    if (task.status !== 'planning' && task.status !== 'awaiting_approval')
+      return `Board task #${task_id} is '${task.status}' — only planning work with finished plans can be proposed (or re-proposed while awaiting approval).`;
     const plans = await this.plans.listForTask(id.team, task_id);
     if (plans.length === 0)
       return `No plans are attached to #${task_id} yet — employees attach plans by finishing a plan turn on a session linked to the ticket (board_task_id).`;
@@ -106,14 +106,14 @@ export class ProposePlanTool implements IHarnessTool<typeof proposeSchema> {
     if (pending.length)
       return `These plans on #${task_id} aren't lead-approved yet: ${pending.join(', ')} — review (get_ticket) and approve_plan each first.`;
 
-    // Normal path: CAS in_progress → awaiting_approval (a concurrent double-propose loses).
+    // Normal path: CAS planning → awaiting_approval (a concurrent double-propose loses).
     // Re-propose path (already awaiting_approval): skip the flip, just re-present — the recovery
     // for a card that never landed; a duplicate card is harmless (first verdict wins the CAS).
-    if (task.status === 'in_progress') {
+    if (task.status === 'planning') {
       const flipped = await this.board.transition(
         id.team,
         task_id,
-        'in_progress',
+        'planning',
         {
           status: 'awaiting_approval',
         },

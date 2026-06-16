@@ -37,4 +37,27 @@ export class TeamTaskPlan extends TimestampedEntity {
   /** Provenance: the (in-memory) session id that produced this plan — may dangle after restart. */
   @Column({ type: 'text', nullable: true })
   session_id!: string | null;
+
+  /**
+   * Per-owner EXECUTION state, set during the harness-driven review pipeline (distinct from the
+   * task's coarse status): 'executing' (default — coding / per-owner self-review), 'reviewed'
+   * (self-review clean, mid-publish), 'complete' (this owner's work is published + reviewed), or
+   * 'blocked' (a publish conflict or failure left work needing the owner). The task flips
+   * 'executing' → 'self_review' only when EVERY plan row is 'complete'.
+   */
+  @Column({ type: 'text', default: 'executing' })
+  owner_status!: string;
+
+  /** The execute worktree this owner's work lives in — stamped at execute-session start so the
+   * integration barrier can find the shared branch / PR without re-deriving it. */
+  @Column({ type: 'text', nullable: true })
+  execute_worktree_id!: string | null;
+
+  /** The shared integration branch (shared/<slug>) this owner publishes through. */
+  @Column({ type: 'text', nullable: true })
+  shared_branch!: string | null;
+
+  /** The task-level PR URL, stamped by the integration barrier once the draft PR exists. */
+  @Column({ type: 'text', nullable: true })
+  pr_url!: string | null;
 }

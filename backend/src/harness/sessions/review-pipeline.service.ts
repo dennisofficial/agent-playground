@@ -1,0 +1,622 @@
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import type { EmployeeContext } from '../employees/employee-context';
+import type { EmployeeDefinition } from '../employees/employee.types';
+import { EmployeeRegistry } from '../employees/employee.registry';
+import { SELF_REVIEW } from '../employees/capabilities/self-review.capability';
+import type { EngineSpec } from '../engines/engine-spec';
+import { EngineRegistry } from '../engines/engine.registry';
+import { withActiveRoot } from '../engines/guard';
+import {
+  EWorkerEngineName,
+  type WorkerEvent,
+} from '../engines/worker-engine.port';
+import { CredentialContext } from '../llm-keys/credential-context';
+import {
+  TenantCredentialService,
+  type TenantKeys,
+} from '../llm-keys/tenant-credential.service';
+import { BoardStore, type BoardStatus } from '../memory/board-store';
+import { BoardEventsBus } from '../memory/board-events.bus';
+import { PlanStore, type TaskPlan } from '../memory/plan-store';
+import { TicketNoteStore } from '../memory/ticket-note-store';
+import { parseGithubRepo } from '../projects/git-auth';
+import { GithubApiService } from '../projects/github-api.service';
+import { GithubTokenStore } from '../projects/github-token-store';
+import { WorktreeService } from '../worktrees/worktree.service';
+import { EnvService } from '@core/config/env/env.service';
+import {
+  CODE_REVIEW_PROMPT,
+  CONFLICT_RESOLVE_PROMPT,
+  INTEGRATION_REVIEW_PROMPT,
+  REVIEW_FIX_PROMPT,
+  SELF_REVIEW_PR_COMMENT,
+  parseVerdict,
+} from './review-pipeline.prompts';
+import {
+  SESSION_REGISTRY,
+  type Session,
+  type SessionRegistry,
+} from './session-registry.port';
+import { SessionRunnerService } from './session-runner.service';
+
+/** How many fix passes the per-owner review loop runs before handing back to the human. */
+const MAX_FIX_PASSES = 2;
+/** Bound on a single internal fix/resolve turn so a stuck engine can't hang the pipeline. */
+const INTERNAL_TURN_TIMEOUT_MS = 15 * 60 * 1000;
+
+export type OwnerReviewOutcome =
+  | { kind: 'complete' }
+  | { kind: 'blocked'; reason: string };
+
+/** A ticket is "published" (its work is on the shared branch) once it reaches self_review or beyond —
+ * the sibling-ship gate keys off this without joining the plan rows. */
+const PUBLISHED_STATUSES: readonly BoardStatus[] = [
+  'self_review',
+  'in_review',
+  'done',
+];
+
+/** One block per ticket in a shared feature — fed into the integration review prompt + the PR body so
+ * both describe the WHOLE combined work, not just whichever ticket opened the draft PR first. */
+function aggregateTicketText(
+  tickets: ReadonlyArray<{ id: number; title: string; description: string }>,
+): string {
+  return tickets
+    .map((t) => `#${t.id} ${t.title}${t.description ? ` — ${t.description}` : ''}`)
+    .join('\n\n');
+}
+
+/**
+ * The harness-driven PR self-review pipeline — the built-in replacement for the prose instruction
+ * Sam kept forgetting ("self-review the PR, then mark it ready"). It runs as a SessionsModule service
+ * (it already has the engines, credentials, worktree and session runner it needs; ProjectsModule adds
+ * the GitHub client) and is invoked by the `submit_for_review` tool.
+ *
+ * Two entry points:
+ *  - reviewOwner(session): per-owner. Reviews ONLY this owner's diff (cross-engine, read-only), runs a
+ *    bounded in-session fix loop, publishes the owner's branch onto the shared branch, and marks the
+ *    owner's plan row 'complete'. A publish conflict or an exhausted fix loop marks the row 'blocked'
+ *    and seeds the owner to recover — it NEVER completes on failure.
+ *  - integrate(team, taskId): the task-level barrier, fired only when the LAST owner completes. Opens
+ *    the shared-branch DRAFT PR, runs a final integration review, and on a clean verdict flips the PR
+ *    to ready and the ticket to 'in_review'.
+ *
+ * Every milestone emits a board event so the conductor wakes the owner to narrate it in their own
+ * voice (Dennis's choice). The bot reaches a 'self_review' session only through the runner's internal
+ * resume path — never a tool call.
+ */
+@Injectable()
+export class ReviewPipelineService {
+  private readonly logger = new Logger(ReviewPipelineService.name);
+
+  constructor(
+    private readonly engines: EngineRegistry,
+    private readonly employees: EmployeeRegistry,
+    private readonly credCtx: CredentialContext,
+    private readonly creds: TenantCredentialService,
+    private readonly worktrees: WorktreeService,
+    private readonly tokens: GithubTokenStore,
+    private readonly github: GithubApiService,
+    private readonly board: BoardStore,
+    private readonly plans: PlanStore,
+    private readonly notes: TicketNoteStore,
+    private readonly boardEvents: BoardEventsBus,
+    private readonly runner: SessionRunnerService,
+    private readonly env: EnvService,
+    @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
+  ) {}
+
+  private keyFor(keys: TenantKeys, engine: EWorkerEngineName): string | undefined {
+    return engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
+  }
+
+  /** The owner's REVIEW engine — reuse the cross-engine recipe they already declared for plan
+   * self-review (SELF_REVIEW capability); fall back to their execute engine when they declare none. */
+  private reviewSpec(bot: EmployeeDefinition, ctx: EmployeeContext): EngineSpec {
+    const cap = bot.capabilities(ctx).find((c) => c.name === SELF_REVIEW);
+    return cap ? cap.spec(ctx) : bot.executeEngine(ctx);
+  }
+
+  /** Run a read-only review turn (investigate mode) and return its prose result, or ''. */
+  private async runReview(
+    bot: EmployeeDefinition,
+    spec: EngineSpec,
+    worktreePath: string,
+    team: string,
+    keys: TenantKeys,
+    prompt: string,
+  ): Promise<string> {
+    const onEvent = (_e: WorkerEvent) => undefined;
+    const out = await withActiveRoot(worktreePath, () =>
+      this.credCtx.run({ teamId: team, keys }, () =>
+        this.engines.get(spec.engine).run({
+          task: prompt,
+          cwd: worktreePath,
+          systemPrompt: spec.systemPrompt,
+          agentId: bot.id,
+          sessionId: undefined,
+          model: spec.model,
+          effort: spec.effort,
+          mode: 'investigate',
+          apiKey: this.keyFor(keys, spec.engine),
+          onEvent,
+        }),
+      ),
+    );
+    return out.result?.trim() ?? '';
+  }
+
+  /**
+   * Per-owner: review THIS owner's diff, fix-loop in-session, then publish onto the shared branch.
+   * Marks the plan row 'complete' on success (and triggers integrate() when it's the last owner), or
+   * 'blocked' + seeds the owner on a conflict / exhausted fix loop. Best-effort and self-contained:
+   * it owns the owner_status writes so a partial run never strands the task silently.
+   */
+  async reviewOwner(session: Session): Promise<OwnerReviewOutcome> {
+    const { team, ownerBot: employee, worktreeId } = session;
+    const taskId = session.boardTaskId;
+    if (taskId === undefined)
+      return { kind: 'blocked', reason: 'session is not linked to a board task' };
+
+    const bot = this.employees.byId(employee);
+    if (!bot) {
+      await this.failOwner(
+        session,
+        taskId,
+        `unknown employee '${employee}' — can't run self-review`,
+      );
+      return { kind: 'blocked', reason: `unknown employee '${employee}'` };
+    }
+    const ctx = this.employees.context();
+    const worktree = this.worktrees.get(worktreeId);
+    if (!worktree) {
+      await this.failOwner(
+        session,
+        taskId,
+        `worktree ${worktreeId} no longer exists — can't run self-review`,
+      );
+      return { kind: 'blocked', reason: 'worktree gone' };
+    }
+    const task = await this.board.get(team, taskId);
+    // Self-heal: the worktree never joined a shared branch at execute start (the stamping no-op'd or
+    // these sessions predate it). Promote it at the base divergence point — using the ticket's shared
+    // slug (or `ticket-N` solo) so the branch identity matches the sibling grouping — so the owner's
+    // own diff is reviewable instead of silently giving up. A failure here is a loud recoverable dead end.
+    if (!worktree.sharedBranch) {
+      const healed = await this.worktrees.ensureSharedAtBase(
+        worktreeId,
+        task?.sharedSlug ?? `ticket-${taskId}`,
+      );
+      if (!healed.ok) {
+        await this.failOwner(
+          session,
+          taskId,
+          `couldn't prepare a shared branch for review: ${healed.reason}`,
+        );
+        return { kind: 'blocked', reason: healed.reason };
+      }
+    }
+    // Backfill the plan row's execute context (idempotent) so the integration barrier's anchor lookup
+    // (`executeWorktreeId && sharedBranch`) can find this owner — a row promoted-but-never-stamped
+    // would otherwise mark 'complete' and then strand integrate() with no anchor.
+    await this.plans
+      .setExecuteContext(team, taskId, employee, {
+        executeWorktreeId: worktreeId,
+        sharedBranch: worktree.sharedBranch,
+      })
+      .catch(() => undefined);
+    const keys = await this.creds.resolve(team);
+    const ticketText = task
+      ? `${task.title}\n\n${task.description}`.trim()
+      : session.task;
+    const goal = task?.title ?? session.task;
+
+    // The shared tip BEFORE we publish — the review diffs <preRef>...<ownerBranch> (three-dot), so an
+    // owner reviewing after teammates have already integrated never re-reviews their work.
+    const preRef = await this.worktrees.sharedRef(worktreeId);
+
+    // Review/fix loop runs LOCALLY (no publish yet) so the publish at the end carries the fixed work.
+    if (preRef) {
+      for (let pass = 0; pass <= MAX_FIX_PASSES; pass++) {
+        const { range, files } = await this.worktrees.ownerDiff(
+          worktreeId,
+          preRef,
+        );
+        if (files.length === 0) break; // nothing of this owner's own to review
+        const reviewText = await this.runReview(
+          bot,
+          this.reviewSpec(bot, ctx),
+          worktree.path,
+          team,
+          keys,
+          CODE_REVIEW_PROMPT({ goal, ticket: ticketText, range }),
+        );
+        if (parseVerdict(reviewText) === 'pass') break;
+        if (pass === MAX_FIX_PASSES) {
+          await this.failOwner(
+            session,
+            taskId,
+            `self-review still flagged issues after ${MAX_FIX_PASSES} fix passes — take it from here`,
+          );
+          return {
+            kind: 'blocked',
+            reason: 'fix loop exhausted',
+          };
+        }
+        // Fix the flagged issues in the owner's OWN session (harness-initiated, gate-bypassed).
+        await this.runner.resumeInternal(
+          session.id,
+          REVIEW_FIX_PROMPT({ critique: reviewText }),
+          { mode: 'execute', timeoutMs: INTERNAL_TURN_TIMEOUT_MS },
+        );
+      }
+    }
+
+    // Publish the (now reviewed) work onto the shared branch. A conflict is left in-progress; seed the
+    // owner to resolve and re-submit — do NOT mark complete.
+    const publish = await this.worktrees.publish(worktreeId).catch((err) => ({
+      integrated: false as const,
+      sharedBranch: worktree.sharedBranch!,
+      files: [String(err instanceof Error ? err.message : err)],
+    }));
+    if (!publish.integrated) {
+      await this.plans.setOwnerStatus(team, taskId, employee, 'blocked');
+      await this.runner
+        .resumeInternal(
+          session.id,
+          CONFLICT_RESOLVE_PROMPT({
+            sharedBranch: publish.sharedBranch,
+            files: publish.files ?? [],
+          }),
+          { mode: 'execute', timeoutMs: INTERNAL_TURN_TIMEOUT_MS },
+        )
+        .catch(() => undefined);
+      this.emitFailed(
+        session,
+        taskId,
+        `publishing onto ${publish.sharedBranch} hit a merge conflict (${(publish.files ?? []).join(', ') || 'see git status'}) — resolve it, then submit_for_review again`,
+      );
+      return { kind: 'blocked', reason: 'publish conflict' };
+    }
+
+    await this.plans.setOwnerStatus(team, taskId, employee, 'complete');
+
+    // This owner published — trip the integration barrier. For a shared feature it only ships once
+    // every sibling ticket is published too (the gate lives in integrate()).
+    await this.integrate(team, taskId).catch((err) =>
+      this.logger.warn(`integrate(#${taskId}) failed: ${err}`),
+    );
+    return { kind: 'complete' };
+  }
+
+  /**
+   * Task-level barrier: open the shared-branch DRAFT PR and run the final integration review (a
+   * fresh-eyes, different-engine pass over the COMBINED work). The harness NEVER judges pass/fail on
+   * it — that non-deterministic gate was the #49 infinite loop. INTEGRATION_REVIEW_MODE decides the
+   * hand-off: 'advisory' (default) ships the PR ready for Dennis and attaches the findings as a PR
+   * comment (max autonomy, no employee in the path); 'gated' parks the findings and seeds the decision
+   * owner to ship-or-fix. Single-owner tickets skip the review entirely (the per-owner pass already
+   * covered the whole diff). Fired only when every owner is complete; idempotent on the status CAS.
+   */
+  async integrate(team: string, taskId: number): Promise<void> {
+    const plans = await this.plans.listForTask(team, taskId);
+    // The integration-barrier milestones wake EVERY owner of the ticket (not just the anchor), each
+    // in their own session's room — resolved once here (also the fan-out for any failure).
+    const owners = await this.resolveOwners(plans);
+    const anchor = plans.find((p) => p.executeWorktreeId && p.sharedBranch);
+    if (!anchor?.executeWorktreeId) {
+      this.logger.warn(
+        `integrate(#${taskId}): no plan row carries an execute worktree — cannot open the PR`,
+      );
+      // The ticket is still 'executing' at this point (we haven't transitioned yet), so it's already
+      // resubmittable — just narrate the miss so it isn't swallowed.
+      this.notifyOwners(owners, {
+        kind: 'self-review-failed',
+        team,
+        taskId,
+        reason:
+          'no execute worktree is recorded for this ticket — re-run submit_for_review to retry',
+      });
+      return;
+    }
+    const worktreeId = anchor.executeWorktreeId;
+
+    // executing → self_review (the integration review is running). Idempotent: a no-op if a concurrent
+    // trip already advanced it. Every dead end past this point rolls it back via failIntegration().
+    await this.board
+      .transition(team, taskId, 'executing', { status: 'self_review' })
+      .catch(() => undefined);
+
+    const rec = await this.worktrees.projectRecordFor(worktreeId);
+    const task = await this.board.get(team, taskId);
+    if (!rec || !task) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owners,
+        'no registered GitHub repo matches this worktree — open the PR manually',
+      );
+      return;
+    }
+    const auth = await this.tokens
+      .resolve(rec.teamId, rec.tokenName)
+      .catch(() => undefined);
+    if (!auth) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owners,
+        'no GitHub token is stored for this project — open the PR manually',
+      );
+      return;
+    }
+
+    // Ensure origin has the branch (also runs the repo-identity guard) and open/find the DRAFT PR.
+    const { owner, repo } = parseGithubRepo(rec.gitUrl);
+    let pr: { url: string; number: number };
+    try {
+      const { sharedBranch } =
+        await this.worktrees.pushSharedToOrigin(worktreeId);
+      pr = await this.github.openPullRequest(auth.token, {
+        owner,
+        repo,
+        head: sharedBranch,
+        base: rec.defaultBranch,
+        title: task.title,
+        body: task.description || undefined,
+        draft: true,
+      });
+      await this.plans.setPrUrl(team, taskId, pr.url);
+      this.notifyOwners(owners, {
+        kind: 'pr-opened',
+        team,
+        taskId,
+        prUrl: pr.url,
+      });
+    } catch (err) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owners,
+        `couldn't open the PR (${err instanceof Error ? err.message : String(err)}) — open it manually`,
+      );
+      return;
+    }
+
+    // The final fresh-eyes, different-engine pass over the COMBINED work. Single-owner tickets skip
+    // it: the per-owner review already covered the whole diff (their diff IS the combined diff), so a
+    // second pass is pure redundant non-determinism.
+    let reviewText = '';
+    const bot = this.employees.byId(anchor.employee);
+    if (plans.length > 1 && bot) {
+      const ctx = this.employees.context();
+      const keys = await this.creds.resolve(team);
+      const wt = this.worktrees.get(worktreeId);
+      reviewText = await this.runReview(
+        bot,
+        this.reviewSpec(bot, ctx),
+        wt?.path ?? '',
+        team,
+        keys,
+        INTEGRATION_REVIEW_PROMPT({
+          goal: task.title,
+          ticket: `${task.title}\n\n${task.description}`.trim(),
+          sharedBranch: anchor.sharedBranch ?? wt?.sharedBranch ?? '',
+          base: rec.defaultBranch,
+        }),
+      ).catch(() => '');
+    }
+    const findings = reviewText.trim();
+
+    // The harness NEVER judges pass/fail on this (non-deterministic) review — that gate was the #49
+    // loop. The mode decides the hand-off.
+    if (this.env.get('INTEGRATION_REVIEW_MODE') === 'gated') {
+      await this.handOffToOwner(
+        team,
+        taskId,
+        owners,
+        plans,
+        anchor,
+        task.assignee,
+        pr.url,
+        findings,
+      );
+      return;
+    }
+
+    // advisory (default, max autonomy): SHIP the PR ready for Dennis — no employee in the path. Loud
+    // fail: if readying fails the ticket does NOT advance (no silent draft-stuck desync, the #38 bug).
+    try {
+      await this.github.markReadyForReview(auth.token, {
+        owner,
+        repo,
+        number: pr.number,
+      });
+    } catch (err) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owners,
+        `couldn't flip the PR out of draft (${err instanceof Error ? err.message : String(err)}) — mark it ready manually`,
+      );
+      return;
+    }
+    // Attach the findings to the PR (+ ticket) so Dennis sees them in his review — advisory, never
+    // blocking. parseVerdict only SUPPRESSES NOISE here (a clean review's "all good" prose isn't worth
+    // a comment); it never gates the ship — the PR is already ready above either way.
+    if (findings && parseVerdict(reviewText) === 'changes') {
+      await this.github
+        .commentOnPullRequest(auth.token, {
+          owner,
+          repo,
+          number: pr.number,
+          body: SELF_REVIEW_PR_COMMENT(findings),
+        })
+        .catch((err) =>
+          this.logger.warn(`self-review PR comment(#${taskId}) failed: ${err}`),
+        );
+      await this.notes
+        .add(team, taskId, anchor.employee, findings)
+        .catch(() => undefined);
+    }
+    await this.board
+      .transition(team, taskId, 'self_review', { status: 'in_review' })
+      .catch(() => undefined);
+    this.notifyOwners(owners, { kind: 'pr-ready', team, taskId, prUrl: pr.url });
+  }
+
+  /** gated mode: park the findings under a ticket-note id and wake the DECISION OWNER to decide —
+   * ship it (mark_pr_ready) or fix from the note and resubmit. The ticket stays in self_review; a
+   * failed note write is a recoverable infra dead end (rolls back so a resubmit retries). */
+  private async handOffToOwner(
+    team: string,
+    taskId: number,
+    owners: Array<{ employee: string; notifyThread?: string }>,
+    plans: TaskPlan[],
+    anchor: TaskPlan,
+    assignee: string | undefined,
+    prUrl: string,
+    findings: string,
+  ): Promise<void> {
+    const note = await this.notes
+      .add(
+        team,
+        taskId,
+        anchor.employee,
+        findings || 'Self-review completed — no issues surfaced.',
+      )
+      .catch(() => undefined);
+    if (!note) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owners,
+        "couldn't save the self-review findings to the ticket — submit_for_review again to retry",
+      );
+      return;
+    }
+    const decider = await this.decisionOwner(plans, assignee, anchor);
+    this.boardEvents.emit({
+      kind: 'self-review-ready',
+      team,
+      taskId,
+      employee: decider.employee,
+      prUrl,
+      noteId: note.id,
+      worktreeId: decider.worktreeId,
+      sessionId: decider.sessionId,
+      notifyThread: decider.notifyThread,
+    });
+  }
+
+  /** The single ship-or-fix decider for the integration PR: the board assignee when they own an
+   * execute plan row on this ticket, else the anchor. mark_pr_ready only authorizes the board
+   * assignee or the lead, so the decide seed goes to exactly one owner (co-owners got pr-opened). */
+  private async decisionOwner(
+    plans: TaskPlan[],
+    assignee: string | undefined,
+    anchor: TaskPlan,
+  ): Promise<{
+    employee: string;
+    worktreeId: string;
+    sessionId?: string;
+    notifyThread?: string;
+  }> {
+    const row =
+      (assignee &&
+        plans.find((p) => p.employee === assignee && p.executeWorktreeId)) ||
+      anchor;
+    const notifyThread = row.sessionId
+      ? (await this.sessions.get(row.sessionId))?.notifyThread
+      : undefined;
+    return {
+      employee: row.employee,
+      worktreeId: row.executeWorktreeId ?? anchor.executeWorktreeId!,
+      sessionId: row.sessionId,
+      notifyThread,
+    };
+  }
+
+  /** Wake the owner (real seeded narration) that a per-owner step couldn't auto-clear. */
+  private emitFailed(session: Session, taskId: number, reason: string): void {
+    this.boardEvents.emit({
+      kind: 'self-review-failed',
+      team: session.team,
+      taskId,
+      employee: session.ownerBot,
+      reason,
+      notifyThread: session.notifyThread,
+    });
+  }
+
+  /** A LOUD per-owner dead end: persist `owner_status='blocked'` AND narrate it, so a bot can never
+   * be told "review is running" and then silently loop. The single funnel for every reviewOwner
+   * failure that isn't auto-recoverable. */
+  private async failOwner(
+    session: Session,
+    taskId: number,
+    reason: string,
+  ): Promise<void> {
+    await this.plans
+      .setOwnerStatus(session.team, taskId, session.ownerBot, 'blocked')
+      .catch(() => undefined);
+    this.emitFailed(session, taskId, reason);
+  }
+
+  /** Public entry for the `submit_for_review` fire-and-forget `.catch()`: an UNEXPECTED throw out of
+   * reviewOwner (its known dead ends already self-report) must not vanish as an unhandled rejection —
+   * mark the owner blocked + narrate so the bot hears about it. */
+  async reportOwnerCrash(session: Session, reason: string): Promise<void> {
+    if (session.boardTaskId === undefined) return;
+    await this.failOwner(session, session.boardTaskId, reason);
+  }
+
+  /** A LOUD + RECOVERABLE integration dead end (everything past the executing→self_review flip): roll
+   * the ticket BACK to 'executing' so the standard submit_for_review path can re-trip the barrier
+   * after the human/config fix (owners stay 'complete', so a single resubmit re-runs reviewOwner →
+   * integrate), and narrate the reason to EVERY owner. Without the rollback the ticket would strand in
+   * self_review, where submit_for_review's status guard rejects every resubmit. */
+  private async failIntegration(
+    team: string,
+    taskId: number,
+    owners: Array<{ employee: string; notifyThread?: string }>,
+    reason: string,
+  ): Promise<void> {
+    await this.board
+      .transition(team, taskId, 'self_review', { status: 'executing' })
+      .catch(() => undefined);
+    this.notifyOwners(owners, { kind: 'self-review-failed', team, taskId, reason });
+  }
+
+  /** Resolve every owner of a task to (employee, their session's room) — the fan-out targets for the
+   * integration-barrier milestones, so each owner is woken where their work was opened. */
+  private async resolveOwners(
+    plans: TaskPlan[],
+  ): Promise<Array<{ employee: string; notifyThread?: string }>> {
+    return Promise.all(
+      plans.map(async (p) => ({
+        employee: p.employee,
+        notifyThread: p.sessionId
+          ? (await this.sessions.get(p.sessionId))?.notifyThread
+          : undefined,
+      })),
+    );
+  }
+
+  /** Emit an integration-barrier milestone to EVERY owner (not just the anchor) — one seed per owner,
+   * each woken in their own room. The per-owner reviewOwner failures still target the single owner
+   * (their conflict / exhausted fix loop is theirs to resolve). */
+  private notifyOwners(
+    owners: Array<{ employee: string; notifyThread?: string }>,
+    ev:
+      | { kind: 'pr-opened' | 'pr-ready'; team: string; taskId: number; prUrl: string }
+      | { kind: 'self-review-failed'; team: string; taskId: number; reason: string },
+  ): void {
+    for (const o of owners)
+      this.boardEvents.emit({
+        ...ev,
+        employee: o.employee,
+        notifyThread: o.notifyThread,
+      });
+  }
+}

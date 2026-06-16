@@ -73,19 +73,9 @@ export class ToolRegistry implements OnModuleInit {
     });
   }
 
-  /** LLM-visible names of the allowlist's TERMINAL tools (calls that end the bot's turn). */
-  terminalToolNames(classes: ReadonlyArray<Type<IHarnessTool>>): Set<string> {
-    return new Set(
-      classes
-        .map((cls) => this.resolve(cls))
-        .filter((impl) => impl.terminal)
-        .map((impl) => impl.name),
-    );
-  }
-
   /**
    * Map from tool name → the context scopes it dirties, for the allowlist's context-refresh tools.
-   * Only tools with a non-empty `refreshesContext` array appear in the map. Mirrors `terminalToolNames`.
+   * Only tools with a non-empty `refreshesContext` array appear in the map.
    */
   refreshScopesByName(
     classes: ReadonlyArray<Type<IHarnessTool>>,

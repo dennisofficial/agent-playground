@@ -126,7 +126,6 @@ function buildFactory(
     { get: () => undefined } as unknown as ChannelRegistryService,
     {
       toStructuredTools: () => [pokeTool],
-      terminalToolNames: () => new Set<string>(),
       // poke is untagged (no refresh scope) → the PASS path routes straight to llm.
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,

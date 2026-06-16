@@ -1,9 +1,16 @@
+import { Inject, Logger, Optional } from '@nestjs/common';
 import { z } from 'zod';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { recallProjects } from '../../domain/identity';
-import { BoardStore, type BoardTask } from '../../memory/board-store';
+import { BoardStore, type BoardStatus, type BoardTask } from '../../memory/board-store';
+import { PlanStore, type PlanState } from '../../memory/plan-store';
+import { STATUS_COLUMN_GUIDE } from '../../employees/persona.prompts';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
+import {
+  BOARD_NOTIFIER,
+  type BoardNotifier,
+} from '../../approvals/board-notifier.port';
 
 /**
  * The TEAM BOARD — the shared task list the team coordinates multi-step / multi-person work on.
@@ -16,8 +23,11 @@ import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 const fmtAssignee = (t: BoardTask): string =>
   t.assignee ? `→ ${t.assignee}` : 'unassigned';
 
-const fmtTask = (t: BoardTask, blockers?: number[]): string =>
-  `- [#${t.id}] ${t.title} (${fmtAssignee(t)}, ${t.status})` +
+const fmtPlan = (s?: PlanState): string =>
+  s && s !== 'none' ? `, plan: ${s}` : '';
+
+const fmtTask = (t: BoardTask, blockers?: number[], plan?: PlanState): string =>
+  `- [#${t.id}] ${t.title} (${fmtAssignee(t)}, ${t.status}${fmtPlan(plan)})` +
   (t.dependsOn.length ? ` after #${t.dependsOn.join(', #')}` : '') +
   (blockers?.length ? ` — BLOCKED by #${blockers.join(', #')}` : '');
 
@@ -144,20 +154,31 @@ export class ClaimBoardTaskTool implements IHarnessTool<typeof claimSchema> {
   }
 }
 
+/** Ticket statuses on which a description edit warrants a Dennis notification card.
+ * Module-local: notification policy belongs here in the tool, NOT in board-store.ts. */
+const NOTIFY_ON_DESCRIPTION_EDIT: readonly BoardStatus[] = [
+  'approved',
+  'executing',
+  'self_review',
+  'in_review',
+];
+
 const updateSchema = z.object({
   id: z.number().describe('The board task id (the #N from list_board).'),
   status: z
     .enum([
       'open',
-      'in_progress',
+      'planning',
       'awaiting_approval',
       'approved',
+      'executing',
+      'self_review',
       'in_review',
       'done',
     ])
     .optional()
     .describe(
-      "New status. 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY (proposing normally happens via propose_plan; 'approved' records Dennis's verdict). 'in_review' is normally set by mark_pr_ready when the PR is up. 'done' completes it — but for APPROVED work that's the team lead recording Dennis's acceptance, not the assignee.",
+      "New status. 'open' releases it back to the board (clears the assignee). 'awaiting_approval' and 'approved' are TEAM LEAD ONLY (proposing normally happens via propose_plan; 'approved' records Dennis's verdict). 'executing'/'self_review'/'in_review' are normally set by the harness as work moves through execution and the automated PR self-review. 'done' completes it — but for work that went through approval that's the team lead recording Dennis's acceptance, not the assignee.",
     ),
   assignee: z
     .string()
@@ -177,9 +198,14 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     "Update a TEAM BOARD task: complete it ('done'), release it back to the board ('open'), or — team lead only — reassign/reopen/edit anything, propose manually ('awaiting_approval'; normally propose_plan does this), and record Dennis's approval ('approved'). Teammates can only complete or release their OWN tasks.";
   readonly schema = updateSchema;
 
+  private readonly logger = new Logger(UpdateBoardTaskTool.name);
+
   constructor(
     private readonly board: BoardStore,
     private readonly employees: EmployeeRegistry,
+    @Optional()
+    @Inject(BOARD_NOTIFIER)
+    private readonly notifier?: BoardNotifier,
   ) {}
 
   async execute(
@@ -213,7 +239,10 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
     // review feedback in their execute session; the lead marks it done once Dennis accepts the PR.
     if (
       status === 'done' &&
-      (task.status === 'approved' || task.status === 'in_review') &&
+      (task.status === 'approved' ||
+        task.status === 'executing' ||
+        task.status === 'self_review' ||
+        task.status === 'in_review') &&
       !isLead
     )
       return `Board task #${taskId} is '${task.status}' — completing approved work records Dennis's acceptance, which is the team lead's call. Keep addressing review feedback in your execute session; @Sam marks it 'done' once Dennis accepts the PR.`;
@@ -228,7 +257,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
       if (task.assignee !== id.selfAgent)
         return `Board task #${taskId} is ${task.assignee ? `${task.assignee}'s` : 'unassigned'} — only they or the team lead can change it.`;
       if (!status) return `Nothing to change on #${taskId}.`;
-      if (status === 'in_progress')
+      if (status === 'planning')
         return `Use claim_board_task to start a task — it checks dependencies atomically.`;
     }
     const newAssignee = assignee?.trim().toLowerCase();
@@ -247,6 +276,35 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
       ...(description !== undefined ? { description } : {}),
     });
     if (!updated) return `No board task #${taskId} found.`;
+
+    // Best-effort description-change notification — fires iff:
+    //   1. description was provided in this call,
+    //   2. it actually changed (vs. the pre-update row), AND
+    //   3. the pre-update status is in the approved-or-beyond set.
+    // Gate on pre-update `task.status` intentionally: what qualified is the status the ticket HAD
+    // when edited. Failure is logged and swallowed — never fails or changes the tool's return.
+    if (
+      description !== undefined &&
+      description !== task.description &&
+      NOTIFY_ON_DESCRIPTION_EDIT.includes(task.status)
+    ) {
+      this.notifier
+        ?.notifyDescriptionChange({
+          team: id.team,
+          taskId,
+          title: task.title,
+          changedBy: id.selfAgent,
+          oldDescription: task.description,
+          newDescription: description,
+          surfaceId: id.surface,
+        })
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `description-change notification failed for #${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
+
     if (status === 'done')
       return `Board task #${taskId} done: ${updated.title}`;
     if (status === 'awaiting_approval')
@@ -273,9 +331,11 @@ const listSchema = z.object({
   status: z
     .enum([
       'open',
-      'in_progress',
+      'planning',
       'awaiting_approval',
       'approved',
+      'executing',
+      'self_review',
       'in_review',
       'done',
     ])
@@ -289,10 +349,14 @@ const listSchema = z.object({
 export class ListBoardTool implements IHarnessTool<typeof listSchema> {
   readonly name = 'list_board';
   readonly description =
-    "The TEAM BOARD — the shared task list with assignees, status, and dependencies (NOT your private reminders; that's list_tasks). Check it before picking up work or when coordinating who does what.";
+    "The TEAM BOARD — the shared task list with assignees, status, and dependencies (NOT your private reminders; that's list_tasks). Check it before picking up work or when coordinating who does what.\n\n" +
+    STATUS_COLUMN_GUIDE;
   readonly schema = listSchema;
 
-  constructor(private readonly board: BoardStore) {}
+  constructor(
+    private readonly board: BoardStore,
+    private readonly plans: PlanStore,
+  ) {}
 
   async execute(
     { project, assignee, status }: z.infer<typeof listSchema>,
@@ -312,9 +376,13 @@ export class ListBoardTool implements IHarnessTool<typeof listSchema> {
     if (tasks.length === 0)
       return target ? `The ${target} board is clear.` : 'The board is clear.';
     const blocked = await this.board.blockersOf(id.team, tasks);
+    const planStates = await this.plans.planStatesOf(
+      id.team,
+      tasks.map((t) => t.id),
+    );
     const lines = tasks.map(
       (t) =>
-        `${fmtTask(t, blocked.get(t.id))}${target ? '' : ` [${t.project}]`}`,
+        `${fmtTask(t, blocked.get(t.id), planStates.get(t.id))}${target ? '' : ` [${t.project}]`}`,
     );
     return `Team board${target ? ` (${target})` : ''}:\n${lines.join('\n')}`;
   }

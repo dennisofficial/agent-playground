@@ -10,21 +10,47 @@ import { rawRows, toIso } from './sql';
  * role of a claim lock), and `blocked` is DERIVED from `depends_on` inside that same statement, so
  * completing a task never fans out writes to its dependents.
  *
- * Lifecycle (the approval layer rides on status): open → claim → in_progress (planning) →
- * awaiting_approval (plan + its Q&A posted for Dennis) → approved (TEAM LEAD only, recorded on
- * Dennis's explicit word at a planning sitting) → execution → in_review (the PR is up and marked
- * ready, waiting on Dennis) → done. An APPROVED ticket stays the owner's to execute and re-execute:
- * review feedback loops in 'in_review' with NO re-approval (the original approval covers it), and
- * only Dennis's acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only
- * 'open' tasks, and only 'done' satisfies a dependency — both unchanged by the in-between states.
+ * Lifecycle (the approval layer rides on status): open → claim → planning (the planning session +
+ * its Q&A) → awaiting_approval (plan posted for Dennis) → approved (TEAM LEAD only, recorded on
+ * Dennis's explicit word at a planning sitting) → executing (an execute session opened — the
+ * approved→executing CAS lives in CreateSessionTool) → self_review (all owners done; the harness's
+ * task-level integration review on the shared branch) → in_review (PR marked ready, waiting on
+ * Dennis) → done. An APPROVED ticket stays the owner's to execute and re-execute: review feedback
+ * loops in 'in_review' with NO re-approval (the original approval covers it), and only Dennis's
+ * acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only 'open' tasks,
+ * and only 'done' satisfies a dependency — both unchanged by the in-between states.
+ *
+ * Execution detail (the owner's execute worktree + shared branch, whether its own self-review is done)
+ * lives on the plan row (PlanStore), NOT the task. One employee owns a ticket; tickets that share a
+ * `shared_slug` converge on one `shared/<slug>` branch + PR and ship together once all are published.
  */
 export type BoardStatus =
   | 'open'
-  | 'in_progress'
+  | 'planning'
   | 'awaiting_approval'
   | 'approved'
+  | 'executing'
+  | 'self_review'
   | 'in_review'
   | 'done';
+
+/** Task statuses that represent active, in-flight work — what FetchService injects into bot context
+ * and what the execution throttle counts. */
+export const ACTIVE_BOARD_STATUSES: readonly BoardStatus[] = [
+  'planning',
+  'executing',
+  'self_review',
+];
+
+/** The in-flight execution statuses the throttle counts against its concurrency cap. Only 'executing'
+ * counts: a ticket reaches 'self_review' after its own work is published (the heavy per-owner review
+ * already ran under 'executing'), and a shared-feature ticket can sit in 'self_review' waiting for its
+ * siblings — counting that would let a sibling group larger than the cap deadlock (the waiters hold
+ * every slot, the last sibling never starts). The ship-time integration review's small spend then
+ * happens under 'self_review', uncounted (bounded, one per shipped feature). */
+export const IN_FLIGHT_EXECUTION_STATUSES: readonly BoardStatus[] = [
+  'executing',
+];
 
 export interface BoardTask {
   id: number;
@@ -35,6 +61,8 @@ export interface BoardTask {
   assignee?: string;
   createdBy: string;
   dependsOn: number[];
+  /** Shared integration-branch/PR slug; same slug across tickets = one feature, one PR. */
+  sharedSlug?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,13 +75,16 @@ export interface NewBoardTask {
   assignee?: string;
   createdBy: string;
   dependsOn?: number[];
+  sharedSlug?: string;
 }
 
 export interface ListBoardQuery {
   team: string;
   project?: string;
   assignee?: string;
-  status?: BoardStatus;
+  status?: BoardStatus | readonly BoardStatus[];
+  /** Group lookup for a shared feature — always pair with `project` (slugs are per-project). */
+  sharedSlug?: string;
   limit?: number;
 }
 
@@ -68,6 +99,7 @@ interface BoardRow {
   assignee: string | null;
   created_by: string;
   depends_on: number[];
+  shared_slug: string | null;
   created_at: unknown;
   updated_at: unknown;
 }
@@ -81,6 +113,7 @@ const toBoardTask = (r: BoardRow): BoardTask => ({
   assignee: r.assignee ?? undefined,
   createdBy: r.created_by,
   dependsOn: (r.depends_on ?? []).map(Number),
+  sharedSlug: r.shared_slug ?? undefined,
   createdAt: toIso(r.created_at),
   updatedAt: toIso(r.updated_at),
 });
@@ -123,8 +156,8 @@ export class BoardStore {
       if (unknownDeps.length > 0) return { unknownDeps };
     }
     const rows = await this.q(
-      `INSERT INTO team_tasks (team_id, project, title, description, status, assignee, created_by, depends_on, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, now(), now())
+      `INSERT INTO team_tasks (team_id, project, title, description, status, assignee, created_by, depends_on, shared_slug, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, $8, now(), now())
        RETURNING *`,
       [
         t.team,
@@ -134,6 +167,7 @@ export class BoardStore {
         t.assignee ?? null,
         t.createdBy,
         deps,
+        t.sharedSlug ?? null,
       ],
     );
     return toBoardTask(rows[0]);
@@ -150,7 +184,7 @@ export class BoardStore {
     botId: string,
   ): Promise<BoardTask | ClaimRefusal> {
     const rows = await this.q(
-      `UPDATE team_tasks t SET assignee = $3, status = 'in_progress', updated_at = now()
+      `UPDATE team_tasks t SET assignee = $3, status = 'planning', updated_at = now()
        WHERE t.id = $1 AND t.team_id = $2 AND t.status = 'open'
          AND (t.assignee IS NULL OR t.assignee = $3)
          AND NOT EXISTS (SELECT 1 FROM team_tasks d
@@ -204,6 +238,7 @@ export class BoardStore {
       assignee?: string | null;
       title?: string;
       description?: string;
+      sharedSlug?: string | null;
     },
   ): Promise<BoardTask | undefined> {
     const sets: string[] = ['updated_at = now()'];
@@ -216,6 +251,7 @@ export class BoardStore {
     if (patch.assignee !== undefined) set('assignee', patch.assignee);
     if (patch.title !== undefined) set('title', patch.title);
     if (patch.description !== undefined) set('description', patch.description);
+    if (patch.sharedSlug !== undefined) set('shared_slug', patch.sharedSlug);
     const rows = await this.q(
       `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 RETURNING *`,
       args,
@@ -244,13 +280,27 @@ export class BoardStore {
     };
     if (query.project) and((n) => `project = $${n}`, query.project);
     if (query.assignee) and((n) => `assignee = $${n}`, query.assignee);
-    if (query.status) and((n) => `status = $${n}`, query.status);
+    if (query.sharedSlug) and((n) => `shared_slug = $${n}`, query.sharedSlug);
+    if (query.status)
+      Array.isArray(query.status)
+        ? and((n) => `status = ANY($${n})`, [...query.status])
+        : and((n) => `status = $${n}`, query.status);
     args.push(query.limit ?? 50);
     const rows = await this.q(
       `SELECT * FROM team_tasks WHERE ${where.join(' AND ')} ORDER BY created_at ASC LIMIT $${args.length}`,
       args,
     );
     return rows.map(toBoardTask);
+  }
+
+  /** How many of this team's tasks are actively executing — the count the execution throttle weighs
+   * against its concurrency cap (see IN_FLIGHT_EXECUTION_STATUSES for why self_review is excluded). */
+  async countInFlightExecution(team: string): Promise<number> {
+    const rows = await this.repo.manager.query(
+      `SELECT count(*)::int AS n FROM team_tasks WHERE team_id = $1 AND status = ANY($2)`,
+      [team, [...IN_FLIGHT_EXECUTION_STATUSES]],
+    );
+    return Number(rawRows<{ n: number }>(rows)[0]?.n ?? 0);
   }
 
   /**

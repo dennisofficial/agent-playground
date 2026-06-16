@@ -62,6 +62,8 @@ export interface EmployeeDefinition {
   planEngine(ctx: EmployeeContext): EngineSpec;
   /** The engine recipe for EXECUTE turns. */
   executeEngine(ctx: EmployeeContext): EngineSpec;
+  /** The engine recipe for read-only INVESTIGATE turns (execute's engine; Claude swaps to a top-tier model). */
+  investigateEngine(ctx: EmployeeContext): EngineSpec;
   /** This employee's capabilities — forced lifecycle hooks + discretionary tools (per-employee). */
   capabilities(ctx: EmployeeContext): Capability[];
 }

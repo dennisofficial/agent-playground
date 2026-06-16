@@ -1,7 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type ChatTracePointer, traceSessionTurn } from '@workspace/langfuse';
-import { INVESTIGATE_ESCALATION_MODEL } from '../engines/engine-presets';
 import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
 import {
@@ -10,6 +9,7 @@ import {
   WorkerMode,
 } from '../engines/worker-engine.port';
 import { toGenerationUsage } from '../llm/usage-format';
+import { engineSpecForMode } from '../employees/engine-for-mode';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { PersonaService } from '../employees/persona.service';
 import { LifecycleRunner } from '../lifecycle/lifecycle.runner';
@@ -20,12 +20,13 @@ import { BoardStore } from '../memory/board-store';
 import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
+import { MetricsEventsService } from '../metrics/metrics-events.service';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
-import { investigationConfidence } from './confidence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
   SESSION_REGISTRY,
+  type Session,
   type SessionRegistry,
 } from './session-registry.port';
 
@@ -54,10 +55,6 @@ function renderEvent(e: WorkerEvent): string {
 const TRANSCRIPT_PAGE_SIZE = 40;
 const TRANSCRIPT_MAX_MATCHES = 30;
 
-/** The re-ask sent into the engine session when an investigation reports LOW confidence (v2). */
-const ESCALATION_NUDGE =
-  "Your previous answer reported LOW confidence. Take another, deeper pass: re-read the relevant code, specifically verify the things you said you could not confirm, and correct anything you guessed or got wrong. End again with the exact Confidence and Couldn't-verify lines.";
-
 @Injectable()
 export class SessionRunnerService {
   private readonly logger = new Logger(SessionRunnerService.name);
@@ -76,11 +73,84 @@ export class SessionRunnerService {
     private readonly worktrees: WorktreeService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly metrics: MetricsEventsService,
     private readonly board: BoardStore,
     private readonly env: EnvService,
     private readonly plans: PlanStore,
     private readonly settings: TeamSettingsStore,
   ) {}
+
+  /**
+   * Refresh a worktree against its base branch when execution starts, and return a PREAMBLE to
+   * prepend to the turn's opening message. Empty string on a clean refresh (or a benign "no base to
+   * track" — unregistered local dev); otherwise a one-line heads-up so the bot knows it may be on a
+   * stale base. A merge conflict gets the strongest preamble (resolve it first); a dirty tree / fetch
+   * miss / contention / error each get an actionable note pointing at `refresh_worktree`. Never
+   * throws — staleness must not block the turn.
+   */
+  private async baseRefreshPreamble(
+    sessionId: string,
+    worktree: { id: string },
+  ): Promise<string> {
+    const end = '\n\n';
+    const otherLive = (
+      await this.sessions.list({ worktreeId: worktree.id })
+    ).some((s) => s.id !== sessionId && s.status === 'running');
+    if (otherLive) {
+      this.logger.warn(
+        `${sessionId}: another session is mid-turn in ${worktree.id} — skipping base refresh`,
+      );
+      return `Heads up: this worktree wasn't updated against the base branch because another session is mid-turn in it — your base may be behind. Run \`refresh_worktree\` once it's free if you need the latest.${end}`;
+    }
+    // A merge already in progress (e.g. this is a session opened to resolve a publish/pull conflict)
+    // would make refreshFromBase throw via refuseMidMerge — short-circuit to the resolve instruction
+    // instead of the generic "couldn't refresh" note, and point at the actual conflicted files.
+    const merge = await this.worktrees.mergeState(worktree.id);
+    if (merge.inProgress) {
+      this.logger.log(
+        `${sessionId}: merge in progress in ${worktree.id} — handing conflicts to the turn`,
+      );
+      return `Before anything else: a merge is IN PROGRESS in this worktree with conflicts in: ${merge.files.join(', ') || '(unknown files)'}. Resolve the conflicts and commit the merge.${end}`;
+    }
+    try {
+      const r = await this.worktrees.refreshFromBase(worktree.id);
+      const base = r.baseBranch ?? 'the base branch';
+      if (r.conflicted) {
+        this.logger.log(
+          `${sessionId}: base refresh hit conflicts (${r.baseBranch}) — handing them to the turn`,
+        );
+        return `Before anything else: a merge of the base branch \`${base}\` into this worktree is IN PROGRESS with conflicts in: ${(r.files ?? []).join(', ') || '(unknown files)'}. Resolve the conflicts, commit the merge, then continue.${end}`;
+      }
+      if (r.refreshed) {
+        this.logger.log(
+          `${sessionId}: refreshed ${worktree.id} from ${r.baseBranch}`,
+        );
+        return '';
+      }
+      if (r.dirty) {
+        this.logger.warn(
+          `${sessionId}: base refresh skipped (${worktree.id}) — dirty working tree`,
+        );
+        return `Heads up: this worktree wasn't updated against \`${base}\` because it has uncommitted changes — your base may be behind. Commit your work, then run \`refresh_worktree\` before relying on it.${end}`;
+      }
+      if (r.baseBranch) {
+        // Has a base to track but it didn't land (e.g. fetch miss) — actionable staleness.
+        this.logger.warn(
+          `${sessionId}: base refresh did not land (${worktree.id}) — ${r.detail ?? 'unknown reason'}`,
+        );
+        return `Heads up: this worktree wasn't updated against \`${base}\` (${r.detail ?? 'the refresh did not land'}) — your base may be behind. Run \`refresh_worktree\` to retry when ready.${end}`;
+      }
+      // No base branch to track at all (unregistered / guard) — working on local state is expected;
+      // a heads-up would be noise (and `refresh_worktree` would no-op too).
+      this.logger.log(`${sessionId}: base refresh no-op — ${r.detail}`);
+      return '';
+    } catch (err) {
+      this.logger.warn(
+        `${sessionId}: base refresh failed (${worktree.id}), proceeding on local state: ${err}`,
+      );
+      return `Heads up: this worktree couldn't be updated against the base branch (an error occurred) — your base may be behind. Run \`refresh_worktree\` to retry; if it keeps failing, flag it to Dennis.${end}`;
+    }
+  }
 
   /**
    * Run one session turn to its report. `message` is the opening task on the first turn, or the
@@ -91,11 +161,13 @@ export class SessionRunnerService {
     sessionId: string,
     message: string,
     parentChatTrace?: ChatTracePointer,
+    enteringExecute = false,
   ): Promise<void> {
     // Everything — including the registry read — runs inside the try: callers fire-and-forget
     // (`void runSessionTurn(...)`), so a rejection escaping this method would vanish and leave the
     // session stuck in 'running' forever with no failure relay.
     const ac = new AbortController();
+    const startedAt = Date.now();
     this.controllers.set(sessionId, ac);
     try {
       const session = await this.sessions.get(sessionId);
@@ -108,14 +180,25 @@ export class SessionRunnerService {
           `Worktree "${session.worktreeId}" no longer exists — the session has nowhere to run.`,
         );
       }
-      // Per-turn spec from the employee: a 'plan' turn runs on the plan engine recipe, 'execute' on
-      // the execute one (model/effort/systemPrompt). Byte-stable across turns; `mode` also drives the
-      // engine's read-only posture at the seam. `session.engine` (fixed at create) is the source of
-      // truth for WHICH engine — an engine-changing mode flip is refused at replySession, so the
-      // resolved spec's engine always matches it.
+      // Entering execute (a fresh execute session, or a plan→execute flip): bring the worktree up
+      // to date with the base branch before the engine runs. A worktree cut during stand-up is
+      // stale by now (base moved while it sat idle / between sequential tickets). Skip if ANOTHER
+      // session is mid-turn in the same checkout (a merge would mutate files under it) — this
+      // session is already 'running', so it's excluded. The base merge never blocks the turn: a
+      // CONFLICT is handed to the engine to resolve as its first act, and every OTHER non-clean
+      // outcome (dirty tree, fetch miss, contention, error) is surfaced to the bot as a heads-up so
+      // it knows it may be on a stale base and can `refresh_worktree` after committing.
+      if (enteringExecute) {
+        message = (await this.baseRefreshPreamble(sessionId, worktree)) + message;
+      }
+      // Per-turn spec from the employee, by mode: 'plan' → plan recipe, 'investigate' → investigate
+      // recipe (execute's engine on a top-tier model), else the execute recipe (model/effort/
+      // systemPrompt). Byte-stable across turns; `mode` also drives the engine's read-only posture at
+      // the seam. `session.engine` (fixed at create) is the source of truth for WHICH engine — an
+      // engine-changing mode flip is refused at replySession, so the resolved spec's engine always
+      // matches it (investigate keeps execute's engine, so the flip into it is never engine-changing).
       const ctx = this.persona.context();
-      const spec =
-        session.mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx);
+      const spec = engineSpecForMode(bot, ctx, session.mode);
       const { model, effort, systemPrompt } = spec;
 
       this.logger.log(
@@ -130,8 +213,7 @@ export class SessionRunnerService {
           : keys.anthropic;
       // Jail the in-process langgraph tools to the worktree for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
-      // One engine run, parametrized by message / model / resume-id so the confidence escalation
-      // below can fire a SECOND run (deeper model, same engine session) within this one turn.
+      // The single engine run for this turn, parametrized by message / model / resume-id.
       // `systemPrompt`/`effort`/`mode` are constant for the turn.
       const runEngineTurn = (
         turnMessage: string,
@@ -181,7 +263,6 @@ export class SessionRunnerService {
             sessionId,
             input: turnMessage,
             metadata: {
-              systemPrompt,
               model: turnModel,
               effort,
               mode: session.mode,
@@ -197,42 +278,10 @@ export class SessionRunnerService {
         );
 
       const first = await runTraced(message, model, session.engineSessionId);
-      let result = first.result;
-      let engineSessionId = first.sessionId;
+      const result = first.result;
+      const engineSessionId = first.sessionId;
       const { questions, planText } = first;
 
-      // V2 — confidence-gated escalation. A read-only INVESTIGATE turn whose report self-declares
-      // LOW confidence gets ONE deeper pass on a higher-reasoning model, resuming the same engine
-      // session so it builds on and corrects the first attempt; that pass's report becomes what
-      // relays. Bounded to a single re-run. Skipped for: non-Claude engines (they route their own
-      // models), questions-turns (they need answers, not more reasoning), and aborts. Falls SAFE
-      // when no confidence marker is present (investigationConfidence → null ≠ 'low').
-      if (
-        session.mode === 'investigate' &&
-        session.engine === EWorkerEngineName.CLAUDE &&
-        !questions?.length &&
-        !ac.signal.aborted &&
-        investigationConfidence(result) === 'low'
-      ) {
-        this.logger.log(
-          `${sessionId} investigate confidence LOW — escalating one pass to ${INVESTIGATE_ESCALATION_MODEL}`,
-        );
-        await this.sessions
-          .appendProgress(sessionId, {
-            kind: 'text',
-            text: `Confidence was low — taking a second, deeper pass on ${INVESTIGATE_ESCALATION_MODEL}.`,
-          })
-          .catch(() => undefined);
-        const deeper = await runTraced(
-          ESCALATION_NUDGE,
-          INVESTIGATE_ESCALATION_MODEL,
-          engineSessionId,
-        );
-        if (!ac.signal.aborted) {
-          result = deeper.result;
-          engineSessionId = deeper.sessionId ?? engineSessionId;
-        }
-      }
       // Closed while we were finishing up: discard the result, don't go idle or relay. The abort
       // flag alone isn't enough — closeSession writes 'closed' BEFORE calling abort(), so an engine
       // that resolves inside that window would see aborted=false and overwrite the close with
@@ -328,19 +377,48 @@ export class SessionRunnerService {
         lastReportKind: kind,
         turns: session.turns + 1,
       });
+      if (session.mode === 'execute') {
+        await this.metrics
+          .recordExecutionCompleted({
+            teamId: session.team,
+            agentId: session.ownerBot,
+            projectId: session.project,
+            sessionId,
+            durationMs: Date.now() - startedAt,
+          })
+          .catch((metricsErr) =>
+            this.logger.warn(
+              `recordExecutionCompleted(${sessionId}) failed: ${metricsErr}`,
+            ),
+          );
+      }
     } catch (err) {
       // An abort surfaces here as a thrown error — that's a close, not a failure; closeSession
       // already finalized the status. The updates are themselves guarded (a registry rejection here
       // must not escape the fire-and-forget caller) and never overwrite a status closeSession wrote.
       try {
-        if (
-          !ac.signal.aborted &&
-          (await this.sessions.get(sessionId))?.status === 'running'
-        ) {
+        const live = await this.sessions.get(sessionId);
+        if (!ac.signal.aborted && live?.status === 'running') {
           await this.sessions.update(sessionId, {
             status: 'failed',
             error: err instanceof Error ? err.message : String(err),
           });
+          if (live.mode === 'execute') {
+            await this.metrics
+              .recordExecutionBlocked({
+                teamId: live.team,
+                agentId: live.ownerBot,
+                projectId: live.project,
+                sessionId,
+                durationMs: Date.now() - startedAt,
+                reason: err instanceof Error ? err.message : String(err),
+              })
+              .catch((metricsErr) =>
+                this.logger.warn(
+                  `recordExecutionBlocked(${sessionId}) failed: ${metricsErr}`,
+                ),
+              );
+          }
         }
       } catch (updateErr) {
         this.logger.error(
@@ -386,9 +464,7 @@ export class SessionRunnerService {
       const bot =
         this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
       const ctx = this.persona.context();
-      const targetEngine = (
-        mode === 'plan' ? bot.planEngine(ctx) : bot.executeEngine(ctx)
-      ).engine;
+      const targetEngine = engineSpecForMode(bot, ctx, mode).engine;
       if (targetEngine !== session.engine) {
         return {
           ok: false,
@@ -401,6 +477,20 @@ export class SessionRunnerService {
       const refusal = await this.executeRefusal(
         session.team,
         session.boardTaskId,
+        session.worktreeId,
+      );
+      if (refusal) return { ok: false, reason: refusal };
+    }
+    // A no-mode reply CONTINUING an already-execute, UNLINKED session re-asserts the gate. In 'all'
+    // mode the only unlinked execute session is the merge-resolution bypass — re-gating it each turn
+    // means it can't keep executing past the merge it was opened to finish (once the merge is
+    // committed, mergeState clears and the refusal returns). In 'linked'/'off' mode executeRefusal
+    // returns null for unlinked work anyway, so legitimate unlinked sessions are unaffected.
+    else if (session.mode === 'execute' && session.boardTaskId === undefined) {
+      const refusal = await this.executeRefusal(
+        session.team,
+        undefined,
+        session.worktreeId,
       );
       if (refusal) return { ok: false, reason: refusal };
     }
@@ -410,12 +500,20 @@ export class SessionRunnerService {
       session.lastReportKind === 'questions' && session.lastReport
         ? { qa: [...(session.qa ?? []), { q: session.lastReport, a: message }] }
         : {};
+    // A real transition INTO execute (plan→execute flip) starts execution for this work — refresh
+    // the worktree against base. `session.mode` is still the pre-update value here.
+    const enteringExecute = mode === 'execute' && session.mode !== 'execute';
     await this.sessions.update(sessionId, {
       status: 'running',
       ...(mode ? { mode } : {}),
       ...qaPatch,
     });
-    void this.runSessionTurn(sessionId, message, parentChatTrace);
+    void this.runSessionTurn(
+      sessionId,
+      message,
+      parentChatTrace,
+      enteringExecute,
+    );
     return { ok: true };
   }
 
@@ -428,10 +526,18 @@ export class SessionRunnerService {
    * every execute turn needs a linked board task in 'approved' (or 'done'/'in_review'); 'linked' =
    * only board-linked sessions are gated. Unknown dial values fail closed to 'all'. Also used by
    * create_session for execute-mode opens, so a fresh session can't bypass the gate.
+   *
+   * MERGE-RESOLUTION EXCEPTION: when `worktreeId` is given and that worktree has a merge already in
+   * progress (MERGE_HEAD), an UNLINKED execute session is allowed — finishing a merge the harness
+   * itself left behind (publish/pull/refresh) isn't new work to approve, it's forced cleanup (the
+   * same reasoning as resumeInternal). Scoped to unlinked work only: a board-linked, non-approved
+   * task is NEVER bypassed (it would run an unapproved plan as if approved), and the standup gate
+   * still wins (a wedged merge waits for close_standup).
    */
   async executeRefusal(
     team: string,
     boardTaskId: number | undefined,
+    worktreeId?: string,
   ): Promise<string | null> {
     const dial = this.env.get('EXECUTION_APPROVAL_MODE');
     if (dial === 'off') return null;
@@ -447,12 +553,66 @@ export class SessionRunnerService {
       return `the standup is still OPEN — approved or not, nothing starts executing until the team lead closes it (close_standup). Keep planning or wait for the all-clear in the channel.`;
     }
     if (boardTaskId === undefined) {
-      return dial === 'linked'
-        ? null
-        : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
+      if (dial === 'linked') return null;
+      // Ad-hoc execute is normally refused — EXCEPT to finish a merge the harness left in this
+      // worktree (publish/pull/refresh leave MERGE_HEAD). Finishing it isn't new work to approve.
+      if (worktreeId && (await this.worktrees.mergeState(worktreeId)).inProgress)
+        return null;
+      return `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
     }
-    if (task!.status === 'approved' || task!.status === 'done') return null;
+    // 'approved' (first execute session — the approved→executing CAS in CreateSessionTool flips it),
+    // 'executing' (work in flight — continuing turns and additional owners), and 'done' all execute.
+    // 'self_review' is HERE too: after the integration self-review hands the owner the ship-or-fix
+    // decision, a legitimate fix pass runs in their execute session (reply_session, or a fresh execute
+    // session for the closed-session fallback) while the ticket sits in self_review.
+    if (
+      task!.status === 'approved' ||
+      task!.status === 'executing' ||
+      task!.status === 'self_review' ||
+      task!.status === 'done'
+    )
+      return null;
     return `board task #${boardTaskId} is '${task!.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; @Sam reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
+  }
+
+  /**
+   * Resume a session for ONE awaited turn, HARNESS-INITIATED — deliberately bypasses executeRefusal
+   * (that gate guards a bot's own tool calls, not the harness's review pipeline). The review
+   * pipeline's bounded fix loop and conflict-resolution call this; the bot never reaches a
+   * 'self_review' session through a tool. Sets the session running in `mode`, awaits the turn, and
+   * returns the resulting session ('idle' with lastReport, or 'failed'). A timeout aborts the turn.
+   * `enteringExecute` is false — the work already lives in the worktree; an internal fix/resolve turn
+   * must NOT trigger a base refresh that could clobber an in-progress merge.
+   */
+  async resumeInternal(
+    sessionId: string,
+    prompt: string,
+    opts: { mode?: WorkerMode; timeoutMs?: number } = {},
+  ): Promise<Session | undefined> {
+    const mode: WorkerMode = opts.mode ?? 'execute';
+    const session = await this.sessions.get(sessionId);
+    if (!session) return undefined;
+    if (session.status === 'closed') return session;
+    if (session.status === 'running')
+      throw new Error(
+        `session ${sessionId} is mid-turn — cannot resume it internally`,
+      );
+    await this.sessions.update(sessionId, { status: 'running', mode });
+    const turn = this.runSessionTurn(sessionId, prompt, undefined, false);
+    if (opts.timeoutMs) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          this.controllers.get(sessionId)?.abort();
+          resolve();
+        }, opts.timeoutMs);
+      });
+      await Promise.race([turn, timeout]);
+      if (timer) clearTimeout(timer);
+    } else {
+      await turn;
+    }
+    return this.sessions.get(sessionId);
   }
 
   /**

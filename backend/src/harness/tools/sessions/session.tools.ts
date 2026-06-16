@@ -11,9 +11,11 @@ import {
   EWorkerEngineName,
   type WorkerMode,
 } from '../../engines/worker-engine.port';
+import { engineSpecForMode } from '../../employees/engine-for-mode';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { BoardStore } from '../../memory/board-store';
 import { PlanStore } from '../../memory/plan-store';
+import { TicketNoteStore } from '../../memory/ticket-note-store';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -43,6 +45,19 @@ const modeField = z
     "'plan' = read-only (the engine's native planning posture — investigation, review, planning a change); 'execute' = can change the worktree.",
   );
 
+const reviewNoteField = z
+  .number()
+  .int()
+  .optional()
+  .describe(
+    "A self-review findings note (#X from the self-review heads-up) to load into this session — the harness inlines the full findings so you don't retype them. Use it when addressing self-review feedback.",
+  );
+
+/** The findings block the harness inlines when a tool is handed a review note id. */
+function reviewFindingsBlock(noteId: number, body: string): string {
+  return `SELF-REVIEW FINDINGS TO ADDRESS (note #${noteId}):\n${body}`;
+}
+
 const createSessionSchema = z.object({
   worktreeId: z.string().describe('The worktree this session runs in.'),
   task: z
@@ -56,6 +71,7 @@ const createSessionSchema = z.object({
     .describe(
       'The team-board task (#N from list_board) this session works. Link it for ANY board work: the plan→approval flow runs through the board, and an execute turn is refused until the task is approved.',
     ),
+  review_note_id: reviewNoteField,
 });
 
 @HarnessTool()
@@ -64,9 +80,8 @@ export class CreateSessionTool implements IHarnessTool<
 > {
   readonly name = 'create_session';
   readonly description =
-    "Open a background session — a long-lived Claude Code-style worker — in a worktree and give it its first turn. Returns a session id; you're notified when the turn reports back, and the session STAYS OPEN for follow-ups (reply_session). Calling this ENDS YOUR TURN, so put any brief first-person heads-up in THIS message's text.";
+    "Open a background session — a long-lived Claude Code-style worker — in a worktree and give it its first turn. Returns a session id; you're notified when the turn reports back, and the session STAYS OPEN for follow-ups (reply_session). Put any brief first-person heads-up in THIS message's text; once it's running you don't need to keep replying — just wait for the report-back, don't poll or babysit it.";
   readonly schema = createSessionSchema;
-  readonly terminal = true;
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
@@ -75,6 +90,7 @@ export class CreateSessionTool implements IHarnessTool<
     private readonly employees: EmployeeRegistry,
     private readonly board: BoardStore,
     private readonly plans: PlanStore,
+    private readonly notes: TicketNoteStore,
   ) {}
 
   async execute(
@@ -83,6 +99,7 @@ export class CreateSessionTool implements IHarnessTool<
       task,
       mode,
       board_task_id,
+      review_note_id,
     }: z.infer<typeof createSessionSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
@@ -100,7 +117,11 @@ export class CreateSessionTool implements IHarnessTool<
       return `No board task #${board_task_id} — check list_board, or omit board_task_id.`;
     // The same approval gate reply_session applies — a fresh execute-mode session can't bypass it.
     if (mode === 'execute') {
-      const refusal = await this.runner.executeRefusal(id.team, board_task_id);
+      const refusal = await this.runner.executeRefusal(
+        id.team,
+        board_task_id,
+        worktreeId,
+      );
       if (refusal) return `Can't open an execute session: ${refusal}`;
     }
     // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
@@ -140,6 +161,15 @@ export class CreateSessionTool implements IHarnessTool<
         if (task.trim()) openingTask += `\n\nTASK:\n${task.trim()}`;
       }
     }
+    // Inline self-review findings by id so the owner doesn't retype them (the closed-session fallback;
+    // the recommended path is reply_session into the still-open execute session).
+    if (review_note_id !== undefined && board_task_id !== undefined) {
+      const note = await this.notes
+        .get(id.team, board_task_id, review_note_id)
+        .catch(() => undefined);
+      if (note)
+        openingTask += `\n\n${reviewFindingsBlock(note.id, note.body)}`;
+    }
     const { sessionId } = await this.openSession({
       identity: id,
       worktreeId,
@@ -150,6 +180,28 @@ export class CreateSessionTool implements IHarnessTool<
       boardTaskId: board_task_id,
       parentChatTrace: ctx.parentChatTrace,
     });
+    // The board task starts EXECUTING once an execute session is live. CAS approved→executing AFTER
+    // the session registered (a failed create can't strand the task), idempotent across owners (only
+    // the first owner's start flips it; later owners find it already 'executing'). Stamp the execute
+    // worktree + shared branch on this owner's plan row so the integration barrier finds them later.
+    // Both best-effort — they must never fail the session that's already running.
+    if (mode === 'execute' && board_task_id !== undefined && boardTask) {
+      // Ensure the worktree is on a shared branch derived from the TICKET, so the review pipeline can
+      // open + ready the PR through it for SOLO work too (not only multi-employee), and every owner of
+      // this ticket converges on the same shared branch. No-op if it already joined one explicitly.
+      const sharedBranch = await this.worktrees
+        .ensureShared(worktreeId, `ticket-${board_task_id}`)
+        .catch(() => worktree.sharedBranch);
+      await this.board
+        .transition(id.team, board_task_id, 'approved', { status: 'executing' })
+        .catch(() => undefined);
+      await this.plans
+        .setExecuteContext(id.team, board_task_id, id.selfAgent, {
+          executeWorktreeId: worktreeId,
+          sharedBranch: sharedBranch ?? worktree.sharedBranch,
+        })
+        .catch(() => undefined);
+    }
     return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
   }
 
@@ -187,10 +239,12 @@ export class CreateSessionTool implements IHarnessTool<
         : {}),
     });
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
+      // A fresh execute session starts execution for this work — refresh the worktree against base.
       void this.runner.runSessionTurn(
         session.id,
         opts.openingTask,
         opts.parentChatTrace,
+        opts.mode === 'execute',
       );
     });
     return { sessionId: session.id };
@@ -209,6 +263,7 @@ const replySessionSchema = z.object({
     .describe(
       "Switch the session's mode from this turn on (e.g. a plan session into execution for quick non-board work). BOARD work does NOT switch here — approved tickets execute in a fresh execute session opened from the plan.",
     ),
+  review_note_id: reviewNoteField,
 });
 
 @HarnessTool()
@@ -217,22 +272,32 @@ export class ReplySessionTool implements IHarnessTool<
 > {
   readonly name = 'reply_session';
   readonly description =
-    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. This is how you feed review/revision notes back into a still-open planning or execute session. Calling this ENDS YOUR TURN; you're notified when the turn reports back.";
+    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. This is how you feed review/revision notes back into a still-open planning or execute session. You're notified when the turn reports back; no need to keep chatting in the meantime.";
   readonly schema = replySessionSchema;
-  readonly terminal = true;
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     private readonly runner: SessionRunnerService,
+    private readonly notes: TicketNoteStore,
   ) {}
 
   async execute(
-    { sessionId, message, mode }: z.infer<typeof replySessionSchema>,
+    { sessionId, message, mode, review_note_id }: z.infer<typeof replySessionSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const session = await this.sessions.get(sessionId);
     if (!session || session.ownerBot !== ctx.identity.selfAgent)
       throw new Error(`Couldn't reply to ${sessionId}: not your session.`);
+    // Inline self-review findings by id (the recommended fix path: feed the notes into this still-open
+    // execute session). The harness loads the full note so the owner only writes how to proceed.
+    let outgoing = message;
+    if (review_note_id !== undefined && session.boardTaskId !== undefined) {
+      const note = await this.notes
+        .get(session.team, session.boardTaskId, review_note_id)
+        .catch(() => undefined);
+      if (note)
+        outgoing = `${reviewFindingsBlock(note.id, note.body)}\n\n${message}`;
+    }
     // The reply fires fire-and-forget and must run in a clean store so a LangGraph run's callbacks
     // don't bleed into the chat stream.
     let res: ActionResult = { ok: false };
@@ -241,7 +306,7 @@ export class ReplySessionTool implements IHarnessTool<
       async () => {
         res = await this.runner.replySession(
           sessionId,
-          message,
+          outgoing,
           mode,
           ctx.parentChatTrace,
         );
@@ -324,10 +389,7 @@ export class CheckSessionTool implements IHarnessTool<
     const bot =
       this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
     const specCtx = this.employees.context();
-    const { model, effort } =
-      session.mode === 'plan'
-        ? bot.planEngine(specCtx)
-        : bot.executeEngine(specCtx);
+    const { model, effort } = engineSpecForMode(bot, specCtx, session.mode);
     const tier = `${session.mode} on ${model ?? `${session.engine} default`}${effort ? `, effort ${effort}` : ''}`;
     const board =
       session.boardTaskId !== undefined

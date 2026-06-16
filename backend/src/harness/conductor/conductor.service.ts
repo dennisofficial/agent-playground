@@ -35,6 +35,7 @@ import { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
 import { PlanStore } from '../memory/plan-store';
+import { BoardStore } from '../memory/board-store';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -49,6 +50,10 @@ import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorMetricsService } from './conductor-metrics.service';
 import {
   planReadySeed,
+  prOpenedSeed,
+  prReadySeed,
+  selfReviewFailedSeed,
+  selfReviewReadySeed,
   sessionRelayPrompt,
   ticketApprovedSeed,
 } from './seed.prompts';
@@ -141,6 +146,9 @@ export class ConductorService
    * run and silently update it in place instead of appending. */
   private readonly mintTag = Date.now().toString(36);
   private stopping = false;
+  /** `team|taskId` of 'approved' tickets already nudged to execute — dedups the throttle's rescans so
+   * a still-pending owner isn't re-seeded every pass. Pruned against the live approved set per rescan. */
+  private readonly executionWoken = new Set<string>();
   private unsubscribers: Array<() => void> = [];
 
   constructor(
@@ -158,6 +166,7 @@ export class ConductorService
     private readonly credCtx: CredentialContext,
     private readonly boardEvents: BoardEventsBus,
     private readonly plans: PlanStore,
+    private readonly board: BoardStore,
     private readonly metrics: ConductorMetricsService,
   ) {}
 
@@ -228,6 +237,11 @@ export class ConductorService
           this.relayQueue.push(session);
           this.schedule();
         }
+        // A closed session may have freed an execution slot — pull the next approved ticket in.
+        if (session.status === 'closed')
+          void this.rescanApproved(session.team).catch((err) =>
+            this.logger.warn(`approved rescan failed: ${err}`),
+          );
       }),
     );
     // Board state transitions wake the right bot mechanically (instead of relying on an owner
@@ -244,11 +258,12 @@ export class ConductorService
   }
 
   /**
-   * Turn a board transition into a gate-bypassed wake-up. `plan-attached` → the lead reviews
-   * (skip self-plans — the lead proposes their own); `ticket-approved` → each plan owner opens a
-   * fresh execute session, carrying the resolved worktree id so the action is mechanically
-   * possible. Channel resolution comes from the planning session's notifyThread, falling back to
-   * the process's default room.
+   * Turn a board transition into a gate-bypassed wake-up. `plan-attached` → the lead reviews (skip
+   * self-plans). `ticket-approved` → a THROTTLED nudge to execute (never an auto-start): only up to
+   * MAX_CONCURRENT_EXECUTIONS owners are woken at once, the rest wait in 'approved' until a slot
+   * frees. The `pr-opened` / `self-review-ready` / `pr-ready` / `self-review-failed` events narrate
+   * the harness's PR self-review in the owner's voice; `self-review-ready` hands the ship-or-fix
+   * decision to the owner; `pr-ready` also frees a slot, so it rescans for the next ticket.
    */
   private async handleBoardEvent(event: BoardEvent): Promise<void> {
     if (event.kind === 'plan-attached') {
@@ -262,8 +277,86 @@ export class ConductorService
       );
       return;
     }
-    // ticket-approved: wake every teammate with a plan on the ticket to execute it.
-    const plans = await this.plans.listForTask(event.team, event.taskId);
+    if (event.kind === 'pr-opened') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        prOpenedSeed({ taskId: event.taskId, prUrl: event.prUrl }),
+      );
+      return;
+    }
+    if (event.kind === 'pr-ready') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        prReadySeed({ taskId: event.taskId, prUrl: event.prUrl }),
+      );
+      // The ticket reached in_review — a slot freed. Pull the next approved ticket into execution.
+      await this.rescanApproved(event.team);
+      return;
+    }
+    if (event.kind === 'self-review-ready') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        selfReviewReadySeed({
+          taskId: event.taskId,
+          prUrl: event.prUrl,
+          noteId: event.noteId,
+          worktreeId: event.worktreeId,
+          sessionId: event.sessionId,
+        }),
+      );
+      return;
+    }
+    if (event.kind === 'self-review-failed') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        selfReviewFailedSeed({ taskId: event.taskId, reason: event.reason }),
+      );
+      return;
+    }
+    // ticket-approved: hand it to the throttle (which wakes it if a slot's free, else lets it wait).
+    await this.rescanApproved(event.team);
+  }
+
+  /** Per-team execution concurrency cap (the autonomy throttle). Default 3. */
+  private executionCap(): number {
+    const n = this.env.get('MAX_CONCURRENT_EXECUTIONS');
+    return typeof n === 'number' && n > 0 ? n : 3;
+  }
+
+  /**
+   * The execution throttle: wake owners of 'approved' tickets (oldest first) to open execute sessions,
+   * but only enough to bring in-flight execution (executing + self_review) up to the cap. The board
+   * itself is the durable pending queue — 'approved' tickets that don't fit wait here and are picked
+   * up by the next rescan (a slot frees on `pr-ready` or a session close). `executionWoken` dedups so
+   * a still-pending owner isn't re-nudged every rescan; stale keys (tickets no longer approved) are
+   * pruned each pass so a re-approved ticket can be woken again.
+   */
+  private async rescanApproved(team: string): Promise<void> {
+    const inFlight = await this.board.countInFlightExecution(team);
+    let slots = this.executionCap() - inFlight;
+    const approved = await this.board.list({ team, status: 'approved' });
+    const approvedKeys = new Set(approved.map((t) => `${team}|${t.id}`));
+    for (const key of [...this.executionWoken])
+      if (key.startsWith(`${team}|`) && !approvedKeys.has(key))
+        this.executionWoken.delete(key);
+    if (slots <= 0) return;
+    for (const t of approved) {
+      if (slots <= 0) break;
+      const key = `${team}|${t.id}`;
+      if (this.executionWoken.has(key)) continue; // already nudged; waiting on the owner
+      await this.wakeTicketOwners(team, t.id);
+      this.executionWoken.add(key);
+      slots--;
+    }
+  }
+
+  /** Nudge every teammate with a plan on the ticket to open a fresh execute session (Option B). */
+  private async wakeTicketOwners(team: string, taskId: number): Promise<void> {
+    const plans = await this.plans.listForTask(team, taskId);
     for (const plan of plans) {
       const session = plan.sessionId
         ? await this.sessions.get(plan.sessionId)
@@ -274,12 +367,14 @@ export class ConductorService
       this.injectSeed(
         plan.employee,
         channelId,
-        ticketApprovedSeed({
-          taskId: event.taskId,
-          worktreeId: session?.worktreeId,
-        }),
+        ticketApprovedSeed({ taskId, worktreeId: session?.worktreeId }),
       );
     }
+  }
+
+  /** The room for a review-pipeline narration seed (its notifyThread), or the default room. */
+  private roomFor(notifyThread?: string): string {
+    return notifyThread ? this.resolveRoom(notifyThread) : this.channel.surfaceId;
   }
 
   /** The room a session relays into (its notifyThread), or the default room when unknown. */

@@ -100,7 +100,6 @@ function buildFactory(channel: FakeChannel, gapMs?: number) {
     { get: () => undefined } as unknown as ChannelRegistryService,
     {
       toStructuredTools: () => [],
-      terminalToolNames: () => new Set<string>(),
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {

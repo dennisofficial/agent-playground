@@ -20,7 +20,7 @@ const TASK = {
   project: 'proj',
   title: 'Wire the API',
   description: 'The full description.',
-  status: 'in_progress' as const,
+  status: 'planning' as const,
   assignee: 'alex',
   createdBy: 'sam',
   dependsOn: [3],
@@ -34,6 +34,7 @@ const plan = (employee: string, planMd: string): TaskPlan => ({
   employee,
   planMd,
   leadStatus: 'pending',
+  ownerStatus: 'executing',
   createdAt: '2026-06-12T00:00:00.000Z',
   updatedAt: '2026-06-12T01:00:00.000Z',
 });
@@ -87,7 +88,7 @@ describe('get_ticket', () => {
       f.notes as never,
     );
     const out = await tool.execute({ id: 7 }, ctx);
-    expect(out).toContain('#7 — Wire the API (→ alex, in_progress, after #3)');
+    expect(out).toContain('#7 — Wire the API (→ alex, planning, after #3)');
     expect(out).toContain('The full description.');
     expect(out).toContain("### alex's plan [lead: pending]");
     expect(out).toContain(`get_ticket(7, plan_of: 'alex') for the full plan`);

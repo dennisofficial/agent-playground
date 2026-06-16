@@ -1,5 +1,9 @@
 import { EnvService } from '@core/config/env/env.service';
 import {
+  type BoardNotifier,
+  type DescriptionChangeEvent,
+} from '@harness/approvals/board-notifier.port';
+import {
   type PlanProposalEvent,
   type PlanProposalPresenter,
 } from '@harness/approvals/proposal-presenter.port';
@@ -22,6 +26,7 @@ import {
   APPROVE_ACTION_ID,
   type ApprovalActionMeta,
   chunkPlan,
+  descriptionChangeCardBlocks,
   DENY_ACTION_ID,
   proposalCardBlocks,
   REQUEST_CHANGES_ACTION_ID,
@@ -49,7 +54,7 @@ const APPROVAL_PREFIX = 'approval:';
  */
 @Injectable()
 export class ApprovalCardsService
-  implements PlanProposalPresenter, SlackInboundInterceptor
+  implements PlanProposalPresenter, SlackInboundInterceptor, BoardNotifier
 {
   private readonly logger = new Logger(ApprovalCardsService.name);
 
@@ -110,6 +115,39 @@ export class ApprovalCardsService
         plan,
       );
     }
+  }
+
+  // ── Outbound: description-change notification ───────────────────────────────────────────────
+
+  async notifyDescriptionChange(e: DescriptionChangeEvent): Promise<void> {
+    const parsed = parseSlackSurface(e.surfaceId);
+    if (!parsed)
+      throw new Error(
+        `description-change card for #${e.taskId} from a non-Slack room (${e.surfaceId})`,
+      );
+    const web = await this.clients.clientFor(parsed.teamId);
+    if (!web)
+      throw new Error(`no Slack client for workspace ${parsed.teamId}`);
+
+    // Resolve the boss mention — <@Uxxxx> when configured; literal fallback so the card still
+    // posts but without a ping (dev workspaces without APPROVAL_BOSS_USER_ID configured).
+    const tenant = await this.tenants.get(parsed.teamId).catch(() => undefined);
+    const bossId =
+      tenant?.installedBy ?? this.env.get('APPROVAL_BOSS_USER_ID');
+    const bossMention = bossId ? `<@${bossId}>` : 'Dennis';
+
+    const actor = this.employees.byId(e.changedBy);
+    const actorName = actor?.name ?? e.changedBy;
+
+    await web.chat.postMessage({
+      channel: parsed.channel,
+      text: `${bossMention} — description changed on ticket #${e.taskId}: ${e.title} (by ${actorName})`,
+      blocks: descriptionChangeCardBlocks(e, bossMention) as never,
+      username: actorName,
+      ...(this.avatarBase
+        ? { icon_url: `${this.avatarBase}/${e.changedBy}.png` }
+        : {}),
+    });
   }
 
   /**
@@ -298,7 +336,7 @@ export class ApprovalCardsService
         ? { status: 'approved' as const }
         : v.verdict === 'deny'
           ? { status: 'open' as const, assignee: null }
-          : { status: 'in_progress' as const };
+          : { status: 'planning' as const };
     const flipped = await this.board.transition(
       v.teamId,
       v.taskId,

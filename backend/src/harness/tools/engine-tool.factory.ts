@@ -14,7 +14,8 @@ import { CreateSessionTool } from './sessions/session.tools';
  * allowlist at GRAPH-BUILD time — the discretionary half of the capability system. Each becomes a
  * StructuredTool that, when called, opens a REAL session via `CreateSessionTool.openSession` (the
  * shared worktree/ownership/ALS-detached path — NOT a parallel worker path), using the engine from
- * the capability's `EngineSpec`. Like `create_session`, these tools END the turn (terminal).
+ * the capability's `EngineSpec`. Like `create_session`, the bot is notified when the session reports
+ * back.
  *
  * v1 worktree strategy: reuse the caller-supplied `worktreeId`, else the bot's most recent worktree;
  * if it has none, return a friendly nudge to `create_worktree` first (a session must live in one).
@@ -27,15 +28,14 @@ export class EngineToolFactory {
     private readonly worktrees: WorktreeService,
   ) {}
 
-  /** Build the StructuredTools + their (terminal) names for a bot's tool-capabilities. */
+  /** Build the StructuredTools for a bot's tool-capabilities. */
   buildTools(
     bot: EmployeeDefinition,
     ctx: EmployeeContext,
-  ): { tools: StructuredToolInterface[]; terminalNames: string[] } {
+  ): { tools: StructuredToolInterface[] } {
     const caps = bot.capabilities(ctx).filter(isToolCapability);
     return {
       tools: caps.map((cap) => this.toTool(ctx, cap)),
-      terminalNames: caps.map((cap) => cap.name),
     };
   }
 
