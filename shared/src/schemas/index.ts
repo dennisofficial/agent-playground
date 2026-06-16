@@ -17,7 +17,6 @@ export * from './provider-key.entity';
 export * from './session.entity';
 export * from './session-event.entity';
 export * from './session-note.entity';
-export * from './slack-identity.entity';
 export * from './task.entity';
 export * from './team-setting.entity';
 export * from './team-task-note.entity';
@@ -42,7 +41,6 @@ import { ProviderKey } from './provider-key.entity';
 import { Session } from './session.entity';
 import { SessionEvent } from './session-event.entity';
 import { SessionNote } from './session-note.entity';
-import { SlackIdentity } from './slack-identity.entity';
 import { Task } from './task.entity';
 import { TeamSetting } from './team-setting.entity';
 import { TeamTaskNote } from './team-task-note.entity';
@@ -74,7 +72,6 @@ export const ENTITIES = [
   Session,
   SessionEvent,
   SessionNote,
-  SlackIdentity,
   Tenant,
   EmployeeSkill,
   EmployeeMcpServer,

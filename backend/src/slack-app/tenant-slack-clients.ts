@@ -18,7 +18,7 @@ interface ClientEntry {
  * The per-workspace "ears" WebClient — the OAuth-distributed main app's bot token DIFFERS per
  * install, so reads (users.info / conversations.info / auth.test) and fallback posts must use the
  * RIGHT workspace's token, resolved from the `tenants` row (`bot_token_ciphertext`, decrypted here).
- * Read-through cache, same shape as SlackIdentityRegistry. Falls back to the `SLACK_BOT_TOKEN` env
+ * Read-through cache. Falls back to the `SLACK_BOT_TOKEN` env
  * (the dev Socket-Mode app's single-workspace token) when a workspace has no stored token — so local
  * dev needs no install. `undefined` = no token for that workspace yet (caller degrades/skips).
  */

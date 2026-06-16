@@ -36,9 +36,7 @@ function makeService(opts: {
   tenantMissing?: boolean;
   envBoss?: string;
   transitionResult?: Record<string, unknown> | undefined;
-  /** The plan author's puppet client, when one exists (snippet uploads prefer it). */
-  puppet?: { filesUploadV2: ReturnType<typeof vi.fn> };
-  /** Make the MAIN app's snippet upload reject (e.g. missing files:write scope). */
+  /** Make the app's snippet upload reject (e.g. missing files:write scope). */
   uploadFails?: boolean;
 }) {
   const web = {
@@ -55,9 +53,6 @@ function makeService(opts: {
     ),
   };
   const clients = { clientFor: vi.fn(() => Promise.resolve(web)) };
-  const identities = {
-    clientFor: vi.fn(() => Promise.resolve(opts.puppet)),
-  };
   const tenants = {
     get: vi.fn(() =>
       Promise.resolve(
@@ -102,14 +97,13 @@ function makeService(opts: {
     clients as never,
     tenants as never,
     directory as never,
-    identities as never,
     board as never,
     notes as never,
     conductor as never,
     employees as never,
     env as never,
   );
-  return { service, web, board, notes, conductor, identities };
+  return { service, web, board, notes, conductor };
 }
 
 /** A zero-arg vi.fn()'s `calls` is typed `[][]` — widen to read the runtime-recorded args. */
@@ -166,21 +160,6 @@ describe('ApprovalCardsService — outbound (present)', () => {
       content: 'alex plan body',
     });
     expect(uploads[1]).toMatchObject({ filename: 'ticket-7-riley-plan.md' });
-  });
-
-  it("uploads via the plan author's PUPPET when one exists — the plan reads as theirs", async () => {
-    const puppet = {
-      filesUploadV2: vi.fn(() => Promise.resolve({ ok: true })),
-    };
-    const { service, web, identities } = makeService({
-      installedBy: 'U-BOSS',
-      puppet,
-    });
-    await service.present(EVENT);
-    expect(identities.clientFor).toHaveBeenCalledWith('T1', 'alex');
-    expect(identities.clientFor).toHaveBeenCalledWith('T1', 'riley');
-    expect(puppet.filesUploadV2).toHaveBeenCalledTimes(2);
-    expect(web.filesUploadV2).not.toHaveBeenCalled();
   });
 
   it('falls back to chunked thread messages when snippet uploads fail (e.g. missing files:write)', async () => {

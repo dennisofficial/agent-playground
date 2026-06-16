@@ -9,14 +9,12 @@ import { MetricsModule } from '../harness/metrics/metrics.module';
 import { MemoryAdminModule } from '../harness/memory-admin/memory-admin.module';
 import { ProjectsModule } from '../harness/projects/projects.module';
 import { TenantsModule } from '../harness/tenants/tenants.module';
-import { SlackIdentitiesModule } from '../harness/slack-identities/slack-identities.module';
 import { AdminTokenGuard } from './admin/admin-token.guard';
 import { EmployeeToolsController } from './admin/employee-tools.controller';
 import { InternalMetricsController } from './admin/internal-metrics.controller';
 import { LlmKeysController } from './admin/llm-keys.controller';
 import { MemoryFactsController } from './admin/memory.controller';
 import { ProjectsController } from './admin/projects.controller';
-import { SlackIdentitiesController } from './admin/slack-identities.controller';
 import { TenantsController } from './admin/tenants.controller';
 import { TokensController } from './admin/tokens.controller';
 import { ApiController } from './api.controller';
@@ -50,7 +48,6 @@ import { AuthModule } from './auth/auth.module';
     EmployeeToolsModule,
     LlmKeysModule,
     MetricsModule,
-    SlackIdentitiesModule,
     MemoryAdminModule,
     TenantsModule,
     AuthModule,
@@ -62,7 +59,6 @@ import { AuthModule } from './auth/auth.module';
     TokensController,
     LlmKeysController,
     InternalMetricsController,
-    SlackIdentitiesController,
     MemoryFactsController,
     TenantsController,
   ],

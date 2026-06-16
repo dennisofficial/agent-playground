@@ -33,11 +33,6 @@ function makeService(overrides?: { existingRoom?: boolean }) {
     ]),
     byId: vi.fn(() => undefined as { id: string; name: string } | undefined),
   };
-  const identities = {
-    slackUserIdFor: vi.fn(
-      (): Promise<string | undefined> => Promise.resolve(undefined),
-    ),
-  };
   // The per-team ears client provider — returns the workspace's WebClient (the `web` mock here).
   const clients = {
     clientFor: vi.fn(() => Promise.resolve(web)),
@@ -47,9 +42,8 @@ function makeService(overrides?: { existingRoom?: boolean }) {
     clients as never,
     registry as never,
     employees as never,
-    identities as never,
   );
-  return { service, web, registry, employees, identities };
+  return { service, web, registry, employees };
 }
 
 describe('SlackDirectoryService.resolveUser', () => {
@@ -98,23 +92,6 @@ describe('SlackDirectoryService.ensureChannelRegistered', () => {
 });
 
 describe('SlackDirectoryService.resolveMention', () => {
-  it('resolves a roster bot by id (case-insensitive via slug)', async () => {
-    const { service, identities, employees } = makeService();
-    employees.byId.mockReturnValue({ id: 'alex', name: 'Alex' });
-    // Persistent mock (not Once) so both 'alex' and 'Alex' calls hit a resolved value.
-    identities.slackUserIdFor.mockResolvedValue('UALEX');
-    expect(await service.resolveMention('T1', 'alex')).toBe('UALEX');
-    expect(await service.resolveMention('T1', 'Alex')).toBe('UALEX');
-  });
-
-  it('resolves a roster bot by display-name slug when byId misses', async () => {
-    const { service, identities, employees } = makeService();
-    employees.byId.mockReturnValue(undefined);
-    // list() returns [{ id: 'alex', name: 'Alex' }, { id: 'sam', name: 'Sam' }]
-    identities.slackUserIdFor.mockResolvedValueOnce('USAM');
-    expect(await service.resolveMention('T1', 'Sam')).toBe('USAM');
-  });
-
   it('resolves a human from the reverse index populated by resolveUser', async () => {
     const { service } = makeService();
     // Simulate an inbound event that caches the user.

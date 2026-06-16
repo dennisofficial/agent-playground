@@ -73,9 +73,6 @@ function makeJarvis(
         : undefined,
     ),
   };
-  const identities = {
-    botIdForSlackUser: vi.fn(async () => undefined as string | undefined),
-  };
   const jarvis = new JarvisService(
     clients as never,
     directory as never,
@@ -84,7 +81,6 @@ function makeJarvis(
     providerKeys as never,
     githubTokens as never,
     projects as never,
-    identities as never,
   );
   jarvis.onModuleInit();
   return {

@@ -1,6 +1,6 @@
 import type { Seeder } from '@workspace/nestjs-core';
 import { WebClient } from '@slack/web-api';
-import { encryptSecret } from '../cli/puppet-identity';
+import { encryptSecret } from '../cli/secret-encrypt';
 
 /**
  * Re-seeds the dev workspace's TENANT row after a DB recreate, from `SLACK_TENANT_SEED`

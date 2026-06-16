@@ -15,7 +15,6 @@ import {
 } from '@nestjs/common';
 import type { Subscription } from 'rxjs';
 import { SlackDirectoryService } from '../slack-directory.service';
-import { SlackIdentityRegistry } from '../slack-identity.registry';
 import { TenantSlackClients } from '../tenant-slack-clients';
 import type {
   SlackInbound,
@@ -91,7 +90,6 @@ export class JarvisService
     private readonly providerKeys: ProviderKeyStore,
     private readonly githubTokens: GithubTokenStore,
     private readonly projects: ProjectStore,
-    private readonly identities: SlackIdentityRegistry,
   ) {}
 
   onModuleInit(): void {
@@ -135,20 +133,9 @@ export class JarvisService
   ): Promise<boolean> {
     if (!event.channel) return false;
     if (event.user !== (await this.directory.selfUserIdFor(teamId))) {
-      // Not Jarvis — check if it's a known puppet bot.
-      // Slack only delivers member_joined_channel to apps already in the channel, so if we
-      // received this event, Jarvis is already present and the channel is already set up.
-      const botId = await this.identities.botIdForSlackUser(
-        teamId,
-        event.user ?? '',
-      );
-      if (botId) {
-        this.logger.log(
-          `puppet ${botId} joined ${event.channel} in workspace ${teamId}`,
-        );
-        return true; // consume — prevents routing to the conductor
-      }
-      return false; // human join — let it pass through
+      // Someone other than this app joined — not Jarvis's business (single voice: no puppet bots
+      // to recognise). Let it pass through.
+      return false;
     }
     const channel = event.channel;
     const inviter =

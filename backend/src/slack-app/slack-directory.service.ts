@@ -1,7 +1,6 @@
 import { ChannelRegistryService } from '@harness/channel/channel-registry.service';
 import { EmployeeRegistry } from '@harness/employees/employee.registry';
 import { Injectable, Logger } from '@nestjs/common';
-import { SlackIdentityRegistry } from './slack-identity.registry';
 import { TenantSlackClients } from './tenant-slack-clients';
 
 const DIRECTORY_TTL_MS = 30 * 60_000; // 30 min
@@ -42,7 +41,6 @@ export class SlackDirectoryService {
     private readonly clients: TenantSlackClients,
     private readonly registry: ChannelRegistryService,
     private readonly employees: EmployeeRegistry,
-    private readonly identities: SlackIdentityRegistry,
   ) {}
 
   /** This app's bot user id IN a workspace (echo-loop guard + self-mention translation). */
@@ -138,31 +136,21 @@ export class SlackDirectoryService {
     this.registeredChannels.add(key);
   }
 
-  /** Resolve a @handle to a Slack user id for mention formatting in outbound messages. Checks
-   * roster bots first (by id then display-name slug), then the human reverse index (populated on
-   * every inbound resolve + a lazy `users.list` sync). Returns undefined for unrecognised handles
-   * — the caller leaves those literal in the posted text (graceful degradation). */
+  /** Resolve a @handle to a Slack user id for mention formatting in outbound messages. Single voice:
+   * specialists are invisible in Slack, so handles only resolve to HUMANS — the reverse index
+   * (populated on every inbound resolve), then a lazy `users.list` sync. Returns undefined for
+   * unrecognised handles — the caller leaves those literal in the posted text (graceful degradation). */
   async resolveMention(
     teamId: string,
     handle: string,
   ): Promise<string | undefined> {
     const slug = slugify(handle);
 
-    // 1. Roster bots — match by id (lowercase already) then by display-name slug.
-    const byId = this.employees.byId(slug);
-    const botId =
-      byId?.id ??
-      this.employees.list().find((e) => slugify(e.name) === slug)?.id;
-    if (botId) {
-      const slackId = await this.identities.slackUserIdFor(teamId, botId);
-      if (slackId) return slackId;
-    }
-
-    // 2. Human reverse index (populated by inbound events this session).
+    // 1. Human reverse index (populated by inbound events this session).
     const fromIndex = this.handleIndex.get(`${teamId}|${slug}`);
     if (fromIndex) return fromIndex;
 
-    // 3. Lazy workspace directory sync (users:read; cached 30 min) — re-check after load.
+    // 2. Lazy workspace directory sync (users:read; cached 30 min) — re-check after load.
     await this.ensureDirectoryLoaded(teamId);
     return this.handleIndex.get(`${teamId}|${slug}`);
   }

@@ -135,12 +135,6 @@ export interface IEnvConfig {
   GATEWAY_SHARED_SECRET?: string; // bearer between gateway → tenant stacks' /slack/inbound
   GATEWAY_PUBLIC_URL?: string; // public base (OAuth redirect = <base>/slack/oauth)
   GATEWAY_PORT?: number; // default 4100
-  // Per-employee puppet apps' OAuth creds, JSON: {"alex":{"clientId":"…","clientSecret":"…"}, …}.
-  // Used only by the puppet install callback (<base>/slack/puppet/oauth, botId in `state`).
-  SLACK_PUPPET_OAUTH?: string;
-  // Dev-only (CLI seed, not the app): puppet bot tokens re-seeded into slack_identities on
-  // `db:seed`, JSON: {"teamId":"T0…","tokens":{"alex":"xoxb-…", …}}. Lives in .env.personal.
-  SLACK_PUPPET_SEED?: string;
   // Dev-only (CLI seed, not the app): the dev workspace's tenant row (ears token + installer),
   // re-seeded on `db:seed` — socket-mode dev never OAuth-installs, so without it there's no
   // tenant row (boss check falls back to APPROVAL_BOSS_USER_ID). JSON:
@@ -254,8 +248,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SLACK_CLIENT_ID: Joi.string().optional(),
   SLACK_CLIENT_SECRET: Joi.string().optional(),
   SLACK_SIGNING_SECRET: Joi.string().optional(),
-  SLACK_PUPPET_OAUTH: Joi.string().optional(),
-  SLACK_PUPPET_SEED: Joi.string().optional(),
   SLACK_TENANT_SEED: Joi.string().optional(),
   GATEWAY_SHARED_SECRET: Joi.string().optional(),
   GATEWAY_PUBLIC_URL: Joi.string().uri().optional(),

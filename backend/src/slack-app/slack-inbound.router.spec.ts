@@ -21,14 +21,12 @@ function makeRouter(
   approvals?: SlackInboundInterceptor,
 ) {
   const surface = { handleMessageEvent: vi.fn(async () => {}) };
-  const presence = { observe: vi.fn(async () => {}) };
   const router = new SlackInboundRouter(
     surface as never,
-    presence as never,
     interceptor,
     approvals,
   );
-  return { router, surface, presence };
+  return { router, surface };
 }
 
 describe('SlackInboundRouter', () => {
@@ -70,22 +68,6 @@ describe('SlackInboundRouter', () => {
     await router.route(eventItem({ type: 'member_joined_channel' }));
     await router.route(interactivityItem());
     expect(surface.handleMessageEvent).not.toHaveBeenCalled();
-  });
-
-  it('lead presence observes every event — even ones the interceptor consumes — and a rejected observe never breaks routing', async () => {
-    const interceptor = { maybeHandle: vi.fn(async () => true) };
-    const { router, presence } = makeRouter(interceptor);
-    presence.observe.mockImplementation(async () => {
-      throw new Error('presence boom');
-    });
-    await router.route(
-      eventItem({ type: 'member_joined_channel', user: 'U1' }),
-    );
-    expect(presence.observe).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'member_joined_channel' }),
-      'T1',
-    );
-    expect(interceptor.maybeHandle).toHaveBeenCalled(); // routing proceeded regardless
   });
 
   it('tries the approval interceptor AFTER Jarvis: Jarvis-false → approval handles; approval-true consumes', async () => {

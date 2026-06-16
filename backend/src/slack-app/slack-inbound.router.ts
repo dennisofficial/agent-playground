@@ -1,6 +1,5 @@
 import { DEFAULT_TEAM } from '@harness/domain/identity';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import {
   APPROVAL_INTERCEPTOR,
@@ -23,7 +22,6 @@ export class SlackInboundRouter {
 
   constructor(
     private readonly surface: SlackChatSurface,
-    private readonly presence: LeadPresenceService,
     @Optional()
     @Inject(JARVIS_INTERCEPTOR)
     private readonly interceptor?: SlackInboundInterceptor,
@@ -41,15 +39,6 @@ export class SlackInboundRouter {
       if (item.kind === 'command') {
         if (this.commands) await this.commands.maybeHandle(item);
         return;
-      }
-      // Lead presence watches every event BEFORE the interceptor (Jarvis CONSUMES
-      // member_joined_channel, so a post-interceptor hook would never see the lead's own join).
-      // Fire-and-forget: presence can never delay or break routing.
-      if (item.kind === 'event' && item.body.event) {
-        const teamId = item.body.team_id ?? DEFAULT_TEAM;
-        this.presence
-          .observe(item.body.event, teamId)
-          .catch((err) => this.logger.warn(`lead presence failed: ${err}`));
       }
       if (this.interceptor && (await this.interceptor.maybeHandle(item)))
         return;

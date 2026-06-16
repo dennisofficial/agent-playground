@@ -7,10 +7,7 @@ function makeClients(filesUploadV2Result: Record<string, unknown> = {}) {
   const clients = {
     clientFor: vi.fn(async () => webClient),
   };
-  const identities = {
-    clientFor: vi.fn(async () => undefined as unknown),
-  };
-  return { clients, identities, webClient };
+  return { clients, webClient };
 }
 
 const req = {
@@ -24,14 +21,11 @@ const req = {
 describe('SlackFileUploadService', () => {
   it('uploads without channel_id and returns the file ID from the nested response', async () => {
     const fileId = 'F0GDJ3XMH';
-    const { clients, identities, webClient } = makeClients({
+    const { clients, webClient } = makeClients({
       ok: true,
       files: [{ ok: true, files: [{ id: fileId, title: 'Weekly Report' }] }],
     });
-    const svc = new SlackFileUploadService(
-      clients as never,
-      identities as never,
-    );
+    const svc = new SlackFileUploadService(clients as never);
 
     const result = await svc.upload(req);
 
@@ -43,29 +37,7 @@ describe('SlackFileUploadService', () => {
     expect(uploadArgs).not.toHaveProperty('channel_id');
   });
 
-  it('uses puppet client when available (puppet-first)', async () => {
-    const puppet = {
-      filesUploadV2: vi.fn(async () => ({
-        ok: true,
-        files: [{ ok: true, files: [{ id: 'F_PUPPET', title: 'plan' }] }],
-      })),
-    };
-    const ears = { filesUploadV2: vi.fn() };
-    const clients = { clientFor: vi.fn(async () => ears) };
-    const identities = { clientFor: vi.fn(async () => puppet) };
-    const svc = new SlackFileUploadService(
-      clients as never,
-      identities as never,
-    );
-
-    const result = await svc.upload(req);
-
-    expect(puppet.filesUploadV2).toHaveBeenCalledTimes(1);
-    expect(ears.filesUploadV2).not.toHaveBeenCalled();
-    expect(result.fileId).toBe('F_PUPPET');
-  });
-
-  it('falls back to ears when no puppet token', async () => {
+  it('uploads via the single workspace app', async () => {
     const ears = {
       filesUploadV2: vi.fn(async () => ({
         ok: true,
@@ -73,11 +45,7 @@ describe('SlackFileUploadService', () => {
       })),
     };
     const clients = { clientFor: vi.fn(async () => ears) };
-    const identities = { clientFor: vi.fn(async () => undefined) };
-    const svc = new SlackFileUploadService(
-      clients as never,
-      identities as never,
-    );
+    const svc = new SlackFileUploadService(clients as never);
 
     const result = await svc.upload(req);
 
@@ -87,11 +55,7 @@ describe('SlackFileUploadService', () => {
 
   it('returns {} (no fileId) when no client available', async () => {
     const clients = { clientFor: vi.fn(async () => undefined) };
-    const identities = { clientFor: vi.fn(async () => undefined) };
-    const svc = new SlackFileUploadService(
-      clients as never,
-      identities as never,
-    );
+    const svc = new SlackFileUploadService(clients as never);
 
     const result = await svc.upload(req);
 
@@ -105,11 +69,7 @@ describe('SlackFileUploadService', () => {
       }),
     };
     const clients = { clientFor: vi.fn(async () => failClient) };
-    const identities = { clientFor: vi.fn(async () => undefined) };
-    const svc = new SlackFileUploadService(
-      clients as never,
-      identities as never,
-    );
+    const svc = new SlackFileUploadService(clients as never);
 
     await expect(svc.upload(req)).resolves.toEqual({});
   });
@@ -122,11 +82,7 @@ describe('SlackFileUploadService', () => {
       })),
     };
     const clients = { clientFor: vi.fn(async () => client) };
-    const identities = { clientFor: vi.fn(async () => undefined) };
-    const svc = new SlackFileUploadService(
-      clients as never,
-      identities as never,
-    );
+    const svc = new SlackFileUploadService(clients as never);
 
     await svc.upload(req);
 
@@ -147,11 +103,7 @@ describe('SlackFileUploadService', () => {
       })),
     };
     const clients = { clientFor: vi.fn(async () => client) };
-    const identities = { clientFor: vi.fn(async () => undefined) };
-    const svc = new SlackFileUploadService(
-      clients as never,
-      identities as never,
-    );
+    const svc = new SlackFileUploadService(clients as never);
 
     await svc.upload({ ...req, title: undefined });
 

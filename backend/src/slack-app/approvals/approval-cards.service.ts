@@ -14,7 +14,6 @@ import { TicketNoteStore } from '@harness/memory/ticket-note-store';
 import { Injectable, Logger } from '@nestjs/common';
 import { parseSlackSurface } from '../slack-membership';
 import { SlackDirectoryService } from '../slack-directory.service';
-import { SlackIdentityRegistry } from '../slack-identity.registry';
 import type {
   SlackInbound,
   SlackInboundInterceptor,
@@ -65,7 +64,6 @@ export class ApprovalCardsService
     private readonly clients: TenantSlackClients,
     private readonly tenants: TenantStore,
     private readonly directory: SlackDirectoryService,
-    private readonly identities: SlackIdentityRegistry,
     private readonly board: BoardStore,
     private readonly notes: TicketNoteStore,
     private readonly conductor: ConductorService,
@@ -151,9 +149,7 @@ export class ApprovalCardsService
   /**
    * One plan into the card's thread, best rendering first:
    *  1. A FILE SNIPPET (`files.uploadV2`, .md) — Slack gives it a real markdown viewer, no chunk
-   *     caps. Uploaded by the plan author's own PUPPET when one exists, so the plan reads as
-   *     theirs; else by the main app. Needs the `files:write` scope on whichever app uploads —
-   *     missing scope falls through.
+   *     caps. Uploaded by the single app (needs the `files:write` scope) — missing scope falls through.
    *  2. Fallback: the chunked plain-text thread replies (universal, no extra scope, ugly).
    */
   private async postPlanArtifact(
@@ -172,19 +168,14 @@ export class ApprovalCardsService
       content: plan.planMd,
       initial_comment: `*${plan.employee}'s plan* for ticket #${taskId}`,
     };
-    const puppet = await this.identities
-      .clientFor(teamId, plan.employee)
-      .catch(() => undefined);
-    for (const client of [puppet, web]) {
-      if (!client) continue;
-      try {
-        await client.filesUploadV2(upload);
-        return;
-      } catch (err) {
-        this.logger.warn(
-          `plan snippet upload (#${taskId}, ${plan.employee}, ${client === puppet ? 'puppet' : 'main app'}) failed — ${err instanceof Error ? err.message : String(err)}; falling back`,
-        );
-      }
+    // Single voice: the one app uploads the snippet (no per-author puppet client).
+    try {
+      await web.filesUploadV2(upload);
+      return;
+    } catch (err) {
+      this.logger.warn(
+        `plan snippet upload (#${taskId}, ${plan.employee}) failed — ${err instanceof Error ? err.message : String(err)}; falling back`,
+      );
     }
     for (const [i, chunk] of chunkPlan(plan.planMd).entries()) {
       const header = i === 0 ? `*${plan.employee}'s plan*\n` : '';

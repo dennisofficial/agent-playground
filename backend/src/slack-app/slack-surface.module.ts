@@ -8,7 +8,6 @@ import { LlmKeysModule } from '@harness/llm-keys/llm-keys.module';
 import { MemoryModule } from '@harness/memory/memory.module';
 import { ProjectsModule } from '@harness/projects/projects.module';
 import { SecretCipher } from '@harness/projects/secret-cipher';
-import { SlackIdentitiesModule } from '@harness/slack-identities/slack-identities.module';
 import { ARTIFACT_SINK } from '@harness/surface/artifact-sink.port';
 import { CHAT_SURFACE } from '@harness/surface/chat-surface.port';
 import { Global, Module } from '@nestjs/common';
@@ -17,12 +16,10 @@ import { SocketModeClient } from '@slack/socket-mode';
 import { Tenant } from '@workspace/shared/schemas';
 import { ApprovalCardsService } from './approvals/approval-cards.service';
 import { JarvisService } from './jarvis/jarvis.service';
-import { LeadPresenceService } from './lead-presence.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import { SlackCommandService } from './slack-commands.service';
 import { SlackDirectoryService } from './slack-directory.service';
 import { SlackFileUploadService } from './slack-file-upload.service';
-import { SlackIdentityRegistry } from './slack-identity.registry';
 import { SlackInboundRouter } from './slack-inbound.router';
 import {
   APPROVAL_INTERCEPTOR,
@@ -50,7 +47,6 @@ import { TenantSlackClients } from './tenant-slack-clients';
     LlmKeysModule,
     MemoryModule,
     ProjectsModule,
-    SlackIdentitiesModule,
     TypeOrmModule.forFeature([Tenant]),
   ],
   providers: [
@@ -70,8 +66,6 @@ import { TenantSlackClients } from './tenant-slack-clients';
       inject: [EnvService],
     },
     SlackDirectoryService,
-    SlackIdentityRegistry,
-    LeadPresenceService,
     SlackChatSurface,
     SlackFileUploadService,
     SlackInboundRouter,

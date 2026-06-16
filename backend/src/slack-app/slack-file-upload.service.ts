@@ -4,35 +4,24 @@ import type {
   ArtifactUploadResult,
 } from '@harness/surface/artifact-sink.port';
 import { Injectable, Logger } from '@nestjs/common';
-import { SlackIdentityRegistry } from './slack-identity.registry';
 import { TenantSlackClients } from './tenant-slack-clients';
 
 /**
  * Slack adapter for the `ARTIFACT_SINK` port. Uploads an artifact as an UNSHARED Slack file
  * (no `channel_id`) so the file exists in the workspace but doesn't create its own message.
  * The conductor attaches the returned `fileId` to the agent's outgoing message via
- * `chat.update(file_ids)`.
- *
- * Identity resolution mirrors `SlackChatSurface.post()`: puppet-first → ears fallback. The puppet
- * posts the file under the employee's own bot identity; the ears app is the fallback for employees
- * without a puppet token.
+ * `chat.update(file_ids)`. SINGLE VOICE: the one Slack app uploads (Atlas), like `SlackChatSurface`.
  */
 @Injectable()
 export class SlackFileUploadService implements ArtifactSink {
   private readonly logger = new Logger(SlackFileUploadService.name);
 
-  constructor(
-    private readonly clients: TenantSlackClients,
-    private readonly identities: SlackIdentityRegistry,
-  ) {}
+  constructor(private readonly clients: TenantSlackClients) {}
 
   async upload(req: ArtifactUploadRequest): Promise<ArtifactUploadResult> {
     const { teamId, authorBotId, content, filename, title } = req;
 
-    // puppet-first → ears fallback (matches the post() identity resolution in SlackChatSurface)
-    const puppet = await this.identities.clientFor(teamId, authorBotId);
-    const ears = await this.clients.clientFor(teamId);
-    const client = puppet ?? ears;
+    const client = await this.clients.clientFor(teamId);
 
     if (!client) {
       this.logger.warn(
