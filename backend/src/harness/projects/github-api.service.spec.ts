@@ -170,3 +170,46 @@ describe('GithubApiService.listOpenPullRequests', () => {
     ).rejects.not.toThrow(/SECRET_TOK/);
   });
 });
+
+describe('GithubApiService.commentOnPullRequest', () => {
+  it('posts to the issues/comments endpoint with the body', async () => {
+    const { impl, calls } = fakeFetch([{ status: 201, body: { id: 1 } }]);
+    const api = new GithubApiService();
+    api.fetchImpl = impl;
+    await api.commentOnPullRequest('TOK', {
+      owner: 'dennis',
+      repo: 'app',
+      number: 7,
+      body: 'integration findings',
+    });
+    expect(calls[0].url).toBe(
+      'https://api.github.com/repos/dennis/app/issues/7/comments',
+    );
+    expect(calls[0].init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      body: 'integration findings',
+    });
+  });
+
+  it('throws a token-free error on failure', async () => {
+    const { impl } = fakeFetch([{ status: 403, body: { message: 'no access' } }]);
+    const api = new GithubApiService();
+    api.fetchImpl = impl;
+    await expect(
+      api.commentOnPullRequest('SECRET_TOK', {
+        owner: 'dennis',
+        repo: 'app',
+        number: 7,
+        body: 'x',
+      }),
+    ).rejects.toThrow(/GitHub refused the PR comment \(403\): no access/);
+    await expect(
+      api.commentOnPullRequest('SECRET_TOK', {
+        owner: 'dennis',
+        repo: 'app',
+        number: 7,
+        body: 'x',
+      }),
+    ).rejects.not.toThrow(/SECRET_TOK/);
+  });
+});

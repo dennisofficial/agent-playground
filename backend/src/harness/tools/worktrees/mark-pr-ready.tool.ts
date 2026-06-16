@@ -41,9 +41,8 @@ const markReadySchema = z.object({
 export class MarkPrReadyTool implements IHarnessTool<typeof markReadySchema> {
   readonly name = 'mark_pr_ready';
   readonly description =
-    "Ship your work: flip its DRAFT PR to ready-for-review and move the board task to 'in_review' for Dennis — your call once the self-review hands you the decision (the harness already opened the draft PR). The harness announces the PR is ready, so keep this message's heads-up brief. Calling this ENDS YOUR TURN.";
+    "Ship your work: flip its DRAFT PR to ready-for-review and move the board task to 'in_review' for Dennis — your call once the self-review hands you the decision (the harness already opened the draft PR). The harness announces the PR is ready, so keep this message's heads-up brief.";
   readonly schema = markReadySchema;
-  readonly terminal = true;
 
   constructor(
     private readonly worktrees: WorktreeService,

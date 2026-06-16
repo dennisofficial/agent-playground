@@ -87,7 +87,11 @@ describe('create_session × the approval gate', () => {
     );
     expect(out).toContain("Can't open an execute session: needs approval");
     expect(created).toHaveLength(0);
-    expect(runner.executeRefusal).toHaveBeenCalledWith('T1', undefined);
+    expect(runner.executeRefusal).toHaveBeenCalledWith(
+      'T1',
+      undefined,
+      'wt-001',
+    );
   });
 
   it('plan-mode opens are never gated', async () => {
@@ -139,7 +143,7 @@ describe('create_session × the approval gate', () => {
       ctx,
     );
     expect(out).toContain('board #7');
-    expect(linked.runner.executeRefusal).toHaveBeenCalledWith('T1', 7);
+    expect(linked.runner.executeRefusal).toHaveBeenCalledWith('T1', 7, 'wt-001');
     expect(linked.created[0]?.boardTaskId).toBe(7);
   });
 

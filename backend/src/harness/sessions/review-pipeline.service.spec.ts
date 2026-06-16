@@ -43,6 +43,8 @@ function build(opts: {
   openPrThrows?: boolean; // openPullRequest rejects
   assignee?: string; // board task assignee (the ship decision owner)
   noteAddFails?: boolean; // TicketNoteStore.add throws (findings can't be parked)
+  mode?: 'advisory' | 'gated'; // INTEGRATION_REVIEW_MODE (default advisory)
+  markReadyThrows?: boolean; // markReadyForReview rejects (advisory loud-fail path)
 }) {
   const ownerStatuses = opts.ownerStatuses ?? { alex: 'executing' };
   const worktreeShared =
@@ -148,12 +150,17 @@ function build(opts: {
       existing: false,
     };
   });
-  const markReadyForReview = vi.fn(async () => ({ isDraft: false }));
+  const markReadyForReview = vi.fn(async () => {
+    if (opts.markReadyThrows) throw new Error('github 500');
+    return { isDraft: false };
+  });
+  const commentOnPullRequest = vi.fn(async () => undefined);
   const listOpenPullRequests = vi.fn(async () => [{ number: 1, headBranch: SHARED }]);
   const github = {
     openPullRequest,
     listOpenPullRequests,
     markReadyForReview,
+    commentOnPullRequest,
   } as never;
 
   const noteAdd = vi.fn(async (_t: string, _id: number, author: string, body: string) => {
@@ -174,6 +181,10 @@ function build(opts: {
   const resumeInternal = vi.fn(async () => makeSession());
   const runner = { resumeInternal } as never;
   const sessions = { get: async () => makeSession() } as never;
+  const env = {
+    get: (k: string) =>
+      k === 'INTEGRATION_REVIEW_MODE' ? (opts.mode ?? 'advisory') : undefined,
+  } as never;
 
   const svc = new ReviewPipelineService(
     engines,
@@ -188,6 +199,7 @@ function build(opts: {
     notes,
     boardEvents,
     runner,
+    env,
     sessions,
   );
   return {
@@ -201,6 +213,7 @@ function build(opts: {
     openPullRequest,
     listOpenPullRequests,
     markReadyForReview,
+    commentOnPullRequest,
     boardEmit,
     resumeInternal,
     noteAdd,
@@ -217,8 +230,8 @@ function emittedFor(boardEmit: { mock: { calls: unknown[][] } }, kind: string) {
 }
 
 describe('ReviewPipelineService.reviewOwner', () => {
-  it('clean review (sole owner) → completes the owner, opens the PR, parks findings + hands the ship decision to the owner (NO auto-ready)', async () => {
-    const f = build({ reviewVerdict: 'All good.\nVERDICT: PASS' });
+  it('gated mode (sole owner) → completes the owner, opens the PR, parks findings + hands the ship decision to the owner (NO auto-ready)', async () => {
+    const f = build({ reviewVerdict: 'All good.\nVERDICT: PASS', mode: 'gated' });
     const out = await f.svc.reviewOwner(makeSession());
     expect(out).toEqual({ kind: 'complete' });
     expect(f.setOwnerStatus).toHaveBeenCalledWith('T1', 7, 'alex', 'complete');
@@ -285,10 +298,11 @@ describe('ReviewPipelineService.reviewOwner', () => {
     });
   });
 
-  it('integration barrier fans pr-opened to EVERY owner, but the ship decision goes to a SINGLE owner', async () => {
+  it('gated mode: fans pr-opened to EVERY owner, but the ship decision goes to a SINGLE owner', async () => {
     const f = build({
       reviewVerdict: 'ok\nVERDICT: PASS',
       ownerStatuses: { alex: 'complete', riley: 'complete' },
+      mode: 'gated',
     });
     await f.svc.integrate('T1', 7);
     expect(emittedFor(f.boardEmit, 'pr-opened')).toEqual(
@@ -296,16 +310,17 @@ describe('ReviewPipelineService.reviewOwner', () => {
     );
     // Exactly one decision owner is asked to ship-or-fix (mark_pr_ready authorizes one owner).
     expect(emittedFor(f.boardEmit, 'self-review-ready')).toHaveLength(1);
-    // integrate() no longer auto-readies, so it never emits pr-ready (mark_pr_ready does that).
+    // gated never auto-readies, so it never emits pr-ready (mark_pr_ready does that).
     expect(emittedFor(f.boardEmit, 'pr-ready')).toEqual([]);
     expect(f.markReadyForReview).not.toHaveBeenCalled();
   });
 
-  it('routes the ship decision to the board ASSIGNEE when set', async () => {
+  it('gated mode: routes the ship decision to the board ASSIGNEE when set', async () => {
     const f = build({
       reviewVerdict: 'ok\nVERDICT: PASS',
       ownerStatuses: { alex: 'complete', riley: 'complete' },
       assignee: 'riley',
+      mode: 'gated',
     });
     await f.svc.integrate('T1', 7);
     expect(emittedFor(f.boardEmit, 'self-review-ready')).toEqual(['riley']);
@@ -392,10 +407,11 @@ describe('ReviewPipelineService.integrate (loud + recoverable dead ends)', () =>
     );
   });
 
-  it('integration review flagging issues does NOT roll back (the #49 loop fix) — it parks findings + hands the decision to the owner', async () => {
+  it('gated mode: integration review flagging issues does NOT roll back (the #49 loop fix) — it parks findings + hands the decision to the owner', async () => {
     const f = build({
-      ownerStatuses: { alex: 'complete' },
+      ownerStatuses: { alex: 'complete', riley: 'complete' },
       reviewVerdict: 'Combined work breaks X\nVERDICT: CHANGES',
+      mode: 'gated',
     });
     await f.svc.integrate('T1', 7);
     // No rollback to executing on a (non-deterministic) review verdict — that was the infinite loop.
@@ -416,8 +432,12 @@ describe('ReviewPipelineService.integrate (loud + recoverable dead ends)', () =>
     expect(emittedFor(f.boardEmit, 'self-review-failed')).toEqual([]);
   });
 
-  it('an empty review still parks a note and seeds the decision (clean is still owner-decided)', async () => {
-    const f = build({ ownerStatuses: { alex: 'complete' }, reviewVerdict: '' });
+  it('gated mode: an empty review still parks a note and seeds the decision (clean is still owner-decided)', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete' },
+      reviewVerdict: '',
+      mode: 'gated',
+    });
     await f.svc.integrate('T1', 7);
     expect(f.noteAdd).toHaveBeenCalledWith(
       'T1',
@@ -430,11 +450,12 @@ describe('ReviewPipelineService.integrate (loud + recoverable dead ends)', () =>
     );
   });
 
-  it('a failed findings write IS a recoverable dead end → rolls back to executing + narrates', async () => {
+  it('gated mode: a failed findings write IS a recoverable dead end → rolls back to executing + narrates', async () => {
     const f = build({
       ownerStatuses: { alex: 'complete' },
       reviewVerdict: 'ok\nVERDICT: PASS',
       noteAddFails: true,
+      mode: 'gated',
     });
     await f.svc.integrate('T1', 7);
     expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', {
@@ -448,17 +469,13 @@ describe('ReviewPipelineService.integrate (loud + recoverable dead ends)', () =>
     );
   });
 
-  it('REGRESSION (#3/PR #38): integrate() never auto-readies — no list/markReady calls, no self_review→in_review', async () => {
-    // The deleted auto-ready block (pre-d43e94d) would have called listOpenPullRequests,
-    // markReadyForReview, and transitioned self_review→in_review without owner input.
-    // If any of those come back, this test fails loudly.
+  it('gated mode: integrate() never auto-readies — no markReady calls, no self_review→in_review (hands off instead)', async () => {
     const f = build({
       ownerStatuses: { alex: 'complete', riley: 'complete' },
       reviewVerdict: 'ok\nVERDICT: PASS',
+      mode: 'gated',
     });
     await f.svc.integrate('T1', 7);
-    // The deleted auto-ready block would have done all three of these:
-    expect(f.listOpenPullRequests).not.toHaveBeenCalled();
     expect(f.markReadyForReview).not.toHaveBeenCalled();
     expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'self_review', {
       status: 'in_review',
@@ -466,5 +483,81 @@ describe('ReviewPipelineService.integrate (loud + recoverable dead ends)', () =>
     // Instead it opens the DRAFT PR and hands the ship decision to one owner.
     expect(f.openPullRequest).toHaveBeenCalled();
     expect(emittedFor(f.boardEmit, 'self-review-ready')).toHaveLength(1);
+  });
+});
+
+describe('ReviewPipelineService.integrate (advisory mode — default, max autonomy)', () => {
+  it('sole owner → ships straight to ready: auto-readies the PR, ticket → in_review, pr-ready, no integration review, no decision seed', async () => {
+    const f = build({ reviewVerdict: 'ok\nVERDICT: PASS' }); // default advisory, sole owner
+    const out = await f.svc.reviewOwner(makeSession());
+    expect(out).toEqual({ kind: 'complete' });
+    expect(f.markReadyForReview).toHaveBeenCalled();
+    expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'in_review',
+    });
+    expect(emittedFor(f.boardEmit, 'pr-ready')).toContain('alex');
+    expect(emittedFor(f.boardEmit, 'self-review-ready')).toEqual([]);
+    // sole-owner skips the integration review (per-owner pass already covered the whole diff).
+    expect(f.engineRun).toHaveBeenCalledTimes(1);
+    expect(f.commentOnPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('multi-owner review that flags issues → ships the PR ANYWAY and posts findings as a PR comment + ticket note (advisory never blocks)', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete', riley: 'complete' },
+      reviewVerdict: 'Contract mismatch in X\nVERDICT: CHANGES',
+    });
+    await f.svc.integrate('T1', 7);
+    expect(f.markReadyForReview).toHaveBeenCalled();
+    expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'in_review',
+    });
+    expect(f.commentOnPullRequest).toHaveBeenCalledWith(
+      'tok',
+      expect.objectContaining({
+        body: expect.stringContaining('Contract mismatch in X'),
+      }),
+    );
+    expect(f.noteAdd).toHaveBeenCalledWith(
+      'T1',
+      7,
+      'alex',
+      expect.stringContaining('Contract mismatch in X'),
+    );
+    expect(emittedFor(f.boardEmit, 'pr-ready')).toEqual(
+      expect.arrayContaining(['alex', 'riley']),
+    );
+    expect(emittedFor(f.boardEmit, 'self-review-ready')).toEqual([]);
+  });
+
+  it('a clean multi-owner review ships with NO PR comment (no noise)', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete', riley: 'complete' },
+      reviewVerdict: 'All good\nVERDICT: PASS',
+    });
+    await f.svc.integrate('T1', 7);
+    expect(f.markReadyForReview).toHaveBeenCalled();
+    expect(f.commentOnPullRequest).not.toHaveBeenCalled();
+    expect(emittedFor(f.boardEmit, 'pr-ready')).toEqual(
+      expect.arrayContaining(['alex', 'riley']),
+    );
+  });
+
+  it('a failed mark-ready does NOT advance the ticket — loud-fail, no silent draft-stuck (the #38 bug)', async () => {
+    const f = build({
+      ownerStatuses: { alex: 'complete' },
+      markReadyThrows: true,
+    });
+    await f.svc.integrate('T1', 7);
+    // Rolled back to executing (recoverable), NOT advanced to in_review with a still-draft PR.
+    expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'executing',
+    });
+    expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'self_review', {
+      status: 'in_review',
+    });
+    expect(emittedFor(f.boardEmit, 'self-review-failed')).toEqual(
+      expect.arrayContaining(['alex']),
+    );
   });
 });

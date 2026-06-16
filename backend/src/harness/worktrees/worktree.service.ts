@@ -397,6 +397,22 @@ export class WorktreeService implements OnApplicationBootstrap {
       .catch(() => []);
   }
 
+  /** Read-only: whether a merge is in progress in this worktree (MERGE_HEAD present), and the
+   * conflicted paths if so. The session-approval gate uses this to let an UNLINKED execute session
+   * through purely to finish a merge the harness itself left behind (publish/pull/refresh). Read-only
+   * git (rev-parse/diff), so it needs no gitOps mutex; an unknown worktree reads as no merge. */
+  async mergeState(
+    worktreeId: string,
+  ): Promise<{ inProgress: boolean; files: string[] }> {
+    const wt = this.worktrees.get(worktreeId);
+    if (!wt) return { inProgress: false, files: [] };
+    const inProgress = await this.mergeInProgress(wt.checkout);
+    return {
+      inProgress,
+      files: inProgress ? await this.conflictedFiles(wt.checkout) : [],
+    };
+  }
+
   private async readSharedConfig(
     branch: string,
     repoRoot: string,

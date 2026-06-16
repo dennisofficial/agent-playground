@@ -53,7 +53,6 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'complete_task',
         'create_session',
         'create_worktree',
-        'end_turn',
         'forget',
         'investigate',
         'list_board',
@@ -81,16 +80,6 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'update_board_task',
         'update_memory',
       ].sort(),
-    );
-    expect(tools.terminalToolNames(DEFAULT_CHAT_TOOLSET)).toEqual(
-      new Set([
-        'create_session',
-        'reply_session',
-        'submit_for_review',
-        'mark_pr_ready',
-        'investigate',
-        'end_turn',
-      ]),
     );
 
     const engines = moduleRef.get(EngineRegistry);

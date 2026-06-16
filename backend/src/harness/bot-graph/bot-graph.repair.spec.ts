@@ -100,7 +100,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -220,7 +219,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -343,7 +341,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -510,7 +507,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -655,7 +651,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {

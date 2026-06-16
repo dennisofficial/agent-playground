@@ -80,9 +80,8 @@ export class CreateSessionTool implements IHarnessTool<
 > {
   readonly name = 'create_session';
   readonly description =
-    "Open a background session — a long-lived Claude Code-style worker — in a worktree and give it its first turn. Returns a session id; you're notified when the turn reports back, and the session STAYS OPEN for follow-ups (reply_session). Calling this ENDS YOUR TURN, so put any brief first-person heads-up in THIS message's text.";
+    "Open a background session — a long-lived Claude Code-style worker — in a worktree and give it its first turn. Returns a session id; you're notified when the turn reports back, and the session STAYS OPEN for follow-ups (reply_session). Put any brief first-person heads-up in THIS message's text; once it's running you don't need to keep replying — just wait for the report-back, don't poll or babysit it.";
   readonly schema = createSessionSchema;
-  readonly terminal = true;
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
@@ -118,7 +117,11 @@ export class CreateSessionTool implements IHarnessTool<
       return `No board task #${board_task_id} — check list_board, or omit board_task_id.`;
     // The same approval gate reply_session applies — a fresh execute-mode session can't bypass it.
     if (mode === 'execute') {
-      const refusal = await this.runner.executeRefusal(id.team, board_task_id);
+      const refusal = await this.runner.executeRefusal(
+        id.team,
+        board_task_id,
+        worktreeId,
+      );
       if (refusal) return `Can't open an execute session: ${refusal}`;
     }
     // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
@@ -269,9 +272,8 @@ export class ReplySessionTool implements IHarnessTool<
 > {
   readonly name = 'reply_session';
   readonly description =
-    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. This is how you feed review/revision notes back into a still-open planning or execute session. Calling this ENDS YOUR TURN; you're notified when the turn reports back.";
+    "Send the next message into one of your open sessions — it keeps its full context, so follow-ups go here instead of a new session. This is how you feed review/revision notes back into a still-open planning or execute session. You're notified when the turn reports back; no need to keep chatting in the meantime.";
   readonly schema = replySessionSchema;
-  readonly terminal = true;
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,

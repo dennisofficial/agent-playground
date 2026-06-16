@@ -22,8 +22,8 @@ const submitForReviewSchema = z.object({
  * pipeline reviews this owner's diff (cross-engine), fixes what it can in this session, publishes onto
  * the shared branch, and — once every owner on the ticket has submitted — opens the draft PR, runs a
  * final integration review, and flips it to ready for Dennis. The bot doesn't drive any of that; it
- * just signals completion here. Calling this ENDS YOUR TURN — put a brief first-person heads-up in
- * THIS message's text.
+ * just signals completion here — put a brief first-person heads-up in THIS message's text and wait
+ * for the report-back.
  */
 @HarnessTool()
 export class SubmitForReviewTool implements IHarnessTool<
@@ -31,9 +31,8 @@ export class SubmitForReviewTool implements IHarnessTool<
 > {
   readonly name = 'submit_for_review';
   readonly description =
-    "Submit your finished execute session for review — your one gesture when the code is done. The harness self-reviews your diff, fixes issues in-session, publishes onto the shared branch, and (once every teammate on the ticket has submitted) opens the PR and marks it ready for Dennis. You do NOT open_pr or mark_pr_ready yourself anymore. Calling this ENDS YOUR TURN, so put any brief heads-up in THIS message's text.";
+    "Submit your finished execute session for review — your one gesture when the code is done. The harness self-reviews your diff, fixes issues in-session, publishes onto the shared branch, and (once every teammate on the ticket has submitted) opens the PR and marks it ready for Dennis. You do NOT open_pr or mark_pr_ready yourself anymore. Put any brief heads-up in THIS message's text and wait for the report-back.";
   readonly schema = submitForReviewSchema;
-  readonly terminal = true;
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,

@@ -66,3 +66,12 @@ export const parseVerdict = (text: string): 'pass' | 'changes' => {
   const m = /VERDICT:\s*(PASS|CHANGES)/i.exec(text);
   return m && m[1].toUpperCase() === 'CHANGES' ? 'changes' : 'pass';
 };
+
+/** The advisory-mode PR comment that carries the integration self-review's findings to Dennis on the
+ * PR he's about to review (the harness ships the PR ready regardless — this is informational). */
+export const SELF_REVIEW_PR_COMMENT = (findings: string): string =>
+  `🤖 **Integration self-review** (fresh-eyes, different-engine pass over the combined work)
+
+${findings}
+
+_Advisory only — the PR was readied automatically; nothing here blocked it. Worth a look before merging._`;

@@ -102,6 +102,16 @@ export class SessionRunnerService {
       );
       return `Heads up: this worktree wasn't updated against the base branch because another session is mid-turn in it — your base may be behind. Run \`refresh_worktree\` once it's free if you need the latest.${end}`;
     }
+    // A merge already in progress (e.g. this is a session opened to resolve a publish/pull conflict)
+    // would make refreshFromBase throw via refuseMidMerge — short-circuit to the resolve instruction
+    // instead of the generic "couldn't refresh" note, and point at the actual conflicted files.
+    const merge = await this.worktrees.mergeState(worktree.id);
+    if (merge.inProgress) {
+      this.logger.log(
+        `${sessionId}: merge in progress in ${worktree.id} — handing conflicts to the turn`,
+      );
+      return `Before anything else: a merge is IN PROGRESS in this worktree with conflicts in: ${merge.files.join(', ') || '(unknown files)'}. Resolve the conflicts and commit the merge.${end}`;
+    }
     try {
       const r = await this.worktrees.refreshFromBase(worktree.id);
       const base = r.baseBranch ?? 'the base branch';
@@ -467,6 +477,20 @@ export class SessionRunnerService {
       const refusal = await this.executeRefusal(
         session.team,
         session.boardTaskId,
+        session.worktreeId,
+      );
+      if (refusal) return { ok: false, reason: refusal };
+    }
+    // A no-mode reply CONTINUING an already-execute, UNLINKED session re-asserts the gate. In 'all'
+    // mode the only unlinked execute session is the merge-resolution bypass — re-gating it each turn
+    // means it can't keep executing past the merge it was opened to finish (once the merge is
+    // committed, mergeState clears and the refusal returns). In 'linked'/'off' mode executeRefusal
+    // returns null for unlinked work anyway, so legitimate unlinked sessions are unaffected.
+    else if (session.mode === 'execute' && session.boardTaskId === undefined) {
+      const refusal = await this.executeRefusal(
+        session.team,
+        undefined,
+        session.worktreeId,
       );
       if (refusal) return { ok: false, reason: refusal };
     }
@@ -502,10 +526,18 @@ export class SessionRunnerService {
    * every execute turn needs a linked board task in 'approved' (or 'done'/'in_review'); 'linked' =
    * only board-linked sessions are gated. Unknown dial values fail closed to 'all'. Also used by
    * create_session for execute-mode opens, so a fresh session can't bypass the gate.
+   *
+   * MERGE-RESOLUTION EXCEPTION: when `worktreeId` is given and that worktree has a merge already in
+   * progress (MERGE_HEAD), an UNLINKED execute session is allowed — finishing a merge the harness
+   * itself left behind (publish/pull/refresh) isn't new work to approve, it's forced cleanup (the
+   * same reasoning as resumeInternal). Scoped to unlinked work only: a board-linked, non-approved
+   * task is NEVER bypassed (it would run an unapproved plan as if approved), and the standup gate
+   * still wins (a wedged merge waits for close_standup).
    */
   async executeRefusal(
     team: string,
     boardTaskId: number | undefined,
+    worktreeId?: string,
   ): Promise<string | null> {
     const dial = this.env.get('EXECUTION_APPROVAL_MODE');
     if (dial === 'off') return null;
@@ -521,9 +553,12 @@ export class SessionRunnerService {
       return `the standup is still OPEN — approved or not, nothing starts executing until the team lead closes it (close_standup). Keep planning or wait for the all-clear in the channel.`;
     }
     if (boardTaskId === undefined) {
-      return dial === 'linked'
-        ? null
-        : `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
+      if (dial === 'linked') return null;
+      // Ad-hoc execute is normally refused — EXCEPT to finish a merge the harness left in this
+      // worktree (publish/pull/refresh leave MERGE_HEAD). Finishing it isn't new work to approve.
+      if (worktreeId && (await this.worktrees.mergeState(worktreeId)).inProgress)
+        return null;
+      return `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
     }
     // 'approved' (first execute session — the approved→executing CAS in CreateSessionTool flips it),
     // 'executing' (work in flight — continuing turns and additional owners), and 'done' all execute.

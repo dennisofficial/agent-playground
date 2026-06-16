@@ -37,7 +37,6 @@ import { SubmitPlanTool } from './sessions/submit-plan.tool';
 import { SubmitForReviewTool } from './sessions/submit-for-review.tool';
 import { InvestigateTool } from './sessions/investigate.tool';
 import type { IHarnessTool } from './tool.types';
-import { EndTurnTool } from './turn/end-turn.tool';
 import {
   CreateWorktreeTool,
   ListWorktreesTool,
@@ -75,7 +74,6 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   ListSessionsTool,
   SearchSessionTool,
   RecentWorkTool,
-  EndTurnTool,
   RememberTool,
   RecallTool,
   UpdateMemoryTool,

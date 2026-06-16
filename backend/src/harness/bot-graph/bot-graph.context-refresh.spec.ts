@@ -24,10 +24,9 @@ import { BotGraphFactory } from './bot-graph.factory';
  * state, the `refreshContext` node recomputes ONLY the dirtied context slices before the next
  * model call — so the bot reasons against fresh state, not a frozen pre-turn snapshot.
  *
- * Five invariants:
+ * Invariants:
  *   (1) work refresh:    worktree list change is visible in the next model call
  *   (2) memory refresh:  fetchMemory change is visible in the next model call
- *   (3) terminal → no refresh: terminal tool ends the turn immediately (no refreshContext step)
  *   (4) untagged → no route:   non-refresh tool loops straight back to llm (original behavior)
  *   (5) single recall event:   `recalled` stays the pre-LLM snapshot; refresh updates only `context`
  */
@@ -164,7 +163,6 @@ describe('bot graph — post-tools context refresh', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [pokeTool],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
       } as unknown as ToolRegistry,
       {
@@ -263,7 +261,6 @@ describe('bot graph — post-tools context refresh', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [pokeTool],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map([['poke', ['memory'] as const]]),
       } as unknown as ToolRegistry,
       {
@@ -297,77 +294,6 @@ describe('bot graph — post-tools context refresh', () => {
     // Step 2 sees M2 (the refreshed fetchMemory result from refreshContextNode).
     const step2 = invocations[1].map((m) => flat(m.content)).join('\n');
     expect(step2).toContain('M2: updated memory');
-  });
-
-  it('(3) terminal → no refresh: terminal tool ends the turn without a refreshContext superstep', async () => {
-    const channel = new FakeChannel();
-    channel.append({
-      id: 'u-0',
-      author: 'Dennis',
-      authorId: 'dennis',
-      text: 'Alex, create a session.',
-    });
-
-    const terminalPoke = tool(async () => 'session opened', {
-      name: 'poke',
-      description: 'terminal tool',
-      schema: z.object({}),
-    });
-
-    const invocations: BaseMessage[][] = [];
-    const fakeModel = {
-      bindTools() {
-        return this;
-      },
-      async invoke(convo: BaseMessage[]) {
-        invocations.push(convo);
-        // Always issues a terminal tool call — if routing is broken the turn would loop forever.
-        return new AIMessage({
-          content: '',
-          tool_calls: [
-            { name: 'poke', args: {}, id: 'call_1', type: 'tool_call' },
-          ],
-        });
-      },
-    };
-
-    const factory = new BotGraphFactory(
-      channel as unknown as ChannelService,
-      { get: () => undefined } as unknown as ChannelRegistryService,
-      {
-        toStructuredTools: () => [terminalPoke],
-        // poke is BOTH terminal AND tagged ['work'] — terminal must win.
-        terminalToolNames: () => new Set(['poke']),
-        refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
-      } as unknown as ToolRegistry,
-      {
-        gate: async () => ({ action: 'respond' as const }),
-      } as unknown as GateService,
-      {
-        isEnabled: () => false,
-        windowSize: () => 12,
-        detect: () => Promise.resolve({ looping: false }),
-      } as unknown as RecursionGuardService,
-      {
-        fetchMemory: async () => '',
-        fetchTasks: async () => '',
-      } as unknown as FetchService,
-      {
-        reconcileMemory: async () => {},
-        reconcileTasks: async () => {},
-      } as unknown as ReconcileService,
-      { buildModel: () => fakeModel } as unknown as ChatModelFactory,
-      { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
-      { list: async () => [] } as unknown as SessionRegistry,
-      new MemorySaver() as unknown as PostgresSaver,
-      { get: () => undefined } as unknown as EnvService,
-    );
-
-    await runTurn(factory, 'alex:refresh-terminal:root');
-
-    // Terminal → reconcile → END: the model is only called once (no second llm step).
-    expect(invocations).toHaveLength(1);
   });
 
   it('(4) untagged → no route: non-refresh tool loops straight back to llm (existing behavior)', async () => {
@@ -418,7 +344,6 @@ describe('bot graph — post-tools context refresh', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [pokeTool],
-        terminalToolNames: () => new Set<string>(),
         // Empty map → poke has NO refresh scope → routes straight to llm after tools.
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
@@ -512,7 +437,6 @@ describe('bot graph — post-tools context refresh', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [pokeTool],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map([['poke', ['work'] as const]]),
       } as unknown as ToolRegistry,
       {

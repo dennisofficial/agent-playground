@@ -58,6 +58,10 @@ function buildRunner(
     refreshResult?: Awaited<ReturnType<WorktreeService['refreshFromBase']>>;
     /** Make WorktreeService.refreshFromBase reject (the thrown-error path). */
     refreshThrows?: boolean;
+    /** Initial WorktreeService.mergeState — the merge-resolution bypass signal. Mutate the returned
+     * `mergeRef` mid-test to simulate the bot committing the merge. */
+    mergeInProgress?: boolean;
+    mergeFiles?: string[];
   } = {},
 ) {
   const worktree = 'worktree' in opts ? opts.worktree : WT;
@@ -84,6 +88,10 @@ function buildRunner(
     logWork: async (e: unknown) => void worklogged.push(e),
   } as unknown as WorklogStore;
   const refreshCalls: string[] = [];
+  const mergeRef = {
+    inProgress: opts.mergeInProgress ?? false,
+    files: opts.mergeFiles ?? [],
+  };
   const worktrees = {
     get: () => worktree,
     refreshFromBase: async (id: string) => {
@@ -91,6 +99,10 @@ function buildRunner(
       if (opts.refreshThrows) throw new Error('git merge blew up');
       return opts.refreshResult ?? { refreshed: true, baseBranch: 'main' };
     },
+    mergeState: async () => ({
+      inProgress: mergeRef.inProgress,
+      files: mergeRef.files,
+    }),
   } as unknown as WorktreeService;
   const creds = {
     resolve: async () => ({}),
@@ -149,6 +161,7 @@ function buildRunner(
     blockedEvents,
     attached,
     refreshCalls,
+    mergeRef,
   };
 }
 
@@ -695,6 +708,68 @@ describe('SessionRunnerService — the execute-approval gate', () => {
       true,
     );
   });
+
+  it("dial 'all': an UNLINKED execute flip is allowed when a merge is in progress (finish the harness's own merge)", async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      mergeInProgress: true,
+    });
+    const session = await idleSession(runner, sessions); // unlinked, plan mode
+    const res = await runner.replySession(
+      session.id,
+      'resolve the conflict',
+      'execute',
+    );
+    expect(res.ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await sessions.get(session.id))?.mode).toBe('execute');
+  });
+
+  it("dial 'all': the merge bypass is UNLINKED-only — a non-approved LINKED task is still refused even with a merge in progress", async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      boardTasks: { 7: { status: 'awaiting_approval' } },
+      mergeInProgress: true,
+    });
+    const session = await idleSession(runner, sessions, 7);
+    const res = await runner.replySession(session.id, 'resolve', 'execute');
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("#7 is 'awaiting_approval'");
+  });
+
+  it("dial 'all': a no-mode reply continuing an unlinked execute session is allowed WHILE the merge is in progress, refused once it's committed", async () => {
+    const { runner, sessions, mergeRef } = buildRunner(echo, {
+      approvalMode: 'all',
+      mergeInProgress: true,
+    });
+    const session = await idleSession(runner, sessions); // unlinked, plan mode
+    expect(
+      (await runner.replySession(session.id, 'resolve it', 'execute')).ok,
+    ).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    // A no-mode follow-up still resolves while the merge is live.
+    expect((await runner.replySession(session.id, 'still resolving')).ok).toBe(
+      true,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    // Once the bot commits the merge, the bypass evaporates — no open-ended ungated execution.
+    mergeRef.inProgress = false;
+    const after = await runner.replySession(session.id, 'now do unrelated work');
+    expect(after.ok).toBe(false);
+    expect(after.reason).toContain('APPROVED board task');
+  });
+
+  it('an open standup still refuses an unlinked merge-resolution flip (standup wins over the merge bypass)', async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      mergeInProgress: true,
+      standupOpen: true,
+    });
+    const session = await idleSession(runner, sessions);
+    const res = await runner.replySession(session.id, 'resolve', 'execute');
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain('standup');
+  });
 });
 
 describe('SessionRunnerService — plan relay (no auto-attach) + plan.finished hooks', () => {
@@ -956,6 +1031,27 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     expect(seen[0]?.task).toContain('main');
     expect(seen[0]?.task).toContain('src/app.ts');
     expect(seen[0]?.task).toContain('do the work'); // original task still there
+  });
+
+  it('hands an ALREADY-in-progress merge to the turn (resolve & commit) without calling refreshFromBase', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const recording: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      async run(args: RunWorkerArgs) {
+        seen.push(args);
+        return { result: 'Alex — resolved.', sessionId: 'e1' };
+      },
+    };
+    const { runner, sessions, refreshCalls } = buildRunner(recording, {
+      mergeInProgress: true,
+      mergeFiles: ['src/auth.guard.spec.ts'],
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(refreshCalls).toEqual([]); // short-circuited before refreshFromBase (would have thrown)
+    expect(seen[0]?.task).toMatch(/IN PROGRESS/);
+    expect(seen[0]?.task).toContain('src/auth.guard.spec.ts');
+    expect(seen[0]?.task).toContain('do the work');
   });
 
   // The engine's `task` is what the bot actually reads — assert the heads-up reaches it (or doesn't).

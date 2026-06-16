@@ -79,7 +79,6 @@ function buildFactory(
     { get: () => undefined } as unknown as ChannelRegistryService,
     {
       toStructuredTools: () => [],
-      terminalToolNames: () => new Set<string>(),
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     { gate } as unknown as GateService,

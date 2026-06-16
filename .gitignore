@@ -24,5 +24,3 @@ dist
 backend/slack-manifests/.app-credentials.json
 # CocoIndex Code (ccc)
 /.cocoindex_code/
-# Graphify knowledge-graph artifacts
-/graphify-out/

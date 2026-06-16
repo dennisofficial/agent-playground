@@ -15,7 +15,7 @@ import {
   TenantCredentialService,
   type TenantKeys,
 } from '../llm-keys/tenant-credential.service';
-import { BoardStore } from '../memory/board-store';
+import { BoardStore, type BoardStatus } from '../memory/board-store';
 import { BoardEventsBus } from '../memory/board-events.bus';
 import { PlanStore, type TaskPlan } from '../memory/plan-store';
 import { TicketNoteStore } from '../memory/ticket-note-store';
@@ -23,11 +23,13 @@ import { parseGithubRepo } from '../projects/git-auth';
 import { GithubApiService } from '../projects/github-api.service';
 import { GithubTokenStore } from '../projects/github-token-store';
 import { WorktreeService } from '../worktrees/worktree.service';
+import { EnvService } from '@core/config/env/env.service';
 import {
   CODE_REVIEW_PROMPT,
   CONFLICT_RESOLVE_PROMPT,
   INTEGRATION_REVIEW_PROMPT,
   REVIEW_FIX_PROMPT,
+  SELF_REVIEW_PR_COMMENT,
   parseVerdict,
 } from './review-pipeline.prompts';
 import {
@@ -45,6 +47,24 @@ const INTERNAL_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 export type OwnerReviewOutcome =
   | { kind: 'complete' }
   | { kind: 'blocked'; reason: string };
+
+/** A ticket is "published" (its work is on the shared branch) once it reaches self_review or beyond —
+ * the sibling-ship gate keys off this without joining the plan rows. */
+const PUBLISHED_STATUSES: readonly BoardStatus[] = [
+  'self_review',
+  'in_review',
+  'done',
+];
+
+/** One block per ticket in a shared feature — fed into the integration review prompt + the PR body so
+ * both describe the WHOLE combined work, not just whichever ticket opened the draft PR first. */
+function aggregateTicketText(
+  tickets: ReadonlyArray<{ id: number; title: string; description: string }>,
+): string {
+  return tickets
+    .map((t) => `#${t.id} ${t.title}${t.description ? ` — ${t.description}` : ''}`)
+    .join('\n\n');
+}
 
 /**
  * The harness-driven PR self-review pipeline — the built-in replacement for the prose instruction
@@ -82,6 +102,7 @@ export class ReviewPipelineService {
     private readonly notes: TicketNoteStore,
     private readonly boardEvents: BoardEventsBus,
     private readonly runner: SessionRunnerService,
+    private readonly env: EnvService,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
@@ -156,13 +177,15 @@ export class ReviewPipelineService {
       );
       return { kind: 'blocked', reason: 'worktree gone' };
     }
+    const task = await this.board.get(team, taskId);
     // Self-heal: the worktree never joined a shared branch at execute start (the stamping no-op'd or
-    // these sessions predate it). Promote it at the base divergence point so the owner's own diff is
-    // reviewable, instead of silently giving up. Any failure here is a loud, recoverable dead end.
+    // these sessions predate it). Promote it at the base divergence point — using the ticket's shared
+    // slug (or `ticket-N` solo) so the branch identity matches the sibling grouping — so the owner's
+    // own diff is reviewable instead of silently giving up. A failure here is a loud recoverable dead end.
     if (!worktree.sharedBranch) {
       const healed = await this.worktrees.ensureSharedAtBase(
         worktreeId,
-        `ticket-${taskId}`,
+        task?.sharedSlug ?? `ticket-${taskId}`,
       );
       if (!healed.ok) {
         await this.failOwner(
@@ -183,7 +206,6 @@ export class ReviewPipelineService {
       })
       .catch(() => undefined);
     const keys = await this.creds.resolve(team);
-    const task = await this.board.get(team, taskId);
     const ticketText = task
       ? `${task.title}\n\n${task.description}`.trim()
       : session.task;
@@ -259,19 +281,22 @@ export class ReviewPipelineService {
 
     await this.plans.setOwnerStatus(team, taskId, employee, 'complete');
 
-    // The last owner to finish trips the integration barrier.
-    if (await this.plans.allOwnersComplete(team, taskId)) {
-      await this.integrate(team, taskId).catch((err) =>
-        this.logger.warn(`integrate(#${taskId}) failed: ${err}`),
-      );
-    }
+    // This owner published — trip the integration barrier. For a shared feature it only ships once
+    // every sibling ticket is published too (the gate lives in integrate()).
+    await this.integrate(team, taskId).catch((err) =>
+      this.logger.warn(`integrate(#${taskId}) failed: ${err}`),
+    );
     return { kind: 'complete' };
   }
 
   /**
-   * Task-level barrier: open the shared-branch DRAFT PR, run a final integration review, and on a
-   * clean verdict flip the PR to ready and the ticket to 'in_review'. Fired only when every owner is
-   * complete. Idempotent on the status CAS so a re-trip is harmless.
+   * Task-level barrier: open the shared-branch DRAFT PR and run the final integration review (a
+   * fresh-eyes, different-engine pass over the COMBINED work). The harness NEVER judges pass/fail on
+   * it — that non-deterministic gate was the #49 infinite loop. INTEGRATION_REVIEW_MODE decides the
+   * hand-off: 'advisory' (default) ships the PR ready for Dennis and attaches the findings as a PR
+   * comment (max autonomy, no employee in the path); 'gated' parks the findings and seeds the decision
+   * owner to ship-or-fix. Single-owner tickets skip the review entirely (the per-owner pass already
+   * covered the whole diff). Fired only when every owner is complete; idempotent on the status CAS.
    */
   async integrate(team: string, taskId: number): Promise<void> {
     const plans = await this.plans.listForTask(team, taskId);
@@ -327,12 +352,12 @@ export class ReviewPipelineService {
     }
 
     // Ensure origin has the branch (also runs the repo-identity guard) and open/find the DRAFT PR.
-    let prUrl: string;
+    const { owner, repo } = parseGithubRepo(rec.gitUrl);
+    let pr: { url: string; number: number };
     try {
       const { sharedBranch } =
         await this.worktrees.pushSharedToOrigin(worktreeId);
-      const { owner, repo } = parseGithubRepo(rec.gitUrl);
-      const pr = await this.github.openPullRequest(auth.token, {
+      pr = await this.github.openPullRequest(auth.token, {
         owner,
         repo,
         head: sharedBranch,
@@ -341,9 +366,13 @@ export class ReviewPipelineService {
         body: task.description || undefined,
         draft: true,
       });
-      prUrl = pr.url;
-      await this.plans.setPrUrl(team, taskId, prUrl);
-      this.notifyOwners(owners, { kind: 'pr-opened', team, taskId, prUrl });
+      await this.plans.setPrUrl(team, taskId, pr.url);
+      this.notifyOwners(owners, {
+        kind: 'pr-opened',
+        team,
+        taskId,
+        prUrl: pr.url,
+      });
     } catch (err) {
       await this.failIntegration(
         team,
@@ -354,13 +383,12 @@ export class ReviewPipelineService {
       return;
     }
 
-    // Final integration review over the whole shared branch — a fresh-eyes, different-engine pass.
-    // The harness does NOT judge pass/fail here: a stateless adversarial review forced to a binary
-    // verdict loops forever on non-deterministic output (the #49 bug). Instead it parks the FULL
-    // findings under a ticket-note id and hands the ship-or-fix decision to the owner.
-    const bot = this.employees.byId(anchor.employee);
+    // The final fresh-eyes, different-engine pass over the COMBINED work. Single-owner tickets skip
+    // it: the per-owner review already covered the whole diff (their diff IS the combined diff), so a
+    // second pass is pure redundant non-determinism.
     let reviewText = '';
-    if (bot) {
+    const bot = this.employees.byId(anchor.employee);
+    if (plans.length > 1 && bot) {
       const ctx = this.employees.context();
       const keys = await this.creds.resolve(team);
       const wt = this.worktrees.get(worktreeId);
@@ -378,14 +406,85 @@ export class ReviewPipelineService {
         }),
       ).catch(() => '');
     }
+    const findings = reviewText.trim();
 
-    // Park the findings under an id and wake the DECISION OWNER. The ticket stays in self_review (PR
-    // a draft) until they mark_pr_ready or fix-and-resubmit — never a harness rollback/retry. A failed
-    // note write is a recoverable infra dead end (rolls back to executing so a resubmit retries).
-    const findings =
-      reviewText.trim() || 'Self-review completed — no issues surfaced.';
+    // The harness NEVER judges pass/fail on this (non-deterministic) review — that gate was the #49
+    // loop. The mode decides the hand-off.
+    if (this.env.get('INTEGRATION_REVIEW_MODE') === 'gated') {
+      await this.handOffToOwner(
+        team,
+        taskId,
+        owners,
+        plans,
+        anchor,
+        task.assignee,
+        pr.url,
+        findings,
+      );
+      return;
+    }
+
+    // advisory (default, max autonomy): SHIP the PR ready for Dennis — no employee in the path. Loud
+    // fail: if readying fails the ticket does NOT advance (no silent draft-stuck desync, the #38 bug).
+    try {
+      await this.github.markReadyForReview(auth.token, {
+        owner,
+        repo,
+        number: pr.number,
+      });
+    } catch (err) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owners,
+        `couldn't flip the PR out of draft (${err instanceof Error ? err.message : String(err)}) — mark it ready manually`,
+      );
+      return;
+    }
+    // Attach the findings to the PR (+ ticket) so Dennis sees them in his review — advisory, never
+    // blocking. parseVerdict only SUPPRESSES NOISE here (a clean review's "all good" prose isn't worth
+    // a comment); it never gates the ship — the PR is already ready above either way.
+    if (findings && parseVerdict(reviewText) === 'changes') {
+      await this.github
+        .commentOnPullRequest(auth.token, {
+          owner,
+          repo,
+          number: pr.number,
+          body: SELF_REVIEW_PR_COMMENT(findings),
+        })
+        .catch((err) =>
+          this.logger.warn(`self-review PR comment(#${taskId}) failed: ${err}`),
+        );
+      await this.notes
+        .add(team, taskId, anchor.employee, findings)
+        .catch(() => undefined);
+    }
+    await this.board
+      .transition(team, taskId, 'self_review', { status: 'in_review' })
+      .catch(() => undefined);
+    this.notifyOwners(owners, { kind: 'pr-ready', team, taskId, prUrl: pr.url });
+  }
+
+  /** gated mode: park the findings under a ticket-note id and wake the DECISION OWNER to decide —
+   * ship it (mark_pr_ready) or fix from the note and resubmit. The ticket stays in self_review; a
+   * failed note write is a recoverable infra dead end (rolls back so a resubmit retries). */
+  private async handOffToOwner(
+    team: string,
+    taskId: number,
+    owners: Array<{ employee: string; notifyThread?: string }>,
+    plans: TaskPlan[],
+    anchor: TaskPlan,
+    assignee: string | undefined,
+    prUrl: string,
+    findings: string,
+  ): Promise<void> {
     const note = await this.notes
-      .add(team, taskId, anchor.employee, findings)
+      .add(
+        team,
+        taskId,
+        anchor.employee,
+        findings || 'Self-review completed — no issues surfaced.',
+      )
       .catch(() => undefined);
     if (!note) {
       await this.failIntegration(
@@ -396,7 +495,7 @@ export class ReviewPipelineService {
       );
       return;
     }
-    const decider = await this.decisionOwner(plans, task.assignee, anchor);
+    const decider = await this.decisionOwner(plans, assignee, anchor);
     this.boardEvents.emit({
       kind: 'self-review-ready',
       team,

@@ -156,6 +156,79 @@ export class GithubApiService {
     };
   }
 
+  /**
+   * Update a PR's title/body — used to aggregate a shared feature's sibling tickets onto the PR at
+   * ship time (the draft was opened with just the first ticket's metadata). Best-effort by the caller.
+   */
+  async updatePullRequest(
+    token: string,
+    {
+      owner,
+      repo,
+      number,
+      title,
+      body,
+    }: {
+      owner: string;
+      repo: string;
+      number: number;
+      title?: string;
+      body?: string;
+    },
+  ): Promise<void> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}`,
+      {
+        method: 'PATCH',
+        headers: this.headers(token),
+        body: JSON.stringify({
+          ...(title !== undefined ? { title } : {}),
+          ...(body !== undefined ? { body } : {}),
+        }),
+      },
+    );
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      throw new Error(
+        `GitHub refused the PR update (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
+    }
+  }
+
+  /**
+   * Post a comment on a PR (the integration self-review's findings, in advisory mode). PRs are issues
+   * for the comments API, so this hits the issues endpoint. Best-effort by the caller — a failed
+   * comment must never block shipping the PR.
+   */
+  async commentOnPullRequest(
+    token: string,
+    {
+      owner,
+      repo,
+      number,
+      body,
+    }: { owner: string; repo: string; number: number; body: string },
+  ): Promise<void> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/issues/${number}/comments`,
+      {
+        method: 'POST',
+        headers: this.headers(token),
+        body: JSON.stringify({ body }),
+      },
+    );
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      throw new Error(
+        `GitHub refused the PR comment (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
+    }
+  }
+
   /** List the open PRs on a repo (up to 50, newest first). */
   async listOpenPullRequests(
     token: string,

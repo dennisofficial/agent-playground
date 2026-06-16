@@ -253,9 +253,4 @@ describe('propose_plan', () => {
     expect(out2).toContain('FAILED (slack down)');
     expect(out2).toContain('walk Dennis through your summary');
   });
-
-  it('is non-terminal (fire-and-forget by contract)', () => {
-    const { tool } = makeTool({});
-    expect((tool as { terminal?: boolean }).terminal ?? false).toBe(false);
-  });
 });

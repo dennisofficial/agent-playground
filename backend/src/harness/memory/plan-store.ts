@@ -207,20 +207,13 @@ export class PlanStore {
     return rows[0] ? toPlan(rows[0]) : undefined;
   }
 
-  /** Record the task-level PR url on every plan row of the task (the barrier opens ONE shared-branch
-   * PR; stamping all rows keeps the lookup uniform regardless of which owner is read). */
+  /** Record the task-level PR url on the task's plan row(s) (one owner per ticket; stamping by task
+   * keeps the lookup uniform regardless of which row is read). */
   async setPrUrl(team: string, taskId: number, prUrl: string): Promise<void> {
     await this.q(
       `UPDATE team_task_plans SET pr_url = $3, updated_at = now()
        WHERE team_id = $1 AND task_id = $2`,
       [team, taskId, prUrl],
     );
-  }
-
-  /** True when every plan row on the task is 'complete' — the integration barrier's gate. With no
-   * plans the task can't be in execution, so an empty set is NOT complete. */
-  async allOwnersComplete(team: string, taskId: number): Promise<boolean> {
-    const plans = await this.listForTask(team, taskId);
-    return plans.length > 0 && plans.every((p) => p.ownerStatus === 'complete');
   }
 }

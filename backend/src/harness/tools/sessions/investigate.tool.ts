@@ -40,15 +40,14 @@ const investigateSchema = z.object({
  * It reuses `CreateSessionTool.openSession` (the shared worktree/ownership/ALS-detached path) on the
  * employee's INVESTIGATE engine recipe (execute's engine on a top-tier reasoning model — grounding
  * facts is worth the better model). The session stays open for read-only follow-ups (reply_session).
- * Like `create_session`, calling it ENDS THE TURN — the answer relays back when the turn reports.
+ * Like `create_session`, the answer relays back when the turn reports.
  */
 @HarnessTool()
 export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
   readonly name = 'investigate';
   readonly description =
-    "Ground your answer in the ACTUAL codebase before you commit to it — spins up a read-only worker that reads/greps the real repo and reports what's actually true. Reach for it ANY time your reply, decision, or recommendation rests on a checkable fact about the code (how does X work, where is Y, does Z already exist, is this premise even true): back it with the code instead of answering from memory or assumption. It never modifies anything and needs no approval. Calling this ENDS YOUR TURN, so put any brief first-person heads-up in THIS message's text; you're notified when it reports back, and it stays open for read-only follow-ups (reply_session).";
+    "Ground your answer in the ACTUAL codebase before you commit to it — spins up a read-only worker that reads/greps the real repo and reports what's actually true. Reach for it ANY time your reply, decision, or recommendation rests on a checkable fact about the code (how does X work, where is Y, does Z already exist, is this premise even true): back it with the code instead of answering from memory or assumption. It never modifies anything and needs no approval. Put any brief first-person heads-up in THIS message's text; you're notified when it reports back, and it stays open for read-only follow-ups (reply_session).";
   readonly schema = investigateSchema;
-  readonly terminal = true;
 
   constructor(
     private readonly createSession: CreateSessionTool,

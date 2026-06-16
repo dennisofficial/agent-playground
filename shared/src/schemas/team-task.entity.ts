@@ -43,4 +43,10 @@ export class TeamTask extends TimestampedEntity {
   /** Same-team task ids this one waits on; claimable only once all are done. */
   @Column('int', { array: true, default: () => "'{}'" })
   depends_on!: number[];
+
+  /** The shared integration branch/PR slug this ticket converges on. NULL = solo (the shared branch
+   * defaults to `ticket-${id}`); a non-NULL slug shared across tickets makes them a feature group that
+   * lands on one `shared/<slug>` branch + one PR. Set by the team lead. */
+  @Column({ type: 'text', nullable: true })
+  shared_slug!: string | null;
 }
