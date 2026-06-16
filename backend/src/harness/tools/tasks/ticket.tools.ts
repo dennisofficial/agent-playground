@@ -87,14 +87,14 @@ export class GetTicketTool implements IHarnessTool<typeof getTicketSchema> {
     if (!task) return `No board task #${taskId} found.`;
 
     if (plan_of !== undefined) {
-      const who = plan_of.trim().toLowerCase();
-      const plan = await this.plans.get(id.team, taskId, who);
+      // One plan per ticket now — plan_of is vestigial; read the task's single attached plan.
+      const plan = await this.plans.get(id.team, taskId);
       if (!plan)
-        return `No plan by '${who}' on #${taskId} — get_ticket(${taskId}) lists what's attached.`;
-      return `${who}'s plan on #${taskId} [lead: ${plan.leadStatus}] (updated ${plan.updatedAt}):\n\n${paged(
+        return `No plan on #${taskId} — get_ticket(${taskId}) lists what's attached.`;
+      return `${plan.employee}'s plan on #${taskId} [lead: ${plan.leadStatus}] (updated ${plan.updatedAt}):\n\n${paged(
         plan.planMd,
         page ?? 1,
-        (next) => `get_ticket(${taskId}, plan_of: '${who}', page: ${next})`,
+        (next) => `get_ticket(${taskId}, plan_of: '${plan.employee}', page: ${next})`,
       )}`;
     }
 

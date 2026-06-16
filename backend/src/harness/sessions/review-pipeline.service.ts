@@ -162,9 +162,9 @@ export class ReviewPipelineService {
   async reviewOwner(session: Session): Promise<OwnerReviewOutcome> {
     const outcome = await this.reviewStage(session);
     if (outcome.kind !== 'complete') return outcome;
-    const { team, ownerBot: employee } = session;
+    const { team } = session;
     const taskId = session.boardTaskId!;
-    await this.plans.setOwnerStatus(team, taskId, employee, 'complete');
+    await this.plans.setOwnerStatus(team, taskId, 'complete');
     // This owner published — trip the integration barrier. For a shared feature it only ships once
     // every sibling ticket is published too (the gate lives in integrate()).
     await this.integrate(team, taskId).catch((err) =>
@@ -232,7 +232,7 @@ export class ReviewPipelineService {
     // (`executeWorktreeId && sharedBranch`) can find this owner — a row promoted-but-never-stamped
     // would otherwise mark 'complete' and then strand integrate() with no anchor.
     await this.plans
-      .setExecuteContext(team, taskId, employee, {
+      .setExecuteContext(team, taskId, {
         executeWorktreeId: worktreeId,
         sharedBranch: worktree.sharedBranch,
       })
@@ -292,7 +292,7 @@ export class ReviewPipelineService {
       files: [String(err instanceof Error ? err.message : err)],
     }));
     if (!publish.integrated) {
-      await this.plans.setOwnerStatus(team, taskId, employee, 'blocked');
+      await this.plans.setOwnerStatus(team, taskId, 'blocked');
       await this.runner
         .resumeInternal(
           session.id,
@@ -790,7 +790,7 @@ export class ReviewPipelineService {
     reason: string,
   ): Promise<void> {
     await this.plans
-      .setOwnerStatus(session.team, taskId, session.ownerBot, 'blocked')
+      .setOwnerStatus(session.team, taskId, 'blocked')
       .catch(() => undefined);
     this.emitFailed(session, taskId, reason);
   }

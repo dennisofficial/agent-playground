@@ -9,9 +9,9 @@ import { BoardStore, type BoardTask } from './board-store';
 import { PlanStore } from './plan-store';
 
 /**
- * Live-Postgres coverage for the harness-driven-quality-gates lifecycle: the new status vocabulary +
- * CAS transitions, the per-owner columns added to team_task_plans, the integration barrier's
- * allOwnersComplete gate, and the execution throttle's in-flight count.
+ * Live-Postgres coverage for the harness-driven-quality-gates lifecycle: the status vocabulary +
+ * CAS transitions, the per-task execution columns on team_task_plans, and the execution throttle's
+ * in-flight count.
  */
 function makeDataSource(): DataSource {
   return new DataSource({
@@ -64,15 +64,15 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
   it('plan rows default owner_status=executing and carry the execute context', async () => {
     const t = await approvedTask();
     await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'plan' });
-    let plan = await plans.get('T1', t.id, 'alex');
+    let plan = await plans.get('T1', t.id);
     expect(plan?.ownerStatus).toBe('executing');
     expect(plan?.executeWorktreeId).toBeUndefined();
 
-    await plans.setExecuteContext('T1', t.id, 'alex', {
+    await plans.setExecuteContext('T1', t.id, {
       executeWorktreeId: 'wt-9',
       sharedBranch: 'shared/x',
     });
-    plan = await plans.get('T1', t.id, 'alex');
+    plan = await plans.get('T1', t.id);
     expect(plan?.executeWorktreeId).toBe('wt-9');
     expect(plan?.sharedBranch).toBe('shared/x');
   });
@@ -80,17 +80,17 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
   it('owner_status walks executing → complete on the single plan row', async () => {
     const t = await approvedTask();
     await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'a' });
-    expect((await plans.get('T1', t.id, 'alex'))?.ownerStatus).toBe('executing');
-    await plans.setOwnerStatus('T1', t.id, 'alex', 'complete');
-    expect((await plans.get('T1', t.id, 'alex'))?.ownerStatus).toBe('complete');
+    expect((await plans.get('T1', t.id))?.ownerStatus).toBe('executing');
+    await plans.setOwnerStatus('T1', t.id, 'complete');
+    expect((await plans.get('T1', t.id))?.ownerStatus).toBe('complete');
   });
 
   it('re-attaching a plan resets owner_status back to executing', async () => {
     const t = await approvedTask();
     await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'a' });
-    await plans.setOwnerStatus('T1', t.id, 'alex', 'complete');
+    await plans.setOwnerStatus('T1', t.id, 'complete');
     await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'a2' });
-    expect((await plans.get('T1', t.id, 'alex'))?.ownerStatus).toBe('executing');
+    expect((await plans.get('T1', t.id))?.ownerStatus).toBe('executing');
   });
 
   it('the execution status walk: approved → executing → self_review → in_review', async () => {

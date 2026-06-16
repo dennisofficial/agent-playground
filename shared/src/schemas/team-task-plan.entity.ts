@@ -2,14 +2,15 @@ import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from './classes/base.entity';
 
 /**
- * A plan attached to a TEAM BOARD task, PER EMPLOYEE — the durable artifact of a planning session
- * (sessions are in-memory; the ticket carries the plan across restarts and is the handoff to the
- * execute session). One ticket can hold several employees' plans; the unique (team, task, employee)
- * key is the latest-wins upsert anchor. `lead_status` records the team lead's first-pass review:
- * re-attaching a revised plan resets it to 'pending' — a changed plan needs the lead again.
+ * A plan attached to a TEAM BOARD task — the durable artifact of a planning session (sessions are
+ * in-memory; the ticket carries the plan across restarts and is the handoff to the execute session).
+ * ONE plan per task: the unique (team, task) key is the latest-wins upsert anchor (the `employee`
+ * column records the authoring role, not part of the key). `lead_status` records the lead's
+ * first-pass review: re-attaching a revised plan resets it to 'pending' — a changed plan needs the
+ * lead again.
  */
 @Entity({ name: 'team_task_plans' })
-@Index(['team_id', 'task_id', 'employee'], { unique: true })
+@Index(['team_id', 'task_id'], { unique: true })
 export class TeamTaskPlan extends TimestampedEntity {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -22,7 +23,7 @@ export class TeamTaskPlan extends TimestampedEntity {
   @Column({ type: 'int' })
   task_id!: number;
 
-  /** Roster bot id of the plan's author ('alex'). */
+  /** Roster id of the plan's authoring role ('alex') — provenance only, NOT part of the unique key. */
   @Column({ type: 'text' })
   employee!: string;
 
@@ -39,11 +40,11 @@ export class TeamTaskPlan extends TimestampedEntity {
   session_id!: string | null;
 
   /**
-   * Per-owner EXECUTION state, set during the harness-driven review pipeline (distinct from the
-   * task's coarse status): 'executing' (default — coding / per-owner self-review), 'reviewed'
-   * (self-review clean, mid-publish), 'complete' (this owner's work is published + reviewed), or
+   * EXECUTION state of the task's single plan row, set during the harness-driven review pipeline
+   * (distinct from the task's coarse status): 'executing' (default — coding / self-review),
+   * 'reviewed' (self-review clean, mid-publish), 'complete' (the work is published + reviewed), or
    * 'blocked' (a publish conflict or failure left work needing the owner). The task flips
-   * 'executing' → 'self_review' only when EVERY plan row is 'complete'.
+   * 'executing' → 'self_review' when this row reaches 'complete'.
    */
   @Column({ type: 'text', default: 'executing' })
   owner_status!: string;

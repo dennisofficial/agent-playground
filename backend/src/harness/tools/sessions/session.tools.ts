@@ -160,7 +160,7 @@ export class CreateSessionTool implements IHarnessTool<
       openingTask = DEFAULT_PLAN_PROMPT({ ticket: task });
     }
     if (mode === 'execute' && board_task_id !== undefined && boardTask) {
-      const plan = await this.plans.get(id.team, board_task_id, id.selfAgent);
+      const plan = await this.plans.get(id.team, board_task_id);
       if (plan) {
         const ticketText =
           `${boardTask.title}\n\n${boardTask.description}`.trim();
@@ -208,7 +208,7 @@ export class CreateSessionTool implements IHarnessTool<
         .transition(id.team, board_task_id, 'approved', { status: 'executing' })
         .catch(() => undefined);
       await this.plans
-        .setExecuteContext(id.team, board_task_id, id.selfAgent, {
+        .setExecuteContext(id.team, board_task_id, {
           executeWorktreeId: worktreeId,
           sharedBranch: sharedBranch ?? worktree.sharedBranch,
         })

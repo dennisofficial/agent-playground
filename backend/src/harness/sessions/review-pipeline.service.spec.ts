@@ -94,14 +94,13 @@ function build(opts: {
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
   const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
 
-  const setOwnerStatus = vi.fn(async (_t: string, id: number, emp: string, s: string) => {
-    const p = (plansByTask[id] ?? []).find((x) => x.employee === emp);
+  const setOwnerStatus = vi.fn(async (_t: string, id: number, s: string) => {
+    const p = (plansByTask[id] ?? [])[0];
     if (p) (p as Record<string, unknown>).ownerStatus = s;
   });
   const plans = {
     listForTask: async (_t: string, id: number) => plansByTask[id] ?? [],
-    get: async (_t: string, id: number, emp: string) =>
-      (plansByTask[id] ?? []).find((p) => p.employee === emp),
+    get: async (_t: string, id: number) => (plansByTask[id] ?? [])[0],
     setOwnerStatus,
     setExecuteContext: vi.fn(async () => undefined),
     setPrUrl: vi.fn(async () => undefined),
@@ -242,7 +241,7 @@ describe('ReviewPipelineService.reviewOwner (per-owner review, unchanged)', () =
     const f = build({ reviewVerdict: 'ok\nVERDICT: PASS', publishIntegrated: false });
     const out = await f.svc.reviewOwner(makeSession());
     expect(out).toEqual({ kind: 'blocked', reason: 'publish conflict' });
-    expect(f.setOwnerStatus).toHaveBeenCalledWith('T1', 7, 'alex', 'blocked');
+    expect(f.setOwnerStatus).toHaveBeenCalledWith('T1', 7, 'blocked');
     expect(f.openPullRequest).not.toHaveBeenCalled();
     expect(eventsOf(f.boardEmit, 'self-review-failed').length).toBeGreaterThan(0);
     expect(f.resumeInternal).toHaveBeenCalled();

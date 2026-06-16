@@ -123,7 +123,7 @@ describe('get_ticket', () => {
       missing.notes as never,
     );
     expect(await tool2.execute({ id: 7, plan_of: 'maya' }, ctx)).toContain(
-      "No plan by 'maya'",
+      'No plan on #7',
     );
   });
 

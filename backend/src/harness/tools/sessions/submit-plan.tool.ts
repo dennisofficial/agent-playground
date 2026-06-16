@@ -53,8 +53,9 @@ export class SubmitPlanTool implements IHarnessTool<typeof submitPlanSchema> {
     if (!session.lastReport) return `${sessionId} has no plan text to submit.`;
 
     // One employee owns a ticket — refuse a second planner's plan so a ticket can never grow two
-    // owners (which the shared-branch / ship logic assumes can't happen). Same employee re-submitting
-    // (a revision) is fine — attach upserts on (team, task, employee).
+    // owners (which the shared-branch / ship logic assumes can't happen). With one plan row per task
+    // (attach upserts on (team, task)), this guard also stops a second author from CLOBBERING the
+    // first's plan. Same employee re-submitting (a revision) is fine.
     const existing = await this.plans
       .listForTask(session.team, session.boardTaskId)
       .catch(() => []);

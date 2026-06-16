@@ -45,7 +45,7 @@ describe('PlanStore (live Postgres)', () => {
       ...overrides,
     });
 
-  it('upserts on (team, task, employee) — the latest plan wins', async () => {
+  it('upserts on (team, task) — the latest plan wins', async () => {
     await attach();
     await attach({ planMd: 'v2 of the plan', sessionId: 'sess-002' });
     const all = await plans.listForTask('T1', 7);
@@ -59,28 +59,28 @@ describe('PlanStore (live Postgres)', () => {
     const approved = await plans.approve('T1', 7, 'alex');
     expect(approved?.leadStatus).toBe('approved');
     await attach({ planMd: 'revised after approval' });
-    expect((await plans.get('T1', 7, 'alex'))?.leadStatus).toBe('pending');
+    expect((await plans.get('T1', 7))?.leadStatus).toBe('pending');
   });
 
-  it('several employees coexist on one task, listed in employee order', async () => {
+  it('a second author overwrites — one plan row per task', async () => {
     await attach({ employee: 'riley', planMd: 'riley plan' });
-    await attach();
+    await attach(); // alex, 'v1 of the plan' — same (team, task) → overwrites riley
     const all = await plans.listForTask('T1', 7);
-    expect(all.map((p) => p.employee)).toEqual(['alex', 'riley']);
+    expect(all).toHaveLength(1);
+    expect(all[0].employee).toBe('alex');
+    expect(all[0].planMd).toBe('v1 of the plan');
   });
 
-  it('approve targets one (team, task, employee) and misses cleanly', async () => {
+  it('approve targets one (team, task) and misses cleanly', async () => {
     await attach();
-    expect(await plans.approve('T1', 7, 'riley')).toBeUndefined();
+    expect(await plans.approve('T1', 7, 'riley')).toBeUndefined(); // wrong author → miss
     expect(await plans.approve('T2', 7, 'alex')).toBeUndefined(); // team isolation
     expect((await plans.approve('T1', 7, 'alex'))?.leadStatus).toBe('approved');
   });
 
-  it('planStatesOf: pending_review when any plan is pending, lead_approved when all approved, absent = none, team isolated', async () => {
-    // Task 7 (T1): alex pending + riley approved → pending_review
+  it('planStatesOf: pending_review when the plan is pending, lead_approved when approved, absent = none, team isolated', async () => {
+    // Task 7 (T1): single plan, pending → pending_review
     await attach({ taskId: 7, employee: 'alex' }); // lead_status = 'pending'
-    await attach({ taskId: 7, employee: 'riley' });
-    await plans.approve('T1', 7, 'riley');
 
     // Task 8 (T1): single plan, approved → lead_approved
     await attach({ taskId: 8, employee: 'alex' });

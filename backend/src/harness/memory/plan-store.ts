@@ -4,25 +4,25 @@ import type { BoardEventsBus } from './board-events.bus';
 import { rawRows, toIso } from './sql';
 
 /**
- * Per-employee plans attached to TEAM BOARD tasks — the DURABLE artifact of a planning session.
- * The runner auto-attaches a board-linked session's finished plan here (latest version wins per
- * (team, task, employee)); the team lead reviews each attached plan (`lead_status`), and only a
- * ticket whose plans are ALL lead-approved can be proposed to Dennis. Re-attaching a revised plan
- * RESETS lead_status to 'pending' inside the same upsert — a changed plan needs the lead again.
+ * The plan attached to a TEAM BOARD task — the DURABLE artifact of a planning session. ONE plan per
+ * task (latest version wins per (team, task)); the `employee` column records the authoring role only.
+ * The lead reviews the attached plan (`lead_status`), and only a lead-approved ticket can be proposed
+ * to Dennis. Re-attaching a revised plan RESETS lead_status to 'pending' inside the same upsert — a
+ * changed plan needs the lead again.
  */
 export type PlanLeadStatus = 'pending' | 'approved';
 
 /**
  * The plan-review state of a board task — derived from `team_task_plans`, a pure plan-review axis
- * entirely separate from the board status (Dennis-approval lives in `status`) and from the per-owner
+ * entirely separate from the board status (Dennis-approval lives in `status`) and from the
  * EXECUTION axis (`PlanOwnerStatus`).
  * - 'none'           — no plan attached yet.
- * - 'pending_review' — at least one plan is attached but not yet lead-approved.
- * - 'lead_approved'  — every attached plan has been lead-approved.
+ * - 'pending_review' — a plan is attached but not yet lead-approved.
+ * - 'lead_approved'  — the attached plan has been lead-approved.
  */
 export type PlanState = 'none' | 'pending_review' | 'lead_approved';
 
-/** Per-owner execution state on the plan row — see TeamTaskPlan.owner_status. */
+/** Execution state on the plan row — see TeamTaskPlan.owner_status. */
 export type PlanOwnerStatus = 'executing' | 'reviewed' | 'complete' | 'blocked';
 
 export interface TaskPlan {
@@ -82,7 +82,8 @@ export class PlanStore {
     return rawRows<R>(await this.repo.manager.query(sql, params));
   }
 
-  /** Upsert on (team, task, employee) — latest plan wins, and the lead's prior approval is reset. */
+  /** Upsert on (team, task) — latest plan wins (overwriting any prior author's row), and the lead's
+   * prior approval is reset. The `employee` field records who authored THIS version. */
   async attach(p: {
     team: string;
     taskId: number;
@@ -93,10 +94,11 @@ export class PlanStore {
     const rows = await this.q(
       // A re-attached (revised) plan resets BOTH gates: lead_status → 'pending' (the lead re-reviews)
       // and owner_status → 'executing' (any prior execution/self-review state is stale for new work).
+      // The conflict target is (team, task): one plan per task, so a fresh author overwrites.
       `INSERT INTO team_task_plans (team_id, task_id, employee, plan_md, session_id, lead_status, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, 'pending', now(), now())
-       ON CONFLICT (team_id, task_id, employee)
-       DO UPDATE SET plan_md = $4, session_id = $5, lead_status = 'pending', owner_status = 'executing', updated_at = now()
+       ON CONFLICT (team_id, task_id)
+       DO UPDATE SET employee = $3, plan_md = $4, session_id = $5, lead_status = 'pending', owner_status = 'executing', updated_at = now()
        RETURNING *`,
       [p.team, p.taskId, p.employee, p.planMd, p.sessionId ?? null],
     );
@@ -113,19 +115,16 @@ export class PlanStore {
     return plan;
   }
 
-  async get(
-    team: string,
-    taskId: number,
-    employee: string,
-  ): Promise<TaskPlan | undefined> {
+  /** The single plan attached to a task (or undefined). */
+  async get(team: string, taskId: number): Promise<TaskPlan | undefined> {
     const rows = await this.q(
-      `SELECT * FROM team_task_plans WHERE team_id = $1 AND task_id = $2 AND employee = $3`,
-      [team, taskId, employee],
+      `SELECT * FROM team_task_plans WHERE team_id = $1 AND task_id = $2`,
+      [team, taskId],
     );
     return rows[0] ? toPlan(rows[0]) : undefined;
   }
 
-  /** Every plan on a task, employee order (stable reading order for review and the card thread). */
+  /** The plan on a task as a list (0 or 1 rows) — kept for callers that render plan blocks. */
   async listForTask(team: string, taskId: number): Promise<TaskPlan[]> {
     const rows = await this.q(
       `SELECT * FROM team_task_plans WHERE team_id = $1 AND task_id = $2 ORDER BY employee ASC`,
@@ -179,54 +178,44 @@ export class PlanStore {
     return out;
   }
 
-  /** Stamp the execute context (worktree + shared branch) onto an owner's plan row at execute-session
+  /** Stamp the execute context (worktree + shared branch) onto the task's plan row at execute-session
    * start, so the integration barrier can find them later. Idempotent. */
   async setExecuteContext(
     team: string,
     taskId: number,
-    employee: string,
     ctx: { executeWorktreeId: string; sharedBranch?: string },
   ): Promise<TaskPlan | undefined> {
     const rows = await this.q(
       `UPDATE team_task_plans
-         SET execute_worktree_id = $4, shared_branch = $5, updated_at = now()
-       WHERE team_id = $1 AND task_id = $2 AND employee = $3
+         SET execute_worktree_id = $3, shared_branch = $4, updated_at = now()
+       WHERE team_id = $1 AND task_id = $2
        RETURNING *`,
-      [team, taskId, employee, ctx.executeWorktreeId, ctx.sharedBranch ?? null],
+      [team, taskId, ctx.executeWorktreeId, ctx.sharedBranch ?? null],
     );
     return rows[0] ? toPlan(rows[0]) : undefined;
   }
 
-  /** Move an owner's per-owner execution state ('executing' → 'blocked'/'reviewed'/'complete'). */
+  /** Move the task's execution state ('executing' → 'blocked'/'reviewed'/'complete'). */
   async setOwnerStatus(
     team: string,
     taskId: number,
-    employee: string,
     ownerStatus: PlanOwnerStatus,
   ): Promise<TaskPlan | undefined> {
     const rows = await this.q(
-      `UPDATE team_task_plans SET owner_status = $4, updated_at = now()
-       WHERE team_id = $1 AND task_id = $2 AND employee = $3
+      `UPDATE team_task_plans SET owner_status = $3, updated_at = now()
+       WHERE team_id = $1 AND task_id = $2
        RETURNING *`,
-      [team, taskId, employee, ownerStatus],
+      [team, taskId, ownerStatus],
     );
     return rows[0] ? toPlan(rows[0]) : undefined;
   }
 
-  /** Record the task-level PR url on the task's plan row(s) (one owner per ticket; stamping by task
-   * keeps the lookup uniform regardless of which row is read). */
+  /** Record the task-level PR url on the task's plan row. */
   async setPrUrl(team: string, taskId: number, prUrl: string): Promise<void> {
     await this.q(
       `UPDATE team_task_plans SET pr_url = $3, updated_at = now()
        WHERE team_id = $1 AND task_id = $2`,
       [team, taskId, prUrl],
     );
-  }
-
-  /** True when every plan row on the task is 'complete' — the integration barrier's gate. With no
-   * plans the task can't be in execution, so an empty set is NOT complete. */
-  async allOwnersComplete(team: string, taskId: number): Promise<boolean> {
-    const plans = await this.listForTask(team, taskId);
-    return plans.length > 0 && plans.every((p) => p.ownerStatus === 'complete');
   }
 }
