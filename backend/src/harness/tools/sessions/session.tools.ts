@@ -123,6 +123,16 @@ export class CreateSessionTool implements IHarnessTool<
         worktreeId,
       );
       if (refusal) return `Can't open an execute session: ${refusal}`;
+      // Drift guard: the ticket's slug is the single source of truth for its shared branch. If this
+      // worktree already sits on a DIFFERENT shared branch (e.g. a manual create_worktree(shared:)),
+      // refuse — otherwise ensureShared keeps the stale branch and the sibling grouping diverges.
+      if (board_task_id !== undefined && boardTask && worktree.sharedBranch) {
+        const want = this.worktrees.sharedBranchName(
+          boardTask.sharedSlug ?? `ticket-${board_task_id}`,
+        );
+        if (worktree.sharedBranch !== want)
+          return `Can't open an execute session: ${worktreeId} is on ${worktree.sharedBranch}, but ticket #${board_task_id} lands on ${want}. Use a fresh worktree for this ticket.`;
+      }
     }
     // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
     // and an execute session on the same employee can run different engines (Option B). Fixed at
@@ -185,11 +195,14 @@ export class CreateSessionTool implements IHarnessTool<
     // worktree + shared branch on this owner's plan row so the integration barrier finds them later.
     // Both best-effort — they must never fail the session that's already running.
     if (mode === 'execute' && board_task_id !== undefined && boardTask) {
-      // Ensure the worktree is on a shared branch derived from the TICKET, so the review pipeline can
-      // open + ready the PR through it for SOLO work too (not only multi-employee), and every owner of
-      // this ticket converges on the same shared branch. No-op if it already joined one explicitly.
+      // Ensure the worktree is on the shared branch the TICKET names: its `shared_slug` (a feature
+      // group landing on one PR), or `ticket-${id}` for standalone work. The drift guard above already
+      // rejected a worktree sitting on a conflicting shared branch, so this is a no-op or a clean cut.
       const sharedBranch = await this.worktrees
-        .ensureShared(worktreeId, `ticket-${board_task_id}`)
+        .ensureShared(
+          worktreeId,
+          boardTask.sharedSlug ?? `ticket-${board_task_id}`,
+        )
         .catch(() => worktree.sharedBranch);
       await this.board
         .transition(id.team, board_task_id, 'approved', { status: 'executing' })

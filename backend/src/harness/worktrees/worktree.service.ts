@@ -317,8 +317,9 @@ export class WorktreeService implements OnApplicationBootstrap {
   }
 
   /** Normalize an employee-supplied shared name to `shared/<slug>` (a leading `shared/` is allowed
-   * and stripped first, so passing a full branch name back in can't double-prefix). */
-  private sharedBranchName(input: string): string {
+   * and stripped first, so passing a full branch name back in can't double-prefix). Public so callers
+   * (e.g. create_session's drift guard) can compute the branch a ticket's slug WOULD derive. */
+  sharedBranchName(input: string): string {
     return `shared/${slugify(input.replace(/^shared\//, ''))}`;
   }
 

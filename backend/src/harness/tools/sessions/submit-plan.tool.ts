@@ -52,6 +52,16 @@ export class SubmitPlanTool implements IHarnessTool<typeof submitPlanSchema> {
       return `${sessionId} isn't linked to a board task — open it with board_task_id so its plan has a ticket to attach to.`;
     if (!session.lastReport) return `${sessionId} has no plan text to submit.`;
 
+    // One employee owns a ticket — refuse a second planner's plan so a ticket can never grow two
+    // owners (which the shared-branch / ship logic assumes can't happen). Same employee re-submitting
+    // (a revision) is fine — attach upserts on (team, task, employee).
+    const existing = await this.plans
+      .listForTask(session.team, session.boardTaskId)
+      .catch(() => []);
+    const other = existing.find((p) => p.employee !== session.ownerBot);
+    if (other)
+      return `Board task #${session.boardTaskId} already has ${other.employee}'s plan — one owner per ticket. Ask @Sam to split the work into a separate ticket (a shared_slug groups them onto one PR).`;
+
     await this.plans.attach({
       team: session.team,
       taskId: session.boardTaskId,

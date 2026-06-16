@@ -171,6 +171,49 @@ describe('GithubApiService.listOpenPullRequests', () => {
   });
 });
 
+describe('GithubApiService.updatePullRequest', () => {
+  it('PATCHes the PR with title + body', async () => {
+    const { impl, calls } = fakeFetch([{ status: 200, body: { number: 7 } }]);
+    const api = new GithubApiService();
+    api.fetchImpl = impl;
+    await api.updatePullRequest('TOK', {
+      owner: 'dennis',
+      repo: 'app',
+      number: 7,
+      title: 'payment-flow',
+      body: '#7 A — x\n\n#8 B — y',
+    });
+    expect(calls[0].url).toBe('https://api.github.com/repos/dennis/app/pulls/7');
+    expect(calls[0].init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      title: 'payment-flow',
+      body: '#7 A — x\n\n#8 B — y',
+    });
+  });
+
+  it('throws a token-free error on failure', async () => {
+    const { impl } = fakeFetch([{ status: 403, body: { message: 'no access' } }]);
+    const api = new GithubApiService();
+    api.fetchImpl = impl;
+    await expect(
+      api.updatePullRequest('SECRET_TOK', {
+        owner: 'dennis',
+        repo: 'app',
+        number: 7,
+        title: 'x',
+      }),
+    ).rejects.toThrow(/GitHub refused the PR update \(403\): no access/);
+    await expect(
+      api.updatePullRequest('SECRET_TOK', {
+        owner: 'dennis',
+        repo: 'app',
+        number: 7,
+        title: 'x',
+      }),
+    ).rejects.not.toThrow(/SECRET_TOK/);
+  });
+});
+
 describe('GithubApiService.commentOnPullRequest', () => {
   it('posts to the issues/comments endpoint with the body', async () => {
     const { impl, calls } = fakeFetch([{ status: 201, body: { id: 1 } }]);
