@@ -20,7 +20,7 @@ const ctx: { identity: Identity } = {
     surface: 'chan',
     isChannel: true,
   },
-} as never;
+};
 
 function makeSession(over: Partial<Session> = {}): Session {
   return {
@@ -53,7 +53,9 @@ function makeTool(opts: {
         ? { id: 7, status: 'executing' }
         : { id: 7, status: opts.taskStatus },
   } as never;
-  const reviewOwner = vi.fn(opts.reviewOwner ?? (async () => ({ kind: 'complete' })));
+  const reviewOwner = vi.fn(
+    opts.reviewOwner ?? (async () => ({ kind: 'complete' })),
+  );
   const reportOwnerCrash = vi.fn(
     async (_session: Session, _reason: string) => undefined,
   );
@@ -65,7 +67,7 @@ function makeTool(opts: {
 describe('submit_for_review', () => {
   it('fires the review pipeline and returns the running heads-up', async () => {
     const { tool, reviewOwner, reportOwnerCrash } = makeTool({});
-    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx as never);
+    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx);
     expect(reviewOwner).toHaveBeenCalledTimes(1);
     expect(msg).toMatch(/submitted sess-1 \(#7\) for review/i);
     // A clean run never reports a crash.
@@ -79,7 +81,7 @@ describe('submit_for_review', () => {
         throw new Error('boom');
       },
     });
-    await tool.execute({ sessionId: 'sess-1' }, ctx as never);
+    await tool.execute({ sessionId: 'sess-1' }, ctx);
     await vi.waitFor(() => expect(reportOwnerCrash).toHaveBeenCalledTimes(1));
     const [session, reason] = reportOwnerCrash.mock.calls[0];
     expect(session.id).toBe('sess-1');
@@ -88,14 +90,14 @@ describe('submit_for_review', () => {
 
   it('rejects a session whose task is no longer executing — and never fires the pipeline', async () => {
     const { tool, reviewOwner } = makeTool({ taskStatus: 'in_review' });
-    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx as never);
+    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx);
     expect(msg).toMatch(/not 'executing'/i);
     expect(reviewOwner).not.toHaveBeenCalled();
   });
 
   it('accepts a resubmit from self_review (the fix-and-resubmit path)', async () => {
     const { tool, reviewOwner } = makeTool({ taskStatus: 'self_review' });
-    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx as never);
+    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx);
     expect(reviewOwner).toHaveBeenCalledTimes(1);
     expect(msg).toMatch(/submitted sess-1 \(#7\) for review/i);
   });
@@ -104,7 +106,7 @@ describe('submit_for_review', () => {
     const { tool, reviewOwner } = makeTool({
       session: makeSession({ ownerBot: 'riley' }),
     });
-    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx as never);
+    const msg = await tool.execute({ sessionId: 'sess-1' }, ctx);
     expect(msg).toMatch(/not your session/i);
     expect(reviewOwner).not.toHaveBeenCalled();
   });

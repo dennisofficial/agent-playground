@@ -501,7 +501,10 @@ describe('ApprovalCardsService — notifyDescriptionChange', () => {
   it('throws (and does NOT post) for a non-Slack surface id', async () => {
     const { service, web } = makeService({ installedBy: 'U-BOSS' });
     await expect(
-      service.notifyDescriptionChange({ ...CHANGE_EVENT, surfaceId: 'tui:main' }),
+      service.notifyDescriptionChange({
+        ...CHANGE_EVENT,
+        surfaceId: 'tui:main',
+      }),
     ).rejects.toThrow('non-Slack');
     expect(web.chat.postMessage).not.toHaveBeenCalled();
   });

@@ -277,7 +277,12 @@ describe('WorktreeService (real git, temp repo)', () => {
         '--cacheinfo',
         `160000,${sha},vendor/stub`,
       );
-      await git(submodRepo, 'commit', '-m', 'add submodule stub (unreachable url)');
+      await git(
+        submodRepo,
+        'commit',
+        '-m',
+        'add submodule stub (unreachable url)',
+      );
 
       const submodService = makeService(submodRepo);
       const errorSpy = vi.spyOn(Logger.prototype, 'error');
@@ -295,7 +300,9 @@ describe('WorktreeService (real git, temp repo)', () => {
         expect(warning).toContain('git submodule update --init --recursive');
         // Logger.error was called with the failure message
         expect(errorSpy).toHaveBeenCalled();
-        expect(String(errorSpy.mock.calls[0][0])).toMatch(/submodule init failed/i);
+        expect(String(errorSpy.mock.calls[0][0])).toMatch(
+          /submodule init failed/i,
+        );
       } finally {
         errorSpy.mockRestore();
       }
@@ -1020,7 +1027,9 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     expect(await readFile(join(worktree.checkout, 'merged.txt'), 'utf8')).toBe(
       'from main\n',
     );
-    expect(await git(worktree.checkout, 'log', '--format=%H')).toContain(newTip);
+    expect(await git(worktree.checkout, 'log', '--format=%H')).toContain(
+      newTip,
+    );
   });
 
   it('refreshFromBase leaves a conflict IN PROGRESS for a session to resolve', async () => {
@@ -1104,7 +1113,11 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     expect(range).toContain('alex.txt');
     expect(service.get(worktree.id)?.sharedBranch).toBe('shared/ticket-9');
     expect(
-      await git(worktree.repoRoot, 'config', `branch.${worktree.branch}.agent-shared`),
+      await git(
+        worktree.repoRoot,
+        'config',
+        `branch.${worktree.branch}.agent-shared`,
+      ),
     ).toBe('shared/ticket-9');
   });
 

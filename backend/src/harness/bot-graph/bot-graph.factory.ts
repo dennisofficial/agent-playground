@@ -11,7 +11,6 @@ import { ChatModelFactory } from '../llm/chat-model.factory';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
 import { CompactionSummaryStore } from '../memory/compaction-summary.store';
 import { FetchService } from '../memory/fetch.service';
-import { COMPACTION_TAIL } from '../memory/memory-constants';
 import { ReconcileService } from '../memory/reconcile.service';
 import { RecursionGuardService } from '../recursion-guard/recursion-guard.service';
 import { ToolLoopGuardService } from '../recursion-guard/tool-loop-guard.service';
@@ -136,7 +135,6 @@ export class BotGraphFactory {
       dormancyEnabled,
       dormancyThreshold,
       this.engineTools,
-      COMPACTION_TAIL,
       this.compactionStore,
       this.toolLoopGuard,
     );
@@ -153,8 +151,8 @@ export class BotGraphFactory {
 
   private build(bot: EmployeeDefinition) {
     const n = this.nodes.forBot(bot);
-    // `compact` runs sequentially after `reconcile` on every path (a cheap token-threshold
-    // check first — no LLM call unless COMPACTION_TOKEN_THRESHOLD has been crossed). Both checkpoint
+    // `compact` runs sequentially after `reconcile` on every path (a cheap token-estimate
+    // check first — no LLM call unless COMPACTION_TRIGGER_TOKENS is exceeded). Both checkpoint
     // their state changes before END.
     //
     // Topology (updated):
@@ -162,37 +160,39 @@ export class BotGraphFactory {
     //                 │                        └─ pause ──────────────────────────────────┤
     //                 └─ acknowledge / ignore → mark_seen ──────────────────────────────┴→ reconcile → compact → END
     //                                              └─ dormant off-lane skip ───────────────────────────────────────→ END
-    return new StateGraph(BotState)
-      .addNode('gate', n.gate)
-      .addNode('loop_guard', n.loopGuard)
-      .addNode('pause', n.pause)
-      .addNode('recall', n.recall)
-      .addNode('llm', n.llm)
-      .addNode('tools', n.tools)
-      .addNode('tool_loop_guard', n.toolLoopGuard)
-      .addNode('refreshContext', n.refreshContext)
-      .addNode('mark_seen', n.markSeen)
-      .addNode('reconcile', n.reconcile)
-      .addNode('compact', n.compact)
-      .addEdge(START, 'gate')
-      .addConditionalEdges('gate', route, ['loop_guard', 'mark_seen'])
-      .addConditionalEdges('loop_guard', afterGuard, ['recall', 'pause'])
-      .addEdge('recall', 'llm')
-      .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
-      // No tool ends the turn directly: every tool batch flows through `tool_loop_guard`, which
-      // catches a repeated-tool-call loop before the llm/refresh route. The turn ends only when the
-      // bot's next llm step produces no tool call (afterLlm → reconcile).
-      .addEdge('tools', 'tool_loop_guard')
-      .addConditionalEdges('tool_loop_guard', makeAfterToolLoopGuard(n.refresh), [
-        'llm',
-        'refreshContext',
-        'reconcile',
-      ])
-      .addEdge('refreshContext', 'llm')
-      .addConditionalEdges('mark_seen', afterMarkSeen, ['reconcile', END])
-      .addEdge('pause', 'reconcile')
-      .addEdge('reconcile', 'compact')
-      .addEdge('compact', END)
-      .compile({ checkpointer: this.checkpointer });
+    return (
+      new StateGraph(BotState)
+        .addNode('gate', n.gate)
+        .addNode('loop_guard', n.loopGuard)
+        .addNode('pause', n.pause)
+        .addNode('recall', n.recall)
+        .addNode('llm', n.llm)
+        .addNode('tools', n.tools)
+        .addNode('tool_loop_guard', n.toolLoopGuard)
+        .addNode('refreshContext', n.refreshContext)
+        .addNode('mark_seen', n.markSeen)
+        .addNode('reconcile', n.reconcile)
+        .addNode('compact', n.compact)
+        .addEdge(START, 'gate')
+        .addConditionalEdges('gate', route, ['loop_guard', 'mark_seen'])
+        .addConditionalEdges('loop_guard', afterGuard, ['recall', 'pause'])
+        .addEdge('recall', 'llm')
+        .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
+        // No tool ends the turn directly: every tool batch flows through `tool_loop_guard`, which
+        // catches a repeated-tool-call loop before the llm/refresh route. The turn ends only when the
+        // bot's next llm step produces no tool call (afterLlm → reconcile).
+        .addEdge('tools', 'tool_loop_guard')
+        .addConditionalEdges(
+          'tool_loop_guard',
+          makeAfterToolLoopGuard(n.refresh),
+          ['llm', 'refreshContext', 'reconcile'],
+        )
+        .addEdge('refreshContext', 'llm')
+        .addConditionalEdges('mark_seen', afterMarkSeen, ['reconcile', END])
+        .addEdge('pause', 'reconcile')
+        .addEdge('reconcile', 'compact')
+        .addEdge('compact', END)
+        .compile({ checkpointer: this.checkpointer })
+    );
   }
 }

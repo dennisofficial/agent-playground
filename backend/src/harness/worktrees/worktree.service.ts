@@ -475,7 +475,8 @@ export class WorktreeService implements OnApplicationBootstrap {
         input.project,
         repoRoot,
       );
-      if (baseWarning) warning = warning ? `${warning} ${baseWarning}` : baseWarning;
+      if (baseWarning)
+        warning = warning ? `${warning} ${baseWarning}` : baseWarning;
 
       let shared = input.shared
         ? this.sharedBranchName(input.shared)
@@ -874,7 +875,9 @@ export class WorktreeService implements OnApplicationBootstrap {
         wt.repoRoot,
       );
       wt.sharedBranch = shared;
-      this.logger.log(`${id}: promoted ${wt.branch} to shared branch ${shared}`);
+      this.logger.log(
+        `${id}: promoted ${wt.branch} to shared branch ${shared}`,
+      );
       return shared;
     });
   }
@@ -893,7 +896,9 @@ export class WorktreeService implements OnApplicationBootstrap {
   async ensureSharedAtBase(
     id: string,
     name: string,
-  ): Promise<{ ok: true; sharedBranch: string } | { ok: false; reason: string }> {
+  ): Promise<
+    { ok: true; sharedBranch: string } | { ok: false; reason: string }
+  > {
     const wt = this.worktrees.get(id);
     if (!wt) return { ok: false, reason: `worktree ${id} no longer exists` };
     if (wt.sharedBranch) return { ok: true, sharedBranch: wt.sharedBranch };
@@ -967,7 +972,10 @@ export class WorktreeService implements OnApplicationBootstrap {
       ['diff', '--name-only', range],
       wt.checkout,
     ).catch(() => '');
-    const files = out.split('\n').map((f) => f.trim()).filter(Boolean);
+    const files = out
+      .split('\n')
+      .map((f) => f.trim())
+      .filter(Boolean);
     return { range, files };
   }
 

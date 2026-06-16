@@ -120,7 +120,7 @@ describe('create_session × the approval gate', () => {
       { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
       ctx,
     );
-    const opening = runner.runSessionTurn.mock.calls[0]?.[1] as string;
+    const opening = runner.runSessionTurn.mock.calls[0]?.[1];
     // Codex has no native plan ceremony, so the posture is established in the prompt.
     expect(opening).toContain('PLAN MODE');
     expect(opening).toContain('READ-ONLY');
@@ -152,7 +152,11 @@ describe('create_session × the approval gate', () => {
       ctx,
     );
     expect(out).toContain('board #7');
-    expect(linked.runner.executeRefusal).toHaveBeenCalledWith('T1', 7, 'wt-001');
+    expect(linked.runner.executeRefusal).toHaveBeenCalledWith(
+      'T1',
+      7,
+      'wt-001',
+    );
     expect(linked.created[0]?.boardTaskId).toBe(7);
   });
 
@@ -255,7 +259,7 @@ describe('create_session × the approval gate', () => {
       ctx,
     );
     expect(notes.get).toHaveBeenCalledWith('T1', 7, 42);
-    const opening = runner.runSessionTurn.mock.calls[0]?.[1] as string;
+    const opening = runner.runSessionTurn.mock.calls[0]?.[1];
     expect(opening).toContain('SELF-REVIEW FINDINGS TO ADDRESS (note #42)');
     expect(opening).toContain('Null check missing in handler.');
   });
@@ -305,11 +309,15 @@ describe('reply_session × review_note_id templating (the recommended fix path)'
       note: { id: 42, body: 'Fix the null check.' },
     });
     await tool.execute(
-      { sessionId: 'sess-1', message: 'addressing the note', review_note_id: 42 },
+      {
+        sessionId: 'sess-1',
+        message: 'addressing the note',
+        review_note_id: 42,
+      },
       ctx,
     );
     expect(notes.get).toHaveBeenCalledWith('T1', 7, 42);
-    const sent = replySession.mock.calls[0]?.[1] as string;
+    const sent = replySession.mock.calls[0]?.[1];
     expect(sent).toContain('SELF-REVIEW FINDINGS TO ADDRESS (note #42)');
     expect(sent).toContain('Fix the null check.');
     expect(sent).toContain('addressing the note');

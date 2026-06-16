@@ -1,5 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { INestApplication } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,7 +33,7 @@ async function buildApp(token?: string): Promise<INestApplication> {
         provide: TenantViewStore,
         useValue: mockStore,
       },
-      AdminTokenGuard,
+      { provide: APP_GUARD, useClass: AdminTokenGuard },
       {
         // Provide EnvService under its real class token so AdminTokenGuard's constructor
         // injection resolves; `ADMIN_API_TOKEN` drives the guard's enabled/valid checks.

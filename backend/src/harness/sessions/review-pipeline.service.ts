@@ -62,7 +62,9 @@ function aggregateTicketText(
   tickets: ReadonlyArray<{ id: number; title: string; description: string }>,
 ): string {
   return tickets
-    .map((t) => `#${t.id} ${t.title}${t.description ? ` — ${t.description}` : ''}`)
+    .map(
+      (t) => `#${t.id} ${t.title}${t.description ? ` — ${t.description}` : ''}`,
+    )
     .join('\n\n');
 }
 
@@ -106,13 +108,19 @@ export class ReviewPipelineService {
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
-  private keyFor(keys: TenantKeys, engine: EWorkerEngineName): string | undefined {
+  private keyFor(
+    keys: TenantKeys,
+    engine: EWorkerEngineName,
+  ): string | undefined {
     return engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
   }
 
   /** The owner's REVIEW engine — reuse the cross-engine recipe they already declared for plan
    * self-review (SELF_REVIEW capability); fall back to their execute engine when they declare none. */
-  private reviewSpec(bot: EmployeeDefinition, ctx: EmployeeContext): EngineSpec {
+  private reviewSpec(
+    bot: EmployeeDefinition,
+    ctx: EmployeeContext,
+  ): EngineSpec {
     const cap = bot.capabilities(ctx).find((c) => c.name === SELF_REVIEW);
     return cap ? cap.spec(ctx) : bot.executeEngine(ctx);
   }
@@ -156,7 +164,10 @@ export class ReviewPipelineService {
     const { team, ownerBot: employee, worktreeId } = session;
     const taskId = session.boardTaskId;
     if (taskId === undefined)
-      return { kind: 'blocked', reason: 'session is not linked to a board task' };
+      return {
+        kind: 'blocked',
+        reason: 'session is not linked to a board task',
+      };
 
     const bot = this.employees.byId(employee);
     if (!bot) {

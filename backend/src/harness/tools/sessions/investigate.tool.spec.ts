@@ -107,10 +107,7 @@ describe('investigate', () => {
   });
 
   it('injects a distinct emphasis line per intent', async () => {
-    const cases: Array<[
-      'trace' | 'debug' | 'review',
-      string,
-    ]> = [
+    const cases: Array<['trace' | 'debug' | 'review', string]> = [
       ['trace', 'walk the exact path'],
       ['debug', 'check whether the premise is even true'],
       ['review', 'trade-offs'],

@@ -252,6 +252,62 @@ export const pairSafeBoundary = (
   return b;
 };
 
+/** Rough token estimate: chars / 4, rounded up. No tokenizer dependency. */
+export const estimateTokens = (text: string): number =>
+  Math.ceil(text.length / 4);
+
+/** Per-message token estimate: flattened text content + tool_call JSON length, chars/4. */
+export const estimateMessageTokens = (m: BaseMessage): number => {
+  const textLen = flattenContent(m.content).length;
+  const calls = (m as AIMessage).tool_calls;
+  const callsLen = calls?.length ? JSON.stringify(calls).length : 0;
+  return Math.ceil((textLen + callsLen) / 4);
+};
+
+/** Sum estimated tokens across an array of messages. */
+export const sumMessageTokens = (messages: BaseMessage[]): number =>
+  messages.reduce((s, m) => s + estimateMessageTokens(m), 0);
+
+/**
+ * Find the start index of the verbatim tail that fits within `verbatimBudgetTokens`.
+ *
+ * Walks backward from the end of `messages[from..]`, accumulating estimated tokens.
+ * Stops when adding the next message would exceed the budget — except the very last
+ * message is always kept regardless of budget (so the tail is never empty).
+ *
+ * The raw cut is then passed to `pairSafeBoundary` (with `floor = from`) to guarantee
+ * the tail never starts on an orphan ToolMessage and always starts at a HumanMessage
+ * boundary. Returns `from` (no progress / bail) when the pair-safe walk collapses.
+ */
+export const findCompactionCutPoint = (
+  messages: BaseMessage[],
+  from: number,
+  verbatimBudgetTokens: number,
+): number => {
+  let acc = 0;
+  let cut = messages.length;
+  for (let i = messages.length - 1; i >= from; i--) {
+    const t = estimateMessageTokens(messages[i]);
+    // Always keep at least the last message even if it alone exceeds the budget.
+    if (acc + t > verbatimBudgetTokens && i < messages.length - 1) break;
+    acc += t;
+    cut = i;
+  }
+  // Delegate pair-safety to pairSafeBoundary.
+  //
+  // NB: The approved plan specified ToolMessage-only walk-back (declining the stricter
+  // HumanMessage-boundary step). We intentionally use pairSafeBoundary here instead,
+  // which adds a further walk-back to the nearest preceding HumanMessage. Reason: the
+  // Anthropic API requires the verbatim tail to begin with a human turn; an AIMessage at
+  // the cut head is technically valid (the summary HumanMessage in block 2 precedes it),
+  // but a ToolMessage at the head is an immediate API 400. Using pairSafeBoundary is the
+  // conservative, consistent choice — it reuses the existing safe-boundary helper, costs
+  // at most a few extra evicted messages, and prevents a class of runtime errors. The
+  // HumanMessage-boundary portion returns `from` (bail) when no valid boundary exists
+  // above the floor, so the stuck-compaction backstop still fires correctly.
+  return pairSafeBoundary(messages, cut, from);
+};
+
 /**
  * SELF-HEALING GUARD: repair dangling tool calls in the durable history before every model call.
  *

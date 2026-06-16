@@ -754,7 +754,10 @@ describe('SessionRunnerService — the execute-approval gate', () => {
     await new Promise((r) => setTimeout(r, 20));
     // Once the bot commits the merge, the bypass evaporates — no open-ended ungated execution.
     mergeRef.inProgress = false;
-    const after = await runner.replySession(session.id, 'now do unrelated work');
+    const after = await runner.replySession(
+      session.id,
+      'now do unrelated work',
+    );
     expect(after.ok).toBe(false);
     expect(after.reason).toContain('APPROVED board task');
   });

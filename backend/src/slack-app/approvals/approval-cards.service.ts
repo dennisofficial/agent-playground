@@ -126,14 +126,12 @@ export class ApprovalCardsService
         `description-change card for #${e.taskId} from a non-Slack room (${e.surfaceId})`,
       );
     const web = await this.clients.clientFor(parsed.teamId);
-    if (!web)
-      throw new Error(`no Slack client for workspace ${parsed.teamId}`);
+    if (!web) throw new Error(`no Slack client for workspace ${parsed.teamId}`);
 
     // Resolve the boss mention — <@Uxxxx> when configured; literal fallback so the card still
     // posts but without a ping (dev workspaces without APPROVAL_BOSS_USER_ID configured).
     const tenant = await this.tenants.get(parsed.teamId).catch(() => undefined);
-    const bossId =
-      tenant?.installedBy ?? this.env.get('APPROVAL_BOSS_USER_ID');
+    const bossId = tenant?.installedBy ?? this.env.get('APPROVAL_BOSS_USER_ID');
     const bossMention = bossId ? `<@${bossId}>` : 'Dennis';
 
     const actor = this.employees.byId(e.changedBy);

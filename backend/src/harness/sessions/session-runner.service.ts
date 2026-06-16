@@ -189,7 +189,8 @@ export class SessionRunnerService {
       // outcome (dirty tree, fetch miss, contention, error) is surfaced to the bot as a heads-up so
       // it knows it may be on a stale base and can `refresh_worktree` after committing.
       if (enteringExecute) {
-        message = (await this.baseRefreshPreamble(sessionId, worktree)) + message;
+        message =
+          (await this.baseRefreshPreamble(sessionId, worktree)) + message;
       }
       // Per-turn spec from the employee, by mode: 'plan' → plan recipe, 'investigate' → investigate
       // recipe (execute's engine on a top-tier model), else the execute recipe (model/effort/
@@ -556,7 +557,10 @@ export class SessionRunnerService {
       if (dial === 'linked') return null;
       // Ad-hoc execute is normally refused — EXCEPT to finish a merge the harness left in this
       // worktree (publish/pull/refresh leave MERGE_HEAD). Finishing it isn't new work to approve.
-      if (worktreeId && (await this.worktrees.mergeState(worktreeId)).inProgress)
+      if (
+        worktreeId &&
+        (await this.worktrees.mergeState(worktreeId)).inProgress
+      )
         return null;
       return `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
     }

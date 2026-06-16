@@ -177,8 +177,7 @@ export class CreateSessionTool implements IHarnessTool<
       const note = await this.notes
         .get(id.team, board_task_id, review_note_id)
         .catch(() => undefined);
-      if (note)
-        openingTask += `\n\n${reviewFindingsBlock(note.id, note.body)}`;
+      if (note) openingTask += `\n\n${reviewFindingsBlock(note.id, note.body)}`;
     }
     const { sessionId } = await this.openSession({
       identity: id,
@@ -295,7 +294,12 @@ export class ReplySessionTool implements IHarnessTool<
   ) {}
 
   async execute(
-    { sessionId, message, mode, review_note_id }: z.infer<typeof replySessionSchema>,
+    {
+      sessionId,
+      message,
+      mode,
+      review_note_id,
+    }: z.infer<typeof replySessionSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const session = await this.sessions.get(sessionId);

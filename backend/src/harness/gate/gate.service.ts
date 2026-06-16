@@ -169,8 +169,7 @@ export class GateService {
   ): Promise<GateDecision> {
     if (opts.authorBotId === bot.id)
       return { ...IGNORE, reason: 'own-message' }; // never react to your own message
-    if (opts.channel?.kind === 'dm')
-      return { ...RESPOND, reason: 'dm' }; // a 1:1 is always yours to answer
+    if (opts.channel?.kind === 'dm') return { ...RESPOND, reason: 'dm' }; // a 1:1 is always yours to answer
 
     const fromBot = !!opts.authorBotId;
     const batch = (

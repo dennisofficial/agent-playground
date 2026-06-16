@@ -161,7 +161,10 @@ export class PlanStore {
     const out = new Map<number, PlanState>();
     const ids = [...new Set(taskIds)];
     if (ids.length === 0) return out;
-    const rows = await this.q<{ task_id: number | string; pending: number | string }>(
+    const rows = await this.q<{
+      task_id: number | string;
+      pending: number | string;
+    }>(
       `SELECT task_id, count(*) FILTER (WHERE lead_status <> 'approved') AS pending
          FROM team_task_plans
         WHERE team_id = $1 AND task_id = ANY($2)
@@ -169,7 +172,10 @@ export class PlanStore {
       [team, ids],
     );
     for (const r of rows)
-      out.set(Number(r.task_id), Number(r.pending) > 0 ? 'pending_review' : 'lead_approved');
+      out.set(
+        Number(r.task_id),
+        Number(r.pending) > 0 ? 'pending_review' : 'lead_approved',
+      );
     return out;
   }
 
@@ -215,5 +221,12 @@ export class PlanStore {
        WHERE team_id = $1 AND task_id = $2`,
       [team, taskId, prUrl],
     );
+  }
+
+  /** True when every plan row on the task is 'complete' — the integration barrier's gate. With no
+   * plans the task can't be in execution, so an empty set is NOT complete. */
+  async allOwnersComplete(team: string, taskId: number): Promise<boolean> {
+    const plans = await this.listForTask(team, taskId);
+    return plans.length > 0 && plans.every((p) => p.ownerStatus === 'complete');
   }
 }

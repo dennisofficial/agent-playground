@@ -2,7 +2,11 @@ import { Inject, Logger, Optional } from '@nestjs/common';
 import { z } from 'zod';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { recallProjects } from '../../domain/identity';
-import { BoardStore, type BoardStatus, type BoardTask } from '../../memory/board-store';
+import {
+  BoardStore,
+  type BoardStatus,
+  type BoardTask,
+} from '../../memory/board-store';
 import { PlanStore, type PlanState } from '../../memory/plan-store';
 import { STATUS_COLUMN_GUIDE } from '../../employees/persona.prompts';
 import { HarnessTool } from '../harness-tool.decorator';

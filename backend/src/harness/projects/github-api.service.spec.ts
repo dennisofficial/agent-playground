@@ -235,7 +235,9 @@ describe('GithubApiService.commentOnPullRequest', () => {
   });
 
   it('throws a token-free error on failure', async () => {
-    const { impl } = fakeFetch([{ status: 403, body: { message: 'no access' } }]);
+    const { impl } = fakeFetch([
+      { status: 403, body: { message: 'no access' } },
+    ]);
     const api = new GithubApiService();
     api.fetchImpl = impl;
     await expect(

@@ -139,9 +139,7 @@ describe('board tools authority', () => {
     const { board, employees } = makeFakes();
     const tool = new UpdateBoardTaskTool(board as never, employees as never);
 
-    board.get.mockResolvedValue(
-      task({ assignee: 'alex', status: 'planning' }),
-    );
+    board.get.mockResolvedValue(task({ assignee: 'alex', status: 'planning' }));
     await expect(
       tool.execute({ id: 7, status: 'done' }, identity('alex')),
     ).resolves.toContain('done');
@@ -170,9 +168,7 @@ describe('board tools authority', () => {
     const tool = new UpdateBoardTaskTool(board as never, employees as never);
 
     // A teammate can NOT post for approval — plans auto-attach; the lead proposes (propose_plan).
-    board.get.mockResolvedValue(
-      task({ assignee: 'alex', status: 'planning' }),
-    );
+    board.get.mockResolvedValue(task({ assignee: 'alex', status: 'planning' }));
     await expect(
       tool.execute({ id: 7, status: 'awaiting_approval' }, identity('alex')),
     ).resolves.toContain('@Sam');
@@ -189,9 +185,7 @@ describe('board tools authority', () => {
       tool.execute({ id: 7, status: 'approved' }, identity('sam')),
     ).resolves.toContain('APPROVED');
     // …but not one that was never proposed.
-    board.get.mockResolvedValue(
-      task({ assignee: 'alex', status: 'planning' }),
-    );
+    board.get.mockResolvedValue(task({ assignee: 'alex', status: 'planning' }));
     await expect(
       tool.execute({ id: 7, status: 'approved' }, identity('sam')),
     ).resolves.toContain("not 'awaiting_approval'");
@@ -270,7 +264,12 @@ describe('board tools authority', () => {
     const { board, plans } = makeFakes();
     board.list.mockResolvedValue([
       task({ id: 1, title: 'Alpha', status: 'planning', assignee: 'alex' }),
-      task({ id: 2, title: 'Beta', status: 'awaiting_approval', assignee: 'riley' }),
+      task({
+        id: 2,
+        title: 'Beta',
+        status: 'awaiting_approval',
+        assignee: 'riley',
+      }),
       task({ id: 3, title: 'Gamma', status: 'open' }),
     ]);
     board.blockersOf.mockResolvedValue(new Map());
@@ -285,7 +284,9 @@ describe('board tools authority', () => {
     // task 1: no plan state → no tag
     expect(out).toContain('[#1] Alpha (→ alex, planning)');
     // task 2: pending_review
-    expect(out).toContain('[#2] Beta (→ riley, awaiting_approval, plan: pending_review)');
+    expect(out).toContain(
+      '[#2] Beta (→ riley, awaiting_approval, plan: pending_review)',
+    );
     // task 3: lead_approved
     expect(out).toContain('[#3] Gamma (unassigned, open, plan: lead_approved)');
   });
@@ -294,7 +295,9 @@ describe('board tools authority', () => {
     // Each status → column pair (the eight-status lifecycle)
     expect(STATUS_COLUMN_GUIDE).toContain('open → "Backlog"');
     expect(STATUS_COLUMN_GUIDE).toContain('planning → "Planning"');
-    expect(STATUS_COLUMN_GUIDE).toContain('awaiting_approval → "Awaiting Approval"');
+    expect(STATUS_COLUMN_GUIDE).toContain(
+      'awaiting_approval → "Awaiting Approval"',
+    );
     expect(STATUS_COLUMN_GUIDE).toContain('approved → "Approved"');
     expect(STATUS_COLUMN_GUIDE).toContain('executing → "Executing"');
     expect(STATUS_COLUMN_GUIDE).toContain('self_review → "Self-Review"');
@@ -339,12 +342,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     return { board, employees, notifier };
   };
 
-  it.each([
-    'approved',
-    'executing',
-    'self_review',
-    'in_review',
-  ] as const)(
+  it.each(['approved', 'executing', 'self_review', 'in_review'] as const)(
     'calls notifyDescriptionChange when description changes on a %s ticket',
     async (status) => {
       const { board, employees, notifier } = makeNotifierFakes();
@@ -357,7 +355,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
       const tool = new UpdateBoardTaskTool(
         board as never,
         employees as never,
-        notifier as never,
+        notifier,
       );
       await tool.execute(
         { id: 7, description: 'new text' },
@@ -377,12 +375,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     },
   );
 
-  it.each([
-    'open',
-    'planning',
-    'awaiting_approval',
-    'done',
-  ] as const)(
+  it.each(['open', 'planning', 'awaiting_approval', 'done'] as const)(
     'does NOT notify when description changes on a %s ticket',
     async (status) => {
       const { board, employees, notifier } = makeNotifierFakes();
@@ -393,7 +386,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
       const tool = new UpdateBoardTaskTool(
         board as never,
         employees as never,
-        notifier as never,
+        notifier,
       );
       // non-lead can't change description, so use sam for all statuses
       await tool.execute({ id: 7, description: 'new' }, slackIdentity('sam'));
@@ -412,9 +405,12 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     const tool = new UpdateBoardTaskTool(
       board as never,
       employees as never,
-      notifier as never,
+      notifier,
     );
-    await tool.execute({ id: 7, description: 'same text' }, slackIdentity('sam'));
+    await tool.execute(
+      { id: 7, description: 'same text' },
+      slackIdentity('sam'),
+    );
     expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
   });
 
@@ -427,7 +423,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     const tool = new UpdateBoardTaskTool(
       board as never,
       employees as never,
-      notifier as never,
+      notifier,
     );
     await tool.execute({ id: 7, status: 'done' }, slackIdentity('sam'));
     expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
@@ -438,11 +434,13 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     board.get.mockResolvedValue(
       task({ status: 'approved', description: 'some text' }),
     );
-    board.update.mockResolvedValue(task({ status: 'approved', title: 'New title' }));
+    board.update.mockResolvedValue(
+      task({ status: 'approved', title: 'New title' }),
+    );
     const tool = new UpdateBoardTaskTool(
       board as never,
       employees as never,
-      notifier as never,
+      notifier,
     );
     await tool.execute({ id: 7, title: 'New title' }, slackIdentity('sam'));
     expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
@@ -462,7 +460,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     const tool = new UpdateBoardTaskTool(
       board as never,
       employees as never,
-      notifier as never,
+      notifier,
     );
     // Should resolve (not throw) despite the notifier rejecting.
     await expect(

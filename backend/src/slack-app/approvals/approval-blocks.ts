@@ -139,10 +139,7 @@ export function descriptionChangeCardBlocks(
   e: DescriptionChangeEvent,
   bossMention?: string,
 ): Record<string, unknown>[] {
-  const contextText = [
-    bossMention,
-    `Changed by ${e.changedBy}`,
-  ]
+  const contextText = [bossMention, `Changed by ${e.changedBy}`]
     .filter(Boolean)
     .join(' · ');
   return [

@@ -144,7 +144,10 @@ export function selfReviewFailedSeed(p: {
   taskId: number;
   reason: string;
 }): string {
-  return SELF_REVIEW_FAILED_SEED({ taskId: String(p.taskId), reason: p.reason });
+  return SELF_REVIEW_FAILED_SEED({
+    taskId: String(p.taskId),
+    reason: p.reason,
+  });
 }
 
 /** Wake the decision owner that the integration self-review is done — ship it or fix from the note. */

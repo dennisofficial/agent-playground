@@ -31,8 +31,14 @@ export interface BotStateDelta {
   /** Suggestion block from the previous turn's memory reconcile — injected into the next turn's
    * context so the agent can act on it with remember / update_memory / forget. '' = nothing. */
   memorySuggestions?: string;
-  /** Rolling compaction summary — replaces compacted history in llmNode. */
+  /** @deprecated Legacy single-string compaction summary written by pre-TKT-38 code.
+   * Read-only compat shim: checkpoints that carry a `summary` string are deserialized into
+   * this field so `llmNode` / `compactionNode` can derive `effectiveSummaries` from it.
+   * Never written by TKT-38+ code; remove once all active threads have cycled through at
+   * least one new compaction pass. */
   summary?: string;
+  /** Rolling compaction summary queue (block 2). [] = no compaction has occurred yet. */
+  summaries?: string[];
   /** messages[] index of the first verbatim-tail message. 0 = no compaction. */
   summarizedUpTo?: number;
   /** Monotonically incrementing compaction event count per thread. */
@@ -121,7 +127,8 @@ export const BotState = Annotation.Root({
     default: () => undefined,
   }),
   /** The gate's input-token count for this turn — last-write-wins proxy for context size.
-   * Written by `gateNode` on every path; read by `compactionNode`. 0 = gate was skipped. */
+   * Written by `gateNode` on every path (0 when the gate call was skipped). Retained for
+   * observability; no longer the compaction trigger (TKT-38 uses token-estimation instead). */
   lastContextTokens: Annotation<number>({
     reducer: (_: number, b: number) => b ?? 0,
     default: () => 0,
@@ -219,22 +226,37 @@ export const BotState = Annotation.Root({
     default: () => '',
   }),
   /**
-   * Rolling compaction summary. Written by `compactionNode` when
-   * `lastContextTokens > COMPACTION_TOKEN_THRESHOLD`. The text is a human-readable rolling summary
-   * (state, decisions, next steps, learnings) covering the compacted portion.
-   * '' = no compaction has occurred yet. In `llmNode`, when non-empty, this replaces the
-   * compacted messages: the convo becomes [persona, summaryMsg, tail, recalled, ...].
+   * @deprecated Legacy single-string compaction summary written by pre-TKT-38 code.
+   * Registered as a channel so LangGraph deserializes old checkpoints that carry a `summary`
+   * field into `state.summary`. `llmNode` and `compactionNode` derive `effectiveSummaries`
+   * from this field when `summaries` is empty and `summarizedUpTo > 0`, preserving the
+   * previously-compacted context instead of replaying full durable history. NEVER written by
+   * TKT-38+ code. Remove once all active threads have cycled through at least one new
+   * compaction pass under the TKT-38 architecture.
    */
   summary: Annotation<string>({
     reducer: (_: string, b: string) => b ?? '',
     default: () => '',
   }),
   /**
+   * Rolling compaction summary queue (block 2). Written by `compactionNode` when block 3
+   * (verbatim tail) exceeds COMPACTION_TRIGGER_TOKENS. Each entry is a human-readable
+   * rolling summary covering the compacted portion at that pass. Ordered oldest → newest;
+   * FIFO-evicted at MAX_SUMMARIES. [] = no compaction has occurred yet.
+   * In `llmNode`, when non-empty, the queue is rendered as a structured summary block
+   * immediately before the verbatim tail (block 3). `summaries.length > 0` is the single
+   * source of truth for "this thread has been compacted."
+   */
+  summaries: Annotation<string[]>({
+    reducer: (_: string[], b: string[]) => b ?? [],
+    default: () => [],
+  }),
+  /**
    * Index into `messages[]` of the first verbatim-tail message. 0 = no compaction.
-   * When > 0, `llmNode` uses `messages.slice(summarizedUpTo)` as the live history, prefixed by
-   * the `summary` HumanMessage. `compactionNode` sets this to the output of
-   * `pairSafeBoundary(messages, messages.length − COMPACTION_TAIL, summarizedUpTo)`, which may sit
-   * earlier than the arithmetic cut to avoid splitting a tool_use/tool_result group.
+   * When `summaries.length > 0`, `llmNode` uses `messages.slice(summarizedUpTo)` as the
+   * live history, prefixed by the rendered summary block. `compactionNode` sets this to
+   * the token-budget cut point returned by `findCompactionCutPoint`, which always lands
+   * at a HumanMessage boundary via `pairSafeBoundary`.
    */
   summarizedUpTo: Annotation<number>({
     reducer: (_: number, b: number) => b ?? 0,

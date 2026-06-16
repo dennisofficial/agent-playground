@@ -11,7 +11,9 @@ describe('tmpl', () => {
 
   it('reuses a slot used more than once', () => {
     const t = tmpl`${'name'} — start every report with "${'name'} —".`;
-    expect(t({ name: 'Alex' })).toBe('Alex — start every report with "Alex —".');
+    expect(t({ name: 'Alex' })).toBe(
+      'Alex — start every report with "Alex —".',
+    );
   });
 
   it('passes literal braces through verbatim (no f-string parsing)', () => {

@@ -90,7 +90,9 @@ describe('PlanStore (live Postgres)', () => {
 
     // Task 7 in T2: no plans → absent (team isolation check)
     const result = await plans.planStatesOf('T1', [7, 8, 9]);
-    expect(result.get(7) satisfies PlanState | undefined).toBe('pending_review');
+    expect(result.get(7) satisfies PlanState | undefined).toBe(
+      'pending_review',
+    );
     expect(result.get(8) satisfies PlanState | undefined).toBe('lead_approved');
     expect(result.has(9)).toBe(false); // no plan attached → absent (callers treat as 'none')
 

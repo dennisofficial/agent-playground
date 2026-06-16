@@ -375,7 +375,9 @@ export class ConductorService
 
   /** The room for a review-pipeline narration seed (its notifyThread), or the default room. */
   private roomFor(notifyThread?: string): string {
-    return notifyThread ? this.resolveRoom(notifyThread) : this.channel.surfaceId;
+    return notifyThread
+      ? this.resolveRoom(notifyThread)
+      : this.channel.surfaceId;
   }
 
   /** The room a session relays into (its notifyThread), or the default room when unknown. */

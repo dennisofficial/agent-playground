@@ -69,7 +69,9 @@ When you understand the work, write a concrete plan that a SEPARATE execute sess
 - **Verify** — the exact commands / checks that prove it works (tests, typecheck, build).`;
 
 export const DEFAULT_PLAN_PROMPT: PlanPromptTemplate = ({ ticket, context }) =>
-  PLAN_HEAD({ ticket }) + (context ? PLAN_CONTEXT({ context }) : '') + PLAN_TAIL;
+  PLAN_HEAD({ ticket }) +
+  (context ? PLAN_CONTEXT({ context }) : '') +
+  PLAN_TAIL;
 
 export const DEFAULT_EXECUTE_PROMPT: ExecutePromptTemplate = tmpl`Execute this approved plan. It was reviewed and approved — follow it; deviate only where it's clearly wrong, and say so in your report if you do.
 
