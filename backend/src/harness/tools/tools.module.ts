@@ -48,7 +48,6 @@ import {
 } from './tasks/task.tools';
 import { AddNoteTool, GetTicketTool } from './tasks/ticket.tools';
 import { ToolRegistry } from './tool.registry';
-import { EndTurnTool } from './turn/end-turn.tool';
 import {
   CreateWorktreeTool,
   ListWorktreesTool,
@@ -106,9 +105,8 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
     CheckSessionTool,
     ListSessionsTool,
     SearchSessionTool,
-    // worklog + turn
+    // worklog
     RecentWorkTool,
-    EndTurnTool,
     // memory
     RememberTool,
     RecallTool,

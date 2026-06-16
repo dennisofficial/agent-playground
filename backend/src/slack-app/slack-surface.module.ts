@@ -1,4 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
+import { BOARD_NOTIFIER } from '@harness/approvals/board-notifier.port';
 import { PROPOSAL_PRESENTER } from '@harness/approvals/proposal-presenter.port';
 import { ChannelModule } from '@harness/channel/channel.module';
 import { ConductorModule } from '@harness/conductor/conductor.module';
@@ -87,6 +88,9 @@ import { TenantSlackClients } from './tenant-slack-clients';
     { provide: CHAT_SURFACE, useExisting: SlackChatSurface },
     // The artifact-upload port's Slack adapter (share_artifact → filesUploadV2 + chat.update).
     { provide: ARTIFACT_SINK, useExisting: SlackFileUploadService },
+    // The description-change notification OUTBOUND PORT's Slack adapter (update_board_task with a
+    // description edit on an approved-or-beyond ticket → inline channel card with @Dennis mention).
+    { provide: BOARD_NOTIFIER, useExisting: ApprovalCardsService },
   ],
   exports: [
     CHAT_SURFACE,
@@ -95,6 +99,9 @@ import { TenantSlackClients } from './tenant-slack-clients';
     // propose_plan resolves no presenter and degrades to chat-words. (APPROVAL_INTERCEPTOR
     // needs no export: its consumer, SlackInboundRouter, lives in this module.)
     PROPOSAL_PRESENTER,
+    // Like PROPOSAL_PRESENTER, BOARD_NOTIFIER must be exported for the global module to reach
+    // UpdateBoardTaskTool (registered in ToolsModule, which imports SlackSurfaceModule globally).
+    BOARD_NOTIFIER,
     SlackChatSurface,
     SlackInboundRouter,
     SlackSocketTransport,

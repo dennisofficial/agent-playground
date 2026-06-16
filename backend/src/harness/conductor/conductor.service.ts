@@ -53,6 +53,7 @@ import {
   prOpenedSeed,
   prReadySeed,
   selfReviewFailedSeed,
+  selfReviewReadySeed,
   sessionRelayPrompt,
   ticketApprovedSeed,
 } from './seed.prompts';
@@ -260,8 +261,9 @@ export class ConductorService
    * Turn a board transition into a gate-bypassed wake-up. `plan-attached` → the lead reviews (skip
    * self-plans). `ticket-approved` → a THROTTLED nudge to execute (never an auto-start): only up to
    * MAX_CONCURRENT_EXECUTIONS owners are woken at once, the rest wait in 'approved' until a slot
-   * frees. The `pr-opened` / `pr-ready` / `self-review-failed` events narrate the harness's PR
-   * self-review in the owner's voice; `pr-ready` also frees a slot, so it rescans for the next ticket.
+   * frees. The `pr-opened` / `self-review-ready` / `pr-ready` / `self-review-failed` events narrate
+   * the harness's PR self-review in the owner's voice; `self-review-ready` hands the ship-or-fix
+   * decision to the owner; `pr-ready` also frees a slot, so it rescans for the next ticket.
    */
   private async handleBoardEvent(event: BoardEvent): Promise<void> {
     if (event.kind === 'plan-attached') {
@@ -291,6 +293,20 @@ export class ConductorService
       );
       // The ticket reached in_review — a slot freed. Pull the next approved ticket into execution.
       await this.rescanApproved(event.team);
+      return;
+    }
+    if (event.kind === 'self-review-ready') {
+      this.injectSeed(
+        event.employee,
+        this.roomFor(event.notifyThread),
+        selfReviewReadySeed({
+          taskId: event.taskId,
+          prUrl: event.prUrl,
+          noteId: event.noteId,
+          worktreeId: event.worktreeId,
+          sessionId: event.sessionId,
+        }),
+      );
       return;
     }
     if (event.kind === 'self-review-failed') {
@@ -358,7 +374,9 @@ export class ConductorService
 
   /** The room for a review-pipeline narration seed (its notifyThread), or the default room. */
   private roomFor(notifyThread?: string): string {
-    return notifyThread ? this.resolveRoom(notifyThread) : this.channel.surfaceId;
+    return notifyThread
+      ? this.resolveRoom(notifyThread)
+      : this.channel.surfaceId;
   }
 
   /** The room a session relays into (its notifyThread), or the default room when unknown. */

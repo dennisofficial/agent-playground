@@ -6,6 +6,7 @@ import { OPENAI_CODEX_SDK } from '../../_lib/esm/esm.module';
 import { engineHomeDir } from './engine-home';
 import {
   EWorkerEngineName,
+  IWorkerUsage,
   RunWorkerArgs,
   WorkerEngine,
 } from './worker-engine.port';
@@ -74,7 +75,7 @@ export class CodexEngine implements WorkerEngine {
     cwd: string,
     opts: { model?: string; readOnly?: boolean } = {},
   ): ThreadOptions {
-    const model = opts.model ?? this.env.get('CODEX_MODEL');
+    const model = opts.model;
     // Grant write access to the shared git dir (it's outside cwd — doubly so in a linked worktree,
     // whose `.git` is a FILE pointing into the main repo) so an execute turn can commit/push/merge.
     // Not needed on a read-only (plan or investigate) turn.
@@ -109,9 +110,11 @@ export class CodexEngine implements WorkerEngine {
     onEvent,
     signal,
   }: RunWorkerArgs) {
+    // Resolve model once so it can be threaded into both threadOptions and the returned usage.
+    const resolvedModel = model ?? this.env.get('CODEX_MODEL');
     const client = this.getCodex(agentId, apiKey);
     const opts = this.threadOptions(cwd, {
-      model,
+      model: resolvedModel,
       readOnly: mode !== 'execute',
     });
     const thread = sessionId
@@ -123,6 +126,13 @@ export class CodexEngine implements WorkerEngine {
 
     let result = '';
     let resolvedSession = sessionId;
+    // Accumulate usage across turn.completed events (multiple can fire if the SDK batches them).
+    let accInput = 0;
+    let accCached = 0;
+    let accOutput = 0;
+    let accReasoning = 0;
+    let usageSeen = false;
+
     const { events } = await thread.runStreamed(input, { signal });
     for await (const event of events) {
       switch (event.type) {
@@ -163,6 +173,16 @@ export class CodexEngine implements WorkerEngine {
           }
           break;
         }
+        case 'turn.completed': {
+          // OpenAI convention: input_tokens INCLUDES cached; output_tokens INCLUDES reasoning.
+          const u = event.usage;
+          accInput += u.input_tokens ?? 0;
+          accCached += u.cached_input_tokens ?? 0;
+          accOutput += u.output_tokens ?? 0;
+          accReasoning += u.reasoning_output_tokens ?? 0;
+          usageSeen = true;
+          break;
+        }
         case 'turn.failed':
           throw new Error(event.error.message);
         case 'error':
@@ -172,9 +192,22 @@ export class CodexEngine implements WorkerEngine {
 
     const summary = result || '(no summary)';
     onEvent({ kind: 'result', text: summary });
+
+    const workerUsage: IWorkerUsage | undefined = usageSeen
+      ? {
+          inputTokens: accInput,
+          outputTokens: accOutput,
+          ...(accCached > 0 ? { cacheReadTokens: accCached } : {}),
+          ...(accReasoning > 0 ? { reasoningTokens: accReasoning } : {}),
+          // No costUsd — Codex (OpenAI) doesn't return cost; rely on Langfuse server-side pricing.
+          ...(resolvedModel ? { model: resolvedModel } : {}),
+        }
+      : undefined;
+
     return {
       result: summary,
       sessionId: resolvedSession ?? thread.id ?? undefined,
+      ...(workerUsage ? { usage: workerUsage } : {}),
     };
   }
 }

@@ -397,6 +397,22 @@ export class WorktreeService implements OnApplicationBootstrap {
       .catch(() => []);
   }
 
+  /** Read-only: whether a merge is in progress in this worktree (MERGE_HEAD present), and the
+   * conflicted paths if so. The session-approval gate uses this to let an UNLINKED execute session
+   * through purely to finish a merge the harness itself left behind (publish/pull/refresh). Read-only
+   * git (rev-parse/diff), so it needs no gitOps mutex; an unknown worktree reads as no merge. */
+  async mergeState(
+    worktreeId: string,
+  ): Promise<{ inProgress: boolean; files: string[] }> {
+    const wt = this.worktrees.get(worktreeId);
+    if (!wt) return { inProgress: false, files: [] };
+    const inProgress = await this.mergeInProgress(wt.checkout);
+    return {
+      inProgress,
+      files: inProgress ? await this.conflictedFiles(wt.checkout) : [],
+    };
+  }
+
   private async readSharedConfig(
     branch: string,
     repoRoot: string,
@@ -458,7 +474,8 @@ export class WorktreeService implements OnApplicationBootstrap {
         input.project,
         repoRoot,
       );
-      if (baseWarning) warning = warning ? `${warning} ${baseWarning}` : baseWarning;
+      if (baseWarning)
+        warning = warning ? `${warning} ${baseWarning}` : baseWarning;
 
       let shared = input.shared
         ? this.sharedBranchName(input.shared)
@@ -515,14 +532,24 @@ export class WorktreeService implements OnApplicationBootstrap {
       }
       await this.setWorktreeIdentity(checkout, repoRoot, input.ownerBot);
       // A repo with submodules needs them populated before the worktree builds (a fresh checkout
-      // gets empty submodule dirs). Best-effort: a failure must never fail the create.
+      // gets empty submodule dirs). Best-effort: a failure must never fail the create, but it must
+      // be loud — a silent init failure produces empty submodule dirs which causes TS2307
+      // "Cannot find module '@workspace/langfuse'" (and @workspace/auth) at install/typecheck time.
       if (await exists(join(checkout, '.gitmodules'))) {
         await this.git(
           ['submodule', 'update', '--init', '--recursive'],
           checkout,
-        ).catch((err) =>
-          this.logger.warn(`${id}: submodule init failed: ${err}`),
-        );
+        ).catch((err) => {
+          const remediation = `cd ${checkout} && git submodule update --init --recursive`;
+          this.logger.error(
+            `${id}: submodule init failed — workspace packages (e.g. @workspace/langfuse, ` +
+              `@workspace/auth) will be unresolved until you run: ${remediation}. Error: ${err}`,
+          );
+          const initMsg =
+            `Submodule init failed: workspace packages (@workspace/langfuse, @workspace/auth) ` +
+            `will be unresolved. Run: ${remediation}`;
+          warning = warning ? `${warning} ${initMsg}` : initMsg;
+        });
       }
 
       const worktree: Worktree = {
@@ -651,8 +678,9 @@ export class WorktreeService implements OnApplicationBootstrap {
    * and merge it into the checkout. This is the "keep the worktree current" primitive — a worktree
    * cut during stand-up planning is stale by the time it executes (base moved). Same conflict shape
    * as publish/pull (the merge is left IN PROGRESS for a session's turn to resolve). Unregistered
-   * projects, an origin-guard refusal, or a fetch miss are no-ops (`refreshed:false` + detail), never
-   * errors — execution proceeds on local state rather than being blocked.
+   * projects, an origin-guard refusal, a DIRTY working tree (git would refuse the merge), or a fetch
+   * miss are no-ops (`refreshed:false` + detail), never errors — execution proceeds on local state
+   * rather than being blocked. The caller surfaces non-clean outcomes to the owner.
    */
   async refreshFromBase(id: string): Promise<BaseRefreshResult> {
     return this.gitOps(async () => {
@@ -670,6 +698,22 @@ export class WorktreeService implements OnApplicationBootstrap {
       const guard = await this.originGuard(wt, rec);
       if (guard) return { refreshed: false, detail: guard };
       const base = rec.defaultBranch;
+      // Uncommitted tracked changes make `git merge` refuse outright (it would clobber them) — return
+      // a structured result, not a thrown error, so the caller can tell the owner to commit + refresh.
+      const dirty = !!(
+        await this.git(
+          ['status', '--porcelain', '--untracked-files=no'],
+          wt.checkout,
+        ).catch(() => '')
+      ).trim();
+      if (dirty) {
+        return {
+          refreshed: false,
+          dirty: true,
+          baseBranch: base,
+          detail: `the worktree has uncommitted changes — commit them, then refresh against ${base}`,
+        };
+      }
       const auth = gitAuthEnv(rec.gitUrl, await this.tokenFor(rec));
       try {
         await this.git(['fetch', 'origin', base], wt.repoRoot, auth);
@@ -799,6 +843,104 @@ export class WorktreeService implements OnApplicationBootstrap {
   }
 
   /**
+   * Promote a worktree to a shared integration branch if it isn't on one already — so the review
+   * pipeline always has a `shared/<slug>` to publish + open/ready the PR through, for SOLO work as
+   * well as multi-employee. Without this, a solo engineer's personal-branch work can't be readied by
+   * the harness (mark_pr_ready / the pipeline only reach shared branches). Idempotent: a worktree that
+   * already joined a shared branch (explicit multi-employee work) keeps it. The caller derives `name`
+   * from the TICKET at execute-session start, so every owner of a ticket converges on the SAME shared
+   * branch with no name coordination. Returns the shared branch name, or undefined for an unknown
+   * worktree. Cuts the shared branch from the worktree's current branch tip (refreshed from base at
+   * execute start, so ≈ origin/base) — a later publish fast-forwards / merges the personal work in.
+   */
+  async ensureShared(
+    id: string,
+    name: string,
+    startPoint?: string,
+  ): Promise<string | undefined> {
+    return this.gitOps(async () => {
+      const wt = this.worktrees.get(id);
+      if (!wt) return undefined;
+      if (wt.sharedBranch) return wt.sharedBranch; // already shared — respect it
+      const shared = this.sharedBranchName(name);
+      // Default start point is the branch tip (fresh-worktree case ≈ origin/base). A caller can pass
+      // an explicit start point (see `ensureSharedAtBase`) to cut the shared branch elsewhere.
+      const start =
+        startPoint ?? (await this.git(['rev-parse', wt.branch], wt.repoRoot));
+      await this.ensureSharedBranch(shared, wt.repoRoot, start);
+      // Record the personal branch's association so it survives restarts (re-adopted like create()).
+      await this.git(
+        ['config', `branch.${wt.branch}.${SHARED_CONFIG_KEY}`, shared],
+        wt.repoRoot,
+      );
+      wt.sharedBranch = shared;
+      this.logger.log(
+        `${id}: promoted ${wt.branch} to shared branch ${shared}`,
+      );
+      return shared;
+    });
+  }
+
+  /**
+   * Retroactively promote a worktree that ALREADY has owner commits to a shared branch, cut at the
+   * branch's DIVERGENCE POINT from the base (`merge-base`), not its tip. The review pipeline uses this
+   * to self-heal a worktree that never joined a shared branch at execute start: cutting at the tip
+   * (plain `ensureShared`) would make the owner's self-review range `<sharedRef>...<branch>` empty, so
+   * their real code would never be reviewed. The merge-base start point yields exactly the owner's own
+   * commits — any execute-start base-refresh merge sits BELOW it and is excluded. Works for adopted
+   * worktrees too (no stored `baseRef` needed). Returns a typed failure (rather than throwing) when the
+   * worktree is gone, unregistered (can't open a PR anyway), the origin guard refuses, or the base
+   * divergence point can't be resolved — the pipeline surfaces these loud upstream.
+   */
+  async ensureSharedAtBase(
+    id: string,
+    name: string,
+  ): Promise<
+    { ok: true; sharedBranch: string } | { ok: false; reason: string }
+  > {
+    const wt = this.worktrees.get(id);
+    if (!wt) return { ok: false, reason: `worktree ${id} no longer exists` };
+    if (wt.sharedBranch) return { ok: true, sharedBranch: wt.sharedBranch };
+    const rec = await this.projectRecordFor(id);
+    if (!rec)
+      return {
+        ok: false,
+        reason: `no registered GitHub repo matches worktree ${id} — it can't open a PR`,
+      };
+    // Mirror the remote-op identity guard BEFORE any authenticated network op: projectRecordFor's
+    // `wt.project` fast-path returns a record without verifying the actual remote, so a stale or
+    // misregistered worktree could otherwise fetch the wrong origin with the project's token.
+    const guard = await this.originGuard(wt, rec);
+    if (guard) return { ok: false, reason: guard };
+    const base = rec.defaultBranch;
+    // Best-effort: refresh origin/<base> so the merge-base is against the latest base. A miss still
+    // lets us fall back to whatever origin/<base> we already have locally.
+    await this.git(
+      ['fetch', 'origin', base],
+      wt.repoRoot,
+      gitAuthEnv(rec.gitUrl, await this.tokenFor(rec)),
+    ).catch(() => undefined);
+    const startPoint = (
+      await this.git(
+        ['merge-base', wt.branch, `origin/${base}`],
+        wt.repoRoot,
+      ).catch(() => '')
+    ).trim();
+    if (!startPoint)
+      return {
+        ok: false,
+        reason: `couldn't resolve the base divergence point (merge-base ${wt.branch}..origin/${base}) to cut a shared branch`,
+      };
+    const shared = await this.ensureShared(id, name, startPoint);
+    if (!shared)
+      return {
+        ok: false,
+        reason: `couldn't promote worktree ${id} to a shared branch`,
+      };
+    return { ok: true, sharedBranch: shared };
+  }
+
+  /**
    * The current tip sha of a worktree's shared integration branch — captured by the review pipeline
    * BEFORE publish, so an owner's self-review can diff `<sharedRef>...<ownerBranch>` (three-dot:
    * changes on the owner's branch since it diverged from shared) and never re-review a prior owner's
@@ -829,7 +971,10 @@ export class WorktreeService implements OnApplicationBootstrap {
       ['diff', '--name-only', range],
       wt.checkout,
     ).catch(() => '');
-    const files = out.split('\n').map((f) => f.trim()).filter(Boolean);
+    const files = out
+      .split('\n')
+      .map((f) => f.trim())
+      .filter(Boolean);
     return { range, files };
   }
 

@@ -100,7 +100,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -220,7 +219,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -343,7 +341,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -371,7 +368,9 @@ describe('bot graph — poisoned-history self-healing', () => {
     );
 
     const graph = factory.getBotGraph(ALEX);
-    const config = { configurable: { thread_id: 'alex:orphan-tool-result:root' } };
+    const config = {
+      configurable: { thread_id: 'alex:orphan-tool-result:root' },
+    };
 
     // Seed a poisoned checkpoint: summarizedUpTo=2, which points at the ToolMessage (idx 2).
     // This simulates a compaction cut that landed on a ToolMessage before the fix.
@@ -532,7 +531,9 @@ describe('bot graph — poisoned-history self-healing', () => {
     );
 
     const graph = factory.getBotGraph(ALEX);
-    const config = { configurable: { thread_id: 'alex:legacy-summary-compat:root' } };
+    const config = {
+      configurable: { thread_id: 'alex:legacy-summary-compat:root' },
+    };
 
     const LEGACY_SUMMARY =
       'LEGACY_SUMMARY: Dennis asked about status; Alex said all is on track.';
@@ -541,12 +542,12 @@ describe('bot graph — poisoned-history self-healing', () => {
     await graph.updateState(config, {
       messages: [
         new HumanMessage('Dennis: what is the project status?'), // idx 0 — compacted
-        new AIMessage({ content: 'All is on track.' }),           // idx 1 — compacted
-        new HumanMessage('Dennis: great, keep going.'),           // idx 2 — verbatim tail start
-        new AIMessage({ content: 'Will do.' }),                   // idx 3 — verbatim tail
+        new AIMessage({ content: 'All is on track.' }), // idx 1 — compacted
+        new HumanMessage('Dennis: great, keep going.'), // idx 2 — verbatim tail start
+        new AIMessage({ content: 'Will do.' }), // idx 3 — verbatim tail
       ],
-      summary: LEGACY_SUMMARY,   // pre-TKT-38 field
-      summarizedUpTo: 2,         // tail starts at idx 2
+      summary: LEGACY_SUMMARY, // pre-TKT-38 field
+      summarizedUpTo: 2, // tail starts at idx 2
       // summaries intentionally absent → defaults to []
       cursor: 1,
     });
@@ -571,7 +572,8 @@ describe('bot graph — poisoned-history self-healing', () => {
 
     // 1. The legacy summary MUST appear as a HumanMessage in the model input.
     const summaryMsg = convo.find(
-      (m) => m.getType() === 'human' && String(m.content).includes(LEGACY_SUMMARY),
+      (m) =>
+        m.getType() === 'human' && String(m.content).includes(LEGACY_SUMMARY),
     );
     expect(summaryMsg).toBeDefined();
 
@@ -669,7 +671,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {
@@ -697,7 +698,9 @@ describe('bot graph — poisoned-history self-healing', () => {
     );
 
     const graph = factory.getBotGraph(ALEX);
-    const config = { configurable: { thread_id: 'alex:compaction-write:root' } };
+    const config = {
+      configurable: { thread_id: 'alex:compaction-write:root' },
+    };
 
     // Build 23 seeded messages (see budget design in the docblock above).
     //   idx 0–3 : large HumanMessages (10 000 chars each) — pushed before the verbatim window
@@ -736,9 +739,7 @@ describe('bot graph — poisoned-history self-healing', () => {
     // Padding: indices 8–22 (15 messages, alternating Human/AI), each 2 656 chars.
     for (let i = 8; i < 23; i++) {
       seededMessages.push(
-        i % 2 === 0
-          ? new HumanMessage(PAD)
-          : new AIMessage({ content: PAD }),
+        i % 2 === 0 ? new HumanMessage(PAD) : new AIMessage({ content: PAD }),
       );
     }
     // (sanity) 8 + 15 = 23 seeded messages
@@ -856,7 +857,9 @@ describe('bot graph — poisoned-history self-healing', () => {
     );
 
     const graph = factory.getBotGraph(ALEX);
-    const config = { configurable: { thread_id: 'alex:boundary-no-compact:root' } };
+    const config = {
+      configurable: { thread_id: 'alex:boundary-no-compact:root' },
+    };
 
     // Seed 19 990 tokens; the turn will add exactly 10 more → 20 000 total (at-threshold, no fire).
     await graph.updateState(config, {
@@ -913,7 +916,6 @@ describe('bot graph — poisoned-history self-healing', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {

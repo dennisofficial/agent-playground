@@ -22,8 +22,8 @@ const submitForReviewSchema = z.object({
  * pipeline reviews this owner's diff (cross-engine), fixes what it can in this session, publishes onto
  * the shared branch, and — once every owner on the ticket has submitted — opens the draft PR, runs a
  * final integration review, and flips it to ready for Dennis. The bot doesn't drive any of that; it
- * just signals completion here. Calling this ENDS YOUR TURN — put a brief first-person heads-up in
- * THIS message's text.
+ * just signals completion here — put a brief first-person heads-up in THIS message's text and wait
+ * for the report-back.
  */
 @HarnessTool()
 export class SubmitForReviewTool implements IHarnessTool<
@@ -31,9 +31,8 @@ export class SubmitForReviewTool implements IHarnessTool<
 > {
   readonly name = 'submit_for_review';
   readonly description =
-    "Submit your finished execute session for review — your one gesture when the code is done. The harness self-reviews your diff, fixes issues in-session, publishes onto the shared branch, and (once every teammate on the ticket has submitted) opens the PR and marks it ready for Dennis. You do NOT open_pr or mark_pr_ready yourself anymore. Calling this ENDS YOUR TURN, so put any brief heads-up in THIS message's text.";
+    "Submit your finished execute session for review — your one gesture when the code is done. The harness self-reviews your diff, fixes issues in-session, publishes onto the shared branch, and (once every teammate on the ticket has submitted) opens the PR and marks it ready for Dennis. You do NOT open_pr or mark_pr_ready yourself anymore. Put any brief heads-up in THIS message's text and wait for the report-back.";
   readonly schema = submitForReviewSchema;
-  readonly terminal = true;
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
@@ -59,13 +58,20 @@ export class SubmitForReviewTool implements IHarnessTool<
     const task = await this.board.get(session.team, session.boardTaskId);
     if (!task)
       return `Linked board task #${session.boardTaskId} no longer exists.`;
-    if (task.status !== 'executing')
+    if (task.status !== 'executing' && task.status !== 'self_review')
       return `Board task #${session.boardTaskId} is '${task.status}', not 'executing' — only in-flight execution work can be submitted for review.`;
 
     // Fire-and-forget the pipeline, detached from the chat stream (same as create_session's first
-    // turn): it runs long engine review/fix turns and narrates its milestones via board events.
+    // turn): it runs long engine review/fix turns and narrates its milestones via board events. Its
+    // known dead ends self-report (blocked + seeded), but an UNEXPECTED throw must not vanish as an
+    // unhandled rejection — catch it and mark the owner blocked + narrate so the bot still hears back.
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.reviewPipeline.reviewOwner(session);
+      void this.reviewPipeline.reviewOwner(session).catch((err) => {
+        void this.reviewPipeline.reportOwnerCrash(
+          session,
+          `self-review crashed before it could finish (${err instanceof Error ? err.message : String(err)}) — take it from here`,
+        );
+      });
     });
     return `Submitted ${sessionId} (#${session.boardTaskId}) for review — self-review is running; I'll report back when the PR is ready or if something needs you.`;
   }

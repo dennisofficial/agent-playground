@@ -75,8 +75,7 @@ type ToolCall = NonNullable<AIMessage['tool_calls']>[number];
  */
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value))
-    return `[${value.map(stableStringify).join(',')}]`;
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   const obj = value as Record<string, unknown>;
   const body = Object.keys(obj)
     .sort()
@@ -100,7 +99,7 @@ function summarizeToolResult(m: ToolMessage): string {
  * The node IMPLEMENTATIONS of a bot's turn-graph — gate, loop_guard, recall, llm, tools,
  * mark_seen, pause, reconcile. `BotGraphFactory` owns the DI + the graph TOPOLOGY (which node goes
  * where); this owns what each node DOES. `forBot(bot)` returns the per-bot node functions plus the
- * bot's terminal-tool set (which `makeAfterTools` in routing.ts closes over).
+ * bot's context-refresh scope map (which the routing predicates in routing.ts close over).
  *
  * Constructed manually by the factory (not a Nest provider) so the factory keeps its existing
  * constructor — the services it injects are handed straight through here.
@@ -200,25 +199,20 @@ export class BotGraphNodes {
     return parts.join('\n\n');
   }
 
-  /** Build the per-bot node functions + terminal-tool set for the turn graph. */
+  /** Build the per-bot node functions for the turn graph. */
   forBot(bot: EmployeeDefinition) {
     const channel = this.channel;
     const allowlist = bot.tools ?? DEFAULT_CHAT_TOOLSET;
     const tools = this.toolRegistry.toStructuredTools(allowlist);
-    // Turn-ending tools, derived from the allowlist's `terminal` flags (no magic-string list). Only
-    // can't-fail tools should be terminal: the conductor surfaces only assistant text, never
-    // tool-result content, so a swallowed failure from a fallible terminal tool would be invisible.
-    const terminal = this.toolRegistry.terminalToolNames(allowlist);
     // Tool-triggered CAPABILITIES (e.g. Nora's deep_research) bind here at graph-build, alongside the
-    // static allowlist and under the same cache_control breakpoint. Each opens a session, so it's
-    // terminal like create_session. (Absent in unit specs where engineTools isn't injected.)
+    // static allowlist and under the same cache_control breakpoint. (Absent in unit specs where
+    // engineTools isn't injected.)
     if (this.engineTools) {
       const cap = this.engineTools.buildTools(bot, this.persona.context());
       tools.push(...cap.tools);
-      for (const name of cap.terminalNames) terminal.add(name);
     }
     // Context-refreshing tools: name → scopes map, derived from the allowlist's `refreshesContext`
-    // flags. Used by `makeAfterTools` (routing) and `refreshContextNode` (recompute).
+    // flags. Used by `makeAfterToolLoopGuard` (routing) and `refreshContextNode` (recompute).
     const REFRESH = this.toolRegistry.refreshScopesByName(allowlist);
     const refreshScopesFromTurn = makeRefreshScopesFromTurn(REFRESH);
 
@@ -329,7 +323,11 @@ export class BotGraphNodes {
       // No LLM ran (a hard addressing rule or dormant-skip decided it) → mark the gate span. The soft
       // path already shows its Haiku generation, so don't double-record it.
       if (!d.softGate)
-        await traceGate(d.action, d.reason ?? 'hard-rule', d.action === 'ignore');
+        await traceGate(
+          d.action,
+          d.reason ?? 'hard-rule',
+          d.action === 'ignore',
+        );
       // Next dormancy count: a respond/ack re-engages (→0); a SOFT ignore advances toward dormancy
       // (+1); a cheap dormant-skip or hard-rule ignore leaves it unchanged.
       const nextSoftIgnores =
@@ -454,12 +452,12 @@ export class BotGraphNodes {
             : [];
       const compacted = effectiveSummaries.length > 0;
       const rawHistory = compacted
-        ? dropLeadingOrphanToolResults(state.messages.slice(state.summarizedUpTo))
+        ? dropLeadingOrphanToolResults(
+            state.messages.slice(state.summarizedUpTo),
+          )
         : state.messages;
       const history = filterToolDispatchMessages(
-        compactPriorToolResults(
-          repairDanglingToolCalls(rawHistory),
-        ),
+        compactPriorToolResults(repairDanglingToolCalls(rawHistory)),
       );
       const cachedHistory = history.length
         ? [
@@ -494,7 +492,10 @@ export class BotGraphNodes {
             new HumanMessage(
               `(Conversation summary so far — oldest first, each block covers an earlier span:\n\n` +
                 effectiveSummaries
-                  .map((s, i) => `[Summary ${i + 1}/${effectiveSummaries.length}]\n${s}`)
+                  .map(
+                    (s, i) =>
+                      `[Summary ${i + 1}/${effectiveSummaries.length}]\n${s}`,
+                  )
                   .join('\n\n') +
                 `)`,
             ),
@@ -614,8 +615,8 @@ export class BotGraphNodes {
      *   - fewer than GUARD_FLOOR substantive SPOKEN own messages in history (not enough signal)
      *
      * The judged window counts only SPOKEN messages (non-empty chat text). A tool-only turn —
-     * gate passed, but the employee used a tool and ended its turn silently via end_turn — posts
-     * no chat text and is never loop evidence; it's a deliberate "second gate" decline, not a
+     * gate passed, but the employee only used a tool (or stayed silent), posting no chat text — is
+     * never loop evidence; it's a deliberate "second gate" decline, not a
      * stall. (Without this, a quiet teammate woken by bot-only chatter accumulates identical
      * empty-text "Name: [tools: list_sessions]" lines that the judge reads as a no-progress loop.)
      *
@@ -640,9 +641,9 @@ export class BotGraphNodes {
       // A human anywhere in the batch → real turn, no fuse check.
       if (state.pending.some((m) => !m.authorBotId)) return GUARD_SKIP;
       const ownMessages = state.messages.filter((m) => m.getType() === 'ai');
-      // Only the bot's SPOKEN messages are loop evidence. A tool-only turn (gate passed, but the
-      // employee used a tool and ended its turn silently via end_turn) is a deliberate "second
-      // gate" decline, not a stall — it must not count toward the floor or appear in the window.
+      // Only the bot's SPOKEN messages are loop evidence. A silent turn (gate passed, but the
+      // employee only used a tool or said nothing) is a deliberate "second gate" decline, not a
+      // stall — it must not count toward the floor or appear in the window.
       const spoken = ownMessages.filter(
         (m) => flattenContent(m.content).trim() !== '',
       );
@@ -819,8 +820,8 @@ export class BotGraphNodes {
      * Runs between `tools` and `llm` when a state-mutating tool call ran (create/remove_worktree,
      * close_session, remember/update_memory/forget, add/complete_task). Only the flagged scopes are
      * re-fetched — a memory-only refresh doesn't re-list worktrees, and vice-versa. Detection is
-     * name-based (same posture as terminal): a failed mutation still triggers a harmless, idempotent
-     * recompute. Errors degrade silently, keeping the previous slice intact.
+     * name-based: a failed mutation still triggers a harmless, idempotent recompute. Errors degrade
+     * silently, keeping the previous slice intact.
      *
      * `recalled` is NOT updated — it's the one-shot pre-LLM snapshot for the conductor's `recall`
      * event. No duplicate `recall` events are emitted mid-turn.
@@ -876,8 +877,8 @@ export class BotGraphNodes {
     /**
      * TOOL_LOOP_GUARD NODE — catch a bot re-issuing the SAME tool call inside the `llm ⇄ tools`
      * loop (the failure the turn-entry `loop_guard` can't see: it watches spoken messages at turn
-     * boundaries, not mid-turn tool calls). Sits only on the NON-TERMINAL continuation path
-     * (`makeAfterTools` routes terminal batches straight to reconcile/llm).
+     * boundaries, not mid-turn tool calls). Sits on every continuation out of `tools` (a plain edge
+     * from `tools`; no tool ends the turn directly).
      *
      * Two stages:
      *  1. DETERMINISTIC prefilter — count identical `tool+stable-args` signatures across this turn's
@@ -950,13 +951,14 @@ export class BotGraphNodes {
         config,
       );
       if (decision.verdict === 'progressing')
-        return { toolLoopVerdict: 'pass', toolLoopReasoning: decision.reasoning };
+        return {
+          toolLoopVerdict: 'pass',
+          toolLoopReasoning: decision.reasoning,
+        };
       // stuck
       const corrections = state.toolLoopCorrections ?? 0;
       if (corrections === 0) {
-        const scopes = [
-          ...((REFRESH.get(tripped.call.name) ?? []) as readonly RefreshScope[]),
-        ];
+        const scopes = [...(REFRESH.get(tripped.call.name) ?? [])];
         const lastResult = results[results.length - 1] ?? 'it already ran';
         const because = decision.reasoning ? ` (${decision.reasoning})` : '';
         const instruction =
@@ -1136,7 +1138,6 @@ Be thorough but concise. Preserve specific names, project names, technical detai
       pause: pauseNode,
       reconcile: reconcileNode,
       compact: compactionNode,
-      terminal,
       refresh: REFRESH,
       refreshContext: refreshContextNode,
     };

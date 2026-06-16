@@ -20,9 +20,9 @@ import { rawRows, toIso } from './sql';
  * acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only 'open' tasks,
  * and only 'done' satisfies a dependency — both unchanged by the in-between states.
  *
- * Per-owner execution detail (which owner has finished its own self-review, the execute worktree,
- * the shared branch) lives on the plan row (PlanStore), NOT the task: a multi-owner ticket stays
- * 'executing' until every plan row is 'complete', then the integration barrier flips it.
+ * Execution detail (the owner's execute worktree + shared branch, whether its own self-review is done)
+ * lives on the plan row (PlanStore), NOT the task. One employee owns a ticket; tickets that share a
+ * `shared_slug` converge on one `shared/<slug>` branch + PR and ship together once all are published.
  */
 export type BoardStatus =
   | 'open'
@@ -42,10 +42,14 @@ export const ACTIVE_BOARD_STATUSES: readonly BoardStatus[] = [
   'self_review',
 ];
 
-/** The in-flight execution statuses the throttle counts against its concurrency cap. */
+/** The in-flight execution statuses the throttle counts against its concurrency cap. Only 'executing'
+ * counts: a ticket reaches 'self_review' after its own work is published (the heavy per-owner review
+ * already ran under 'executing'), and a shared-feature ticket can sit in 'self_review' waiting for its
+ * siblings — counting that would let a sibling group larger than the cap deadlock (the waiters hold
+ * every slot, the last sibling never starts). The ship-time integration review's small spend then
+ * happens under 'self_review', uncounted (bounded, one per shipped feature). */
 export const IN_FLIGHT_EXECUTION_STATUSES: readonly BoardStatus[] = [
   'executing',
-  'self_review',
 ];
 
 export interface BoardTask {
@@ -57,6 +61,8 @@ export interface BoardTask {
   assignee?: string;
   createdBy: string;
   dependsOn: number[];
+  /** Shared integration-branch/PR slug; same slug across tickets = one feature, one PR. */
+  sharedSlug?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,6 +75,7 @@ export interface NewBoardTask {
   assignee?: string;
   createdBy: string;
   dependsOn?: number[];
+  sharedSlug?: string;
 }
 
 export interface ListBoardQuery {
@@ -76,6 +83,8 @@ export interface ListBoardQuery {
   project?: string;
   assignee?: string;
   status?: BoardStatus | readonly BoardStatus[];
+  /** Group lookup for a shared feature — always pair with `project` (slugs are per-project). */
+  sharedSlug?: string;
   limit?: number;
 }
 
@@ -90,6 +99,7 @@ interface BoardRow {
   assignee: string | null;
   created_by: string;
   depends_on: number[];
+  shared_slug: string | null;
   created_at: unknown;
   updated_at: unknown;
 }
@@ -103,6 +113,7 @@ const toBoardTask = (r: BoardRow): BoardTask => ({
   assignee: r.assignee ?? undefined,
   createdBy: r.created_by,
   dependsOn: (r.depends_on ?? []).map(Number),
+  sharedSlug: r.shared_slug ?? undefined,
   createdAt: toIso(r.created_at),
   updatedAt: toIso(r.updated_at),
 });
@@ -145,8 +156,8 @@ export class BoardStore {
       if (unknownDeps.length > 0) return { unknownDeps };
     }
     const rows = await this.q(
-      `INSERT INTO team_tasks (team_id, project, title, description, status, assignee, created_by, depends_on, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, now(), now())
+      `INSERT INTO team_tasks (team_id, project, title, description, status, assignee, created_by, depends_on, shared_slug, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, $8, now(), now())
        RETURNING *`,
       [
         t.team,
@@ -156,6 +167,7 @@ export class BoardStore {
         t.assignee ?? null,
         t.createdBy,
         deps,
+        t.sharedSlug ?? null,
       ],
     );
     return toBoardTask(rows[0]);
@@ -226,6 +238,7 @@ export class BoardStore {
       assignee?: string | null;
       title?: string;
       description?: string;
+      sharedSlug?: string | null;
     },
   ): Promise<BoardTask | undefined> {
     const sets: string[] = ['updated_at = now()'];
@@ -238,6 +251,7 @@ export class BoardStore {
     if (patch.assignee !== undefined) set('assignee', patch.assignee);
     if (patch.title !== undefined) set('title', patch.title);
     if (patch.description !== undefined) set('description', patch.description);
+    if (patch.sharedSlug !== undefined) set('shared_slug', patch.sharedSlug);
     const rows = await this.q(
       `UPDATE team_tasks SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 RETURNING *`,
       args,
@@ -266,6 +280,7 @@ export class BoardStore {
     };
     if (query.project) and((n) => `project = $${n}`, query.project);
     if (query.assignee) and((n) => `assignee = $${n}`, query.assignee);
+    if (query.sharedSlug) and((n) => `shared_slug = $${n}`, query.sharedSlug);
     if (query.status)
       Array.isArray(query.status)
         ? and((n) => `status = ANY($${n})`, [...query.status])
@@ -278,8 +293,8 @@ export class BoardStore {
     return rows.map(toBoardTask);
   }
 
-  /** How many of this team's tasks are in-flight execution (executing + self_review) — the count the
-   * execution throttle weighs against its concurrency cap. */
+  /** How many of this team's tasks are actively executing — the count the execution throttle weighs
+   * against its concurrency cap (see IN_FLIGHT_EXECUTION_STATUSES for why self_review is excluded). */
   async countInFlightExecution(team: string): Promise<number> {
     const rows = await this.repo.manager.query(
       `SELECT count(*)::int AS n FROM team_tasks WHERE team_id = $1 AND status = ANY($2)`,

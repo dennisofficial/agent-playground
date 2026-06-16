@@ -6,6 +6,7 @@ import { EnginesModule } from '../engines/engines.module';
 import { LifecycleModule } from '../lifecycle/lifecycle.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
+import { MetricsModule } from '../metrics/metrics.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
 import { PostgresSessionRegistry } from './postgres-session.registry';
@@ -28,6 +29,7 @@ import { SessionRunnerService } from './session-runner.service';
     LifecycleModule,
     LlmKeysModule,
     MemoryModule,
+    MetricsModule,
     ProjectsModule,
     WorktreesModule,
   ],

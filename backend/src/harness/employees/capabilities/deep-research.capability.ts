@@ -32,7 +32,7 @@ export const deepResearchCapability = (
   name: DEEP_RESEARCH,
   trigger: { kind: 'tool' },
   description:
-    'Open a background RESEARCH session — searches the web and reads primary sources, then reports findings with citations. Read-only; ENDS YOUR TURN. Put a brief first-person heads-up in this message.',
+    "Open a background RESEARCH session — searches the web and reads primary sources, then reports findings with citations. Read-only; you're notified when it reports back. Put a brief first-person heads-up in this message.",
   schema: deepResearchSchema,
   mode: 'plan',
   spec,

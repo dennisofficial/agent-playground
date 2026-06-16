@@ -114,9 +114,9 @@ describe('BoardStore (live Postgres)', () => {
     expect(await board.list({ team: 'T1', project: 'p' })).toHaveLength(2);
     expect(await board.list({ team: 'T1', assignee: 'alex' })).toHaveLength(1);
     asTask(await board.claim('T1', a.id, 'maya'));
-    expect(
-      await board.list({ team: 'T1', status: 'planning' }),
-    ).toHaveLength(1);
+    expect(await board.list({ team: 'T1', status: 'planning' })).toHaveLength(
+      1,
+    );
   });
 
   it('release puts a claimed task back up for grabs', async () => {

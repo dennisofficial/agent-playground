@@ -26,13 +26,12 @@ class EchoTool implements IHarnessTool<typeof echoSchema> {
 }
 
 @HarnessTool()
-class EndTurnTool implements IHarnessTool<typeof echoSchema> {
-  readonly name = 'end_turn';
-  readonly description = 'Ends the turn.';
+class PingTool implements IHarnessTool<typeof echoSchema> {
+  readonly name = 'ping';
+  readonly description = 'A second tool.';
   readonly schema = echoSchema;
-  readonly terminal = true;
   async execute(): Promise<string> {
-    return 'done';
+    return 'pong';
   }
 }
 
@@ -54,7 +53,7 @@ class TestAlex extends BaseEmployee {
   readonly role = 'backend engineer';
   readonly sortOrder = 10;
   readonly teamLead = true;
-  readonly tools = [EchoTool, EndTurnTool];
+  readonly tools = [EchoTool, PingTool];
   roleContext(_ctx: EmployeeContext): string {
     return 'static role context';
   }
@@ -74,7 +73,7 @@ class TestSam extends BaseEmployee {
 }
 
 async function buildModule(
-  extraProviders: any[] = [TestAlex, TestSam, EchoTool, EndTurnTool],
+  extraProviders: any[] = [TestAlex, TestSam, EchoTool, PingTool],
 ) {
   const moduleRef = await Test.createTestingModule({
     imports: [DiscoveryModule],
@@ -105,11 +104,8 @@ describe('harness decorator discovery', () => {
   it('resolves a class-reference allowlist into bound LangChain tools', async () => {
     const moduleRef = await buildModule();
     const tools = moduleRef.get(ToolRegistry);
-    const bound = tools.toStructuredTools([EchoTool, EndTurnTool]);
-    expect(bound.map((t) => t.name)).toEqual(['echo', 'end_turn']);
-    expect(tools.terminalToolNames([EchoTool, EndTurnTool])).toEqual(
-      new Set(['end_turn']),
-    );
+    const bound = tools.toStructuredTools([EchoTool, PingTool]);
+    expect(bound.map((t) => t.name)).toEqual(['echo', 'ping']);
 
     const result = await (bound[0] as any).invoke(
       { text: 'hi' },
@@ -138,12 +134,12 @@ describe('harness decorator discovery', () => {
       }
     }
     await expect(
-      buildModule([TestAlex, TestSam, DupAlex, EchoTool, EndTurnTool]),
+      buildModule([TestAlex, TestSam, DupAlex, EchoTool, PingTool]),
     ).rejects.toThrow(/Duplicate employee id 'alex'/);
   });
 
   it('fails boot unless exactly one employee is team lead', async () => {
-    await expect(buildModule([TestSam, EchoTool, EndTurnTool])).rejects.toThrow(
+    await expect(buildModule([TestSam, EchoTool, PingTool])).rejects.toThrow(
       /Exactly one employee/,
     );
   });

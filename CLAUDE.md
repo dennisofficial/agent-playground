@@ -11,6 +11,8 @@ Two implementations of the same autonomous-AI-employee system coexist:
 
 Also: `shared/` (`@workspace/shared` — TypeORM entities under `./schemas` subpath), `web/` (Next.js admin skeleton), `packages/nestjs-core-essentials` (house Nest conventions: `@CreateModule`, `BaseEnvService`).
 
+**Submodule prerequisite:** `packages/nestjs-ai-essentials` (`@workspace/langfuse`) and `packages/jwt-auth` (`@workspace/auth`) are git submodules — run `pnpm run setup` from repo root (submodule init + install + package builds), otherwise TS2307 "Cannot find module '@workspace/langfuse'" / '@workspace/auth' at test/typecheck time.
+
 ## Backend harness (`backend/src/harness/`)
 
 One Nest module per domain, all composed by `harness.module.ts` (import that one module to host the harness). **Only ONE process may compose it at a time** (no multi-conductor locking).
@@ -20,7 +22,7 @@ One Nest module per domain, all composed by `harness.module.ts` (import that one
 | `conductor/` | Event loop (`ConductorService`, lifecycle-hooked), per-bot LangGraph turn graphs (`BotGraphFactory`), RxJS event/status bus (`ConductorEventsBus`) — the presentation seam |
 | `channel/` | The conversation log. **Synchronous in-memory face, write-behind Postgres durability** (`channel_messages` + `bot_cursors`); hydrates on boot. The sync `append`/`since` contract is load-bearing (mid-thought collaboration) |
 | `employees/` | `@AIEmployee()` decorator + DiscoveryService auto-discovery. One class per teammate in `roster/` (persona, engine, tool allowlist); `EmployeeRegistry` validates at boot; `PersonaService` assembles prompts |
-| `tools/` | `@HarnessTool()` decorator classes → `ToolRegistry`. Employee allowlists are **class references** (the class is the DI token), never name strings. `terminal: true` on a tool ends the turn |
+| `tools/` | `@HarnessTool()` decorator classes → `ToolRegistry`. Employee allowlists are **class references** (the class is the DI token), never name strings. No tool ends the turn directly — every tool batch loops back to the model, and a turn ends only when the bot's next step makes no tool call |
 | `engines/` | `claude`/`codex`/`langgraph` behind the `WorkerEngine` port. ESM-only SDKs arrive via `_lib/esm` DI tokens |
 | `sessions/` | Employee-managed background sessions (long-lived interactive engine conversations — the bots' "Claude Code"). In-memory `SessionRegistry` behind `SESSION_REGISTRY`; `SessionRunnerService` runs one turn at a time inside the session's worktree; every turn-end relays to the owner, who replies (`reply_session`, mode-switchable per turn — 'plan' = engine-native read-only, 'execute' = writes) or closes (`close_session` → worklog) |
 | `worktrees/` | Employee-managed git worktrees (`WorktreeService`), PER PROJECT: registered projects get their GitHub repo cloned on first use to `<REPOS_ROOT>/<projectId>`, unregistered fall back to `WORKER_ROOT`. Checkouts at `<repoRoot>/.worktrees/<id>-<slug>`; git is the durable store (re-adopted on boot from every known repo; shared association in `branch.<b>.agent-shared` config), mutating git ops mutex-serialized. Multi-employee features converge on a `shared/<slug>` integration branch (never checked out): personal branches cut from it, `publish`/`pull` merge through it (conflicts left in-progress for a session to resolve), and publish also pushes shared→origin behind a repo-identity guard. `open_pr` opens/finds the GitHub PR Dennis reviews |

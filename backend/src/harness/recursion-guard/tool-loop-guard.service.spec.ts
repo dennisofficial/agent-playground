@@ -34,7 +34,8 @@ function fakeEnv(
     get: (key: string): unknown => {
       if (key === 'TOOL_LOOP_GUARD_ENABLED')
         return opts.enabled === undefined ? undefined : opts.enabled;
-      if (key === 'TOOL_LOOP_GUARD_THRESHOLD') return opts.threshold ?? undefined;
+      if (key === 'TOOL_LOOP_GUARD_THRESHOLD')
+        return opts.threshold ?? undefined;
       return undefined;
     },
   } as unknown as EnvService;
@@ -134,7 +135,10 @@ describe('ToolLoopGuardService', () => {
 
   describe('isEnabled / threshold helpers', () => {
     it('isEnabled is true by default (env key absent)', () => {
-      const svc = buildService(() => ({ verdict: 'progressing', reasoning: '' }));
+      const svc = buildService(() => ({
+        verdict: 'progressing',
+        reasoning: '',
+      }));
       expect(svc.isEnabled()).toBe(true);
     });
 
@@ -149,7 +153,10 @@ describe('ToolLoopGuardService', () => {
     });
 
     it('threshold returns 3 by default', () => {
-      const svc = buildService(() => ({ verdict: 'progressing', reasoning: '' }));
+      const svc = buildService(() => ({
+        verdict: 'progressing',
+        reasoning: '',
+      }));
       expect(svc.threshold()).toBe(3);
     });
 

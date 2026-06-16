@@ -1,3 +1,4 @@
+import type { DescriptionChangeEvent } from '@harness/approvals/board-notifier.port';
 import type { PlanProposalEvent } from '@harness/approvals/proposal-presenter.port';
 import type { SlackInbound } from '../slack-inbound.types';
 import {
@@ -6,6 +7,7 @@ import {
   REQUEST_CHANGES_ACTION_ID,
   REVISION_MODAL_CALLBACK_ID,
   chunkPlan,
+  descriptionChangeCardBlocks,
 } from './approval-blocks';
 import { ApprovalCardsService } from './approval-cards.service';
 
@@ -380,5 +382,130 @@ describe('chunkPlan', () => {
     expect(chunks.every((c) => c.length <= 3500 + 80)).toBe(true);
     expect(chunks[9]).toContain('get_ticket');
     expect(chunkPlan('short')).toEqual(['short']);
+  });
+});
+
+// ── descriptionChangeCardBlocks (approval-blocks) ────────────────────────────────────────────────
+
+const CHANGE_EVENT: DescriptionChangeEvent = {
+  team: 'T1',
+  taskId: 26,
+  title: 'Wire the API',
+  changedBy: 'sam',
+  oldDescription: 'Original description.',
+  newDescription: 'Updated description.',
+  surfaceId: 'slack:T1:C99',
+};
+
+describe('descriptionChangeCardBlocks', () => {
+  it('headline contains ticket id and title', () => {
+    const blocks = descriptionChangeCardBlocks(CHANGE_EVENT);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('ticket #26');
+    expect(json).toContain('Wire the API');
+  });
+
+  it('includes changedBy in the context line', () => {
+    const blocks = descriptionChangeCardBlocks(CHANGE_EVENT);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('Changed by sam');
+  });
+
+  it('includes the @mention when bossMention is supplied', () => {
+    const blocks = descriptionChangeCardBlocks(CHANGE_EVENT, '<@U-BOSS>');
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('<@U-BOSS>');
+  });
+
+  it('omits bossMention gracefully when not supplied', () => {
+    const blocks = descriptionChangeCardBlocks(CHANGE_EVENT);
+    const json = JSON.stringify(blocks);
+    expect(json).not.toContain('<@');
+  });
+
+  it('shows old and new description text', () => {
+    const blocks = descriptionChangeCardBlocks(CHANGE_EVENT);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('Original description.');
+    expect(json).toContain('Updated description.');
+    expect(json).toContain('Old description');
+    expect(json).toContain('New description');
+  });
+
+  it('has no actions block (purely informational, no buttons)', () => {
+    const blocks = descriptionChangeCardBlocks(CHANGE_EVENT, '<@U-BOSS>');
+    expect(blocks.every((b) => b.type !== 'actions')).toBe(true);
+  });
+
+  it('truncates descriptions that exceed SUMMARY_MAX (~2900 chars)', () => {
+    const huge = 'x'.repeat(4000);
+    const blocks = descriptionChangeCardBlocks(
+      { ...CHANGE_EVENT, oldDescription: huge, newDescription: huge },
+      '<@U-BOSS>',
+    );
+    const json = JSON.stringify(blocks);
+    // The truncated marker must appear for both sections.
+    expect(json).toContain('…(truncated)');
+    // The raw 4000-char string must NOT appear verbatim.
+    expect(json).not.toContain(huge);
+  });
+});
+
+// ── ApprovalCardsService.notifyDescriptionChange ──────────────────────────────────────────────────
+
+describe('ApprovalCardsService — notifyDescriptionChange', () => {
+  it('posts to the parsed channel with @boss mention and both descriptions', async () => {
+    const { service, web } = makeService({ installedBy: 'U-BOSS' });
+    await service.notifyDescriptionChange(CHANGE_EVENT);
+
+    const posts = argsOf(web.chat.postMessage).map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ channel: 'C99', username: 'Sam' });
+    const text = posts[0].text as string;
+    expect(text).toContain('<@U-BOSS>');
+    const blocksJson = JSON.stringify(posts[0].blocks);
+    expect(blocksJson).toContain('Original description.');
+    expect(blocksJson).toContain('Updated description.');
+    expect(blocksJson).toContain('<@U-BOSS>');
+  });
+
+  it("degrades to literal 'Dennis' when no boss id is configured", async () => {
+    const { service, web } = makeService({ installedBy: null });
+    await service.notifyDescriptionChange(CHANGE_EVENT);
+
+    const posts = argsOf(web.chat.postMessage).map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+    expect(posts).toHaveLength(1);
+    const blocksJson = JSON.stringify(posts[0].blocks);
+    // No <@ mention, but the literal fallback appears.
+    expect(blocksJson).toContain('Dennis');
+    expect(blocksJson).not.toContain('<@');
+  });
+
+  it('uses the env fallback boss id when installedBy is null', async () => {
+    const { service, web } = makeService({
+      installedBy: null,
+      envBoss: 'U-ENV-BOSS',
+    });
+    await service.notifyDescriptionChange(CHANGE_EVENT);
+
+    const posts = argsOf(web.chat.postMessage).map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+    expect(JSON.stringify(posts[0].blocks)).toContain('<@U-ENV-BOSS>');
+  });
+
+  it('throws (and does NOT post) for a non-Slack surface id', async () => {
+    const { service, web } = makeService({ installedBy: 'U-BOSS' });
+    await expect(
+      service.notifyDescriptionChange({
+        ...CHANGE_EVENT,
+        surfaceId: 'tui:main',
+      }),
+    ).rejects.toThrow('non-Slack');
+    expect(web.chat.postMessage).not.toHaveBeenCalled();
   });
 });

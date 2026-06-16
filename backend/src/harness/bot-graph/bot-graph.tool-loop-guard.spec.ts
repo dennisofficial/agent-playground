@@ -126,17 +126,21 @@ function buildFactory(
     { get: () => undefined } as unknown as ChannelRegistryService,
     {
       toStructuredTools: () => [pokeTool],
-      terminalToolNames: () => new Set<string>(),
       // poke is untagged (no refresh scope) → the PASS path routes straight to llm.
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
-    { gate: async () => ({ action: 'respond' as const }) } as unknown as GateService,
+    {
+      gate: async () => ({ action: 'respond' as const }),
+    } as unknown as GateService,
     {
       isEnabled: () => false,
       windowSize: () => 12,
       detect: () => Promise.resolve({ looping: false }),
     } as unknown as RecursionGuardService,
-    { fetchMemory: async () => '', fetchTasks: async () => '' } as unknown as FetchService,
+    {
+      fetchMemory: async () => '',
+      fetchTasks: async () => '',
+    } as unknown as FetchService,
     {
       reconcileMemory: async () => {},
       reconcileTasks: async () => {},
@@ -171,7 +175,10 @@ function fakeGuard(
   } as unknown as ToolLoopGuardService;
 }
 
-async function runTurn(factory: BotGraphFactory, threadId: string): Promise<void> {
+async function runTurn(
+  factory: BotGraphFactory,
+  threadId: string,
+): Promise<void> {
   const graph = factory.getBotGraph(ALEX);
   const config = { configurable: { thread_id: threadId } };
   const stream = await graph.stream(
@@ -222,7 +229,12 @@ describe('bot graph — tool-loop guard', () => {
     const detectCalls: ToolLoopObservation[] = [];
     // Three identical calls trip the prefilter on the 3rd; after the correction the model stops.
     const model = scriptedModel(
-      [{ args: { n: 1 } }, { args: { n: 1 } }, { args: { n: 1 } }, { args: null }],
+      [
+        { args: { n: 1 } },
+        { args: { n: 1 } },
+        { args: { n: 1 } },
+        { args: null },
+      ],
       invocations,
     );
     const factory = buildFactory(
@@ -288,7 +300,9 @@ describe('bot graph — tool-loop guard', () => {
     const last = messages[messages.length - 1];
     expect(last.getType()).toBe('ai');
     expect(flat(last.content)).toContain("I think I'm going in circles here");
-    expect(flat(last.content)).toContain('What I kept repeating: judge says so');
+    expect(flat(last.content)).toContain(
+      'What I kept repeating: judge says so',
+    );
   });
 
   it('(d) at threshold + progressing: a legitimate poll loop is never interrupted', async () => {
@@ -297,7 +311,12 @@ describe('bot graph — tool-loop guard', () => {
     const invocations: BaseMessage[][] = [];
     const detectCalls: ToolLoopObservation[] = [];
     const model = scriptedModel(
-      [{ args: { n: 1 } }, { args: { n: 1 } }, { args: { n: 1 } }, { args: null }],
+      [
+        { args: { n: 1 } },
+        { args: { n: 1 } },
+        { args: { n: 1 } },
+        { args: null },
+      ],
       invocations,
     );
     const factory = buildFactory(
@@ -331,7 +350,12 @@ describe('bot graph — tool-loop guard', () => {
     const detectCalls: ToolLoopObservation[] = [];
     // Same tool, DIFFERENT args each call → each signature count stays at 1.
     const model = scriptedModel(
-      [{ args: { n: 1 } }, { args: { n: 2 } }, { args: { n: 3 } }, { args: null }],
+      [
+        { args: { n: 1 } },
+        { args: { n: 2 } },
+        { args: { n: 3 } },
+        { args: null },
+      ],
       invocations,
     );
     const factory = buildFactory(

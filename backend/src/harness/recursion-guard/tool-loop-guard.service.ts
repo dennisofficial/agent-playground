@@ -35,7 +35,9 @@ const PROGRESSING: ToolLoopDecision = { verdict: 'progressing' };
 const Schema = z.object({
   reasoning: z
     .string()
-    .describe('one short sentence — is this repeated call progressing or stuck?'),
+    .describe(
+      'one short sentence — is this repeated call progressing or stuck?',
+    ),
   verdict: z
     .enum(['progressing', 'stuck'])
     .describe(
@@ -119,19 +121,20 @@ export class ToolLoopGuardService {
         name: 'tool_loop_guard',
         includeRaw: true,
       }),
-      RunnableLambda.from<{ raw: AIMessage; parsed: SchemaT }, ToolLoopDecision>(
-        ({ raw, parsed }) => {
-          const u = raw.usage_metadata;
-          const usage = u
-            ? { input: u.input_tokens, output: u.output_tokens }
-            : undefined;
-          return {
-            verdict: parsed.verdict,
-            reasoning: parsed.reasoning,
-            usage,
-          };
-        },
-      ),
+      RunnableLambda.from<
+        { raw: AIMessage; parsed: SchemaT },
+        ToolLoopDecision
+      >(({ raw, parsed }) => {
+        const u = raw.usage_metadata;
+        const usage = u
+          ? { input: u.input_tokens, output: u.output_tokens }
+          : undefined;
+        return {
+          verdict: parsed.verdict,
+          reasoning: parsed.reasoning,
+          usage,
+        };
+      }),
     ]).withConfig({ runName: 'Tool Loop Guard' }));
   }
 

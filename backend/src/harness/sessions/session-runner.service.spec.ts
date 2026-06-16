@@ -16,6 +16,7 @@ import type { BoardStatus, BoardStore } from '../memory/board-store';
 import type { PlanStore } from '../memory/plan-store';
 import type { TeamSettingsStore } from '../memory/team-settings-store';
 import type { WorklogStore } from '../memory/worklog-store';
+import type { MetricsEventsService } from '../metrics/metrics-events.service';
 import type { WorktreeService } from '../worktrees/worktree.service';
 import { InMemorySessionRegistry } from './in-memory-session.registry';
 import type { Session } from './session-registry.port';
@@ -55,6 +56,12 @@ function buildRunner(
     selfReview?: (planBody: string) => string;
     /** What WorktreeService.refreshFromBase returns (default: a clean refresh). */
     refreshResult?: Awaited<ReturnType<WorktreeService['refreshFromBase']>>;
+    /** Make WorktreeService.refreshFromBase reject (the thrown-error path). */
+    refreshThrows?: boolean;
+    /** Initial WorktreeService.mergeState — the merge-resolution bypass signal. Mutate the returned
+     * `mergeRef` mid-test to simulate the bot committing the merge. */
+    mergeInProgress?: boolean;
+    mergeFiles?: string[];
   } = {},
 ) {
   const worktree = 'worktree' in opts ? opts.worktree : WT;
@@ -81,12 +88,21 @@ function buildRunner(
     logWork: async (e: unknown) => void worklogged.push(e),
   } as unknown as WorklogStore;
   const refreshCalls: string[] = [];
+  const mergeRef = {
+    inProgress: opts.mergeInProgress ?? false,
+    files: opts.mergeFiles ?? [],
+  };
   const worktrees = {
     get: () => worktree,
     refreshFromBase: async (id: string) => {
       refreshCalls.push(id);
+      if (opts.refreshThrows) throw new Error('git merge blew up');
       return opts.refreshResult ?? { refreshed: true, baseBranch: 'main' };
     },
+    mergeState: async () => ({
+      inProgress: mergeRef.inProgress,
+      files: mergeRef.files,
+    }),
   } as unknown as WorktreeService;
   const creds = {
     resolve: async () => ({}),
@@ -94,6 +110,13 @@ function buildRunner(
   const credCtx = {
     run: (_c: unknown, fn: () => unknown) => fn(),
   } as unknown as CredentialContext;
+  const completedEvents: unknown[] = [];
+  const blockedEvents: unknown[] = [];
+  const metrics = {
+    recordExecutionCompleted: async (e: unknown) =>
+      void completedEvents.push(e),
+    recordExecutionBlocked: async (e: unknown) => void blockedEvents.push(e),
+  } as unknown as MetricsEventsService;
   const board = {
     get: (_team: string, id: number) =>
       Promise.resolve(
@@ -124,12 +147,22 @@ function buildRunner(
     worktrees,
     creds,
     credCtx,
+    metrics,
     board,
     env,
     plans,
     settings,
   );
-  return { runner, sessions, worklogged, attached, refreshCalls };
+  return {
+    runner,
+    sessions,
+    worklogged,
+    completedEvents,
+    blockedEvents,
+    attached,
+    refreshCalls,
+    mergeRef,
+  };
 }
 
 const newSession = {
@@ -211,6 +244,62 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     expect(after?.mode).toBe('execute');
     expect(after?.turns).toBe(2);
     expect(modes).toEqual(['plan', 'execute']);
+  });
+
+  it('records execute-mode turn completion metrics', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      run: async () => ({ result: 'Built it.', sessionId: 'e1' }),
+    };
+    const { runner, sessions, completedEvents, blockedEvents } =
+      buildRunner(fake);
+    const session = await sessions.create({
+      ...newSession,
+      mode: 'execute',
+    });
+
+    await runner.runSessionTurn(session.id, session.task);
+
+    expect(completedEvents).toEqual([
+      expect.objectContaining({
+        teamId: 'local',
+        agentId: 'alex',
+        projectId: 'local',
+        sessionId: session.id,
+        durationMs: expect.any(Number),
+      }),
+    ]);
+    expect(blockedEvents).toHaveLength(0);
+  });
+
+  it('records execute-mode turn failure metrics', async () => {
+    const fake: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      async run() {
+        throw new Error('engine exploded');
+      },
+    };
+    const { runner, sessions, completedEvents, blockedEvents } =
+      buildRunner(fake);
+    const session = await sessions.create({
+      ...newSession,
+      mode: 'execute',
+    });
+
+    await runner.runSessionTurn(session.id, session.task);
+
+    expect((await sessions.get(session.id))?.status).toBe('failed');
+    expect(completedEvents).toHaveLength(0);
+    expect(blockedEvents).toEqual([
+      expect.objectContaining({
+        teamId: 'local',
+        agentId: 'alex',
+        projectId: 'local',
+        sessionId: session.id,
+        durationMs: expect.any(Number),
+        reason: 'engine exploded',
+      }),
+    ]);
   });
 
   it('refuses replySession mid-turn and on a closed session', async () => {
@@ -619,6 +708,71 @@ describe('SessionRunnerService — the execute-approval gate', () => {
       true,
     );
   });
+
+  it("dial 'all': an UNLINKED execute flip is allowed when a merge is in progress (finish the harness's own merge)", async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      mergeInProgress: true,
+    });
+    const session = await idleSession(runner, sessions); // unlinked, plan mode
+    const res = await runner.replySession(
+      session.id,
+      'resolve the conflict',
+      'execute',
+    );
+    expect(res.ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await sessions.get(session.id))?.mode).toBe('execute');
+  });
+
+  it("dial 'all': the merge bypass is UNLINKED-only — a non-approved LINKED task is still refused even with a merge in progress", async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      boardTasks: { 7: { status: 'awaiting_approval' } },
+      mergeInProgress: true,
+    });
+    const session = await idleSession(runner, sessions, 7);
+    const res = await runner.replySession(session.id, 'resolve', 'execute');
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain("#7 is 'awaiting_approval'");
+  });
+
+  it("dial 'all': a no-mode reply continuing an unlinked execute session is allowed WHILE the merge is in progress, refused once it's committed", async () => {
+    const { runner, sessions, mergeRef } = buildRunner(echo, {
+      approvalMode: 'all',
+      mergeInProgress: true,
+    });
+    const session = await idleSession(runner, sessions); // unlinked, plan mode
+    expect(
+      (await runner.replySession(session.id, 'resolve it', 'execute')).ok,
+    ).toBe(true);
+    await new Promise((r) => setTimeout(r, 20));
+    // A no-mode follow-up still resolves while the merge is live.
+    expect((await runner.replySession(session.id, 'still resolving')).ok).toBe(
+      true,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    // Once the bot commits the merge, the bypass evaporates — no open-ended ungated execution.
+    mergeRef.inProgress = false;
+    const after = await runner.replySession(
+      session.id,
+      'now do unrelated work',
+    );
+    expect(after.ok).toBe(false);
+    expect(after.reason).toContain('APPROVED board task');
+  });
+
+  it('an open standup still refuses an unlinked merge-resolution flip (standup wins over the merge bypass)', async () => {
+    const { runner, sessions } = buildRunner(echo, {
+      approvalMode: 'all',
+      mergeInProgress: true,
+      standupOpen: true,
+    });
+    const session = await idleSession(runner, sessions);
+    const res = await runner.replySession(session.id, 'resolve', 'execute');
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain('standup');
+  });
 });
 
 describe('SessionRunnerService — plan relay (no auto-attach) + plan.finished hooks', () => {
@@ -694,10 +848,10 @@ describe('SessionRunnerService — plan relay (no auto-attach) + plan.finished h
   });
 });
 
-describe('SessionRunnerService — investigate confidence escalation (v2)', () => {
+describe('SessionRunnerService — investigate runs on the Opus recipe', () => {
   const investigate = { ...newSession, mode: 'investigate' as const };
 
-  it('re-runs ONCE on the deeper model when an investigate report is LOW confidence, and relays that pass', async () => {
+  it('runs a Claude investigate turn ONCE on claude-opus-4-8, regardless of reported confidence', async () => {
     const models: Array<string | undefined> = [];
     let calls = 0;
     const fake: WorkerEngine = {
@@ -705,58 +859,23 @@ describe('SessionRunnerService — investigate confidence escalation (v2)', () =
       async run(args: RunWorkerArgs) {
         calls++;
         models.push(args.model);
-        return calls === 1
-          ? {
-              result: 'Alex — partial answer.\nConfidence: low — could not find it.',
-              sessionId: 'engine-1',
-            }
-          : {
-              result: 'Alex — deeper answer.\nConfidence: high — verified.',
-              sessionId: 'engine-1',
-            };
+        // Even a LOW-confidence report no longer triggers a second pass — Opus is already the base.
+        return {
+          result: 'Alex — answer.\nConfidence: low — could not find it.',
+          sessionId: 'engine-1',
+        };
       },
     };
     const { runner, sessions } = buildRunner(fake);
     const session = await sessions.create(investigate);
     await runner.runSessionTurn(session.id, session.task);
 
-    expect(calls).toBe(2);
-    expect(models[1]).toBe('claude-opus-4-8'); // the second pass used the escalation model
-    expect(models[1]).not.toBe(models[0]);
+    expect(calls).toBe(1); // single pass — no escalation re-run
+    expect(models[0]).toBe('claude-opus-4-8'); // investigate recipe = Opus, not the Sonnet execute model
     const after = await sessions.get(session.id);
     expect(after?.status).toBe('idle');
-    expect(after?.lastReport).toContain('deeper answer'); // the escalated pass is what relays
-    expect(after?.turns).toBe(1); // still ONE logical turn
-  });
-
-  it('does NOT escalate when confidence is not low (or no marker)', async () => {
-    let calls = 0;
-    const fake: WorkerEngine = {
-      name: EWorkerEngineName.CLAUDE,
-      async run() {
-        calls++;
-        return { result: 'Alex — solid.\nConfidence: high — verified.', sessionId: 'e1' };
-      },
-    };
-    const { runner, sessions } = buildRunner(fake);
-    const session = await sessions.create(investigate);
-    await runner.runSessionTurn(session.id, session.task);
-    expect(calls).toBe(1);
-  });
-
-  it('does NOT escalate a non-investigate (plan/execute) turn, even on low confidence', async () => {
-    let calls = 0;
-    const fake: WorkerEngine = {
-      name: EWorkerEngineName.CLAUDE,
-      async run() {
-        calls++;
-        return { result: 'Alex — plan.\nConfidence: low — unsure.', sessionId: 'e1' };
-      },
-    };
-    const { runner, sessions } = buildRunner(fake);
-    const session = await sessions.create(newSession); // mode: 'plan'
-    await runner.runSessionTurn(session.id, session.task);
-    expect(calls).toBe(1);
+    expect(after?.lastReport).toContain('answer');
+    expect(after?.turns).toBe(1);
   });
 });
 
@@ -915,5 +1034,112 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     expect(seen[0]?.task).toContain('main');
     expect(seen[0]?.task).toContain('src/app.ts');
     expect(seen[0]?.task).toContain('do the work'); // original task still there
+  });
+
+  it('hands an ALREADY-in-progress merge to the turn (resolve & commit) without calling refreshFromBase', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const recording: WorkerEngine = {
+      name: EWorkerEngineName.CLAUDE,
+      async run(args: RunWorkerArgs) {
+        seen.push(args);
+        return { result: 'Alex — resolved.', sessionId: 'e1' };
+      },
+    };
+    const { runner, sessions, refreshCalls } = buildRunner(recording, {
+      mergeInProgress: true,
+      mergeFiles: ['src/auth.guard.spec.ts'],
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(refreshCalls).toEqual([]); // short-circuited before refreshFromBase (would have thrown)
+    expect(seen[0]?.task).toMatch(/IN PROGRESS/);
+    expect(seen[0]?.task).toContain('src/auth.guard.spec.ts');
+    expect(seen[0]?.task).toContain('do the work');
+  });
+
+  // The engine's `task` is what the bot actually reads — assert the heads-up reaches it (or doesn't).
+  const recordingEngine = (seen: Partial<RunWorkerArgs>[]): WorkerEngine => ({
+    name: EWorkerEngineName.CLAUDE,
+    async run(args: RunWorkerArgs) {
+      seen.push(args);
+      return { result: 'Alex — done.', sessionId: 'e1' };
+    },
+  });
+
+  it('does NOT prepend anything on a CLEAN refresh', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: { refreshed: true, baseBranch: 'main' },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toBe('do the work'); // untouched
+  });
+
+  it('tells the bot when the tree is DIRTY (commit + refresh_worktree)', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: {
+        refreshed: false,
+        dirty: true,
+        baseBranch: 'main',
+        detail: 'the worktree has uncommitted changes',
+      },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/uncommitted changes/);
+    expect(seen[0]?.task).toContain('refresh_worktree');
+    expect(seen[0]?.task).toContain('do the work');
+  });
+
+  it('tells the bot when the refresh did not land (e.g. fetch miss)', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: {
+        refreshed: false,
+        baseBranch: 'main',
+        detail: "couldn't fetch main from origin: network",
+      },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/may be behind/);
+    expect(seen[0]?.task).toContain('refresh_worktree');
+  });
+
+  it('tells the bot when the refresh THREW', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshThrows: true,
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/an error occurred/);
+    expect(seen[0]?.task).toContain('refresh_worktree');
+    expect(seen[0]?.task).toContain('do the work');
+  });
+
+  it('tells the bot when refresh was skipped for a mid-turn sibling session', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen));
+    await sessions.create(execSession); // a sibling, left 'running'
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toMatch(/another session is mid-turn/);
+    expect(seen[0]?.task).toContain('do the work');
+  });
+
+  it('stays QUIET when there is no base branch to track (unregistered)', async () => {
+    const seen: Partial<RunWorkerArgs>[] = [];
+    const { runner, sessions } = buildRunner(recordingEngine(seen), {
+      refreshResult: {
+        refreshed: false,
+        detail: 'no registered GitHub repo matches this worktree',
+      },
+    });
+    const session = await sessions.create(execSession);
+    await runner.runSessionTurn(session.id, 'do the work', undefined, true);
+    expect(seen[0]?.task).toBe('do the work'); // no noise when there's nothing to refresh against
   });
 });

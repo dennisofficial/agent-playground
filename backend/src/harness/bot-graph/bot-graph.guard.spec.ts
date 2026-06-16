@@ -144,7 +144,6 @@ function buildFactory(
     { get: () => undefined } as unknown as ChannelRegistryService,
     {
       toStructuredTools: () => [],
-      terminalToolNames: () => new Set<string>(),
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {
@@ -608,7 +607,7 @@ describe('bot graph — recursion guard', () => {
     expect(invocations).toHaveLength(1);
   });
 
-  it('(i) silent tool-only turns are never loop evidence — gate-passed end_turn declines do not pause', async () => {
+  it('(i) silent tool-only turns are never loop evidence — gate-passed silent declines do not pause', async () => {
     const channel = new FakeChannel();
     channel.append({
       id: 'b-1',

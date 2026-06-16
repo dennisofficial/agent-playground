@@ -322,10 +322,7 @@ describe('compactPriorToolResults', () => {
  */
 describe('filterToolDispatchMessages', () => {
   it('returns the same reference when there are no tool-dispatch messages', () => {
-    const history = [
-      new HumanMessage('hi'),
-      new AIMessage('hello'),
-    ];
+    const history = [new HumanMessage('hi'), new AIMessage('hello')];
     expect(filterToolDispatchMessages(history)).toBe(history);
   });
 
@@ -342,7 +339,9 @@ describe('filterToolDispatchMessages', () => {
   it('filters a prior-turn text-less dispatch and its tool result', () => {
     const dispatch = new AIMessage({
       content: '',
-      tool_calls: [{ name: 'recall', args: { query: 'foo' }, id: 'd1', type: 'tool_call' }],
+      tool_calls: [
+        { name: 'recall', args: { query: 'foo' }, id: 'd1', type: 'tool_call' },
+      ],
     });
     const toolResult = new ToolMessage({
       tool_call_id: 'd1',
@@ -383,7 +382,11 @@ describe('filterToolDispatchMessages', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'p1', type: 'tool_call' }],
     });
-    const priorTool = new ToolMessage({ tool_call_id: 'p1', name: 'a', content: 'r1' });
+    const priorTool = new ToolMessage({
+      tool_call_id: 'p1',
+      name: 'a',
+      content: 'r1',
+    });
     const currentDispatch = new AIMessage({
       content: '',
       tool_calls: [{ name: 'b', args: {}, id: 'c1', type: 'tool_call' }],
@@ -403,12 +406,20 @@ describe('filterToolDispatchMessages', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'id1', type: 'tool_call' }],
     });
-    const t1 = new ToolMessage({ tool_call_id: 'id1', name: 'a', content: 'r1' });
+    const t1 = new ToolMessage({
+      tool_call_id: 'id1',
+      name: 'a',
+      content: 'r1',
+    });
     const d2 = new AIMessage({
       content: '',
       tool_calls: [{ name: 'b', args: {}, id: 'id2', type: 'tool_call' }],
     });
-    const t2 = new ToolMessage({ tool_call_id: 'id2', name: 'b', content: 'r2' });
+    const t2 = new ToolMessage({
+      tool_call_id: 'id2',
+      name: 'b',
+      content: 'r2',
+    });
     const final = new AIMessage({ content: 'Done.' });
 
     const history = [d1, t1, d2, t2, final];
@@ -426,7 +437,11 @@ describe('filterToolDispatchMessages', () => {
       content: 'Checking…',
       tool_calls: [{ name: 'search', args: {}, id: 's1', type: 'tool_call' }],
     });
-    const toolMsg = new ToolMessage({ tool_call_id: 's1', name: 'search', content: 'result' });
+    const toolMsg = new ToolMessage({
+      tool_call_id: 's1',
+      name: 'search',
+      content: 'result',
+    });
     const lastAi = new AIMessage({ content: 'Answer.' });
 
     const history = [human, aiWithText, toolMsg, lastAi];
@@ -460,7 +475,11 @@ describe('dropLeadingOrphanToolResults', () => {
   });
 
   it('drops a single leading ToolMessage', () => {
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'orphan' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'orphan',
+    });
     const ai = new AIMessage({ content: 'reply' });
     const history = [tool, ai];
     const out = dropLeadingOrphanToolResults(history);
@@ -470,8 +489,16 @@ describe('dropLeadingOrphanToolResults', () => {
   });
 
   it('drops multiple contiguous leading ToolMessages', () => {
-    const t1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
-    const t2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const t1 = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r1',
+    });
+    const t2 = new ToolMessage({
+      tool_call_id: 't2',
+      name: 'b',
+      content: 'r2',
+    });
     const ai = new AIMessage({ content: 'next' });
     const human = new HumanMessage('after');
     const history = [t1, t2, ai, human];
@@ -494,7 +521,11 @@ describe('dropLeadingOrphanToolResults', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'result' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'result',
+    });
     const history = [ai, tool];
     expect(dropLeadingOrphanToolResults(history)).toBe(history);
   });
@@ -535,7 +566,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'r',
+    });
     const messages = [
       new HumanMessage('earlier'),
       new AIMessage({ content: 'prior reply' }),
@@ -555,8 +590,16 @@ describe('pairSafeBoundary', () => {
         { name: 'b', args: {}, id: 't2', type: 'tool_call' },
       ],
     });
-    const tool1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
-    const tool2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const tool1 = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r1',
+    });
+    const tool2 = new ToolMessage({
+      tool_call_id: 't2',
+      name: 'b',
+      content: 'r2',
+    });
     const messages = [
       new HumanMessage('earlier'),
       new AIMessage({ content: 'prior reply' }),
@@ -577,7 +620,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r',
+    });
     const messages = [new HumanMessage('h'), ai, tool];
     // rawCut=2 (tool), floor=2 → b<=floor immediately → floor
     expect(pairSafeBoundary(messages, 2, 2)).toBe(2);
@@ -602,7 +649,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'a', args: {}, id: 'x', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r',
+    });
     const messages = [new HumanMessage('h'), ai, tool];
     // rawCut=2 on tool → (a) walks to b=1 (AI) → (b) id mismatch → floor
     expect(pairSafeBoundary(messages, 2, 0)).toBe(0);
@@ -617,8 +668,16 @@ describe('pairSafeBoundary', () => {
         { name: 'b', args: {}, id: 't2', type: 'tool_call' },
       ],
     });
-    const t1 = new ToolMessage({ tool_call_id: 't1', name: 'a', content: 'r1' });
-    const t2 = new ToolMessage({ tool_call_id: 't2', name: 'b', content: 'r2' });
+    const t1 = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'a',
+      content: 'r1',
+    });
+    const t2 = new ToolMessage({
+      tool_call_id: 't2',
+      name: 'b',
+      content: 'r2',
+    });
     const reply = new AIMessage({ content: 'done' });
     const messages = [
       new HumanMessage('earlier'),
@@ -656,7 +715,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'r',
+    });
     const messages = [
       new HumanMessage('h'),
       ai,
@@ -674,7 +737,11 @@ describe('pairSafeBoundary', () => {
       content: '',
       tool_calls: [{ name: 'recall', args: {}, id: 't1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 't1', name: 'recall', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 't1',
+      name: 'recall',
+      content: 'r',
+    });
     const messages = [
       new HumanMessage('h'),
       ai,
@@ -724,7 +791,14 @@ describe('estimateMessageTokens', () => {
   });
 
   it('AIMessage with tool_calls: adds JSON length of calls', () => {
-    const calls = [{ name: 'recall', args: { q: 'x' }, id: 't1', type: 'tool_call' as const }];
+    const calls = [
+      {
+        name: 'recall',
+        args: { q: 'x' },
+        id: 't1',
+        type: 'tool_call' as const,
+      },
+    ];
     const m = new AIMessage({ content: '', tool_calls: calls });
     const callsLen = JSON.stringify(calls).length;
     expect(estimateMessageTokens(m)).toBe(Math.ceil(callsLen / 4));
@@ -743,7 +817,7 @@ describe('sumMessageTokens', () => {
 
   it('sums tokens across all messages', () => {
     const messages = [
-      new HumanMessage('aaaa'),  // 4 chars → 1 token
+      new HumanMessage('aaaa'), // 4 chars → 1 token
       new AIMessage({ content: 'bbbbbbbb' }), // 8 chars → 2 tokens
     ];
     expect(sumMessageTokens(messages)).toBe(3);
@@ -787,10 +861,7 @@ describe('findCompactionCutPoint', () => {
   it('always keeps at least the last message even if it alone exceeds the budget', () => {
     // Single large message whose tokens exceed the budget — still must not return messages.length.
     const huge = 'x'.repeat(40_000); // 10 000 tokens
-    const messages = [
-      new HumanMessage('prefix'),
-      new HumanMessage(huge),
-    ];
+    const messages = [new HumanMessage('prefix'), new HumanMessage(huge)];
     // Walk: i=1 (huge): acc + 10000 > 100 BUT i=1 === messages.length-1=1 → keep it. cut=1.
     // pairSafeBoundary(messages, 1, 0): messages[1] is Human → (c) it IS Human → return 1.
     expect(findCompactionCutPoint(messages, 0, 100)).toBe(1);
@@ -799,9 +870,9 @@ describe('findCompactionCutPoint', () => {
   it('respects `from` as the floor — does not walk below it', () => {
     // budget = 50 tokens, from = 2, messages[2..] = one tiny message.
     const messages = [
-      new HumanMessage('x'.repeat(400)),  // large — before floor
-      new AIMessage({ content: 'x'.repeat(400) }),  // large — before floor
-      new HumanMessage('short'),           // idx 2, after floor
+      new HumanMessage('x'.repeat(400)), // large — before floor
+      new AIMessage({ content: 'x'.repeat(400) }), // large — before floor
+      new HumanMessage('short'), // idx 2, after floor
     ];
     // Walk from i=2 (the only message in [from..end]): 5 chars → 2 tokens ≤ 50 → cut=2.
     // pairSafeBoundary(messages, 2, 2) → floor=2 (b<=floor immediately) → 2.
@@ -826,16 +897,22 @@ describe('findCompactionCutPoint', () => {
     //   (c) Human boundary: b=2 is AI → b=1 (HumanMessage) → return 1
     const ai = new AIMessage({
       content: '',
-      tool_calls: [{ name: 'recall', args: {}, id: 'cut-t1', type: 'tool_call' }],
+      tool_calls: [
+        { name: 'recall', args: {}, id: 'cut-t1', type: 'tool_call' },
+      ],
     });
-    const tool = new ToolMessage({ tool_call_id: 'cut-t1', name: 'recall', content: 'r' });
+    const tool = new ToolMessage({
+      tool_call_id: 'cut-t1',
+      name: 'recall',
+      content: 'r',
+    });
     const bigHuman = new HumanMessage('x'.repeat(400)); // 100 tokens
     const messages = [
-      new HumanMessage('x'.repeat(400)),  // idx 0, before window
-      new HumanMessage('h2'),              // idx 1, Human boundary target
-      ai,                                  // idx 2
-      tool,                                // idx 3
-      bigHuman,                            // idx 4
+      new HumanMessage('x'.repeat(400)), // idx 0, before window
+      new HumanMessage('h2'), // idx 1, Human boundary target
+      ai, // idx 2
+      tool, // idx 3
+      bigHuman, // idx 4
     ];
     // With budget=101: idx4=100 fits, idx3 (ToolMessage,1 token) fits at acc=101,
     // idx2 (AI, ~small) → acc+small > 101 → break, raw cut=3.
@@ -852,11 +929,15 @@ describe('findCompactionCutPoint', () => {
       content: '',
       tool_calls: [{ name: 't', args: {}, id: 'c1', type: 'tool_call' }],
     });
-    const tool = new ToolMessage({ tool_call_id: 'c1', name: 't', content: 'x'.repeat(400) });
+    const tool = new ToolMessage({
+      tool_call_id: 'c1',
+      name: 't',
+      content: 'x'.repeat(400),
+    });
     const messages = [
-      new HumanMessage('h'),  // idx 0
-      ai,                      // idx 1
-      tool,                    // idx 2
+      new HumanMessage('h'), // idx 0
+      ai, // idx 1
+      tool, // idx 2
     ];
     // Walk: tool(2)=100 tokens fits in 1000 budget, AI(1) + tool_call JSON fits, Human(0) stays too.
     // raw cut = 0. pairSafeBoundary(messages, 0, 0) → b=0 ≤ floor=0 → return 0.
@@ -892,4 +973,3 @@ describe('findCompactionCutPoint', () => {
     expect(sumMessageTokens(messages.slice(result))).toBeGreaterThan(20_000);
   });
 });
-

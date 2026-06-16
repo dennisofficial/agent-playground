@@ -28,6 +28,14 @@ export class ChatModelFactory {
     return this.creds.anthropicKey();
   }
 
+  /**
+   * The model id that `buildModel()` uses — single source of truth so callers that need the
+   * string (e.g. the LangGraph engine for cost attribution) don't have to re-read the env.
+   */
+  chatModelId(): string {
+    return this.env.get('CHAT_MODEL') ?? DEFAULT_CHAT_MODEL;
+  }
+
   /** The main chat model (one model for v0; per-role / multi-LLM config comes later). */
   buildModel(): ChatAnthropic {
     const temperature = this.env.get('CHAT_TEMPERATURE') ?? 1;

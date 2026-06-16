@@ -1,5 +1,5 @@
 import { RunnableLambda } from '@langchain/core/runnables';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Fact } from '@workspace/shared/schemas';
 import type { Repository } from 'typeorm';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
@@ -106,25 +106,26 @@ function makeCredCtx() {
 }
 
 /**
- * Build a Repository<Fact> stub that supports the TypeORM QueryBuilder API used by
- * MemoryConsolidationService. Each call to `createQueryBuilder` consumes the next result
- * from `qbResults` and returns a chainable QB object whose `getRawMany` resolves it.
+ * Build a Repository<Fact> stub whose createQueryBuilder returns a chainable query builder.
+ * `rawManyResults` is consumed in order: first getRawMany() call → first result, etc.
  */
-function makeFactRepo(qbResults: unknown[][]) {
+function makeFactRepo(rawManyResults: unknown[][]) {
   let call = 0;
-  const createQueryBuilder = vi.fn((_alias?: string) => {
-    const result = qbResults[call++] ?? [];
-    return {
-      select: vi.fn().mockReturnThis(),
-      addSelect: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      andWhere: vi.fn().mockReturnThis(),
-      groupBy: vi.fn().mockReturnThis(),
-      having: vi.fn().mockReturnThis(),
-      orderBy: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockReturnThis(),
-      getRawMany: vi.fn(() => Promise.resolve(result)),
-    };
+  const createQueryBuilder = vi.fn(() => {
+    const qb: Record<string, any> = {};
+    const chain = () => qb;
+    for (const m of [
+      'select',
+      'where',
+      'andWhere',
+      'groupBy',
+      'having',
+      'orderBy',
+      'limit',
+    ])
+      qb[m] = vi.fn(chain);
+    qb.getRawMany = vi.fn(() => Promise.resolve(rawManyResults[call++] ?? []));
+    return qb;
   });
   return { createQueryBuilder } as unknown as Repository<Fact>;
 }
@@ -450,31 +451,37 @@ describe('MemoryConsolidationService', () => {
 
   describe('re-entrancy guard', () => {
     it('skips a second overlapping tick', async () => {
-      // Use a repo whose first QB.getRawMany never resolves to simulate a long-running first tick.
-      let resolveFirst!: (rows: Array<{ team_id: string }>) => void;
+      const facts = [
+        makeFact(70, 'a', SCOPE_A),
+        makeFact(71, 'b', SCOPE_A),
+        makeFact(72, 'c', SCOPE_A),
+      ];
+      // Use a repo that never resolves to simulate a long-running first tick
+      let resolveFirst!: () => void;
       const firstQuery = new Promise<Array<{ team_id: string }>>((res) => {
-        resolveFirst = res;
+        resolveFirst = () => res([{ team_id: TEAM_ID }]);
       });
-      let qbCallIndex = 0;
-      const createQueryBuilder = vi.fn(() => {
-        const callIdx = qbCallIndex++;
-        return {
-          select: vi.fn().mockReturnThis(),
-          where: vi.fn().mockReturnThis(),
-          andWhere: vi.fn().mockReturnThis(),
-          groupBy: vi.fn().mockReturnThis(),
-          having: vi.fn().mockReturnThis(),
-          orderBy: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockReturnThis(),
-          // First call (tenants) blocks until resolveFirst; subsequent calls (scopes) return []
-          getRawMany: vi.fn(() =>
-            callIdx === 0 ? firstQuery : Promise.resolve([]),
-          ),
-        };
-      });
-      const factRepo = { createQueryBuilder } as unknown as Repository<Fact>;
+      const getRawMany = vi.fn(() => firstQuery);
+      const factRepo = {
+        createQueryBuilder: vi.fn(() => {
+          const qb: Record<string, any> = {};
+          const chain = () => qb;
+          for (const m of [
+            'select',
+            'where',
+            'andWhere',
+            'groupBy',
+            'having',
+            'orderBy',
+            'limit',
+          ])
+            qb[m] = vi.fn(chain);
+          qb.getRawMany = getRawMany;
+          return qb;
+        }),
+      } as unknown as Repository<Fact>;
 
-      const semantic = makeSemantic({});
+      const semantic = makeSemantic({ [SCOPE_A]: facts });
       const write = makeWrite();
       const metrics = makeMetrics();
       const models = makeModels({
@@ -496,18 +503,18 @@ describe('MemoryConsolidationService', () => {
         factRepo,
       );
 
-      // Start first tick (doesn't complete yet — blocked on tenant QB query)
+      // Start first tick (doesn't complete yet)
       const first = svc.consolidate();
       // Immediately fire a second tick
       const second = svc.consolidate();
 
-      // Second tick resolves instantly (skipped because this.running = true)
+      // Second tick resolves instantly (skipped)
       await second;
-      // Only the first tick's tenant QB has been initiated at this point
-      expect(createQueryBuilder).toHaveBeenCalledTimes(1);
-
-      // Unblock the first tick (tenant query resolves → runTenant → empty scopes → done)
-      resolveFirst([{ team_id: TEAM_ID }]);
+      // BEFORE unblocking: only the first tick's tenant-discovery getRawMany ran;
+      // second tick was a no-op (re-entrancy guard fired).
+      expect(getRawMany).toHaveBeenCalledTimes(1);
+      // Unblock the first
+      resolveFirst();
       await first;
     });
   });

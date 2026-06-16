@@ -75,7 +75,12 @@ export class SessionNoteStore {
     channelId: string,
   ): Promise<SessionNote[]> {
     const rows = await this.repo.find({
-      where: { team_id: team, owner_bot: ownerBot, channel_id: channelId, status: 'open' },
+      where: {
+        team_id: team,
+        owner_bot: ownerBot,
+        channel_id: channelId,
+        status: 'open',
+      },
       order: { created_at: 'ASC' },
     });
     return rows.map(entityToNote);
@@ -91,7 +96,12 @@ export class SessionNoteStore {
     channelId: string,
   ): Promise<SessionNote[]> {
     const rows = await this.repo.find({
-      where: { team_id: team, owner_bot: ownerBot, channel_id: channelId, status: 'resolved' },
+      where: {
+        team_id: team,
+        owner_bot: ownerBot,
+        channel_id: channelId,
+        status: 'resolved',
+      },
       order: { updated_at: 'DESC' },
     });
     return rows.map(entityToNote);

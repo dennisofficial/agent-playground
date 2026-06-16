@@ -33,11 +33,17 @@ committed `backend/.env.local.enc`. The only thing not in the repo is the privat
 decrypts it. So onboarding a new teammate is:
 
 ```bash
-# 1. Get backend/.env.keys (DOTENV_PRIVATE_KEY_LOCAL_ENC) from 1Password, drop it in backend/.
+# 1. Initialize git submodules — required before pnpm install.
+#    packages/nestjs-ai-essentials (provides @workspace/langfuse) and packages/jwt-auth
+#    (provides @workspace/auth) are git submodules; pnpm can't link them until they exist.
+#    Either clone with: git clone --recurse-submodules <url>
+#    Or, on an existing clone: git submodule update --init --recursive
+#    Or, use the convenience script from the repo root: pnpm run setup
+# 2. Get backend/.env.keys (DOTENV_PRIVATE_KEY_LOCAL_ENC) from 1Password, drop it in backend/.
 #    .env.keys is git-ignored — it never lives in the repo.
-# 2. Copy the example for your personal secrets (LLM keys, machine paths):
+# 3. Copy the example for your personal secrets (LLM keys, machine paths):
 cp .env.example .env.personal       # then fill in ANTHROPIC_API_KEY / OPENAI_API_KEY / WORKER_ROOT
-# 3. Start Postgres and build the DB (drops → migrates → seeds Slack identities + tenant row):
+# 4. Start Postgres and build the DB (drops → migrates → seeds Slack identities + tenant row):
 docker compose up -d postgres       # from the repo root
 pnpm install
 pnpm db:recreate
@@ -49,8 +55,18 @@ key there only to deviate from the shared dev workspace.
 
 ## Project setup
 
+**Submodules must be initialized before `pnpm install`** — `@workspace/langfuse` and
+`@workspace/auth` live in git submodules (`packages/nestjs-ai-essentials`, `packages/jwt-auth`).
+Without them pnpm can't link the workspace packages and `tsc` throws TS2307.
+
 ```bash
+# From the repo root — initializes submodules, installs, AND builds packages in one step:
+$ pnpm run setup
+
+# Or separately:
+$ git submodule update --init --recursive
 $ pnpm install
+$ pnpm build:packages   # required: builds @workspace/langfuse and @workspace/auth dist/
 ```
 
 ## Compile and run the project

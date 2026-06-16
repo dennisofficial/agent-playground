@@ -12,7 +12,6 @@ import {
 } from '../../tools/tasks/standup.tools';
 import { DEFAULT_CHAT_TOOLSET } from '../../tools/default-toolset';
 import { OpenPrTool } from '../../tools/worktrees/open-pr.tool';
-import { MarkPrReadyTool } from '../../tools/worktrees/mark-pr-ready.tool';
 import { EXECUTE_CODEX, PLAN_CODEX } from '../../engines/engine-presets';
 
 /**
@@ -37,10 +36,10 @@ export class SamEmployee extends BaseEmployee {
   readonly tools = [
     ...DEFAULT_CHAT_TOOLSET,
     ListPullRequestsTool,
-    // Lead-only manual override of the automated PR pipeline (ICs no longer carry these — the review
-    // pipeline opens the draft PR and flips it to ready itself).
+    // Lead-only manual override: open a PR by hand. mark_pr_ready is now in DEFAULT_CHAT_TOOLSET (every
+    // owner ships their own PR after the self-review hands them the decision), so Sam inherits it there
+    // — re-listing it would double-register (the allowlist→tools mapping doesn't dedup).
     OpenPrTool,
-    MarkPrReadyTool,
     // Lead-only approval pipeline + standup switch.
     ApprovePlanTool,
     ProposePlanTool,

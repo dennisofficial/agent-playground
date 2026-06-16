@@ -32,12 +32,12 @@ export const REVIEW_CLAUDE: EnginePreset = {
 };
 
 /**
- * When a Claude investigation self-reports LOW confidence, the session runner re-runs it ONCE on
- * this higher-reasoning model (resuming the same engine session, so it builds on and corrects the
- * first pass). Kept here so the model-tier knowledge stays single-sourced. Claude-only: non-Claude
- * investigate sessions route their own models and are never escalated.
+ * The model a Claude `investigate` turn runs on. Investigations exist to BACK a fact or decision with
+ * the real codebase (not answer from memory), so they get a top-tier reasoning model rather than the
+ * everyday execute model. Kept here so the model-tier knowledge stays single-sourced. Claude-only:
+ * non-Claude investigate sessions route their own models (see `BaseEmployee.investigateEngine`).
  */
-export const INVESTIGATE_ESCALATION_MODEL = 'claude-opus-4-8';
+export const INVESTIGATE_CLAUDE_MODEL = 'claude-opus-4-8';
 
 // Codex resolves its own model/effort from its env/SDK; the preset just pins the engine.
 export const PLAN_CODEX: EnginePreset = { engine: EWorkerEngineName.CODEX };

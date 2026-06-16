@@ -253,7 +253,8 @@ export const pairSafeBoundary = (
 };
 
 /** Rough token estimate: chars / 4, rounded up. No tokenizer dependency. */
-export const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
+export const estimateTokens = (text: string): number =>
+  Math.ceil(text.length / 4);
 
 /** Per-message token estimate: flattened text content + tool_call JSON length, chars/4. */
 export const estimateMessageTokens = (m: BaseMessage): number => {

@@ -24,5 +24,4 @@ if (!process.env.POSTGRES_DB?.endsWith('_test')) {
 
 // Harness-migration TODO: once @langchain lands in the backend, extend matchers
 // here (e.g. `expect.extend(langchainMatchers)` from '@langchain/core/testing')
-// and wire LangSmith tracing for *.ai.test.ts — this project traces via LangSmith,
-// not Langfuse (see mls-studio for the Langfuse/OTEL variant of this hook).
+// and wire Langfuse tracing for *.ai.test.ts — this project traces via Langfuse.

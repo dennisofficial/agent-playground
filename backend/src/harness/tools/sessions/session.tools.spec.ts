@@ -1,7 +1,11 @@
 import { makeEmployee } from '@harness/employees/employee.testing';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 import type { Identity } from '../../domain/identity';
-import { CreateSessionTool } from './session.tools';
+import {
+  CheckSessionTool,
+  CreateSessionTool,
+  ReplySessionTool,
+} from './session.tools';
 
 /**
  * The create_session side of the approval gate: an execute-mode session is checked against the
@@ -27,6 +31,7 @@ function makeTool(opts: {
   boardTask?: { id: number; title?: string; description?: string } | undefined;
   plan?: { planMd: string } | undefined;
   engine?: EWorkerEngineName;
+  note?: { id: number; body: string } | undefined;
 }) {
   const created: Record<string, unknown>[] = [];
   const sessions = {
@@ -42,7 +47,10 @@ function makeTool(opts: {
         Promise.resolve(),
     ),
   };
-  const worktrees = { get: () => ({ id: 'wt-001', path: '/tmp/wt' }) };
+  const worktrees = {
+    get: () => ({ id: 'wt-001', path: '/tmp/wt' }),
+    ensureShared: vi.fn(async () => 'shared/ticket-7'),
+  };
   const alex = makeEmployee({ id: 'alex', name: 'Alex', engine: opts.engine });
   const employees = {
     byId: () => alex,
@@ -57,6 +65,7 @@ function makeTool(opts: {
     get: vi.fn(() => Promise.resolve(opts.plan)),
     setExecuteContext: vi.fn(() => Promise.resolve(undefined)),
   };
+  const notes = { get: vi.fn(() => Promise.resolve(opts.note)) };
   const tool = new CreateSessionTool(
     sessions as never,
     runner as never,
@@ -64,8 +73,9 @@ function makeTool(opts: {
     employees as never,
     board as never,
     plans as never,
+    notes as never,
   );
-  return { tool, created, runner, board, plans };
+  return { tool, created, runner, board, plans, notes };
 }
 
 describe('create_session × the approval gate', () => {
@@ -77,7 +87,11 @@ describe('create_session × the approval gate', () => {
     );
     expect(out).toContain("Can't open an execute session: needs approval");
     expect(created).toHaveLength(0);
-    expect(runner.executeRefusal).toHaveBeenCalledWith('T1', undefined);
+    expect(runner.executeRefusal).toHaveBeenCalledWith(
+      'T1',
+      undefined,
+      'wt-001',
+    );
   });
 
   it('plan-mode opens are never gated', async () => {
@@ -97,7 +111,7 @@ describe('create_session × the approval gate', () => {
       { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
       ctx,
     );
-    const opening = runner.runSessionTurn.mock.calls[0]?.[1] as string;
+    const opening = runner.runSessionTurn.mock.calls[0]?.[1];
     // Codex has no native plan ceremony, so the posture is established in the prompt.
     expect(opening).toContain('PLAN MODE');
     expect(opening).toContain('READ-ONLY');
@@ -129,7 +143,11 @@ describe('create_session × the approval gate', () => {
       ctx,
     );
     expect(out).toContain('board #7');
-    expect(linked.runner.executeRefusal).toHaveBeenCalledWith('T1', 7);
+    expect(linked.runner.executeRefusal).toHaveBeenCalledWith(
+      'T1',
+      7,
+      'wt-001',
+    );
     expect(linked.created[0]?.boardTaskId).toBe(7);
   });
 
@@ -175,6 +193,29 @@ describe('create_session × the approval gate', () => {
     expect(runner.runSessionTurn.mock.calls[0]?.[1]).toBe('just do it');
   });
 
+  it('inlines self-review findings by id into the opening message (review_note_id fallback path)', async () => {
+    const { tool, runner, notes } = makeTool({
+      boardTask: { id: 7, title: 'Wire auth' },
+      plan: undefined,
+      refusal: null,
+      note: { id: 42, body: 'Null check missing in handler.' },
+    });
+    await tool.execute(
+      {
+        worktreeId: 'wt-001',
+        task: 'fix the self-review note',
+        mode: 'execute',
+        board_task_id: 7,
+        review_note_id: 42,
+      },
+      ctx,
+    );
+    expect(notes.get).toHaveBeenCalledWith('T1', 7, 42);
+    const opening = runner.runSessionTurn.mock.calls[0]?.[1];
+    expect(opening).toContain('SELF-REVIEW FINDINGS TO ADDRESS (note #42)');
+    expect(opening).toContain('Null check missing in handler.');
+  });
+
   it('threads the chat-turn trace pointer through to the first session turn (Langfuse link)', async () => {
     const { tool, runner } = makeTool({ engine: EWorkerEngineName.CLAUDE });
     const parentChatTrace = { traceId: 'abc123', spanId: 'def456' };
@@ -184,5 +225,104 @@ describe('create_session × the approval gate', () => {
     );
     // 3rd arg of runSessionTurn is the parent-chat-trace pointer (for the session-turn observation).
     expect(runner.runSessionTurn.mock.calls[0]?.[2]).toEqual(parentChatTrace);
+  });
+});
+
+describe('reply_session × review_note_id templating (the recommended fix path)', () => {
+  function makeReply(opts: {
+    session?: Record<string, unknown>;
+    note?: { id: number; body: string };
+  }) {
+    const sessions = { get: vi.fn(() => Promise.resolve(opts.session)) };
+    const replySession = vi.fn(
+      (_id: string, _message: string, _mode?: unknown, _trace?: unknown) =>
+        Promise.resolve({ ok: true }),
+    );
+    const runner = { replySession };
+    const notes = { get: vi.fn(() => Promise.resolve(opts.note)) };
+    const tool = new ReplySessionTool(
+      sessions as never,
+      runner as never,
+      notes as never,
+    );
+    return { tool, replySession, notes };
+  }
+
+  const liveSession = {
+    id: 'sess-1',
+    ownerBot: 'alex',
+    team: 'T1',
+    boardTaskId: 7,
+  };
+
+  it('prepends the findings note body to the outgoing message', async () => {
+    const { tool, replySession, notes } = makeReply({
+      session: liveSession,
+      note: { id: 42, body: 'Fix the null check.' },
+    });
+    await tool.execute(
+      {
+        sessionId: 'sess-1',
+        message: 'addressing the note',
+        review_note_id: 42,
+      },
+      ctx,
+    );
+    expect(notes.get).toHaveBeenCalledWith('T1', 7, 42);
+    const sent = replySession.mock.calls[0]?.[1];
+    expect(sent).toContain('SELF-REVIEW FINDINGS TO ADDRESS (note #42)');
+    expect(sent).toContain('Fix the null check.');
+    expect(sent).toContain('addressing the note');
+  });
+
+  it('no-ops the templating when the note id is unknown', async () => {
+    const { tool, replySession } = makeReply({
+      session: liveSession,
+      note: undefined,
+    });
+    await tool.execute(
+      { sessionId: 'sess-1', message: 'plain message', review_note_id: 99 },
+      ctx,
+    );
+    expect(replySession.mock.calls[0]?.[1]).toBe('plain message');
+  });
+});
+
+describe('check_session × the displayed engine tier', () => {
+  function makeCheckTool(session: Record<string, unknown>) {
+    const sessions = {
+      get: vi.fn(() => Promise.resolve(session)),
+      latest: vi.fn(() => Promise.resolve(session)),
+    };
+    const runner = { getSessionActivity: vi.fn(() => Promise.resolve('')) };
+    const alex = makeEmployee({ id: 'alex', name: 'Alex' }); // Claude
+    const employees = {
+      byId: () => alex,
+      fallbackOwner: () => alex,
+      context: () => ({ team: 'local', roster: 'Alex — backend engineer' }),
+    };
+    return new CheckSessionTool(
+      sessions as never,
+      runner as never,
+      employees as never,
+    );
+  }
+
+  it('renders a Claude investigate session on the Opus tier (not the Sonnet execute model)', async () => {
+    const tool = makeCheckTool({
+      id: 'sess-001',
+      ownerBot: 'alex',
+      mode: 'investigate',
+      engine: EWorkerEngineName.CLAUDE,
+      status: 'idle',
+      lastReport: 'the answer',
+      lastReportKind: 'text',
+      worktreeId: 'wt-001',
+      turns: 1,
+      task: 'how does the gate work?',
+    });
+    const out = await tool.execute({ sessionId: 'sess-001' }, ctx);
+    expect(out).toContain('investigate on claude-opus-4-8');
+    expect(out).not.toContain('claude-sonnet-4-6');
   });
 });

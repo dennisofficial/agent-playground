@@ -4,7 +4,7 @@ import {
 } from '@workspace/shared/schemas';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
-import { PlanStore } from './plan-store';
+import { PlanStore, type PlanState } from './plan-store';
 
 function makeDataSource(): DataSource {
   return new DataSource({
@@ -74,5 +74,35 @@ describe('PlanStore (live Postgres)', () => {
     expect(await plans.approve('T1', 7, 'riley')).toBeUndefined();
     expect(await plans.approve('T2', 7, 'alex')).toBeUndefined(); // team isolation
     expect((await plans.approve('T1', 7, 'alex'))?.leadStatus).toBe('approved');
+  });
+
+  it('planStatesOf: pending_review when any plan is pending, lead_approved when all approved, absent = none, team isolated', async () => {
+    // Task 7 (T1): alex pending + riley approved → pending_review
+    await attach({ taskId: 7, employee: 'alex' }); // lead_status = 'pending'
+    await attach({ taskId: 7, employee: 'riley' });
+    await plans.approve('T1', 7, 'riley');
+
+    // Task 8 (T1): single plan, approved → lead_approved
+    await attach({ taskId: 8, employee: 'alex' });
+    await plans.approve('T1', 8, 'alex');
+
+    // Task 9 (T1): no plans attached → absent from result
+
+    // Task 7 in T2: no plans → absent (team isolation check)
+    const result = await plans.planStatesOf('T1', [7, 8, 9]);
+    expect(result.get(7) satisfies PlanState | undefined).toBe(
+      'pending_review',
+    );
+    expect(result.get(8) satisfies PlanState | undefined).toBe('lead_approved');
+    expect(result.has(9)).toBe(false); // no plan attached → absent (callers treat as 'none')
+
+    // T2 sees nothing for the same task ids
+    const t2Result = await plans.planStatesOf('T2', [7, 8]);
+    expect(t2Result.size).toBe(0);
+  });
+
+  it('planStatesOf: empty taskIds returns empty map immediately', async () => {
+    const result = await plans.planStatesOf('T1', []);
+    expect(result.size).toBe(0);
   });
 });

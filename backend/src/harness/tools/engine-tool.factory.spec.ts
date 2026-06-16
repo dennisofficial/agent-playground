@@ -61,11 +61,10 @@ function build(opts: { worktrees?: string[] } = {}) {
 }
 
 describe('EngineToolFactory', () => {
-  it('binds a tool per tool-capability and marks it terminal', () => {
+  it('binds a tool per tool-capability', () => {
     const { factory } = build({ worktrees: ['wt-1'] });
-    const { tools, terminalNames } = factory.buildTools(nora(), CTX);
+    const { tools } = factory.buildTools(nora(), CTX);
     expect(tools.map((t) => t.name)).toEqual(['deep_research']);
-    expect(terminalNames).toEqual(['deep_research']);
   });
 
   it('opens a session on the capability spec engine, reusing a given worktree', async () => {

@@ -65,7 +65,6 @@ describe('bot graph — consume path resets recalled', () => {
       { get: () => undefined } as unknown as ChannelRegistryService,
       {
         toStructuredTools: () => [],
-        terminalToolNames: () => new Set<string>(),
         refreshScopesByName: () => new Map(),
       } as unknown as ToolRegistry,
       {

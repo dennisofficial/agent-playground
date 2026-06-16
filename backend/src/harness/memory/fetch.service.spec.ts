@@ -82,10 +82,10 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       expect(result).toContain('Postgres');
     });
 
-    it('calls standingContext with the conversation id', async () => {
+    it('calls standingContext with limit 5', async () => {
       const { svc, semantic } = makeService({});
       await svc.fetchContext(makeBot(), id);
-      expect(semantic.standingContext).toHaveBeenCalledWith(id);
+      expect(semantic.standingContext).toHaveBeenCalledWith(id, 5);
     });
 
     it('degrades gracefully when standingContext throws (still emits role/project)', async () => {

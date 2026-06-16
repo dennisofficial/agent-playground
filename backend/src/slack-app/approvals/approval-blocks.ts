@@ -1,3 +1,4 @@
+import type { DescriptionChangeEvent } from '@harness/approvals/board-notifier.port';
 import type { PlanProposalEvent } from '@harness/approvals/proposal-presenter.port';
 
 /**
@@ -129,6 +130,45 @@ export function revisionModalView(meta: string): Record<string, unknown> {
       },
     ],
   };
+}
+
+/** The description-change notification card: headline, context line with @mention + actor, then
+ * full old and new descriptions (each truncated at SUMMARY_MAX). No action buttons — purely
+ * informational. `bossMention` is the `<@Uxxxx>` string for Dennis (or a literal name fallback). */
+export function descriptionChangeCardBlocks(
+  e: DescriptionChangeEvent,
+  bossMention?: string,
+): Record<string, unknown>[] {
+  const contextText = [bossMention, `Changed by ${e.changedBy}`]
+    .filter(Boolean)
+    .join(' · ');
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Description changed — ticket #${e.taskId}: ${e.title}*`,
+      },
+    },
+    {
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: contextText }],
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Old description*\n${truncate(e.oldDescription, SUMMARY_MAX)}`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*New description*\n${truncate(e.newDescription, SUMMARY_MAX)}`,
+      },
+    },
+  ];
 }
 
 /** Split a plan into thread-reply-sized chunks at line boundaries, capped — the ticket holds the

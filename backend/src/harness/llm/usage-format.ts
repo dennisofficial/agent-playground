@@ -4,6 +4,8 @@ import type {
   AccumulatedUsage,
   MessageUsage,
 } from '../domain/conductor-events';
+import type { IWorkerUsage } from '../engines/worker-engine.port';
+import type { IGenerationUsage } from '@workspace/langfuse';
 
 // Source: https://www.anthropic.com/pricing, verified June 2025
 interface ModelPricing {
@@ -108,6 +110,65 @@ export function formatUsageLine(
     parts.push(`cache write 1h ${usage.cacheWrite1h.toLocaleString('en-US')}`);
   parts.push(`$${usage.costUsd.toFixed(4)}`);
   return parts.join(' · ');
+}
+
+/**
+ * Map a neutral `IWorkerUsage` to the `IGenerationUsage` shape expected by `traceSessionTurn`'s
+ * `usage` callback. Returns `undefined` when there is no token data to record.
+ *
+ * Key semantics (deliberate, avoids double-counting):
+ * - `input` = fresh tokens (grand total − cache slices) — what Langfuse bills at the base rate.
+ * - `output` = total output tokens (including reasoning).
+ * - `cache_read_input_tokens` / `cache_creation_input_tokens` = named slices so Langfuse's
+ *   server-side cost formula can apply the correct per-tier rate.
+ * - `total` = inputTokens + outputTokens (grand total across all tiers).
+ * - `output_reasoning_tokens` = reasoning sub-slice (informational; omitted when absent).
+ * - `costDetails.total` = exact cost in USD when the SDK provides it; absent for Codex (relies on
+ *   Langfuse server-side OpenAI model pricing).
+ */
+export function toGenerationUsage(
+  u?: IWorkerUsage,
+): IGenerationUsage | undefined {
+  if (!u) return undefined;
+
+  const {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+    costUsd,
+    model,
+  } = u;
+
+  // Nothing to record.
+  if (inputTokens === undefined && outputTokens === undefined) return undefined;
+
+  const fresh = Math.max(
+    0,
+    (inputTokens ?? 0) - (cacheReadTokens ?? 0) - (cacheWriteTokens ?? 0),
+  );
+  const total = (inputTokens ?? 0) + (outputTokens ?? 0);
+
+  const usageDetails: Record<string, number> = {
+    input: fresh,
+    output: outputTokens ?? 0,
+    ...(cacheReadTokens ? { cache_read_input_tokens: cacheReadTokens } : {}),
+    ...(cacheWriteTokens
+      ? { cache_creation_input_tokens: cacheWriteTokens }
+      : {}),
+    ...(reasoningTokens ? { output_reasoning_tokens: reasoningTokens } : {}),
+    total,
+  };
+
+  const costDetails: Record<string, number> | undefined =
+    costUsd !== undefined ? { total: costUsd } : undefined;
+
+  return {
+    usageDetails,
+    ...(costDetails ? { costDetails } : {}),
+    ...(model ? { model } : {}),
+  };
 }
 
 /**

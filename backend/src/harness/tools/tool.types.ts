@@ -15,7 +15,7 @@ export interface HarnessToolContext {
 
 /**
  * Which part of the pre-LLM context a tool call can dirty. Used by the graph to decide which
- * context slices to recompute after a tool batch (same discovery pattern as `terminal`).
+ * context slices to recompute after a tool batch.
  * - 'work'   → worktrees + open sessions (create_worktree, remove_worktree, close_session)
  * - 'memory' → semantic facts (remember, update_memory, forget)
  * - 'tasks'  → reminders plate (add_task, complete_task)
@@ -34,13 +34,8 @@ export interface IHarnessTool<S extends z.ZodTypeAny = z.ZodTypeAny> {
   readonly description: string;
   readonly schema: S;
   /**
-   * True → a call to this tool ENDS the bot's turn (the graph's terminal set is derived from this
-   * flag, not from a magic-string list in the graph).
-   */
-  readonly terminal?: boolean;
-  /**
    * Parts of the pre-LLM context a successful call dirties — the graph recomputes ONLY these after
-   * the tool runs (same discovery pattern as `terminal`). Omit for read-only tools.
+   * the tool runs. Omit for read-only tools.
    */
   readonly refreshesContext?: readonly RefreshScope[];
   execute(args: z.infer<S>, ctx: HarnessToolContext): Promise<string>;

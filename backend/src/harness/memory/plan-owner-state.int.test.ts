@@ -52,18 +52,33 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
 
   const approvedTask = async (assignee = 'alex') => {
     const t = asTask(
-      await board.create({ team: 'T1', project: 'p', title: 'X', createdBy: 'sam', assignee }),
+      await board.create({
+        team: 'T1',
+        project: 'p',
+        title: 'X',
+        createdBy: 'sam',
+        assignee,
+      }),
     );
     // walk it to 'approved' the way the real flow does
     await board.claim('T1', t.id, assignee); // → planning
-    await board.transition('T1', t.id, 'planning', { status: 'awaiting_approval' });
-    await board.transition('T1', t.id, 'awaiting_approval', { status: 'approved' });
+    await board.transition('T1', t.id, 'planning', {
+      status: 'awaiting_approval',
+    });
+    await board.transition('T1', t.id, 'awaiting_approval', {
+      status: 'approved',
+    });
     return t;
   };
 
   it('plan rows default owner_status=executing and carry the execute context', async () => {
     const t = await approvedTask();
-    await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'plan' });
+    await plans.attach({
+      team: 'T1',
+      taskId: t.id,
+      employee: 'alex',
+      planMd: 'plan',
+    });
     let plan = await plans.get('T1', t.id, 'alex');
     expect(plan?.ownerStatus).toBe('executing');
     expect(plan?.executeWorktreeId).toBeUndefined();
@@ -79,8 +94,18 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
 
   it('integration barrier gate: allOwnersComplete is false until EVERY owner is complete', async () => {
     const t = await approvedTask();
-    await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'a' });
-    await plans.attach({ team: 'T1', taskId: t.id, employee: 'riley', planMd: 'r' });
+    await plans.attach({
+      team: 'T1',
+      taskId: t.id,
+      employee: 'alex',
+      planMd: 'a',
+    });
+    await plans.attach({
+      team: 'T1',
+      taskId: t.id,
+      employee: 'riley',
+      planMd: 'r',
+    });
 
     expect(await plans.allOwnersComplete('T1', t.id)).toBe(false);
     await plans.setOwnerStatus('T1', t.id, 'alex', 'complete');
@@ -91,10 +116,22 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
 
   it('re-attaching a plan resets owner_status back to executing', async () => {
     const t = await approvedTask();
-    await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'a' });
+    await plans.attach({
+      team: 'T1',
+      taskId: t.id,
+      employee: 'alex',
+      planMd: 'a',
+    });
     await plans.setOwnerStatus('T1', t.id, 'alex', 'complete');
-    await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'a2' });
-    expect((await plans.get('T1', t.id, 'alex'))?.ownerStatus).toBe('executing');
+    await plans.attach({
+      team: 'T1',
+      taskId: t.id,
+      employee: 'alex',
+      planMd: 'a2',
+    });
+    expect((await plans.get('T1', t.id, 'alex'))?.ownerStatus).toBe(
+      'executing',
+    );
   });
 
   it('the execution status walk: approved → executing → self_review → in_review', async () => {
