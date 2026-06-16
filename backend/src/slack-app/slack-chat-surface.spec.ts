@@ -37,6 +37,11 @@ function makeFakes(
   };
   const identities = {
     clientFor: vi.fn(async (_teamId: string, botId: string) => puppets[botId]),
+    // Default: no mentioned id is a puppet (humans stay bare). Tests override per-id.
+    botIdForSlackUser: vi.fn(
+      async (_teamId: string, _id: string): Promise<string | undefined> =>
+        undefined,
+    ),
   };
   // The per-team ears client provider — returns the workspace's WebClient (the `web` mock).
   const clients = { clientFor: vi.fn(async () => web) };
@@ -120,6 +125,19 @@ describe('SlackChatSurface inbound', () => {
     await inject(human({ text: '<@UBOT> everyone check in' }));
     expect(((await next) as { text: string }).text).toBe(
       '@here everyone check in',
+    );
+  });
+
+  it('keeps the @ on a puppet-bot mention so the gate hard-respond rule fires', async () => {
+    const { surface, identities, inject } = makeFakes();
+    identities.botIdForSlackUser.mockImplementation(
+      async (_teamId: string, id: string) =>
+        id === 'U07SAM' ? 'sam' : id === 'U07MAYA' ? 'maya' : undefined,
+    );
+    const next = firstValueFrom(surface.inbound$);
+    await inject(human({ text: '<@U07SAM> <@U07MAYA> please look' }));
+    expect(((await next) as { text: string }).text).toBe(
+      '@sam @maya please look',
     );
   });
 });

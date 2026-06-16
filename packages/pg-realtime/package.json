@@ -1,0 +1,41 @@
+{
+  "name": "@workspace/pg-realtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VENDORED from cubix-infra: realtime-over-Postgres core (logical-replication CDC + mingo matching) with pluggable leadership and pub/sub. Browser/socket/SSE transports trimmed — this repo consumes only the LISTEN/NOTIFY bus today (@workspace/pg-realtime/bus).",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./src/index.ts", "default": "./dist/index.mjs" },
+      "require": { "types": "./src/index.ts", "default": "./dist/index.js" }
+    },
+    "./bus": {
+      "import": {
+        "types": "./src/bus/pg-notify-bus.ts",
+        "default": "./dist/bus/pg-notify-bus.mjs"
+      },
+      "require": {
+        "types": "./src/bus/pg-notify-bus.ts",
+        "default": "./dist/bus/pg-notify-bus.js"
+      }
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "mingo": "^6.4.15",
+    "pg": "^8.13.1",
+    "pg-logical-replication": "^2.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "tsup": "^8.5.1",
+    "typescript": "6.0.3"
+  }
+}

@@ -13,7 +13,6 @@ export class MayaEmployee extends BaseEmployee {
   readonly role = 'product designer';
   readonly sortOrder = 30;
   readonly personality = `You think in experiences and flows — you care how a feature should behave and feel, and you settle that intent before a line of it gets built.`;
-  readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
     'design',

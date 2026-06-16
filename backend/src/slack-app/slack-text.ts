@@ -16,6 +16,11 @@ export interface OutboundTranslationDeps {
 export interface InboundTranslationDeps {
   /** Slack user id → display name (undefined when unknown — the raw id is kept then). */
   resolveUser: (slackUserId: string) => string | undefined;
+  /** Slack user id → roster bot id, for ids that belong to a puppet bot. When this returns
+   * a handle, the mention is emitted as `@<botId>` (keeping the `@`) so the harness gate's
+   * `mentionedBots` hard rule fires (gate.service.ts) and the bot is forced to respond.
+   * Undefined → not a bot (a human/unknown) → bare display name, unchanged. */
+  resolveBotHandle?: (slackUserId: string) => string | undefined;
   /** Our own bot's Slack user id — mentioning the app hails the whole roster (`@here`). */
   selfBotUserId?: string;
 }
@@ -51,12 +56,16 @@ export function translateInbound(
 ): string {
   let out = text;
 
-  // User mentions: <@U123>, <@W123>, <@U123|label>
+  // User mentions: <@U123>, <@W123>, <@U123|label>. A roster puppet keeps its `@` (as
+  // `@<botId>`) so the gate's hard mention rule fires; a human/unknown resolves to a bare
+  // display name (the gate's bare-name path is the soft gate — deliberate).
   out = out.replace(
     /<@([UW][A-Z0-9]+)(?:\|([^>]*))?>/g,
     (_m, id: string, label?: string) => {
       if (deps.selfBotUserId && id === deps.selfBotUserId) return '@here';
-      return deps.resolveUser(id) ?? label ?? id;
+      const botHandle = deps.resolveBotHandle?.(id);
+      if (botHandle) return '@' + botHandle; // roster puppet → hard @mention
+      return deps.resolveUser(id) ?? label ?? id; // human/unknown → bare (unchanged)
     },
   );
 

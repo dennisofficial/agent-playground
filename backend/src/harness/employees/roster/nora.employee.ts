@@ -13,7 +13,6 @@ export class NoraEmployee extends BaseEmployee {
   readonly role = 'researcher';
   readonly sortOrder = 50;
   readonly personality = `You're evidence-driven and healthily skeptical — you don't guess, you go find out, and you show your sources.`;
-  readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
     'research',

@@ -12,12 +12,11 @@ function makeStubCodex(
   events: Array<Record<string, unknown>>,
   threadId = 'thread-stub-1',
 ) {
+  const captured: { input?: string } = {};
   const thread = {
     id: threadId,
-    runStreamed(
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      _input: string,
-    ) {
+    runStreamed(input: string) {
+      captured.input = input;
       // eslint-disable-next-line @typescript-eslint/require-await
       const eventGen = async function* () {
         yield { type: 'thread.started', thread_id: threadId };
@@ -39,14 +38,22 @@ function makeStubCodex(
     },
   } as unknown as typeof import('@openai/codex-sdk');
 
-  return sdk;
+  return { sdk, captured };
 }
 
-function makeEngine(sdk: unknown) {
+function makeEngine(
+  sdk: unknown,
+  forAgent: () => {
+    skillNames: string[];
+    skillsPrompt: string;
+    mcpServers: unknown[];
+  } = () => ({ skillNames: [], skillsPrompt: '', mcpServers: [] }),
+) {
   const env = {
     get: (k: string) => (k === 'AGENT_HOME_ROOT' ? '/tmp/homes' : undefined),
   } as unknown as EnvService;
-  return new CodexEngine(sdk as never, env);
+  const provisioner = { forAgent } as never;
+  return new CodexEngine(sdk as never, env, provisioner);
 }
 
 const baseArgs = (mode: 'plan' | 'execute' = 'execute'): RunWorkerArgs => ({
@@ -60,7 +67,7 @@ const baseArgs = (mode: 'plan' | 'execute' = 'execute'): RunWorkerArgs => ({
 
 describe('CodexEngine — token usage extraction', () => {
   it('extracts usage from turn.completed event', async () => {
-    const sdk = makeStubCodex([
+    const { sdk } = makeStubCodex([
       {
         type: 'item.completed',
         item: { type: 'agent_message', text: 'Done.' },
@@ -89,7 +96,7 @@ describe('CodexEngine — token usage extraction', () => {
   });
 
   it('omits cacheReadTokens/reasoningTokens when zero', async () => {
-    const sdk = makeStubCodex([
+    const { sdk } = makeStubCodex([
       {
         type: 'item.completed',
         item: { type: 'agent_message', text: 'Done.' },
@@ -111,7 +118,7 @@ describe('CodexEngine — token usage extraction', () => {
   });
 
   it('returns undefined usage when no turn.completed fires', async () => {
-    const sdk = makeStubCodex([
+    const { sdk } = makeStubCodex([
       {
         type: 'item.completed',
         item: { type: 'agent_message', text: 'Done.' },
@@ -122,7 +129,7 @@ describe('CodexEngine — token usage extraction', () => {
   });
 
   it('accumulates usage from multiple turn.completed events', async () => {
-    const sdk = makeStubCodex([
+    const { sdk } = makeStubCodex([
       {
         type: 'turn.completed',
         usage: {
@@ -147,5 +154,35 @@ describe('CodexEngine — token usage extraction', () => {
     expect(out.usage!.outputTokens).toBe(70);
     expect(out.usage!.cacheReadTokens).toBe(150);
     expect(out.usage!.reasoningTokens).toBe(15);
+  });
+});
+
+describe('CodexEngine — skills preamble', () => {
+  const done = [
+    { type: 'item.completed', item: { type: 'agent_message', text: 'Done.' } },
+  ];
+
+  it("injects the employee's skill listing into the first-turn preamble", async () => {
+    const { sdk, captured } = makeStubCodex(done);
+    const forAgent = () => ({
+      skillNames: ['code-review'],
+      skillsPrompt: '# Skills available to you\n- **code-review** — review diffs',
+      mcpServers: [],
+    });
+    await makeEngine(sdk, forAgent).run(baseArgs());
+    expect(captured.input).toContain('worker prompt'); // systemPrompt
+    expect(captured.input).toContain('code-review'); // skills listing
+    expect(captured.input).toContain('Task: do the thing');
+  });
+
+  it('does NOT prepend the preamble on a resumed turn (already in history)', async () => {
+    const { sdk, captured } = makeStubCodex(done);
+    const forAgent = () => ({
+      skillNames: ['code-review'],
+      skillsPrompt: '# Skills available to you\n- **code-review** — review diffs',
+      mcpServers: [],
+    });
+    await makeEngine(sdk, forAgent).run({ ...baseArgs(), sessionId: 'thread-1' });
+    expect(captured.input).toBe('do the thing'); // bare task, no preamble
   });
 });

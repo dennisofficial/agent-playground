@@ -46,7 +46,6 @@ export class SamEmployee extends BaseEmployee {
     OpenStandupTool,
     CloseStandupTool,
   ];
-  readonly skills = [];
   readonly keywords = [
     'standup',
     'plan',

@@ -6,6 +6,7 @@ export * from './bot-cursor.entity';
 export * from './compaction-summary.entity';
 export * from './channel-message.entity';
 export * from './channel.entity';
+export * from './employee-mcp-server.entity';
 export * from './employee-skill.entity';
 export * from './fact.entity';
 export * from './github-token.entity';
@@ -29,6 +30,7 @@ import { BotCursor } from './bot-cursor.entity';
 import { ChannelMessage } from './channel-message.entity';
 import { CompactionSummary } from './compaction-summary.entity';
 import { Channel } from './channel.entity';
+import { EmployeeMcpServer } from './employee-mcp-server.entity';
 import { EmployeeSkill } from './employee-skill.entity';
 import { Fact } from './fact.entity';
 import { GithubToken } from './github-token.entity';
@@ -72,4 +74,5 @@ export const ENTITIES = [
   SlackIdentity,
   Tenant,
   EmployeeSkill,
+  EmployeeMcpServer,
 ];

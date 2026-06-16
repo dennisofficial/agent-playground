@@ -110,12 +110,19 @@ export class SlackChatSurface implements ChatSurface {
       }
 
       const author = await this.directory.resolveUser(teamId, event.user);
-      // Pre-resolve mentioned users so the sync translator's cache lookups hit.
+      // Pre-resolve mentioned users so the sync translator's cache lookups hit, and build a
+      // sync map of which mentioned ids are roster puppets — a puppet mention keeps its `@`
+      // (as `@<botId>`) so the gate's hard mention rule forces a respond.
+      const botHandles = new Map<string, string>();
       for (const id of extractMentionIds(event.text ?? '')) {
-        if (id !== selfBotUserId) await this.directory.resolveUser(teamId, id);
+        if (id === selfBotUserId) continue;
+        await this.directory.resolveUser(teamId, id);
+        const botId = await this.identities.botIdForSlackUser(teamId, id);
+        if (botId) botHandles.set(id, botId);
       }
       const text = translateInbound(event.text ?? '', {
         resolveUser: (id) => this.directory.displayNameOf(teamId, id),
+        resolveBotHandle: (id) => botHandles.get(id),
         selfBotUserId,
       }).trim();
       if (!text) return;

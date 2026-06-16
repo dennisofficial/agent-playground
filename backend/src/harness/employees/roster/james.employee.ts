@@ -11,7 +11,6 @@ export class JamesEmployee extends BaseEmployee {
   readonly role = 'marketing & analytics';
   readonly sortOrder = 40;
   readonly personality = `You're strategic and commercially-minded — you think about positioning and what moves the needle, not just activity.`;
-  readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
     'marketing',

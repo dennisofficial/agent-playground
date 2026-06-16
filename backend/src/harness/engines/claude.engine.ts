@@ -1,5 +1,6 @@
 import type {
   CanUseTool,
+  McpServerConfig as SdkMcpServerConfig,
   Options,
   PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -7,6 +8,8 @@ import { EnvService } from '@core/config/env/env.service';
 import { engineHomeDir } from './engine-home';
 import { Inject, Injectable } from '@nestjs/common';
 import { ANTHROPIC_AGENT_SDK } from '../../_lib/esm/esm.module';
+import { EngineHomeProvisioner } from '../skills/engine-home-provisioner.service';
+import type { McpServerConfig } from '../skills/skill.types';
 import { bashDenyReason, bashWriteReason, isInsideRoot } from './guard';
 import { CLAUDE_DENIALS } from './engine.prompts';
 import {
@@ -136,6 +139,30 @@ const makeCanUseTool =
     return { behavior: 'allow', updatedInput: input };
   };
 
+/** Map our engine-neutral MCP config to the SDK's keyed `mcpServers` Record. stdio → process
+ * transport, http → http transport (the two kinds our `McpServerConfig` union models). */
+function toSdkMcpServers(
+  servers: ReadonlyArray<McpServerConfig>,
+): Record<string, SdkMcpServerConfig> {
+  const out: Record<string, SdkMcpServerConfig> = {};
+  for (const s of servers) {
+    out[s.name] =
+      s.transport === 'stdio'
+        ? {
+            type: 'stdio',
+            command: s.command,
+            ...(s.args ? { args: s.args } : {}),
+            ...(s.env ? { env: s.env } : {}),
+          }
+        : {
+            type: 'http',
+            url: s.url,
+            ...(s.headers ? { headers: s.headers } : {}),
+          };
+  }
+  return out;
+}
+
 /** The Claude Agent SDK engine. The ESM-only SDK arrives via the EsmModule's lazy-loaded DI token. */
 @Injectable()
 export class ClaudeEngine implements WorkerEngine {
@@ -145,6 +172,7 @@ export class ClaudeEngine implements WorkerEngine {
     @Inject(ANTHROPIC_AGENT_SDK)
     private readonly sdk: typeof import('@anthropic-ai/claude-agent-sdk'),
     private readonly env: EnvService,
+    private readonly provisioner: EngineHomeProvisioner,
   ) {}
 
   async run({
@@ -183,6 +211,11 @@ export class ClaudeEngine implements WorkerEngine {
     // direct answer.
     const planMode = mode === 'plan';
     const readOnly = mode !== 'execute';
+    // This employee's resolved skills + MCP servers (the boot/reconcile provisioner already
+    // materialized the per-employee claude home — skills are symlinked into <CLAUDE_CONFIG_DIR>/skills,
+    // MCP rides in-memory here). Empty for un-provisioned employees → options stay exactly as before.
+    const agentTools = this.provisioner.forAgent(agentId);
+    const mcpServers = toSdkMcpServers(agentTools.mcpServers);
     let capturedPlan = '';
     // Accumulated across the turn, deduped by question text — a model that re-asks despite the
     // deny instruction must not produce duplicate entries in the report.
@@ -190,13 +223,23 @@ export class ClaudeEngine implements WorkerEngine {
     const options: Options = {
       cwd,
       systemPrompt,
-      // SDK isolation: do NOT inherit the user's global ~/.claude config, skills, or hooks.
-      settingSources: [],
-      tools: planMode
-        ? PLAN_TOOLS
-        : readOnly
-          ? INVESTIGATE_TOOLS
-          : WORKER_TOOLS,
+      // Skill DISCOVERY is gated by the setting sources — the `skills` option only FILTERS what's
+      // discovered, so with `[]` nothing is found and the symlinked skills never load (proven by
+      // claude-skill-discovery.ai.test.ts). `'user'` makes the CLI scan the user config dir's
+      // `skills/`, which — because CLAUDE_CONFIG_DIR is overridden to this employee's ISOLATED home
+      // (below) — is OUR per-employee skills dir, NOT the developer's ~/.claude. So isolation is held
+      // by CLAUDE_CONFIG_DIR, and we only widen to `'user'` when this employee actually has skills.
+      settingSources: agentTools.skillNames.length ? ['user'] : [],
+      // `tools` RESTRICTS the available built-in set — so the `Skill` tool must be listed here when
+      // this employee has skills, or the model can't invoke them even though they're discovered.
+      tools: (() => {
+        const base = planMode
+          ? PLAN_TOOLS
+          : readOnly
+            ? INVESTIGATE_TOOLS
+            : WORKER_TOOLS;
+        return agentTools.skillNames.length ? [...base, 'Skill'] : base;
+      })(),
       allowedTools: AUTO_APPROVE,
       canUseTool: makeCanUseTool(
         readOnly,
@@ -228,6 +271,15 @@ export class ClaudeEngine implements WorkerEngine {
       ...(sessionId ? { resume: sessionId } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(effort ? { effort } : {}),
+      // Enable ONLY this employee's skills — the SDK's `skills` option is the single switch that turns
+      // the Skill tool on; `tools` above restricts only BUILT-IN tools, so it doesn't gate these.
+      // Omitted when empty so un-provisioned employees keep the prior (no-skills) posture.
+      ...(agentTools.skillNames.length ? { skills: agentTools.skillNames } : {}),
+      // Pass this employee's MCP servers in-memory; `strictMcpConfig` so ONLY these load (settingSources
+      // is [] already, but this also blocks any stray on-disk .mcp.json from leaking in).
+      ...(Object.keys(mcpServers).length
+        ? { mcpServers, strictMcpConfig: true }
+        : {}),
     };
 
     let result = '';

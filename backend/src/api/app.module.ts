@@ -3,6 +3,7 @@ import { envConfigValidation } from '@core/config/env/validation';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { JwtModule } from '@workspace/auth/server';
 import { DatabaseModule } from '../_lib/database/database.module';
+import { EmployeeToolsModule } from '../harness/employee-skills/employee-tools.module';
 import { LlmKeysModule } from '../harness/llm-keys/llm-keys.module';
 import { MetricsModule } from '../harness/metrics/metrics.module';
 import { MemoryAdminModule } from '../harness/memory-admin/memory-admin.module';
@@ -10,6 +11,7 @@ import { ProjectsModule } from '../harness/projects/projects.module';
 import { TenantsModule } from '../harness/tenants/tenants.module';
 import { SlackIdentitiesModule } from '../harness/slack-identities/slack-identities.module';
 import { AdminTokenGuard } from './admin/admin-token.guard';
+import { EmployeeToolsController } from './admin/employee-tools.controller';
 import { InternalMetricsController } from './admin/internal-metrics.controller';
 import { LlmKeysController } from './admin/llm-keys.controller';
 import { MemoryFactsController } from './admin/memory.controller';
@@ -45,6 +47,7 @@ import { AuthModule } from './auth/auth.module';
       }),
     }),
     ProjectsModule,
+    EmployeeToolsModule,
     LlmKeysModule,
     MetricsModule,
     SlackIdentitiesModule,
@@ -55,6 +58,7 @@ import { AuthModule } from './auth/auth.module';
   controllers: [
     ApiController,
     ProjectsController,
+    EmployeeToolsController,
     TokensController,
     LlmKeysController,
     InternalMetricsController,

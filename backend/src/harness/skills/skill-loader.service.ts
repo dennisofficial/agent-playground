@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
-import { skillCacheDir } from '../engines/engine-home';
+import { repoRoot, skillCacheDir } from '../engines/engine-home';
 import type { LoadedSkill, SkillSource } from './skill.types';
 
 /**
@@ -81,9 +81,11 @@ export class SkillLoaderService {
     return dir;
   }
 
-  /** An absolute path, or a path resolved against the process cwd (repo). */
+  /** An absolute path, or a path resolved against the REPO ROOT (not cwd) — so the canonical
+   * top-level `skills/<name>` dir is found no matter which app's working directory boots the harness
+   * (the api app runs from a different cwd than the tui). */
   private resolveLocal(path: string): string {
-    const dir = isAbsolute(path) ? path : resolve(process.cwd(), path);
+    const dir = isAbsolute(path) ? path : resolve(repoRoot(), path);
     if (!existsSync(dir))
       throw new Error(`local skill path does not exist: ${dir}`);
     return dir;

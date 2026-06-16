@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { execFileSync } from 'node:child_process';
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { OPENAI_CODEX_SDK } from '../../_lib/esm/esm.module';
+import { EngineHomeProvisioner } from '../skills/engine-home-provisioner.service';
 import { engineHomeDir } from './engine-home';
 import {
   EWorkerEngineName,
@@ -45,6 +46,7 @@ export class CodexEngine implements WorkerEngine {
     @Inject(OPENAI_CODEX_SDK)
     private readonly sdk: typeof import('@openai/codex-sdk'),
     private readonly env: EnvService,
+    private readonly provisioner: EngineHomeProvisioner,
   ) {}
 
   private getCodex(agentId: string, apiKey?: string): Codex {
@@ -122,7 +124,14 @@ export class CodexEngine implements WorkerEngine {
       : client.startThread(opts);
 
     // Codex has no systemPrompt option, so seed our worker persona as a preamble on the first turn.
-    const input = sessionId ? task : `${systemPrompt}\n\n---\n\nTask: ${task}`;
+    // Skills have no native codex package, so this employee's resolved skill listing rides in the same
+    // preamble (the provisioner also drops it in CODEX_HOME/AGENTS.md; this is the guaranteed path).
+    // Resumes already carry it in the thread history, so only the first turn needs it.
+    const skillsPrompt = this.provisioner.forAgent(agentId).skillsPrompt;
+    const preamble = skillsPrompt
+      ? `${systemPrompt}\n\n${skillsPrompt}`
+      : systemPrompt;
+    const input = sessionId ? task : `${preamble}\n\n---\n\nTask: ${task}`;
 
     let result = '';
     let resolvedSession = sessionId;

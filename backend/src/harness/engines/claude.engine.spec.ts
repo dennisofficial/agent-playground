@@ -17,6 +17,10 @@ type CanUseTool = (
 interface CapturedOptions {
   tools?: string[];
   canUseTool?: CanUseTool;
+  skills?: string[];
+  mcpServers?: Record<string, unknown>;
+  strictMcpConfig?: boolean;
+  settingSources?: string[];
 }
 
 const QUESTION_INPUT = {
@@ -58,9 +62,16 @@ function stubSdk(
   return { sdk, captured };
 }
 
-function makeEngine(sdk: unknown) {
+function makeEngine(
+  sdk: unknown,
+  forAgent: () => { skillNames: string[]; mcpServers: unknown[] } = () => ({
+    skillNames: [],
+    mcpServers: [],
+  }),
+) {
   const env = { get: () => undefined } as unknown as EnvService;
-  return new ClaudeEngine(sdk as never, env);
+  const provisioner = { forAgent } as never;
+  return new ClaudeEngine(sdk as never, env, provisioner);
 }
 
 const baseArgs = (mode: 'plan' | 'execute'): RunWorkerArgs => ({
@@ -154,6 +165,40 @@ describe('ClaudeEngine — AskUserQuestion capture', () => {
     expect(out.questions).toEqual([
       { question: 'Real one?', options: [{ label: 'A' }] },
     ]);
+  });
+});
+
+describe('ClaudeEngine — skills + MCP wiring', () => {
+  it('passes skills + mapped mcpServers + strictMcpConfig when the employee has them', async () => {
+    const { sdk, captured } = stubSdk(async () => {});
+    const engine = makeEngine(sdk, () => ({
+      skillNames: ['code-review'],
+      mcpServers: [
+        { name: 'fs', transport: 'stdio', command: 'mcp-fs', args: ['--root', '.'] },
+        { name: 'docs', transport: 'http', url: 'https://x/mcp' },
+      ],
+    }));
+    await engine.run(baseArgs('execute'));
+    expect(captured.options?.skills).toEqual(['code-review']);
+    // Discovery + invocation require BOTH: the 'user' setting source (scan the isolated config dir's
+    // skills/) and 'Skill' in the tools allowlist. Proven against the real CLI by the .ai probe.
+    expect(captured.options?.settingSources).toEqual(['user']);
+    expect(captured.options?.tools).toContain('Skill');
+    expect(captured.options?.strictMcpConfig).toBe(true);
+    expect(captured.options?.mcpServers).toEqual({
+      fs: { type: 'stdio', command: 'mcp-fs', args: ['--root', '.'] },
+      docs: { type: 'http', url: 'https://x/mcp' },
+    });
+  });
+
+  it('omits skills/mcpServers entirely for an un-provisioned employee', async () => {
+    const { sdk, captured } = stubSdk(async () => {});
+    await makeEngine(sdk).run(baseArgs('execute')); // default forAgent → empty
+    expect(captured.options?.skills).toBeUndefined();
+    expect(captured.options?.mcpServers).toBeUndefined();
+    expect(captured.options?.strictMcpConfig).toBeUndefined();
+    expect(captured.options?.settingSources).toEqual([]); // isolation preserved when no skills
+    expect(captured.options?.tools).not.toContain('Skill');
   });
 });
 

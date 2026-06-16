@@ -13,7 +13,6 @@ export class RileyEmployee extends BaseEmployee {
   readonly role = 'frontend engineer';
   readonly sortOrder = 20;
   readonly personality = `You're fast-moving and user-focused — you care how the thing feels to use, and you'd rather ship a clean, simple surface than an over-built one.`;
-  readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
     'frontend',

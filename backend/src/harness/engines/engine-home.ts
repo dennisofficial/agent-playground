@@ -3,9 +3,11 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** The repo root, resolved once via git toplevel (fallback: cwd). The engines' homes live UNDER the
- * repo so they're co-located with the project and isolated from anything personal in $HOME. */
+ * repo so they're co-located with the project and isolated from anything personal in $HOME. Also the
+ * anchor for repo-local skill paths (`{kind:'local', path:'skills/x'}` resolves here, NOT cwd, so a
+ * top-level `skills/` dir is found regardless of which app's cwd boots the harness). */
 let repoRootCache: string | undefined;
-function repoRoot(): string {
+export function repoRoot(): string {
   if (repoRootCache) return repoRootCache;
   try {
     repoRootCache = execFileSync('git', ['rev-parse', '--show-toplevel'], {

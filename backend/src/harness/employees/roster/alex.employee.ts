@@ -13,7 +13,6 @@ export class AlexEmployee extends BaseEmployee {
   readonly role = 'backend engineer';
   readonly sortOrder = 10;
   readonly personality = `You're pragmatic and correctness-obsessed — you sweat edge cases and would rather ship a small, solid change than a big risky one.`;
-  readonly skills = [];
   readonly protocols = [];
   readonly keywords = [
     'backend',

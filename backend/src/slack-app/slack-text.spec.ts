@@ -7,9 +7,11 @@ import {
 
 const deps = (overrides?: {
   users?: Record<string, string>;
+  bots?: Record<string, string>;
   selfBotUserId?: string;
 }) => ({
   resolveUser: (id: string) => (overrides?.users ?? {})[id],
+  resolveBotHandle: (id: string) => (overrides?.bots ?? {})[id],
   selfBotUserId: overrides?.selfBotUserId,
 });
 
@@ -25,6 +27,29 @@ describe('translateInbound', () => {
   it('keeps the embedded label, then the raw id, when the user is unknown', () => {
     expect(translateInbound('<@U999|denny> hi', deps())).toBe('denny hi');
     expect(translateInbound('<@U999> hi', deps())).toBe('U999 hi');
+  });
+
+  it('keeps the @ for a roster puppet mention (so the gate hard-respond rule fires)', () => {
+    expect(
+      translateInbound('<@U07SAM> can you check this?', {
+        ...deps({ bots: { U07SAM: 'sam' } }),
+      }),
+    ).toBe('@sam can you check this?');
+  });
+
+  it('keeps the @ for every puppet when multiple bots are mentioned (the "Sam Maya" regression)', () => {
+    expect(
+      translateInbound('<@U07SAM> <@U07MAYA>', {
+        ...deps({ bots: { U07SAM: 'sam', U07MAYA: 'maya' } }),
+      }),
+    ).toBe('@sam @maya');
+  });
+
+  it('leaves a human mention bare even when their name collides with a bot (no false hard-mention)', () => {
+    // U123 resolves to display name "Sam" but is NOT a puppet → bare, not @sam.
+    expect(
+      translateInbound('<@U123> ping', deps({ users: { U123: 'Sam' } })),
+    ).toBe('Sam ping');
   });
 
   it('translates a mention of our own bot user into @here (roster broadcast)', () => {

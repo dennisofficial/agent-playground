@@ -22,7 +22,10 @@ describe('ClaudeEngine AskUserQuestion on a plan turn (real LLM)', () => {
       get: (k: string) =>
         k === 'WORKER_MODEL' ? 'claude-haiku-4-5-20251001' : undefined,
     } as unknown as EnvService;
-    const engine = new ClaudeEngine(sdk, env);
+    const provisioner = {
+      forAgent: () => ({ skillNames: [], mcpServers: [] }),
+    } as never;
+    const engine = new ClaudeEngine(sdk, env, provisioner);
 
     const dir = await realpath(await mkdtemp(join(tmpdir(), 'ask-probe-')));
     const calcBefore = 'export const add = (a: number, b: number) => a + b;\n';

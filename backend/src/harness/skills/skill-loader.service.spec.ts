@@ -30,6 +30,15 @@ describe('SkillLoaderService.resolve (local sources)', () => {
     });
   });
 
+  it('resolves a relative local path against the repo root (not cwd)', async () => {
+    // The repo ships a canonical top-level `skills/code-review` skill; a relative source must find it
+    // regardless of the booting app's cwd. (If this skill is renamed/removed, update the path.)
+    const [skill] = await loader.resolve([
+      { kind: 'local', path: 'skills/code-review' },
+    ]);
+    expect(skill).toMatchObject({ name: 'code-review' });
+  });
+
   it('SKIPS a source with no SKILL.md or no name, rather than throwing', async () => {
     const noName = skillDir(`---\ndescription: nameless\n---`);
     const missing: SkillSource = {
