@@ -10,6 +10,7 @@ import { EWorkerEngineName } from '../engines/worker-engine.port';
 import type { McpServerConfig, SkillSource } from '../skills/skill.types';
 import type { IHarnessTool } from '../tools/tool.types';
 import type { Capability } from './capability';
+import { selfReviewCapability } from './capabilities/self-review.capability';
 import type { EmployeeContext } from './employee-context';
 import type { EmployeeDefinition } from './employee.types';
 import {
@@ -50,13 +51,27 @@ export abstract class BaseEmployee implements EmployeeDefinition {
   protected readonly planPreset: EnginePreset = PLAN_CLAUDE;
   /** The engine preset EXECUTE turns run on. */
   protected readonly executePreset: EnginePreset = EXECUTE_CLAUDE;
+  /**
+   * The engine preset the codex_advisory self-review runs on. When set, the default `capabilities()`
+   * auto-declares a one-shot cross-engine plan self-review on it (fires on PlanFinished). The default
+   * matrix is plan=Claude / advisory=Codex / execute=Claude, so a builder section sets `REVIEW_CODEX`
+   * here and a Claude-written plan gets an INDEPENDENT Codex challenge before it's attached. Leave
+   * undefined for no self-review (chat employees, Codex-planning roles where Codex would be same-engine).
+   */
+  protected readonly advisoryPreset?: EnginePreset;
 
   /** The deep role knowledge — concrete employees compose it from `ctx.team` + role-specific prose. */
   abstract roleContext(ctx: EmployeeContext): string;
 
-  /** Default: no capabilities. Engineers add self-review; Nora adds deep research. */
+  /**
+   * Default: a one-shot codex_advisory self-review on `advisoryPreset` when one is declared, else no
+   * capabilities. A concrete employee overrides this only for a DIFFERENT capability (e.g. Nora's deep
+   * research) — the common builder case is just setting `advisoryPreset`.
+   */
   capabilities(_ctx: EmployeeContext): Capability[] {
-    return [];
+    return this.advisoryPreset
+      ? [selfReviewCapability((c) => this.engineSpec(c, this.advisoryPreset!))]
+      : [];
   }
 
   planEngine(ctx: EmployeeContext): EngineSpec {

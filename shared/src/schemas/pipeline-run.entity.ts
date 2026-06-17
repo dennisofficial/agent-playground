@@ -86,4 +86,10 @@ export class PipelineRun extends TimestampedEntity {
    * prompt so each section is grounded in the whole, not just its one-line brief. */
   @Column({ type: 'text', nullable: true })
   overview!: string | null;
+
+  /** The section currently live (a SOFT pointer into pipeline_run_sections — recomputable from section
+   * statuses; the section rows are authoritative). The explicit-row replacement for `section_index`;
+   * the positional cursor is dual-written through the transition and dropped in a later drain window. */
+  @Column({ type: 'uuid', nullable: true })
+  active_section_id!: string | null;
 }

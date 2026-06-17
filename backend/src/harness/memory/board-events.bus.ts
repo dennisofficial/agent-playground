@@ -106,6 +106,26 @@ export type BoardEvent =
       employee: string;
       prUrl: string;
       notifyThread?: string;
+    }
+  // A pipeline review stage finished with a call that is ATLAS'S to make (a cross-section defect at the
+  // full-implementation review, or a per-section review blocker) — the run is PAUSED and Atlas is woken
+  // with the findings + the menu of actions he owns. The structured "wake-up channel" / "walk Atlas's
+  // hands": a JIT decision prompt delivered as a gate-bypassed seed (boardEventRelayPrompt renders it,
+  // maybeRelayBoardEvent routes it), keeping the system prompt lean. Reusable for any future judgment
+  // moment a stage needs to hand to Atlas without blocking on him.
+  | {
+      kind: 'stage-decision';
+      team: string;
+      taskId: number;
+      /** The stage that finished and needs a call, e.g. 'full implementation review'. */
+      stage: string;
+      /** The review's findings — what Atlas is deciding about. */
+      findings: string;
+      /** The actions Atlas may take, default-first (tool call + one-line description each). */
+      allowedActions: ReadonlyArray<{ action: string; description: string }>;
+      /** The section the defect was scoped to, when it's a per-section call (undefined = ticket-level). */
+      section?: string;
+      notifyThread?: string;
     };
 
 @Injectable()

@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PipelineRunnerService } from './pipeline-runner.service';
+import {
+  FakeCodingStore,
+  FakeNoteStore,
+  FakePhaseStore,
+  FakeReviewStore,
+  FakeRunStore,
+  FakeSectionStore,
+  type Row,
+} from './pipeline-runner.test-fakes';
 
 /**
  * Pipeline stage sessions are owned by synthetic phase-configs that never call close_session, so the
@@ -11,97 +20,6 @@ import { PipelineRunnerService } from './pipeline-runner.service';
  * Unlike the FSM spec's fakes (which leave `sessions.get` undefined), this harness tracks real session
  * rows so close is actually exercised.
  */
-
-interface Row {
-  [k: string]: unknown;
-}
-
-class FakeRunStore {
-  rows = new Map<string, Row>();
-  private seq = 0;
-  async create(n: Row): Promise<Row> {
-    const id = `run-${++this.seq}`;
-    const row: Row = {
-      id,
-      team: n.team,
-      taskId: n.taskId,
-      pipeline: n.pipeline,
-      status: n.status ?? 'running',
-      currentRole: n.currentRole,
-      mode: n.mode,
-      worktreeId: n.worktreeId,
-      sessionId: n.sessionId,
-      notifyThread: n.notifyThread,
-      project: n.project,
-      kind: n.kind ?? 'feature',
-      sectionIndex: n.sectionIndex ?? 0,
-      phaseIndex: n.phaseIndex ?? 0,
-      planningSubstep: n.planningSubstep,
-      overview: n.overview,
-    };
-    this.rows.set(id, row);
-    return { ...row };
-  }
-  async get(team: string, id: string): Promise<Row | undefined> {
-    const r = this.rows.get(id);
-    return r && r.team === team ? { ...r } : undefined;
-  }
-  async getByTask(team: string, taskId: number): Promise<Row | undefined> {
-    const all = [...this.rows.values()].filter(
-      (r) => r.team === team && r.taskId === taskId,
-    );
-    return all.length ? { ...all[all.length - 1] } : undefined;
-  }
-  async update(team: string, id: string, patch: Row): Promise<Row | undefined> {
-    const r = this.rows.get(id);
-    if (!r) return undefined;
-    for (const k of Object.keys(patch))
-      r[k] = patch[k] === null ? undefined : patch[k];
-    return { ...r };
-  }
-  async listAllActive(): Promise<Row[]> {
-    return [...this.rows.values()]
-      .filter((r) => r.status === 'running' || r.status === 'paused')
-      .map((r) => ({ ...r }));
-  }
-}
-
-class FakeSectionStore {
-  rows: Row[] = [];
-  private seq = 0;
-  async createMany(runId: string, team: string, sections: Row[]): Promise<Row[]> {
-    return sections.map((s) => {
-      const row: Row = {
-        id: `sec-${++this.seq}`,
-        runId,
-        team,
-        ordinal: s.ordinal,
-        name: s.name,
-        brief: s.brief,
-        phaseRole: s.phaseRole,
-        status: s.status ?? 'pending',
-        planMd: undefined,
-        phases: undefined,
-        phaseCount: undefined,
-      };
-      this.rows.push(row);
-      return { ...row };
-    });
-  }
-  async listForRun(runId: string): Promise<Row[]> {
-    return this.rows
-      .filter((r) => r.runId === runId)
-      .sort((a, b) => (a.ordinal as number) - (b.ordinal as number))
-      .map((r) => ({ ...r }));
-  }
-  async update(id: string, patch: Row): Promise<Row | undefined> {
-    const r = this.rows.find((x) => x.id === id);
-    if (!r) return undefined;
-    for (const k of Object.keys(patch))
-      r[k] = patch[k] === null ? undefined : patch[k];
-    return { ...r };
-  }
-}
 
 /** A minimal session registry that tracks status, plus a runner whose openStageSession registers a
  * session and whose closeSession flips it to 'closed' — so the driver's reclaim path runs for real. */
@@ -158,6 +76,11 @@ function build(opts: { shipOk?: boolean } = {}) {
         ? { ok: true, prUrl: 'http://pr/1' }
         : { ok: false, reason: 'ship blew up' },
     ),
+    reviewSectionLenses: vi.fn(async () => ({ ok: true, findings: [] as string[] })),
+    reviewFullImplementation: vi.fn(async () => ({
+      verdict: 'pass' as const,
+      findings: '',
+    })),
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
   const worktrees = { get: vi.fn(() => ({ path: '' })) };
@@ -174,6 +97,10 @@ function build(opts: { shipOk?: boolean } = {}) {
     review as never,
     boardEvents as never,
     worktrees as never,
+    new FakePhaseStore() as never,
+    new FakeCodingStore() as never,
+    new FakeReviewStore() as never,
+    new FakeNoteStore() as never,
   );
   const openSessions = () =>
     [...sessionRows.values()].filter((s) => s.status !== 'closed');

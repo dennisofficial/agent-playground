@@ -5,9 +5,20 @@ import { rawRows, toIso } from './sql';
 export type PipelineRunStatus = 'running' | 'paused' | 'done' | 'failed';
 /** 'feature' = dynamic section-driver loop; 'bugfix' = single execute session → PR gate. */
 export type PipelineRunKind = 'feature' | 'bugfix';
-/** The active section's sub-state: 'drafting'/'gate' (plan), 'awaiting_design' (a design section
- * paused for the human's artifact), or undefined while building. */
-export type PlanningSubstep = 'drafting' | 'gate' | 'awaiting_design';
+/** The active section's sub-state: 'drafting' (the plan session is running), 'advisory' (the plan
+ * turn reported and the one-shot codex_advisory self-review ran inside it — the transient window
+ * before the gate is posted; a crash here re-plans), 'gate' (paused for Dennis's approval),
+ * 'awaiting_design' (a design section paused for the human's artifact), 'stage_decision' (paused at a
+ * review-stage decision Atlas owns — a cross-section defect / blocker; resumes via the fix-up or
+ * reopen-section tools), 'fixup' (a harness-opened fix-up session is running against the integrated
+ * worktree; its report re-enters the PR gate), or undefined while building. */
+export type PlanningSubstep =
+  | 'drafting'
+  | 'advisory'
+  | 'gate'
+  | 'awaiting_design'
+  | 'stage_decision'
+  | 'fixup';
 
 export interface PipelineRun {
   id: string;
@@ -28,6 +39,8 @@ export interface PipelineRun {
   planningSubstep?: PlanningSubstep;
   /** The agreed high-level plan (feature runs) — seeds every section's just-in-time plan prompt. */
   overview?: string;
+  /** Soft pointer to the live section (pipeline_run_sections.id); the section rows are authoritative. */
+  activeSectionId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,6 +82,7 @@ interface PipelineRunRow {
   phase_index: number | string;
   planning_substep: string | null;
   overview: string | null;
+  active_section_id: string | null;
   created_at: unknown;
   updated_at: unknown;
 }
@@ -91,6 +105,7 @@ const toRun = (r: PipelineRunRow): PipelineRun => ({
   phaseIndex: Number(r.phase_index),
   planningSubstep: (r.planning_substep as PlanningSubstep) ?? undefined,
   overview: r.overview ?? undefined,
+  activeSectionId: r.active_section_id ?? undefined,
   createdAt: toIso(r.created_at),
   updatedAt: toIso(r.updated_at),
 });
@@ -171,6 +186,7 @@ export class PipelineRunStore {
       sectionIndex?: number;
       phaseIndex?: number;
       planningSubstep?: PlanningSubstep | null;
+      activeSectionId?: string | null;
     },
   ): Promise<PipelineRun | undefined> {
     const sets: string[] = ['updated_at = now()'];
@@ -190,6 +206,8 @@ export class PipelineRunStore {
     if (patch.phaseIndex !== undefined) set('phase_index', patch.phaseIndex);
     if ('planningSubstep' in patch)
       set('planning_substep', patch.planningSubstep ?? null);
+    if ('activeSectionId' in patch)
+      set('active_section_id', patch.activeSectionId ?? null);
     const rows = await this.q(
       `UPDATE pipeline_runs SET ${sets.join(', ')} WHERE id = $1 AND team_id = $2 RETURNING *`,
       args,

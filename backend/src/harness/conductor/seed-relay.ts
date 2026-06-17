@@ -39,7 +39,8 @@ export function sessionRelayPrompt(session: Session): string {
  *
  * Returns `null` for the events the conductor must NOT consume: `ticket-approved` (the plan-gate
  * resume, owned by PipelineRunnerService.onBoardEvent) and `plan-attached` — narrating them here would
- * double-handle the transition. Only the four human-facing review/PR events get a prompt.
+ * double-handle the transition. The human-facing review/PR events, the design/question relays, and the
+ * `stage-decision` wake-up (Atlas's JIT decision menu) each get a prompt.
  */
 export function boardEventRelayPrompt(event: BoardEvent): string | null {
   switch (event.kind) {
@@ -55,6 +56,16 @@ export function boardEventRelayPrompt(event: BoardEvent): string | null {
       return `[Pipeline · #${event.taskId}] the build reached the DESIGN step for the '${event.section}' section — the functional UI is up. Tell Dennis he can design it (online) and hand you the zip to attach (attach_design), OR skip it for now (skip_design) and ship the functional version. This is his call — surface it, don't decide for him.`;
     case 'section-questions':
       return `[Pipeline · #${event.taskId}] the ${event.section ? `'${event.section}' ` : ''}session has QUESTIONS before it can finish — this is NOT a plan yet, so there's nothing to approve:\n${event.questions}\n\nRoute each: a product WHAT/WHY is Dennis's call — bring it to him with your recommendation; a technical HOW you already know — answer it yourself. Then send ALL answers in ONE answer_section(${event.taskId}, <answers>); it reworks and reports back (a revised plan, or more questions).`;
+    case 'stage-decision': {
+      // The "walk Atlas's hands" wake-up: findings + the decision he owns + the menu of allowed
+      // actions, default-first. A gate-bypassed seed (outside the cached system prompt), so the dynamic
+      // guidance never breaks prompt caching. The run is PAUSED; it advances when Atlas picks an action.
+      const actions = event.allowedActions
+        .map((a) => `  • ${a.action} — ${a.description}`)
+        .join('\n');
+      const scope = event.section ? ` for the '${event.section}' section` : '';
+      return `[Pipeline · #${event.taskId}] the ${event.stage} stage finished${scope} and flagged this — the run is PAUSED until you decide:\n${event.findings}\n\nYou own this call — pick one:\n${actions}\n\nDecide in your own voice; only loop Dennis in if it turns out to be a product/scope call rather than a code defect.`;
+    }
     // ticket-approved (PipelineRunnerService.onBoardEvent owns the plan-gate resume), the verdict
     // events (the runner reacts), and plan-attached are NOT narrated here — return null so the
     // conductor never double-handles them.

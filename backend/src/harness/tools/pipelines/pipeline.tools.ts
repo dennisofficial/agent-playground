@@ -262,6 +262,25 @@ const answerSectionSchema = z.object({
   answers: z
     .string()
     .describe('Your consolidated answers to ALL of its questions, in one message.'),
+  regrouped_phases: z
+    .array(
+      z.object({
+        phase_id: z
+          .number()
+          .int()
+          .describe('A pending (not-yet-built) phase id from the section plan.'),
+        group: z
+          .number()
+          .int()
+          .describe(
+            'The coding-session group to place it in — consecutive phases sharing a group build in ONE engine context.',
+          ),
+      }),
+    )
+    .optional()
+    .describe(
+      'OPTIONAL: re-group the REMAINING (not-yet-built) phases of this section into different coding sessions — e.g. the running build realized phases 4–5 should share its context. Only future phases can move (already-building/done phases are fixed); list every pending phase exactly once. This is a mechanics call (same phases, new packaging) — no re-approval.',
+    ),
 });
 
 @HarnessTool()
@@ -270,20 +289,110 @@ export class AnswerSectionTool
 {
   readonly name = 'answer_section';
   readonly description =
-    "Answer the questions a pipeline section's plan/build session raised — delivers your answers into that session so it can finish (a revised plan comes back, or more questions). Use THIS for pipeline sections, not reply_session (they aren't your sessions). Answer technical HOWs yourself; bring product WHAT/WHYs to Dennis first.";
+    "Answer the questions a pipeline section's plan/build session raised — delivers your answers into that session so it can finish (a revised plan comes back, or more questions). Use THIS for pipeline sections, not reply_session (they aren't your sessions). Answer technical HOWs yourself; bring product WHAT/WHYs to Dennis first. If a build session proposes re-grouping its remaining phases, pass regrouped_phases to reshape them before it resumes.";
   readonly schema = answerSectionSchema;
   readonly refreshesContext = ['pipelines'] as const;
 
   constructor(private readonly runner: PipelineRunnerService) {}
 
   async execute(
-    { board_task_id, answers }: z.infer<typeof answerSectionSchema>,
+    { board_task_id, answers, regrouped_phases }: z.infer<
+      typeof answerSectionSchema
+    >,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const r = await this.runner.answerSectionQuestions(
       ctx.identity.team,
       board_task_id,
       answers,
+      regrouped_phases?.map((p) => ({ id: p.phase_id, group: p.group })),
+    );
+    return r.message;
+  }
+}
+
+const insertSectionSchema = z.object({
+  board_task_id: z
+    .number()
+    .int()
+    .describe('The board task (#N) whose running feature pipeline to add a section to.'),
+  after_section: z
+    .string()
+    .describe(
+      'The name of the existing section to insert the new one AFTER (it lands in the still-pending tail).',
+    ),
+  name: z.string().describe('Name for the new section, e.g. "prompt-eng".'),
+  brief: z
+    .string()
+    .optional()
+    .describe("One-line intent for the new section (seeds its plan)."),
+  role: z
+    .string()
+    .describe(
+      "The phase-config to build the new section as, e.g. 'phase_backend'. Scopes its skills/engines.",
+    ),
+});
+
+@HarnessTool()
+export class InsertSectionTool
+  implements IHarnessTool<typeof insertSectionSchema>
+{
+  readonly name = 'insert_section';
+  readonly description =
+    "Add a NEW section into a running feature's still-pending tail (e.g. a backend stage revealed you need a prompt-eng section). It's born pending and hits the normal plan gate when the pipeline reaches it — so this introduces real new work (gated), unlike reorder_sections. You can only insert AFTER already-committed (executed/executing) sections, never wedge before them.";
+  readonly schema = insertSectionSchema;
+  readonly refreshesContext = ['pipelines'] as const;
+
+  constructor(private readonly runner: PipelineRunnerService) {}
+
+  async execute(
+    { board_task_id, after_section, name, brief, role }: z.infer<
+      typeof insertSectionSchema
+    >,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const r = await this.runner.insertSection(
+      ctx.identity.team,
+      board_task_id,
+      after_section,
+      { name, brief, phaseRole: role },
+    );
+    return r.message;
+  }
+}
+
+const reorderSectionsSchema = z.object({
+  board_task_id: z
+    .number()
+    .int()
+    .describe('The board task (#N) whose running feature pipeline to reorder.'),
+  order: z
+    .array(z.string())
+    .describe(
+      'The new order of the still-PENDING sections, by name — must list every pending section exactly once. Already-building/done sections are fixed and stay put.',
+    ),
+});
+
+@HarnessTool()
+export class ReorderSectionsTool
+  implements IHarnessTool<typeof reorderSectionsSchema>
+{
+  readonly name = 'reorder_sections';
+  readonly description =
+    "Reorder the still-PENDING sections of a running feature (same work, new order). This is a mechanics change, NOT new substance — it needs no re-approval and pauses nothing; you're just resequencing what hasn't started yet. Only pending sections move; committed (building/done) sections hold their place. Use insert_section to add new work instead.";
+  readonly schema = reorderSectionsSchema;
+  readonly refreshesContext = ['pipelines'] as const;
+
+  constructor(private readonly runner: PipelineRunnerService) {}
+
+  async execute(
+    { board_task_id, order }: z.infer<typeof reorderSectionsSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const r = await this.runner.reorderSections(
+      ctx.identity.team,
+      board_task_id,
+      order,
     );
     return r.message;
   }
@@ -311,6 +420,85 @@ export class SkipDesignTool implements IHarnessTool<typeof skipDesignSchema> {
     ctx: HarnessToolContext,
   ): Promise<string> {
     const r = await this.runner.skipDesign(ctx.identity.team, board_task_id);
+    return r.message;
+  }
+}
+
+const dispatchFixupSchema = z.object({
+  board_task_id: z
+    .number()
+    .int()
+    .describe('The board task (#N) whose pipeline is paused at a review decision.'),
+  guidance: z
+    .string()
+    .optional()
+    .describe(
+      "Optional steer for the fix-up session (how you read the finding / what to prioritize). The full review findings are already on the ticket, so this is just your overlay.",
+    ),
+});
+
+@HarnessTool()
+export class DispatchFixupSessionTool
+  implements IHarnessTool<typeof dispatchFixupSchema>
+{
+  readonly name = 'dispatch_fixup_session';
+  readonly description =
+    "Resolve a review-flagged defect when a pipeline is paused at a review decision (a cross-section defect at the full-implementation review, or a section-review blocker). Opens a fresh session in the INTEGRATED worktree to fix the issue at the root cause, then auto re-runs the review and ships if clean. This is the usual call — use it for integration/seam defects, or to verify a benign finding and ship. Use reopen_section instead only when a section's PLAN was wrong.";
+  readonly schema = dispatchFixupSchema;
+  readonly refreshesContext = ['pipelines'] as const;
+
+  constructor(private readonly runner: PipelineRunnerService) {}
+
+  async execute(
+    { board_task_id, guidance }: z.infer<typeof dispatchFixupSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const r = await this.runner.dispatchFixup(
+      ctx.identity.team,
+      board_task_id,
+      guidance,
+    );
+    return r.message;
+  }
+}
+
+const reopenSectionSchema = z.object({
+  board_task_id: z
+    .number()
+    .int()
+    .describe('The board task (#N) whose pipeline is paused at a review decision.'),
+  section: z
+    .string()
+    .describe('The name of the section to send back to planning.'),
+  defect: z
+    .string()
+    .describe(
+      "The defect / why the section's PLAN was wrong — injected as authoritative direction for the re-plan.",
+    ),
+});
+
+@HarnessTool()
+export class ReopenSectionTool
+  implements IHarnessTool<typeof reopenSectionSchema>
+{
+  readonly name = 'reopen_section';
+  readonly description =
+    "Send a section back to planning when a review concludes its PLAN was wrong (a design defect — the RARE path). Drops the section's built work, re-plans it with your defect note as the brief, and pauses at its plan gate for Dennis's approval. For an integration/seam defect that's just a code fix, use dispatch_fixup_session instead.";
+  readonly schema = reopenSectionSchema;
+  readonly refreshesContext = ['pipelines'] as const;
+
+  constructor(private readonly runner: PipelineRunnerService) {}
+
+  async execute(
+    { board_task_id, section, defect }: z.infer<typeof reopenSectionSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const r = await this.runner.reopenSection(
+      ctx.identity.team,
+      board_task_id,
+      section,
+      defect,
+    );
     return r.message;
   }
 }

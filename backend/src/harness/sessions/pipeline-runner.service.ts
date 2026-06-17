@@ -17,9 +17,21 @@ import { PlanStore } from '../memory/plan-store';
 import { PipelineRunStore, type PipelineRun } from '../memory/pipeline-run-store';
 import {
   PipelineRunSectionStore,
+  phaseGroups,
   type PipelineRunSection,
+  type SectionMutation,
   type SectionPhase,
 } from '../memory/pipeline-run-section-store';
+import {
+  PipelineRunPhaseStore,
+  type PipelineRunPhase,
+} from '../memory/pipeline-run-phase-store';
+import {
+  PipelineCodingSessionStore,
+  type PipelineCodingSession,
+} from '../memory/pipeline-coding-session-store';
+import { PipelinePhaseReviewStore } from '../memory/pipeline-phase-review-store';
+import { TicketNoteStore } from '../memory/ticket-note-store';
 import { WorktreeService } from '../worktrees/worktree.service';
 import { ReviewPipelineService } from './review-pipeline.service';
 import {
@@ -42,22 +54,35 @@ export interface SectionInput {
 
 /** Sentinel `pipeline` name for a dynamic, section-driven run (vs a static registry pipeline name). */
 const DYNAMIC = 'dynamic';
+
+/**
+ * The shape of the ticket note the approval card writes for a CHANGES-REQUESTED verdict — see
+ * `slack-app/approvals/approval-cards.service.ts` (`Requested changes on the proposal … : <feedback>`).
+ * Loosely coupled ON PURPOSE: the deny-grill reads the verdict's note (the durable record of Dennis's
+ * direction) rather than re-plumbing the feedback through the board event. If the phrasing ever drifts,
+ * the match misses and the re-plan degrades to feedback-less (today's behavior) — never throws. Group 1
+ * captures the actual direction (everything after the colon); `(no notes)` means he denied without text.
+ */
+const CHANGES_REQUESTED_NOTE = /requested changes on the proposal[^:]*:\s*([\s\S]*)/i;
 /** Sentinel section role for a DESIGN section — a human gate that produces the `design/` artifact the
  * NEXT section implements, rather than a phase-config that runs engine turns. */
 export const DESIGN_ROLE = 'design';
 
 /**
- * The DYNAMIC section-driver. A 'feature' run is a list of strictly-sequential SECTIONS (Atlas
- * declares them at dispatch); each section is planned just-in-time (a plan session whose phase-config
- * self-reviews on Codex → MD#2), gated for Dennis's approval, then BUILT phase-by-phase (one fresh
- * execute session per phase, each followed by a fresh review). Work accumulates in ONE worktree; the
- * last section's last phase ships ONE PR. A 'bugfix' run skips all of it — a single execute session
- * straight to the PR gate.
+ * The DYNAMIC section-driver. A 'feature' run is a list of dependency-ordered SECTIONS (Atlas declares
+ * them at dispatch, and may grow/reorder the still-pending tail mid-run); each section is planned
+ * just-in-time (a plan session whose phase-config self-reviews on Codex → MD#2), gated for Dennis's
+ * approval, then BUILT phase-by-phase (one execute session per phase, each followed by a review). Work
+ * accumulates in ONE worktree; the last section's last phase ships ONE PR. A 'bugfix' run skips all of
+ * it — a single execute session straight to the PR gate.
  *
- * The durable `pipeline_runs` row is the source of truth: the 2-D cursor (section_index, phase_index)
- * + planning_substep ('drafting' | 'gate' | null) + mode ('plan' | 'execute' | 'investigate') encode
- * exactly what is live, so a restart re-enters the identical state. The in-process `sessions.onUpdate`
- * signal only TRIGGERS re-evaluation; it never carries state.
+ * STATE = EXPLICIT ROWS, not a positional cursor. The section/phase/coding-session/review rows each
+ * carry a `status` enum that IS the cursor: `activeSection`/`activePhase` locate what's live and the
+ * driver "re-opens whatever the rows say is live", so a restart re-enters the identical state without
+ * arithmetic (the off-by-one busy-loop / orphan-session deadlock the old 2-D cursor invited). The
+ * legacy `pipeline_runs` cursor (section_index, phase_index, planning_substep, mode) is DUAL-WRITTEN
+ * through the transition (boot fallback + the awareness slice) and dropped in a later drain window. The
+ * in-process `sessions.onUpdate` signal only TRIGGERS re-evaluation; it never carries state.
  */
 @Injectable()
 export class PipelineRunnerService implements OnApplicationBootstrap {
@@ -75,6 +100,10 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     private readonly review: ReviewPipelineService,
     private readonly boardEvents: BoardEventsBus,
     private readonly worktrees: WorktreeService,
+    private readonly phaseStore: PipelineRunPhaseStore,
+    private readonly codingStore: PipelineCodingSessionStore,
+    private readonly reviewStore: PipelinePhaseReviewStore,
+    private readonly notes: TicketNoteStore,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -150,7 +179,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       planningSubstep: 'drafting',
       overview: opts.overview,
     });
-    await this.sectionStore.createMany(
+    const created = await this.sectionStore.createMany(
       run.id,
       opts.team,
       sections.map((s, i) => ({
@@ -160,41 +189,44 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         phaseRole: s.role,
       })),
     );
-    await this.openSection(run, 0);
+    await this.openSection(run, created[0].id);
     return (await this.runs.get(opts.team, run.id)) ?? run;
   }
 
   // ── section-driver: routing ─────────────────────────────────────────────────
 
-  /** Advance to section `index`: a DESIGN section opens a human gate (no engine turn); any other
-   * section opens its just-in-time plan session. The single entry every advance routes through. */
-  private async openSection(run: PipelineRun, index: number): Promise<void> {
-    const sections = await this.sectionStore.listForRun(run.id);
-    const section = sections[index];
+  /** Open the section with id `sectionId`: a DESIGN section opens a human gate (no engine turn); any
+   * other section opens its just-in-time plan session. The single entry every advance routes through. */
+  private async openSection(run: PipelineRun, sectionId: string): Promise<void> {
+    const section = await this.sectionStore.get(sectionId);
     if (!section) {
-      await this.failRun(run, `no section at index ${index}`);
+      await this.failRun(run, `no section ${sectionId}`);
       return;
     }
     if (section.phaseRole === DESIGN_ROLE)
-      await this.openDesignGate(run, index, section);
-    else await this.openSectionPlan(run, index);
+      await this.openDesignGate(run, section);
+    else await this.openSectionPlan(run, section);
   }
 
   /** A DESIGN section: pause for the human to produce + attach the artifact (or skip). No engine turn
    * runs here — resume is via attachDesign()/skipDesign(), not a board event. */
   private async openDesignGate(
     run: PipelineRun,
-    index: number,
     section: PipelineRunSection,
   ): Promise<void> {
-    await this.sectionStore.update(section.id, { status: 'awaiting_design' });
+    const index = await this.positionOf(run.id, section.id);
+    await this.sectionStore.update(section.id, {
+      status: 'awaiting_design',
+      activeSessionId: null,
+    });
     await this.runs.update(run.team, run.id, {
       sectionIndex: index,
+      activeSectionId: section.id,
       status: 'paused',
       planningSubstep: 'awaiting_design',
     });
     this.logger.log(
-      `pipeline ${run.id}: design gate at section ${index} (${section.name}) — awaiting artifact`,
+      `pipeline ${run.id}: design gate at section '${section.name}' — awaiting artifact`,
     );
     this.boardEvents.emit({
       kind: 'design-gate',
@@ -207,28 +239,31 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
 
   // ── section-driver: planning ──────────────────────────────────────────────
 
-  /** Open section `index`'s just-in-time plan session (its phase-config self-reviews on Codex). */
-  private async openSectionPlan(run: PipelineRun, index: number): Promise<void> {
-    const sections = await this.sectionStore.listForRun(run.id);
-    const section = sections[index];
-    if (!section) {
-      await this.failRun(run, `no section at index ${index}`);
-      return;
-    }
+  /** Open a section's just-in-time plan session (its phase-config self-reviews on Codex). `denyFeedback`
+   * (Dennis's changes-requested note) is woven into the prompt as authoritative direction for a re-plan. */
+  private async openSectionPlan(
+    run: PipelineRun,
+    section: PipelineRunSection,
+    denyFeedback?: string,
+  ): Promise<void> {
+    const index = await this.positionOf(run.id, section.id);
     await this.sectionStore.update(section.id, { status: 'planning' });
     await this.runs.update(run.team, run.id, {
       sectionIndex: index,
+      activeSectionId: section.id,
       phaseIndex: 0,
       planningSubstep: 'drafting',
       status: 'running',
     });
     const refreshed = (await this.runs.get(run.team, run.id)) ?? run;
-    await this.openSession(
+    const sections = await this.sectionStore.listForRun(run.id);
+    const sid = await this.openSession(
       refreshed,
       section.phaseRole,
       'plan',
-      this.sectionPlanPrompt(refreshed, section, sections),
+      this.sectionPlanPrompt(refreshed, section, sections, denyFeedback),
     );
+    if (sid) await this.sectionStore.update(section.id, { activeSessionId: sid });
   }
 
   /**
@@ -268,10 +303,12 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       status: 'paused',
       planningSubstep: 'gate',
     });
+    const all = await this.sectionStore.listForRun(run.id);
+    const pos = all.findIndex((s) => s.id === section.id) + 1;
     const outcome = await this.proposals.propose({
       team: run.team,
       taskId: run.taskId,
-      summary: `Section '${section.name}' (${run.sectionIndex + 1} of ${(await this.sectionStore.listForRun(run.id)).length}) is planned. Review the attached plan and approve to build it.`,
+      summary: `Section '${section.name}' (${pos} of ${all.length}) is planned. Review the attached plan and approve to build it.`,
       proposedBy: this.employees.teamLead().id,
       surfaceId: run.notifyThread ?? session.notifyThread,
     });
@@ -279,7 +316,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       await this.failRun(run, `propose failed (${outcome.kind}) (no card posted)`);
   }
 
-  /** Route a plan-gate verdict to the active section (the cursor, not the event, says which one). */
+  /** Route a plan-gate verdict to the active section (the section rows, not the event, say which one). */
   private async onBoardEvent(event: BoardEvent): Promise<void> {
     if (
       event.kind !== 'ticket-approved' &&
@@ -291,17 +328,25 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (!run) return;
     if (event.kind === 'ticket-changes-requested') {
       // R1: Dennis sent the plan back — re-plan THIS section (no wedge). The board is already
-      // 'planning' (the verdict set it); re-open a fresh plan session for the same section.
+      // 'planning' (the verdict set it); re-open a fresh plan session for the same section. Carry
+      // Dennis's feedback INTO the new plan prompt (deny-grill) so the re-plan is steered by his
+      // direction rather than dropping it on the floor and re-deriving the same plan.
+      const section = await this.sectionStore.activeSection(run.id);
+      if (!section) {
+        await this.failRun(run, 'changes requested but no active section');
+        return;
+      }
+      const denyFeedback = await this.latestDenyFeedback(run.team, run.taskId);
       this.logger.log(
-        `pipeline ${run.id}: section ${run.sectionIndex} changes requested — re-planning`,
+        `pipeline ${run.id}: section '${section.name}' changes requested — re-planning${denyFeedback ? ' with Dennis’s feedback' : ''}`,
       );
-      await this.openSectionPlan(run, run.sectionIndex);
+      await this.openSectionPlan(run, section, denyFeedback);
       return;
     }
     if (event.kind === 'ticket-denied') {
       // R1: Dennis released the ticket — fail the run (it's back on the open backlog for Atlas).
       this.logger.log(`pipeline ${run.id}: section plan denied — failing run`);
-      const { section } = await this.activeSection(run);
+      const section = await this.sectionStore.activeSection(run.id);
       if (section) await this.sectionStore.update(section.id, { status: 'failed' });
       await this.closeRunSession(run.sessionId); // reclaim the idle plan session
       await this.runs.update(run.team, run.id, { status: 'failed' });
@@ -322,21 +367,71 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     return run;
   }
 
-  /** Dennis approved the active section's plan: parse its phases, flip to building, open phase 0. */
+  /** The direction text from the most-recent changes-requested verdict note on this task (the
+   * deny-grill input), or undefined if none / he denied without notes. Newest-first scan; only the
+   * latest changes-requested note matters (a fresh verdict supersedes an earlier one). */
+  private async latestDenyFeedback(
+    team: string,
+    taskId: number,
+  ): Promise<string | undefined> {
+    const { notes } = await this.notes.listForTask(team, taskId, { pageSize: 20 });
+    for (const note of notes) {
+      const m = note.body.match(CHANGES_REQUESTED_NOTE);
+      if (!m) continue;
+      const text = m[1]?.trim();
+      return text && text !== '(no notes)' ? text : undefined;
+    }
+    return undefined;
+  }
+
+  /** Dennis approved the active section's plan: parse its phases, materialize the phase + coding-session
+   * rows, freeze the section, flip to building, and open the first coding session. */
   private async handleSectionApproved(run: PipelineRun): Promise<void> {
-    const sections = await this.sectionStore.listForRun(run.id);
-    const section = sections[run.sectionIndex];
+    const section = await this.sectionStore.activeSection(run.id);
     if (!section) {
       await this.failRun(run, 'approved but no active section');
       return;
     }
-    const phases = parsePhases(section.planMd ?? '');
-    const phaseCount = phases?.length ?? 1;
+    // Idempotency: a racing/replayed approval must not double-materialize the rows.
+    const existing = await this.phaseStore.listForSection(section.id);
+    if (existing.length > 0) {
+      this.logger.warn(
+        `pipeline ${run.id}: section '${section.name}' already materialized — ignoring re-approval`,
+      );
+      return;
+    }
+    const phases = parsePhases(section.planMd ?? '') ?? [{ id: 1 }];
+    const phaseCount = phases.length;
     await this.sectionStore.update(section.id, {
       status: 'building',
-      phases: phases ?? [{ id: 1 }],
+      phases,
       phaseCount,
+      frozen: true, // committed work — living-section ops may no longer reorder/wedge before it
     });
+    // Fold contiguous phases into coding-session GROUPS (Phase 4): one execute session per group,
+    // sharing one engine context. With no `group` in the plan this is 1 group per phase (the default).
+    const groups = phaseGroups(phases);
+    const coding = await this.codingStore.createMany(
+      run.id,
+      run.team,
+      section.id,
+      groups.map((_, i) => ({ ordinal: (i + 1) * 10 })),
+    );
+    // Flatten group membership → each phase row links to its group's coding session (groups partition
+    // the phase sequence in order, so this index lines up with `phases`).
+    const groupOfPhase: number[] = [];
+    groups.forEach((g, gi) => g.phases.forEach(() => groupOfPhase.push(gi)));
+    await this.phaseStore.createMany(
+      run.id,
+      run.team,
+      section.id,
+      phases.map((p, i) => ({
+        ordinal: (i + 1) * 10,
+        planPhaseId: p.id,
+        title: p.title,
+        codingSessionId: coding[groupOfPhase[i]].id,
+      })),
+    );
     await this.board
       .update(run.team, run.taskId, { status: 'executing' })
       .catch(() => undefined);
@@ -346,78 +441,214 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       phaseIndex: 0,
     });
     const refreshed = (await this.runs.get(run.team, run.id)) ?? run;
-    await this.openPhaseExecute(refreshed, 0);
+    await this.openGroupExecute(refreshed, coding[0]);
   }
 
-  // ── section-driver: building ────────────────────────────────────────────────
+  // ── section-driver: building (grouped) ──────────────────────────────────────
 
-  /** Open a fresh execute session for build-phase `phaseIndex` of the active section. */
-  private async openPhaseExecute(
+  /** The phase rows of a coding-session GROUP (the phases that share its one engine context), in
+   * execution order. */
+  private async groupPhases(
+    sectionId: string,
+    codingId: string,
+  ): Promise<PipelineRunPhase[]> {
+    const all = await this.phaseStore.listForSection(sectionId);
+    return all.filter((p) => p.codingSessionId === codingId);
+  }
+
+  /**
+   * Open ONE execute session for a coding-session group — it builds ALL the group's consecutive phases
+   * in a single shared engine context (Phase 4). Prior groups' handoff notes are woven into the prompt
+   * (and recorded as this group's `handoff_in`); the group leaves its own `handoff_out` when it reports.
+   */
+  private async openGroupExecute(
     run: PipelineRun,
-    phaseIndex: number,
+    coding: PipelineCodingSession,
   ): Promise<void> {
-    const { section, phases } = await this.activeSection(run);
-    if (!section) return;
+    const section = await this.sectionStore.get(coding.sectionId);
+    if (!section) {
+      await this.failRun(run, `coding session for missing section ${coding.sectionId}`);
+      return;
+    }
+    const allPhases = await this.phaseStore.listForSection(section.id);
+    const groupPhases = allPhases.filter((p) => p.codingSessionId === coding.id);
+    const allCoding = await this.codingStore.listForSection(section.id);
+    const groupIndex = Math.max(0, allCoding.findIndex((c) => c.id === coding.id));
+    const index = await this.positionOf(run.id, section.id);
+    const phaseIndex = groupPhases[0]
+      ? Math.max(0, allPhases.findIndex((p) => p.id === groupPhases[0].id))
+      : 0;
+    for (const p of groupPhases)
+      await this.phaseStore.update(p.id, { status: 'building' });
+    await this.codingStore.update(coding.id, { status: 'building' });
     await this.runs.update(run.team, run.id, {
+      sectionIndex: index,
+      activeSectionId: section.id,
       phaseIndex,
       mode: 'execute',
       planningSubstep: null,
       status: 'running',
     });
+    const handoffNotes = await this.priorHandoffs(section.id, coding.ordinal);
+    if (handoffNotes)
+      await this.codingStore.update(coding.id, { handoffIn: handoffNotes });
     const refreshed = (await this.runs.get(run.team, run.id)) ?? run;
-    await this.openSession(
+    const sid = await this.openSession(
       refreshed,
       section.phaseRole,
       'execute',
-      this.phaseExecutePrompt(section, phaseIndex, phases),
+      this.phaseGroupExecutePrompt({
+        taskId: run.taskId,
+        intent: run.overview,
+        sectionName: section.name,
+        sectionPlan: section.planMd,
+        group: groupPhases.map((p) => ({ id: p.planPhaseId, title: p.title })),
+        groupIndex,
+        groupCount: allCoding.length,
+        handoffNotes,
+      }),
     );
+    if (sid) {
+      await this.codingStore.update(coding.id, { engineSessionId: sid });
+      await this.sectionStore.update(section.id, { activeSessionId: sid });
+    }
   }
 
-  /** Open a fresh READ-ONLY review session over the just-built phase (tracked via mode='investigate',
-   * so its idle is distinguishable from the phase execute session's — no onSessionUpdate re-entry). */
-  private async openPhaseReview(run: PipelineRun): Promise<void> {
-    const { section, phases } = await this.activeSection(run);
-    if (!section) return;
+  /** The handoff notes left by every PRIOR group in this section (lower ordinal, with a `handoff_out`),
+   * assembled in order — the structured context the next group inherits. Undefined when none. */
+  private async priorHandoffs(
+    sectionId: string,
+    beforeOrdinal: number,
+  ): Promise<string | undefined> {
+    const all = await this.codingStore.listForSection(sectionId);
+    const prior = all
+      .filter((c) => c.ordinal < beforeOrdinal && c.handoffOut)
+      .sort((a, b) => a.ordinal - b.ordinal);
+    if (!prior.length) return undefined;
+    return prior
+      .map((c, i) => `— from coding session ${i + 1}:\n${c.handoffOut}`)
+      .join('\n\n');
+  }
+
+  /** Open a fresh READ-ONLY review session over the group's just-built phases (tracked via
+   * mode='investigate', so its idle is distinguishable from the execute session's). One review attempt
+   * per phase in the group, all sharing the review session — the per-phase lineage Phase 5 builds on. */
+  private async openGroupReview(
+    run: PipelineRun,
+    coding: PipelineCodingSession,
+  ): Promise<void> {
+    const section = await this.sectionStore.get(coding.sectionId);
+    if (!section) {
+      await this.failRun(run, `review for missing section ${coding.sectionId}`);
+      return;
+    }
+    const groupPhases = await this.groupPhases(section.id, coding.id);
+    for (const p of groupPhases)
+      await this.phaseStore.update(p.id, { status: 'reviewing' });
+    await this.codingStore.update(coding.id, { status: 'reviewing' });
     await this.runs.update(run.team, run.id, { mode: 'investigate' });
     const refreshed = (await this.runs.get(run.team, run.id)) ?? run;
-    await this.openSession(
+    const sid = await this.openSession(
       refreshed,
       section.phaseRole,
       'investigate',
-      this.phaseReviewPrompt(section, refreshed.phaseIndex, phases),
+      this.phaseGroupReviewPrompt(section, groupPhases),
     );
+    for (const p of groupPhases) {
+      const attempts = await this.reviewStore.listForPhase(p.id);
+      await this.reviewStore.create(run.id, run.team, {
+        phaseId: p.id,
+        attempt: attempts.length + 1,
+        engineSessionId: sid ?? undefined,
+      });
+    }
+    if (sid) await this.sectionStore.update(section.id, { activeSessionId: sid });
   }
 
-  /** A phase review finished. v1 is ADVISORY: capture the report, mark the phase reviewed, advance.
-   * (Acting on a blocker verdict — pause/auto-fix — is Phase-5 hardening; for now it never wedges.) */
-  private async advanceAfterReview(
+  /** A group's review finished. v1 is ADVISORY: record the verdict on every phase in the group, mark
+   * them (and the coding session) done, advance to the next group / section / PR. (Acting on a blocker
+   * verdict — pause/auto-fix — is Phase-5 hardening.) */
+  private async advanceAfterGroupReview(
     run: PipelineRun,
+    coding: PipelineCodingSession,
     session: Session,
   ): Promise<void> {
-    const { section, phases } = await this.activeSection(run);
+    const section = await this.sectionStore.get(coding.sectionId);
     if (!section) return;
-    const marked = phases.map((p, i) =>
-      i === run.phaseIndex ? { ...p, reviewed: true } : p,
+    const verdict = parseVerdict(session.lastReport ?? '');
+    const groupPhases = await this.groupPhases(section.id, coding.id);
+    for (const p of groupPhases) {
+      const latest = await this.reviewStore.latestForPhase(p.id);
+      if (latest)
+        await this.reviewStore.update(latest.id, {
+          status: 'done',
+          blocker: verdict?.blocker ?? false,
+          summary: verdict?.summary ?? null,
+        });
+      await this.phaseStore.update(p.id, { status: 'done' });
+    }
+    await this.codingStore.update(coding.id, { status: 'done' });
+    // Dual-write the phases_json `reviewed` markers (boot fallback + awareness slice).
+    const reviewedIds = new Set(groupPhases.map((p) => p.planPhaseId));
+    const marked = (section.phases ?? []).map((p) =>
+      reviewedIds.has(p.id) ? { ...p, reviewed: true } : p,
     );
     await this.sectionStore.update(section.id, { phases: marked });
-    const verdict = parseVerdict(session.lastReport ?? '');
     if (verdict?.summary)
       this.logger.log(
-        `pipeline ${run.id}: phase ${run.phaseIndex + 1} review — ${verdict.summary}`,
+        `pipeline ${run.id}: group ${coding.ordinal / 10} review — ${verdict.summary}`,
       );
 
-    const nextPhase = run.phaseIndex + 1;
-    const phaseCount = section.phaseCount ?? phases.length;
-    if (nextPhase < phaseCount) {
-      await this.openPhaseExecute(run, nextPhase);
+    // Phase 5d: a review BLOCKER is Atlas's call, not an auto-advance — PAUSE and wake him with the
+    // decision menu (fix-up vs reopen). The work is recorded as built+reviewed-with-blocker above, so
+    // whichever action he picks resumes from a consistent state.
+    if (verdict?.blocker) {
+      await this.pauseForStageDecision(run, {
+        stage: 'section review',
+        section: section.name,
+        findings: verdict.summary ?? '(the review flagged a blocking issue)',
+      });
       return;
     }
-    // Section done — advance to the next section (build or design gate), or ship the terminal PR.
-    await this.sectionStore.update(section.id, { status: 'done' });
-    const sections = await this.sectionStore.listForRun(run.id);
-    const nextSection = run.sectionIndex + 1;
-    if (nextSection < sections.length) {
-      await this.openSection(run, nextSection);
+
+    const nextCoding = await this.codingStore.nextPending(section.id);
+    if (nextCoding) {
+      await this.openGroupExecute(run, nextCoding);
+      return;
+    }
+    // Section done — mark it done FIRST (so a re-entrant turn from the lens fix loop finds no active
+    // section), run the per-section multi-lens self-review (Phase 5a — advisory: auto-fixes, narrates on
+    // exhaustion, never wedges), then advance to the next runnable section or ship the terminal PR.
+    await this.sectionStore.update(section.id, {
+      status: 'done',
+      activeSessionId: null,
+    });
+    await this.review
+      .reviewSectionLenses(session, { sectionName: section.name })
+      .catch((err) => {
+        this.logger.warn(
+          `pipeline ${run.id}: section-lens review failed: ${err}`,
+        );
+        return { ok: true, findings: [] as string[] };
+      });
+    await this.advanceToNextSection(run);
+  }
+
+  /** Pick the next runnable section (topological over depends_on) and open it; ship the PR when none
+   * remain; FAIL LOUDLY when pending sections remain but none are runnable (a dependency deadlock —
+   * never hang). The single advance point shared by review-completion and the design gates. */
+  private async advanceToNextSection(run: PipelineRun): Promise<void> {
+    const next = await this.sectionStore.nextPending(run.id);
+    if (next) {
+      await this.openSection(run, next.id);
+      return;
+    }
+    const all = await this.sectionStore.listForRun(run.id);
+    if (all.some((s) => s.status === 'pending')) {
+      await this.failRun(
+        run,
+        'dependency deadlock — pending sections have unsatisfiable depends_on',
+      );
       return;
     }
     await this.handlePrGate(run);
@@ -454,15 +685,19 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         message: `Couldn't unzip '${source}' into the worktree: ${err instanceof Error ? err.message : String(err)}.`,
       };
     }
-    const sections = await this.sectionStore.listForRun(run.id);
-    const section = sections[run.sectionIndex];
-    if (section) await this.sectionStore.update(section.id, { status: 'done' });
+    const design = await this.sectionStore.activeSection(run.id);
+    if (design)
+      await this.sectionStore.update(design.id, {
+        status: 'done',
+        frozen: true,
+        activeSessionId: null,
+      });
     await this.runs.update(team, run.id, {
       status: 'running',
       planningSubstep: null,
     });
     const refreshed = (await this.runs.get(team, run.id)) ?? run;
-    await this.openSection(refreshed, run.sectionIndex + 1);
+    await this.advanceToNextSection(refreshed);
     return {
       ok: true,
       message: `Design attached to ${run.worktreeId} (design/). The next section is now planning/building against it.`,
@@ -478,29 +713,298 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const run = await this.runs.getByTask(team, taskId);
     if (!run || run.status !== 'paused' || run.planningSubstep !== 'awaiting_design')
       return { ok: false, message: `#${taskId} isn't waiting at a design gate.` };
-    const sections = await this.sectionStore.listForRun(run.id);
-    const design = sections[run.sectionIndex];
+    const all = await this.sectionStore.listForRun(run.id);
+    const design = await this.sectionStore.activeSection(run.id);
     if (design) await this.sectionStore.update(design.id, { status: 'skipped' });
-    // The section right after a design gate is its implementer — skip it too (nothing to implement
-    // without a design).
-    const implementer = sections[run.sectionIndex + 1];
-    let nextIndex = run.sectionIndex + 1;
-    if (implementer) {
+    // The section right after a design gate (by ordinal) is its implementer — skip it too (nothing to
+    // implement without a design).
+    const idx = design ? all.findIndex((s) => s.id === design.id) : -1;
+    const implementer = idx >= 0 ? all[idx + 1] : undefined;
+    if (implementer && implementer.status === 'pending')
       await this.sectionStore.update(implementer.id, { status: 'skipped' });
-      nextIndex = run.sectionIndex + 2;
-    }
     await this.runs.update(team, run.id, {
       status: 'running',
       planningSubstep: null,
-      sectionIndex: nextIndex,
     });
     const refreshed = (await this.runs.get(team, run.id)) ?? run;
-    if (nextIndex < sections.length) await this.openSection(refreshed, nextIndex);
-    else await this.handlePrGate(refreshed); // no more sections → ship the functional version
+    await this.advanceToNextSection(refreshed); // continue, or ship the functional version
     return {
       ok: true,
       message: `Skipped the design (and its implementation) for #${taskId} — the functional version will ship. Ask Dennis whether to backlog the design + redesign for later; add_board_task ONLY if he says yes.`,
     };
+  }
+
+  // ── living sections ──────────────────────────────────────────────────────────
+
+  /**
+   * Insert a new section into a running feature's still-pending tail (Atlas orchestration call). The new
+   * section is born `pending` and hits the normal plan gate when reached (gate the substance). Refuses
+   * (helpful message, never throws) when the run isn't a live feature, the anchor is unknown/committed,
+   * or the wedge would land before frozen work / form a forward dependency.
+   */
+  async insertSection(
+    team: string,
+    taskId: number,
+    afterSectionName: string,
+    spec: { name: string; brief?: string; phaseRole: string },
+  ): Promise<{ ok: boolean; message: string }> {
+    const run = await this.livingRun(team, taskId);
+    if (!run.ok) return { ok: false, message: run.message };
+    if (spec.phaseRole !== DESIGN_ROLE && !this.employees.byId(spec.phaseRole))
+      return {
+        ok: false,
+        message: `Unknown phase-config '${spec.phaseRole}' — use a real one (e.g. 'phase_backend') or '${DESIGN_ROLE}'.`,
+      };
+    const sections = await this.sectionStore.listForRun(run.run.id);
+    const anchor = sections.find((s) => s.name === afterSectionName);
+    if (!anchor)
+      return {
+        ok: false,
+        message: `No section '${afterSectionName}' in #${taskId}'s run — sections are: ${sections.map((s) => s.name).join(', ')}.`,
+      };
+    const result: SectionMutation = await this.sectionStore.insertSection(
+      run.run.id,
+      team,
+      anchor.ordinal,
+      spec,
+    );
+    if (!result.ok) return { ok: false, message: `Couldn't insert: ${result.reason}.` };
+    this.logger.log(
+      `pipeline ${run.run.id}: inserted section '${spec.name}' after '${afterSectionName}' (ordinal ${result.section.ordinal})`,
+    );
+    return {
+      ok: true,
+      message: `Added section '${spec.name}' after '${afterSectionName}' in #${taskId}. It'll plan (and pause for your approval) when the pipeline reaches it.`,
+    };
+  }
+
+  /**
+   * Reorder a running feature's still-pending sections (gate the substance: same sections, new order ⇒
+   * no re-approval, Atlas merely notified). Only pending sections move; frozen/active/done ones hold.
+   * Refuses with a helpful message on stale state, a non-pending name, or a dependency-breaking order.
+   */
+  async reorderSections(
+    team: string,
+    taskId: number,
+    orderedNames: string[],
+  ): Promise<{ ok: boolean; message: string }> {
+    const run = await this.livingRun(team, taskId);
+    if (!run.ok) return { ok: false, message: run.message };
+    const result = await this.sectionStore.reorderSections(
+      run.run.id,
+      team,
+      orderedNames,
+    );
+    if (!result.ok) return { ok: false, message: `Couldn't reorder: ${result.reason}.` };
+    this.logger.log(
+      `pipeline ${run.run.id}: reordered pending sections → ${orderedNames.join(', ')}`,
+    );
+    return {
+      ok: true,
+      message: `Reordered the pending sections of #${taskId}: ${orderedNames.join(' → ')}. No re-approval needed — same work, new order.`,
+    };
+  }
+
+  /** A live feature run for living-section edits, or a helpful refusal. */
+  private async livingRun(
+    team: string,
+    taskId: number,
+  ): Promise<{ ok: true; run: PipelineRun } | { ok: false; message: string }> {
+    const run = await this.runs.getByTask(team, taskId);
+    if (!run)
+      return { ok: false, message: `No pipeline run for #${taskId}.` };
+    if (run.kind !== 'feature' || run.pipeline !== DYNAMIC)
+      return {
+        ok: false,
+        message: `#${taskId} isn't a section-driven feature run — nothing to reshape.`,
+      };
+    if (run.status === 'done' || run.status === 'failed')
+      return {
+        ok: false,
+        message: `#${taskId}'s run is already ${run.status} — too late to reshape it.`,
+      };
+    return { ok: true, run };
+  }
+
+  // ── cross-section defect: Atlas decides (fix-up vs reopen) ───────────────────
+
+  /**
+   * PAUSE a run at a review-stage decision and wake Atlas with the findings + the action menu (the
+   * "walk Atlas's hands" wake-up). The run sits at `paused`/`stage_decision` until he picks an action
+   * (dispatch_fixup_session / reopen_section). The findings are also parked as a durable ticket note so
+   * they survive a restart (the seed event won't re-fire on boot — like the design gate, it waits).
+   */
+  private async pauseForStageDecision(
+    run: PipelineRun,
+    opts: { stage: string; findings: string; section?: string },
+  ): Promise<void> {
+    await this.runs.update(run.team, run.id, {
+      status: 'paused',
+      planningSubstep: 'stage_decision',
+    });
+    await this.notes
+      .add(
+        run.team,
+        run.taskId,
+        this.employees.teamLead().id,
+        `Pipeline ${opts.stage}${opts.section ? ` ('${opts.section}')` : ''} flagged a blocking issue:\n\n${opts.findings}`,
+      )
+      .catch(() => undefined);
+    this.boardEvents.emit({
+      kind: 'stage-decision',
+      team: run.team,
+      taskId: run.taskId,
+      stage: opts.stage,
+      findings: opts.findings,
+      section: opts.section,
+      allowedActions: [
+        {
+          action: `dispatch_fixup_session(${run.taskId})`,
+          description:
+            'fix it in a fresh session against the integrated worktree, then auto re-review + ship — the usual call for an integration/seam defect (or to verify a benign finding and ship).',
+        },
+        {
+          action: `reopen_section(${run.taskId}, '<section>')`,
+          description:
+            "send a section back to planning with this as the brief — only when the section's PLAN was wrong (a design defect), which re-gates to Dennis.",
+        },
+        {
+          action: 'loop Dennis in',
+          description:
+            "if it's a product/scope call rather than a code defect, bring it to him with your read before acting.",
+        },
+      ],
+      notifyThread: run.notifyThread,
+    });
+    this.logger.log(
+      `pipeline ${run.id}: paused at ${opts.stage}${opts.section ? ` ('${opts.section}')` : ''} — awaiting Atlas's decision`,
+    );
+  }
+
+  /**
+   * dispatch_fixup_session: the ~90% cross-section-defect path. Opens a fresh execute session in the
+   * INTEGRATED worktree to fix the flagged defect; its report re-enters the PR gate (re-runs the
+   * full-impl review and ships if clean). Re-validates run state (mirror gatedRun) and returns a helpful
+   * message — never throws — when the run isn't waiting on a review decision.
+   */
+  async dispatchFixup(
+    team: string,
+    taskId: number,
+    guidance?: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    const gated = await this.stageDecisionRun(team, taskId);
+    if (!gated.ok) return { ok: false, message: gated.message };
+    const run = gated.run;
+    if (!run.worktreeId)
+      return { ok: false, message: `#${taskId} has no worktree to fix in.` };
+    await this.runs.update(team, run.id, { status: 'running' });
+    const refreshed = (await this.runs.get(team, run.id)) ?? run;
+    const sid = await this.openSession(
+      refreshed,
+      refreshed.currentRole ?? '',
+      'execute',
+      this.fixupPrompt(refreshed, guidance),
+      refreshed,
+    );
+    if (!sid)
+      return {
+        ok: false,
+        message: `Couldn't open a fix-up session for #${taskId} — check the worktree/project.`,
+      };
+    // Mark the run so the fix-up session's report re-enters the PR gate (set AFTER openSession, which
+    // doesn't touch planning_substep).
+    await this.runs.update(team, run.id, { planningSubstep: 'fixup' });
+    this.logger.log(
+      `pipeline ${run.id}: dispatched a fix-up session for #${taskId}`,
+    );
+    return {
+      ok: true,
+      message: `On it — a fix-up session is fixing the flagged issues in #${taskId}'s integrated worktree. It'll re-run the review and ship if clean; I'll surface the PR gate.`,
+    };
+  }
+
+  /**
+   * reopen_section: the rare design-defect path. Drops a section's built rows so a re-approval
+   * re-materializes them, resets it to a fresh plan with the defect injected as authoritative deny-style
+   * feedback, and re-opens its plan session → Dennis's gate. Re-validates run state and returns a
+   * helpful message on stale state / unknown section — never throws.
+   */
+  async reopenSection(
+    team: string,
+    taskId: number,
+    sectionName: string,
+    defect: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    const gated = await this.stageDecisionRun(team, taskId);
+    if (!gated.ok) return { ok: false, message: gated.message };
+    const run = gated.run;
+    const sections = await this.sectionStore.listForRun(run.id);
+    const section = sections.find((s) => s.name === sectionName);
+    if (!section)
+      return {
+        ok: false,
+        message: `No section '${sectionName}' in #${taskId}'s run — sections are: ${sections.map((s) => s.name).join(', ')}.`,
+      };
+    // Clear the section's built rows (reviews first — they key off the phase ids), then reset the
+    // section to a fresh plan. Re-approval (handleSectionApproved) re-materializes from the new plan.
+    await this.reviewStore.deleteForSection(section.id);
+    await this.phaseStore.deleteForSection(section.id);
+    await this.codingStore.deleteForSection(section.id);
+    await this.sectionStore.update(section.id, {
+      status: 'planning',
+      frozen: false,
+      planMd: null,
+      phases: null,
+      phaseCount: null,
+      activeSessionId: null,
+    });
+    await this.runs.update(team, run.id, {
+      status: 'running',
+      planningSubstep: 'drafting',
+    });
+    const refreshed = (await this.runs.get(team, run.id)) ?? run;
+    const fresh = await this.sectionStore.get(section.id);
+    if (fresh) await this.openSectionPlan(refreshed, fresh, defect);
+    this.logger.log(
+      `pipeline ${run.id}: reopened section '${sectionName}' for re-planning (cross-section defect)`,
+    );
+    return {
+      ok: true,
+      message: `Reopened the '${sectionName}' section of #${taskId} — it's re-planning with your defect note as the brief, and will pause at its plan gate for Dennis's approval.`,
+    };
+  }
+
+  /** The fix-up session reported back → clear the marker and re-enter the PR gate (re-runs the
+   * full-impl review, then ships if clean or pauses again if the defect persists). */
+  private async handleFixupDone(run: PipelineRun): Promise<void> {
+    await this.runs.update(run.team, run.id, { planningSubstep: null });
+    const refreshed = (await this.runs.get(run.team, run.id)) ?? run;
+    await this.handlePrGate(refreshed);
+  }
+
+  /** A run paused at a stage-decision for `taskId`, or a helpful refusal (mirror of gatedRun/livingRun). */
+  private async stageDecisionRun(
+    team: string,
+    taskId: number,
+  ): Promise<{ ok: true; run: PipelineRun } | { ok: false; message: string }> {
+    const run = await this.runs.getByTask(team, taskId);
+    if (!run) return { ok: false, message: `No pipeline run for #${taskId}.` };
+    if (run.kind !== 'feature' || run.pipeline !== DYNAMIC)
+      return {
+        ok: false,
+        message: `#${taskId} isn't a section-driven feature run.`,
+      };
+    if (run.status === 'done' || run.status === 'failed')
+      return {
+        ok: false,
+        message: `#${taskId}'s run is already ${run.status} — nothing to decide.`,
+      };
+    if (run.status !== 'paused' || run.planningSubstep !== 'stage_decision')
+      return {
+        ok: false,
+        message: `#${taskId} isn't waiting on a review decision right now${run.planningSubstep ? ` (it's at the ${run.planningSubstep} step)` : ''}.`,
+      };
+    return { ok: true, run };
   }
 
   // ── shared: PR gate (terminal for feature + bugfix) ─────────────────────────
@@ -513,11 +1017,36 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       await this.failRun(run, 'PR gate with no worktree');
       return;
     }
+    // Phase 5b: the ticket-level full-implementation review runs BEFORE the ship (feature runs only — a
+    // bugfix is a single session with no cross-section seams). `changes` → Atlas decides (don't ship);
+    // `pass` → ship, and any advisory findings ride the PR self-review comment.
+    let advisoryFindings: string | undefined;
+    if (run.kind === 'feature') {
+      const full = await this.review
+        .reviewFullImplementation({
+          team: run.team,
+          taskId: run.taskId,
+          worktreeId: run.worktreeId,
+        })
+        .catch((err) => {
+          this.logger.warn(`pipeline ${run.id}: full-impl review failed: ${err}`);
+          return { verdict: 'pass' as const, findings: '' };
+        });
+      if (full.verdict === 'changes') {
+        await this.pauseForStageDecision(run, {
+          stage: 'full implementation review',
+          findings: full.findings || '(the review flagged cross-section issues)',
+        });
+        return; // don't ship — wake Atlas to decide (fix-up vs reopen)
+      }
+      advisoryFindings = full.findings || undefined;
+    }
     const shipped = await this.review.shipTask({
       team: run.team,
       taskId: run.taskId,
       worktreeId: run.worktreeId,
       notifyThread: run.notifyThread ?? '',
+      findings: advisoryFindings,
     });
     if (!shipped.ok) {
       await this.failRun(run, `shipTask failed — ${shipped.reason}`);
@@ -532,12 +1061,13 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       status: 'done',
       currentRole: null,
       mode: null,
+      activeSectionId: null,
     });
   }
 
   // ── the dispatcher ──────────────────────────────────────────────────────────
 
-  /** React to a tracked session reporting back: route purely off the durable cursor. */
+  /** React to a tracked session reporting back: route purely off the durable rows (status = cursor). */
   private async onSessionUpdate(session: Session): Promise<void> {
     if (session.status !== 'idle' && session.status !== 'failed') return;
     if (session.boardTaskId === undefined) return;
@@ -547,7 +1077,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (session.status === 'failed') {
       await this.failRun(
         run,
-        `session ${session.id} (kind=${run.kind}, section=${run.sectionIndex}, phase=${run.phaseIndex}, mode=${run.mode}) failed`,
+        `session ${session.id} (kind=${run.kind}, mode=${run.mode}) failed`,
       );
       return;
     }
@@ -566,19 +1096,43 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     }
     if (run.pipeline !== DYNAMIC) return; // legacy flat runs aren't driven here
 
-    if (run.planningSubstep === 'drafting') {
-      const { section } = await this.activeSection(run);
-      if (section) await this.handleSectionPlanGate(run, section, session);
+    // A harness fix-up session (dispatch_fixup_session) reported → re-enter the PR gate, which re-runs
+    // the full-impl review and ships (or pauses again if the defect persists). Checked BEFORE the
+    // active-section lookup: a ticket-level fix-up runs with every section already done (no active one).
+    if (run.planningSubstep === 'fixup') {
+      await this.handleFixupDone(run);
       return;
     }
-    // Building: mode distinguishes the phase execute session from its review session.
-    if (run.mode === 'execute') {
-      await this.openPhaseReview(run);
+
+    const section = await this.sectionStore.activeSection(run.id);
+    if (!section) return; // no live section while running — nothing to advance (defensive)
+
+    if (section.status === 'planning') {
+      // The plan turn reported. The one-shot codex_advisory self-review already ran INSIDE it (the
+      // PlanFinished lifecycle hook resolves before the session reports idle), so stamp 'advisory' as
+      // the transient post-advisory marker — observability + a re-plan anchor if a crash lands between
+      // here and the gate. handleSectionPlanGate clears it to 'gate' at the pause.
+      await this.runs.update(run.team, run.id, { planningSubstep: 'advisory' });
+      await this.handleSectionPlanGate(run, section, session);
       return;
     }
-    if (run.mode === 'investigate') {
-      await this.advanceAfterReview(run, session);
-      return;
+    if (section.status === 'building') {
+      // The active GROUP's status distinguishes the just-finished execute from its review.
+      const coding = await this.codingStore.activeCodingSession(section.id);
+      if (!coding) return; // defensive: building section with no live group
+      if (coding.status === 'building') {
+        // The group's execute session just finished — capture the handoff it left for the NEXT group
+        // (parsed from its report), then open the group's review.
+        const handoff = parseHandoff(session.lastReport ?? '');
+        if (handoff)
+          await this.codingStore.update(coding.id, { handoffOut: handoff });
+        await this.openGroupReview(run, coding);
+        return;
+      }
+      if (coding.status === 'reviewing') {
+        await this.advanceAfterGroupReview(run, coding, session);
+        return;
+      }
     }
   }
 
@@ -590,7 +1144,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
   ): Promise<void> {
     const section =
       run.kind === 'feature' && run.pipeline === DYNAMIC
-        ? (await this.activeSection(run)).section
+        ? await this.sectionStore.activeSection(run.id)
         : undefined;
     this.logger.log(
       `pipeline ${run.id}: ${section?.name ?? 'bugfix'} session asked questions — relaying to Atlas (no gate)`,
@@ -608,11 +1162,14 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
   /** Deliver Atlas's answers into the section/bugfix session that asked questions (Atlas can't
    * reply_session — it's not his session). Resumes the SAME session (keeps its context) in its current
    * mode, detached; its report-back re-enters onSessionUpdate (a revised plan → gate, or more
-   * questions → relay again). */
+   * questions → relay again). When `regroupedPhases` is supplied (an execute session asked to re-shape
+   * the remaining work — a ```regroup``` block in its questions), the still-pending phases/groups are
+   * re-materialized FIRST, so the resumed session and every later group run the new grouping. */
   async answerSectionQuestions(
     team: string,
     taskId: number,
     answers: string,
+    regroupedPhases?: ReadonlyArray<{ id: number; group: number; title?: string }>,
   ): Promise<{ ok: boolean; message: string }> {
     const run = await this.runs.getByTask(team, taskId);
     if (!run || run.status !== 'running' || !run.sessionId)
@@ -627,8 +1184,14 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         ok: false,
         message: `#${taskId}'s session isn't waiting on answers right now.`,
       };
+    let regroupNote = '';
+    if (regroupedPhases && regroupedPhases.length) {
+      const applied = await this.applyRegroup(run, regroupedPhases);
+      if (!applied.ok) return { ok: false, message: applied.message };
+      regroupNote = ` ${applied.message}`;
+    }
     const mode: WorkerMode =
-      run.planningSubstep === 'drafting'
+      run.planningSubstep === 'drafting' || run.planningSubstep === 'advisory'
         ? 'plan'
         : run.mode === 'investigate'
           ? 'investigate'
@@ -641,11 +1204,93 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       };
     const section =
       run.kind === 'feature' && run.pipeline === DYNAMIC
-        ? (await this.activeSection(run)).section
+        ? await this.sectionStore.activeSection(run.id)
         : undefined;
     return {
       ok: true,
-      message: `Answers delivered to the ${section ? `'${section.name}' ` : ''}session for #${taskId}; it's reworking and will report back (a revised plan, or more questions).`,
+      message: `Answers delivered to the ${section ? `'${section.name}' ` : ''}session for #${taskId}; it's reworking and will report back (a revised plan, or more questions).${regroupNote}`,
+    };
+  }
+
+  /**
+   * Renegotiable grouping (Phase 4c): re-shape the still-PENDING phases of the active building section
+   * into a new set of coding-session groups. The live/done groups (and their phases) are IMMUTABLE — you
+   * can only regroup work that hasn't started. `regrouped` must list every pending phase exactly once,
+   * with its new `group` number; contiguous same-number phases fold into one session. Re-materializes
+   * the pending coding-session rows in the new shape and re-links the pending phase rows. Atlas's call
+   * (no re-approval — same phases, new packaging), so it's a helpful refusal, never a throw.
+   */
+  private async applyRegroup(
+    run: PipelineRun,
+    regrouped: ReadonlyArray<{ id: number; group: number; title?: string }>,
+  ): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+    const section = await this.sectionStore.activeSection(run.id);
+    if (!section || section.status !== 'building')
+      return {
+        ok: false,
+        message: `#${run.taskId} has no building section to regroup right now.`,
+      };
+    const phaseRows = await this.phaseStore.listForSection(section.id);
+    const coding = await this.codingStore.listForSection(section.id);
+    const pendingIds = new Set(
+      coding.filter((c) => c.status === 'pending').map((c) => c.id),
+    );
+    const pendingPhaseRows = phaseRows.filter(
+      (p) => p.codingSessionId && pendingIds.has(p.codingSessionId),
+    );
+    const pendingPlanIds = new Set(pendingPhaseRows.map((p) => p.planPhaseId));
+
+    // Validate the regroup covers EXACTLY the pending phases (immutable ones can't move).
+    const seen = new Set<number>();
+    for (const r of regrouped) {
+      if (seen.has(r.id))
+        return { ok: false, message: `Regroup lists phase ${r.id} twice.` };
+      seen.add(r.id);
+      if (!pendingPlanIds.has(r.id))
+        return {
+          ok: false,
+          message: `Phase ${r.id} isn't a pending (not-yet-built) phase — only future phases can be regrouped (pending: ${[...pendingPlanIds].join(', ') || 'none'}).`,
+        };
+    }
+    if (seen.size !== pendingPlanIds.size)
+      return {
+        ok: false,
+        message: `Regroup must list every pending phase exactly once (pending: ${[...pendingPlanIds].join(', ') || 'none'}).`,
+      };
+
+    // Rewrite the pending phases' group numbers in phases_json (the frozen ones keep theirs).
+    const newGroupById = new Map(regrouped.map((r) => [r.id, r.group]));
+    const newPhases = (section.phases ?? []).map((p) =>
+      newGroupById.has(p.id) ? { ...p, group: newGroupById.get(p.id) } : p,
+    );
+    await this.sectionStore.update(section.id, { phases: newPhases });
+
+    // Re-materialize the pending coding sessions for the new grouping of the pending suffix.
+    const groups = phaseGroups(newPhases.filter((p) => pendingPlanIds.has(p.id)));
+    await this.codingStore.deletePending(section.id);
+    const baseOrdinal = coding
+      .filter((c) => c.status !== 'pending')
+      .reduce((m, c) => Math.max(m, c.ordinal), 0);
+    const newCoding = await this.codingStore.createMany(
+      run.id,
+      run.team,
+      section.id,
+      groups.map((_, i) => ({ ordinal: baseOrdinal + (i + 1) * 10 })),
+    );
+    const codingByPlanId = new Map<number, string>();
+    groups.forEach((g, gi) =>
+      g.phases.forEach((p) => codingByPlanId.set(p.id, newCoding[gi].id)),
+    );
+    for (const pr of pendingPhaseRows) {
+      const csId = codingByPlanId.get(pr.planPhaseId);
+      if (csId) await this.phaseStore.update(pr.id, { codingSessionId: csId });
+    }
+    this.logger.log(
+      `pipeline ${run.id}: regrouped ${pendingPhaseRows.length} pending phase(s) of '${section.name}' into ${groups.length} coding session(s)`,
+    );
+    return {
+      ok: true,
+      message: `Regrouped the remaining phases into ${groups.length} coding session(s).`,
     };
   }
 
@@ -653,29 +1298,30 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
 
   /**
    * Re-drive in-flight runs on boot — the in-process turn dies on restart, so a 'running' run would
-   * otherwise stall. Reads the durable cursor for each. (R2 — a section approved during downtime, run
-   * left paused+gate while the board is already 'approved' — is Phase-5 hardening; here a paused+gate
-   * run simply waits for the next ticket-approved.)
+   * otherwise stall. Reads the durable rows for each. R2 (a section approved during downtime — the run
+   * left paused at its plan gate while the board already shows 'approved') is re-keyed on the SECTION
+   * row (status 'planning' + plan_md present), not the positional cursor.
    */
   async resumePipelines(): Promise<void> {
     const active = await this.runs.listAllActive();
     for (const run of active) {
-      // R2: a section approved while we were down — announceIfApproved won't re-fire on boot, so a
-      // run parked at its gate would stall though the board already shows 'approved'. Replay it.
-      if (
-        run.status === 'paused' &&
-        run.planningSubstep === 'gate' &&
-        run.pipeline === DYNAMIC
-      ) {
-        try {
-          const task = await this.board.get(run.team, run.taskId);
-          if (task?.status === 'approved') await this.handleSectionApproved(run);
-        } catch (err) {
-          this.logger.warn(`pipeline ${run.id}: boot gate-reconcile failed: ${err}`);
+      if (run.status === 'paused') {
+        // A paused feature run sits at a plan gate or a design gate. Re-key R2 on the section row: a
+        // plan-gate section approved during downtime must replay (the board event won't re-fire).
+        if (run.pipeline === DYNAMIC && run.kind === 'feature') {
+          try {
+            const section = await this.sectionStore.activeSection(run.id);
+            if (section?.status === 'planning' && section.planMd) {
+              const task = await this.board.get(run.team, run.taskId);
+              if (task?.status === 'approved') await this.handleSectionApproved(run);
+            }
+          } catch (err) {
+            this.logger.warn(`pipeline ${run.id}: boot gate-reconcile failed: ${err}`);
+          }
         }
-        continue;
+        continue; // paused runs (plan / design gate) otherwise wait for their event
       }
-      if (run.status !== 'running') continue; // paused (gate) waits for onBoardEvent
+      if (run.status !== 'running') continue;
       if (run.kind !== 'bugfix' && run.pipeline !== DYNAMIC) continue; // legacy: not driven
       try {
         const session = run.sessionId
@@ -694,18 +1340,41 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     }
   }
 
-  /** Re-open whatever step the durable cursor says is live (boot recovery). */
+  /** Re-open whatever step the durable rows say is live (boot recovery). IDEMPOTENT: if the run's
+   * active session is still alive, the step is already live — re-running this opens no duplicate. */
   private async reopenCurrentStep(run: PipelineRun): Promise<void> {
+    if (run.sessionId) {
+      const live = await this.sessions.get(run.sessionId);
+      if (live && (live.status === 'idle' || live.status === 'running')) return;
+    }
+    if (run.planningSubstep === 'fixup') {
+      // A fix-up session died on restart — re-open it (its report re-enters the PR gate).
+      await this.openSession(run, '', 'execute', this.fixupPrompt(run), run);
+      return;
+    }
     if (run.kind === 'bugfix') {
       await this.openSession(run, '', 'execute', this.bugfixPrompt(run), run);
       return;
     }
-    if (run.planningSubstep === 'drafting') {
-      await this.openSectionPlan(run, run.sectionIndex);
+    const section = await this.sectionStore.activeSection(run.id);
+    if (!section) return; // nothing live (between sections / done)
+    if (section.status === 'planning') {
+      await this.openSectionPlan(run, section);
       return;
     }
-    if (run.mode === 'execute') await this.openPhaseExecute(run, run.phaseIndex);
-    else if (run.mode === 'investigate') await this.openPhaseReview(run);
+    if (section.status === 'building') {
+      const coding =
+        (await this.codingStore.activeCodingSession(section.id)) ??
+        (await this.codingStore.nextPending(section.id));
+      if (!coding) return; // defensive
+      if (coding.status === 'reviewing') {
+        await this.openGroupReview(run, coding);
+        return;
+      }
+      // pending / building → (re)open its grouped execute session.
+      await this.openGroupExecute(run, coding);
+    }
+    // awaiting_design → no reopen (the run is paused; handled in resumePipelines)
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────
@@ -739,28 +1408,28 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     await this.runs.update(run.team, run.id, { status: 'failed' });
   }
 
-  /** The active section + its parsed phases (empty array if none parsed yet). */
-  private async activeSection(
-    run: PipelineRun,
-  ): Promise<{ section?: PipelineRunSection; phases: SectionPhase[] }> {
-    const sections = await this.sectionStore.listForRun(run.id);
-    const section = sections[run.sectionIndex];
-    return { section, phases: section?.phases ?? [] };
+  /** The positional index of a section in its run's ordinal-ordered list (dual-writes section_index
+   * for the awareness slice + boot fallback while the cursor columns survive). */
+  private async positionOf(runId: string, sectionId: string): Promise<number> {
+    const all = await this.sectionStore.listForRun(runId);
+    const i = all.findIndex((s) => s.id === sectionId);
+    return i < 0 ? 0 : i;
   }
 
-  /** Open a session for `run` as `role`/`mode`, stamping it as the run's active session. For bugfix
-   * re-open on boot the role is read from the run's current_role. */
+  /** Open a session for `run` as `role`/`mode`, stamping it as the run's active session; returns the new
+   * session id (undefined if the open was refused). For bugfix re-open on boot the role is read from the
+   * run's current_role. */
   private async openSession(
     run: PipelineRun,
     role: string,
     mode: 'plan' | 'execute' | 'investigate',
     task: string,
     reopen?: PipelineRun,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const resolvedRole = role || reopen?.currentRole || '';
     if (!run.worktreeId || !run.project || !run.notifyThread) {
       await this.failRun(run, 'missing worktree/project/thread');
-      return;
+      return undefined;
     }
     // Reclaim the session this open supersedes before we overwrite run.sessionId — otherwise each
     // phase/review transition strands the previous one as an idle orphan in the worktree.
@@ -781,6 +1450,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       mode,
       status: 'running',
     });
+    return session.id;
   }
 
   // ── prompts ──────────────────────────────────────────────────────────────────
@@ -789,13 +1459,14 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     run: PipelineRun,
     section: PipelineRunSection,
     sections: PipelineRunSection[],
+    denyFeedback?: string,
   ): string {
+    const idx = sections.findIndex((s) => s.id === section.id);
     const prior = sections
-      .slice(0, run.sectionIndex)
-      .filter((s) => s.status === 'done')
+      .filter((s) => s.status === 'done' && s.ordinal < section.ordinal)
       .map((s) => s.name)
       .join(', ');
-    const priorSection = sections[run.sectionIndex - 1];
+    const priorSection = idx > 0 ? sections[idx - 1] : undefined;
     const designAvailable =
       priorSection?.phaseRole === DESIGN_ROLE && priorSection.status === 'done';
     const parts = [
@@ -804,6 +1475,9 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         ? `The agreed HIGH-LEVEL PLAN for the whole feature (your north star — plan this section to fit it):\n${run.overview}`
         : undefined,
       section.brief ? `This section's focus: ${section.brief}` : undefined,
+      denyFeedback
+        ? `Dennis reviewed your previous plan for this section and SENT IT BACK with this direction — treat it as AUTHORITATIVE; it overrides your earlier assumptions:\n\n${denyFeedback}\n\nRe-plan the section to honor it. Grill the gaps: where his direction is ambiguous or trades off against the high-level plan, ASK before you commit (batch related questions) rather than guessing.`
+        : undefined,
       prior
         ? `Earlier sections already shipped into THIS worktree: ${prior}. Read the current worktree state before planning — build on what's there, don't redo it.`
         : undefined,
@@ -811,43 +1485,63 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         ? `The APPROVED design (specs + reference) is in the worktree under \`design/\` — your plan must implement it faithfully over the existing functional UI.`
         : undefined,
       `Produce a HIGHLY DETAILED, fully-specified implementation plan for THIS section only. Break it into as many sequential PHASES as it needs — each phase a coherent, independently-committable chunk. Do NOT implement; this is a plan and goes to Dennis for approval before any code is written.`,
-      `End your plan with a fenced code block tagged \`phases\` containing a JSON array, one object per phase, e.g.:\n\`\`\`phases\n[{"id":1,"title":"DB schema + migration"},{"id":2,"title":"service + API endpoint"}]\n\`\`\`\nThe orchestrator parses it to chunk the build; if you omit it the whole plan runs as one phase.`,
+      `End your plan with a fenced code block tagged \`phases\` containing a JSON array, one object per phase, e.g.:\n\`\`\`phases\n[{"id":1,"title":"DB schema + migration","group":1},{"id":2,"title":"service + API endpoint","group":1},{"id":3,"title":"frontend wiring","group":2}]\n\`\`\`\nThe orchestrator parses it to chunk the build; if you omit it the whole plan runs as one phase. Optional \`"group"\`: CONSECUTIVE phases sharing a group number build in ONE coding session (one engine context — use it when phases are tightly coupled and benefit from shared context); omit it and each phase gets its own session.`,
     ];
     return parts.filter(Boolean).join('\n\n');
   }
 
-  private phaseExecutePrompt(
-    section: PipelineRunSection,
-    phaseIndex: number,
-    phases: SectionPhase[],
-  ): string {
-    const total = section.phaseCount ?? phases.length;
-    const phase = phases[phaseIndex];
-    const label = phase
-      ? `phase ${phase.id}${phase.title ? ` — ${phase.title}` : ''}`
-      : `phase ${phaseIndex + 1}`;
+  /**
+   * The execute prompt for one coding-session GROUP — it builds ALL the group's consecutive phases in a
+   * single shared engine context (Phase 4). Plain string factory (no LangChain), co-located with the
+   * other private prompt builders. `handoffNotes` (prior groups' structured handoffs) ground it in what
+   * came before; the trailing \`handoff\` block is what the NEXT group inherits.
+   */
+  private phaseGroupExecutePrompt(args: {
+    taskId: number;
+    intent?: string;
+    sectionName: string;
+    sectionPlan?: string;
+    group: ReadonlyArray<{ id: number; title?: string }>;
+    groupIndex: number;
+    groupCount: number;
+    handoffNotes?: string;
+  }): string {
+    const { group, groupIndex, groupCount, sectionName } = args;
+    const phaseLines = group
+      .map((p) => `  - phase ${p.id}${p.title ? ` — ${p.title}` : ''}`)
+      .join('\n');
+    const groupLabel =
+      group.length > 1
+        ? `phases ${group.map((p) => p.id).join(', ')}`
+        : `phase ${group[0]?.id ?? groupIndex + 1}`;
     const parts = [
-      `You are implementing the "${section.name}" section of a feature in this worktree — ${label} (${phaseIndex + 1} of ${total}).`,
-      section.planMd
-        ? `The APPROVED plan for this section (your north star):\n\n${section.planMd}`
+      `You are implementing the "${sectionName}" section of a feature (board task #${args.taskId}) in this worktree — coding session ${groupIndex + 1} of ${groupCount}, covering ${groupLabel}.`,
+      args.intent
+        ? `The agreed HIGH-LEVEL PLAN for the whole feature (your north star):\n${args.intent}`
         : undefined,
-      phaseIndex > 0
-        ? `Earlier phases already committed in this worktree — build on them, don't redo them.`
+      args.sectionPlan
+        ? `The APPROVED plan for this section (your north star):\n\n${args.sectionPlan}`
         : undefined,
-      `Implement ONLY this phase, test/smoke-validate your work, and commit it cleanly. Report what you did so the orchestrator can advance.`,
+      `Implement these phases IN ORDER, in THIS one session — they share this context on purpose:\n${phaseLines}`,
+      args.handoffNotes
+        ? `HANDOFF from the previous coding session(s) in this section — what they left you (interfaces exposed, decisions made, anything stubbed or still pending). Build on it, don't re-derive it:\n\n${args.handoffNotes}`
+        : groupIndex > 0
+          ? `Earlier coding sessions already committed in this worktree — build on them, don't redo them.`
+          : undefined,
+      `Implement ONLY these phases, test/smoke-validate your work, and commit cleanly (a commit per phase is fine).`,
+      `End your report with a fenced \`handoff\` block for the NEXT coding session — the interfaces you exposed, decisions you made, and anything still stubbed or pending, e.g.:\n\`\`\`handoff\nExposed POST /api/upload (multipart, returns {id}). Stubbed the virus scan — the FE can assume 200 for now. Migration 123 adds the uploads table.\n\`\`\`\nKeep it tight and factual; the next session inherits it verbatim. If this is the last session, leave a short closing summary in the same block.`,
     ];
     return parts.filter(Boolean).join('\n\n');
   }
 
-  private phaseReviewPrompt(
+  private phaseGroupReviewPrompt(
     section: PipelineRunSection,
-    phaseIndex: number,
-    phases: SectionPhase[],
+    groupPhases: ReadonlyArray<{ planPhaseId: number; title?: string }>,
   ): string {
-    const phase = phases[phaseIndex];
-    const label = phase
-      ? `phase ${phase.id}${phase.title ? ` — ${phase.title}` : ''}`
-      : `phase ${phaseIndex + 1}`;
+    const label =
+      groupPhases.length > 1
+        ? `phases ${groupPhases.map((p) => p.planPhaseId).join(', ')}`
+        : `phase ${groupPhases[0]?.planPhaseId ?? 1}`;
     return [
       `You are reviewing — READ-ONLY — the work just committed for ${label} of the "${section.name}" section, in this worktree. Do NOT change files.`,
       `Review the recent changes for correctness, regressions, missed edge cases, and obvious quality issues.`,
@@ -861,6 +1555,17 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       `Reproduce it, fix it at the root cause, validate the fix (run/curl/test as appropriate), and commit cleanly. Report what was wrong and what you changed.`,
     ].join('\n\n');
   }
+
+  /** The fix-up session prompt (dispatch_fixup_session) — a focused pass over the INTEGRATED worktree to
+   * clear a review-flagged cross-section defect before the feature ships. The findings are parked as a
+   * ticket note, so the session reads them off the ticket. */
+  private fixupPrompt(run: PipelineRun, guidance?: string): string {
+    return [
+      `You are clearing a review-flagged defect in the integrated worktree for board task #${run.taskId} — the feature is fully built (every section committed here); this is a focused fix-up pass before it ships.`,
+      `Read the ticket and its latest notes for the review findings (the flagged issues are parked there).${guidance ? ` Atlas's steer: ${guidance}` : ''}`,
+      `Fix the issues at the root cause across whatever sections they span, validate (run/test as appropriate), and commit cleanly. Don't open or touch any PR — the harness re-reviews and ships once you're done. If a finding turns out to be a non-issue, address the rest and note briefly why you skipped it.`,
+    ].join('\n\n');
+  }
 }
 
 /** Extract a fenced ```<tag> … ``` block's body, or null. Tolerant of leading/trailing whitespace. */
@@ -870,21 +1575,32 @@ function parseFenced(md: string, tag: string): string | null {
   return m ? m[1].trim() : null;
 }
 
-/** Parse the plan's `phases` JSON block → SectionPhase[]. Null on missing/malformed (caller falls
- * back to a single phase) so a bad LLM emission never wedges the build. */
+/** Parse the plan's `phases` JSON block → SectionPhase[]. Reads the optional per-phase `group` number
+ * (Phase 4 — folds consecutive phases into one coding session; omitted ⇒ that phase is its own group).
+ * Null on missing/malformed (caller falls back to a single phase) so a bad LLM emission never wedges
+ * the build. */
 function parsePhases(planMd: string): SectionPhase[] | null {
   const body = parseFenced(planMd, 'phases');
   if (!body) return null;
   try {
     const parsed = JSON.parse(body);
     if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    return parsed.map((p: { id?: unknown; title?: unknown }, i) => ({
-      id: typeof p.id === 'number' ? p.id : i + 1,
-      title: typeof p.title === 'string' ? p.title : undefined,
-    }));
+    return parsed.map(
+      (p: { id?: unknown; title?: unknown; group?: unknown }, i) => ({
+        id: typeof p.id === 'number' ? p.id : i + 1,
+        title: typeof p.title === 'string' ? p.title : undefined,
+        group: typeof p.group === 'number' ? p.group : undefined,
+      }),
+    );
   } catch {
     return null;
   }
+}
+
+/** Extract a build session's trailing `handoff` block — the structured context it leaves the NEXT
+ * coding session (interfaces, decisions, stubs). Null when absent. */
+function parseHandoff(report: string): string | null {
+  return parseFenced(report, 'handoff');
 }
 
 /** Parse a review's `verdict` JSON block, or null. */

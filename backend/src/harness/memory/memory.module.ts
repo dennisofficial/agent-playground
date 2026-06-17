@@ -3,7 +3,10 @@ import { CreateModule } from '@workspace/nestjs-core';
 import {
   CompactionSummary,
   Fact,
+  PipelineCodingSession,
+  PipelinePhaseReview,
   PipelineRun,
+  PipelineRunPhase,
   PipelineRunSection,
   SessionNote,
   Task,
@@ -27,6 +30,9 @@ import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { PipelineRunStore } from './pipeline-run-store';
 import { PipelineRunSectionStore } from './pipeline-run-section-store';
+import { PipelineRunPhaseStore } from './pipeline-run-phase-store';
+import { PipelineCodingSessionStore } from './pipeline-coding-session-store';
+import { PipelinePhaseReviewStore } from './pipeline-phase-review-store';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
 import { SessionNoteStore } from './session-note.store';
@@ -59,6 +65,9 @@ import { WorklogStore } from './worklog-store';
       Worklog,
       PipelineRun,
       PipelineRunSection,
+      PipelineRunPhase,
+      PipelineCodingSession,
+      PipelinePhaseReview,
     ]),
     LlmModule,
     LlmKeysModule,
@@ -108,6 +117,24 @@ import { WorklogStore } from './worklog-store';
       inject: [getRepositoryToken(PipelineRunSection)],
       useFactory: (repo: Repository<PipelineRunSection>) =>
         new PipelineRunSectionStore(repo),
+    },
+    {
+      provide: PipelineRunPhaseStore,
+      inject: [getRepositoryToken(PipelineRunPhase)],
+      useFactory: (repo: Repository<PipelineRunPhase>) =>
+        new PipelineRunPhaseStore(repo),
+    },
+    {
+      provide: PipelineCodingSessionStore,
+      inject: [getRepositoryToken(PipelineCodingSession)],
+      useFactory: (repo: Repository<PipelineCodingSession>) =>
+        new PipelineCodingSessionStore(repo),
+    },
+    {
+      provide: PipelinePhaseReviewStore,
+      inject: [getRepositoryToken(PipelinePhaseReview)],
+      useFactory: (repo: Repository<PipelinePhaseReview>) =>
+        new PipelinePhaseReviewStore(repo),
     },
     {
       provide: PlanStore,

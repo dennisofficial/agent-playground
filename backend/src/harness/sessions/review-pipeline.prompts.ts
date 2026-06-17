@@ -59,6 +59,29 @@ End your response with EXACTLY ONE of these lines and nothing after it:
 VERDICT: PASS
 VERDICT: CHANGES`;
 
+/** The final TICKET-LEVEL review over the whole feature's accumulated diff before the pipeline ships
+ * its PR (Phase 5b) — INTEGRATION_REVIEW_PROMPT scoped to one ticket built section-by-section in ONE
+ * worktree. Takes a ready git range (the runner computes base...branch) rather than the shared-branch
+ * pair, since the pipeline accumulates on the worktree branch and only publishes at ship time. A
+ * `changes` verdict routes to the cross-section-defect decision (Atlas decides) instead of shipping. */
+export const FULL_IMPLEMENTATION_REVIEW_PROMPT = (p: {
+  goal: string;
+  ticket: string;
+  range: string;
+}): string =>
+  `You are a code-review agent doing the FINAL whole-implementation pass before this feature's PR goes to Dennis. The feature was built section-by-section (backend, frontend, …) in ONE worktree; review the COMBINED changes in the git range \`${p.range}\` — run \`git diff ${p.range}\`. Focus on whether the sections fit TOGETHER: consistent contracts across the seams, nothing half-wired between sections, no contradictions or dead ends introduced where one section met another. Per-section reviews already covered each piece in isolation — your job is the integration. READ-ONLY.
+
+The work implements:
+${p.ticket}
+
+Goal: ${p.goal}
+
+Report concrete cross-section problems with file:line references. If the combined work hangs together and is ready, say so in one line.
+
+End your response with EXACTLY ONE of these lines and nothing after it:
+VERDICT: PASS
+VERDICT: CHANGES`;
+
 /** Parse the trailing VERDICT line. Defaults to 'pass' when absent — the review prompt requires the
  * line, so a missing one means a clean/empty review; defaulting to 'changes' would risk a fix loop on
  * an unparseable response. */

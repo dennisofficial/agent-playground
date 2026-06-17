@@ -4,115 +4,53 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PipelineRunnerService } from './pipeline-runner.service';
+import {
+  FakeCodingStore,
+  FakeNoteStore,
+  FakePhaseStore,
+  FakeReviewStore,
+  FakeRunStore,
+  FakeSectionStore,
+  type Row,
+} from './pipeline-runner.test-fakes';
 
 /**
- * Drives the section-driver state machine end-to-end with in-memory fakes (no engines/DB). Asserts the
- * exact session sequence a 2-section feature produces — plan → gate → build(phase×N, each + review) →
- * next section → terminal PR — and that the per-section gate reuse (attach/approve/propose, board
- * cycling) and the mode-encoded build sub-states route correctly.
+ * Drives the EXPLICIT-ROW section-driver state machine end-to-end with in-memory fakes (no engines/DB).
+ * Asserts the exact session sequence a 2-section feature produces — plan → gate → build(phase×N, each +
+ * review) → next section → terminal PR — driven purely off the section/phase/coding-session row statuses
+ * (no positional arithmetic), plus the living-section ops (insert/reorder), dependency-deadlock failure,
+ * and boot idempotency. The raw SQL behind these store contracts is covered by pipeline-rows.int.test.ts.
  */
-
-interface Row {
-  [k: string]: unknown;
-}
-
-class FakeRunStore {
-  rows = new Map<string, Row>();
-  private seq = 0;
-  async create(n: Row): Promise<Row> {
-    const id = `run-${++this.seq}`;
-    const row: Row = {
-      id,
-      team: n.team,
-      taskId: n.taskId,
-      pipeline: n.pipeline,
-      status: n.status ?? 'running',
-      currentRole: n.currentRole,
-      mode: n.mode,
-      worktreeId: n.worktreeId,
-      sessionId: n.sessionId,
-      notifyThread: n.notifyThread,
-      project: n.project,
-      kind: n.kind ?? 'feature',
-      sectionIndex: n.sectionIndex ?? 0,
-      phaseIndex: n.phaseIndex ?? 0,
-      planningSubstep: n.planningSubstep,
-      overview: n.overview,
-    };
-    this.rows.set(id, row);
-    return { ...row };
-  }
-  async get(team: string, id: string): Promise<Row | undefined> {
-    const r = this.rows.get(id);
-    return r && r.team === team ? { ...r } : undefined;
-  }
-  async getByTask(team: string, taskId: number): Promise<Row | undefined> {
-    const all = [...this.rows.values()].filter(
-      (r) => r.team === team && r.taskId === taskId,
-    );
-    return all.length ? { ...all[all.length - 1] } : undefined;
-  }
-  async update(team: string, id: string, patch: Row): Promise<Row | undefined> {
-    const r = this.rows.get(id);
-    if (!r) return undefined;
-    for (const k of Object.keys(patch))
-      r[k] = patch[k] === null ? undefined : patch[k];
-    return { ...r };
-  }
-  async listAllActive(): Promise<Row[]> {
-    return [...this.rows.values()]
-      .filter((r) => r.status === 'running' || r.status === 'paused')
-      .map((r) => ({ ...r }));
-  }
-}
-
-class FakeSectionStore {
-  rows: Row[] = [];
-  private seq = 0;
-  async createMany(runId: string, team: string, sections: Row[]): Promise<Row[]> {
-    return sections.map((s) => {
-      const row: Row = {
-        id: `sec-${++this.seq}`,
-        runId,
-        team,
-        ordinal: s.ordinal,
-        name: s.name,
-        brief: s.brief,
-        phaseRole: s.phaseRole,
-        status: s.status ?? 'pending',
-        planMd: undefined,
-        phases: undefined,
-        phaseCount: undefined,
-      };
-      this.rows.push(row);
-      return { ...row };
-    });
-  }
-  async listForRun(runId: string): Promise<Row[]> {
-    return this.rows
-      .filter((r) => r.runId === runId)
-      .sort((a, b) => (a.ordinal as number) - (b.ordinal as number))
-      .map((r) => ({ ...r }));
-  }
-  async update(id: string, patch: Row): Promise<Row | undefined> {
-    const r = this.rows.find((x) => x.id === id);
-    if (!r) return undefined;
-    for (const k of Object.keys(patch))
-      r[k] = patch[k] === null ? undefined : patch[k];
-    return { ...r };
-  }
-}
 
 function build() {
   const runs = new FakeRunStore();
   const sectionStore = new FakeSectionStore();
+  const phaseStore = new FakePhaseStore();
+  const codingStore = new FakeCodingStore();
+  const reviewStore = new FakeReviewStore();
+  // A session-tracking registry (like the cleanup spec): openStageSession registers an idle session and
+  // closeSession flips it closed, so the driver's reclaim + the boot-idempotency guard run for real.
+  const sessionRows = new Map<string, Row>();
   let sessSeq = 0;
-  const openStageSession = vi.fn(async (opts: Row) => ({
-    id: `sess-${++sessSeq}`,
-    ...opts,
-  }));
-  const runner = { openStageSession };
-  const sessions = { onUpdate: vi.fn(), get: vi.fn(async () => undefined) };
+  const openStageSession = vi.fn(async (opts: Row) => {
+    const session: Row = { id: `sess-${++sessSeq}`, status: 'idle', ...opts };
+    sessionRows.set(session.id as string, session);
+    return session;
+  });
+  const closeSession = vi.fn(async (id: string, _o?: { logWork?: boolean }) => {
+    const r = sessionRows.get(id);
+    if (!r || r.status === 'closed') return { ok: false, reason: 'gone' };
+    r.status = 'closed';
+    return { ok: true };
+  });
+  const runner = { openStageSession, closeSession };
+  const sessions = {
+    onUpdate: vi.fn(),
+    async get(id: string): Promise<Row | undefined> {
+      const r = sessionRows.get(id);
+      return r ? { ...r } : undefined;
+    },
+  };
   const board = {
     update: vi.fn(async (..._a: unknown[]) => undefined),
     get: vi.fn(),
@@ -128,9 +66,15 @@ function build() {
   const proposals = { propose: vi.fn(async () => ({ ok: true })) };
   const review = {
     shipTask: vi.fn(async () => ({ ok: true, prUrl: 'http://pr/1' })),
+    reviewSectionLenses: vi.fn(async () => ({ ok: true, findings: [] as string[] })),
+    reviewFullImplementation: vi.fn(async () => ({
+      verdict: 'pass' as const,
+      findings: '',
+    })),
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
   const worktrees = { get: vi.fn(() => ({ path: '' })) };
+  const notes = new FakeNoteStore();
 
   const svc = new PipelineRunnerService(
     runs as never,
@@ -144,18 +88,28 @@ function build() {
     review as never,
     boardEvents as never,
     worktrees as never,
+    phaseStore as never,
+    codingStore as never,
+    reviewStore as never,
+    notes as never,
   );
   return {
     svc,
     runs,
     sectionStore,
+    phaseStore,
+    codingStore,
+    reviewStore,
     runner,
+    sessions,
+    sessionRows,
     board,
     plans,
     proposals,
     review,
     boardEvents,
     worktrees,
+    notes,
   };
 }
 
@@ -166,25 +120,26 @@ const planMd = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ id: i + 1, title: `p${i + 1}` })),
   )}\n\`\`\``;
 
-describe('PipelineRunnerService — section-driver FSM', () => {
+type Driver = { onSessionUpdate: (s: Row) => Promise<void> };
+type BoardDriver = { onBoardEvent: (e: Row) => Promise<void> };
+
+describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
   it('drives a 2-section feature: plan→gate→build(+review per phase)→next section→one PR', async () => {
     const { svc, runs, runner, board, plans, proposals, review } = build();
     const idle = async (lastReport = '') => {
       const run = (await runs.getByTask(TEAM, TASK))!;
-      await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate(
-        {
-          id: run.sessionId,
-          status: 'idle',
-          boardTaskId: TASK,
-          team: TEAM,
-          notifyThread: 'thread',
-          project: 'proj',
-          lastReport,
-        },
-      );
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: TASK,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
     };
     const approve = () =>
-      (svc as never as { onBoardEvent: (e: Row) => Promise<void> }).onBoardEvent({
+      (svc as never as BoardDriver).onBoardEvent({
         kind: 'ticket-approved',
         team: TEAM,
         taskId: TASK,
@@ -240,7 +195,7 @@ describe('PipelineRunnerService — section-driver FSM', () => {
       'phase_frontend',
     ]);
 
-    // One gate per section (propose twice); R6: approve uses the SAME employee as attach.
+    // One gate per section (propose twice); approve uses the SAME employee as attach.
     expect(proposals.propose).toHaveBeenCalledTimes(2);
     expect(plans.attach).toHaveBeenCalledTimes(2);
     expect(plans.approve.mock.calls.map((c) => c[2] as string)).toEqual([
@@ -259,6 +214,58 @@ describe('PipelineRunnerService — section-driver FSM', () => {
     expect(finalRun?.status).toBe('done');
   });
 
+  it('materializes phase + coding-session + review rows as the section builds', async () => {
+    const { svc, runs, sectionStore, phaseStore, codingStore, reviewStore } = build();
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, 21))!;
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: 21,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: 21,
+      worktreeId: 'wt-21',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    await idle(planMd(2)); // plan → gate
+    await (svc as never as BoardDriver).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: 21,
+    });
+    const section = (await sectionStore.listForRun(
+      (await runs.getByTask(TEAM, 21))!.id as string,
+    ))[0];
+    // Approval materialized 2 phase rows + 2 coding-session rows (1:1), section frozen + building.
+    expect(section.frozen).toBe(true);
+    expect(section.status).toBe('building');
+    const phaseRows = await phaseStore.listForSection(section.id as string);
+    const codingRows = await codingStore.listForSection(section.id as string);
+    expect(phaseRows.length).toBe(2);
+    expect(codingRows.length).toBe(2);
+    expect(phaseRows[0].codingSessionId).toBe(codingRows[0].id); // linked
+    expect(phaseRows[0].status).toBe('building'); // first phase live
+
+    await idle(); // execute done → review opens (review row created)
+    expect((await reviewStore.listForPhase(phaseRows[0].id as string)).length).toBe(1);
+    await idle('```verdict\n{"blocker":false,"summary":"clean"}\n```'); // review done → phase 1 done
+    const afterReview = await phaseStore.get(phaseRows[0].id as string);
+    expect(afterReview?.status).toBe('done');
+    const review0 = (await reviewStore.listForPhase(phaseRows[0].id as string))[0];
+    expect(review0.status).toBe('done');
+    expect(review0.summary).toBe('clean');
+  });
+
   it('runs a bugfix as a single execute session straight to the PR gate', async () => {
     const { svc, runs, runner, review } = build();
     await svc.start({
@@ -274,17 +281,15 @@ describe('PipelineRunnerService — section-driver FSM', () => {
     expect(run.kind).toBe('bugfix');
     expect(runner.openStageSession.mock.calls[0][0].mode).toBe('execute');
 
-    await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate(
-      {
-        id: run.sessionId,
-        status: 'idle',
-        boardTaskId: 9,
-        team: TEAM,
-        notifyThread: 'thread',
-        project: 'proj',
-        lastReport: 'fixed it',
-      },
-    );
+    await (svc as never as Driver).onSessionUpdate({
+      id: run.sessionId,
+      status: 'idle',
+      boardTaskId: 9,
+      team: TEAM,
+      notifyThread: 'thread',
+      project: 'proj',
+      lastReport: 'fixed it',
+    });
     expect(review.shipTask).toHaveBeenCalledTimes(1);
     expect((await runs.getByTask(TEAM, 9))?.status).toBe('done');
   });
@@ -300,10 +305,8 @@ describe('PipelineRunnerService — section-driver FSM', () => {
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
     });
-    const onUpdate = (svc as never as { onSessionUpdate: (s: Row) => Promise<void> })
-      .onSessionUpdate;
-    const onBoard = (svc as never as { onBoardEvent: (e: Row) => Promise<void> })
-      .onBoardEvent;
+    const onUpdate = (svc as never as Driver).onSessionUpdate;
+    const onBoard = (svc as never as BoardDriver).onBoardEvent;
     const planIdle = async () => {
       const run = (await runs.getByTask(TEAM, 13))!;
       await onUpdate.call(svc, {
@@ -337,7 +340,7 @@ describe('PipelineRunnerService — section-driver FSM', () => {
   });
 
   it('R2: boot-reconcile resumes a paused+gate run whose board is already approved', async () => {
-    const { svc, runs, runner } = build();
+    const { svc, runs, runner, board } = build();
     await svc.start({
       team: TEAM,
       project: 'proj',
@@ -348,22 +351,17 @@ describe('PipelineRunnerService — section-driver FSM', () => {
       sections: [{ name: 'backend', role: 'phase_backend' }],
     });
     const run = (await runs.getByTask(TEAM, 15))!;
-    await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate(
-      {
-        id: run.sessionId,
-        status: 'idle',
-        boardTaskId: 15,
-        team: TEAM,
-        notifyThread: 'thread',
-        project: 'proj',
-        lastReport: planMd(1),
-      },
-    );
+    await (svc as never as Driver).onSessionUpdate({
+      id: run.sessionId,
+      status: 'idle',
+      boardTaskId: 15,
+      team: TEAM,
+      notifyThread: 'thread',
+      project: 'proj',
+      lastReport: planMd(1),
+    });
     // Now paused at the gate. Simulate "approved during downtime": board.get returns approved.
     expect((await runs.getByTask(TEAM, 15))?.status).toBe('paused');
-    const board = (
-      svc as never as { board: { get: ReturnType<typeof vi.fn> } }
-    ).board;
     board.get.mockResolvedValue({ status: 'approved' });
     await svc.resumePipelines();
     // The gate was replayed → building (a phase execute session opened).
@@ -377,17 +375,15 @@ describe('PipelineRunnerService — section-driver FSM', () => {
     const { svc, runs, runner, review, boardEvents } = build();
     const idle = async (lastReport = '') => {
       const run = (await runs.getByTask(TEAM, 31))!;
-      await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate(
-        {
-          id: run.sessionId,
-          status: 'idle',
-          boardTaskId: 31,
-          team: TEAM,
-          notifyThread: 'thread',
-          project: 'proj',
-          lastReport,
-        },
-      );
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: 31,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
     };
     await svc.start({
       team: TEAM,
@@ -403,7 +399,7 @@ describe('PipelineRunnerService — section-driver FSM', () => {
       ],
     });
     await idle(planMd(1)); // backend plan → gate
-    await (svc as never as { onBoardEvent: (e: Row) => Promise<void> }).onBoardEvent({
+    await (svc as never as BoardDriver).onBoardEvent({
       kind: 'ticket-approved',
       team: TEAM,
       taskId: 31,
@@ -496,20 +492,18 @@ describe('PipelineRunnerService — section-driver FSM', () => {
     });
     const idle = async (lastReport = '') => {
       const run = (await runs.getByTask(TEAM, 11))!;
-      await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate(
-        {
-          id: run.sessionId,
-          status: 'idle',
-          boardTaskId: 11,
-          team: TEAM,
-          notifyThread: 'thread',
-          project: 'proj',
-          lastReport,
-        },
-      );
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: 11,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
     };
     await idle('a plan with NO phases block'); // → gate
-    await (svc as never as { onBoardEvent: (e: Row) => Promise<void> }).onBoardEvent({
+    await (svc as never as BoardDriver).onBoardEvent({
       kind: 'ticket-approved',
       team: TEAM,
       taskId: 11,
@@ -557,7 +551,7 @@ describe('PipelineRunnerService — section-driver FSM', () => {
     const run0 = (await runs.getByTask(TEAM, 71))!;
 
     // The plan session ends with QUESTIONS, not a finished plan — must NOT be proposed as a plan.
-    await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate({
+    await (svc as never as Driver).onSessionUpdate({
       id: run0.sessionId,
       status: 'idle',
       boardTaskId: 71,
@@ -596,5 +590,351 @@ describe('PipelineRunnerService — section-driver FSM', () => {
       'Use Postgres.',
       'plan',
     );
+  });
+
+  // ── living sections (Phase 2) ───────────────────────────────────────────────
+
+  it('insert_section wedges a new section into the pending tail after committed work', async () => {
+    const { svc, runs, sectionStore } = build();
+    const task = 91;
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, task))!;
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: task,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: 'wt-91',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [
+        { name: 'backend', role: 'phase_backend' },
+        { name: 'frontend', role: 'phase_frontend' },
+      ],
+    });
+    // Drive backend fully done → frozen; frontend now planning.
+    await idle(planMd(1)); // backend plan → gate
+    await (svc as never as BoardDriver).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: task,
+    });
+    await idle(); // execute → review
+    await idle(); // review → backend done → frontend plan opens
+    const runId = (await runs.getByTask(TEAM, task))!.id as string;
+    const backend = (await sectionStore.listForRun(runId)).find(
+      (s) => s.name === 'backend',
+    )!;
+    expect(backend.status).toBe('done');
+    expect(backend.frozen).toBe(true);
+
+    // Wedge an analytics section after the executed backend.
+    const r = await svc.insertSection(TEAM, task, 'backend', {
+      name: 'analytics',
+      phaseRole: 'phase_backend',
+    });
+    expect(r.ok).toBe(true);
+    const after = await sectionStore.listForRun(runId);
+    const analytics = after.find((s) => s.name === 'analytics')!;
+    expect(analytics).toBeTruthy();
+    expect(analytics.status).toBe('pending');
+    expect(analytics.ordinal).toBe(15); // midpoint of backend(10) and frontend(20)
+    expect(analytics.dependsOn).toEqual([10]); // depends on the anchor
+  });
+
+  it('reorder_sections reorders the pending tail with NO gate, but refuses a non-pending section', async () => {
+    const { svc, runs, sectionStore, proposals } = build();
+    const task = 92;
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, task))!;
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: task,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: 'wt-92',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [
+        { name: 'backend', role: 'phase_backend' },
+        { name: 'frontend', role: 'phase_frontend' },
+        { name: 'analytics', role: 'phase_backend' },
+      ],
+    });
+    await idle(planMd(1)); // backend → gate
+    await (svc as never as BoardDriver).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: task,
+    });
+    const proposalsBefore = proposals.propose.mock.calls.length;
+    const runId = (await runs.getByTask(TEAM, task))!.id as string;
+
+    // Reorder the two PENDING sections → no approval card (gate the substance).
+    const ok = await svc.reorderSections(TEAM, task, ['analytics', 'frontend']);
+    expect(ok.ok).toBe(true);
+    const order = (await sectionStore.listForRun(runId))
+      .filter((s) => s.status === 'pending')
+      .map((s) => s.name);
+    expect(order).toEqual(['analytics', 'frontend']);
+    expect(proposals.propose.mock.calls.length).toBe(proposalsBefore); // no new gate
+
+    // Listing the building backend is refused (only pending sections move).
+    const refused = await svc.reorderSections(TEAM, task, ['backend', 'frontend']);
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toMatch(/building/i);
+  });
+
+  it('a dependency deadlock (no runnable pending section) fails the run loudly — never hangs', async () => {
+    const { svc, runs, sectionStore } = build();
+    const task = 93;
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, task))!;
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: task,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: 'wt-93',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [
+        { name: 'backend', role: 'phase_backend' },
+        { name: 'a', role: 'phase_backend' },
+        { name: 'b', role: 'phase_backend' },
+      ],
+    });
+    // Inject a dependency cycle into the two pending sections (a↔b) — unreachable through the tools,
+    // but the runner must fail loudly rather than hang if it ever arises.
+    const runId = (await runs.getByTask(TEAM, task))!.id as string;
+    const all = await sectionStore.listForRun(runId);
+    const a = sectionStore.rows.find((s) => s.name === 'a')!;
+    const b = sectionStore.rows.find((s) => s.name === 'b')!;
+    a.dependsOn = [b.ordinal];
+    b.dependsOn = [a.ordinal];
+    void all;
+
+    await idle(planMd(1)); // backend plan → gate
+    await (svc as never as BoardDriver).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: task,
+    });
+    await idle(); // execute → review
+    await idle(); // review → backend done → advance: a/b both blocked → deadlock → fail
+    expect((await runs.getByTask(TEAM, task))?.status).toBe('failed');
+  });
+
+  // ── cross-section defect → Atlas decides (Phase 5d) ─────────────────────────
+
+  /** Drive a single-section feature to a per-group review BLOCKER → the run pauses at a stage decision. */
+  const toBlockerPause = async (
+    svc: PipelineRunnerService,
+    runs: FakeRunStore,
+    task: number,
+  ) => {
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, task))!;
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: task,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: `wt-${task}`,
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    await idle(planMd(1)); // plan → gate
+    await (svc as never as BoardDriver).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: task,
+    });
+    await idle(); // execute → review
+    await idle('```verdict\n{"blocker":true,"summary":"seam defect"}\n```'); // blocker → pause
+    return { idle };
+  };
+
+  it('a review blocker pauses the run and emits a stage-decision (no ship)', async () => {
+    const { svc, runs, review, boardEvents, notes } = build();
+    const task = 101;
+    await toBlockerPause(svc, runs, task);
+
+    const paused = (await runs.getByTask(TEAM, task))!;
+    expect(paused.status).toBe('paused');
+    expect(paused.planningSubstep).toBe('stage_decision');
+    expect(review.shipTask).not.toHaveBeenCalled();
+    const decisions = boardEvents.emit.mock.calls
+      .map((c) => c[0] as Row)
+      .filter((e) => e.kind === 'stage-decision');
+    expect(decisions.length).toBe(1);
+    expect(decisions[0].section).toBe('backend');
+    expect(String(decisions[0].findings)).toContain('seam defect');
+    // The findings are parked durably so a restart can recover them.
+    expect((await notes.listForTask(TEAM, task)).notes.length).toBe(1);
+  });
+
+  it('dispatch_fixup_session opens a fix-up session that re-enters the PR gate and ships', async () => {
+    const { svc, runs, runner, review } = build();
+    const task = 102;
+    const { idle } = await toBlockerPause(svc, runs, task);
+    const execBefore = runner.openStageSession.mock.calls.filter(
+      (c) => c[0].mode === 'execute',
+    ).length;
+
+    const r = await svc.dispatchFixup(TEAM, task, 'just patch the seam');
+    expect(r.ok).toBe(true);
+    const running = (await runs.getByTask(TEAM, task))!;
+    expect(running.status).toBe('running');
+    expect(running.planningSubstep).toBe('fixup');
+    // A fresh execute session opened in the integrated worktree.
+    expect(
+      runner.openStageSession.mock.calls.filter((c) => c[0].mode === 'execute')
+        .length,
+    ).toBe(execBefore + 1);
+
+    // The fix-up session reports → re-enters the PR gate (full-impl review passes) → ships.
+    await idle('fixed the seam');
+    expect(review.reviewFullImplementation).toHaveBeenCalled();
+    expect(review.shipTask).toHaveBeenCalledTimes(1);
+    expect((await runs.getByTask(TEAM, task))?.status).toBe('done');
+  });
+
+  it('reopen_section drops the section to planning with the defect and re-gates', async () => {
+    const { svc, runs, runner, sectionStore, phaseStore, proposals } = build();
+    const task = 103;
+    const { idle } = await toBlockerPause(svc, runs, task);
+    const runId = (await runs.getByTask(TEAM, task))!.id as string;
+    const section = (await sectionStore.listForRun(runId)).find(
+      (s) => s.name === 'backend',
+    )!;
+    // It had phase rows from the build.
+    expect((await phaseStore.listForSection(section.id as string)).length).toBeGreaterThan(0);
+    const proposalsBefore = proposals.propose.mock.calls.length;
+
+    const r = await svc.reopenSection(TEAM, task, 'backend', 'the plan missed auth');
+    expect(r.ok).toBe(true);
+    const reopened = (await sectionStore.listForRun(runId)).find(
+      (s) => s.name === 'backend',
+    )!;
+    expect(reopened.status).toBe('planning');
+    expect(reopened.frozen).toBe(false);
+    // Built rows cleared so the re-approval re-materializes.
+    expect((await phaseStore.listForSection(section.id as string)).length).toBe(0);
+    // A fresh plan session opened, carrying the defect as deny-style feedback.
+    const lastPlan = [...runner.openStageSession.mock.calls]
+      .reverse()
+      .find((c) => c[0].mode === 'plan');
+    expect(lastPlan?.[0].role).toBe('phase_backend');
+    expect(String(lastPlan?.[0].task)).toContain('the plan missed auth');
+    const afterReopen = (await runs.getByTask(TEAM, task))!;
+    expect(afterReopen.status).toBe('running');
+    expect(afterReopen.planningSubstep).toBe('drafting');
+
+    // The re-plan reports → it gates again for Dennis (re-approval).
+    await idle(planMd(1));
+    expect(proposals.propose.mock.calls.length).toBe(proposalsBefore + 1);
+  });
+
+  it('fix-up / reopen refuse with a helpful message when the run is not at a review decision', async () => {
+    const { svc, runs } = build();
+    const task = 104;
+    // No run at all.
+    expect((await svc.dispatchFixup(TEAM, task)).ok).toBe(false);
+    expect((await svc.reopenSection(TEAM, task, 'backend', 'x')).ok).toBe(false);
+
+    // A run that's mid-build (not paused at a decision) is refused too.
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: `wt-${task}`,
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    const fix = await svc.dispatchFixup(TEAM, task);
+    expect(fix.ok).toBe(false);
+    expect(fix.message).toMatch(/review decision/i);
+  });
+
+  it('boot idempotency: reopenCurrentStep twice opens exactly one session for a live row', async () => {
+    const { svc, runs, runner, sessionRows } = build();
+    const task = 94;
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, task))!;
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: task,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: 'wt-94',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    await idle(planMd(1)); // plan → gate
+    await (svc as never as BoardDriver).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: task,
+    });
+    // Now a phase is building (execute session open). Simulate a restart: the in-memory registry loses
+    // its sessions (the documented v0 behavior).
+    const crashed = (await runs.getByTask(TEAM, task))!;
+    sessionRows.delete(crashed.sessionId as string);
+    const before = runner.openStageSession.mock.calls.length;
+
+    const reopen = (svc as never as { reopenCurrentStep: (r: Row) => Promise<void> })
+      .reopenCurrentStep;
+    await reopen.call(svc, (await runs.getByTask(TEAM, task))!); // session gone → opens one
+    await reopen.call(svc, (await runs.getByTask(TEAM, task))!); // session alive → skips
+    expect(runner.openStageSession.mock.calls.length - before).toBe(1);
   });
 });

@@ -56,4 +56,22 @@ export class PipelineRunSection extends TimestampedEntity {
   /** Number of build phases parsed from the approved plan (NULL until parsed; fallback 1). */
   @Column({ type: 'int', nullable: true })
   phase_count!: number | null;
+
+  /** Ordinals (this run's section ordinals) this section waits on — its dependency-ordered position
+   * in the living queue. Default empty = strictly ordinal-sequential. `nextPending` topo-picks over it;
+   * a forward/cyclic dependency is rejected at insert/reorder time, so it stays acyclic. */
+  @Column('int', { array: true, default: () => "'{}'" })
+  depends_on!: number[];
+
+  /** Set once the section has committed work in the shared worktree (it enters `building`, or a design
+   * section's artifact lands). A frozen section is IMMUTABLE: living-section ops may never reorder it
+   * nor wedge a new section before it — you may only append after committed work. Replaces the implicit
+   * done/building immutability the positional cursor relied on. */
+  @Column({ type: 'boolean', default: false })
+  frozen!: boolean;
+
+  /** The harness background Session id currently live for this section (plan / coding / review). A soft
+   * pointer (recomputable from the run) kept for awareness + debugging; NULL between sessions. */
+  @Column({ type: 'text', nullable: true })
+  active_session_id!: string | null;
 }

@@ -27,11 +27,17 @@ import { EnvService } from '@core/config/env/env.service';
 import {
   CODE_REVIEW_PROMPT,
   CONFLICT_RESOLVE_PROMPT,
+  FULL_IMPLEMENTATION_REVIEW_PROMPT,
   INTEGRATION_REVIEW_PROMPT,
   REVIEW_FIX_PROMPT,
   SELF_REVIEW_PR_COMMENT,
   parseVerdict,
 } from './review-pipeline.prompts';
+import {
+  LENSES,
+  LENS_REVIEW_PROMPT,
+  type Lens,
+} from './section-review.prompts';
 import {
   SESSION_REGISTRY,
   type Session,
@@ -315,6 +321,158 @@ export class ReviewPipelineService {
   }
 
   /**
+   * The git range covering a pipeline ticket's WHOLE accumulated work in its single worktree — the
+   * worktree branch since its cut point (`baseRef`, or the project's default branch as a fallback).
+   * Shared by the per-section multi-lens review and the final full-implementation review (the pipeline
+   * accumulates on the worktree branch and only publishes onto a shared branch at ship time, so there's
+   * no shared-branch pair to diff yet). Empty `files` ⇒ nothing to review.
+   */
+  private async ticketRange(
+    worktreeId: string,
+  ): Promise<{ range: string; files: string[] }> {
+    const wt = this.worktrees.get(worktreeId);
+    if (!wt) return { range: '', files: [] };
+    const rec = await this.worktrees.projectRecordFor(worktreeId);
+    const base = wt.baseRef && wt.baseRef.length > 0 ? wt.baseRef : rec?.defaultBranch;
+    if (!base) return { range: '', files: [] };
+    return this.worktrees
+      .ownerDiff(worktreeId, base)
+      .catch(() => ({ range: '', files: [] as string[] }));
+  }
+
+  /**
+   * Per-section MULTI-LENS self-review (Phase 5a). Runs one read-only review per LENS
+   * (correctness / SOLID / DRY / conventions) over the section's accumulated diff; any lens that returns
+   * CHANGES drives the bounded in-session fix loop (resumeInternal + REVIEW_FIX_PROMPT, ≤ MAX_FIX_PASSES)
+   * and only the still-failing lenses are re-run on the next pass. Findings are returned (and, on
+   * exhaustion, parked as a ticket note + narrated via a self-review-failed event). ADVISORY by design:
+   * the run advances either way (the cross-section-defect gate / full-impl review is the hard stop), so a
+   * lens that can't auto-clear narrates rather than wedging the pipeline. Called by the runner when a
+   * section completes, before it advances. `session` is the section's just-finished review session — its
+   * worktree + engine context are reused for the lens reviews and the fix turns.
+   */
+  async reviewSectionLenses(
+    session: Session,
+    opts: { sectionName: string },
+  ): Promise<{ ok: boolean; findings: string[] }> {
+    const { team, ownerBot: employee, worktreeId } = session;
+    const taskId = session.boardTaskId;
+    if (taskId === undefined) return { ok: true, findings: [] };
+    const bot = this.employees.byId(employee);
+    const worktree = this.worktrees.get(worktreeId);
+    if (!bot || !worktree) return { ok: true, findings: [] };
+    const { range, files } = await this.ticketRange(worktreeId);
+    if (files.length === 0) return { ok: true, findings: [] }; // nothing built to review
+    const ctx = this.employees.context();
+    const keys = await this.creds.resolve(team);
+    const task = await this.board.get(team, taskId);
+    const goal = task?.title ?? session.task;
+    const ticketText = task
+      ? `${task.title}\n\n${task.description}`.trim()
+      : session.task;
+    const spec = this.reviewSpec(bot, ctx);
+
+    const findings: string[] = [];
+    let failing: Lens[] = [...LENSES];
+    for (let pass = 0; pass <= MAX_FIX_PASSES; pass++) {
+      const results = await Promise.all(
+        failing.map(async (lens) => {
+          const text = await this.runReview(
+            bot,
+            spec,
+            worktree.path,
+            team,
+            keys,
+            LENS_REVIEW_PROMPT({
+              lens,
+              goal,
+              ticket: ticketText,
+              range,
+              section: opts.sectionName,
+            }),
+          );
+          return { lens, text, verdict: parseVerdict(text) };
+        }),
+      );
+      const changed = results.filter((r) => r.verdict === 'changes');
+      if (changed.length === 0) return { ok: true, findings }; // every lens clean
+      const critique = changed
+        .map((r) => `## ${r.lens}\n${r.text}`)
+        .join('\n\n');
+      findings.push(critique);
+      if (pass === MAX_FIX_PASSES) {
+        // Out of fix budget — park the findings + narrate (advisory; the run still advances).
+        await this.notes
+          .add(
+            team,
+            taskId,
+            bot.id,
+            `Section '${opts.sectionName}' self-review still flags issues after ${MAX_FIX_PASSES} fix passes:\n\n${critique}`,
+          )
+          .catch(() => undefined);
+        this.boardEvents.emit({
+          kind: 'self-review-failed',
+          team,
+          taskId,
+          employee: bot.id,
+          reason: `the '${opts.sectionName}' section self-review couldn't auto-clear (${changed
+            .map((c) => c.lens)
+            .join(', ')}) after ${MAX_FIX_PASSES} fix passes`,
+          notifyThread: session.notifyThread,
+        });
+        return { ok: false, findings };
+      }
+      // Fix the still-failing lenses in the section's own session, then re-run ONLY those lenses.
+      await this.runner.resumeInternal(
+        session.id,
+        REVIEW_FIX_PROMPT({ critique }),
+        { mode: 'execute', timeoutMs: INTERNAL_TURN_TIMEOUT_MS },
+      );
+      failing = changed.map((r) => r.lens);
+    }
+    return { ok: true, findings };
+  }
+
+  /**
+   * Ticket-level FULL-IMPLEMENTATION review (Phase 5b) — one read-only, fresh-eyes, DIFFERENT-ENGINE
+   * pass over the whole feature's accumulated diff before the pipeline ships its PR. The team lead
+   * (Atlas, on Codex) reviews work the specialists planned + built on Claude, focused on the SEAMS
+   * between sections (the per-section reviews already covered each piece). Returns the verdict + findings;
+   * the caller (handlePrGate) ships on `pass` (findings ride the advisory PR comment) and routes
+   * `changes` to the cross-section-defect decision instead of shipping. Never throws — degrades to a
+   * clean pass on any infra miss so a review hiccup can't strand a finished build.
+   */
+  async reviewFullImplementation(opts: {
+    team: string;
+    taskId: number;
+    worktreeId: string;
+  }): Promise<{ verdict: 'pass' | 'changes'; findings: string }> {
+    const { team, taskId, worktreeId } = opts;
+    const worktree = this.worktrees.get(worktreeId);
+    if (!worktree) return { verdict: 'pass', findings: '' };
+    const { range, files } = await this.ticketRange(worktreeId);
+    if (files.length === 0) return { verdict: 'pass', findings: '' };
+    const bot = this.employees.teamLead();
+    if (!bot) return { verdict: 'pass', findings: '' };
+    const ctx = this.employees.context();
+    const keys = await this.creds.resolve(team);
+    const task = await this.board.get(team, taskId);
+    const goal = task?.title ?? `#${taskId}`;
+    const ticketText = task
+      ? `${task.title}\n\n${task.description}`.trim()
+      : `#${taskId}`;
+    const reviewText = await this.runReview(
+      bot,
+      this.reviewSpec(bot, ctx),
+      worktree.path,
+      team,
+      keys,
+      FULL_IMPLEMENTATION_REVIEW_PROMPT({ goal, ticket: ticketText, range }),
+    ).catch(() => '');
+    return { verdict: parseVerdict(reviewText), findings: reviewText.trim() };
+  }
+
+  /**
    * Task-level barrier (fired when THIS ticket's owner publishes). Opens the shared-branch DRAFT PR,
    * then — once every ticket sharing the branch is published — runs the final integration review and
    * ships. The harness NEVER judges pass/fail on the review (that non-deterministic gate was the #49
@@ -595,6 +753,9 @@ export class ReviewPipelineService {
     taskId: number;
     worktreeId: string;
     notifyThread?: string;
+    /** Advisory full-implementation-review findings to ride the PR as a self-review comment (Phase 5b);
+     * the PR ships regardless — this is informational for Dennis's review. */
+    findings?: string;
   }): Promise<{ ok: boolean; reason?: string; prUrl?: string }> {
     const { team, taskId, worktreeId } = opts;
     const task = await this.board.get(team, taskId);
@@ -665,6 +826,20 @@ export class ReviewPipelineService {
           number: pr.number,
         })
         .catch(() => undefined);
+      // Advisory full-impl-review findings → one comment on the PR (informational; the PR ships anyway).
+      if (opts.findings)
+        await this.github
+          .commentOnPullRequest(auth.token, {
+            owner: ghOwner,
+            repo,
+            number: pr.number,
+            body: SELF_REVIEW_PR_COMMENT(opts.findings),
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `full-impl-review PR comment(#${taskId}) failed: ${err}`,
+            ),
+          );
     } catch (err) {
       return {
         ok: false,

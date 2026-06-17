@@ -70,4 +70,26 @@ describe('boardEventRelayPrompt', () => {
     expect(reviewFailed).toContain('#7');
     expect(reviewFailed).toContain('fix loop exhausted');
   });
+
+  it('renders a stage-decision wake-up with the findings + the action menu', () => {
+    const decision: BoardEvent = {
+      kind: 'stage-decision',
+      team: 't',
+      taskId: 7,
+      stage: 'full implementation review',
+      findings: 'contract mismatch at the BE/FE seam',
+      allowedActions: [
+        { action: 'dispatch_fixup_session(7)', description: 'fix + re-review + ship' },
+        { action: "reopen_section(7, '<section>')", description: 'replan a section' },
+      ],
+    };
+    const prompt = boardEventRelayPrompt(decision);
+    expect(prompt).toContain('#7');
+    expect(prompt).toContain('full implementation review');
+    expect(prompt).toContain('contract mismatch at the BE/FE seam');
+    expect(prompt).toContain('dispatch_fixup_session(7)');
+    expect(prompt).toContain("reopen_section(7, '<section>')");
+    // The run is paused on Atlas's call.
+    expect(prompt).toMatch(/paused/i);
+  });
 });

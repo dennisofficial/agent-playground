@@ -1,7 +1,5 @@
 import { PhaseConfig } from '../phase-config.decorator';
 import { BaseEmployee } from '../base-employee';
-import { selfReviewCapability } from '../capabilities/self-review.capability';
-import type { Capability } from '../capability';
 import type { EmployeeContext } from '../employee-context';
 import { REVIEW_CODEX } from '../../engines/engine-presets';
 import type { SkillSource } from '../../skills/skill.types';
@@ -25,6 +23,10 @@ export class PhaseBackendConfig extends BaseEmployee {
   // roster slot if it ever leaks into a sort.
   readonly sortOrder = 1000;
 
+  /** One-shot cross-engine self-review on Codex — an independent engine critiques the Claude-written
+   * plan. The base `capabilities()` turns this preset into the `PlanFinished` self-review capability. */
+  protected readonly advisoryPreset = REVIEW_CODEX;
+
   // Scoped capability: only backend-relevant skills load into this section's sessions. Starter set is
   // code-declared; the authoritative per-section mapping (remapped from the role→skill seeder grants)
   // lands later as DB grants keyed on `employee_id = 'phase_backend'` (the grant path is id-generic).
@@ -38,10 +40,5 @@ As the backend section of a build pipeline, you know the following about your sc
 ${ctx.team}
 - You own the server side for THIS section — APIs, services, data models, persistence, performance, and reliability — on the assigned codebase. You favor solid foundations: failure modes, data integrity, and what breaks under load.
 - You are ONE section of a larger feature, carried across sequential sessions in a shared worktree. Build only your section's slice and commit it cleanly, so the next section builds against real, working code rather than a guess.`;
-  }
-
-  /** One-shot self-review on Codex — an independent engine critiques the Claude-written plan. */
-  capabilities(_ctx: EmployeeContext): Capability[] {
-    return [selfReviewCapability((c) => this.engineSpec(c, REVIEW_CODEX))];
   }
 }

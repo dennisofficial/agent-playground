@@ -64,8 +64,12 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
 import {
   AnswerSectionTool,
   AttachDesignTool,
+  DispatchFixupSessionTool,
   DispatchPipelineTool,
   EnqueueFindingTool,
+  InsertSectionTool,
+  ReopenSectionTool,
+  ReorderSectionsTool,
   SkipDesignTool,
 } from './pipelines/pipeline.tools';
 
@@ -145,12 +149,16 @@ import {
     CloseStandupTool,
     // artifacts
     ShareArtifactTool,
-    // pipelines (orchestrator dispatch + backlog enqueue + design gate)
+    // pipelines (orchestrator dispatch + backlog enqueue + design gate + living sections + review decisions)
     DispatchPipelineTool,
     EnqueueFindingTool,
     AttachDesignTool,
     SkipDesignTool,
     AnswerSectionTool,
+    InsertSectionTool,
+    ReorderSectionsTool,
+    DispatchFixupSessionTool,
+    ReopenSectionTool,
   ],
 })
 export class ToolsModule {}
