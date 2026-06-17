@@ -151,7 +151,10 @@ interface FakeGraphBehavior {
   };
 }
 
-async function buildConductor(behavior: FakeGraphBehavior) {
+async function buildConductor(
+  behavior: FakeGraphBehavior,
+  gateDecide: () => Promise<'respond' | 'skip'> = async () => 'respond',
+) {
   const channel = new FakeChannel();
   const cursors = new FakeCursors();
   const bus = new ConductorEventsBus();
@@ -230,7 +233,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     creds,
     credCtx,
     boardEvents,
-    { decide: async () => 'respond' } as unknown as AddressingGate,
+    { decide: gateDecide } as unknown as AddressingGate,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -255,6 +258,26 @@ describe('ConductorService scheduling', () => {
     await conductor.whenIdle();
     expect(cursors.get('alex', 'tui:test')).toBe(1);
     expect(events.filter((e) => e.kind === 'message')).toHaveLength(1); // the human's own echo
+  });
+
+  it('consumes a skipped message PAST its seq so the gate-skip path settles (no busy-loop)', async () => {
+    // Regression: the skip path advanced the cursor TO the last message's seq, but `since()` is
+    // inclusive (seq >= cursor), so that message stayed in-window — hasWork → skip → re-schedule
+    // forever (and the wedged cursor reloaded on every restart). The cursor must land PAST it.
+    // The gate flips to 'respond' after a cap purely so a regression fails fast (cursor advances via
+    // the graph) instead of hanging the suite; a correct skip never reaches the cap.
+    let decideCalls = 0;
+    const { conductor, channel, cursors } = await buildConductor(
+      {
+        run: () => ({ deltas: [{}], cursorAfter: channel.length }),
+      },
+      async () => (++decideCalls > 10 ? 'respond' : 'skip'),
+    );
+    conductor.submitFrom('someone', 'Someone', 'human-to-human chatter');
+    await conductor.whenIdle();
+    expect(decideCalls).toBe(1); // gated exactly once — no re-fire on the same message
+    expect(cursors.get('alex', 'tui:test')).toBe(channel.length); // cursor moved past seq 0
+    expect(channel.since(cursors.get('alex', 'tui:test'))).toHaveLength(0); // nothing left in-window
   });
 
   it('gives up after MAX_TURN_RETRIES no-progress failures and skips the wedged batch', async () => {

@@ -465,16 +465,21 @@ export class ConductorService
       await this.runBotGraph(bot, { channelId });
       return;
     }
-    // Skip: consume the unseen messages so the room settles — advance Atlas's cursor to the latest
-    // seq WITHOUT running a turn. Monotonic guard mirrors the post-turn cursor write.
-    const target = Math.max(...unseen.map((m) => m.seq));
+    // Skip: consume the unseen messages so the room settles — advance Atlas's cursor PAST the latest
+    // seq WITHOUT running a turn. The cursor is the NEXT-unconsumed seq and `since()` is inclusive
+    // (seq >= cursor), so we set it to lastSeq + 1 — exactly what lengthOf()/the graph's newCursor do.
+    // Setting it to lastSeq would leave that message in-window forever, re-firing this skip every
+    // schedule() pass (tight busy-loop). Monotonic guard mirrors the post-turn cursor write; we only
+    // consume what we actually evaluated (lastSeq + 1, not lengthOf), so any message that arrived
+    // during the gate call still gets its own gate pass.
+    const lastSeq = Math.max(...unseen.map((m) => m.seq));
     const current = this.cursors.has(bot.id, channelId)
       ? this.cursors.get(bot.id, channelId)
       : 0;
-    this.cursors.set(bot.id, channelId, Math.max(current, target));
+    this.cursors.set(bot.id, channelId, Math.max(current, lastSeq + 1));
     void this.cursors.flush().catch(() => {});
     this.logger.debug(
-      `gate: ${bot.id} skipped ${channelId} up to seq ${target}`,
+      `gate: ${bot.id} skipped ${channelId} up to seq ${lastSeq}`,
     );
   }
 
