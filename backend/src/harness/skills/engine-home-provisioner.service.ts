@@ -69,7 +69,7 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     // employee is provisioned, forAgent() returns empty (a first turn in that brief window simply sees
     // no skills yet); the grant-change listener keeps it current thereafter.
     const startedAt = Date.now();
-    const count = this.employees.list().length;
+    const count = this.employees.provisionable().length;
     this.logger.log(
       `Provisioning skill/MCP homes for ${count} employee(s) in the background…`,
     );
@@ -95,7 +95,9 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
   async reconcileAll(): Promise<void> {
     const root = this.env.get('AGENT_HOME_ROOT');
     const ctx = this.employees.context();
-    for (const emp of this.employees.list()) {
+    // provisionable() = the chat roster ∪ the pipeline phase-configs — every identity that runs engine
+    // turns and therefore needs a scoped per-engine home (NOT just list(), the chat roster).
+    for (const emp of this.employees.provisionable()) {
       const startedAt = Date.now();
       await this.provision(emp, ctx, root);
       this.logger.log(
@@ -112,7 +114,9 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
    * Same exact-mirror semantics as boot.
    */
   async reconcile(employeeId: string): Promise<void> {
-    const emp = this.employees.list().find((e) => e.id === employeeId);
+    // byId resolves the roster AND phase-configs — a grant change on a phase-config id reconciles it
+    // too (the `employee_skills`/`employee_mcp_servers` id space is generic over both).
+    const emp = this.employees.byId(employeeId);
     if (!emp) {
       this.logger.warn(`reconcile: unknown employee "${employeeId}"`);
       return;

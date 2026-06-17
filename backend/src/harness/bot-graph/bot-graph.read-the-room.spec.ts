@@ -24,10 +24,11 @@ import { makeEmployee } from '@harness/employees/employee.testing';
 
 /**
  * READ-THE-ROOM (optimistic-concurrency posting). A final text reply is composed blind for one
- * model-invoke latency; if a teammate-bot message lands in that window, the reply must be demoted
- * to a draft (never posted, never in durable history) and recomposed with the teammate's message
- * folded in. This spec pins that seam deterministically: the scripted model appends to the channel
- * DURING its own invoke — exactly the blind window.
+ * model-invoke latency; if a non-own message lands in that window — a teammate-bot answering the
+ * same broadcast OR the user adding more (e.g. the rest of a fragmented message) — the reply must
+ * be demoted to a draft (never posted, never in durable history) and recomposed with the new
+ * message folded in. This spec pins that seam deterministically: the scripted model appends to the
+ * channel DURING its own invoke — exactly the blind window.
  */
 
 class FakeChannel {
@@ -331,7 +332,7 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
     expect(step2.some((t) => t.includes('NOT posted'))).toBe(false);
   });
 
-  it('a HUMAN message landing mid-compose does not trigger a revision', async () => {
+  it('a HUMAN message landing mid-compose triggers a revision (read-the-room for humans)', async () => {
     const channel = new FakeChannel();
     channel.append({
       id: 'u-0',
@@ -339,6 +340,8 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
       authorId: 'dennis',
       text: 'Alex, quick status?',
     });
+    const DRAFT = 'Footer work is done.';
+    const RECOMPOSED = 'Footer is done, and yes — the cost meter is live.';
     const invocations: BaseMessage[][] = [];
     const fakeModel: FakeModel = {
       bindTools() {
@@ -346,25 +349,105 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
       },
       async invoke(convo) {
         invocations.push(convo);
-        channel.append({
-          id: 'u-1',
-          author: 'Dennis',
-          authorId: 'dennis',
-          text: 'also, one more thing…',
-        });
-        return new AIMessage({ content: 'Footer work is done.' });
+        if (invocations.length === 1) {
+          // Lands DURING this compose — the blind window. A HUMAN, not a teammate bot.
+          channel.append({
+            id: 'u-1',
+            author: 'Dennis',
+            authorId: 'dennis',
+            text: 'also, is the cost meter live yet?',
+          });
+          return new AIMessage({ content: DRAFT });
+        }
+        return new AIMessage({ content: RECOMPOSED });
       },
     };
     const factory = makeFactory(channel, fakeModel);
     const deltas = await runTurn(factory, 'alex:rtr-human:root');
 
-    expect(invocations).toHaveLength(1);
-    expect(aiTexts(deltas)).toEqual(['Footer work is done.']);
+    // The blind draft is demoted; the revision pass recomposes once it sees the human's follow-up.
+    expect(invocations).toHaveLength(2);
+    const revisionInput = invocations[1]
+      .filter((m) => m.getType() === 'human')
+      .map((m) => flat(m.content));
+    expect(
+      revisionInput.some((t) =>
+        t.includes('Dennis: also, is the cost meter live yet?'),
+      ),
+    ).toBe(true);
+    expect(revisionInput.some((t) => t === revisionNote(DRAFT))).toBe(true);
+
+    // The blind draft never posts; only the recomposed reply does.
+    expect(aiTexts(deltas)).toEqual([RECOMPOSED]);
+    expect(deltas.some((d) => d.draft === DRAFT)).toBe(true);
+
     const final = await factory
       .getConductorGraph(ALEX)
       .getState({ configurable: { thread_id: 'alex:rtr-human:root' } });
-    // The human's mid-compose message stays unconsumed — the next turn GATES it normally.
-    expect(final.values.cursor).toBe(channel.lengthOf() - 1);
+    const history = (final.values.messages as BaseMessage[]).map((m) =>
+      flat(m.content),
+    );
+    expect(history.some((t) => t.includes(DRAFT))).toBe(false);
+    // The human's mid-compose message is consumed this turn, exactly once.
+    expect(
+      history.filter((t) =>
+        t.includes('Dennis: also, is the cost meter live yet?'),
+      ),
+    ).toHaveLength(1);
+    expect(final.values.draft).toBeUndefined();
+    expect(final.values.cursor).toBe(channel.lengthOf());
+  });
+
+  it('multiple human fragments during compose → one combined reply, no orphaned second turn', async () => {
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: 'What memory functions',
+    });
+    const DRAFT = 'Four tools: remember, recall, update, forget.';
+    const COMBINED = 'Four tools, each with a purpose: remember, recall, update, forget.';
+    const invocations: BaseMessage[][] = [];
+    const fakeModel: FakeModel = {
+      bindTools() {
+        return this;
+      },
+      async invoke(convo) {
+        invocations.push(convo);
+        if (invocations.length === 1) {
+          // Dennis finishes the thought in fragments DURING the blind window.
+          ['do', 'you', 'have?'].forEach((text, i) =>
+            channel.append({
+              id: `u-${i + 1}`,
+              author: 'Dennis',
+              authorId: 'dennis',
+              text,
+            }),
+          );
+          return new AIMessage({ content: DRAFT });
+        }
+        return new AIMessage({ content: COMBINED });
+      },
+    };
+    const factory = makeFactory(channel, fakeModel);
+    const deltas = await runTurn(factory, 'alex:rtr-frags:root');
+
+    // Demoted once, then a SINGLE combined reply — not a blind answer plus a "got cut off" turn.
+    expect(invocations).toHaveLength(2);
+    expect(deltas.filter((d) => d.draft === DRAFT)).toHaveLength(1);
+    expect(aiTexts(deltas)).toEqual([COMBINED]);
+
+    const final = await factory
+      .getConductorGraph(ALEX)
+      .getState({ configurable: { thread_id: 'alex:rtr-frags:root' } });
+    // ALL fragments consumed this turn — nothing left to spawn a redundant follow-up turn.
+    expect(final.values.cursor).toBe(channel.lengthOf());
+    expect(final.values.draft).toBeUndefined();
+    const history = (final.values.messages as BaseMessage[]).map((m) =>
+      flat(m.content),
+    );
+    expect(history.some((t) => t.includes(DRAFT))).toBe(false);
   });
 
   it('the next turn’s prelude resets draft state (no replay of an orphaned draft)', async () => {

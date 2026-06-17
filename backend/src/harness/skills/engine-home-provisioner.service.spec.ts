@@ -41,6 +41,8 @@ describe('EngineHomeProvisioner — exact-mirror reconcile', () => {
 
   const registry = {
     list: () => [employee],
+    provisionable: () => [employee],
+    byId: (id: string) => (id === employee.id ? employee : undefined),
     context: () => ({}),
   } as never;
   const loader = { resolve: () => Promise.resolve(resolved) } as never;

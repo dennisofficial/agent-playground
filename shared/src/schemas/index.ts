@@ -12,6 +12,7 @@ export * from './fact.entity';
 export * from './github-token.entity';
 export * from './metrics-event.entity';
 export * from './pipeline-run.entity';
+export * from './pipeline-run-section.entity';
 export * from './project.entity';
 export * from './provider-key.entity';
 export * from './session.entity';
@@ -36,6 +37,7 @@ import { Fact } from './fact.entity';
 import { GithubToken } from './github-token.entity';
 import { MetricsEvent } from './metrics-event.entity';
 import { PipelineRun } from './pipeline-run.entity';
+import { PipelineRunSection } from './pipeline-run-section.entity';
 import { Project } from './project.entity';
 import { ProviderKey } from './provider-key.entity';
 import { Session } from './session.entity';
@@ -68,6 +70,7 @@ export const ENTITIES = [
   GithubToken,
   MetricsEvent,
   PipelineRun,
+  PipelineRunSection,
   ProviderKey,
   Session,
   SessionEvent,

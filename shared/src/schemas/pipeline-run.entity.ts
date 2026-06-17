@@ -58,4 +58,26 @@ export class PipelineRun extends TimestampedEntity {
   /** The project the pipeline's task belongs to — worktree/session context needed to re-open a stage. */
   @Column({ type: 'text', nullable: true })
   project!: string | null;
+
+  /**
+   * What KIND of run this is: 'feature' (the dynamic section-driver loop — sections in
+   * `pipeline_run_sections`, advanced by the 2-D cursor below) or 'bugfix' (a single execute session
+   * straight to the PR gate, no plan gate / no sections). Legacy flat-`feature`-pipeline rows also
+   * read 'feature' but are driven by `stage_index` instead of the cursor.
+   */
+  @Column({ type: 'text', default: 'feature' })
+  kind!: string;
+
+  /** Section-driver cursor: which section (0-based) of `pipeline_run_sections` is active. */
+  @Column({ type: 'int', default: 0 })
+  section_index!: number;
+
+  /** Section-driver cursor: which build-phase chunk (0-based) within the active section is running. */
+  @Column({ type: 'int', default: 0 })
+  phase_index!: number;
+
+  /** The active section's planning sub-state: 'drafting' (plan session live) | 'gate' (proposed,
+   * paused, awaiting approval) | NULL (building / not planning). */
+  @Column({ type: 'text', nullable: true })
+  planning_substep!: string | null;
 }

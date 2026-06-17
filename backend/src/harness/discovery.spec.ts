@@ -2,6 +2,7 @@ import { DiscoveryModule } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { z } from 'zod';
 import { AIEmployee } from './employees/ai-employee.decorator';
+import { PhaseConfig } from './employees/phase-config.decorator';
 import { BaseEmployee } from './employees/base-employee';
 import type { EmployeeContext } from './employees/employee-context';
 import { EmployeeRegistry } from './employees/employee.registry';
@@ -69,6 +70,19 @@ class TestSam extends BaseEmployee {
   protected readonly executePreset = EXECUTE_CODEX;
   roleContext(_ctx: EmployeeContext): string {
     return 'static role context';
+  }
+}
+
+// A synthetic worker identity (pipeline phase-config) — discovered into a SEPARATE list from the
+// chat roster: resolvable + provisioned, but never a channel participant.
+@PhaseConfig()
+class TestPhaseBackend extends BaseEmployee {
+  readonly id = 'phase_backend';
+  readonly name = 'Backend';
+  readonly role = 'backend engineer';
+  readonly sortOrder = 1000;
+  roleContext(_ctx: EmployeeContext): string {
+    return 'static backend phase context';
   }
 }
 
@@ -142,5 +156,46 @@ describe('harness decorator discovery', () => {
     await expect(buildModule([TestSam, EchoTool, PingTool])).rejects.toThrow(
       /Exactly one employee/,
     );
+  });
+
+  it('resolves + provisions phase-configs but keeps them OFF the chat roster', async () => {
+    const moduleRef = await buildModule([
+      TestAlex,
+      TestSam,
+      TestPhaseBackend,
+      EchoTool,
+      PingTool,
+    ]);
+    const registry = moduleRef.get(EmployeeRegistry);
+
+    // Resolvable by id and included in the provisioning set (gets a scoped per-engine home)…
+    expect(registry.byId('phase_backend')?.id).toBe('phase_backend');
+    expect(registry.provisionable().map((e) => e.id)).toContain('phase_backend');
+
+    // …but NEVER on the live chat roster, summary, or addressing — no phantom channel participant.
+    expect(registry.list().map((e) => e.id)).toEqual(['alex', 'sam']);
+    expect(registry.rosterSummary()).not.toContain('Backend');
+    expect(
+      registry.addressedBots('Backend, build the API').map((e) => e.id),
+    ).toEqual([]);
+    expect(registry.mentionedBots('@phase_backend').map((e) => e.id)).toEqual(
+      [],
+    );
+  });
+
+  it('fails boot when a phase-config id collides with a roster employee id', async () => {
+    @PhaseConfig()
+    class CollidingPhase extends BaseEmployee {
+      readonly id = 'alex';
+      readonly name = 'Backend';
+      readonly role = 'backend engineer';
+      readonly sortOrder = 1000;
+      roleContext(_ctx: EmployeeContext): string {
+        return 'x';
+      }
+    }
+    await expect(
+      buildModule([TestAlex, TestSam, CollidingPhase, EchoTool, PingTool]),
+    ).rejects.toThrow(/collides/);
   });
 });

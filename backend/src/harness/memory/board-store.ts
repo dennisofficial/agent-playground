@@ -138,6 +138,21 @@ export class BoardStore {
       this.events?.emit({ kind: 'ticket-approved', team, taskId: task.id });
   }
 
+  /** A NON-approve verdict on a PROPOSED plan flows through transition(awaiting_approval → …). Emit
+   * the outcome so a section-driver run parked at its plan gate can react. Keyed on the from-status so
+   * only the verdict path matches: our own gate uses update()/planning→awaiting_approval, never this. */
+  private announceVerdict(
+    team: string,
+    from: BoardStatus,
+    task: BoardTask | undefined,
+  ): void {
+    if (!task || from !== 'awaiting_approval') return;
+    if (task.status === 'planning')
+      this.events?.emit({ kind: 'ticket-changes-requested', team, taskId: task.id });
+    else if (task.status === 'open')
+      this.events?.emit({ kind: 'ticket-denied', team, taskId: task.id });
+  }
+
   /**
    * Create a board task. Unknown `dependsOn` ids (not on this team's board) are rejected — a typo'd
    * dependency would otherwise block the task forever.
@@ -226,6 +241,7 @@ export class BoardStore {
     );
     const task = rows[0] ? toBoardTask(rows[0]) : undefined;
     this.announceIfApproved(team, task);
+    this.announceVerdict(team, from, task);
     return task;
   }
 

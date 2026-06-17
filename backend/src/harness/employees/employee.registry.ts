@@ -3,6 +3,7 @@ import { DiscoveryService } from '@nestjs/core';
 import { collectDecorated } from '../discovery.util';
 import { escapeRegExp } from '../domain/text';
 import { AI_EMPLOYEE_METADATA } from './ai-employee.decorator';
+import { PHASE_CONFIG_METADATA } from './phase-config.decorator';
 import type { EmployeeContext } from './employee-context';
 import type { EmployeeDefinition } from './employee.types';
 import { TEAM_CONTEXT } from './roster/shared';
@@ -20,6 +21,13 @@ const KNOWN_LIFECYCLE_EVENTS = new Set<string>(Object.values(LifecycleEvent));
 @Injectable()
 export class EmployeeRegistry implements OnModuleInit {
   private roster: EmployeeDefinition[] = [];
+  /**
+   * Synthetic worker identities (pipeline phase-configs), kept SEPARATE from the chat roster: they are
+   * resolvable (`byId`) and provisioned a home (`provisionable()`), but NEVER enter `list()`, the
+   * roster summary, or addressing — the conductor would otherwise schedule/classify them as phantom
+   * channel participants.
+   */
+  private phaseConfigs: EmployeeDefinition[] = [];
 
   constructor(private readonly discovery: DiscoveryService) {}
 
@@ -55,11 +63,29 @@ export class EmployeeRegistry implements OnModuleInit {
     }
     this.roster = roster;
 
-    // Validate each employee's declared capabilities once the roster (and thus context) exists:
-    // a lifecycle hook must name a known event; capability names must be unique per employee and not
-    // empty. Resolving each spec also surfaces a broken builder at boot rather than mid-turn.
+    // Phase-configs: discovered SEPARATELY (own metadata key), kept off the chat roster. Validate ids
+    // are non-empty lowercase and unique across the roster + each other (they share the `byId` /
+    // home-provisioning id space). The lead/non-empty roster rules deliberately DON'T apply here.
+    const phaseConfigs = collectDecorated<EmployeeDefinition>(
+      this.discovery,
+      PHASE_CONFIG_METADATA,
+    ).map((f) => f.instance);
+    for (const p of phaseConfigs) {
+      if (!p.id || p.id !== p.id.toLowerCase())
+        throw new Error(`Phase-config id '${p.id}' must be non-empty lowercase`);
+      if (ids.has(p.id))
+        throw new Error(
+          `Phase-config id '${p.id}' collides with an existing employee/phase-config id`,
+        );
+      ids.add(p.id);
+    }
+    this.phaseConfigs = phaseConfigs;
+
+    // Validate every declared capability (roster + phase-configs) once context exists: a lifecycle
+    // hook must name a known event; capability names must be unique per identity and not empty.
+    // Resolving each spec also surfaces a broken builder at boot rather than mid-turn.
     const ctx = this.context();
-    for (const e of roster) {
+    for (const e of [...roster, ...phaseConfigs]) {
       const caps = e.capabilities(ctx);
       const names = new Set<string>();
       for (const cap of caps) {
@@ -94,7 +120,18 @@ export class EmployeeRegistry implements OnModuleInit {
   }
 
   byId(id: string): EmployeeDefinition | undefined {
-    return this.roster.find((b) => b.id === id);
+    return (
+      this.roster.find((b) => b.id === id) ??
+      this.phaseConfigs.find((b) => b.id === id)
+    );
+  }
+
+  /**
+   * Roster ∪ phase-configs — every identity that needs a per-engine skill/MCP home provisioned. Used
+   * ONLY by `EngineHomeProvisioner`, never as the chat roster (that's `list()`).
+   */
+  provisionable(): ReadonlyArray<EmployeeDefinition> {
+    return [...this.roster, ...this.phaseConfigs];
   }
 
   /** The lowest-ordered employee — the owner used when a bot lookup misses. */

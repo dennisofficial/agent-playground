@@ -3,82 +3,135 @@ import { Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { recallProjects } from '../../domain/identity';
 import { BoardStore } from '../../memory/board-store';
-import { PipelineRegistry } from '../../pipelines/pipeline.registry';
+import { EmployeeRegistry } from '../../employees/employee.registry';
 import { PipelineRunnerService } from '../../sessions/pipeline-runner.service';
 import { WorktreeService } from '../../worktrees/worktree.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
 /**
- * The orchestrator's pipeline tools. `dispatch_pipeline` runs an approved board task through a
- * declarative pipeline (each stage = a specialist session in one worktree); `enqueue_finding` parks
- * an out-of-scope discovery on the backlog for later human triage (never auto-approved).
+ * The orchestrator's pipeline tools. `dispatch_pipeline` runs an approved board task as a dynamic
+ * section-driven run (you declare the sections; each is planned just-in-time and built phase-by-phase)
+ * or a single-session bugfix; `enqueue_finding` parks an out-of-scope discovery on the backlog for
+ * later human triage (never auto-approved).
  */
+
+const sectionSchema = z.object({
+  name: z.string().describe('Section name, e.g. "backend" or "frontend".'),
+  brief: z
+    .string()
+    .optional()
+    .describe("One-line intent for this section (seeds its plan)."),
+  role: z
+    .string()
+    .describe(
+      "The phase-config to build this section as, e.g. 'phase_backend'. Scopes its skills/engines.",
+    ),
+});
 
 const dispatchSchema = z.object({
   board_task_id: z
     .number()
     .int()
-    .describe('The approved team-board task (#N) to run a pipeline for.'),
+    .describe('The approved team-board task (#N) to run.'),
   worktree_id: z
     .string()
-    .describe('The worktree the pipeline runs in (create_worktree first).'),
-  pipeline: z
+    .describe('The worktree the run happens in (create_worktree first).'),
+  kind: z
+    .enum(['feature', 'bugfix'])
+    .optional()
+    .describe(
+      "'feature' (default): the declared sections plan→gate→build→PR in order. 'bugfix': a single execute session straight to a PR (no plan gate).",
+    ),
+  sections: z
+    .array(sectionSchema)
+    .optional()
+    .describe(
+      'For a feature: the ordered sections to build (each planned just-in-time, after the prior ships). Required for kind=feature.',
+    ),
+  role: z
     .string()
     .optional()
-    .describe("Which pipeline to run; defaults to 'feature'."),
+    .describe(
+      "For a bugfix: the phase-config to run the single fix session as. Required for kind=bugfix.",
+    ),
 });
 
 @HarnessTool()
 export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema> {
   readonly name = 'dispatch_pipeline';
   readonly description =
-    'Dispatch an approved board task through a deterministic pipeline — each stage runs as a specialist session in the given worktree, advancing automatically and pausing at the plan and PR gates for your review. You are notified as stages report back; no need to babysit it.';
+    'Dispatch an approved board task. A feature runs your declared sections in order — each planned just-in-time (and gated for your approval) then built phase-by-phase with a fresh review after each, all in one worktree, shipping one PR. A bugfix runs a single execute session straight to a PR. It advances automatically; you are notified at each gate.';
   readonly schema = dispatchSchema;
   private readonly logger = new Logger(DispatchPipelineTool.name);
 
   constructor(
     private readonly board: BoardStore,
     private readonly worktrees: WorktreeService,
-    private readonly pipelines: PipelineRegistry,
+    private readonly employees: EmployeeRegistry,
     private readonly runner: PipelineRunnerService,
   ) {}
 
   async execute(
-    { board_task_id, worktree_id, pipeline }: z.infer<typeof dispatchSchema>,
+    { board_task_id, worktree_id, kind, sections, role }: z.infer<
+      typeof dispatchSchema
+    >,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
-    const name = pipeline?.trim() || 'feature';
-    const known = this.pipelines.list().map((d) => d.name);
-    if (!known.includes(name))
-      return `No pipeline '${name}'. Available: ${known.join(', ')}.`;
+    const runKind = kind ?? 'feature';
     const task = await this.board.get(id.team, board_task_id);
     if (!task) return `No board task #${board_task_id} — check list_board.`;
     const worktree = this.worktrees.get(worktree_id);
     if (!worktree)
       return `No worktree '${worktree_id}' — create one first (create_worktree).`;
-    // Detached: the pipeline's stage sessions run their own engine turns; the ALS reset keeps those
-    // tokens out of the orchestrator's chat-stream trace/cost footer.
-    AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      void this.runner
-        .start({
+
+    // Validate the phase-config role(s) resolve before starting (a typo'd role would otherwise fail
+    // the run mid-flight).
+    const roles =
+      runKind === 'bugfix' ? (role ? [role] : []) : (sections ?? []).map((s) => s.role);
+    if (runKind === 'feature' && (!sections || sections.length === 0))
+      return `A feature run needs at least one section (name + role). Declare the sections and re-dispatch.`;
+    if (runKind === 'bugfix' && !role)
+      return `A bugfix run needs a role — the phase-config to fix as (e.g. 'phase_backend').`;
+    for (const r of roles)
+      if (!this.employees.byId(r))
+        return `Unknown phase-config '${r}'. Use a real one (e.g. 'phase_backend').`;
+
+    // Start AWAITED so a startup failure reaches the orchestrator as the tool result, not a swallowed
+    // log. start() does all durable setup (run row + section rows) and opens the first session; only
+    // the engine TURN is detached (inside openStageSession). The ALS reset keeps that setup out of the
+    // orchestrator's chat-stream trace/cost footer.
+    try {
+      await AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () =>
+        this.runner.start({
           team: id.team,
           project: task.project,
           taskId: board_task_id,
-          pipeline: name,
           worktreeId: worktree_id,
           notifyThread: id.surface,
-        })
-        .catch((err) =>
-          // Detached start: surface the failure in logs at least — the tool already returned
-          // "Dispatched…" synchronously, so a silent throw would otherwise leave no trace.
-          this.logger.warn(
-            `dispatch_pipeline: starting '${name}' for #${board_task_id} in ${worktree_id} failed: ${err}`,
-          ),
-        );
-    });
-    return `Dispatched the '${name}' pipeline for #${board_task_id} in ${worktree_id}. Stages run as specialist sessions; it pauses at the plan and PR gates for your review.`;
+          kind: runKind,
+          sections:
+            runKind === 'feature'
+              ? sections!.map((s) => ({
+                  name: s.name,
+                  brief: s.brief,
+                  role: s.role,
+                }))
+              : undefined,
+          role: runKind === 'bugfix' ? role : undefined,
+        }),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `dispatch_pipeline: starting ${runKind} for #${board_task_id} in ${worktree_id} failed: ${err}`,
+      );
+      const detail = err instanceof Error ? err.message : String(err);
+      return `Couldn't start the ${runKind} run for #${board_task_id} in ${worktree_id}: ${detail}. Nothing is running — no run was created and the task is unchanged. Do NOT report this as dispatched; fix the cause and retry.`;
+    }
+    return runKind === 'bugfix'
+      ? `Dispatched a bugfix session for #${board_task_id} in ${worktree_id}. It runs straight to a PR — I'll surface it at the PR gate.`
+      : `Dispatched the ${sections!.length}-section pipeline for #${board_task_id} in ${worktree_id}. It's planning the first section now and will pause at its plan gate for your review.`;
   }
 }
 

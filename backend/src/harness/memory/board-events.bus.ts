@@ -43,6 +43,10 @@ export type BoardEvent =
       sessionId?: string;
     }
   | { kind: 'ticket-approved'; team: string; taskId: number }
+  // A proposed plan got a NON-approve verdict (the section-driver reacts: re-plan vs release). Fired
+  // from BoardStore.transition on the unique awaiting_approval→planning / →open verdict transitions.
+  | { kind: 'ticket-changes-requested'; team: string; taskId: number }
+  | { kind: 'ticket-denied'; team: string; taskId: number }
   | {
       kind: 'pr-opened';
       team: string;

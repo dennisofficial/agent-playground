@@ -57,7 +57,7 @@ import {
 } from './message-helpers';
 import {
   MAX_REVISION_PASSES,
-  interleavedTeammates,
+  interleavedMessages,
   revisionNote,
 } from './read-the-room';
 import { makeRefreshScopesFromTurn } from './routing';
@@ -418,12 +418,14 @@ export class BotGraphNodes {
       const hasToolCalls = ((ai as AIMessage).tool_calls?.length ?? 0) > 0;
       // READ-THE-ROOM check: synchronous (same JS tick as the return below — the in-memory channel
       // is synchronous, so nothing interleaves between this read and the checkpoint write request).
-      // Only a FINAL text post is gated: a tool-call step must enter history intact (a tool_use
-      // needs its tool_result) and the post-tools llm step folds new messages in anyway.
+      // Any non-own message landing mid-compose (a teammate's reply OR the user adding more — e.g.
+      // the rest of a fragmented message) stales the draft. Only a FINAL text post is gated: a
+      // tool-call step must enter history intact (a tool_use needs its tool_result) and the
+      // post-tools llm step folds new messages in anyway.
       const interleaved =
         hasToolCalls || !aiText
           ? []
-          : interleavedTeammates(channel, channelId, newCursor, bot.id);
+          : interleavedMessages(channel, channelId, newCursor, bot.id);
       if (
         interleaved.length > 0 &&
         state.revisionPasses < MAX_REVISION_PASSES

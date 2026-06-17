@@ -4,6 +4,7 @@ import {
   CompactionSummary,
   Fact,
   PipelineRun,
+  PipelineRunSection,
   SessionNote,
   Task,
   TeamSetting,
@@ -25,6 +26,7 @@ import { CompactionSummaryStore } from './compaction-summary.store';
 import { OpenAIEmbeddingProvider } from './embedding';
 import { FetchService } from './fetch.service';
 import { PipelineRunStore } from './pipeline-run-store';
+import { PipelineRunSectionStore } from './pipeline-run-section-store';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { MemoryWriteService } from './memory-write.service';
 import { SessionNoteStore } from './session-note.store';
@@ -56,6 +58,7 @@ import { WorklogStore } from './worklog-store';
       TeamSetting,
       Worklog,
       PipelineRun,
+      PipelineRunSection,
     ]),
     LlmModule,
     LlmKeysModule,
@@ -99,6 +102,12 @@ import { WorklogStore } from './worklog-store';
       provide: PipelineRunStore,
       inject: [getRepositoryToken(PipelineRun)],
       useFactory: (repo: Repository<PipelineRun>) => new PipelineRunStore(repo),
+    },
+    {
+      provide: PipelineRunSectionStore,
+      inject: [getRepositoryToken(PipelineRunSection)],
+      useFactory: (repo: Repository<PipelineRunSection>) =>
+        new PipelineRunSectionStore(repo),
     },
     {
       provide: PlanStore,
