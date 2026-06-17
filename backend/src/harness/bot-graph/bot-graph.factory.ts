@@ -4,6 +4,7 @@ import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ChannelRegistryService } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
+import { AddressingGate } from '../conductor/addressing-gate';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { PersonaService } from '../employees/persona.service';
 import { ChatModelFactory } from '../llm/chat-model.factory';
@@ -30,17 +31,20 @@ export { MAX_REVISION_PASSES, revisionNote } from './read-the-room';
 
 /**
  * The orchestrator's TURN, as an explicit LangGraph state machine. Atlas (the single voice you talk
- * to) drives ONE gate-less graph, persisted on thread `${bot.id}:${channelId}:root` (Postgres
- * checkpointer). The conductor invokes it whenever the human thread has grown past Atlas's cursor (or
- * a silent seed wakes it).
+ * to) drives ONE graph, persisted on thread `${bot.id}:${channelId}:root` (Postgres checkpointer).
+ * The conductor invokes it whenever the human thread has grown past Atlas's cursor (or a silent seed
+ * wakes it).
  *
- *   START → prelude → recall → llm ⇄ tools → tool_loop_guard → refreshContext? → reconcile → compact → END
+ *   START → gate → (respond) recall → llm ⇄ tools → tool_loop_guard → refreshContext? → reconcile → compact → END
+ *                  (skip)    consume → END
  *
- * There is no gate / dormancy / read-the-room peer self-loop: the one DM/thread is always addressed
- * to Atlas, so `prelude` just runs the per-turn reset the old gate node did (turnStart + draft /
- * tool-loop field resets). (`tool_loop_guard` still sits on the continuation out of `tools`: a
- * deterministic prefilter + Haiku judge that catches a single bot re-issuing the SAME tool call —
- * corrects + refreshes once, then pauses if it persists. No tool ends the turn directly.)
+ * The `gate` node is the entry: the addressing gate runs IN-GRAPH (respond/skip classify) so a SKIP
+ * lands in the same Langfuse turn trace as the work it gated. On respond it runs the normal turn; on
+ * skip it routes to `consume` (advance the cursor past the gated batch, no model call). A seed / job
+ * relay (`state.forced`) bypasses the classify and always responds. (`tool_loop_guard` still sits on
+ * the continuation out of `tools`: a deterministic prefilter + Haiku judge that catches a single bot
+ * re-issuing the SAME tool call — corrects + refreshes once, then pauses if it persists. No tool ends
+ * the turn directly.)
  *
  * Memory is DETERMINISTIC, not agentic: `recall` reads the relevant facts + open tasks IN before the
  * bot thinks, and the single `reconcile` node writes tasks OUT after. The llm step keeps its
@@ -86,6 +90,9 @@ export class BotGraphFactory {
     // these in the app; absent → compaction is skipped / the tool-loop guard is inert.
     @Optional() private readonly compactionStore?: CompactionSummaryStore,
     @Optional() private readonly toolLoopGuard?: ToolLoopGuardService,
+    // The in-graph addressing gate. Optional + last for the same positional-spec reason; absent → the
+    // gate node falls back to "always respond" (the unit specs' assumption).
+    @Optional() private readonly gate?: AddressingGate,
   ) {
     const gapThresholdMs =
       env.get('HARNESS_TIMESTAMP_GAP_MS') ?? GAP_THRESHOLD_DEFAULT_MS;
@@ -103,12 +110,14 @@ export class BotGraphFactory {
       this.engineTools,
       this.compactionStore,
       this.toolLoopGuard,
+      this.gate,
     );
   }
 
   /**
-   * The gate-less orchestrator graph: START → prelude → recall → llm ⇄ tools → tool_loop_guard →
-   * refreshContext? → reconcile → compact → END. Memoized per bot id (Atlas in production).
+   * The orchestrator graph: START → gate → (respond) recall → llm ⇄ tools → tool_loop_guard →
+   * refreshContext? → reconcile → compact → END, or (skip) consume → END. Memoized per bot id (Atlas
+   * in production).
    */
   getConductorGraph(bot: EmployeeDefinition) {
     let g = this.conductorGraphs.get(bot.id);
@@ -122,7 +131,8 @@ export class BotGraphFactory {
   private buildConductorGraph(bot: EmployeeDefinition) {
     const n = this.nodes.forBot(bot);
     return new StateGraph(BotState)
-      .addNode('prelude', n.prelude)
+      .addNode('gate', n.gate)
+      .addNode('consume', n.consume)
       .addNode('recall', n.recall)
       .addNode('llm', n.llm)
       .addNode('tools', n.tools)
@@ -130,8 +140,9 @@ export class BotGraphFactory {
       .addNode('refreshContext', n.refreshContext)
       .addNode('reconcile', n.reconcile)
       .addNode('compact', n.compact)
-      .addEdge(START, 'prelude')
-      .addEdge('prelude', 'recall')
+      .addEdge(START, 'gate')
+      .addConditionalEdges('gate', n.route, ['recall', 'consume'])
+      .addEdge('consume', END)
       .addEdge('recall', 'llm')
       .addConditionalEdges('llm', afterLlm, ['tools', 'llm', 'reconcile'])
       .addEdge('tools', 'tool_loop_guard')

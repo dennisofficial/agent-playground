@@ -1,4 +1,5 @@
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import type { RunnableConfig } from '@langchain/core/runnables';
 import { Injectable, Logger } from '@nestjs/common';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
@@ -32,13 +33,18 @@ export class AddressingGate {
     private readonly models: ChatModelFactory,
   ) {}
 
-  async decide(opts: {
-    bot: EmployeeDefinition;
-    isDm: boolean;
-    text: string;
-    /** Recent channel lines (oldest first), for the classifier to judge continuation/context. */
-    history: string;
-  }): Promise<GateDecision> {
+  async decide(
+    opts: {
+      bot: EmployeeDefinition;
+      isDm: boolean;
+      text: string;
+      /** Recent channel lines (oldest first), for the classifier to judge continuation/context. */
+      history: string;
+    },
+    /** The turn's LangGraph RunnableConfig — threaded into the Haiku call so the classify nests in
+     * the turn's Langfuse trace (the gate runs in-graph). Omitted by direct/unit callers. */
+    config?: RunnableConfig,
+  ): Promise<GateDecision> {
     const { bot, isDm, text } = opts;
     // Hard rules (no LLM): a 1:1 DM, a broadcast, or Atlas addressed by @ or name → always respond.
     if (isDm) return 'respond';
@@ -48,12 +54,15 @@ export class AddressingGate {
     // Ambiguous: not a DM, not a broadcast, not addressed to Atlas — let a cheap model judge.
     try {
       const model = this.models.buildGateModel();
-      const res = await model.invoke([
-        new SystemMessage(GATE_SYSTEM),
-        new HumanMessage(
-          `Recent channel context (oldest first):\n${opts.history}\n\nLatest message:\n${text}\n\nRESPOND or SKIP?`,
-        ),
-      ]);
+      const res = await model.invoke(
+        [
+          new SystemMessage(GATE_SYSTEM),
+          new HumanMessage(
+            `Recent channel context (oldest first):\n${opts.history}\n\nLatest message:\n${text}\n\nRESPOND or SKIP?`,
+          ),
+        ],
+        config,
+      );
       const out = (
         typeof res.content === 'string'
           ? res.content

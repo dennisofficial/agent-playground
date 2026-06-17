@@ -6,7 +6,6 @@ import { LlmModule } from '../llm/llm.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
-import { AddressingGate } from './addressing-gate';
 import { ConductorEventsModule } from './conductor-events.module';
 import { ConductorService } from './conductor.service';
 
@@ -28,7 +27,7 @@ import { ConductorService } from './conductor.service';
     MemoryModule,
     SessionsModule,
   ],
-  services: [AddressingGate, ConductorService],
+  services: [ConductorService],
   exports: [ConductorEventsModule],
 })
 export class ConductorModule {}

@@ -38,7 +38,6 @@ import {
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
-import { AddressingGate } from './addressing-gate';
 import { boardEventRelayPrompt, sessionRelayPrompt } from './seed-relay';
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import {
@@ -93,6 +92,16 @@ const MAX_TURN_RETRIES = 3;
 /** How long shutdown waits for the in-flight turn before giving up (ms). */
 const SHUTDOWN_IDLE_TIMEOUT_MS = 10_000;
 
+// ── Addressing-gate reaction markers ─────────────────────────────────────────────────────────────
+/** The transient "seen, working on it" bubble folded onto the triggering message the moment the
+ * addressing gate commits Atlas to a turn, and removed when that turn ends — so a message in flight is
+ * visibly distinct from one nobody has picked up. The skip/silent counterpart is SEEN_EMOJI. */
+const COMPOSING_EMOJI = '💭';
+/** The persistent "seen, not jumping in" marker: dropped on the triggering message when the gate SKIPS
+ * it (a human-to-human aside) OR when Atlas gate-responds but ends the turn silent — so a registered
+ * message reads as considered, not missed. No remove (it's a record, not a transient). */
+const SEEN_EMOJI = '👀';
+
 @Injectable()
 export class ConductorService
   implements OnApplicationBootstrap, OnApplicationShutdown
@@ -131,7 +140,6 @@ export class ConductorService
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
     private readonly boardEvents: BoardEventsBus,
-    private readonly gate: AddressingGate,
   ) {}
 
   /** Atlas — the single orchestrator (the one `teamLead`). */
@@ -364,6 +372,29 @@ export class ConductorService
     this.bus.emit(event);
   }
 
+  /** Fold (or, with `remove`, un-fold) a bot's emoji reaction onto a channel message — the producer
+   * side of the addressing-gate markers (composing bubble + seen-and-skipped 👀). The SurfaceBridge
+   * routes it to surface.react/unreact (the Slack seam) and the TUI folds it onto the target row; both
+   * key the un-fold off (botName, emoji), so an add/remove pair must reuse the same emoji + target. */
+  private emitReaction(
+    bot: EmployeeDefinition,
+    channelId: string,
+    targetId: string,
+    emoji: string,
+    remove = false,
+  ): void {
+    this.emit({
+      id: `r-${this.emitSeq++}`,
+      kind: 'reaction',
+      channelId,
+      botId: bot.id,
+      botName: bot.name,
+      emoji,
+      targetId,
+      ...(remove ? { remove: true } : {}),
+    });
+  }
+
   private refreshThinking(): void {
     const atlas = this.atlas();
     this.bus.patchStatus({
@@ -413,7 +444,7 @@ export class ConductorService
           continue;
         }
         if (!this.hasWork(atlas, info.channelId)) continue;
-        this.claim(() => this.runGatedTurn(atlas, info.channelId));
+        this.claim(() => this.runBotGraph(atlas, { channelId: info.channelId }));
       }
     this.maybeResolveIdle();
   }
@@ -436,61 +467,6 @@ export class ConductorService
       .some((m) => m.authorBotId !== bot.id);
   }
 
-  /**
-   * Gate a room-triggered turn before paying for it. The chat surface is a real Slack channel that
-   * can contain OTHER humans, so not every message is Atlas's to answer: a DM, a broadcast, or an
-   * @Atlas/by-name hail runs immediately; an off-topic human-to-human message is CONSUMED (cursor
-   * advanced to the latest seq) WITHOUT a turn — so Atlas neither barges in nor burns a full turn
-   * just to stay quiet. Seed wakes never reach here (they're gate-bypassed by design).
-   */
-  private async runGatedTurn(
-    bot: EmployeeDefinition,
-    channelId: string,
-  ): Promise<void> {
-    const unseen = this.channel
-      .since(this.cursors.get(bot.id, channelId), channelId)
-      .filter((m) => m.authorBotId !== bot.id);
-    if (unseen.length === 0) return; // raced clear since hasWork
-    const latest = unseen[unseen.length - 1];
-    const isDm = !this.registry.isChannelKind(channelId);
-    // Classifier context = the recent room tail INCLUDING Atlas's own (and already-consumed) messages.
-    // A bare reply to Atlas's own question — "yes please" answering "Want me to …?" — reads as a
-    // context-free acknowledgement (→ SKIP) when Atlas's side of the thread is stripped out; with the
-    // question visible it's a clear continuation (→ RESPOND). Filtering own messages out of the gate
-    // context is what made it ignore replies to itself.
-    const history = this.channel
-      .snapshot(channelId)
-      .slice(-8)
-      .map((m) => `${m.author}: ${m.text}`)
-      .join('\n');
-    const decision = await this.gate.decide({
-      bot,
-      isDm,
-      text: latest.text,
-      history,
-    });
-    if (decision === 'respond') {
-      await this.runBotGraph(bot, { channelId });
-      return;
-    }
-    // Skip: consume the unseen messages so the room settles — advance Atlas's cursor PAST the latest
-    // seq WITHOUT running a turn. The cursor is the NEXT-unconsumed seq and `since()` is inclusive
-    // (seq >= cursor), so we set it to lastSeq + 1 — exactly what lengthOf()/the graph's newCursor do.
-    // Setting it to lastSeq would leave that message in-window forever, re-firing this skip every
-    // schedule() pass (tight busy-loop). Monotonic guard mirrors the post-turn cursor write; we only
-    // consume what we actually evaluated (lastSeq + 1, not lengthOf), so any message that arrived
-    // during the gate call still gets its own gate pass.
-    const lastSeq = Math.max(...unseen.map((m) => m.seq));
-    const current = this.cursors.has(bot.id, channelId)
-      ? this.cursors.get(bot.id, channelId)
-      : 0;
-    this.cursors.set(bot.id, channelId, Math.max(current, lastSeq + 1));
-    void this.cursors.flush().catch(() => {});
-    this.logger.debug(
-      `gate: ${bot.id} skipped ${channelId} up to seq ${lastSeq}`,
-    );
-  }
-
   /** The roster members of a room (its bots — humans in `members` are identity participants). */
   private botsIn(info: ChannelInfo): EmployeeDefinition[] {
     return this.employees.list().filter((b) => info.members.includes(b.id));
@@ -499,13 +475,15 @@ export class ConductorService
   // ── Turn execution ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Run one Atlas turn on its gate-less LangGraph turn-graph. The graph consumes the channel
-   * (mid-step) and checkpoints; the conductor interprets its streamed node deltas — writing each
-   * assistant message back to the CHANNEL and emitting domain ConductorEvents. After the turn it
-   * reads the authoritative cursor back from the checkpoint and persists it.
+   * Run one Atlas turn on its LangGraph turn-graph. The graph's entry `gate` node classifies
+   * respond/skip in-graph (so a skip lands in the turn's Langfuse trace); on skip it just advances
+   * the cursor (no model call, no channel post). The conductor interprets the streamed node deltas —
+   * writing each assistant message back to the CHANNEL, folding the 💭/👀 reaction onto the gated
+   * message, and emitting domain ConductorEvents. After the turn it reads the authoritative cursor
+   * back from the checkpoint and persists it.
    *
-   * `seed` forces a turn on a synthetic message (silent wakes); `channelId` is the room the turn runs
-   * in (defaults to the process's default room).
+   * `seed` forces a turn on a synthetic message (silent wakes, gate-bypassed); `channelId` is the room
+   * the turn runs in (defaults to the process's default room).
    */
   private async runBotGraph(
     bot: EmployeeDefinition,
@@ -532,6 +510,17 @@ export class ConductorService
     const thread = `${bot.id}:${channelId}:root`;
     const identity = this.identityFor(bot.id, info);
     const cursorBefore = this.cursors.get(bot.id, channelId);
+    // Channel high-water at turn start — lets us tell, at turn end, whether Atlas actually posted.
+    const seqBefore = this.channel.lengthOf(channelId);
+
+    // ── in-graph gate reactions ────────────────────────────────────────────────────────────────────
+    // The gate node (graph entry) reports its verdict + the message it gated via the stream. We fold a
+    // 💭 "composing" reaction onto that message while a respond turn runs (removed at end), and leave a
+    // persistent 👀 "seen" when Atlas skipped — or responded but posted nothing — so a registered-but-
+    // unanswered message never reads as ignored. Absent on seed/forced turns (no triggering message).
+    let gateDecision: BotStateDelta['decision'];
+    let gateTargetId: string | undefined;
+    let composing = false;
 
     // ── share_artifact coordination ──────────────────────────────────────────────────────────────
     // When an AIMessage contains both text AND share_artifact tool call(s), the message event is
@@ -644,8 +633,14 @@ export class ConductorService
 
     // Input overwrites the persisted cursor with the durable cursor — the conductor owns the
     // cursor's coordinate space; the graph only borrows it for within-run threading. A seed rides
-    // as a synthetic Human message in state.messages (the prelude/llm respond to it).
-    const input: Record<string, unknown> = { cursor: cursorBefore };
+    // as a synthetic Human message in state.messages and FORCES the gate to respond (gate-bypassed).
+    // `forced` MUST be set on every run, not just seeds: it's persisted BotState on the shared thread,
+    // so a prior seed's `forced: true` would otherwise leak into the next room turn and bypass the
+    // classifier (annotation defaults don't re-apply on an existing checkpoint thread).
+    const input: Record<string, unknown> = {
+      cursor: cursorBefore,
+      forced: !!opts.seed,
+    };
     if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
 
     let failed = false;
@@ -674,6 +669,17 @@ export class ConductorService
         Record<string, BotStateDelta>
       >) {
         for (const delta of Object.values(update)) {
+          // The gate node's verdict (graph entry): fold 💭 onto the gated message while a respond turn
+          // composes; the persistent 👀 is decided at turn end (below) from the verdict + whether a
+          // post happened. Only the gate node sets `decision`, so this fires exactly once per turn.
+          if (delta.decision) {
+            gateDecision = delta.decision;
+            gateTargetId = delta.reactionTargetId;
+            if (gateTargetId && delta.decision === 'respond') {
+              this.emitReaction(bot, channelId, gateTargetId, COMPOSING_EMOJI);
+              composing = true;
+            }
+          }
           // Observability: the fetch node's pre-LLM recall — what Atlas walked in knowing this turn.
           if (delta.recalled) {
             this.emit({
@@ -749,6 +755,25 @@ export class ConductorService
       // Safety-flush a deferred message (e.g. the graph ended/errored before the tool result
       // arrived). Posts without file_ids rather than silently dropping the message.
       if (deferredMsg) flushDeferred(resolvedFileIds.splice(0));
+      // Finalize the gate reaction (runs on every exit — normal, step-cap, error). Clear the 💭
+      // composing bubble, then leave a persistent 👀 "seen" if Atlas skipped OR responded but posted
+      // nothing — so a registered-but-unanswered message reads as considered, not dropped. The post
+      // check is against the channel (a step-cap "pausing" message counts as a post).
+      if (gateTargetId) {
+        if (composing)
+          this.emitReaction(
+            bot,
+            channelId,
+            gateTargetId,
+            COMPOSING_EMOJI,
+            true,
+          );
+        const posted = this.channel
+          .since(seqBefore, channelId)
+          .some((m) => m.authorBotId === bot.id);
+        if (gateDecision !== 'respond' || !posted)
+          this.emitReaction(bot, channelId, gateTargetId, SEEN_EMOJI);
+      }
     }
 
     // The checkpoint is the cursor's source of truth; read it back, then persist it. MONOTONIC on

@@ -22,7 +22,6 @@ import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import type { BoardEvent, BoardEventsBus } from '../memory/board-events.bus';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorService } from './conductor.service';
-import { AddressingGate } from './addressing-gate';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** Minimal synchronous channel double (same contract as ChannelService). */
@@ -151,13 +150,7 @@ interface FakeGraphBehavior {
   };
 }
 
-async function buildConductor(
-  behavior: FakeGraphBehavior,
-  gateDecide: (opts: {
-    text: string;
-    history: string;
-  }) => Promise<'respond' | 'skip'> = async () => 'respond',
-) {
+async function buildConductor(behavior: FakeGraphBehavior) {
   const channel = new FakeChannel();
   const cursors = new FakeCursors();
   const bus = new ConductorEventsBus();
@@ -236,7 +229,6 @@ async function buildConductor(
     creds,
     credCtx,
     boardEvents,
-    { decide: gateDecide } as unknown as AddressingGate,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -263,51 +255,9 @@ describe('ConductorService scheduling', () => {
     expect(events.filter((e) => e.kind === 'message')).toHaveLength(1); // the human's own echo
   });
 
-  it('consumes a skipped message PAST its seq so the gate-skip path settles (no busy-loop)', async () => {
-    // Regression: the skip path advanced the cursor TO the last message's seq, but `since()` is
-    // inclusive (seq >= cursor), so that message stayed in-window — hasWork → skip → re-schedule
-    // forever (and the wedged cursor reloaded on every restart). The cursor must land PAST it.
-    // The gate flips to 'respond' after a cap purely so a regression fails fast (cursor advances via
-    // the graph) instead of hanging the suite; a correct skip never reaches the cap.
-    let decideCalls = 0;
-    const { conductor, channel, cursors } = await buildConductor(
-      {
-        run: () => ({ deltas: [{}], cursorAfter: channel.length }),
-      },
-      async () => (++decideCalls > 10 ? 'respond' : 'skip'),
-    );
-    conductor.submitFrom('someone', 'Someone', 'human-to-human chatter');
-    await conductor.whenIdle();
-    expect(decideCalls).toBe(1); // gated exactly once — no re-fire on the same message
-    expect(cursors.get('alex', 'tui:test')).toBe(channel.length); // cursor moved past seq 0
-    expect(channel.since(cursors.get('alex', 'tui:test'))).toHaveLength(0); // nothing left in-window
-  });
-
-  it("hands the gate Atlas's own recent messages so a reply to its own question is recognizable", async () => {
-    // Regression: the gate context was built from non-own messages only, so a bare "yes please"
-    // replying to Atlas's own question reached the classifier with no question above it → SKIP.
-    // The context must include Atlas's prior (already-consumed) message.
-    const histories: string[] = [];
-    const { conductor, channel } = await buildConductor(
-      { run: () => ({ deltas: [{}], cursorAfter: channel.length }) },
-      async ({ history }) => {
-        histories.push(history);
-        return 'skip';
-      },
-    );
-    // Atlas asked a question on a prior turn (consumed — below the human's cursor)…
-    channel.append({
-      id: 'a-1',
-      author: 'Alex',
-      authorId: 'alex',
-      authorBotId: 'alex',
-      text: 'Want me to put together a backlog item?',
-    } as Parameters<typeof channel.append>[0]);
-    // …then a human replies with a bare acknowledgement.
-    conductor.submitFrom('dennis', 'Dennis', 'yes please');
-    await conductor.whenIdle();
-    expect(histories.at(-1)).toContain('Want me to put together a backlog item?');
-  });
+  // Note: the respond/skip gate moved INTO the turn graph (bot-graph gate node). Its regressions —
+  // "skip advances the cursor past the batch (no busy-loop)" and "the gate sees Atlas's own
+  // messages" — now live in bot-graph.gate.spec.ts. The conductor here always streams the fake graph.
 
   it('gives up after MAX_TURN_RETRIES no-progress failures and skips the wedged batch', async () => {
     let attempts = 0;

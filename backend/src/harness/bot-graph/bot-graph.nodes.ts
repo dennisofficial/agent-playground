@@ -10,6 +10,7 @@ import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { Logger } from '@nestjs/common';
 import { ChannelRegistryService } from '../channel/channel-registry.service';
 import { ChannelService } from '../channel/channel.service';
+import { AddressingGate } from '../conductor/addressing-gate';
 import { getIdentity } from '../domain/identity';
 import { flattenContent } from '../domain/text';
 import type { EmployeeDefinition } from '../employees/employee.types';
@@ -93,12 +94,13 @@ function summarizeToolResult(m: ToolMessage): string {
 }
 
 /**
- * The node IMPLEMENTATIONS of the orchestrator's (Atlas's) gate-less turn-graph — prelude, recall,
- * llm, tools, tool_loop_guard, refreshContext, reconcile, compact. `BotGraphFactory` owns the DI +
- * the graph TOPOLOGY (which node goes where); this owns what each node DOES. `forBot(bot)` returns
- * the per-bot node functions plus the bot's context-refresh scope map (which the routing predicates
- * in routing.ts close over). There is no gate/dormancy/loop-guard: the one human thread is always
- * addressed to Atlas, so `prelude` just runs the per-turn reset the old gate node did on every path.
+ * The node IMPLEMENTATIONS of the orchestrator's (Atlas's) turn-graph — gate, consume, recall, llm,
+ * tools, tool_loop_guard, refreshContext, reconcile, compact. `BotGraphFactory` owns the DI + the
+ * graph TOPOLOGY (which node goes where); this owns what each node DOES. `forBot(bot)` returns the
+ * per-bot node functions plus the bot's context-refresh scope map (which the routing predicates in
+ * routing.ts close over). The `gate` node is the entry: it classifies respond/skip (the addressing
+ * gate, in-graph so a skip lands in the turn's Langfuse trace) and either runs the turn (recall →
+ * llm …) or routes to `consume` (advance the cursor, no model call).
  *
  * Constructed manually by the factory (not a Nest provider) so the factory keeps its existing
  * constructor — the services it injects are handed straight through here.
@@ -120,6 +122,9 @@ export class BotGraphNodes {
     private readonly engineTools?: EngineToolFactory,
     private readonly compactionStore?: CompactionSummaryStore,
     private readonly toolLoopGuard?: ToolLoopGuardService,
+    // Appended last + optional so the positional unit specs (which construct BotGraphNodes without a
+    // gate) keep their "always respond" behavior — the gate node treats an absent gate as respond.
+    private readonly gate?: AddressingGate,
   ) {
     this.gapThresholdMs = gapThresholdMs;
   }
@@ -207,16 +212,12 @@ export class BotGraphNodes {
     const refreshScopesFromTurn = makeRefreshScopesFromTurn(REFRESH);
 
     /**
-     * PRELUDE NODE — the gate-less turn entry. Atlas always responds (the one human thread is always
-     * addressed to it), so there's no respond/ack/ignore classify; this just runs the per-turn reset
-     * the old gate node did on every path. `turnStart` marks where this turn's messages begin so
-     * `reconcile` slices just this exchange; the read-the-room / tool-loop fields reset because
-     * Annotation defaults don't re-apply on an existing checkpoint thread — a stale draft / verdict /
-     * revision count from a prior turn would otherwise poison this one. `decision: 'respond'` keeps
-     * the reconcile passes on their respond-class path.
+     * The per-turn reset the old prelude node did, run on EVERY gate path. `turnStart` marks where
+     * this turn's messages begin so `reconcile` slices just this exchange; the read-the-room /
+     * tool-loop fields reset because Annotation defaults don't re-apply on an existing checkpoint
+     * thread — a stale draft / verdict / revision count from a prior turn would otherwise poison it.
      */
-    const preludeNode = (state: BotStateType): Partial<BotStateType> => ({
-      decision: 'respond',
+    const resetsFor = (state: BotStateType): Partial<BotStateType> => ({
       turnStart: state.messages.length,
       draft: undefined,
       draftUsage: undefined,
@@ -226,6 +227,77 @@ export class BotGraphNodes {
       toolLoopInstruction: undefined,
       forcedRefreshScopes: undefined,
     });
+
+    /**
+     * GATE NODE — the turn entry (replaces the old prelude). Classifies respond vs skip for a
+     * room-triggered turn, then routes: `respond` → recall (the normal turn), anything else →
+     * consume (advance the cursor, no model call). The Haiku classify receives `config`, so it nests
+     * in this turn's Langfuse trace — a SKIP is now visible in the SAME trace as the turn it gated,
+     * which is the whole point of running the gate in-graph. Trade-off: every room-triggered turn now
+     * boots the graph (a checkpoint load + a gate/consume write even on skip).
+     *
+     * Hard rules (DM / broadcast / @Atlas) and the soft Haiku classify live in AddressingGate.decide;
+     * only the genuinely-ambiguous middle pays for a model call (so only those produce a gate span).
+     * `state.forced` (seed / job relay) and the unit-spec path (no gate injected) bypass to respond.
+     * The skip class maps to `decision: 'ignore'` — GateAction has no 'skip'.
+     */
+    const gateNode = async (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Promise<Partial<BotStateType>> => {
+      const resets = resetsFor(state);
+      if (state.forced || !this.gate)
+        return { decision: 'respond', pending: [], ...resets };
+      const channelId = this.channelIdOf(config);
+      const batch = channel
+        .since(state.cursor, channelId)
+        .filter((m) => m.authorBotId !== bot.id);
+      if (batch.length === 0)
+        return { decision: 'ignore', pending: [], ...resets }; // raced clear since hasWork
+      const latest = batch[batch.length - 1];
+      const isDm = !this.channelRegistry.isChannelKind(channelId);
+      // History = the recent room tail INCLUDING Atlas's own messages, so a bare reply to Atlas's own
+      // question ("yes please" answering "Want me to …?") reads as a continuation, not an aside.
+      const history = channel
+        .snapshot(channelId)
+        .slice(-8)
+        .map((m) => `${m.author}: ${m.text}`)
+        .join('\n');
+      const verdict = await this.gate.decide(
+        { bot, isDm, text: latest.text, history },
+        config,
+      );
+      return {
+        decision: verdict === 'respond' ? 'respond' : 'ignore',
+        pending: batch,
+        // The gated message — the conductor folds the 💭 "composing" (respond) / 👀 "seen" (skip)
+        // reaction onto it. Absent on the forced/empty paths (no single triggering message).
+        reactionTargetId: latest.id,
+        ...resets,
+      };
+    };
+
+    /**
+     * CONSUME NODE — the skip path. Advances the cursor PAST the gated batch without a model call.
+     * `seq + 1` (NOT lengthOf) so a message that arrived during the gate's classify still gets its
+     * own future gate pass. Skipped chatter is NOT written into `messages` (Atlas doesn't carry
+     * ignored human-to-human messages into its LLM context — matches prior behavior); routes straight
+     * to END, no reconcile.
+     */
+    const consumeNode = (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Partial<BotStateType> => {
+      const pending = state.pending;
+      const newCursor = pending.length
+        ? pending[pending.length - 1].seq + 1
+        : channel.lengthOf(this.channelIdOf(config));
+      return { cursor: newCursor };
+    };
+
+    /** Out of `gate`: the normal turn (respond) or the cursor-advance skip path. */
+    const route = (state: BotStateType): 'recall' | 'consume' =>
+      state.decision === 'respond' ? 'recall' : 'consume';
 
     /**
      * The pre-LLM context read: assemble the standing-context core + working-state slots into
@@ -854,7 +926,9 @@ Be thorough but concise. Preserve specific names, project names, technical detai
     };
 
     return {
-      prelude: preludeNode,
+      gate: gateNode,
+      consume: consumeNode,
+      route,
       recall: recallNode,
       llm: llmNode,
       tools: toolsNode,
