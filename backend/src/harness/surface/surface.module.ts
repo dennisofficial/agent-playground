@@ -5,7 +5,7 @@ import { SurfaceBridge } from './surface-bridge.service';
 
 /**
  * The chat-surface seam. The port (CHAT_SURFACE + ChatSurface) lives in chat-surface.port.ts; the
- * hosting app binds an adapter to the token (TuiChatSurface today, a Slack adapter later) and this
+ * hosting app binds an adapter to the token (SlackChatSurface, in slack-app) and this
  * bridge wires it to the conductor. No adapter bound → harness runs headless.
  */
 @CreateModule({

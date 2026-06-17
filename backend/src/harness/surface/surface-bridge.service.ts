@@ -19,7 +19,7 @@ import { CHAT_SURFACE, type ChatSurface } from './chat-surface.port';
  *  - outbound: conductor `message` events from bots → `surface.post`; `reaction` events → `surface.react`.
  *
  * The surface binding is OPTIONAL: a hosting app provides `{ provide: CHAT_SURFACE, useClass: … }`
- * (the TUI binds TuiChatSurface; the api will bind a Slack adapter). Without one — tests, headless
+ * (slack-app binds SlackChatSurface). Without one — tests, headless
  * boots — the bridge is inert and the conductor still runs (its events bus is still observable).
  *
  * **Usage accumulation** (Option B — per-Slack-message aggregate):

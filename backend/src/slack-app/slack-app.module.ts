@@ -21,7 +21,7 @@ import { TenantStore } from './tenant.store';
  * — one process serves every workspace (single-process multi-tenant; no gateway hop, no per-tenant
  * stacks). Dev still runs Socket Mode (main.ts connects it when SLACK_APP_TOKEN is set); prod is
  * the OAuth-distributed Events API app whose one connection feeds these controllers, routed by
- * team_id. The TUI remains the local-dev composer — ONE process composes HarnessModule at a time.
+ * team_id. ONE process composes HarnessModule at a time.
  * The api app stays a thin harness-free sibling (admin REST) sharing this database.
  */
 @CreateModule({

@@ -3,7 +3,7 @@ import type { AccumulatedUsage } from '../domain/conductor-events';
 
 /**
  * DI token a hosting app binds its surface adapter to
- * (`{ provide: CHAT_SURFACE, useClass: TuiChatSurface }`).
+ * (`{ provide: CHAT_SURFACE, useExisting: SlackChatSurface }`).
  */
 export const CHAT_SURFACE = Symbol('CHAT_SURFACE');
 

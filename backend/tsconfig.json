@@ -2,7 +2,6 @@
   "compilerOptions": {
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "jsx": "react-jsx",
     "resolvePackageJsonExports": true,
     "esModuleInterop": true,
     "isolatedModules": true,
@@ -25,7 +24,6 @@
     "paths": {
       "@core/*": ["./src/_core/*"],
       "@api/*": ["./src/api/*"],
-      "@tui/*": ["./src/tui/*"],
       "@harness/*": ["./src/harness/*"]
     },
     "types": ["node", "vitest/globals"]

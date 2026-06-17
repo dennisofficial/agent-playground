@@ -19,15 +19,6 @@
         "tsConfigPath": "src/api/tsconfig.json"
       }
     },
-    "tui": {
-      "type": "application",
-      "root": "src/tui",
-      "entryFile": "tui/main",
-      "sourceRoot": "src/tui",
-      "compilerOptions": {
-        "tsConfigPath": "src/tui/tsconfig.json"
-      }
-    },
     "slack-app": {
       "type": "application",
       "root": "src/slack-app",

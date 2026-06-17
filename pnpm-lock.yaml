@@ -28,9 +28,6 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.168
         version: 0.3.168(@anthropic-ai/sdk@0.95.2(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)
-      '@inkjs/ui':
-        specifier: ^2.0.0
-        version: 2.0.0(ink@7.0.5(@types/react@19.2.17)(react@19.2.7))
       '@langchain/anthropic':
         specifier: ^1.4.0
         version: 1.4.0(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))
@@ -133,21 +130,12 @@ importers:
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
-      ink:
-        specifier: ^7.0.5
-        version: 7.0.5(@types/react@19.2.17)(react@19.2.7)
       joi:
         specifier: ^17.13.3
         version: 17.13.3
       langchain:
         specifier: ^1.4.4
         version: 1.4.4(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(ws@8.21.0))(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.42.0(ws@8.21.0)(zod@4.4.3))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))
-      marked:
-        specifier: ^15.0.12
-        version: 15.0.12
-      marked-terminal:
-        specifier: ^7.3.0
-        version: 7.3.0(marked@15.0.12)
       mongoose:
         specifier: ^9.6.3
         version: 9.6.3
@@ -157,9 +145,6 @@ importers:
       pgvector:
         specifier: ^0.3.0
         version: 0.3.0
-      react:
-        specifier: ^19.2.7
-        version: 19.2.7
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -200,18 +185,12 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
-      '@types/marked-terminal':
-        specifier: ^6.1.1
-        version: 6.1.1
       '@types/node':
         specifier: ^22.10.7
         version: 22.19.20
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
-      '@types/react':
-        specifier: ^19.2.17
-        version: 19.2.17
       '@types/supertest':
         specifier: ^6.0.2
         version: 6.0.3
