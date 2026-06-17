@@ -139,7 +139,7 @@ describe('ApprovalCardsService — outbound (present)', () => {
     await service.present(EVENT);
 
     // ONE chat message — the card, posing as Atlas through the MAIN app (block_actions route to
-    // the posting app, so a puppet-posted card would have dead buttons).
+    // the posting app, so the card must be app-posted for button interactivity).
     const posts = argsOf(web.chat.postMessage).map(
       (c) => c[0] as Record<string, unknown>,
     );
