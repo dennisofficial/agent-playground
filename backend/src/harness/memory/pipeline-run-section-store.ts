@@ -7,7 +7,11 @@ export type SectionStatus =
   | 'planning'
   | 'building'
   | 'done'
-  | 'failed';
+  | 'failed'
+  // A design section paused for the human (or, later, a designer agent) to produce its artifact.
+  | 'awaiting_design'
+  // A design section (and its implementer) the human chose to skip — deferred, not built.
+  | 'skipped';
 
 /** One build phase parsed from a section's approved plan (the fenced `phases` JSON block). */
 export interface SectionPhase {

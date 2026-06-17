@@ -8,7 +8,6 @@ import { LifecycleModule } from '../lifecycle/lifecycle.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { MetricsModule } from '../metrics/metrics.module';
-import { PipelinesModule } from '../pipelines/pipelines.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
 import { PipelineRunnerService } from './pipeline-runner.service';
@@ -33,7 +32,6 @@ import { SessionRunnerService } from './session-runner.service';
     LlmKeysModule,
     MemoryModule,
     MetricsModule,
-    PipelinesModule,
     ProjectsModule,
     ProposalModule,
     WorktreesModule,

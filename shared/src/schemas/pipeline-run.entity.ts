@@ -80,4 +80,10 @@ export class PipelineRun extends TimestampedEntity {
    * paused, awaiting approval) | NULL (building / not planning). */
   @Column({ type: 'text', nullable: true })
   planning_substep!: string | null;
+
+  /** The high-level plan Atlas + Dennis agreed on during scoping (the feature's intent, stack,
+   * constraints, and how the sections fit together). Seeded into EVERY section's just-in-time plan
+   * prompt so each section is grounded in the whole, not just its one-line brief. */
+  @Column({ type: 'text', nullable: true })
+  overview!: string | null;
 }

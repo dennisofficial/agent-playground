@@ -102,6 +102,9 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'close_standup',
         'dispatch_pipeline',
         'enqueue_finding',
+        'attach_design',
+        'skip_design',
+        'answer_section',
       ].sort(),
     );
 

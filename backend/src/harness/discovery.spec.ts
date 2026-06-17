@@ -181,6 +181,11 @@ describe('harness decorator discovery', () => {
     expect(registry.mentionedBots('@phase_backend').map((e) => e.id)).toEqual(
       [],
     );
+
+    // The prompt `${roster}` is the PIPELINE phase roles (what specialists Atlas dispatches), NOT the
+    // chat roster — so the phase-config DOES feed `context().roster`, even though it's off the chat
+    // roster. Guards the bug where deleting the named specialists would collapse `${roster}` to Atlas.
+    expect(registry.context().roster).toContain('Backend');
   });
 
   it('fails boot when a phase-config id collides with a roster employee id', async () => {

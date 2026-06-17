@@ -2,37 +2,41 @@ import { describe, expect, it } from 'vitest';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
 import type { BaseEmployee } from './base-employee';
 import type { EmployeeContext } from './employee-context';
-import { AlexEmployee } from './roster/alex.employee';
-import { JamesEmployee } from './roster/james.employee';
-import { MayaEmployee } from './roster/maya.employee';
-import { NoraEmployee } from './roster/nora.employee';
-import { RileyEmployee } from './roster/riley.employee';
 import { AtlasEmployee } from './roster/atlas.employee';
+import { PhaseBackendConfig } from './phase-configs/phase-backend.config';
+import { PhaseFrontendConfig } from './phase-configs/phase-frontend.config';
+import { PhaseDesignConfig } from './phase-configs/phase-design.config';
+import { PhaseResearchConfig } from './phase-configs/phase-research.config';
+import { PhaseMarketingConfig } from './phase-configs/phase-marketing.config';
+import { PhaseAnalyticsConfig } from './phase-configs/phase-analytics.config';
 import { TEAM_CONTEXT } from './roster/shared';
 
 /**
  * Cache-breakpoint guard: `chatPrompt`/`workerPrompt` render on every LLM step under a
  * `cache_control: ephemeral` breakpoint, so their bytes must be byte-stable for a given employee. This
- * snapshot pins the EXACT rendered output for every roster teammate across all three engines — captured
- * before the prompt-template refactor and asserted unchanged after it. A diff here means the cache busts.
+ * snapshot pins the EXACT rendered output for Atlas (the sole chat-roster member) + every pipeline
+ * phase-config across all three engines. A diff here means the cache busts.
  */
 
 // A FIXED context so the snapshot is deterministic (the only thing that must match before/after is the
-// employee builders, not the live roster). Real `TEAM_CONTEXT`, a representative roster line.
+// employee builders, not the live roster). Real `TEAM_CONTEXT`; `roster` is the pipeline phase roles,
+// matching what `EmployeeRegistry.context()` now renders as `${roster}`.
 const CTX: EmployeeContext = {
   team: TEAM_CONTEXT,
   roster:
-    'Alex — backend engineer; Riley — frontend engineer; Maya — product designer; ' +
-    'James — marketing & analytics; Nora — researcher; Atlas — team lead',
+    'Backend — backend engineer; Frontend — frontend engineer; ' +
+    'Design — product designer; Research — researcher; ' +
+    'Marketing — marketing; Analytics — analytics & instrumentation',
 };
 
 const EMPLOYEES: Array<new () => BaseEmployee> = [
-  AlexEmployee,
-  JamesEmployee,
-  MayaEmployee,
-  NoraEmployee,
-  RileyEmployee,
   AtlasEmployee,
+  PhaseBackendConfig,
+  PhaseFrontendConfig,
+  PhaseDesignConfig,
+  PhaseResearchConfig,
+  PhaseMarketingConfig,
+  PhaseAnalyticsConfig,
 ];
 
 const ENGINES = [

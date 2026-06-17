@@ -4,7 +4,12 @@ import {
   Logger,
   OnApplicationBootstrap,
 } from '@nestjs/common';
+import { execFile } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { ProposalService } from '../approvals/proposal.service';
+import type { WorkerMode } from '../engines/worker-engine.port';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { BoardStore } from '../memory/board-store';
 import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
@@ -15,6 +20,7 @@ import {
   type PipelineRunSection,
   type SectionPhase,
 } from '../memory/pipeline-run-section-store';
+import { WorktreeService } from '../worktrees/worktree.service';
 import { ReviewPipelineService } from './review-pipeline.service';
 import {
   SESSION_REGISTRY,
@@ -23,16 +29,22 @@ import {
 } from './session-registry.port';
 import { SessionRunnerService } from './session-runner.service';
 
+const pExecFile = promisify(execFile);
+
 /** A section Atlas declares at dispatch — the just-in-time plan + build happen later, per section. */
 export interface SectionInput {
   name: string;
   brief?: string;
-  /** The phase-config (synthetic worker) id this section runs as, e.g. 'phase_backend'. */
+  /** The phase-config (synthetic worker) id this section runs as, e.g. 'phase_backend'. The sentinel
+   * 'design' marks a human design gate (no phase-config) — see DESIGN_ROLE. */
   role: string;
 }
 
 /** Sentinel `pipeline` name for a dynamic, section-driven run (vs a static registry pipeline name). */
 const DYNAMIC = 'dynamic';
+/** Sentinel section role for a DESIGN section — a human gate that produces the `design/` artifact the
+ * NEXT section implements, rather than a phase-config that runs engine turns. */
+export const DESIGN_ROLE = 'design';
 
 /**
  * The DYNAMIC section-driver. A 'feature' run is a list of strictly-sequential SECTIONS (Atlas
@@ -62,6 +74,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     private readonly proposals: ProposalService,
     private readonly review: ReviewPipelineService,
     private readonly boardEvents: BoardEventsBus,
+    private readonly worktrees: WorktreeService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -98,6 +111,8 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     sections?: ReadonlyArray<SectionInput>;
     /** bugfix: the phase-config to run the single fix session as. */
     role?: string;
+    /** feature: the agreed high-level plan from scoping — seeds every section's plan prompt. */
+    overview?: string;
   }): Promise<PipelineRun> {
     if (opts.kind === 'bugfix') {
       if (!opts.role) throw new Error('bugfix run requires a role');
@@ -121,7 +136,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (sections.length === 0)
       throw new Error('feature run requires at least one section');
     for (const s of sections) {
-      if (!this.employees.byId(s.role))
+      if (s.role !== DESIGN_ROLE && !this.employees.byId(s.role))
         throw new Error(`unknown phase-config '${s.role}' for section '${s.name}'`);
     }
     const run = await this.runs.create({
@@ -133,6 +148,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       notifyThread: opts.notifyThread,
       project: opts.project,
       planningSubstep: 'drafting',
+      overview: opts.overview,
     });
     await this.sectionStore.createMany(
       run.id,
@@ -144,8 +160,49 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         phaseRole: s.role,
       })),
     );
-    await this.openSectionPlan(run, 0);
+    await this.openSection(run, 0);
     return (await this.runs.get(opts.team, run.id)) ?? run;
+  }
+
+  // ── section-driver: routing ─────────────────────────────────────────────────
+
+  /** Advance to section `index`: a DESIGN section opens a human gate (no engine turn); any other
+   * section opens its just-in-time plan session. The single entry every advance routes through. */
+  private async openSection(run: PipelineRun, index: number): Promise<void> {
+    const sections = await this.sectionStore.listForRun(run.id);
+    const section = sections[index];
+    if (!section) {
+      await this.failRun(run, `no section at index ${index}`);
+      return;
+    }
+    if (section.phaseRole === DESIGN_ROLE)
+      await this.openDesignGate(run, index, section);
+    else await this.openSectionPlan(run, index);
+  }
+
+  /** A DESIGN section: pause for the human to produce + attach the artifact (or skip). No engine turn
+   * runs here — resume is via attachDesign()/skipDesign(), not a board event. */
+  private async openDesignGate(
+    run: PipelineRun,
+    index: number,
+    section: PipelineRunSection,
+  ): Promise<void> {
+    await this.sectionStore.update(section.id, { status: 'awaiting_design' });
+    await this.runs.update(run.team, run.id, {
+      sectionIndex: index,
+      status: 'paused',
+      planningSubstep: 'awaiting_design',
+    });
+    this.logger.log(
+      `pipeline ${run.id}: design gate at section ${index} (${section.name}) — awaiting artifact`,
+    );
+    this.boardEvents.emit({
+      kind: 'design-gate',
+      team: run.team,
+      taskId: run.taskId,
+      section: section.name,
+      notifyThread: run.notifyThread,
+    });
   }
 
   // ── section-driver: planning ──────────────────────────────────────────────
@@ -155,8 +212,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const sections = await this.sectionStore.listForRun(run.id);
     const section = sections[index];
     if (!section) {
-      this.logger.warn(`pipeline ${run.id}: no section at index ${index} — failing`);
-      await this.runs.update(run.team, run.id, { status: 'failed' });
+      await this.failRun(run, `no section at index ${index}`);
       return;
     }
     await this.sectionStore.update(section.id, { status: 'planning' });
@@ -219,12 +275,8 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       proposedBy: this.employees.teamLead().id,
       surfaceId: run.notifyThread ?? session.notifyThread,
     });
-    if (!outcome.ok) {
-      this.logger.warn(
-        `pipeline ${run.id}: propose failed (${outcome.kind}) — failing the run (no card posted)`,
-      );
-      await this.runs.update(run.team, run.id, { status: 'failed' });
-    }
+    if (!outcome.ok)
+      await this.failRun(run, `propose failed (${outcome.kind}) (no card posted)`);
   }
 
   /** Route a plan-gate verdict to the active section (the cursor, not the event, says which one). */
@@ -251,6 +303,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       this.logger.log(`pipeline ${run.id}: section plan denied — failing run`);
       const { section } = await this.activeSection(run);
       if (section) await this.sectionStore.update(section.id, { status: 'failed' });
+      await this.closeRunSession(run.sessionId); // reclaim the idle plan session
       await this.runs.update(run.team, run.id, { status: 'failed' });
       return;
     }
@@ -274,8 +327,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const sections = await this.sectionStore.listForRun(run.id);
     const section = sections[run.sectionIndex];
     if (!section) {
-      this.logger.warn(`pipeline ${run.id}: approved but no active section — failing`);
-      await this.runs.update(run.team, run.id, { status: 'failed' });
+      await this.failRun(run, 'approved but no active section');
       return;
     }
     const phases = parsePhases(section.planMd ?? '');
@@ -360,41 +412,122 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       await this.openPhaseExecute(run, nextPhase);
       return;
     }
-    // Section done — advance to the next section's plan, or ship the terminal PR.
+    // Section done — advance to the next section (build or design gate), or ship the terminal PR.
     await this.sectionStore.update(section.id, { status: 'done' });
     const sections = await this.sectionStore.listForRun(run.id);
     const nextSection = run.sectionIndex + 1;
     if (nextSection < sections.length) {
-      await this.openSectionPlan(run, nextSection);
+      await this.openSection(run, nextSection);
       return;
     }
-    await this.handlePrGate(run, session);
+    await this.handlePrGate(run);
+  }
+
+  // ── design gate: human-produced artifact (interim) ──────────────────────────
+
+  /** Attach the human's design artifact (a local zip path): unzip into the worktree's `design/`, mark
+   * the design section done, and advance to the implementer section (which builds against it). */
+  async attachDesign(
+    team: string,
+    taskId: number,
+    source: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    const run = await this.runs.getByTask(team, taskId);
+    if (!run || run.status !== 'paused' || run.planningSubstep !== 'awaiting_design')
+      return { ok: false, message: `#${taskId} isn't waiting at a design gate.` };
+    if (!run.worktreeId) return { ok: false, message: `#${taskId} has no worktree.` };
+    const wt = this.worktrees.get(run.worktreeId);
+    if (!wt) return { ok: false, message: `Worktree '${run.worktreeId}' not found.` };
+    if (/^https?:\/\//i.test(source))
+      return {
+        ok: false,
+        message:
+          'For now, hand me a LOCAL path to the design zip (the online export lands in your Downloads), not a URL.',
+      };
+    const designDir = join(wt.path, 'design');
+    try {
+      mkdirSync(designDir, { recursive: true });
+      await pExecFile('unzip', ['-o', source, '-d', designDir]);
+    } catch (err) {
+      return {
+        ok: false,
+        message: `Couldn't unzip '${source}' into the worktree: ${err instanceof Error ? err.message : String(err)}.`,
+      };
+    }
+    const sections = await this.sectionStore.listForRun(run.id);
+    const section = sections[run.sectionIndex];
+    if (section) await this.sectionStore.update(section.id, { status: 'done' });
+    await this.runs.update(team, run.id, {
+      status: 'running',
+      planningSubstep: null,
+    });
+    const refreshed = (await this.runs.get(team, run.id)) ?? run;
+    await this.openSection(refreshed, run.sectionIndex + 1);
+    return {
+      ok: true,
+      message: `Design attached to ${run.worktreeId} (design/). The next section is now planning/building against it.`,
+    };
+  }
+
+  /** Skip the design gate: mark the design section AND its implementer skipped, ship the functional
+   * version (or continue to later sections). The tool result asks Atlas to offer Dennis a backlog. */
+  async skipDesign(
+    team: string,
+    taskId: number,
+  ): Promise<{ ok: boolean; message: string }> {
+    const run = await this.runs.getByTask(team, taskId);
+    if (!run || run.status !== 'paused' || run.planningSubstep !== 'awaiting_design')
+      return { ok: false, message: `#${taskId} isn't waiting at a design gate.` };
+    const sections = await this.sectionStore.listForRun(run.id);
+    const design = sections[run.sectionIndex];
+    if (design) await this.sectionStore.update(design.id, { status: 'skipped' });
+    // The section right after a design gate is its implementer — skip it too (nothing to implement
+    // without a design).
+    const implementer = sections[run.sectionIndex + 1];
+    let nextIndex = run.sectionIndex + 1;
+    if (implementer) {
+      await this.sectionStore.update(implementer.id, { status: 'skipped' });
+      nextIndex = run.sectionIndex + 2;
+    }
+    await this.runs.update(team, run.id, {
+      status: 'running',
+      planningSubstep: null,
+      sectionIndex: nextIndex,
+    });
+    const refreshed = (await this.runs.get(team, run.id)) ?? run;
+    if (nextIndex < sections.length) await this.openSection(refreshed, nextIndex);
+    else await this.handlePrGate(refreshed); // no more sections → ship the functional version
+    return {
+      ok: true,
+      message: `Skipped the design (and its implementation) for #${taskId} — the functional version will ship. Ask Dennis whether to backlog the design + redesign for later; add_board_task ONLY if he says yes.`,
+    };
   }
 
   // ── shared: PR gate (terminal for feature + bugfix) ─────────────────────────
 
   /** Ship the accumulated worktree as ONE ready PR (reuse ReviewPipelineService.shipTask — no sibling
-   * fan-out). A ship failure fails the run loudly so it never reports a PR that didn't open. */
-  private async handlePrGate(run: PipelineRun, session: Session): Promise<void> {
+   * fan-out). A ship failure fails the run loudly so it never reports a PR that didn't open. Driven
+   * off the durable run (notify_thread), so it works with or without a live session (e.g. skip-to-PR). */
+  private async handlePrGate(run: PipelineRun): Promise<void> {
     if (!run.worktreeId) {
-      this.logger.warn(`pipeline ${run.id}: PR gate with no worktree — failing`);
-      await this.runs.update(run.team, run.id, { status: 'failed' });
+      await this.failRun(run, 'PR gate with no worktree');
       return;
     }
     const shipped = await this.review.shipTask({
       team: run.team,
       taskId: run.taskId,
       worktreeId: run.worktreeId,
-      notifyThread: run.notifyThread ?? session.notifyThread,
+      notifyThread: run.notifyThread ?? '',
     });
     if (!shipped.ok) {
-      this.logger.warn(`pipeline ${run.id}: shipTask failed — ${shipped.reason}`);
-      await this.runs.update(run.team, run.id, { status: 'failed' });
+      await this.failRun(run, `shipTask failed — ${shipped.reason}`);
       return;
     }
     this.logger.log(
       `pipeline ${run.id} (${run.kind}) shipped #${run.taskId}: ${shipped.prUrl}`,
     );
+    // The run is done — reclaim its final stage session so it doesn't block worktree cleanup later.
+    await this.closeRunSession(run.sessionId);
     await this.runs.update(run.team, run.id, {
       status: 'done',
       currentRole: null,
@@ -412,15 +545,23 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (!run || run.status !== 'running' || run.sessionId !== session.id) return;
 
     if (session.status === 'failed') {
-      this.logger.warn(
-        `pipeline ${run.id}: session ${session.id} (kind=${run.kind}, section=${run.sectionIndex}, phase=${run.phaseIndex}, mode=${run.mode}) failed — failing run`,
+      await this.failRun(
+        run,
+        `session ${session.id} (kind=${run.kind}, section=${run.sectionIndex}, phase=${run.phaseIndex}, mode=${run.mode}) failed`,
       );
-      await this.runs.update(run.team, run.id, { status: 'failed' });
+      return;
+    }
+
+    // A turn that ended with QUESTIONS is NOT a finished plan/build — never treat it as one (that bug
+    // proposed an approval card for a clarifying question). Relay it to Atlas (he answers or asks
+    // Dennis) and leave the session open for answer_section; the run stays where it is.
+    if (session.lastReportKind === 'questions') {
+      await this.relaySectionQuestions(run, session);
       return;
     }
 
     if (run.kind === 'bugfix') {
-      await this.handlePrGate(run, session); // single execute session done → ship
+      await this.handlePrGate(run); // single execute session done → ship
       return;
     }
     if (run.pipeline !== DYNAMIC) return; // legacy flat runs aren't driven here
@@ -439,6 +580,73 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       await this.advanceAfterReview(run, session);
       return;
     }
+  }
+
+  /** A session asked questions instead of finishing — relay them to Atlas (answer_section or ask
+   * Dennis). The run is left untouched (still running, session idle), so a later answer resumes it. */
+  private async relaySectionQuestions(
+    run: PipelineRun,
+    session: Session,
+  ): Promise<void> {
+    const section =
+      run.kind === 'feature' && run.pipeline === DYNAMIC
+        ? (await this.activeSection(run)).section
+        : undefined;
+    this.logger.log(
+      `pipeline ${run.id}: ${section?.name ?? 'bugfix'} session asked questions — relaying to Atlas (no gate)`,
+    );
+    this.boardEvents.emit({
+      kind: 'section-questions',
+      team: run.team,
+      taskId: run.taskId,
+      section: section?.name,
+      questions: session.lastReport ?? '(no questions text)',
+      notifyThread: run.notifyThread,
+    });
+  }
+
+  /** Deliver Atlas's answers into the section/bugfix session that asked questions (Atlas can't
+   * reply_session — it's not his session). Resumes the SAME session (keeps its context) in its current
+   * mode, detached; its report-back re-enters onSessionUpdate (a revised plan → gate, or more
+   * questions → relay again). */
+  async answerSectionQuestions(
+    team: string,
+    taskId: number,
+    answers: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    const run = await this.runs.getByTask(team, taskId);
+    if (!run || run.status !== 'running' || !run.sessionId)
+      return { ok: false, message: `#${taskId} has no open session waiting on answers.` };
+    const session = await this.sessions.get(run.sessionId);
+    if (
+      !session ||
+      session.status !== 'idle' ||
+      session.lastReportKind !== 'questions'
+    )
+      return {
+        ok: false,
+        message: `#${taskId}'s session isn't waiting on answers right now.`,
+      };
+    const mode: WorkerMode =
+      run.planningSubstep === 'drafting'
+        ? 'plan'
+        : run.mode === 'investigate'
+          ? 'investigate'
+          : 'execute';
+    const res = await this.runner.replySession(run.sessionId, answers, mode);
+    if (!res.ok)
+      return {
+        ok: false,
+        message: `Couldn't deliver the answers to #${taskId}: ${res.reason}`,
+      };
+    const section =
+      run.kind === 'feature' && run.pipeline === DYNAMIC
+        ? (await this.activeSection(run)).section
+        : undefined;
+    return {
+      ok: true,
+      message: `Answers delivered to the ${section ? `'${section.name}' ` : ''}session for #${taskId}; it's reworking and will report back (a revised plan, or more questions).`,
+    };
   }
 
   // ── boot recovery ────────────────────────────────────────────────────────────
@@ -502,6 +710,35 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
 
   // ── helpers ──────────────────────────────────────────────────────────────────
 
+  /**
+   * Reclaim a stage session the driver is done with. Pipeline sessions are owned by synthetic
+   * phase-configs (e.g. 'phase_backend') that never sit in chat and so never call close_session — so
+   * if the driver doesn't close them itself they pile up as idle/failed orphans in the run's worktree.
+   * An open session blocks worktree cleanup (remove_worktree refuses while any session is open), so a
+   * finished run's orphans deadlock Atlas when he later reclaims the worktree. Uses the runner's
+   * low-level close (no ownership gate) and skips the worklog (intermediate stage turns aren't
+   * standup-worthy; the PR + board events narrate the real outcome). Best-effort — never derails a run.
+   */
+  private async closeRunSession(
+    sessionId: string | null | undefined,
+  ): Promise<void> {
+    if (!sessionId) return;
+    const session = await this.sessions.get(sessionId);
+    if (!session || session.status === 'closed') return;
+    const res = await this.runner.closeSession(sessionId, { logWork: false });
+    if (!res.ok)
+      this.logger.warn(`pipeline: couldn't close session ${sessionId} — ${res.reason}`);
+  }
+
+  /** Terminal failure: reclaim the active session (a failed run's worktree gets cleaned up later, so
+   * its session must not linger as an orphan either), then mark the run failed. */
+  private async failRun(run: PipelineRun, reason: string): Promise<void> {
+    this.logger.warn(`pipeline ${run.id}: ${reason} — failing`);
+    const latest = (await this.runs.get(run.team, run.id)) ?? run;
+    await this.closeRunSession(latest.sessionId);
+    await this.runs.update(run.team, run.id, { status: 'failed' });
+  }
+
   /** The active section + its parsed phases (empty array if none parsed yet). */
   private async activeSection(
     run: PipelineRun,
@@ -522,10 +759,12 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
   ): Promise<void> {
     const resolvedRole = role || reopen?.currentRole || '';
     if (!run.worktreeId || !run.project || !run.notifyThread) {
-      this.logger.warn(`pipeline ${run.id}: missing worktree/project/thread — failing`);
-      await this.runs.update(run.team, run.id, { status: 'failed' });
+      await this.failRun(run, 'missing worktree/project/thread');
       return;
     }
+    // Reclaim the session this open supersedes before we overwrite run.sessionId — otherwise each
+    // phase/review transition strands the previous one as an idle orphan in the worktree.
+    await this.closeRunSession(run.sessionId);
     const session = await this.runner.openStageSession({
       role: resolvedRole,
       team: run.team,
@@ -553,13 +792,23 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
   ): string {
     const prior = sections
       .slice(0, run.sectionIndex)
+      .filter((s) => s.status === 'done')
       .map((s) => s.name)
       .join(', ');
+    const priorSection = sections[run.sectionIndex - 1];
+    const designAvailable =
+      priorSection?.phaseRole === DESIGN_ROLE && priorSection.status === 'done';
     const parts = [
       `You are planning the "${section.name}" section of a larger feature, to be built in this worktree.`,
+      run.overview
+        ? `The agreed HIGH-LEVEL PLAN for the whole feature (your north star — plan this section to fit it):\n${run.overview}`
+        : undefined,
       section.brief ? `This section's focus: ${section.brief}` : undefined,
       prior
         ? `Earlier sections already shipped into THIS worktree: ${prior}. Read the current worktree state before planning — build on what's there, don't redo it.`
+        : undefined,
+      designAvailable
+        ? `The APPROVED design (specs + reference) is in the worktree under \`design/\` — your plan must implement it faithfully over the existing functional UI.`
         : undefined,
       `Produce a HIGHLY DETAILED, fully-specified implementation plan for THIS section only. Break it into as many sequential PHASES as it needs — each phase a coherent, independently-committable chunk. Do NOT implement; this is a plan and goes to Dennis for approval before any code is written.`,
       `End your plan with a fenced code block tagged \`phases\` containing a JSON array, one object per phase, e.g.:\n\`\`\`phases\n[{"id":1,"title":"DB schema + migration"},{"id":2,"title":"service + API endpoint"}]\n\`\`\`\nThe orchestrator parses it to chunk the build; if you omit it the whole plan runs as one phase.`,

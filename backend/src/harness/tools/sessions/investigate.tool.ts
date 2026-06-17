@@ -28,6 +28,13 @@ const investigateSchema = z.object({
     .describe(
       'Which worktree to read in. Omit to use your latest worktree (or to auto-open a fresh one if you have none) — you rarely need to set this.',
     ),
+  board_task_id: z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      "The board task this read grounds (#N) — set it when you're grounding a feature's section breakdown so the decomposition traces to a real code read (the dispatch guard looks for an investigate tied to the task).",
+    ),
 });
 
 /**
@@ -56,7 +63,9 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
   ) {}
 
   async execute(
-    { question, intent, worktreeId }: z.infer<typeof investigateSchema>,
+    { question, intent, worktreeId, board_task_id }: z.infer<
+      typeof investigateSchema
+    >,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
@@ -84,6 +93,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
       openingTask,
       mode: 'investigate',
       engine,
+      boardTaskId: board_task_id,
       parentChatTrace: ctx.parentChatTrace,
     });
     return `Investigating in ${wt.id}${wt.created ? ' (opened a fresh worktree)' : ''}: ${sessionId} (${engine}, read-only). You're notified when it reports back; close_session it once you have your answer.`;

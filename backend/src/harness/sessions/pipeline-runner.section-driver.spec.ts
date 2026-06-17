@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PipelineRunnerService } from './pipeline-runner.service';
 
 /**
@@ -33,6 +37,7 @@ class FakeRunStore {
       sectionIndex: n.sectionIndex ?? 0,
       phaseIndex: n.phaseIndex ?? 0,
       planningSubstep: n.planningSubstep,
+      overview: n.overview,
     };
     this.rows.set(id, row);
     return { ...row };
@@ -124,7 +129,8 @@ function build() {
   const review = {
     shipTask: vi.fn(async () => ({ ok: true, prUrl: 'http://pr/1' })),
   };
-  const boardEvents = { onEvent: vi.fn() };
+  const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
+  const worktrees = { get: vi.fn(() => ({ path: '' })) };
 
   const svc = new PipelineRunnerService(
     runs as never,
@@ -137,8 +143,20 @@ function build() {
     proposals as never,
     review as never,
     boardEvents as never,
+    worktrees as never,
   );
-  return { svc, runs, sectionStore, runner, board, plans, proposals, review };
+  return {
+    svc,
+    runs,
+    sectionStore,
+    runner,
+    board,
+    plans,
+    proposals,
+    review,
+    boardEvents,
+    worktrees,
+  };
 }
 
 const TEAM = 'T1';
@@ -355,6 +373,116 @@ describe('PipelineRunnerService — section-driver FSM', () => {
     expect((await runs.getByTask(TEAM, 15))?.status).toBe('running');
   });
 
+  it('design section pauses at the gate; skip skips it + its implementer and ships the functional version', async () => {
+    const { svc, runs, runner, review, boardEvents } = build();
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, 31))!;
+      await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate(
+        {
+          id: run.sessionId,
+          status: 'idle',
+          boardTaskId: 31,
+          team: TEAM,
+          notifyThread: 'thread',
+          project: 'proj',
+          lastReport,
+        },
+      );
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: 31,
+      worktreeId: 'wt-6',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [
+        { name: 'backend', role: 'phase_backend' },
+        { name: 'design', role: 'design' },
+        { name: 'frontend-redesign', role: 'phase_frontend' },
+      ],
+    });
+    await idle(planMd(1)); // backend plan → gate
+    await (svc as never as { onBoardEvent: (e: Row) => Promise<void> }).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: 31,
+    });
+    await idle(); // backend phase → review
+    await idle(); // review → backend done → reaches the DESIGN gate (no session opened)
+
+    const paused = (await runs.getByTask(TEAM, 31))!;
+    expect(paused.status).toBe('paused');
+    expect(paused.planningSubstep).toBe('awaiting_design');
+    expect(runner.openStageSession.mock.calls.map((c) => c[0].mode)).toEqual([
+      'plan',
+      'execute',
+      'investigate',
+    ]);
+    expect(
+      boardEvents.emit.mock.calls.some((c) => c[0]?.kind === 'design-gate'),
+    ).toBe(true);
+
+    // Skip → design + its implementer skipped → no sections left → ship functional version.
+    const r = await svc.skipDesign(TEAM, 31);
+    expect(r.ok).toBe(true);
+    expect(review.shipTask).toHaveBeenCalledTimes(1);
+    expect((await runs.getByTask(TEAM, 31))?.status).toBe('done');
+  });
+
+  it('attach_design unzips into the worktree and the next section builds against it', async () => {
+    const { svc, runs, runner, worktrees } = build();
+    const wtPath = mkdtempSync(join(tmpdir(), 'wt-'));
+    const srcDir = mkdtempSync(join(tmpdir(), 'design-src-'));
+    writeFileSync(join(srcDir, 'tokens.json'), '{"color":"blue"}');
+    const zipPath = join(srcDir, 'design.zip');
+    execFileSync('zip', ['-j', zipPath, join(srcDir, 'tokens.json')]);
+    worktrees.get.mockReturnValue({ path: wtPath });
+
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: 41,
+      worktreeId: 'wt-7',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [
+        { name: 'design', role: 'design' }, // design FIRST → immediate gate
+        { name: 'frontend', role: 'phase_frontend' },
+      ],
+    });
+    expect((await runs.getByTask(TEAM, 41))?.planningSubstep).toBe('awaiting_design');
+
+    const r = await svc.attachDesign(TEAM, 41, zipPath);
+    expect(r.ok).toBe(true);
+    expect(existsSync(join(wtPath, 'design', 'tokens.json'))).toBe(true);
+
+    const resumed = (await runs.getByTask(TEAM, 41))!;
+    expect(resumed.planningSubstep).toBe('drafting'); // advanced to the implementer's plan
+    expect(
+      runner.openStageSession.mock.calls.some(
+        (c) => c[0].mode === 'plan' && c[0].role === 'phase_frontend',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a non-local (URL) design source', async () => {
+    const { svc, runs } = build();
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: 51,
+      worktreeId: 'wt-8',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'design', role: 'design' }],
+    });
+    expect((await runs.getByTask(TEAM, 51))?.planningSubstep).toBe('awaiting_design');
+    const r = await svc.attachDesign(TEAM, 51, 'https://example.com/design.zip');
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/LOCAL path/i);
+  });
+
   it('falls back to one phase when the plan has no phases block', async () => {
     const { svc, runs, runner } = build();
     await svc.start({
@@ -394,5 +522,79 @@ describe('PipelineRunnerService — section-driver FSM', () => {
       'execute',
       'investigate',
     ]);
+  });
+
+  it('threads the dispatch overview (high-level plan) into every section plan prompt', async () => {
+    const { svc, runner } = build();
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: 81,
+      worktreeId: 'wt-10',
+      notifyThread: 'thread',
+      kind: 'feature',
+      overview: 'HIGH-LEVEL: build a profile-picture upload across the stack.',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    const planCall = runner.openStageSession.mock.calls.find(
+      (c) => c[0].mode === 'plan',
+    );
+    expect(planCall?.[0].task).toContain('HIGH-LEVEL PLAN');
+    expect(planCall?.[0].task).toContain('profile-picture upload');
+  });
+
+  it('relays a plan session that asks QUESTIONS (no approval card); answer_section delivers the reply', async () => {
+    const { svc, runs, proposals, boardEvents, runner } = build();
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: 71,
+      worktreeId: 'wt-9',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    const run0 = (await runs.getByTask(TEAM, 71))!;
+
+    // The plan session ends with QUESTIONS, not a finished plan — must NOT be proposed as a plan.
+    await (svc as never as { onSessionUpdate: (s: Row) => Promise<void> }).onSessionUpdate({
+      id: run0.sessionId,
+      status: 'idle',
+      boardTaskId: 71,
+      team: TEAM,
+      notifyThread: 'thread',
+      project: 'proj',
+      lastReport: 'Q1 — which datastore should I use?',
+      lastReportKind: 'questions',
+    });
+
+    expect(proposals.propose).not.toHaveBeenCalled();
+    expect(
+      boardEvents.emit.mock.calls.some(
+        (c) => (c[0] as Row)?.kind === 'section-questions',
+      ),
+    ).toBe(true);
+    const afterQ = (await runs.getByTask(TEAM, 71))!;
+    expect(afterQ.planningSubstep).toBe('drafting'); // still drafting, NOT paused at a gate
+    expect(afterQ.status).toBe('running');
+
+    // answer_section feeds Atlas's answers back into the SAME session (mode 'plan'), via replySession.
+    const sessions = (
+      svc as never as { sessions: { get: ReturnType<typeof vi.fn> } }
+    ).sessions;
+    sessions.get = vi.fn(async () => ({
+      id: afterQ.sessionId,
+      status: 'idle',
+      lastReportKind: 'questions',
+      mode: 'plan',
+    }));
+    (runner as Row).replySession = vi.fn(async () => ({ ok: true }));
+    const r = await svc.answerSectionQuestions(TEAM, 71, 'Use Postgres.');
+    expect(r.ok).toBe(true);
+    expect((runner as Row).replySession).toHaveBeenCalledWith(
+      afterQ.sessionId,
+      'Use Postgres.',
+      'plan',
+    );
   });
 });

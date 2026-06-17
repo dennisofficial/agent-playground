@@ -47,6 +47,27 @@ export type BoardEvent =
   // from BoardStore.transition on the unique awaiting_approval→planning / →open verdict transitions.
   | { kind: 'ticket-changes-requested'; team: string; taskId: number }
   | { kind: 'ticket-denied'; team: string; taskId: number }
+  // A section-driver run reached a DESIGN section — paused for the human to attach the design
+  // artifact (attach_design) or skip it (skip_design). Narrated so Atlas prompts Dennis.
+  | {
+      kind: 'design-gate';
+      team: string;
+      taskId: number;
+      section: string;
+      notifyThread?: string;
+    }
+  // A section plan/build session ended with QUESTIONS instead of a finished plan/build — relayed so
+  // Atlas answers (answer_section) or brings the product calls to Dennis. NOT a plan gate; no card.
+  | {
+      kind: 'section-questions';
+      team: string;
+      taskId: number;
+      /** The section that asked (undefined for a bugfix run). */
+      section?: string;
+      /** The full questions text the session reported. */
+      questions: string;
+      notifyThread?: string;
+    }
   | {
       kind: 'pr-opened';
       team: string;

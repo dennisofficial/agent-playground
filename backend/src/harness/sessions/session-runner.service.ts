@@ -673,9 +673,15 @@ export class SessionRunnerService {
   /**
    * Close a session its owner is done with. Mid-turn ('running') the in-flight run is aborted and
    * its result discarded; 'idle'/'failed' sessions just close. Closing is when completed work is
-   * logged (a close with a report = a finished thread of work) — the worktree stays.
+   * logged (a close with a report = a finished thread of work) — the worktree stays. `logWork: false`
+   * suppresses that worklog write — used when the pipeline reclaims its own internal stage sessions,
+   * which aren't standup-worthy and would otherwise flood `recent_work` under synthetic phase owners.
    */
-  async closeSession(sessionId: string): Promise<ActionResult> {
+  async closeSession(
+    sessionId: string,
+    opts: { logWork?: boolean } = {},
+  ): Promise<ActionResult> {
+    const { logWork = true } = opts;
     const session = await this.sessions.get(sessionId);
     if (!session) return { ok: false, reason: `No session "${sessionId}".` };
     if (session.status === 'closed') {
@@ -684,7 +690,7 @@ export class SessionRunnerService {
     const controller = this.controllers.get(sessionId);
     await this.sessions.update(sessionId, { status: 'closed' }); // mark first so the turn race re-read sees it
     controller?.abort();
-    if (session.lastReport) {
+    if (logWork && session.lastReport) {
       // Durable record so standups / "what did you do" have a real answer.
       await this.worklog
         .logWork({

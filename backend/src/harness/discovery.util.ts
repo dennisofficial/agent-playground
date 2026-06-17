@@ -6,7 +6,7 @@ import { DiscoveryService } from '@nestjs/core';
  * decorator like `@AIEmployee()` / `@HarnessTool()`).
  *
  * Constraint this imposes on modules: decorated classes must be registered as PLAIN CLASS providers
- * (`providers: [AlexEmployee]`) — `useFactory`/`useValue` providers have no `metatype`, so discovery
+ * (`providers: [AtlasEmployee]`) — `useFactory`/`useValue` providers have no `metatype`, so discovery
  * cannot see their decorator metadata. Registries built on this fail loudly at boot instead.
  */
 export function collectDecorated<T>(

@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { Identity, recallProjects } from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { ACTIVE_BOARD_STATUSES, BoardStore } from './board-store';
+import { PipelineRunStore } from './pipeline-run-store';
+import { PipelineRunSectionStore } from './pipeline-run-section-store';
 import { SemanticMemory } from './semantic-memory';
 import { SessionNoteStore } from './session-note.store';
 import type { SessionNote } from './session-note.store';
@@ -13,6 +15,8 @@ const REMINDER_CAP = 12;
 const BOARD_TASK_CAP = 5;
 // Cap on open session notes shown in the notes slot.
 const NOTES_CAP = 10;
+// Cap on in-flight pipeline runs shown in the pipelines slot.
+const PIPELINE_CAP = 5;
 
 /** Priority order for note kinds: blockers surface first, then todos, hypotheses, handoffs. */
 const NOTE_KIND_ORDER: Record<string, number> = {
@@ -59,6 +63,8 @@ export class FetchService {
     private readonly tasks: TaskStore,
     private readonly board: BoardStore,
     private readonly sessionNotes: SessionNoteStore,
+    private readonly pipelineRuns: PipelineRunStore,
+    private readonly pipelineSections: PipelineRunSectionStore,
   ) {}
 
   /**
@@ -180,6 +186,49 @@ export class FetchService {
       )
       .join('\n');
     return `${bot.teamLead ? 'Open reminders (team)' : 'On your plate'}:\n${lines}${more > 0 ? `\n…and ${more} more` : ''}`;
+  }
+
+  /**
+   * The in-flight pipelines slice (`pipelines` refresh scope) — the "no blind orchestrator" context.
+   * One concise line per active run, from the durable run/section rows only (cheap SQL — no git or
+   * session reads), so the lead always knows what his pipelines are doing without opening any view.
+   * Team-scoped (every run is the lead's), capped at PIPELINE_CAP; '' when none are active.
+   */
+  async fetchPipelines(id: Identity): Promise<string> {
+    const runs = await this.pipelineRuns.listActive(id.team).catch(() => []);
+    if (runs.length === 0) return '';
+    const shown = runs.slice(0, PIPELINE_CAP);
+    const more = runs.length - shown.length;
+    const lines = await Promise.all(
+      shown.map(async (run) => {
+        if (run.kind === 'bugfix') {
+          const state = run.status === 'paused' ? 'paused' : 'executing';
+          return `- [#${run.taskId}] bugfix: ${state}`;
+        }
+        const sections = await this.pipelineSections
+          .listForRun(run.id)
+          .catch(() => []);
+        const total = sections.length;
+        const active = sections[run.sectionIndex];
+        const where = total
+          ? `section ${Math.min(run.sectionIndex + 1, total)}/${total}${active ? ` '${active.name}'` : ''}`
+          : 'section —';
+        let label: string;
+        if (run.planningSubstep === 'gate')
+          label = 'PAUSED at plan gate (your approval)';
+        else if (run.planningSubstep === 'awaiting_design')
+          label = 'PAUSED at design gate';
+        else if (run.planningSubstep === 'drafting') label = 'planning';
+        else if (run.mode === 'execute')
+          label = active?.phaseCount
+            ? `building phase ${run.phaseIndex + 1}/${active.phaseCount}`
+            : 'building';
+        else if (run.mode === 'investigate') label = 'review running';
+        else label = run.status;
+        return `- [#${run.taskId}] feature — ${where}: ${label}`;
+      }),
+    );
+    return `Active pipelines:\n${lines.join('\n')}${more > 0 ? `\n…and ${more} more` : ''}`;
   }
 
   /**

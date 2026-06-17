@@ -336,14 +336,18 @@ export class BotGraphNodes {
       const compactionNote = isCompacted
         ? `Earlier conversation has been summarized (${state.summaries.length || 1} summary block${(state.summaries.length || 1) > 1 ? 's' : ''}, covers messages 1–${state.summarizedUpTo}). See session summaries in conversation history above.`
         : undefined;
-      const [memory, tasks, work] = await Promise.all([
+      const [memory, tasks, work, pipelines] = await Promise.all([
         this.fetchService
           .fetchMemory(bot, id, state.memorySuggestions, compactionNote)
           .catch(() => ''),
         this.fetchService.fetchTasks(bot, id).catch(() => ''),
         this.workContext(bot).catch(() => ''),
+        // The "no blind orchestrator" slice — only the lead (Atlas) owns/drives pipelines.
+        bot.teamLead
+          ? this.fetchService.fetchPipelines(id).catch(() => '')
+          : Promise.resolve(''),
       ]);
-      const context: ContextParts = { memory, tasks, work };
+      const context: ContextParts = { memory, tasks, work, pipelines };
       // recalled = the one-shot pre-LLM snapshot for the conductor's `recall` event.
       // llm renders live context from `context` on every call.
       return {
@@ -667,7 +671,21 @@ export class BotGraphNodes {
             })
             .catch(() => {})
         : Promise.resolve();
-      await Promise.all([refreshWork, refreshMemory, refreshTasks]);
+      const refreshPipelines =
+        scopes.has('pipelines') && bot.teamLead
+          ? this.fetchService
+              .fetchPipelines(id)
+              .then((p) => {
+                next.pipelines = p;
+              })
+              .catch(() => {})
+          : Promise.resolve();
+      await Promise.all([
+        refreshWork,
+        refreshMemory,
+        refreshTasks,
+        refreshPipelines,
+      ]);
       // Clear the forced scopes (one-shot) so a later organic refresh this turn discovers normally.
       return { context: next, forcedRefreshScopes: undefined }; // recalled untouched — no 2nd recall event
     };

@@ -53,12 +53,14 @@ describe('PipelineRunStore + PipelineRunSectionStore (live Postgres)', () => {
       notifyThread: 'slack:T1:C1',
       project: 'proj',
       currentRole: 'phase_backend', // the reserved-word column
+      overview: 'high-level: ship X across the stack',
     });
     expect(created.kind).toBe('feature'); // default
     expect(created.sectionIndex).toBe(0);
     expect(created.phaseIndex).toBe(0);
     expect(created.planningSubstep).toBeUndefined();
     expect(created.currentRole).toBe('phase_backend');
+    expect(created.overview).toBe('high-level: ship X across the stack');
 
     const updated = await runs.update('T1', created.id, {
       status: 'paused',

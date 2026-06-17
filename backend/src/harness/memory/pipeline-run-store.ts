@@ -5,8 +5,9 @@ import { rawRows, toIso } from './sql';
 export type PipelineRunStatus = 'running' | 'paused' | 'done' | 'failed';
 /** 'feature' = dynamic section-driver loop; 'bugfix' = single execute session → PR gate. */
 export type PipelineRunKind = 'feature' | 'bugfix';
-/** The active section's planning sub-state ('drafting' | 'gate'), or undefined while building. */
-export type PlanningSubstep = 'drafting' | 'gate';
+/** The active section's sub-state: 'drafting'/'gate' (plan), 'awaiting_design' (a design section
+ * paused for the human's artifact), or undefined while building. */
+export type PlanningSubstep = 'drafting' | 'gate' | 'awaiting_design';
 
 export interface PipelineRun {
   id: string;
@@ -25,6 +26,8 @@ export interface PipelineRun {
   sectionIndex: number;
   phaseIndex: number;
   planningSubstep?: PlanningSubstep;
+  /** The agreed high-level plan (feature runs) — seeds every section's just-in-time plan prompt. */
+  overview?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +48,7 @@ export interface NewPipelineRun {
   sectionIndex?: number;
   phaseIndex?: number;
   planningSubstep?: PlanningSubstep;
+  overview?: string;
 }
 
 interface PipelineRunRow {
@@ -64,6 +68,7 @@ interface PipelineRunRow {
   section_index: number | string;
   phase_index: number | string;
   planning_substep: string | null;
+  overview: string | null;
   created_at: unknown;
   updated_at: unknown;
 }
@@ -85,6 +90,7 @@ const toRun = (r: PipelineRunRow): PipelineRun => ({
   sectionIndex: Number(r.section_index),
   phaseIndex: Number(r.phase_index),
   planningSubstep: (r.planning_substep as PlanningSubstep) ?? undefined,
+  overview: r.overview ?? undefined,
   createdAt: toIso(r.created_at),
   updatedAt: toIso(r.updated_at),
 });
@@ -108,8 +114,8 @@ export class PipelineRunStore {
     // current_role") and the INSERT never runs. Same applies to the UPDATE in update() below.
     const rows = await this.q(
       `INSERT INTO pipeline_runs
-         (team_id, task_id, pipeline, stage_index, status, "current_role", mode, worktree_id, session_id, notify_thread, project, kind, section_index, phase_index, planning_substep, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now())
+         (team_id, task_id, pipeline, stage_index, status, "current_role", mode, worktree_id, session_id, notify_thread, project, kind, section_index, phase_index, planning_substep, overview, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
        RETURNING *`,
       [
         n.team,
@@ -127,6 +133,7 @@ export class PipelineRunStore {
         n.sectionIndex ?? 0,
         n.phaseIndex ?? 0,
         n.planningSubstep ?? null,
+        n.overview ?? null,
       ],
     );
     return toRun(rows[0]);

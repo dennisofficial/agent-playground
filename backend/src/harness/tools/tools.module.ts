@@ -5,7 +5,6 @@ import { ChannelModule } from '../channel/channel.module';
 import { ConductorEventsModule } from '../conductor/conductor-events.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { MemoryModule } from '../memory/memory.module';
-import { PipelinesModule } from '../pipelines/pipelines.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { WorktreesModule } from '../worktrees/worktrees.module';
@@ -63,8 +62,11 @@ import { OpenPrTool } from './worktrees/open-pr.tool';
 import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 import {
+  AnswerSectionTool,
+  AttachDesignTool,
   DispatchPipelineTool,
   EnqueueFindingTool,
+  SkipDesignTool,
 } from './pipelines/pipeline.tools';
 
 /**
@@ -79,7 +81,6 @@ import {
     ConductorEventsModule,
     EmployeesModule,
     MemoryModule,
-    PipelinesModule,
     ProjectsModule,
     ProposalModule,
     SessionsModule,
@@ -144,9 +145,12 @@ import {
     CloseStandupTool,
     // artifacts
     ShareArtifactTool,
-    // pipelines (orchestrator dispatch + backlog enqueue)
+    // pipelines (orchestrator dispatch + backlog enqueue + design gate)
     DispatchPipelineTool,
     EnqueueFindingTool,
+    AttachDesignTool,
+    SkipDesignTool,
+    AnswerSectionTool,
   ],
 })
 export class ToolsModule {}

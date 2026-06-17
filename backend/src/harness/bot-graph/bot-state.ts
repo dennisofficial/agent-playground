@@ -5,22 +5,25 @@ import type { GateAction, MessageUsage } from '../domain/conductor-events';
 import type { RefreshScope } from '../tools/tool.types';
 
 /**
- * The three independently-refreshable slices of the pre-LLM context. Stored separately so the
+ * The independently-refreshable slices of the pre-LLM context. Stored separately so the
  * post-tools `refreshContext` node can recompute only the dirtied parts without paying for a full
  * re-fetch every tool batch.
- * - `memory` — semantic facts + cross-project facts (embedding-based; set once by `recall`)
- * - `tasks`  — the reminders plate (cheap SQL; refreshed by add_task / complete_task)
- * - `work`   — worktrees + open sessions (registry reads; refreshed by create/remove_worktree, close_session)
+ * - `memory`    — semantic facts + cross-project facts (embedding-based; set once by `recall`)
+ * - `tasks`     — the reminders plate (cheap SQL; refreshed by add_task / complete_task)
+ * - `work`      — worktrees + open sessions (registry reads; refreshed by create/remove_worktree, close_session)
+ * - `pipelines` — in-flight pipeline runs (cheap SQL; refreshed by dispatch_pipeline / answer_section / design gates).
+ *                 The "no blind orchestrator" slice: the lead sees live run state, never blind to automations.
  */
 export interface ContextParts {
   work: string;
   memory: string;
   tasks: string;
+  pipelines: string;
 }
 
-/** Render order preserves today's output: facts/others → plate → worktrees/sessions. */
+/** Render order: facts/others → plate → worktrees/sessions → in-flight pipelines (lowest priority, last). */
 export const renderContext = (c: ContextParts): string =>
-  [c.memory, c.tasks, c.work].filter((s) => s.trim()).join('\n\n');
+  [c.memory, c.tasks, c.work, c.pipelines].filter((s) => s.trim()).join('\n\n');
 
 /** What the conductor reads out of a node's streamed delta (a partial of BotState). */
 export interface BotStateDelta {
@@ -151,8 +154,8 @@ export const BotState = Annotation.Root({
    * call via `renderContext`. Reset by `mark_seen` / `pause` alongside `recalled`. */
   context: Annotation<ContextParts>({
     reducer: (_: ContextParts, b: ContextParts) =>
-      b ?? { work: '', memory: '', tasks: '' },
-    default: () => ({ work: '', memory: '', tasks: '' }),
+      b ?? { work: '', memory: '', tasks: '', pipelines: '' },
+    default: () => ({ work: '', memory: '', tasks: '', pipelines: '' }),
   }),
   /** The turn's retrieval query — persisted so `refreshContext` can re-run `fetchMemory` after the
    * cursor has advanced past the fresh messages. Reset by `mark_seen` / `pause`. */

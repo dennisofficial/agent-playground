@@ -106,6 +106,21 @@ describe('investigate', () => {
     expect(task).not.toContain('FOCUS:'); // no intent → no emphasis line
   });
 
+  it('threads board_task_id to openSession as boardTaskId (the grounding artifact)', async () => {
+    const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+    await tool.execute(
+      { question: 'how does X sit in the repo?', board_task_id: 42 },
+      ctx,
+    );
+    expect(openSession.mock.calls[0][0].boardTaskId).toBe(42);
+  });
+
+  it('omits boardTaskId when board_task_id is not given', async () => {
+    const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+    await tool.execute({ question: 'q' }, ctx);
+    expect(openSession.mock.calls[0][0].boardTaskId).toBeUndefined();
+  });
+
   it('injects a distinct emphasis line per intent', async () => {
     const cases: Array<['trace' | 'debug' | 'review', string]> = [
       ['trace', 'walk the exact path'],

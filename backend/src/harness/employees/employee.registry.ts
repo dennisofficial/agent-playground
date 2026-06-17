@@ -179,17 +179,30 @@ export class EmployeeRegistry implements OnModuleInit {
     return /@(here|channel|everyone)\b/i.test(text);
   }
 
-  /** One-line roster summary for prompts ("Alex — backend engineer; Atlas — team lead"). */
+  /**
+   * One-line CHAT-roster summary ("Atlas — orchestrator"). Chat-roster only — phase-configs never leak
+   * in (asserted by discovery.spec). Distinct from the prompt `${roster}`, which is the pipeline roles
+   * (see `phaseRoleSummary`): with a single orchestrator this would be a useless prompt input.
+   */
   rosterSummary(): string {
     return this.roster.map((b) => `${b.name} — ${b.role}`).join('; ');
   }
 
   /**
+   * One-line summary of the pipeline phase ROLES ("Backend — backend engineer; Frontend — …"). This is
+   * what prompts render as `${roster}` — "the specialist roles you dispatch / in the pipeline" — since
+   * the specialists are the phase-configs, not chat participants.
+   */
+  private phaseRoleSummary(): string {
+    return this.phaseConfigs.map((p) => `${p.name} — ${p.role}`).join('; ');
+  }
+
+  /**
    * The agnostic context the harness injects into an employee's builders (`roleContext`/`planEngine`/
-   * `capabilities`). Static today (team frame + roster summary), a DB row tomorrow. Single source so
-   * the lifecycle runner, session tools, and PersonaService all build identical bytes.
+   * `capabilities`). Static today (team frame + the pipeline phase roles), a DB row tomorrow. Single
+   * source so the lifecycle runner, session tools, and PersonaService all build identical bytes.
    */
   context(): EmployeeContext {
-    return { team: TEAM_CONTEXT, roster: this.rosterSummary() };
+    return { team: TEAM_CONTEXT, roster: this.phaseRoleSummary() };
   }
 }

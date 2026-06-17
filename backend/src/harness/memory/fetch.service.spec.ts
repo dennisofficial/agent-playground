@@ -3,6 +3,8 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { makeEmployee } from '../employees/employee.testing';
 import { CLI_IDENTITY, type Identity } from '../domain/identity';
 import { FetchService } from './fetch.service';
+import type { PipelineRunStore } from './pipeline-run-store';
+import type { PipelineRunSectionStore } from './pipeline-run-section-store';
 import type { SemanticMemory } from './semantic-memory';
 import type { TaskStore } from './task-store';
 import type { BoardStore } from './board-store';
@@ -26,6 +28,13 @@ const makeBot = (
 });
 
 const id: Identity = { ...CLI_IDENTITY };
+
+const stubPipelineRuns = (runs: unknown[] = []) =>
+  ({ listActive: vi.fn().mockResolvedValue(runs) }) as unknown as PipelineRunStore;
+const stubPipelineSections = (sections: unknown[] = []) =>
+  ({
+    listForRun: vi.fn().mockResolvedValue(sections),
+  }) as unknown as PipelineRunSectionStore;
 
 /** Build a FetchService with mocked dependencies. */
 function makeService(opts: {
@@ -52,7 +61,7 @@ function makeService(opts: {
   } as unknown as SessionNoteStore;
 
   return {
-    svc: new FetchService(semantic, tasks, board, sessionNotes),
+    svc: new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections()),
     semantic,
     tasks,
     board,
@@ -102,7 +111,7 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const sessionNotes = {
         listOpen: vi.fn().mockResolvedValue([]),
       } as unknown as SessionNoteStore;
-      const svc = new FetchService(semantic, tasks, board, sessionNotes);
+      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections());
       const result = await svc.fetchContext(makeBot(), id);
       expect(result).toContain('Standing context:');
       expect(result).toContain('backend engineer');
@@ -196,7 +205,7 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const sessionNotes = {
         listOpen: vi.fn().mockResolvedValue([]),
       } as unknown as SessionNoteStore;
-      const svc = new FetchService(semantic, tasks, board, sessionNotes);
+      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections());
       const result = await svc.fetchContext(makeBot(), id);
       // Should still return standing context, no board section
       expect(result).toContain('Standing context:');
@@ -421,7 +430,7 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const sessionNotes = {
         listOpen: vi.fn().mockRejectedValue(new Error('db error')),
       } as unknown as SessionNoteStore;
-      const svc = new FetchService(semantic, tasks, board, sessionNotes);
+      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections());
       const result = await svc.fetchContext(makeBot(), id);
       expect(result).toContain('Standing context:');
       expect(result).not.toContain('Open notes (this thread):');
@@ -490,5 +499,79 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const result = await svc.fetchContext(makeBot(), id);
       expect(result).not.toContain('Memory suggestions');
     });
+  });
+});
+
+describe('FetchService.fetchPipelines (no-blind awareness slice)', () => {
+  const svcWith = (runs: unknown[], sections: unknown[] = []) =>
+    new FetchService(
+      { standingContext: vi.fn().mockResolvedValue('') } as unknown as SemanticMemory,
+      { listTasks: vi.fn(), openTasks: vi.fn() } as unknown as TaskStore,
+      { list: vi.fn() } as unknown as BoardStore,
+      { listOpen: vi.fn() } as unknown as SessionNoteStore,
+      stubPipelineRuns(runs),
+      stubPipelineSections(sections),
+    );
+
+  it('returns "" when no runs are active', async () => {
+    expect(await svcWith([]).fetchPipelines(id)).toBe('');
+  });
+
+  it('labels a feature run paused at the plan gate', async () => {
+    const out = await svcWith(
+      [
+        {
+          id: 'r1',
+          taskId: 12,
+          kind: 'feature',
+          sectionIndex: 1,
+          phaseIndex: 0,
+          status: 'paused',
+          planningSubstep: 'gate',
+        },
+      ],
+      [{ name: 'backend' }, { name: 'frontend' }],
+    ).fetchPipelines(id);
+    expect(out).toContain('Active pipelines:');
+    expect(out).toContain('[#12]');
+    expect(out).toContain("section 2/2 'frontend'");
+    expect(out).toContain('PAUSED at plan gate (your approval)');
+  });
+
+  it('labels a feature run building a phase', async () => {
+    const out = await svcWith(
+      [
+        {
+          id: 'r1',
+          taskId: 7,
+          kind: 'feature',
+          sectionIndex: 0,
+          phaseIndex: 2,
+          status: 'running',
+          mode: 'execute',
+        },
+      ],
+      [{ name: 'backend', phaseCount: 4 }],
+    ).fetchPipelines(id);
+    expect(out).toContain("section 1/1 'backend'");
+    expect(out).toContain('building phase 3/4');
+  });
+
+  it('labels a bugfix run', async () => {
+    const out = await svcWith([
+      { id: 'r2', taskId: 9, kind: 'bugfix', status: 'running' },
+    ]).fetchPipelines(id);
+    expect(out).toContain('[#9] bugfix: executing');
+  });
+
+  it('caps at 5 runs and notes the overflow', async () => {
+    const runs = Array.from({ length: 7 }, (_, i) => ({
+      id: `r${i}`,
+      taskId: i,
+      kind: 'bugfix',
+      status: 'running',
+    }));
+    const out = await svcWith(runs).fetchPipelines(id);
+    expect(out).toContain('…and 2 more');
   });
 });
