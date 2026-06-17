@@ -2,9 +2,11 @@ import { CreateModule } from '@workspace/nestjs-core';
 import { BotGraphModule } from '../bot-graph/bot-graph.module';
 import { ChannelModule } from '../channel/channel.module';
 import { EmployeesModule } from '../employees/employees.module';
+import { LlmModule } from '../llm/llm.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
+import { AddressingGate } from './addressing-gate';
 import { ConductorEventsModule } from './conductor-events.module';
 import { ConductorService } from './conductor.service';
 
@@ -21,11 +23,12 @@ import { ConductorService } from './conductor.service';
     ChannelModule,
     ConductorEventsModule,
     EmployeesModule,
+    LlmModule,
     LlmKeysModule,
     MemoryModule,
     SessionsModule,
   ],
-  services: [ConductorService],
+  services: [AddressingGate, ConductorService],
   exports: [ConductorEventsModule],
 })
 export class ConductorModule {}

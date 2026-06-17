@@ -38,6 +38,7 @@ import {
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
+import { AddressingGate } from './addressing-gate';
 import { boardEventRelayPrompt, sessionRelayPrompt } from './seed-relay';
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import {
@@ -130,6 +131,7 @@ export class ConductorService
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
     private readonly boardEvents: BoardEventsBus,
+    private readonly gate: AddressingGate,
   ) {}
 
   /** Atlas — the single orchestrator (the one `teamLead`). */
@@ -409,7 +411,7 @@ export class ConductorService
           continue;
         }
         if (!this.hasWork(atlas, info.channelId)) continue;
-        this.claim(() => this.runBotGraph(atlas, { channelId: info.channelId }));
+        this.claim(() => this.runGatedTurn(atlas, info.channelId));
       }
     this.maybeResolveIdle();
   }
@@ -430,6 +432,50 @@ export class ConductorService
     return this.channel
       .since(this.cursors.get(bot.id, channelId), channelId)
       .some((m) => m.authorBotId !== bot.id);
+  }
+
+  /**
+   * Gate a room-triggered turn before paying for it. The chat surface is a real Slack channel that
+   * can contain OTHER humans, so not every message is Atlas's to answer: a DM, a broadcast, or an
+   * @Atlas/by-name hail runs immediately; an off-topic human-to-human message is CONSUMED (cursor
+   * advanced to the latest seq) WITHOUT a turn — so Atlas neither barges in nor burns a full turn
+   * just to stay quiet. Seed wakes never reach here (they're gate-bypassed by design).
+   */
+  private async runGatedTurn(
+    bot: EmployeeDefinition,
+    channelId: string,
+  ): Promise<void> {
+    const unseen = this.channel
+      .since(this.cursors.get(bot.id, channelId), channelId)
+      .filter((m) => m.authorBotId !== bot.id);
+    if (unseen.length === 0) return; // raced clear since hasWork
+    const latest = unseen[unseen.length - 1];
+    const isDm = !this.registry.isChannelKind(channelId);
+    const history = unseen
+      .slice(-8)
+      .map((m) => `${m.author}: ${m.text}`)
+      .join('\n');
+    const decision = await this.gate.decide({
+      bot,
+      isDm,
+      text: latest.text,
+      history,
+    });
+    if (decision === 'respond') {
+      await this.runBotGraph(bot, { channelId });
+      return;
+    }
+    // Skip: consume the unseen messages so the room settles — advance Atlas's cursor to the latest
+    // seq WITHOUT running a turn. Monotonic guard mirrors the post-turn cursor write.
+    const target = Math.max(...unseen.map((m) => m.seq));
+    const current = this.cursors.has(bot.id, channelId)
+      ? this.cursors.get(bot.id, channelId)
+      : 0;
+    this.cursors.set(bot.id, channelId, Math.max(current, target));
+    void this.cursors.flush().catch(() => {});
+    this.logger.debug(
+      `gate: ${bot.id} skipped ${channelId} up to seq ${target}`,
+    );
   }
 
   /** The roster members of a room (its bots — humans in `members` are identity participants). */

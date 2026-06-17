@@ -22,6 +22,7 @@ import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
 import type { BoardEvent, BoardEventsBus } from '../memory/board-events.bus';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorService } from './conductor.service';
+import { AddressingGate } from './addressing-gate';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /** Minimal synchronous channel double (same contract as ChannelService). */
@@ -121,6 +122,9 @@ class FakeRegistry {
   }
   teamIdOf(channelId: string): string {
     return this.map.get(channelId)?.teamId ?? 'local';
+  }
+  isChannelKind(channelId: string): boolean {
+    return (this.map.get(channelId)?.kind ?? 'channel') !== 'dm';
   }
   addMembers(channelId: string, ids: string[]): void {
     const info = this.map.get(channelId);
@@ -226,6 +230,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     creds,
     credCtx,
     boardEvents,
+    { decide: async () => 'respond' } as unknown as AddressingGate,
   );
   await conductor.onApplicationBootstrap();
   return {
