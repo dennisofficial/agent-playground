@@ -1,44 +1,24 @@
 import { auth } from './auth';
-import type { FactView, FactListResponse, TenantView, Tier } from '@workspace/shared';
+import type {
+  FactListResponse,
+  FactQuery,
+  FactView,
+  GithubTokenMeta,
+  ProjectRecord,
+  TenantView,
+  Tier,
+} from '@workspace/shared';
 
 // Re-export shared types so consumers can import them from this module.
-export type { FactView, FactListResponse, TenantView, Tier };
-
-/**
- * Type mirrors of backend/src/harness/projects/project.types.ts — two small interfaces; mirroring
- * beats coupling the web build to backend sources (keep in sync by hand).
- */
-
-/** Query params for `listFacts` / `listAllFacts`. All optional. */
-export interface FactQuery {
-  tier?: Tier;
-  projectId?: string;
-  botId?: string;
-  assertedBy?: string;
-  q?: string;
-  includeDeleted?: boolean;
-  includeGlobal?: boolean;
-  limit?: number;
-  offset?: number;
-  sort?: 'updated' | 'created';
-}
-
-export interface ProjectRecord {
-  projectId: string;
-  displayName: string;
-  gitUrl: string;
-  defaultBranch: string;
-  tokenName: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface GithubTokenMeta {
-  name: string;
-  isDefault: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+export type {
+  FactListResponse,
+  FactQuery,
+  FactView,
+  GithubTokenMeta,
+  ProjectRecord,
+  TenantView,
+  Tier,
+};
 
 // ── Memory Viewer API ────────────────────────────────────────────────────────────────────────────
 

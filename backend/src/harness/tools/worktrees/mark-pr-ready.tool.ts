@@ -60,6 +60,6 @@ export class MarkPrReadyTool implements IHarnessTool<typeof markReadySchema> {
     if (!res.ok)
       return `Couldn't mark #${board_task_id}'s PR ready: ${res.reason ?? 'unknown error'}.`;
 
-    return `Marked #${board_task_id}'s PR ready for review — it's Dennis's now. The team's notified; address any feedback in this same execute session (no re-approval); @Sam marks it done once Dennis accepts.`;
+    return `Marked #${board_task_id}'s PR ready for review — it's Dennis's now. The team's notified; address any feedback in this same execute session (no re-approval); the team lead marks it done once Dennis accepts.`;
   }
 }

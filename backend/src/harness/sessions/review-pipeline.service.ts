@@ -70,7 +70,7 @@ function aggregateTicketText(
 
 /**
  * The harness-driven PR self-review pipeline — the built-in replacement for the prose instruction
- * Sam kept forgetting ("self-review the PR, then mark it ready"). It runs as a SessionsModule service
+ * to self-review the PR, then mark it ready. It runs as a SessionsModule service
  * (it already has the engines, credentials, worktree and session runner it needs; ProjectsModule adds
  * the GitHub client) and is invoked by the `submit_for_review` tool.
  *

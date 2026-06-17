@@ -61,8 +61,8 @@ export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
   RemoveWorktreeTool,
   // The review pipeline opens the draft PR + runs the self-review, but no longer flips the PR to ready
   // itself (a stateless adversarial verdict looped forever — the #49 bug). It hands the ship-or-fix
-  // call to the owner, so ICs carry mark_pr_ready (their "it's your turn, Dennis" gesture). open_pr
-  // stays a lead-only manual override (see sam.employee.ts).
+  // call to the owner, so ICs carry mark_pr_ready (their "it's your turn, Dennis" gesture).
+  // open_pr stays a lead-only manual override.
   MarkPrReadyTool,
   CreateSessionTool,
   ReplySessionTool,

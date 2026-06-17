@@ -18,10 +18,10 @@ oauth_config:
       - channels:read
       - channels:history
       - channels:join
-      - channels:manage # invite the team-lead puppet into public channels (join fallback)
+      - channels:manage
       - groups:read
       - groups:history
-      - groups:write # invite the team-lead puppet into private channels
+      - groups:write
       - users:read
 settings:
   event_subscriptions:

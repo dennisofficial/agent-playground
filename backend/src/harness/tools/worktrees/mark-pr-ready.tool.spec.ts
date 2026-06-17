@@ -12,7 +12,7 @@ const task = (p: Partial<BoardTask>): BoardTask => ({
   description: '',
   status: 'self_review',
   assignee: 'alex',
-  createdBy: 'sam',
+  createdBy: 'atlas',
   dependsOn: [],
   createdAt: '',
   updatedAt: '',
@@ -33,7 +33,7 @@ function build(opts: {
     get: async () => opts.boardTask ?? task({}),
   } as unknown as BoardStore;
   const employees = {
-    byId: (id: string) => ({ id, teamLead: !!opts.isLead && id === 'sam' }),
+    byId: (id: string) => ({ id, teamLead: !!opts.isLead && id === 'atlas' }),
   } as unknown as EmployeeRegistry;
   const shipSharedPr = vi.fn(async () => opts.ship ?? { ok: true });
   const reviewPipeline = { shipSharedPr } as unknown as ReviewPipelineService;
@@ -85,7 +85,7 @@ describe('mark_pr_ready tool', () => {
       boardTask: task({ status: 'self_review', assignee: 'alex' }),
       isLead: true,
     });
-    await tool.execute({ worktreeId: 'wt-001', board_task_id: 7 }, ctx('sam'));
+    await tool.execute({ worktreeId: 'wt-001', board_task_id: 7 }, ctx('atlas'));
     expect(shipSharedPr).toHaveBeenCalledWith('local', 7);
   });
 

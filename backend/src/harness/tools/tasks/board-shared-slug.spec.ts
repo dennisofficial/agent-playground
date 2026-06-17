@@ -10,7 +10,7 @@ const ctx = (selfAgent: string): HarnessToolContext =>
   ({ identity: { team: 'T1', selfAgent, project: 'p', surface: 'c' } }) as never;
 
 const employees = () =>
-  ({ byId: (id: string) => ({ id, teamLead: id === 'sam' }) }) as unknown as EmployeeRegistry;
+  ({ byId: (id: string) => ({ id, teamLead: id === 'atlas' }) }) as unknown as EmployeeRegistry;
 
 describe('add_board_task × shared_slug', () => {
   it('refuses a non-lead and never creates', async () => {
@@ -24,7 +24,7 @@ describe('add_board_task × shared_slug', () => {
   it('lets the lead set it (lowercased, threaded to create)', async () => {
     const create = vi.fn(async () => ({ id: 5, dependsOn: [] }));
     const tool = new AddBoardTaskTool({ create } as unknown as BoardStore, employees());
-    await tool.execute({ title: 'X', shared_slug: 'Payment-Flow' }, ctx('sam'));
+    await tool.execute({ title: 'X', shared_slug: 'Payment-Flow' }, ctx('atlas'));
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ sharedSlug: 'payment-flow' }),
     );
@@ -54,7 +54,7 @@ describe('update_board_task × shared_slug', () => {
       title: 't',
     }));
     const tool = new UpdateBoardTaskTool(boardWith(update), employees());
-    await tool.execute({ id: 5, shared_slug: '' }, ctx('sam'));
+    await tool.execute({ id: 5, shared_slug: '' }, ctx('atlas'));
     expect(update).toHaveBeenCalledWith(
       'T1',
       5,

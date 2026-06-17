@@ -106,7 +106,7 @@ export class AddBoardTaskTool implements IHarnessTool<typeof addSchema> {
     // Grouping tickets onto a shared feature branch/PR is the lead's call.
     const slug = shared_slug?.trim().toLowerCase() || undefined;
     if (slug && !isLead)
-      return `Grouping tickets onto a shared feature (shared_slug) is the team lead's call — file it standalone and flag it to @Sam.`;
+      return `Grouping tickets onto a shared feature (shared_slug) is the team lead's call — file it standalone and flag it to the lead.`;
     const named = project?.trim().toLowerCase();
     const target =
       named && recallProjects(id).includes(named) ? named : id.project;
@@ -260,7 +260,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
         return `Board task #${taskId} is '${task.status}', not 'awaiting_approval' — only a proposed ticket can be approved (propose_plan proposes it).`;
     }
     if (status === 'awaiting_approval' && !isLead)
-      return `Posting for approval isn't a status you set — your plan AUTO-ATTACHES to the ticket when your linked planning session finishes. Notify @Sam your plan on #${taskId} is ready for review; he proposes the ticket to Dennis (propose_plan) once every plan is lead-approved.`;
+      return `Posting for approval isn't a status you set — your plan AUTO-ATTACHES to the ticket when your linked planning session finishes. Notify the team lead your plan on #${taskId} is ready for review; they propose the ticket to Dennis (propose_plan) once every plan is lead-approved.`;
     // Completing APPROVED work is Dennis's acceptance, clerked by the lead — an assignee can't
     // self-'done' a ticket that went through approval (or is in review). They keep iterating on
     // review feedback in their execute session; the lead marks it done once Dennis accepts the PR.
@@ -272,7 +272,7 @@ export class UpdateBoardTaskTool implements IHarnessTool<typeof updateSchema> {
         task.status === 'in_review') &&
       !isLead
     )
-      return `Board task #${taskId} is '${task.status}' — completing approved work records Dennis's acceptance, which is the team lead's call. Keep addressing review feedback in your execute session; @Sam marks it 'done' once Dennis accepts the PR.`;
+      return `Board task #${taskId} is '${task.status}' — completing approved work records Dennis's acceptance, which is the team lead's call. Keep addressing review feedback in your execute session; the team lead marks it 'done' once Dennis accepts the PR.`;
 
     if (!isLead) {
       if (

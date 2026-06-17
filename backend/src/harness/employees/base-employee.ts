@@ -54,7 +54,7 @@ export abstract class BaseEmployee implements EmployeeDefinition {
   /** The deep role knowledge — concrete employees compose it from `ctx.team` + role-specific prose. */
   abstract roleContext(ctx: EmployeeContext): string;
 
-  /** Default: no capabilities. Engineers add self-review; Nora adds deep research; Sam stays empty. */
+  /** Default: no capabilities. Engineers add self-review; Nora adds deep research. */
   capabilities(_ctx: EmployeeContext): Capability[] {
     return [];
   }

@@ -369,10 +369,10 @@ export class SessionRunnerService {
 
       // PLAN.FINISHED lifecycle hooks: for a board-linked plan turn, fire the engine-agnostic
       // lifecycle runner. Employees that declare a blocking `plan.finished` hook (the self-review
-      // capability — engineers, not Sam) transform the plan here: a different engine critiques it and
+      // capability — engineers, not Atlas) transform the plan here: a different engine critiques it and
       // the planning engine revises once. The runner is best-effort (it isolates failures/aborts and
       // keeps the prior payload) and may replace only planBody + engineSessionId (the transform
-      // contract). Sam's plans declare no hook → the runner returns the payload unchanged.
+      // contract). Atlas's plans declare no hook → the runner returns the payload unchanged.
       let finalPlanBody = planBody;
       let attachEngineSessionId = engineSessionId;
       if (
@@ -613,7 +613,7 @@ export class SessionRunnerService {
         (await this.worktrees.mergeState(worktreeId)).inProgress
       )
         return null;
-      return `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Sam reviews it and proposes it, and Dennis approves. Then execute.`;
+      return `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Atlas reviews it and proposes it, and Dennis approves. Then execute.`;
     }
     // 'approved' (first execute session — the approved→executing CAS in CreateSessionTool flips it),
     // 'executing' (work in flight — continuing turns and additional owners), and 'done' all execute.
@@ -627,7 +627,7 @@ export class SessionRunnerService {
       task!.status === 'done'
     )
       return null;
-    return `board task #${boardTaskId} is '${task!.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; @Sam reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
+    return `board task #${boardTaskId} is '${task!.status}' — work executes only AFTER Dennis approves it. Your finished plan is attached to the ticket; the team lead reviews it, proposes the ticket to Dennis (propose_plan), and Dennis's approval + the standup closing unlock execution.`;
   }
 
   /**

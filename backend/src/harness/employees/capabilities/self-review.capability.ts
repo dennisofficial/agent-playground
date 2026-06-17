@@ -9,7 +9,7 @@ export const SELF_REVIEW = 'self_review';
 /**
  * The forced, one-shot plan self-review: when a planning turn finishes, a SECOND engine adversarially
  * critiques the plan and the planning engine revises ONCE before the plan relays back to the employee.
- * Declared only by employees that should self-review (the build engineers); Sam/James/Nora omit it.
+ * Declared only by employees that should self-review; non-builder employees omit it.
  *
  * The `spec` is the REVIEW engine recipe — typically a different engine than the planner (cross-engine
  * independence), built by the employee via `this.engineSpec(ctx, REVIEW_*)`. Blocking with no timeout
