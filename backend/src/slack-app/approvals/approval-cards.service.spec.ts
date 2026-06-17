@@ -23,7 +23,7 @@ const EVENT: PlanProposalEvent = {
   taskId: 7,
   title: 'Wire the API',
   summary: 'One summary to rule them all.',
-  proposedBy: 'sam',
+  proposedBy: 'atlas',
   surfaceId: 'slack:T1:C42',
   plans: [
     { employee: 'alex', planMd: 'alex plan body' },
@@ -77,7 +77,7 @@ function makeService(opts: {
       Promise.resolve(
         'transitionResult' in opts
           ? opts.transitionResult
-          : { id: 7, status: 'approved', createdBy: 'sam' },
+          : { id: 7, status: 'approved', createdBy: 'atlas' },
       ),
     ),
     get: vi.fn(() => Promise.resolve({ id: 7, status: 'approved' })),
@@ -85,9 +85,9 @@ function makeService(opts: {
   const notes = { add: vi.fn(() => Promise.resolve({ id: 1 })) };
   const conductor = { injectSeed: vi.fn() };
   const employees = {
-    teamLead: () => ({ id: 'sam', name: 'Sam' }),
+    teamLead: () => ({ id: 'atlas', name: 'Atlas' }),
     byId: (id: string) =>
-      id === 'sam' ? { id: 'sam', name: 'Sam' } : undefined,
+      id === 'atlas' ? { id: 'atlas', name: 'Atlas' } : undefined,
   };
   const env = {
     get: (k: string) =>
@@ -138,13 +138,13 @@ describe('ApprovalCardsService — outbound (present)', () => {
     const { service, web } = makeService({ installedBy: 'U-BOSS' });
     await service.present(EVENT);
 
-    // ONE chat message — the card, posing as Sam through the MAIN app (block_actions route to
+    // ONE chat message — the card, posing as Atlas through the MAIN app (block_actions route to
     // the posting app, so a puppet-posted card would have dead buttons).
     const posts = argsOf(web.chat.postMessage).map(
       (c) => c[0] as Record<string, unknown>,
     );
     expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatchObject({ channel: 'C42', username: 'Sam' });
+    expect(posts[0]).toMatchObject({ channel: 'C42', username: 'Atlas' });
     expect(JSON.stringify(posts[0].blocks)).toContain('Wire the API');
     expect(JSON.stringify(posts[0].blocks)).toContain(APPROVE_ACTION_ID);
 
@@ -242,7 +242,7 @@ describe('ApprovalCardsService — verdicts', () => {
     expect(updatedBlocks).not.toContain('"actions"'); // buttons stripped
     // The lead is woken SILENTLY (session-relay pattern) — no synthesized channel message.
     expect(conductor.injectSeed).toHaveBeenCalledWith(
-      'sam',
+      'atlas',
       'slack:T1:C42',
       expect.stringContaining('Dennis APPROVED ticket #7'),
     );
@@ -267,7 +267,7 @@ describe('ApprovalCardsService — verdicts', () => {
       },
     );
     expect(conductor.injectSeed).toHaveBeenCalledWith(
-      'sam',
+      'atlas',
       'slack:T1:C42',
       expect.stringContaining('DENIED ticket #7'),
     );
@@ -330,7 +330,7 @@ describe('ApprovalCardsService — verdicts', () => {
       },
     );
     expect(conductor.injectSeed).toHaveBeenCalledWith(
-      'sam',
+      'atlas',
       'slack:T1:C42',
       expect.stringContaining('use Postgres, not MySQL'),
     );
@@ -370,7 +370,7 @@ const CHANGE_EVENT: DescriptionChangeEvent = {
   team: 'T1',
   taskId: 26,
   title: 'Wire the API',
-  changedBy: 'sam',
+  changedBy: 'atlas',
   oldDescription: 'Original description.',
   newDescription: 'Updated description.',
   surfaceId: 'slack:T1:C99',
@@ -387,7 +387,7 @@ describe('descriptionChangeCardBlocks', () => {
   it('includes changedBy in the context line', () => {
     const blocks = descriptionChangeCardBlocks(CHANGE_EVENT);
     const json = JSON.stringify(blocks);
-    expect(json).toContain('Changed by sam');
+    expect(json).toContain('Changed by atlas');
   });
 
   it('includes the @mention when bossMention is supplied', () => {
@@ -441,7 +441,7 @@ describe('ApprovalCardsService — notifyDescriptionChange', () => {
       (c) => c[0] as Record<string, unknown>,
     );
     expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatchObject({ channel: 'C99', username: 'Sam' });
+    expect(posts[0]).toMatchObject({ channel: 'C99', username: 'Atlas' });
     const text = posts[0].text as string;
     expect(text).toContain('<@U-BOSS>');
     const blocksJson = JSON.stringify(posts[0].blocks);

@@ -17,8 +17,8 @@ function makeFakes() {
   const settings = { setStandupOpen: vi.fn(() => Promise.resolve()) };
   const employees = {
     byId: (id: string) =>
-      ['sam', 'alex'].includes(id)
-        ? { id, name: id, teamLead: id === 'sam' }
+      ['atlas', 'alex'].includes(id)
+        ? { id, name: id, teamLead: id === 'atlas' }
         : undefined,
   };
   return { settings, employees };
@@ -41,9 +41,9 @@ describe('standup tools', () => {
     );
     expect(f.settings.setStandupOpen).not.toHaveBeenCalled();
 
-    expect(await open.execute({}, identity('sam'))).toContain('Standup OPEN');
+    expect(await open.execute({}, identity('atlas'))).toContain('Standup OPEN');
     expect(f.settings.setStandupOpen).toHaveBeenLastCalledWith('T1', true);
-    expect(await close.execute({}, identity('sam'))).toContain(
+    expect(await close.execute({}, identity('atlas'))).toContain(
       'Standup CLOSED',
     );
     expect(f.settings.setStandupOpen).toHaveBeenLastCalledWith('T1', false);

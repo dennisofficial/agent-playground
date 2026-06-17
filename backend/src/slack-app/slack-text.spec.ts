@@ -202,8 +202,8 @@ describe('extractHandles', () => {
   it('extracts bare @handles from prose', () => {
     expect(extractHandles('@Dennis ping')).toEqual(['Dennis']);
     expect(extractHandles('hey @Alex, check this out')).toEqual(['Alex']);
-    expect(extractHandles('@Sam and @Riley please review')).toEqual([
-      'Sam',
+    expect(extractHandles('@Atlas and @Riley please review')).toEqual([
+      'Atlas',
       'Riley',
     ]);
   });

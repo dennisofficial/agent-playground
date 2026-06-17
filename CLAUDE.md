@@ -33,7 +33,7 @@ One Nest module per domain, all composed by `harness.module.ts` (import that one
 | `skills/` | Skills + MCP loader/booter. `SkillLoaderService` resolves `SkillSource` (git clone/cache + local, repo-root-relative) → SKILL.md; `EngineHomeProvisioner` materializes each employee's per-engine home as an EXACT MIRROR (Claude: symlinks + `skills`/`mcpServers` options; Codex: `config.toml` + `AGENTS.md` preamble; LangGraph: prompt listing + `@langchain/mcp-adapters` tools). Sources = code-declared (`employee.skills`/`mcpServers`) ∪ DB grants (`employee_skills`/`employee_mcp_servers`, via `employee-skills/` stores), deduped by name; a DB trigger `NOTIFY`s and `GrantChangeListener` reactively reconciles the affected employee (no restart, no poll). Control via admin REST (`/admin/employees/:id/skills|mcp`) or the `db:seed` seeder |
 | `llm/` | `ChatModelFactory` (chat/gate/extract model builders, env-driven) + cost helpers |
 
-Deliberately NOT ported (playground-only): `/standup`-style commands. The playground's ticket board is SUPERSEDED by the team board (`BoardStore` + `*_board_task` tools — Sam, the team lead, owns it), and its plan→approve→execute flow by per-turn session modes (the employee approves a plan by replying with mode 'execute').
+Deliberately NOT ported (playground-only): `/standup`-style commands. The playground's ticket board is SUPERSEDED by the team board (`BoardStore` + `*_board_task` tools — Atlas, the team lead, owns it), and its plan→approve→execute flow by per-turn session modes (the employee approves a plan by replying with mode 'execute').
 
 ### Conventions that matter here
 
@@ -48,4 +48,4 @@ Deliberately NOT ported (playground-only): `/standup`-style commands. The playgr
 - **Job runner** (`src/jobs.ts` + `src/worker.ts`) — fire-and-forget background async; in-memory registry.
 - **Worker engines** (`src/engines/`) — same three engines, selected per employee.
 - **Memory** (`src/memory/`) — SQLite (`./.data/zero.db` + `checkpoints.db`); fetch pre-LLM, reconcile post-LLM on every gate path.
-- Thread IDs: `${bot.id}:{project}:root`; the multi-surface `{botId}:{channelId}:{thread_ts}` convention in `playground/ARCHITECTURE.md` is the planned Slack design.
+- Thread IDs: `${bot.id}:{project}:root`; current Slack/TUI surface architecture is documented in `playground/ARCHITECTURE.md`.

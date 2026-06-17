@@ -16,7 +16,7 @@ export interface DescriptionChangeEvent {
   taskId: number;
   /** Ticket title — the card's headline. */
   title: string;
-  /** Roster id of whoever called update_board_task (in practice: Sam the lead). */
+  /** Roster id of whoever called update_board_task (in practice: Atlas the lead). */
   changedBy: string;
   /** The description text as it was BEFORE this update. */
   oldDescription: string;

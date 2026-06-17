@@ -23,7 +23,7 @@ export interface PlanProposalEvent {
   title: string;
   /** The lead's consolidated, first-person summary — what Dennis reads before drilling in. */
   summary: string;
-  /** Roster id of the proposing lead ('sam'). */
+  /** Roster id of the proposing lead. */
   proposedBy: string;
   /** The chat surface coordinate the proposal was made from (ctx.identity.surface) — routes the
    * card AND the verdict's synthesized channel message back to the same room. */

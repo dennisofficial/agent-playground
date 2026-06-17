@@ -63,8 +63,8 @@ function makeFakes(opts: {
   };
   const employees = {
     byId: (id: string) =>
-      ['sam', 'alex'].includes(id)
-        ? { id, name: id, teamLead: id === 'sam' }
+      ['atlas', 'alex'].includes(id)
+        ? { id, name: id, teamLead: id === 'atlas' }
         : undefined,
   };
   return { board, plans, employees };
@@ -88,7 +88,7 @@ describe('approve_plan', () => {
 
     const out = await tool.execute(
       { task_id: 7, employee: 'alex' },
-      identity('sam'),
+      identity('atlas'),
     );
     expect(out).toContain("Approved alex's plan on #7");
     expect(out).toContain('Still pending your review: riley');
@@ -107,7 +107,7 @@ describe('approve_plan', () => {
       all.employees as never,
     );
     expect(
-      await tool.execute({ task_id: 7, employee: 'alex' }, identity('sam')),
+      await tool.execute({ task_id: 7, employee: 'alex' }, identity('atlas')),
     ).toContain('All 1 plan(s) on #7 are now lead-approved');
 
     const missing = makeFakes({
@@ -120,7 +120,7 @@ describe('approve_plan', () => {
       missing.employees as never,
     );
     expect(
-      await tool2.execute({ task_id: 7, employee: 'nora' }, identity('sam')),
+      await tool2.execute({ task_id: 7, employee: 'nora' }, identity('atlas')),
     ).toContain("No plan by 'nora'");
   });
 });
@@ -161,13 +161,13 @@ describe('propose_plan', () => {
     expect(
       await wrongStatus.tool.execute(
         { task_id: 7, summary: 's' },
-        identity('sam'),
+        identity('atlas'),
       ),
     ).toContain("'open'");
 
     const noPlans = makeTool({ taskStatus: 'planning', plans: [] });
     expect(
-      await noPlans.tool.execute({ task_id: 7, summary: 's' }, identity('sam')),
+      await noPlans.tool.execute({ task_id: 7, summary: 's' }, identity('atlas')),
     ).toContain('No plans are attached');
 
     const pending = makeTool({
@@ -175,7 +175,7 @@ describe('propose_plan', () => {
       plans: [plan('alex', 'approved'), plan('riley', 'pending')],
     });
     expect(
-      await pending.tool.execute({ task_id: 7, summary: 's' }, identity('sam')),
+      await pending.tool.execute({ task_id: 7, summary: 's' }, identity('atlas')),
     ).toContain("aren't lead-approved yet: riley");
   });
 
@@ -193,7 +193,7 @@ describe('propose_plan', () => {
     });
     const out = await tool.execute(
       { task_id: 7, summary: 'the consolidated summary' },
-      identity('sam'),
+      identity('atlas'),
     );
     expect(out).toContain('approval card posted');
     expect(board.transition).toHaveBeenCalledWith('T1', 7, 'planning', {
@@ -205,7 +205,7 @@ describe('propose_plan', () => {
       taskId: 7,
       title: 'Wire the API',
       summary: 'the consolidated summary',
-      proposedBy: 'sam',
+      proposedBy: 'atlas',
       surfaceId: 'slack:T1:C42',
     });
     expect(presented[0].plans.map((p) => p.employee)).toEqual([
@@ -228,7 +228,7 @@ describe('propose_plan', () => {
     });
     const out = await tool.execute(
       { task_id: 7, summary: 's' },
-      identity('sam'),
+      identity('atlas'),
     );
     expect(out).toContain('approval card posted');
     expect(board.transition).not.toHaveBeenCalled();
@@ -242,7 +242,7 @@ describe('propose_plan', () => {
     });
     const out1 = await unbound.tool.execute(
       { task_id: 7, summary: 's' },
-      identity('sam'),
+      identity('atlas'),
     );
     expect(out1).toContain('No approval-card surface is bound');
     expect(out1).toContain('awaiting_approval');
@@ -254,7 +254,7 @@ describe('propose_plan', () => {
     });
     const out2 = await throwing.tool.execute(
       { task_id: 7, summary: 's' },
-      identity('sam'),
+      identity('atlas'),
     );
     expect(out2).toContain('FAILED (slack down)');
     expect(out2).toContain('walk Dennis through your summary');
