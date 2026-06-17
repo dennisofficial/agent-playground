@@ -19,6 +19,7 @@ import type {
 } from '../sessions/session-registry.port';
 import type { SessionRunnerService } from '../sessions/session-runner.service';
 import type { BotGraphFactory } from '../bot-graph/bot-graph.factory';
+import type { BoardEvent, BoardEventsBus } from '../memory/board-events.bus';
 import { ConductorEventsBus } from './conductor-events.bus';
 import { ConductorService } from './conductor.service';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
@@ -185,6 +186,15 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     },
   } as unknown as SessionRegistry;
 
+  const boardEventCbs: Array<(e: BoardEvent) => void> = [];
+  const boardEvents = {
+    onEvent: (cb: (e: BoardEvent) => void) => {
+      boardEventCbs.push(cb);
+      return () => {};
+    },
+    emit: () => {},
+  } as unknown as BoardEventsBus;
+
   const runner = { abortAll: () => {} } as unknown as SessionRunnerService;
   const env = { get: () => undefined } as unknown as EnvService;
   // Always-ready in conductor specs; pending-keys gating is covered by the readiness spec.
@@ -215,6 +225,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     readiness,
     creds,
     credCtx,
+    boardEvents,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -223,6 +234,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     cursors,
     events,
     fireSessionUpdate: (s: Session) => sessionUpdateCbs.forEach((cb) => cb(s)),
+    fireBoardEvent: (e: BoardEvent) => boardEventCbs.forEach((cb) => cb(e)),
   };
 }
 

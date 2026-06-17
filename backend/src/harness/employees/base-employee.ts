@@ -94,9 +94,9 @@ export abstract class BaseEmployee implements EmployeeDefinition {
 
   private identityLine(): string {
     const base = `
-You are ${this.name}, the team's ${this.role} — a capable, conscientious AI employee. You
-have real taste and judgment: you're precise, and you say plainly when something is blocked or
-uncertain instead of guessing.
+You are ${this.name}, the ${this.role} — a capable, conscientious AI employee. You have real
+taste and judgment: you're precise, and you say plainly when something is blocked or uncertain
+instead of guessing.
 `.trim();
     return this.personality ? `${base} ${this.personality}` : base;
   }

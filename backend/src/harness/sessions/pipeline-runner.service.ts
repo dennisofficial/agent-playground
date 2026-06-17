@@ -84,6 +84,10 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       stageIndex: 0,
       status: 'running',
       worktreeId: opts.worktreeId,
+      // Persist the resume coordinates on the row so a paused/in-flight run recovers WITHOUT a live
+      // stage session (onBoardEvent + resumePipelines read these, not the session).
+      notifyThread: opts.notifyThread,
+      project: opts.project,
     });
     await this.openStage(run, def, 0, opts.project, opts.notifyThread);
     return (await this.runs.get(opts.team, run.id)) ?? run;
@@ -111,7 +115,16 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       await this.runs.update(run.team, run.id, { status: 'failed' });
       return;
     }
-    const prompt = this.stagePrompt(def, index, task.title, task.description);
+    // Inline the approved plan once the pipeline is past the plan gate, so each downstream stage
+    // builds against the same north star (the worktree carries the code; the plan carries the intent).
+    const plan = await this.plans.get(run.team, run.taskId).catch(() => undefined);
+    const prompt = this.stagePrompt(
+      def,
+      index,
+      task.title,
+      task.description,
+      plan?.planMd,
+    );
     const session = await this.runner.openStageSession({
       role: stage.role,
       team: run.team,
@@ -216,6 +229,10 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     await this.board
       .update(run.team, run.taskId, { status: 'planning' })
       .catch(() => undefined);
+    // PAUSE before proposing, so an approval that races the card (the human approving between the
+    // card posting and this update) always finds the run already 'paused' — onBoardEvent resumes a
+    // paused run only.
+    await this.runs.update(run.team, run.id, { status: 'paused' });
     const outcome = await this.proposals.propose({
       team: run.team,
       taskId: run.taskId,
@@ -223,11 +240,15 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       proposedBy: this.employees.teamLead().id,
       surfaceId: session.notifyThread,
     });
-    if (!outcome.ok)
+    // A failed proposal means NO approval card was posted (bad status, no/unapproved plan, lost CAS).
+    // A run left 'paused' here can never resume — onBoardEvent only fires on 'ticket-approved', which
+    // needs a card → approval. Fail it loudly (recoverable via re-dispatch) instead of wedging it.
+    if (!outcome.ok) {
       this.logger.warn(
-        `pipeline ${run.id}: propose failed (${outcome.kind}) — the run stays paused`,
+        `pipeline ${run.id}: propose failed (${outcome.kind}) — failing the run (no approval card posted)`,
       );
-    await this.runs.update(run.team, run.id, { status: 'paused' });
+      await this.runs.update(run.team, run.id, { status: 'failed' });
+    }
   }
 
   /**
@@ -276,12 +297,16 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const def = this.pipelines.get(run.pipeline);
     const stage = def.stages[run.stageIndex];
     if (stage?.gate !== 'plan') return;
+    // Resume coordinates come from the DURABLE row first (boot-safe), falling back to the live session
+    // and then the board task — so an approval that lands after the stage session is gone still resumes.
     const session = run.sessionId
       ? await this.sessions.get(run.sessionId)
       : undefined;
     const project =
-      session?.project ?? (await this.board.get(run.team, run.taskId))?.project;
-    const notifyThread = session?.notifyThread;
+      run.project ??
+      session?.project ??
+      (await this.board.get(run.team, run.taskId))?.project;
+    const notifyThread = run.notifyThread ?? session?.notifyThread;
     if (!project || !notifyThread) {
       this.logger.warn(
         `pipeline ${run.id}: can't resume after approval — missing project/thread`,
@@ -301,31 +326,113 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
   }
 
   /**
-   * Resume in-flight pipelines on boot. The durable `pipeline_runs` row is the source of truth and
-   * the stage session (PostgresSessionRegistry) survives restarts too. Full re-drive (re-evaluating
-   * each active run against its stage session's status) is owned by the cutover phase, which enumerates
-   * team context at boot; here the live `onUpdate` covers still-running sessions.
+   * Re-drive in-flight pipelines on boot. The durable `pipeline_runs` row is the source of truth; the
+   * in-process engine turn does NOT survive a restart, so a run left 'running' would otherwise stall
+   * forever (no `onUpdate` fires for a dead turn). For each active run:
+   *   - paused        → waits for human approval; `onBoardEvent` ('ticket-approved') resumes it using
+   *                     the row's durable notify_thread/project. Nothing to re-drive here.
+   *   - running, session idle/failed → the stage reported back while we were down; process the missed
+   *                     turn-end via the normal advance path.
+   *   - running, session gone or stale-'running' → the turn died on restart; re-open the CURRENT stage
+   *                     in the same worktree (it carries the accumulated work).
+   * Best-effort and isolated per run — one bad run never blocks the others.
    */
   async resumePipelines(): Promise<void> {
-    return;
+    const active = await this.runs.listAllActive();
+    for (const run of active) {
+      if (run.status !== 'running') continue; // paused runs resume via onBoardEvent
+      try {
+        const def = this.pipelines.get(run.pipeline);
+        const session = run.sessionId
+          ? await this.sessions.get(run.sessionId)
+          : undefined;
+        // The stage reported back while the process was down — run the missed advance now.
+        if (session && (session.status === 'idle' || session.status === 'failed')) {
+          await this.onSessionUpdate(session);
+          continue;
+        }
+        // The owner explicitly closed the session — leave the run for manual handling.
+        if (session && session.status === 'closed') continue;
+        // Session gone, or its row says 'running' but the in-memory turn died on restart (nothing is
+        // live this early in boot): re-open the current stage in the same worktree.
+        const project =
+          run.project ??
+          session?.project ??
+          (await this.board.get(run.team, run.taskId))?.project;
+        const notifyThread = run.notifyThread ?? session?.notifyThread;
+        if (!project || !notifyThread) {
+          this.logger.warn(
+            `pipeline ${run.id}: can't resume on boot — missing project/thread; failing`,
+          );
+          await this.runs.update(run.team, run.id, { status: 'failed' });
+          continue;
+        }
+        this.logger.log(
+          `pipeline ${run.id} (${def.name}): re-opening stage ${run.stageIndex} on boot`,
+        );
+        await this.openStage(run, def, run.stageIndex, project, notifyThread);
+      } catch (err) {
+        this.logger.warn(`pipeline ${run.id}: boot resume failed: ${err}`);
+      }
+    }
   }
 
-  /** Build the opening message for a stage from the board task + the stage's role/mode. */
+  /**
+   * Build the opening message for a stage — the HANDOFF. Conveys that this is ONE stage of a
+   * multi-stage pipeline working a single task across sequential sessions (handing off through the
+   * shared worktree): which stage, what prior stages already did, the approved plan (once past the
+   * plan gate), the work item, the stage's job, and what to leave for the next stage.
+   */
   private stagePrompt(
     def: PipelineDefinition,
     index: number,
     title: string,
     description: string,
+    plan?: string,
   ): string {
     const stage = def.stages[index];
+    const total = def.stages.length;
+    const roleName = (r: string) => this.employees.byId(r)?.name ?? r;
     const ticket = `${title}\n\n${description}`.trim();
-    const roleName = this.employees.byId(stage.role)?.name ?? stage.role;
-    const verb =
+    const job =
       stage.mode === 'plan'
-        ? 'Plan'
+        ? 'produce a plan for this work and STOP — do not implement; the plan goes to Dennis for approval before any code is written'
         : stage.mode === 'investigate'
-          ? 'Review (read-only)'
-          : 'Implement';
-    return `Pipeline '${def.name}', stage ${index + 1}/${def.stages.length} — ${roleName} (${stage.mode}).\n\n${verb} the following work item:\n\n${ticket}`;
+          ? 'review the work so far READ-ONLY and report your findings — do not change files'
+          : 'implement your part and commit it to the worktree';
+
+    const parts: string[] = [
+      `You are running ONE stage of a multi-stage pipeline. The whole pipeline works a SINGLE task across several focused sessions, handing off through the shared worktree — your session is stage ${index + 1} of ${total} in the '${def.name}' pipeline.`,
+      `Your stage: ${roleName(stage.role)} — ${stage.mode}.`,
+    ];
+
+    if (index > 0) {
+      const prior = def.stages
+        .slice(0, index)
+        .map((s, i) => `${i + 1}. ${roleName(s.role)} (${s.mode})`)
+        .join('  →  ');
+      parts.push(
+        `Earlier stages already ran in THIS worktree and committed their work — it is here for you to build on, not redo. What ran before you: ${prior}. Read the worktree for the current state before you start.`,
+      );
+    }
+
+    if (plan) {
+      parts.push(`The APPROVED plan for this task (your north star):\n${plan}`);
+    }
+
+    parts.push(`The work item:\n${ticket}`);
+    parts.push(`Your job: ${job}.`);
+
+    const next = def.stages[index + 1];
+    parts.push(
+      next
+        ? `When you're done, the next stage (${roleName(next.role)} — ${next.mode}) picks up from your COMMITTED work in this same worktree — leave it clean and make your report clear so the handoff is smooth.`
+        : `This is the FINAL stage of the pipeline.`,
+    );
+    parts.push(
+      `Report back when done; the orchestrator advances the pipeline from your report.`,
+    );
+
+    return parts.join('\n\n');
   }
 }

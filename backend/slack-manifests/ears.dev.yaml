@@ -1,12 +1,12 @@
-# DEV EARS — "AI Crew (Dev)" (Socket Mode only; no request URLs — events + interactivity arrive
+# DEV EARS — "Atlas (Dev)" (Socket Mode only; no request URLs — events + interactivity arrive
 # over the websocket). Same bot scopes as prod. After creating the app, mint an APP-LEVEL token
 # with connections:write (that's the xapp-… for SLACK_APP_TOKEN — manifests can't declare it).
 display_information:
-  name: AI Crew (Dev)
-  description: "Relays your messages to the AI crew (dev)."
+  name: Atlas (Dev)
+  description: "Relays your messages to Atlas (dev)."
 features:
   bot_user:
-    display_name: AI Crew (Dev)
+    display_name: Atlas (Dev)
     always_online: true
 oauth_config:
   scopes:

@@ -1,4 +1,5 @@
 import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
+import { Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { recallProjects } from '../../domain/identity';
 import { BoardStore } from '../../memory/board-store';
@@ -34,6 +35,7 @@ export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema>
   readonly description =
     'Dispatch an approved board task through a deterministic pipeline — each stage runs as a specialist session in the given worktree, advancing automatically and pausing at the plan and PR gates for your review. You are notified as stages report back; no need to babysit it.';
   readonly schema = dispatchSchema;
+  private readonly logger = new Logger(DispatchPipelineTool.name);
 
   constructor(
     private readonly board: BoardStore,
@@ -68,7 +70,13 @@ export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema>
           worktreeId: worktree_id,
           notifyThread: id.surface,
         })
-        .catch(() => undefined);
+        .catch((err) =>
+          // Detached start: surface the failure in logs at least — the tool already returned
+          // "Dispatched…" synchronously, so a silent throw would otherwise leave no trace.
+          this.logger.warn(
+            `dispatch_pipeline: starting '${name}' for #${board_task_id} in ${worktree_id} failed: ${err}`,
+          ),
+        );
     });
     return `Dispatched the '${name}' pipeline for #${board_task_id} in ${worktree_id}. Stages run as specialist sessions; it pauses at the plan and PR gates for your review.`;
   }

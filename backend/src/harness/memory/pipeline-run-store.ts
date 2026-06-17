@@ -15,6 +15,8 @@ export interface PipelineRun {
   mode?: string;
   worktreeId?: string;
   sessionId?: string;
+  notifyThread?: string;
+  project?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -29,6 +31,8 @@ export interface NewPipelineRun {
   mode?: string;
   worktreeId?: string;
   sessionId?: string;
+  notifyThread?: string;
+  project?: string;
 }
 
 interface PipelineRunRow {
@@ -42,6 +46,8 @@ interface PipelineRunRow {
   mode: string | null;
   worktree_id: string | null;
   session_id: string | null;
+  notify_thread: string | null;
+  project: string | null;
   created_at: unknown;
   updated_at: unknown;
 }
@@ -57,6 +63,8 @@ const toRun = (r: PipelineRunRow): PipelineRun => ({
   mode: r.mode ?? undefined,
   worktreeId: r.worktree_id ?? undefined,
   sessionId: r.session_id ?? undefined,
+  notifyThread: r.notify_thread ?? undefined,
+  project: r.project ?? undefined,
   createdAt: toIso(r.created_at),
   updatedAt: toIso(r.updated_at),
 });
@@ -77,8 +85,8 @@ export class PipelineRunStore {
   async create(n: NewPipelineRun): Promise<PipelineRun> {
     const rows = await this.q(
       `INSERT INTO pipeline_runs
-         (team_id, task_id, pipeline, stage_index, status, current_role, mode, worktree_id, session_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+         (team_id, task_id, pipeline, stage_index, status, current_role, mode, worktree_id, session_id, notify_thread, project, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
        RETURNING *`,
       [
         n.team,
@@ -90,6 +98,8 @@ export class PipelineRunStore {
         n.mode ?? null,
         n.worktreeId ?? null,
         n.sessionId ?? null,
+        n.notifyThread ?? null,
+        n.project ?? null,
       ],
     );
     return toRun(rows[0]);
@@ -150,6 +160,15 @@ export class PipelineRunStore {
     const rows = await this.q(
       `SELECT * FROM pipeline_runs WHERE team_id = $1 AND status = ANY($2) ORDER BY created_at ASC`,
       [team, ['running', 'paused']],
+    );
+    return rows.map(toRun);
+  }
+
+  /** All running or paused runs across every team, oldest first — for boot recovery (resumePipelines). */
+  async listAllActive(): Promise<PipelineRun[]> {
+    const rows = await this.q(
+      `SELECT * FROM pipeline_runs WHERE status = ANY($1) ORDER BY created_at ASC`,
+      [['running', 'paused']],
     );
     return rows.map(toRun);
   }

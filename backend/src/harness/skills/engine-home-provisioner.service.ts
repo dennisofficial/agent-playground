@@ -62,8 +62,28 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     private readonly mcpStore: EmployeeMcpStore,
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
-    await this.reconcileAll();
+  onApplicationBootstrap(): void {
+    // Provisioning clones/syncs git skill sources and materializes each employee's per-engine home —
+    // network + filesystem work (a `git` sync per git-sourced skill). We do NOT block boot on it: the
+    // app and the Slack connection come up immediately and the homes fill in a beat later. Until an
+    // employee is provisioned, forAgent() returns empty (a first turn in that brief window simply sees
+    // no skills yet); the grant-change listener keeps it current thereafter.
+    const startedAt = Date.now();
+    const count = this.employees.list().length;
+    this.logger.log(
+      `Provisioning skill/MCP homes for ${count} employee(s) in the background…`,
+    );
+    void this.reconcileAll()
+      .then(() =>
+        this.logger.log(
+          `Skill/MCP homes ready for ${count} employee(s) (${Date.now() - startedAt}ms)`,
+        ),
+      )
+      .catch((err) =>
+        this.logger.error(
+          `Background skill/MCP provisioning failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
   }
 
   /**
@@ -75,7 +95,13 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
   async reconcileAll(): Promise<void> {
     const root = this.env.get('AGENT_HOME_ROOT');
     const ctx = this.employees.context();
-    for (const emp of this.employees.list()) await this.provision(emp, ctx, root);
+    for (const emp of this.employees.list()) {
+      const startedAt = Date.now();
+      await this.provision(emp, ctx, root);
+      this.logger.log(
+        `provisioned ${emp.id}: ${this.forAgent(emp.id).skillNames.length} skill(s) (${Date.now() - startedAt}ms)`,
+      );
+    }
   }
 
   /**

@@ -49,4 +49,13 @@ export class PipelineRun extends TimestampedEntity {
   /** The session id for the active stage's engine conversation. */
   @Column({ type: 'text', nullable: true })
   session_id!: string | null;
+
+  /** The surface/thread the orchestrator is notified on. Stored so a paused run can resume after the
+   * stage session is gone (the durable row, not a live session, carries the resume coordinates). */
+  @Column({ type: 'text', nullable: true })
+  notify_thread!: string | null;
+
+  /** The project the pipeline's task belongs to — worktree/session context needed to re-open a stage. */
+  @Column({ type: 'text', nullable: true })
+  project!: string | null;
 }

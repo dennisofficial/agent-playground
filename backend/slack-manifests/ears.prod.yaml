@@ -1,11 +1,11 @@
-# PROD EARS — "AI Crew" (Events API / HTTP only). The one event listener + fallback poster,
+# PROD EARS — "Atlas" (Events API / HTTP only). The one event listener + fallback poster,
 # OAuth-distributed (unlisted) and installed into every workspace.
 display_information:
-  name: AI Crew
-  description: "Relays your messages to the AI crew."
+  name: Atlas
+  description: "Relays your messages to Atlas."
 features:
   bot_user:
-    display_name: AI Crew
+    display_name: Atlas
     always_online: true
 oauth_config:
   redirect_urls:

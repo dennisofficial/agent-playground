@@ -34,8 +34,11 @@ import { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import { TenantCredentialService } from '../llm-keys/tenant-credential.service';
 import {
   SESSION_REGISTRY,
+  type Session,
   type SessionRegistry,
 } from '../sessions/session-registry.port';
+import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
+import { boardEventRelayPrompt, sessionRelayPrompt } from './seed-relay';
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import {
   type BotStateDelta,
@@ -126,6 +129,7 @@ export class ConductorService
     private readonly readiness: LlmReadinessService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
+    private readonly boardEvents: BoardEventsBus,
   ) {}
 
   /** Atlas — the single orchestrator (the one `teamLead`). */
@@ -152,6 +156,17 @@ export class ConductorService
         members: [...this.employees.list().map((b) => b.id), 'dennis'],
       });
     }
+
+    // Reconcile MEMBERSHIP with the current roster BEFORE scheduling or cursor work. `ensure` above
+    // returns an existing room untouched, so a room registered under a PRIOR roster keeps stale
+    // membership — e.g. the Atlas migration collapsed 6 bots → `atlas`, but a channel created before
+    // it still lists the dead {alex,riley,…} and NOT `atlas`. The scheduler gates every room on
+    // `members.includes(atlas.id)`, so without this Atlas is skipped forever in those rooms (silent
+    // channel, no thinking bubble). `addMembers` is additive + idempotent (old ids stay as historical
+    // participants), so it's safe every boot and self-heals any future roster change.
+    const roster = this.employees.list().map((b) => b.id);
+    for (const info of this.registry.list())
+      this.registry.addMembers(info.channelId, roster);
 
     // Reconcile durable cursors with each room's hydration window BEFORE any scheduling. A room
     // hydrates only a tail; a cursor below the window would have the gap silently skipped by
@@ -195,17 +210,26 @@ export class ConductorService
     // Pending-keys mode: when provider keys land at runtime, release the gate and deliver backlog.
     const readySub = this.readiness.ready$.subscribe(() => this.schedule());
     this.unsubscribers.push(() => readySub.unsubscribe());
-    // Session updates only drive the running-sessions UI count now; pipeline stage advancement is
-    // owned by PipelineRunnerService (its own onUpdate subscription). No session relays through chat.
+    // Session updates drive the running-sessions UI count AND relay an Atlas-owned background
+    // session's turn-end back to Atlas. Pipeline stage advancement is owned by PipelineRunnerService
+    // (its own onUpdate subscription); pipeline stage sessions are owned by SPECIALISTS, so the
+    // owner-is-Atlas filter below keeps them out of this chat relay (no double-handling).
     this.unsubscribers.push(
-      this.sessions.onUpdate(() => {
+      this.sessions.onUpdate((session) => {
         void this.sessions
           .list({ status: 'running' })
           .then((running) => this.bus.patchStatus({ running: running.length }))
           .catch((err) =>
             this.logger.warn(`running-sessions count refresh failed: ${err}`),
           );
+        this.maybeRelaySession(session);
       }),
+    );
+    // Narrate the human-facing PIPELINE board events (PR opened/ready, self-review verdict) in chat —
+    // the pipeline runs as detached specialist sessions, so without this Atlas would ship/stall
+    // silently. ticket-approved/plan-attached are filtered out (PipelineRunnerService owns those).
+    this.unsubscribers.push(
+      this.boardEvents.onEvent((event) => this.maybeRelayBoardEvent(event)),
     );
     this.schedule();
   }
@@ -244,6 +268,39 @@ export class ConductorService
    * whether anything gets said in the room is its decision. `botId` is accepted for the existing
    * caller signature but the orchestrator is always Atlas. */
   injectSeed(_botId: string, channelId: string, prompt: string): void {
+    this.seedQueue.push({ channelId, prompt });
+    this.schedule();
+  }
+
+  /**
+   * Relay an ATLAS-owned background session's turn-end (idle/failed) back to Atlas as a gate-bypassed
+   * seed carrying the worker's report — the wake that lets Atlas act on its own investigate /
+   * create_session workers (reply, close, or speak). A 'running' start or a 'closed' session never
+   * relays. Sessions owned by a SPECIALIST (pipeline stages) are skipped: PipelineRunnerService drives
+   * those, so relaying them here would both wake the wrong actor and double-handle the turn-end.
+   */
+  private maybeRelaySession(session: Session): void {
+    if (session.status !== 'idle' && session.status !== 'failed') return;
+    if (session.ownerBot !== this.atlas().id) return;
+    const channelId = this.registry.get(session.notifyThread)
+      ? session.notifyThread
+      : this.channel.surfaceId;
+    this.seedQueue.push({ channelId, prompt: sessionRelayPrompt(session) });
+    this.schedule();
+  }
+
+  /**
+   * Narrate a human-facing pipeline board event (PR opened/ready, self-review verdict) by waking Atlas
+   * with a gate-bypassed seed. `boardEventRelayPrompt` returns null for the events the conductor must
+   * NOT consume (`ticket-approved` is the plan-gate resume owned by PipelineRunnerService;
+   * `plan-attached` isn't narrated), so this never double-handles a transition.
+   */
+  private maybeRelayBoardEvent(event: BoardEvent): void {
+    const prompt = boardEventRelayPrompt(event);
+    if (!prompt) return;
+    const thread = 'notifyThread' in event ? event.notifyThread : undefined;
+    const channelId =
+      thread && this.registry.get(thread) ? thread : this.channel.surfaceId;
     this.seedQueue.push({ channelId, prompt });
     this.schedule();
   }
