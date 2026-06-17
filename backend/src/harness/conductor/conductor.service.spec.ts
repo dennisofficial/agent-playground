@@ -345,6 +345,96 @@ describe('ConductorService scheduling', () => {
   });
 });
 
+// ── in-graph gate reactions ─────────────────────────────────────────────────────────────────────
+
+/** The gate reaction events emitted this turn, in order. */
+function gateReactions(events: ConductorEvent[]) {
+  return events.filter(
+    (e): e is Extract<ConductorEvent, { kind: 'reaction' }> =>
+      e.kind === 'reaction',
+  );
+}
+
+describe('ConductorService gate reactions', () => {
+  it('respond + post: folds 💭 onto the gated message, removes it at turn end, no 👀', async () => {
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [
+          {
+            decision: 'respond',
+            reactionTargetId: 'msg-1',
+            messages: [new AIMessage({ content: 'On it.' })],
+          },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'atlas, help me out');
+    await conductor.whenIdle();
+    // 💭 added before the turn, removed when it ends; no 👀 because Atlas answered.
+    expect(
+      gateReactions(events).map((r) => ({
+        emoji: r.emoji,
+        targetId: r.targetId,
+        remove: r.remove ?? false,
+      })),
+    ).toEqual([
+      { emoji: '💭', targetId: 'msg-1', remove: false },
+      { emoji: '💭', targetId: 'msg-1', remove: true },
+    ]);
+  });
+
+  it('respond + silent (no post): removes 💭 and leaves a persistent 👀', async () => {
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [{ decision: 'respond', reactionTargetId: 'msg-1' }], // gate-responded but posted nothing
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'atlas?');
+    await conductor.whenIdle();
+    const reactions = gateReactions(events);
+    expect(
+      reactions.map((r) => ({ emoji: r.emoji, remove: r.remove ?? false })),
+    ).toEqual([
+      { emoji: '💭', remove: false },
+      { emoji: '💭', remove: true },
+      { emoji: '👀', remove: false },
+    ]);
+    expect(reactions.every((r) => r.targetId === 'msg-1')).toBe(true);
+  });
+
+  it('skip (ignore): marks the message seen with a persistent 👀, never a 💭', async () => {
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        deltas: [{ decision: 'ignore', reactionTargetId: 'msg-1' }], // human-to-human aside
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('alice', 'Alice', 'hey bob, lunch?');
+    await conductor.whenIdle();
+    const reactions = gateReactions(events);
+    expect(reactions).toHaveLength(1);
+    expect(reactions[0]).toMatchObject({ emoji: '👀', targetId: 'msg-1' });
+    expect(reactions[0].remove ?? false).toBe(false);
+  });
+
+  it('forced/seed turn (gate sets no target): emits no gate reactions', async () => {
+    const { conductor, events } = await buildConductor({
+      run: () => ({
+        // A forced/seed turn responds but carries no reactionTargetId (no triggering message).
+        deltas: [
+          { decision: 'respond', messages: [new AIMessage({ content: 'FYI.' })] },
+        ],
+        cursorAfter: 1,
+      }),
+    });
+    conductor.submitFrom('dennis', 'Dennis', 'hello');
+    await conductor.whenIdle();
+    expect(gateReactions(events)).toHaveLength(0);
+  });
+});
+
 // ── share_artifact coordination ───────────────────────────────────────────────────────────────────
 
 describe('ConductorService share_artifact coordination', () => {
