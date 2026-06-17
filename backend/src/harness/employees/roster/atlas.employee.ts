@@ -5,6 +5,7 @@ import { ListPullRequestsTool } from '../../tools/projects/list-pull-requests.to
 import {
   AnswerSectionTool,
   AttachDesignTool,
+  CheckPipelineTool,
   DispatchFixupSessionTool,
   DispatchPipelineTool,
   EnqueueFindingTool,
@@ -70,6 +71,8 @@ export class AtlasEmployee extends BaseEmployee {
     ReorderSectionsTool,
     DispatchFixupSessionTool,
     ReopenSectionTool,
+    // Lead-only read-only window into a running pipeline's active stage session (progress reports).
+    CheckPipelineTool,
   ];
   readonly protocols = [
     "You don't write code or run investigations yourself — you DISPATCH. Approved work goes through a pipeline (dispatch_pipeline on the ticket + a worktree); the building is the specialists' stages, never yours.",

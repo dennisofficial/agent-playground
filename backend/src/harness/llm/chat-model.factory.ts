@@ -7,6 +7,16 @@ const DEFAULT_CHAT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_SMALL_MODEL = 'claude-haiku-4-5-20251001';
 
 /**
+ * The chat model's max output budget — the Anthropic API requires `max_tokens`, so this is NOT an
+ * artificial cap, it's the model's actual output ceiling. 64K is Sonnet 4.6's / Haiku 4.5's max and
+ * is ≤ the 128K ceiling on Opus/Fable, so it's safe for any `CHAT_MODEL`. A LOW value here truncates
+ * long messages mid-sentence with `stop_reason:"max_tokens"` (the thinking summary shares this budget
+ * too), so we run wide open — runaway generations are rare and the per-turn cost is bounded by what
+ * the bot actually writes, not by this number.
+ */
+const CHAT_MAX_OUTPUT_TOKENS = 64000;
+
+/**
  * Reusable Anthropic model builders, shared by the chat agents, the gate, and the reconcile passes.
  * (Ported from playground/src/model.ts, env reads moved onto EnvService.) Callers build lazily (on
  * first use), not at module top-level — ChatAnthropic's constructor throws if no key is resolvable,
@@ -39,7 +49,6 @@ export class ChatModelFactory {
   /** The main chat model (one model for v0; per-role / multi-LLM config comes later). */
   buildModel(): ChatAnthropic {
     const temperature = this.env.get('CHAT_TEMPERATURE') ?? 1;
-    const maxTokens = Math.max(1, this.env.get('CHAT_MAX_TOKENS') ?? 2048);
     return new ChatAnthropic({
       apiKey: this.apiKey(),
       model: this.env.get('CHAT_MODEL') ?? DEFAULT_CHAT_MODEL,
@@ -47,7 +56,7 @@ export class ChatModelFactory {
         'extended-cache-ttl-2025-04-11', // honor ttl:'1h'; without it 1h silently falls back to 5m
       ],
       thinking: { type: 'adaptive', display: 'summarized' },
-      maxTokens,
+      maxTokens: CHAT_MAX_OUTPUT_TOKENS,
       temperature,
     });
   }

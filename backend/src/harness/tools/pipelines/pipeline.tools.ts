@@ -2,7 +2,15 @@ import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { Inject, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { recallProjects } from '../../domain/identity';
+import { engineSpecForMode } from '../../employees/engine-for-mode';
 import { BoardStore } from '../../memory/board-store';
+import { PipelineCodingSessionStore } from '../../memory/pipeline-coding-session-store';
+import { PipelineRunPhaseStore } from '../../memory/pipeline-run-phase-store';
+import {
+  type PipelineRun,
+  PipelineRunStore,
+} from '../../memory/pipeline-run-store';
+import { PipelineRunSectionStore } from '../../memory/pipeline-run-section-store';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import {
   DESIGN_ROLE,
@@ -12,6 +20,7 @@ import {
   SESSION_REGISTRY,
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
+import { SessionRunnerService } from '../../sessions/session-runner.service';
 import { WorktreeService } from '../../worktrees/worktree.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
@@ -500,5 +509,183 @@ export class ReopenSectionTool
       defect,
     );
     return r.message;
+  }
+}
+
+const checkPipelineSchema = z.object({
+  board_task_id: z
+    .number()
+    .int()
+    .describe('The board task (#N) whose pipeline run to look inside.'),
+  query: z
+    .string()
+    .optional()
+    .describe(
+      "Find lines in the active stage session's FULL transcript containing this text (case-insensitive) — for when the at-a-glance progress isn't enough.",
+    ),
+  page: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "Page through the active stage session's transcript instead of the glance view; 1 (default) = the most recent page.",
+    ),
+});
+
+/**
+ * The orchestrator's READ-ONLY window into a running pipeline's active stage session. The phase
+ * coding/plan/review sessions are owned by the synthetic phase-config roles (e.g. 'phase_backend'),
+ * so the owner-scoped session tools (check_session/search_session) refuse them to Atlas — he can see
+ * the structural `pipelines` slice but not what a stage engine is actually doing. This tool closes
+ * that gap from the LEAD side: given a board task, it resolves the run, locates its live stage
+ * session (run.sessionId, the runner's canonical pointer through every plan→build→review→fixup
+ * transition), labels which section/phase it's in, and surfaces the session's live progress (or last
+ * report once idle). `query`/`page` page the stage transcript (reusing searchTranscript). Lead-only
+ * (stage sessions are deliberately invisible to everyone but the orchestrator) and team-scoped (every
+ * run is the lead's). Read-only — it changes nothing, so it dirties no context slice.
+ */
+@HarnessTool()
+export class CheckPipelineTool
+  implements IHarnessTool<typeof checkPipelineSchema>
+{
+  readonly name = 'check_pipeline';
+  readonly description =
+    "See what a pipeline's ACTIVE stage session is actually doing — its live progress (or last report once idle) and which section/phase it's in — for a run you dispatched. Use it when Dennis asks how a feature/bugfix is going and the structural pipeline state isn't enough: stages run as their own role's sessions, so this is the only way to read the real engine work. Pass `query` or `page` to scroll the stage's full transcript. Read-only.";
+  readonly schema = checkPipelineSchema;
+
+  constructor(
+    private readonly runs: PipelineRunStore,
+    private readonly sections: PipelineRunSectionStore,
+    private readonly phases: PipelineRunPhaseStore,
+    private readonly coding: PipelineCodingSessionStore,
+    @Inject(SESSION_REGISTRY) private readonly sessionsReg: SessionRegistry,
+    private readonly sessionRunner: SessionRunnerService,
+    private readonly employees: EmployeeRegistry,
+    private readonly board: BoardStore,
+  ) {}
+
+  async execute(
+    { board_task_id, query, page }: z.infer<typeof checkPipelineSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const id = ctx.identity;
+    // LEAD-ONLY: inspecting a pipeline's stage sessions is the orchestrator's view. Stage sessions
+    // are owned by synthetic phase-config roles, deliberately not exposed to the rest of the roster.
+    if (!this.employees.byId(id.selfAgent)?.teamLead)
+      return `Looking inside a pipeline's stage sessions is the team lead's call.`;
+
+    const run = await this.runs.getByTask(id.team, board_task_id);
+    if (!run)
+      return `No pipeline run for #${board_task_id} — dispatch_pipeline starts one (or check list_board).`;
+
+    const task = await this.board.get(id.team, board_task_id).catch(() => undefined);
+    const title = task?.title ? ` "${task.title}"` : '';
+    const { where, stageSessionId } = await this.locate(run);
+    const head = `Pipeline for #${board_task_id}${title} [${run.status}] — ${where}`;
+
+    if (!stageSessionId)
+      return `${head}\nNo active stage session right now — nothing is mid-flight to look inside.`;
+
+    const session = await this.sessionsReg.get(stageSessionId);
+    if (!session)
+      return `${head}\nThe active stage session (${stageSessionId}) is no longer available — it may have been reclaimed.`;
+
+    const bot =
+      this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
+    const { model, effort } = engineSpecForMode(
+      bot,
+      this.employees.context(),
+      session.mode,
+    );
+    const tier = `${session.mode} on ${model ?? `${session.engine} default`}${effort ? `, effort ${effort}` : ''}`;
+    const sessionLine = `Stage session ${session.id} [${session.status}] (${bot.name}, ${tier}, turn ${session.turns})`;
+
+    // A query or an explicit page = the deep look: scroll the stage's full transcript.
+    if (query !== undefined || page !== undefined) {
+      const transcript = await this.sessionRunner.searchTranscript(session.id, {
+        query,
+        page,
+      });
+      return `${head}\n${sessionLine}\n${transcript}`;
+    }
+
+    // Otherwise the at-a-glance: live activity while running, else the last report (mirrors check_session).
+    let detail: string;
+    if (session.status === 'running')
+      detail = `Progress so far:\n${await this.sessionRunner.getSessionActivity(session.id)}`;
+    else if (session.status === 'failed')
+      detail = `Last turn failed: ${session.error ?? '(unknown error)'}`;
+    else if (session.status === 'closed')
+      detail = `Closed. Final report: ${session.lastReport ?? '(none)'}`;
+    else detail = `Last report: ${session.lastReport ?? '(none)'}`;
+    return `${head}\n${sessionLine}\n${detail}`;
+  }
+
+  /**
+   * Locate the run's live stage session and a human label for WHERE in the pipeline it sits. The
+   * stage session is always `run.sessionId` (the runner keeps it pointed at the current step through
+   * every transition); the section/phase/coding rows only supply the label. Never throws — a missing
+   * row just yields a coarser label.
+   */
+  private async locate(
+    run: PipelineRun,
+  ): Promise<{ where: string; stageSessionId?: string }> {
+    const stageSessionId = run.sessionId;
+    if (run.kind === 'bugfix') {
+      const state =
+        run.status === 'paused'
+          ? 'paused'
+          : run.status === 'running'
+            ? 'executing'
+            : run.status;
+      return { where: `bugfix: ${state}`, stageSessionId };
+    }
+
+    const all = await this.sections.listForRun(run.id).catch(() => []);
+    const total = all.length;
+    const active = await this.sections.activeSection(run.id).catch(() => undefined);
+    if (!active) {
+      const note =
+        run.planningSubstep === 'stage_decision'
+          ? 'PAUSED at a review decision — you own it (dispatch_fixup_session / reopen_section)'
+          : run.status === 'done'
+            ? 'all sections shipped'
+            : run.status === 'failed'
+              ? 'run failed'
+              : 'between sections';
+      return { where: `feature — ${total} section(s): ${note}`, stageSessionId };
+    }
+
+    const pos = all.findIndex((s) => s.id === active.id);
+    const head = `feature — section ${pos + 1}/${total} '${active.name}' (${active.phaseRole}) [${active.status}]`;
+    let label: string;
+    if (active.status === 'planning')
+      label =
+        run.planningSubstep === 'gate'
+          ? 'PAUSED at plan gate (your approval)'
+          : run.planningSubstep === 'advisory'
+            ? 'plan under codex advisory review'
+            : 'planning';
+    else if (active.status === 'awaiting_design')
+      label = 'PAUSED at design gate (attach_design / skip_design)';
+    else if (active.status === 'building') {
+      const phaseRows = await this.phases.listForSection(active.id).catch(() => []);
+      const activePhase = await this.phases
+        .activePhase(active.id)
+        .catch(() => undefined);
+      const phaseNo = activePhase
+        ? phaseRows.findIndex((p) => p.id === activePhase.id) + 1
+        : 0;
+      const coding = await this.coding
+        .activeCodingSession(active.id)
+        .catch(() => undefined);
+      const phaseLabel = phaseRows.length
+        ? `building phase ${phaseNo || '?'}/${phaseRows.length}`
+        : 'building';
+      label = coding ? `${phaseLabel} (coding session ${coding.status})` : phaseLabel;
+    } else label = active.status;
+
+    return { where: `${head} — ${label}`, stageSessionId };
   }
 }

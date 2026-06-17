@@ -64,6 +64,7 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
 import {
   AnswerSectionTool,
   AttachDesignTool,
+  CheckPipelineTool,
   DispatchFixupSessionTool,
   DispatchPipelineTool,
   EnqueueFindingTool,
@@ -159,6 +160,7 @@ import {
     ReorderSectionsTool,
     DispatchFixupSessionTool,
     ReopenSectionTool,
+    CheckPipelineTool,
   ],
 })
 export class ToolsModule {}

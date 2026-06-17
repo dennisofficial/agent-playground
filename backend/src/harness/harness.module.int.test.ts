@@ -109,6 +109,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'reorder_sections',
         'dispatch_fixup_session',
         'reopen_section',
+        'check_pipeline',
       ].sort(),
     );
 

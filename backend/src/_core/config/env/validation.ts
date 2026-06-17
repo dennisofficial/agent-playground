@@ -53,7 +53,6 @@ export interface IEnvConfig {
   // LLM knobs (harness reads these; defaults applied in code, so all optional)
   CHAT_MODEL?: string;
   CHAT_TEMPERATURE?: number;
-  CHAT_MAX_TOKENS?: number;
   WORKER_ENGINE?: string;
   WORKER_MODEL?: string;
   CODEX_MODEL?: string;
@@ -190,7 +189,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // LLM knobs
   CHAT_MODEL: Joi.string().optional(),
   CHAT_TEMPERATURE: Joi.number().optional(),
-  CHAT_MAX_TOKENS: Joi.number().optional(),
   WORKER_ENGINE: Joi.string().optional(),
   WORKER_MODEL: Joi.string().optional(),
   CODEX_MODEL: Joi.string().optional(),
