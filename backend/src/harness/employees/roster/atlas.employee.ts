@@ -25,7 +25,7 @@ import { EXECUTE_CODEX, PLAN_CODEX } from '../../engines/engine-presets';
  * dispatch/staffing, team-board ownership, cross-owner task authority, and Slack presence.
  *
  * (The Atlas-orchestrator migration collapses the specialists into pipeline dispatch targets; the
- * pipeline review stage replaces the old persona-level "Sam's reviewer role". The full orchestrator
+ * pipeline review stage replaces the old persona-level reviewer role. The full orchestrator
  * persona + the gate-less conductor graph wire in at the conductor cutover — for now Atlas inherits
  * the prior team-lead behavior so the harness stays bootable.)
  */

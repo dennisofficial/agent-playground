@@ -29,27 +29,27 @@ describe('translateInbound', () => {
     expect(translateInbound('<@U999> hi', deps())).toBe('U999 hi');
   });
 
-  it('keeps the @ for a roster puppet mention (so the gate hard-respond rule fires)', () => {
+  it('keeps the @ for a roster bot mention (so the gate hard-respond rule fires)', () => {
     expect(
-      translateInbound('<@U07SAM> can you check this?', {
-        ...deps({ bots: { U07SAM: 'sam' } }),
+      translateInbound('<@U07ATLAS> can you check this?', {
+        ...deps({ bots: { U07ATLAS: 'atlas' } }),
       }),
-    ).toBe('@sam can you check this?');
+    ).toBe('@atlas can you check this?');
   });
 
-  it('keeps the @ for every puppet when multiple bots are mentioned (the "Sam Maya" regression)', () => {
+  it('keeps the @ for every roster bot when multiple bots are mentioned', () => {
     expect(
-      translateInbound('<@U07SAM> <@U07MAYA>', {
-        ...deps({ bots: { U07SAM: 'sam', U07MAYA: 'maya' } }),
+      translateInbound('<@U07ATLAS> <@U07MAYA>', {
+        ...deps({ bots: { U07ATLAS: 'atlas', U07MAYA: 'maya' } }),
       }),
-    ).toBe('@sam @maya');
+    ).toBe('@atlas @maya');
   });
 
   it('leaves a human mention bare even when their name collides with a bot (no false hard-mention)', () => {
-    // U123 resolves to display name "Sam" but is NOT a puppet → bare, not @sam.
+    // U123 resolves to display name "Atlas" but is NOT a roster bot -> bare, not @atlas.
     expect(
-      translateInbound('<@U123> ping', deps({ users: { U123: 'Sam' } })),
-    ).toBe('Sam ping');
+      translateInbound('<@U123> ping', deps({ users: { U123: 'Atlas' } })),
+    ).toBe('Atlas ping');
   });
 
   it('translates a mention of our own bot user into @here (roster broadcast)', () => {
@@ -202,8 +202,8 @@ describe('extractHandles', () => {
   it('extracts bare @handles from prose', () => {
     expect(extractHandles('@Dennis ping')).toEqual(['Dennis']);
     expect(extractHandles('hey @Alex, check this out')).toEqual(['Alex']);
-    expect(extractHandles('@Sam and @Riley please review')).toEqual([
-      'Sam',
+    expect(extractHandles('@Atlas and @Riley please review')).toEqual([
+      'Atlas',
       'Riley',
     ]);
   });

@@ -89,8 +89,7 @@ export class ApprovalCardsService
     if (!web) throw new Error(`no Slack client for workspace ${parsed.teamId}`);
     // The card POSTS AS the proposing lead — username/icon override (the chat surface's idiom),
     // but through the MAIN app on purpose: Slack routes block_actions to the app that posted the
-    // message, so a PUPPET-posted card would have dead buttons (puppets are post-only, no
-    // interactivity wiring).
+    // message, so the card must be app-posted for button interactivity to work.
     const proposer = this.employees.byId(e.proposedBy);
     const card = await web.chat.postMessage({
       channel: parsed.channel,
@@ -168,7 +167,7 @@ export class ApprovalCardsService
       content: plan.planMd,
       initial_comment: `*${plan.employee}'s plan* for ticket #${taskId}`,
     };
-    // Single voice: the one app uploads the snippet (no per-author puppet client).
+    // Single voice: the one app uploads the snippet (no per-author posting client).
     try {
       await web.filesUploadV2(upload);
       return;

@@ -23,7 +23,7 @@ const task = (overrides: Partial<BoardTask> = {}): BoardTask => ({
   description: '',
   status: 'open',
   assignee: undefined,
-  createdBy: 'sam',
+  createdBy: 'atlas',
   dependsOn: [],
   createdAt: '2026-06-11T00:00:00.000Z',
   updatedAt: '2026-06-11T00:00:00.000Z',
@@ -61,11 +61,11 @@ function makeFakes() {
   const plans = {
     planStatesOf: vi.fn(async () => new Map<number, PlanState>()),
   };
-  // Sam is the lead; alex/riley are teammates.
+  // Atlas is the lead; alex/riley are teammates.
   const employees = {
     byId: (id: string) =>
-      ['sam', 'alex', 'riley'].includes(id)
-        ? { id, name: id, teamLead: id === 'sam' }
+      ['atlas', 'alex', 'riley'].includes(id)
+        ? { id, name: id, teamLead: id === 'atlas' }
         : undefined,
   };
   return { board, plans, employees };
@@ -92,10 +92,10 @@ describe('board tools authority', () => {
     const { board, employees } = makeFakes();
     const tool = new AddBoardTaskTool(board as never, employees as never);
     await expect(
-      tool.execute({ title: 'X', assignee: 'riley' }, identity('sam')),
+      tool.execute({ title: 'X', assignee: 'riley' }, identity('atlas')),
     ).resolves.toContain('Added board task');
     await expect(
-      tool.execute({ title: 'X', assignee: 'nobody' }, identity('sam')),
+      tool.execute({ title: 'X', assignee: 'nobody' }, identity('atlas')),
     ).resolves.toContain("No teammate 'nobody'");
   });
 
@@ -104,7 +104,7 @@ describe('board tools authority', () => {
     board.create.mockResolvedValue({ unknownDeps: [41, 42] } as never);
     const tool = new AddBoardTaskTool(board as never, employees as never);
     await expect(
-      tool.execute({ title: 'X', depends_on: [41, 42] }, identity('sam')),
+      tool.execute({ title: 'X', depends_on: [41, 42] }, identity('atlas')),
     ).resolves.toContain('Unknown dependency id(s) #41, #42');
   });
 
@@ -171,7 +171,7 @@ describe('board tools authority', () => {
     board.get.mockResolvedValue(task({ assignee: 'alex', status: 'planning' }));
     await expect(
       tool.execute({ id: 7, status: 'awaiting_approval' }, identity('alex')),
-    ).resolves.toContain('@Sam');
+    ).resolves.toContain('Notify the team lead');
     // …and cannot approve, even their own.
     board.get.mockResolvedValue(
       task({ assignee: 'alex', status: 'awaiting_approval' }),
@@ -182,17 +182,17 @@ describe('board tools authority', () => {
 
     // The lead approves a proposed ticket…
     await expect(
-      tool.execute({ id: 7, status: 'approved' }, identity('sam')),
+      tool.execute({ id: 7, status: 'approved' }, identity('atlas')),
     ).resolves.toContain('APPROVED');
     // …but not one that was never proposed.
     board.get.mockResolvedValue(task({ assignee: 'alex', status: 'planning' }));
     await expect(
-      tool.execute({ id: 7, status: 'approved' }, identity('sam')),
+      tool.execute({ id: 7, status: 'approved' }, identity('atlas')),
     ).resolves.toContain("not 'awaiting_approval'");
 
     // The lead's manual escape hatch still works.
     await expect(
-      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('sam')),
+      tool.execute({ id: 7, status: 'awaiting_approval' }, identity('atlas')),
     ).resolves.toContain('posted for approval');
   });
 
@@ -216,7 +216,7 @@ describe('board tools authority', () => {
 
     // The lead records Dennis's acceptance.
     await expect(
-      tool.execute({ id: 7, status: 'done' }, identity('sam')),
+      tool.execute({ id: 7, status: 'done' }, identity('atlas')),
     ).resolves.toContain('done');
   });
 
@@ -227,7 +227,7 @@ describe('board tools authority', () => {
     await expect(
       tool.execute(
         { id: 7, status: 'open', assignee: 'riley', title: 'Re-scoped' },
-        identity('sam'),
+        identity('atlas'),
       ),
     ).resolves.toContain('Updated board task #7');
     expect(board.update).toHaveBeenCalledWith('T1', 7, {
@@ -359,14 +359,14 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
       );
       await tool.execute(
         { id: 7, description: 'new text' },
-        slackIdentity('sam'),
+        slackIdentity('atlas'),
       );
       expect(notifier.notifyDescriptionChange).toHaveBeenCalledWith(
         expect.objectContaining({
           team: 'T1',
           taskId: 7,
           title: 'Wire the API',
-          changedBy: 'sam',
+          changedBy: 'atlas',
           oldDescription: 'old text',
           newDescription: 'new text',
           surfaceId: 'slack:T1:C99',
@@ -388,8 +388,8 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
         employees as never,
         notifier,
       );
-      // non-lead can't change description, so use sam for all statuses
-      await tool.execute({ id: 7, description: 'new' }, slackIdentity('sam'));
+      // non-lead can't change description, so use atlas for all statuses
+      await tool.execute({ id: 7, description: 'new' }, slackIdentity('atlas'));
       expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
     },
   );
@@ -409,7 +409,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     );
     await tool.execute(
       { id: 7, description: 'same text' },
-      slackIdentity('sam'),
+      slackIdentity('atlas'),
     );
     expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
   });
@@ -425,7 +425,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
       employees as never,
       notifier,
     );
-    await tool.execute({ id: 7, status: 'done' }, slackIdentity('sam'));
+    await tool.execute({ id: 7, status: 'done' }, slackIdentity('atlas'));
     expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
   });
 
@@ -442,7 +442,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
       employees as never,
       notifier,
     );
-    await tool.execute({ id: 7, title: 'New title' }, slackIdentity('sam'));
+    await tool.execute({ id: 7, title: 'New title' }, slackIdentity('atlas'));
     expect(notifier.notifyDescriptionChange).not.toHaveBeenCalled();
   });
 
@@ -464,7 +464,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     );
     // Should resolve (not throw) despite the notifier rejecting.
     await expect(
-      tool.execute({ id: 7, description: 'new' }, slackIdentity('sam')),
+      tool.execute({ id: 7, description: 'new' }, slackIdentity('atlas')),
     ).resolves.not.toThrow();
   });
 
@@ -479,7 +479,7 @@ describe('UpdateBoardTaskTool — description-change notification', () => {
     // No notifier injected (undefined).
     const tool = new UpdateBoardTaskTool(board as never, employees as never);
     await expect(
-      tool.execute({ id: 7, description: 'new' }, slackIdentity('sam')),
+      tool.execute({ id: 7, description: 'new' }, slackIdentity('atlas')),
     ).resolves.not.toThrow();
   });
 });

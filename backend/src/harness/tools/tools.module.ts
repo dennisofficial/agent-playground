@@ -137,7 +137,7 @@ import {
     // tickets (plans + notes)
     GetTicketTool,
     AddNoteTool,
-    // approval pipeline + standup (lead-only, Sam's roster array)
+    // approval pipeline + standup (lead-only)
     ApprovePlanTool,
     ProposePlanTool,
     OpenStandupTool,

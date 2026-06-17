@@ -8,8 +8,8 @@ import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
 /**
  * The team lead's two approval-pipeline tools — layer 1 (reviewing each employee's attached plan)
- * and layer 2 (proposing the consolidated ticket to Dennis). Lead-only, in Sam's roster `tools`
- * array, with belt-and-braces authority checks here (the board.tools.ts idiom).
+ * and layer 2 (proposing the consolidated ticket to Dennis). Lead-only, with belt-and-braces
+ * authority checks here (the board.tools.ts idiom).
  */
 
 const approveSchema = z.object({

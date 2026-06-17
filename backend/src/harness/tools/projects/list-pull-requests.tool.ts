@@ -18,7 +18,7 @@ const listPrSchema = z.object({
 
 /**
  * Read-only query: returns the open pull requests on the project's registered GitHub repo.
- * Useful for Sam to check what's awaiting review or merge before closing out a feature.
+ * Useful for the team lead to check what's awaiting review or merge before closing out a feature.
  */
 @HarnessTool()
 export class ListPullRequestsTool implements IHarnessTool<typeof listPrSchema> {

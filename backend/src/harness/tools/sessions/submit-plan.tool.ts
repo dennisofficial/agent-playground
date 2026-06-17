@@ -27,7 +27,7 @@ const submitPlanSchema = z.object({
 export class SubmitPlanTool implements IHarnessTool<typeof submitPlanSchema> {
   readonly name = 'submit_plan';
   readonly description =
-    "Submit a planning session's finished plan to its board ticket — your explicit approval of your own plan. Attaches it (with its Q&A) to the linked ticket and notifies @Sam to review. Use ONLY after reading the relayed plan and being happy with it; to change it, reply_session with notes instead.";
+    "Submit a planning session's finished plan to its board ticket — your explicit approval of your own plan. Attaches it (with its Q&A) to the linked ticket and notifies the team lead to review. Use ONLY after reading the relayed plan and being happy with it; to change it, reply_session with notes instead.";
   readonly schema = submitPlanSchema;
 
   constructor(
@@ -61,7 +61,7 @@ export class SubmitPlanTool implements IHarnessTool<typeof submitPlanSchema> {
       .catch(() => []);
     const other = existing.find((p) => p.employee !== session.ownerBot);
     if (other)
-      return `Board task #${session.boardTaskId} already has ${other.employee}'s plan — one owner per ticket. Ask @Sam to split the work into a separate ticket (a shared_slug groups them onto one PR).`;
+      return `Board task #${session.boardTaskId} already has ${other.employee}'s plan — one owner per ticket. Ask the team lead to split the work into a separate ticket (a shared_slug groups them onto one PR).`;
 
     await this.plans.attach({
       team: session.team,
@@ -70,6 +70,6 @@ export class SubmitPlanTool implements IHarnessTool<typeof submitPlanSchema> {
       planMd: session.lastReport,
       sessionId,
     });
-    return `Submitted your plan on #${session.boardTaskId} — it's attached to the ticket and @Sam is notified to review. Keep ${sessionId} open through the approval pipeline (Sam's review, then Dennis's verdict).`;
+    return `Submitted your plan on #${session.boardTaskId} — it's attached to the ticket and the team lead is notified to review. Keep ${sessionId} open through the approval pipeline (Atlas's review, then Dennis's verdict).`;
   }
 }
