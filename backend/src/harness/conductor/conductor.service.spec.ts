@@ -153,7 +153,10 @@ interface FakeGraphBehavior {
 
 async function buildConductor(
   behavior: FakeGraphBehavior,
-  gateDecide: () => Promise<'respond' | 'skip'> = async () => 'respond',
+  gateDecide: (opts: {
+    text: string;
+    history: string;
+  }) => Promise<'respond' | 'skip'> = async () => 'respond',
 ) {
   const channel = new FakeChannel();
   const cursors = new FakeCursors();
@@ -278,6 +281,32 @@ describe('ConductorService scheduling', () => {
     expect(decideCalls).toBe(1); // gated exactly once — no re-fire on the same message
     expect(cursors.get('alex', 'tui:test')).toBe(channel.length); // cursor moved past seq 0
     expect(channel.since(cursors.get('alex', 'tui:test'))).toHaveLength(0); // nothing left in-window
+  });
+
+  it("hands the gate Atlas's own recent messages so a reply to its own question is recognizable", async () => {
+    // Regression: the gate context was built from non-own messages only, so a bare "yes please"
+    // replying to Atlas's own question reached the classifier with no question above it → SKIP.
+    // The context must include Atlas's prior (already-consumed) message.
+    const histories: string[] = [];
+    const { conductor, channel } = await buildConductor(
+      { run: () => ({ deltas: [{}], cursorAfter: channel.length }) },
+      async ({ history }) => {
+        histories.push(history);
+        return 'skip';
+      },
+    );
+    // Atlas asked a question on a prior turn (consumed — below the human's cursor)…
+    channel.append({
+      id: 'a-1',
+      author: 'Alex',
+      authorId: 'alex',
+      authorBotId: 'alex',
+      text: 'Want me to put together a backlog item?',
+    } as Parameters<typeof channel.append>[0]);
+    // …then a human replies with a bare acknowledgement.
+    conductor.submitFrom('dennis', 'Dennis', 'yes please');
+    await conductor.whenIdle();
+    expect(histories.at(-1)).toContain('Want me to put together a backlog item?');
   });
 
   it('gives up after MAX_TURN_RETRIES no-progress failures and skips the wedged batch', async () => {

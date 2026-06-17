@@ -399,7 +399,9 @@ export class ConductorService
       const channelId = this.registry.get(seed.channelId)
         ? seed.channelId
         : this.channel.surfaceId;
-      this.claim(() => this.runBotGraph(atlas, { seed: seed.prompt, channelId }));
+      this.claim(() =>
+        this.runBotGraph(atlas, { seed: seed.prompt, channelId }),
+      );
     }
     // Room deliveries: Atlas's undelivered work per room it's a member of.
     if (!this.running)
@@ -451,7 +453,13 @@ export class ConductorService
     if (unseen.length === 0) return; // raced clear since hasWork
     const latest = unseen[unseen.length - 1];
     const isDm = !this.registry.isChannelKind(channelId);
-    const history = unseen
+    // Classifier context = the recent room tail INCLUDING Atlas's own (and already-consumed) messages.
+    // A bare reply to Atlas's own question — "yes please" answering "Want me to …?" — reads as a
+    // context-free acknowledgement (→ SKIP) when Atlas's side of the thread is stripped out; with the
+    // question visible it's a clear continuation (→ RESPOND). Filtering own messages out of the gate
+    // context is what made it ignore replies to itself.
+    const history = this.channel
+      .snapshot(channelId)
       .slice(-8)
       .map((m) => `${m.author}: ${m.text}`)
       .join('\n');
