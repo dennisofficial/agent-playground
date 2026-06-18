@@ -43,6 +43,13 @@ export interface IEnvConfig {
   POSTGRES_SSL_MODE?: string; // disable | require | verify-full (defaults by NODE_ENV)
   POSTGRES_POOL_MAX?: number;
 
+  // Redis (Phase 5 — the host↔sandbox-daemon communication bus). The harness drives in-sandbox
+  // daemons over Redis Streams (turn events) + pub/sub (aborts) + correlation-id req/reply (git RPCs).
+  // OPTIONAL: the client is lazy/resilient, so the harness boots with Redis absent (containerized
+  // sessions are simply unavailable until Redis appears); unset → a localhost default. Net-new infra —
+  // a system service on the OVH deploy compose alongside Postgres.
+  REDIS_URL?: string;
+
   // LLM providers — OPTIONAL since the pending-keys pass: a tenant stack boots key-less and the
   // keys arrive at runtime via the encrypted provider_keys store (LlmReadinessService feeds them
   // into process.env, which is what every SDK reads lazily). Env still wins when set (dev).
@@ -181,6 +188,9 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
     .valid('disable', 'require', 'verify-full')
     .optional(),
   POSTGRES_POOL_MAX: Joi.number().integer().min(1).optional(),
+
+  // Redis (Phase 5 host↔daemon bus)
+  REDIS_URL: Joi.string().uri().optional(),
 
   // LLM providers (optional — pending-keys mode gates LLM turns until keys land at runtime)
   ANTHROPIC_API_KEY: Joi.string().optional(),

@@ -40,6 +40,18 @@ export interface IDaemonEnvConfig {
   // per-session worktrees off this. Baked to /workspace/repo in the image; overridable.
   WORKSPACE_ROOT?: string;
 
+  // Redis connection URL (Phase 5) — the daemon connects OUT to it (the only network it needs) to
+  // consume its command stream + stream turn events back. OPTIONAL: the client is lazy/resilient, so
+  // the daemon boots with Redis absent (the consumer loop retries until it appears); unset → a
+  // localhost default. The host's `IEnvConfig` carries the same key.
+  REDIS_URL?: string;
+
+  // The sandbox's OWN workspace id (the uuid that names this container), injected at container creation
+  // (Phase 6). The daemon consumes only its own command stream `ws:{WORKSPACE_ID}:cmds`. Read directly
+  // from process.env by the consumer loop (not a config default — a daemon with no WORKSPACE_ID is a
+  // standalone/dev boot and simply doesn't start the loop). Declared here so it validates.
+  WORKSPACE_ID?: string;
+
   // Git credential (the PAT path — `EnvGitCredentialProvider`). All OPTIONAL: a file:// fixture or an
   // already-public repo needs no token, and Phase 5 swaps in a Redis-pull credential impl. Read
   // directly from process.env by the provider (the daemon binds the host EnvService, typed over the
@@ -65,6 +77,9 @@ export const daemonEnvValidation = Joi.object<IDaemonEnvConfig, true>({
 
   AGENT_HOME_ROOT: Joi.string().optional().default('/workspace/.agent-home'),
   WORKSPACE_ROOT: Joi.string().optional().default('/workspace/repo'),
+
+  REDIS_URL: Joi.string().uri().optional(),
+  WORKSPACE_ID: Joi.string().optional(),
 
   GIT_TOKEN: Joi.string().optional(),
   GIT_AUTHOR_NAME: Joi.string().optional(),
