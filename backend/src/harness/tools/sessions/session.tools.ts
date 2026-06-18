@@ -166,7 +166,7 @@ export class CreateSessionTool implements IHarnessTool<
     // where the engine IS known. The in-sandbox daemon only runs claude/codex (langgraph + chat/conductor
     // stay host-side); a langgraph session in a sandbox would have nowhere to run. Refuse loudly.
     if (containerized && engineName === EWorkerEngineName.LANGGRAPH) {
-      return `Can't open this session in sandbox ${workspaceId}: ${bot.name}'s ${mode} engine is langgraph, which runs only on the host. Use a local workspace for langgraph work.`;
+      return `Can't open this session in ${workspaceId}: ${bot.name}'s ${mode} engine is langgraph, which runs only on the host (the in-sandbox daemon runs claude/codex). Switch ${bot.name}'s ${mode} engine to claude or codex for sandboxed work.`;
     }
     // OPTION B handoff: a fresh execute session is seeded from the APPROVED PLAN (the durable ticket
     // artifact), not the planning session's investigation noise. When this is an execute session on a
