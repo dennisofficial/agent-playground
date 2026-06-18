@@ -1,4 +1,5 @@
 import { Inject } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { EnvService } from '@core/config/env/env.service';
 import { z } from 'zod';
 import { ProjectStore } from '../../projects/project-store';
@@ -7,7 +8,11 @@ import {
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
 import { ContainerManagerService } from '../../workspaces/container-manager.service';
+import { DaemonClient } from '../../workspaces/daemon-client';
+import { SandboxReadinessService } from '../../workspaces/sandbox-readiness.service';
 import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
+import { WorkspaceReader } from '../../workspaces/workspace-reader';
+import { WorkspaceRegistry } from '../../workspaces/workspace-registry';
 import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
@@ -78,6 +83,9 @@ export class CreateWorkspaceTool implements IHarnessTool<
     private readonly containers: ContainerManagerService,
     private readonly projects: ProjectStore,
     private readonly env: EnvService,
+    private readonly workAreas: WorkspaceRegistry,
+    private readonly daemon: DaemonClient,
+    private readonly readiness: SandboxReadinessService,
   ) {}
 
   async execute(
@@ -87,20 +95,42 @@ export class CreateWorkspaceTool implements IHarnessTool<
     const id = ctx.identity;
     try {
       // CREATE-TIME POLICY: containerized sandbox vs local checkout. Decided ONCE, here, and stamped as
-      // the returned workspace id (the sandbox uuid for a sandbox, `ws-NNN` for local) — every later
-      // route reads it back off SandboxRegistry. With the flag off this is always false ⇒ local path.
+      // the returned workspace id (a `workAreaId` for a sandbox, `ws-NNN` for local) — every later route
+      // reads it back through WorkspaceRegistry. With the flag off this is always false ⇒ local path.
       if (
         await shouldContainerize(this.env, this.projects, id.team, id.project)
       ) {
-        // SANDBOX: spawn (or reuse) the project's sandbox; the sandbox uuid IS the workspace id the
-        // agent gets back and that lands in Session.workspace_id. The branch/shared inputs are agent
-        // intent that the in-sandbox daemon realizes per-session later (createWorktree + ensureShared);
-        // there's no host checkout to cut here.
+        // SANDBOX: ensure the project's sandbox (tier 1), then create a durable WORK AREA inside it
+        // (tier 2) — a branch/worktree the work area's SESSIONS share (tier 3). The work area's id is
+        // what the agent gets back and lands in Session.workspace_id. We realize its worktree NOW
+        // (cutting the branch, from the shared tip when `shared`) so a session's first git op finds a
+        // tree; the WorkspaceRegistry record is the host's metadata + routing handle.
         const sandbox = await this.containers.ensureWorkspace(
           id.team,
           id.project,
         );
-        return `Created sandbox workspace ${sandbox.workspaceId} for ${id.team}/${id.project}. Open sessions against it; each session gets its own isolated worktree inside the sandbox.`;
+        const workAreaId = `wa-${randomUUID()}`;
+        await this.readiness.waitForReady(sandbox.workspaceId);
+        await this.daemon.gitCall(sandbox.workspaceId, 'createWorktree', [
+          workAreaId,
+          {
+            ...(branch ? { branch } : {}),
+            ...(shared ? { shared } : {}),
+            ownerBot: id.selfAgent,
+          },
+        ]);
+        this.workAreas.upsert({
+          workAreaId,
+          sandboxId: sandbox.workspaceId,
+          team: id.team,
+          project: id.project,
+          name,
+          ownerBot: id.selfAgent,
+          ...(branch ? { branch } : {}),
+          ...(shared ? { shared } : {}),
+        });
+        const sharedNote = shared ? ` Publishing to shared branch ${shared}.` : '';
+        return `Created work area ${workAreaId} ("${name}") in the ${id.team}/${id.project} sandbox.${sharedNote} Open sessions against it — they share its branch/worktree inside the sandbox.`;
       }
       // LOCAL — today's path, verbatim (through the git port's local adapter).
       const { workspace, warning } = await this.workspaceGit
@@ -135,13 +165,13 @@ export class ListWorkspacesTool implements IHarnessTool<
   readonly schema = listWorkspacesSchema;
 
   constructor(
-    private readonly workspaces: WorkspaceService,
+    private readonly reader: WorkspaceReader,
     private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
   async execute(): Promise<string> {
-    const all = this.workspaces.list();
+    const all = this.reader.list();
     if (all.length === 0) return 'No workspaces exist yet.';
     const lines = await Promise.all(
       all.map(async (w) => {
@@ -194,15 +224,16 @@ export class RemoveWorkspaceTool implements IHarnessTool<
   readonly schema = removeWorkspaceSchema;
 
   constructor(
-    private readonly workspaces: WorkspaceService,
+    private readonly reader: WorkspaceReader,
     private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
+    private readonly workAreas: WorkspaceRegistry,
   ) {}
 
   async execute({
     workspaceId,
   }: z.infer<typeof removeWorkspaceSchema>): Promise<string> {
-    const ws = this.workspaces.get(workspaceId);
+    const ws = this.reader.get(workspaceId);
     if (!ws) return `No workspace "${workspaceId}".`;
     // Policy lives here, not in the git-only service: a workspace with open sessions stays.
     const open = (await this.sessions.list({ workspaceId })).filter(
@@ -217,7 +248,10 @@ export class RemoveWorkspaceTool implements IHarnessTool<
       await this.workspaceGit
         .resolve({ team: ws.team, project: ws.project, workspaceId })
         .remove(workspaceId);
-      return `Removed ${workspaceId}. Branch ${ws.branch} survives with its commits.`;
+      // Drop the host work-area record too (its daemon worktree is now removed).
+      if (ws.containerized) this.workAreas.remove(workspaceId);
+      const branchNote = ws.branch ? ` Branch ${ws.branch} survives with its commits.` : '';
+      return `Removed ${workspaceId}.${branchNote}`;
     } catch (err) {
       return `Couldn't remove ${workspaceId}: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -276,7 +310,7 @@ export class PublishWorkspaceTool implements IHarnessTool<
   readonly schema = publishWorkspaceSchema;
 
   constructor(
-    private readonly workspaces: WorkspaceService,
+    private readonly reader: WorkspaceReader,
     private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
@@ -284,7 +318,7 @@ export class PublishWorkspaceTool implements IHarnessTool<
   async execute({
     workspaceId,
   }: z.infer<typeof publishWorkspaceSchema>): Promise<string> {
-    const ws = this.workspaces.get(workspaceId);
+    const ws = this.reader.get(workspaceId);
     if (!ws) return `No workspace "${workspaceId}".`;
     const refusal = await midTurnRefusal(this.sessions, workspaceId, 'publish');
     if (refusal) return refusal;
@@ -324,7 +358,7 @@ export class PullWorkspaceTool implements IHarnessTool<
   readonly schema = pullWorkspaceSchema;
 
   constructor(
-    private readonly workspaces: WorkspaceService,
+    private readonly reader: WorkspaceReader,
     private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
@@ -332,7 +366,7 @@ export class PullWorkspaceTool implements IHarnessTool<
   async execute({
     workspaceId,
   }: z.infer<typeof pullWorkspaceSchema>): Promise<string> {
-    const ws = this.workspaces.get(workspaceId);
+    const ws = this.reader.get(workspaceId);
     if (!ws) return `No workspace "${workspaceId}".`;
     const refusal = await midTurnRefusal(this.sessions, workspaceId, 'pull');
     if (refusal) return refusal;
@@ -364,7 +398,7 @@ export class RefreshWorkspaceTool implements IHarnessTool<
   readonly schema = refreshWorkspaceSchema;
 
   constructor(
-    private readonly workspaces: WorkspaceService,
+    private readonly reader: WorkspaceReader,
     private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
@@ -372,7 +406,7 @@ export class RefreshWorkspaceTool implements IHarnessTool<
   async execute({
     workspaceId,
   }: z.infer<typeof refreshWorkspaceSchema>): Promise<string> {
-    const ws = this.workspaces.get(workspaceId);
+    const ws = this.reader.get(workspaceId);
     if (!ws) return `No workspace "${workspaceId}".`;
     const refusal = await midTurnRefusal(this.sessions, workspaceId, 'refresh');
     if (refusal) return refusal;

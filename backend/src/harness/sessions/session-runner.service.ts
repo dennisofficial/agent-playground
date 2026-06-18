@@ -237,12 +237,12 @@ export class SessionRunnerService {
       if (!session) return;
       const bot =
         this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-      // CONTAINERIZED? A sandbox session's checkout lives INSIDE the daemon — there is no host
-      // workspace row and no host cwd (the daemon resolves cwd from the session's in-sandbox worktree).
-      // So the host-path lookup below is LOCAL-ONLY: skip it (and its throw) for a containerized session,
-      // and pass cwd='' through the seam (the daemon overrides it; cwd doesn't cross the wire anyway).
-      // With the flag off, `has()` is always false ⇒ the unchanged local path.
-      const containerized = this.sandboxes.has(session.workspaceId);
+      // CONTAINERIZED? A sandbox session's checkout lives INSIDE the daemon (the session's work area
+      // worktree) — there is no host workspace row and no host cwd (the daemon resolves it). So the
+      // host-path lookup below is LOCAL-ONLY: skip it (and its throw) for a containerized session, and
+      // pass cwd='' through the seam (the daemon overrides it; cwd doesn't cross the wire anyway). With
+      // the flag off, this is always false ⇒ the unchanged local path.
+      const containerized = this.workspaceGit.isContainerized({ session });
       const workspace = this.workspaces.get(session.workspaceId);
       if (!containerized && !workspace) {
         throw new Error(

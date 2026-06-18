@@ -110,11 +110,11 @@ export class CreateSessionTool implements IHarnessTool<
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
-    // CONTAINERIZED? A sandbox workspace id is a live sandbox uuid (the create-time policy stamped it).
-    // A sandbox workspace has NO host `WorkspaceService` row — its checkout lives inside the daemon — so
-    // the local existence + drift-guard checks below are LOCAL-ONLY. With the flag off this is always
-    // false and every path is the unchanged local one.
-    const containerized = this.sandboxes.has(workspaceId);
+    // CONTAINERIZED? The workspace id is a `workAreaId` that resolves (via WorkspaceRegistry) to a live
+    // sandbox. A work area's checkout lives inside the daemon (no host `WorkspaceService` row), so the
+    // local existence + drift-guard checks below are LOCAL-ONLY. With the flag off this is always false
+    // and every path is the unchanged local one.
+    const containerized = this.workspaceGit.isContainerized({ workspaceId });
     const workspace = this.workspaces.get(workspaceId);
     if (!containerized && !workspace)
       throw new Error(
@@ -284,18 +284,9 @@ export class CreateSessionTool implements IHarnessTool<
         ? { boardTaskId: opts.boardTaskId }
         : {}),
     });
-    // EAGER PER-SESSION WORKTREE (containerized only): a sandbox hosts MANY sessions, each its own
-    // daemon-side git worktree keyed by THIS session's id. The daemon's run handler lazily creates the
-    // worktree on the first turn, but git ops that run BEFORE that first turn lands (e.g. the execute
-    // path's `ensureShared` right after this returns) need a tree already. So create it now, synchronously
-    // before firing the turn. Idempotent on the daemon side (createWorktree returns the existing path).
-    // Best-effort: a failure here is logged via the thrown RPC, but must not strand the session create —
-    // the run handler's lazy create is the backstop. LOCAL sessions skip this entirely (flag off path).
-    if (this.sandboxes.has(opts.workspaceId)) {
-      await this.daemon
-        .gitCall(opts.workspaceId, 'createWorktree', [session.id])
-        .catch(() => undefined);
-    }
+    // The WORK AREA's worktree is realized once, at create_workspace (the sessions in a work area SHARE
+    // it — that's the three-tier model), so there's no per-session worktree to create here. The daemon's
+    // run handler also lazily ensures the work area's worktree on the first turn as a backstop.
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
       // A fresh execute session starts execution for this work — refresh the workspace against base.
       void this.runner.runSessionTurn(

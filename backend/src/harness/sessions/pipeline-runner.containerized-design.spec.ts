@@ -38,6 +38,9 @@ function build() {
   const attachDesign = vi.fn(async () => ({ ok: true, message: 'attached' }));
   const daemon = { attachDesign };
   const workspaceGit = {
+    isContainerized: vi.fn(
+      (ctx: { workspaceId?: string }) => ctx?.workspaceId === SANDBOX,
+    ),
     daemonFor: vi.fn(() => daemon),
   };
   // The host workspace lookup + unzip must NOT happen on the containerized path.

@@ -97,7 +97,12 @@ function makeTool(opts: {
     runner as never,
     workspaces as never,
     // ensureShared routes through the provider; resolving to the same mock keeps the spy assertion.
-    localGitProvider(workspaces as never),
+    // A containerized workspace id flips the provider's isContainerized (the detection seam).
+    localGitProvider(workspaces as never, {
+      containerizedIds: opts.containerizedWorkspaceId
+        ? new Set([opts.containerizedWorkspaceId])
+        : undefined,
+    }),
     employees as never,
     board as never,
     plans as never,
@@ -312,13 +317,14 @@ describe('create_session × containerized (sandbox) workspace', () => {
     expect(created[0]?.workspaceId).toBe(SANDBOX);
   });
 
-  it('eagerly creates the daemon worktree (gitCall(sandbox, "createWorktree", [sessionId])) before the turn', async () => {
+  it('does NOT create a per-session worktree — sessions SHARE the work area worktree (realized at create_workspace)', async () => {
     const { tool, gitCall } = makeTool({ containerizedWorkspaceId: SANDBOX });
     await tool.execute(
       { workspaceId: SANDBOX, task: 'do it', mode: 'plan' },
       ctx,
     );
-    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'createWorktree', ['sess-001']);
+    // No eager per-session createWorktree: the work area's tree is realized once, at create_workspace.
+    expect(gitCall).not.toHaveBeenCalled();
   });
 
   it('refuses a langgraph session in a sandbox (the daemon only runs claude/codex)', async () => {

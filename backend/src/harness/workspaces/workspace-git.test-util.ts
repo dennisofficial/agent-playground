@@ -30,12 +30,31 @@ export function fakeSandboxRegistry(
  */
 export function localGitProvider(
   git: Partial<WorkspaceGitPort> | WorkspaceService = {},
+  opts: {
+    /** Work-area ids to treat as containerized (`isContainerized`/`daemonFor` fire for them). */
+    containerizedIds?: ReadonlySet<string>;
+    /** The object `daemonFor` returns for a containerized ctx (defaults to `git`). */
+    daemon?: unknown;
+  } = {},
 ): WorkspaceGitProvider {
+  const containerized = opts.containerizedIds ?? new Set<string>();
+  const idOf = (ctx?: {
+    workspaceId?: string;
+    session?: { workspaceId?: string };
+  }): string | undefined => ctx?.session?.workspaceId ?? ctx?.workspaceId;
+  const isC = (ctx?: {
+    workspaceId?: string;
+    session?: { workspaceId?: string };
+  }): boolean => {
+    const id = idOf(ctx);
+    return !!id && containerized.has(id);
+  };
   return {
     resolve: () => git as WorkspaceGitPort,
-    // The flag-off default: every consumer fork takes its LOCAL branch, and no daemon adapter is handed
-    // out. Phase-11 call-site forks (review/ship/open_pr/attachDesign) read these to choose host-vs-daemon.
-    isContainerized: () => false,
-    daemonFor: () => undefined,
+    // Default: every consumer fork takes its LOCAL branch (no containerized ids). Pass `containerizedIds`
+    // to exercise the daemon path; the call-site forks (review/ship/open_pr/attachDesign) read these.
+    isContainerized: isC,
+    daemonFor: (ctx?: { workspaceId?: string; session?: { workspaceId?: string } }) =>
+      isC(ctx) ? ((opts.daemon ?? git) as never) : undefined,
   } as unknown as WorkspaceGitProvider;
 }

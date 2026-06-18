@@ -14,6 +14,7 @@ import { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
 import { TurnExecutor } from './turn-executor.service';
 import { WorkspaceGitProvider } from './workspace-git.provider';
+import { WorkspaceReader } from './workspace-reader';
 import { WorkspaceRegistry } from './workspace-registry';
 import { WorkspaceService } from './workspace.service';
 
@@ -74,6 +75,7 @@ import { WorkspaceService } from './workspace.service';
     LocalWorkspaceAdapter,
     WorkspaceGitProvider,
     WorkspaceRegistry,
+    WorkspaceReader,
   ],
   chains: [
     {

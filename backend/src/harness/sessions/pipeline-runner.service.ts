@@ -771,7 +771,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     // in-sandbox accumulation gap): the later implementer worktree is cut from origin/<base> and so won't
     // automatically see this clone-root design/ — making it flow into the implementer's tree needs the
     // wider accumulation work and is out of scope for this flag-off closure.
-    if (this.sandboxes.has(run.workspaceId)) {
+    if (this.workspaceGit.isContainerized({ workspaceId: run.workspaceId })) {
       const daemon = this.workspaceGit.daemonFor({ workspaceId: run.workspaceId });
       if (!daemon)
         return {
