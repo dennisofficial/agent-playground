@@ -34,7 +34,7 @@ import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
 import { EngineToolFactory } from '../tools/engine-tool.factory';
 import { ToolRegistry } from '../tools/tool.registry';
 import type { RefreshScope } from '../tools/tool.types';
-import { WorktreeService } from '../worktrees/worktree.service';
+import { WorkspaceService } from '../workspaces/workspace.service';
 import {
   GAP_THRESHOLD_DEFAULT_MS,
   buildTimeContext,
@@ -116,7 +116,7 @@ export class BotGraphNodes {
     private readonly reconcile: ReconcileService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
     private readonly sessions: SessionRegistry,
     gapThresholdMs: number,
     private readonly engineTools?: EngineToolFactory,
@@ -152,16 +152,16 @@ export class BotGraphNodes {
   }
 
   /**
-   * The bot's live WORK state — its worktrees and open sessions — appended to the `recalled` block
+   * The bot's live WORK state — its workspaces and open sessions — appended to the `recalled` block
    * each respond turn, the same way reminders are. Registry reads only (no git subprocesses): this
-   * runs on every respond, so it must stay cheap; on-demand git truth lives in list_worktrees.
+   * runs on every respond, so it must stay cheap; on-demand git truth lives in list_workspaces.
    * Surfacing this in-context is what lets a bot notice "project: NONE" or a forgotten session
    * without spending turns spelunking with tools.
    */
   private async workContext(bot: EmployeeDefinition): Promise<string> {
     const CAP = 10;
     const parts: string[] = [];
-    const trees = this.worktrees.list({ ownerBot: bot.id });
+    const trees = this.workspaces.list({ ownerBot: bot.id });
     if (trees.length) {
       const lines = trees
         .slice(0, CAP)
@@ -172,7 +172,7 @@ export class BotGraphNodes {
         .join('\n');
       const more = trees.length - CAP;
       parts.push(
-        `Your worktrees:\n${lines}${more > 0 ? `\n…and ${more} more (list_worktrees)` : ''}`,
+        `Your workspaces:\n${lines}${more > 0 ? `\n…and ${more} more (list_workspaces)` : ''}`,
       );
     }
     const open = (await this.sessions.list({ ownerBot: bot.id })).filter(
@@ -183,7 +183,7 @@ export class BotGraphNodes {
         .slice(0, CAP)
         .map(
           (s) =>
-            `- ${s.id} (${s.status}) in ${s.worktreeId} — "${s.task.length > 80 ? `${s.task.slice(0, 80)}…` : s.task}"`,
+            `- ${s.id} (${s.status}) in ${s.workspaceId} — "${s.task.length > 80 ? `${s.task.slice(0, 80)}…` : s.task}"`,
         )
         .join('\n');
       const more = open.length - CAP;
@@ -303,7 +303,7 @@ export class BotGraphNodes {
      * The pre-LLM context read: assemble the standing-context core + working-state slots into
      * `recalled`. FetchService.fetchContext no longer does semantic recall (no embedding)
      * — it returns the tiny always-on core (role, project, team prefs) + active board tasks +
-     * reminders. The live work state (worktrees + sessions) is joined in from `workContext`.
+     * reminders. The live work state (workspaces + sessions) is joined in from `workContext`.
      * Always set recalled (even to '') so a stale recall from a prior turn never lingers.
      */
     const recallNode = async (
@@ -619,9 +619,9 @@ export class BotGraphNodes {
     /**
      * REFRESH_CONTEXT NODE — recompute only the context slices dirtied by the just-run tool batch.
      *
-     * Runs between `tools` and `llm` when a state-mutating tool call ran (create/remove_worktree,
+     * Runs between `tools` and `llm` when a state-mutating tool call ran (create/remove_workspace,
      * close_session, remember/update_memory/forget, add/complete_task). Only the flagged scopes are
-     * re-fetched — a memory-only refresh doesn't re-list worktrees, and vice-versa. Detection is
+     * re-fetched — a memory-only refresh doesn't re-list workspaces, and vice-versa. Detection is
      * name-based: a failed mutation still triggers a harmless, idempotent recompute. Errors degrade
      * silently, keeping the previous slice intact.
      *

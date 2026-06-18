@@ -13,7 +13,7 @@ import { ConductorService } from './conductor.service';
  * The event loop (ConductorService) + the presentation seam (ConductorEventsBus, via
  * ConductorEventsModule so tools can emit without a module cycle). Atlas's turn graph lives in
  * BotGraphModule — the conductor just dispatches turns onto it and relays their streamed deltas;
- * the graph's node-only dependencies (recursion guard, tools, worktrees, llm) stay in
+ * the graph's node-only dependencies (recursion guard, tools, workspaces, llm) stay in
  * BotGraphModule, not here. UI-agnostic — surfaces subscribe to the bus.
  */
 @CreateModule({

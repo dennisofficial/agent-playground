@@ -121,7 +121,7 @@ describe('compactPriorToolResults', () => {
       content: '',
       tool_calls: [
         {
-          name: 'list_worktrees',
+          name: 'list_workspaces',
           args: { botId: 'alex' },
           id: 'new',
           type: 'tool_call',
@@ -130,7 +130,7 @@ describe('compactPriorToolResults', () => {
     });
     const currTool = new ToolMessage({
       tool_call_id: 'new',
-      name: 'list_worktrees',
+      name: 'list_workspaces',
       content: 'current result — must stay full',
     });
 

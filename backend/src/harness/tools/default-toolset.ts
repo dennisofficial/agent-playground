@@ -38,14 +38,14 @@ import { SubmitForReviewTool } from './sessions/submit-for-review.tool';
 import { InvestigateTool } from './sessions/investigate.tool';
 import type { IHarnessTool } from './tool.types';
 import {
-  CreateWorktreeTool,
-  ListWorktreesTool,
-  PublishWorktreeTool,
-  PullWorktreeTool,
-  RefreshWorktreeTool,
-  RemoveWorktreeTool,
-} from './worktrees/worktree.tools';
-import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
+  CreateWorkspaceTool,
+  ListWorkspacesTool,
+  PublishWorkspaceTool,
+  PullWorkspaceTool,
+  RefreshWorkspaceTool,
+  RemoveWorkspaceTool,
+} from './workspaces/workspace.tools';
+import { MarkPrReadyTool } from './workspaces/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 
 /**
@@ -53,12 +53,12 @@ import { RecentWorkTool } from './worklog/recent-work.tool';
  * the ToolRegistry resolves them to bound LangChain tools at graph-build time.
  */
 export const DEFAULT_CHAT_TOOLSET: ReadonlyArray<Type<IHarnessTool>> = [
-  CreateWorktreeTool,
-  ListWorktreesTool,
-  PublishWorktreeTool,
-  PullWorktreeTool,
-  RefreshWorktreeTool,
-  RemoveWorktreeTool,
+  CreateWorkspaceTool,
+  ListWorkspacesTool,
+  PublishWorkspaceTool,
+  PullWorkspaceTool,
+  RefreshWorkspaceTool,
+  RemoveWorkspaceTool,
   // The review pipeline opens the draft PR + runs the self-review, but no longer flips the PR to ready
   // itself (a stateless adversarial verdict looped forever — the #49 bug). It hands the ship-or-fix
   // call to the owner, so ICs carry mark_pr_ready (their "it's your turn, Dennis" gesture).

@@ -7,7 +7,7 @@ import { MemoryModule } from '../memory/memory.module';
 import { RecursionGuardModule } from '../recursion-guard/recursion-guard.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { ToolsModule } from '../tools/tools.module';
-import { WorktreesModule } from '../worktrees/worktrees.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { BotGraphFactory } from './bot-graph.factory';
 
 /**
@@ -15,7 +15,7 @@ import { BotGraphFactory } from './bot-graph.factory';
  * machine per bot — gate → (respond) recall → llm ⇄ tools → tool_loop_guard → reconcile, or (skip)
  * consume (see bot-graph.factory.ts). This module owns the graph and every dependency the NODES need
  * — the addressing gate (in-graph entry node), recursion/tool-loop guard, memory/fetch + checkpointer,
- * llm, tools, worktrees, sessions, persona. The conductor imports this and stays concerned only with
+ * llm, tools, workspaces, sessions, persona. The conductor imports this and stays concerned only with
  * the event loop. (`AddressingGate` lives here, not in the conductor, because the gate is now a node.)
  */
 @CreateModule({
@@ -27,7 +27,7 @@ import { BotGraphFactory } from './bot-graph.factory';
     RecursionGuardModule,
     SessionsModule,
     ToolsModule,
-    WorktreesModule,
+    WorkspacesModule,
   ],
   services: [AddressingGate, BotGraphFactory],
   exports: [BotGraphFactory],

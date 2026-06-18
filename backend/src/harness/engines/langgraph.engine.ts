@@ -81,7 +81,7 @@ export class LanggraphEngine implements WorkerEngine {
   ) {}
 
   // A read-only turn (plan or investigate) gets a READ-ONLY tool set (no write_file/str_replace/bash)
-  // so it physically cannot mutate the worktree — matching the engine-enforced read-only of the
+  // so it physically cannot mutate the workspace — matching the engine-enforced read-only of the
   // claude/codex read-only turns. LangGraph has no separate plan ceremony, so plan and investigate
   // share the read-only agent; only their opening-prompt framing differs.
   private async getAgent(agentId: string, readOnly: boolean): Promise<Agent> {

@@ -50,9 +50,9 @@ const sortNotes = (a: SessionNote, b: SessionNote): number =>
  * that actually matter. The tiny always-on core is what the bot can reliably use; everything else
  * is on-demand.
  *
- * The bot's worktrees + sessions (`workContext`) are assembled by the `recallNode` in
+ * The bot's workspaces + sessions (`workContext`) are assembled by the `recallNode` in
  * `bot-graph.nodes.ts` and joined to this output — they are bounded working state that lives in
- * the graph layer because they need WorktreeService + SessionRegistry.
+ * the graph layer because they need WorkspaceService + SessionRegistry.
  *
  * Split into `fetchMemory` (sections 1–2) and `fetchTasks` (section 3) so the post-tools
  * `refreshContext` node can recompute only the dirtied half without re-running the whole assembler.

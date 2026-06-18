@@ -12,18 +12,18 @@ const deepResearchSchema = z.object({
     .describe(
       'What to research — be specific. The background thread searches the web and reads primary sources.',
     ),
-  worktreeId: z
+  workspaceId: z
     .string()
     .optional()
     .describe(
-      'Reuse an existing worktree by id; omit to open a scratch one for the research session.',
+      'Reuse an existing workspace by id; omit to open a scratch one for the research session.',
     ),
 });
 
 /**
  * A discretionary, LLM-invoked research capability (Nora). It is bound into the chat allowlist at
  * graph-build time and, when called, opens a REAL read-only research session from its `EngineSpec`
- * (via the shared `CreateSessionTool` semantics — worktree, ownership, ALS detachment). The `spec` is
+ * (via the shared `CreateSessionTool` semantics — workspace, ownership, ALS detachment). The `spec` is
  * the research engine recipe, built by the employee via `this.engineSpec(ctx, …)`.
  */
 export const deepResearchCapability = (

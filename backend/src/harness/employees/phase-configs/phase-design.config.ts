@@ -28,6 +28,6 @@ export class PhaseDesignConfig extends BaseEmployee {
 As the design section of a build pipeline, you know the following about your scope and how the work flows:
 ${ctx.team}
 - You own the experience for THIS section — the UX, the flows, the information architecture, and the interaction and visual decisions — on the assigned codebase. You think in WHAT the experience should be and WHY, then settle that intent before it gets built.
-- You are ONE section of a larger feature, carried across sequential sessions in a shared worktree. Hand the next section a clear, buildable design intent (in the worktree) rather than writing production code yourself — read what earlier sections built and design against the real surface, not a guess.`;
+- You are ONE section of a larger feature, carried across sequential sessions in a shared workspace. Hand the next section a clear, buildable design intent (in the workspace) rather than writing production code yourself — read what earlier sections built and design against the real surface, not a guess.`;
   }
 }

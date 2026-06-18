@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ProjectStore } from '../../projects/project-store';
 import type { ProjectRecord } from '../../projects/project.types';
-import { WorktreeService } from '../../worktrees/worktree.service';
+import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
@@ -44,7 +44,7 @@ export class ReferenceProjectTool
 
   constructor(
     private readonly projects: ProjectStore,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
   ) {}
 
   async execute(
@@ -60,10 +60,10 @@ export class ReferenceProjectTool
       return `✗ "${name}" isn't a registered project in this workspace.\nRemedy: call onboard_project({ name: "${name}" }) to register it read-only, then retry reference_project. (If you don't think it exists on GitHub, just tell Dennis.)`;
     }
     try {
-      const { path } = await this.worktrees.ensureReferenceClone(id.team, {
+      const { path } = await this.workspaces.ensureReferenceClone(id.team, {
         projectId: rec.projectId,
       });
-      const orientation = await this.worktrees.referenceOrientation(path);
+      const orientation = await this.workspaces.referenceOrientation(path);
       return `Referenced ${rec.projectId}${rec.description ? ` — ${rec.description}` : ''} (read-only) at ${path}\n\n${orientation}\n\nTo read deeper, investigate({ question, references: ["${rec.projectId}"] }).`;
     } catch (err) {
       return `Couldn't materialize a read-only clone of ${rec.projectId}: ${err instanceof Error ? err.message : String(err)}`;
@@ -91,7 +91,7 @@ export class ReferenceRepoTool
     "Read a GitHub repo that ISN'T in the catalog, by its URL, read-only (a one-off; authed with the workspace's default token). Returns a quick orientation. For a repo you'll reference repeatedly, onboard_project it instead so it's available by name.";
   readonly schema = referenceRepoSchema;
 
-  constructor(private readonly worktrees: WorktreeService) {}
+  constructor(private readonly workspaces: WorkspaceService) {}
 
   async execute(
     { url }: z.infer<typeof referenceRepoSchema>,
@@ -101,11 +101,11 @@ export class ReferenceRepoTool
     if (!GITHUB_URL.test(u))
       return `✗ "${url}" isn't an https://github.com/<owner>/<repo> URL — reference_repo only reads GitHub repos.`;
     try {
-      const { path } = await this.worktrees.ensureReferenceClone(
+      const { path } = await this.workspaces.ensureReferenceClone(
         ctx.identity.team,
         { gitUrl: u },
       );
-      const orientation = await this.worktrees.referenceOrientation(path);
+      const orientation = await this.workspaces.referenceOrientation(path);
       return `Referenced ${u} (read-only) at ${path}\n\n${orientation}\n\nTo read deeper, investigate the path. If it can't be cloned, the token may lack access — onboard_project can collect one.`;
     } catch (err) {
       return `Couldn't clone ${u} read-only (the default token may not have access): ${err instanceof Error ? err.message : String(err)}\nRemedy: onboard_project({ url: "${u}" }) to collect a token with access.`;

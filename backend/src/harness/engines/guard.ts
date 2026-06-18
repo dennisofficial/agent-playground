@@ -6,7 +6,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
  * the same checks back (a) the LangChain worker tools, and (b) the Claude adapter's `canUseTool`
  * guard (and inform the Codex sandbox config).
  *
- * A worker that has its own isolated workspace (a git worktree — see worktrees/worktree.service.ts)
+ * A worker that has its own isolated workspace (a git workspace — see workspaces/workspace.service.ts)
  * runs jailed to THAT directory instead, not the process root, so concurrent workers can't read or
  * clobber each other's trees (or the trunk). The active workspace is carried per async context below.
  */
@@ -14,14 +14,14 @@ export const ROOT = process.cwd();
 
 /**
  * The jail root for the CURRENTLY EXECUTING worker. Set (via `withActiveRoot`) to the session's
- * worktree for the duration of its engine turn, so the in-process LangChain tools resolve paths and
- * shell `cwd` against the worktree rather than ROOT. Unset → ROOT (the chat process). The SDK
+ * workspace for the duration of its engine turn, so the in-process LangChain tools resolve paths and
+ * shell `cwd` against the workspace rather than ROOT. Unset → ROOT (the chat process). The SDK
  * engines (claude/codex) additionally pass their own `cwd` to the subprocess; this store is what
  * keeps the langgraph in-process tools isolated to match.
  */
 const activeRootStore = new AsyncLocalStorage<string>();
 
-/** The jail root for the current async context — the active worker's worktree, or ROOT. */
+/** The jail root for the current async context — the active worker's workspace, or ROOT. */
 export function activeRoot(): string {
   return activeRootStore.getStore() ?? ROOT;
 }

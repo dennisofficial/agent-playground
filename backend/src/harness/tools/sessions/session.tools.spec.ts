@@ -34,7 +34,7 @@ function makeTool(opts: {
   plan?: { planMd: string } | undefined;
   engine?: EWorkerEngineName;
   note?: { id: number; body: string } | undefined;
-  worktreeShared?: string; // the worktree's existing sharedBranch (for the drift guard)
+  workspaceShared?: string; // the workspace's existing sharedBranch (for the drift guard)
 }) {
   const created: Record<string, unknown>[] = [];
   const sessions = {
@@ -51,11 +51,11 @@ function makeTool(opts: {
     ),
   };
   const ensureShared = vi.fn(async (_id: string, name: string) => `shared/${name}`);
-  const worktrees = {
+  const workspaces = {
     get: () => ({
-      id: 'wt-001',
-      path: '/tmp/wt',
-      sharedBranch: opts.worktreeShared,
+      id: 'ws-001',
+      path: '/tmp/ws',
+      sharedBranch: opts.workspaceShared,
     }),
     ensureShared,
     sharedBranchName: (s: string) => `shared/${s}`,
@@ -78,7 +78,7 @@ function makeTool(opts: {
   const tool = new CreateSessionTool(
     sessions as never,
     runner as never,
-    worktrees as never,
+    workspaces as never,
     employees as never,
     board as never,
     plans as never,
@@ -91,7 +91,7 @@ describe('create_session × the approval gate', () => {
   it('refuses an execute-mode open when the runner refuses, creating nothing', async () => {
     const { tool, created, runner } = makeTool({ refusal: 'needs approval' });
     const out = await tool.execute(
-      { worktreeId: 'wt-001', task: 'build it', mode: 'execute' },
+      { workspaceId: 'ws-001', task: 'build it', mode: 'execute' },
       ctx,
     );
     expect(out).toContain("Can't open an execute session: needs approval");
@@ -99,14 +99,14 @@ describe('create_session × the approval gate', () => {
     expect(runner.executeRefusal).toHaveBeenCalledWith(
       'T1',
       undefined,
-      'wt-001',
+      'ws-001',
     );
   });
 
   it('plan-mode opens are never gated', async () => {
     const { tool, created, runner } = makeTool({ refusal: 'needs approval' });
     const out = await tool.execute(
-      { worktreeId: 'wt-001', task: 'plan it', mode: 'plan' },
+      { workspaceId: 'ws-001', task: 'plan it', mode: 'plan' },
       ctx,
     );
     expect(out).toContain('Opened sess-001');
@@ -117,7 +117,7 @@ describe('create_session × the approval gate', () => {
   it('frames a non-Claude (Codex) plan turn with the structured plan-mode prompt', async () => {
     const { tool, runner } = makeTool({ engine: EWorkerEngineName.CODEX });
     await tool.execute(
-      { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
+      { workspaceId: 'ws-001', task: 'add rate limiting', mode: 'plan' },
       ctx,
     );
     const opening = runner.runSessionTurn.mock.calls[0]?.[1];
@@ -131,7 +131,7 @@ describe('create_session × the approval gate', () => {
   it('leaves a Claude plan turn on the raw task (its native plan mode does the ceremony)', async () => {
     const { tool, runner } = makeTool({ engine: EWorkerEngineName.CLAUDE });
     await tool.execute(
-      { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
+      { workspaceId: 'ws-001', task: 'add rate limiting', mode: 'plan' },
       ctx,
     );
     expect(runner.runSessionTurn.mock.calls[0]?.[1]).toBe('add rate limiting');
@@ -141,21 +141,21 @@ describe('create_session × the approval gate', () => {
     const missing = makeTool({ boardTask: undefined });
     expect(
       await missing.tool.execute(
-        { worktreeId: 'wt-001', task: 't', mode: 'plan', board_task_id: 42 },
+        { workspaceId: 'ws-001', task: 't', mode: 'plan', board_task_id: 42 },
         ctx,
       ),
     ).toContain('No board task #42');
 
     const linked = makeTool({ boardTask: { id: 7 }, refusal: null });
     const out = await linked.tool.execute(
-      { worktreeId: 'wt-001', task: 't', mode: 'execute', board_task_id: 7 },
+      { workspaceId: 'ws-001', task: 't', mode: 'execute', board_task_id: 7 },
       ctx,
     );
     expect(out).toContain('board #7');
     expect(linked.runner.executeRefusal).toHaveBeenCalledWith(
       'T1',
       7,
-      'wt-001',
+      'ws-001',
     );
     expect(linked.created[0]?.boardTaskId).toBe(7);
   });
@@ -168,7 +168,7 @@ describe('create_session × the approval gate', () => {
     });
     await tool.execute(
       {
-        worktreeId: 'wt-001',
+        workspaceId: 'ws-001',
         task: 'go execute #7',
         mode: 'execute',
         board_task_id: 7,
@@ -190,10 +190,10 @@ describe('create_session × the approval gate', () => {
       refusal: null,
     });
     await tool.execute(
-      { worktreeId: 'wt-001', task: 'go', mode: 'execute', board_task_id: 7 },
+      { workspaceId: 'ws-001', task: 'go', mode: 'execute', board_task_id: 7 },
       ctx,
     );
-    expect(ensureShared).toHaveBeenCalledWith('wt-001', 'payment-flow');
+    expect(ensureShared).toHaveBeenCalledWith('ws-001', 'payment-flow');
   });
 
   it('defaults the shared branch to ticket-N for standalone work', async () => {
@@ -202,20 +202,20 @@ describe('create_session × the approval gate', () => {
       refusal: null,
     });
     await tool.execute(
-      { worktreeId: 'wt-001', task: 'go', mode: 'execute', board_task_id: 7 },
+      { workspaceId: 'ws-001', task: 'go', mode: 'execute', board_task_id: 7 },
       ctx,
     );
-    expect(ensureShared).toHaveBeenCalledWith('wt-001', 'ticket-7');
+    expect(ensureShared).toHaveBeenCalledWith('ws-001', 'ticket-7');
   });
 
-  it('drift guard: refuses an execute open when the worktree is on a different shared branch than the ticket lands on', async () => {
+  it('drift guard: refuses an execute open when the workspace is on a different shared branch than the ticket lands on', async () => {
     const { tool, created } = makeTool({
       boardTask: { id: 7, title: 'API', sharedSlug: 'payment-flow' },
       refusal: null,
-      worktreeShared: 'shared/something-else',
+      workspaceShared: 'shared/something-else',
     });
     const out = await tool.execute(
-      { worktreeId: 'wt-001', task: 'go', mode: 'execute', board_task_id: 7 },
+      { workspaceId: 'ws-001', task: 'go', mode: 'execute', board_task_id: 7 },
       ctx,
     );
     expect(out).toContain('shared/something-else');
@@ -231,7 +231,7 @@ describe('create_session × the approval gate', () => {
     });
     await tool.execute(
       {
-        worktreeId: 'wt-001',
+        workspaceId: 'ws-001',
         task: 'just do it',
         mode: 'execute',
         board_task_id: 7,
@@ -250,7 +250,7 @@ describe('create_session × the approval gate', () => {
     });
     await tool.execute(
       {
-        worktreeId: 'wt-001',
+        workspaceId: 'ws-001',
         task: 'fix the self-review note',
         mode: 'execute',
         board_task_id: 7,
@@ -268,7 +268,7 @@ describe('create_session × the approval gate', () => {
     const { tool, runner } = makeTool({ engine: EWorkerEngineName.CLAUDE });
     const parentChatTrace = { traceId: 'abc123', spanId: 'def456' };
     await tool.execute(
-      { worktreeId: 'wt-001', task: 'add rate limiting', mode: 'plan' },
+      { workspaceId: 'ws-001', task: 'add rate limiting', mode: 'plan' },
       { ...ctx, parentChatTrace },
     );
     // 3rd arg of runSessionTurn is the parent-chat-trace pointer (for the session-turn observation).
@@ -365,7 +365,7 @@ describe('check_session × the displayed engine tier', () => {
       status: 'idle',
       lastReport: 'the answer',
       lastReportKind: 'text',
-      worktreeId: 'wt-001',
+      workspaceId: 'ws-001',
       turns: 1,
       task: 'how does the gate work?',
     });

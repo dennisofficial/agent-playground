@@ -20,7 +20,7 @@ import { rawRows, toIso } from './sql';
  * acceptance (clerked by the lead) advances 'in_review' → 'done'. claim() takes only 'open' tasks,
  * and only 'done' satisfies a dependency — both unchanged by the in-between states.
  *
- * Execution detail (the owner's execute worktree + shared branch, whether its own self-review is done)
+ * Execution detail (the owner's execute workspace + shared branch, whether its own self-review is done)
  * lives on the plan row (PlanStore), NOT the task. One employee owns a ticket; tickets that share a
  * `shared_slug` converge on one `shared/<slug>` branch + PR and ship together once all are published.
  */

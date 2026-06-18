@@ -15,7 +15,7 @@ import { promisify } from 'node:util';
 import type { GithubTokenStore } from '../projects/github-token-store';
 import type { ProjectStore } from '../projects/project-store';
 import type { ProjectRecord } from '../projects/project.types';
-import { WorktreeService } from './worktree.service';
+import { WorkspaceService } from './workspace.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,8 +24,8 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-/** Write + commit one file in a checkout (service-created worktrees commit as their owner via
- * per-worktree identity; plain checkouts use the repo's user config). */
+/** Write + commit one file in a checkout (service-created workspaces commit as their owner via
+ * per-workspace identity; plain checkouts use the repo's user config). */
 async function commit(
   checkout: string,
   file: string,
@@ -43,7 +43,7 @@ async function advanceOrigin(
   file: string,
   content: string,
 ): Promise<string> {
-  const scratch = await realpath(await mkdtemp(join(tmpdir(), 'wt-adv-')));
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), 'ws-adv-')));
   await git(scratch, 'clone', originDir, '.');
   await git(scratch, 'config', 'user.email', 'adv@test');
   await git(scratch, 'config', 'user.name', 'adv');
@@ -56,10 +56,10 @@ async function advanceOrigin(
   return sha;
 }
 
-/** A throwaway real git repo — worktree behavior is git behavior, so the spec runs against git. */
+/** A throwaway real git repo — workspace behavior is git behavior, so the spec runs against git. */
 async function makeRepo(): Promise<string> {
   // realpath: macOS tmpdir is symlinked (/var → /private/var) and git reports resolved paths.
-  const repo = await realpath(await mkdtemp(join(tmpdir(), 'wt-spec-')));
+  const repo = await realpath(await mkdtemp(join(tmpdir(), 'ws-spec-')));
   await git(repo, 'init', '-b', 'main');
   await git(repo, 'config', 'user.email', 'spec@test');
   await git(repo, 'config', 'user.name', 'spec');
@@ -102,7 +102,7 @@ const NO_TOKENS = {
 function makeService(
   workerRoot: string,
   opts: { registry?: ProjectStore; reposRoot?: string } = {},
-): WorktreeService {
+): WorkspaceService {
   const env = {
     get: (k: string) =>
       k === 'WORKER_ROOT'
@@ -111,16 +111,16 @@ function makeService(
           ? opts.reposRoot
           : undefined,
   } as unknown as EnvService;
-  return new WorktreeService(
+  return new WorkspaceService(
     env,
     opts.registry ?? fakeRegistry().projects,
     NO_TOKENS,
   );
 }
 
-describe('WorktreeService (real git, temp repo)', () => {
+describe('WorkspaceService (real git, temp repo)', () => {
   let repo: string;
-  let service: WorktreeService;
+  let service: WorkspaceService;
 
   beforeEach(async () => {
     repo = await makeRepo();
@@ -131,86 +131,86 @@ describe('WorktreeService (real git, temp repo)', () => {
     await rm(repo, { recursive: true, force: true });
   });
 
-  it('creates a worktree on a fresh agent branch cut from HEAD by default', async () => {
-    const { worktree } = await service.create({
+  it('creates a workspace on a fresh agent branch cut from HEAD by default', async () => {
+    const { workspace } = await service.create({
       name: 'Auth refactor!',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    expect(worktree.id).toBe('wt-001');
-    expect(worktree.branch).toBe('agent/alex/wt-001-auth-refactor');
-    expect(worktree.baseRef).toBe(await git(repo, 'rev-parse', 'HEAD'));
-    expect(worktree.checkout).toBe(
-      join(repo, '.worktrees', 'wt-001-auth-refactor'),
+    expect(workspace.id).toBe('ws-001');
+    expect(workspace.branch).toBe('agent/alex/ws-001-auth-refactor');
+    expect(workspace.baseRef).toBe(await git(repo, 'rev-parse', 'HEAD'));
+    expect(workspace.checkout).toBe(
+      join(repo, '.workspaces', 'ws-001-auth-refactor'),
     );
     // WORKER_ROOT is the repo root here, so path === checkout.
-    expect(worktree.path).toBe(worktree.checkout);
+    expect(workspace.path).toBe(workspace.checkout);
     expect(
-      await git(worktree.checkout, 'rev-parse', '--abbrev-ref', 'HEAD'),
-    ).toBe(worktree.branch);
-    expect(service.get('wt-001')).toEqual(worktree);
+      await git(workspace.checkout, 'rev-parse', '--abbrev-ref', 'HEAD'),
+    ).toBe(workspace.branch);
+    expect(service.get('ws-001')).toEqual(workspace);
     expect(service.list({ ownerBot: 'alex' })).toHaveLength(1);
   });
 
-  it('ensureShared promotes a solo worktree to shared/<slug> and records the association', async () => {
-    const { worktree } = await service.create({
+  it('ensureShared promotes a solo workspace to shared/<slug> and records the association', async () => {
+    const { workspace } = await service.create({
       name: 'solo work',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    expect(worktree.sharedBranch).toBeUndefined();
+    expect(workspace.sharedBranch).toBeUndefined();
 
-    const shared = await service.ensureShared(worktree.id, 'ticket-7');
+    const shared = await service.ensureShared(workspace.id, 'ticket-7');
     expect(shared).toBe('shared/ticket-7');
-    expect(service.get(worktree.id)?.sharedBranch).toBe('shared/ticket-7');
+    expect(service.get(workspace.id)?.sharedBranch).toBe('shared/ticket-7');
     // The shared branch exists as a ref and the personal branch records the association durably.
     expect(await git(repo, 'rev-parse', 'shared/ticket-7')).toBe(
-      await git(repo, 'rev-parse', worktree.branch),
+      await git(repo, 'rev-parse', workspace.branch),
     );
     expect(
-      await git(repo, 'config', `branch.${worktree.branch}.agent-shared`),
+      await git(repo, 'config', `branch.${workspace.branch}.agent-shared`),
     ).toBe('shared/ticket-7');
   });
 
   it('ensureShared is idempotent and respects an explicitly-joined shared branch', async () => {
-    // A worktree that already joined a shared branch keeps it (no re-promotion to the ticket name).
-    const { worktree } = await service.create({
+    // A workspace that already joined a shared branch keeps it (no re-promotion to the ticket name).
+    const { workspace } = await service.create({
       name: 'feature',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
       shared: 'big-feature',
     });
-    expect(worktree.sharedBranch).toBe('shared/big-feature');
-    expect(await service.ensureShared(worktree.id, 'ticket-7')).toBe(
+    expect(workspace.sharedBranch).toBe('shared/big-feature');
+    expect(await service.ensureShared(workspace.id, 'ticket-7')).toBe(
       'shared/big-feature',
     );
-    expect(service.get(worktree.id)?.sharedBranch).toBe('shared/big-feature');
+    expect(service.get(workspace.id)?.sharedBranch).toBe('shared/big-feature');
   });
 
   it('maps a subdir WORKER_ROOT to the same subpath inside the checkout', async () => {
     const sub = makeService(join(repo, 'app'));
-    const { worktree } = await sub.create({
+    const { workspace } = await sub.create({
       name: 'ui',
       ownerBot: 'riley',
       team: 'local',
       project: 'local',
     });
-    expect(worktree.path).toBe(join(worktree.checkout, 'app'));
+    expect(workspace.path).toBe(join(workspace.checkout, 'app'));
   });
 
   it('attaches to an existing branch, and surfaces the git refusal when it is already checked out', async () => {
     await git(repo, 'branch', 'feature-x');
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'feature work',
       branch: 'feature-x',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    expect(worktree.branch).toBe('feature-x');
+    expect(workspace.branch).toBe('feature-x');
     // A second attach to the same branch is git's own refusal — it must reach the caller.
     await expect(
       service.create({
@@ -224,14 +224,14 @@ describe('WorktreeService (real git, temp repo)', () => {
   });
 
   it('creates a named branch from HEAD when it does not exist yet', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'fix',
       branch: 'fix/login',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    expect(worktree.branch).toBe('fix/login');
+    expect(workspace.branch).toBe('fix/login');
     expect(await git(repo, 'rev-parse', 'fix/login')).toBe(
       await git(repo, 'rev-parse', 'HEAD'),
     );
@@ -252,9 +252,9 @@ describe('WorktreeService (real git, temp repo)', () => {
     // Build a standalone repo with a .gitmodules + gitlink pointing to a path that does not
     // exist — no network call, deterministic. We never run `git submodule add`, so the
     // .git/modules cache is empty and git must attempt a fresh clone on `submodule update`,
-    // which immediately fails. This mirrors the real agent-worktree failure shape.
+    // which immediately fails. This mirrors the real agent-workspace failure shape.
     const submodRepo = await realpath(
-      await mkdtemp(join(tmpdir(), 'wt-submod-spec-')),
+      await mkdtemp(join(tmpdir(), 'ws-submod-spec-')),
     );
     try {
       await git(submodRepo, 'init', '-b', 'main');
@@ -266,7 +266,7 @@ describe('WorktreeService (real git, temp repo)', () => {
       // Register a submodule via .gitmodules pointing at a path that will never exist.
       await writeFile(
         join(submodRepo, '.gitmodules'),
-        '[submodule "vendor/stub"]\n\tpath = vendor/stub\n\turl = /tmp/wt-spec-no-such-submod\n',
+        '[submodule "vendor/stub"]\n\tpath = vendor/stub\n\turl = /tmp/ws-spec-no-such-submod\n',
       );
       await git(submodRepo, 'add', '.gitmodules');
       // Add a gitlink entry (mode 160000) so the committed tree contains the submodule ref.
@@ -288,14 +288,14 @@ describe('WorktreeService (real git, temp repo)', () => {
       const submodService = makeService(submodRepo);
       const errorSpy = vi.spyOn(Logger.prototype, 'error');
       try {
-        const { worktree, warning } = await submodService.create({
+        const { workspace, warning } = await submodService.create({
           name: 'submod-test',
           ownerBot: 'alex',
           team: 'local',
           project: 'local',
         });
         // create must succeed — no fail-hard on submodule init failure
-        expect(worktree.id).toBeTruthy();
+        expect(workspace.id).toBeTruthy();
         // warning signals the failure and contains the remediation command
         expect(warning).toMatch(/submodule init failed/i);
         expect(warning).toContain('git submodule update --init --recursive');
@@ -313,25 +313,25 @@ describe('WorktreeService (real git, temp repo)', () => {
   });
 
   it('removes the checkout but keeps the branch', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'temp',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    await service.remove(worktree.id);
-    expect(service.get(worktree.id)).toBeUndefined();
-    expect(await git(repo, 'branch', '--list', worktree.branch)).toContain(
-      worktree.branch,
+    await service.remove(workspace.id);
+    expect(service.get(workspace.id)).toBeUndefined();
+    expect(await git(repo, 'branch', '--list', workspace.branch)).toContain(
+      workspace.branch,
     );
-    await expect(git(worktree.checkout, 'status')).rejects.toThrow();
+    await expect(git(workspace.checkout, 'status')).rejects.toThrow();
   });
 
   it('rejects removing an unknown id', async () => {
-    await expect(service.remove('wt-999')).rejects.toThrow(/No worktree/);
+    await expect(service.remove('ws-999')).rejects.toThrow(/No workspace/);
   });
 
-  it('re-adopts surviving wt-* checkouts on boot and keeps the id counter clear of them', async () => {
+  it('re-adopts surviving ws-* checkouts on boot and keeps the id counter clear of them', async () => {
     await service.create({
       name: 'survivor',
       ownerBot: 'alex',
@@ -341,24 +341,24 @@ describe('WorktreeService (real git, temp repo)', () => {
 
     const fresh = makeService(repo);
     await fresh.onApplicationBootstrap();
-    const adopted = fresh.get('wt-001');
+    const adopted = fresh.get('ws-001');
     expect(adopted).toBeDefined();
-    expect(adopted?.branch).toBe('agent/alex/wt-001-survivor');
+    expect(adopted?.branch).toBe('agent/alex/ws-001-survivor');
     expect(adopted?.ownerBot).toBe('alex'); // recovered from the agent/<owner>/… branch
     expect(adopted?.baseRef).toBe('');
 
-    const { worktree } = await fresh.create({
+    const { workspace } = await fresh.create({
       name: 'next',
       ownerBot: 'riley',
       team: 'local',
       project: 'local',
     });
-    expect(worktree.id).toBe('wt-002');
+    expect(workspace.id).toBe('ws-002');
   });
 
-  it('leaves non-wt checkouts under .worktrees/ alone during adoption', async () => {
-    // Simulates the playground's ticket worktrees sharing the same .worktrees/ dir.
-    const foreign = join(repo, '.worktrees', 'tickets-TKT-1-alex');
+  it('leaves non-ws checkouts under .workspaces/ alone during adoption', async () => {
+    // Simulates the playground's ticket workspaces sharing the same .workspaces/ dir.
+    const foreign = join(repo, '.workspaces', 'tickets-TKT-1-alex');
     await git(repo, 'worktree', 'add', '-b', 'ticket/TKT-1', foreign, 'HEAD');
 
     const fresh = makeService(repo);
@@ -378,9 +378,9 @@ describe('WorktreeService (real git, temp repo)', () => {
   });
 });
 
-describe('WorktreeService shared integration branches (real git, temp repo)', () => {
+describe('WorkspaceService shared integration branches (real git, temp repo)', () => {
   let repo: string;
-  let service: WorktreeService;
+  let service: WorkspaceService;
 
   beforeEach(async () => {
     repo = await makeRepo();
@@ -393,29 +393,29 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
 
   it('starts a shared branch at pre-create HEAD, cuts the personal branch from it, and records the association', async () => {
     const head = await git(repo, 'rev-parse', 'HEAD');
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'payment work',
       shared: 'Payment Flow!',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    expect(worktree.sharedBranch).toBe('shared/payment-flow');
-    expect(worktree.branch).toBe('agent/alex/wt-001-payment-work');
+    expect(workspace.sharedBranch).toBe('shared/payment-flow');
+    expect(workspace.branch).toBe('agent/alex/ws-001-payment-work');
     expect(await git(repo, 'rev-parse', 'shared/payment-flow')).toBe(head);
-    expect(worktree.baseRef).toBe(head);
+    expect(workspace.baseRef).toBe(head);
     expect(
       await git(
         repo,
         'config',
         '--get',
-        `branch.${worktree.branch}.agent-shared`,
+        `branch.${workspace.branch}.agent-shared`,
       ),
     ).toBe('shared/payment-flow');
   });
 
   it('a second creator joins the SAME shared branch and bases on its tip, not the new HEAD', async () => {
-    const { worktree: a } = await service.create({
+    const { workspace: a } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
@@ -424,7 +424,7 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
     });
     const sharedTip = await git(repo, 'rev-parse', 'shared/feat');
     await commit(repo, 'unrelated.md', 'trunk moved on\n'); // main HEAD advances past the shared base
-    const { worktree: b } = await service.create({
+    const { workspace: b } = await service.create({
       name: 'b',
       shared: 'shared/feat', // full branch name back in must not double-prefix
       ownerBot: 'riley',
@@ -449,15 +449,15 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
   });
 
   it('publishes committed work fast-forward onto the shared branch', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    await commit(worktree.checkout, 'a.txt', 'from alex\n');
-    const res = await service.publish(worktree.id);
+    await commit(workspace.checkout, 'a.txt', 'from alex\n');
+    const res = await service.publish(workspace.id);
     // The remote outcome is ALWAYS reported now — a local-only publish must say so, not look clean.
     expect(res).toEqual({
       integrated: true,
@@ -466,19 +466,19 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
       remote: { pushed: false, detail: expect.stringMatching(/LOCAL ONLY/) },
     });
     expect(await git(repo, 'rev-parse', 'shared/feat')).toBe(
-      await git(worktree.checkout, 'rev-parse', 'HEAD'),
+      await git(workspace.checkout, 'rev-parse', 'HEAD'),
     );
   });
 
   it('merges a teammate-advanced shared branch in, then publishes both (disjoint files)', async () => {
-    const { worktree: a } = await service.create({
+    const { workspace: a } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    const { worktree: b } = await service.create({
+    const { workspace: b } = await service.create({
       name: 'b',
       shared: 'feat',
       ownerBot: 'riley',
@@ -496,14 +496,14 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
   });
 
   it('reports a conflict, leaves the merge IN PROGRESS, and refuses further publishes until resolved', async () => {
-    const { worktree: a } = await service.create({
+    const { workspace: a } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    const { worktree: b } = await service.create({
+    const { workspace: b } = await service.create({
       name: 'b',
       shared: 'feat',
       ownerBot: 'riley',
@@ -530,14 +530,14 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
   });
 
   it('pull takes a teammate’s published work into the checkout', async () => {
-    const { worktree: a } = await service.create({
+    const { workspace: a } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    const { worktree: b } = await service.create({
+    const { workspace: b } = await service.create({
       name: 'b',
       shared: 'feat',
       ownerBot: 'riley',
@@ -560,32 +560,32 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
     expect((await service.pull(a.id)).integrated).toBe(true);
   });
 
-  it('refuses publish/pull on a worktree without a shared branch', async () => {
-    const { worktree } = await service.create({
+  it('refuses publish/pull on a workspace without a shared branch', async () => {
+    const { workspace } = await service.create({
       name: 'solo',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    await expect(service.publish(worktree.id)).rejects.toThrow(
+    await expect(service.publish(workspace.id)).rejects.toThrow(
       /not on a shared branch/i,
     );
-    await expect(service.pull(worktree.id)).rejects.toThrow(
+    await expect(service.pull(workspace.id)).rejects.toThrow(
       /not on a shared branch/i,
     );
   });
 
   it('flags a dirty checkout on publish and does NOT publish the uncommitted content', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    await commit(worktree.checkout, 'a.txt', 'committed\n');
-    await writeFile(join(worktree.checkout, 'scratch.txt'), 'uncommitted\n');
-    const res = await service.publish(worktree.id);
+    await commit(workspace.checkout, 'a.txt', 'committed\n');
+    await writeFile(join(workspace.checkout, 'scratch.txt'), 'uncommitted\n');
+    const res = await service.publish(workspace.id);
     expect(res.integrated).toBe(true);
     expect(res.dirty).toBe(true);
     expect(
@@ -594,7 +594,7 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
   });
 
   it('boot adoption and branch re-attach both restore the shared association from branch config', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'survivor',
       shared: 'feat',
       ownerBot: 'alex',
@@ -604,12 +604,12 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
 
     const fresh = makeService(repo);
     await fresh.onApplicationBootstrap();
-    expect(fresh.get(worktree.id)?.sharedBranch).toBe('shared/feat');
+    expect(fresh.get(workspace.id)?.sharedBranch).toBe('shared/feat');
 
-    await fresh.remove(worktree.id);
-    const { worktree: reattached } = await fresh.create({
+    await fresh.remove(workspace.id);
+    const { workspace: reattached } = await fresh.create({
       name: 'survivor again',
-      branch: worktree.branch, // no `shared` passed — config is the truth
+      branch: workspace.branch, // no `shared` passed — config is the truth
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
@@ -620,7 +620,7 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
     await expect(
       fresh.create({
         name: 'x',
-        branch: worktree.branch,
+        branch: workspace.branch,
         shared: 'other',
         ownerBot: 'alex',
         team: 'local',
@@ -630,20 +630,20 @@ describe('WorktreeService shared integration branches (real git, temp repo)', ()
   });
 });
 
-describe('WorktreeService per-project repos + origin sync (real git, file:// remotes)', () => {
+describe('WorkspaceService per-project repos + origin sync (real git, file:// remotes)', () => {
   let workerRoot: string;
   let reposRoot: string;
   let originDir: string; // bare repo standing in for GitHub
   let registry: ReturnType<typeof fakeRegistry>;
-  let service: WorktreeService;
+  let service: WorkspaceService;
   const ORIGIN_URL = () => `file://${originDir}`;
 
   beforeEach(async () => {
     workerRoot = await makeRepo();
-    reposRoot = await realpath(await mkdtemp(join(tmpdir(), 'wt-repos-')));
+    reposRoot = await realpath(await mkdtemp(join(tmpdir(), 'ws-repos-')));
     const seed = await makeRepo();
     originDir = join(
-      await realpath(await mkdtemp(join(tmpdir(), 'wt-origin-'))),
+      await realpath(await mkdtemp(join(tmpdir(), 'ws-origin-'))),
       'origin.git',
     );
     await git(seed, 'clone', '--bare', seed, originDir);
@@ -661,21 +661,21 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     }
   });
 
-  it('clones a registered project on first use and cuts worktrees inside the clone', async () => {
-    const { worktree } = await service.create({
+  it('clones a registered project on first use and cuts workspaces inside the clone', async () => {
+    const { workspace } = await service.create({
       name: 'feature',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    expect(worktree.repoRoot).toBe(join(reposRoot, 'local', 'proj'));
+    expect(workspace.repoRoot).toBe(join(reposRoot, 'local', 'proj'));
     expect(
-      worktree.checkout.startsWith(
-        join(reposRoot, 'local', 'proj', '.worktrees'),
+      workspace.checkout.startsWith(
+        join(reposRoot, 'local', 'proj', '.workspaces'),
       ),
     ).toBe(true);
-    expect(worktree.path).toBe(worktree.checkout); // subdir '' — cwd is the clone root
+    expect(workspace.path).toBe(workspace.checkout); // subdir '' — cwd is the clone root
     expect(
       await git(
         join(reposRoot, 'local', 'proj'),
@@ -692,23 +692,23 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
       team: 'local',
       project: 'proj',
     });
-    expect(second.worktree.repoRoot).toBe(worktree.repoRoot);
+    expect(second.workspace.repoRoot).toBe(workspace.repoRoot);
   });
 
   it('publish syncs the shared branch to origin; unregistered projects stay local-only', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    await commit(worktree.checkout, 'a.txt', 'work\n');
-    const res = await service.publish(worktree.id);
+    await commit(workspace.checkout, 'a.txt', 'work\n');
+    const res = await service.publish(workspace.id);
     expect(res.integrated).toBe(true);
     expect(res.remote).toEqual({ pushed: true });
     expect(await git(originDir, 'rev-parse', 'shared/feat')).toBe(
-      await git(worktree.checkout, 'rev-parse', 'HEAD'),
+      await git(workspace.checkout, 'rev-parse', 'HEAD'),
     );
 
     // Unregistered project ('' / not in registry, and WORKER_ROOT has no origin) → the publish
@@ -720,73 +720,73 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
       team: 'local',
       project: 'local',
     });
-    await commit(local.worktree.checkout, 'l.txt', 'local\n');
-    const localRes = await service.publish(local.worktree.id);
+    await commit(local.workspace.checkout, 'l.txt', 'local\n');
+    const localRes = await service.publish(local.workspace.id);
     expect(localRes.integrated).toBe(true);
     expect(localRes.remote?.pushed).toBe(false);
     expect(localRes.remote?.detail).toMatch(/LOCAL ONLY/);
   });
 
   it('a remote-push failure reports remote.pushed=false WITHOUT losing the local publish', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    await commit(worktree.checkout, 'a.txt', 'work\n');
+    await commit(workspace.checkout, 'a.txt', 'work\n');
     await rm(originDir, { recursive: true, force: true }); // origin gone → push fails
-    const res = await service.publish(worktree.id);
+    const res = await service.publish(workspace.id);
     expect(res.integrated).toBe(true); // local publish intact
     expect(res.remote?.pushed).toBe(false);
     expect(res.remote?.detail).toBeTruthy();
     expect(
-      await git(worktree.repoRoot, 'rev-parse', 'shared/feat'),
+      await git(workspace.repoRoot, 'rev-parse', 'shared/feat'),
     ).toBeTruthy();
   });
 
-  it('identity guard: a worktree created before its project was registered never pushes to the new origin', async () => {
-    // 'late' is unregistered at create time → worktree lives in WORKER_ROOT's repo.
-    const { worktree } = await service.create({
+  it('identity guard: a workspace created before its project was registered never pushes to the new origin', async () => {
+    // 'late' is unregistered at create time → workspace lives in WORKER_ROOT's repo.
+    const { workspace } = await service.create({
       name: 'early',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'late',
     });
-    expect(worktree.repoRoot).not.toBe(join(reposRoot, 'late'));
-    await commit(worktree.checkout, 'e.txt', 'pre-registration work\n');
+    expect(workspace.repoRoot).not.toBe(join(reposRoot, 'late'));
+    await commit(workspace.checkout, 'e.txt', 'pre-registration work\n');
     // Now the project gets registered with a repo + (implicitly) a token.
     registry.map.set('late', record('late', ORIGIN_URL()));
 
-    const res = await service.publish(worktree.id);
+    const res = await service.publish(workspace.id);
     expect(res.integrated).toBe(true); // local publish still works
     expect(res.remote?.pushed).toBe(false);
-    expect(res.remote?.detail).toMatch(/recreate the worktree/i);
-    await expect(service.pushSharedToOrigin(worktree.id)).rejects.toThrow(
-      /recreate the worktree/i,
+    expect(res.remote?.detail).toMatch(/recreate the workspace/i);
+    await expect(service.pushSharedToOrigin(workspace.id)).rejects.toThrow(
+      /recreate the workspace/i,
     );
     // And nothing reached the origin.
     await expect(git(originDir, 'rev-parse', 'shared/feat')).rejects.toThrow();
   });
 
   it('pushSharedToOrigin is idempotent and refuses unregistered projects', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    await commit(worktree.checkout, 'a.txt', 'work\n');
-    await service.publish(worktree.id);
-    await expect(service.pushSharedToOrigin(worktree.id)).resolves.toEqual({
+    await commit(workspace.checkout, 'a.txt', 'work\n');
+    await service.publish(workspace.id);
+    await expect(service.pushSharedToOrigin(workspace.id)).resolves.toEqual({
       sharedBranch: 'shared/feat',
       gitUrl: ORIGIN_URL(),
     });
     await expect(
-      service.pushSharedToOrigin(worktree.id),
+      service.pushSharedToOrigin(workspace.id),
     ).resolves.toBeDefined(); // up-to-date push ok
 
     const local = await service.create({
@@ -796,7 +796,7 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
       team: 'local',
       project: 'local',
     });
-    await expect(service.pushSharedToOrigin(local.worktree.id)).rejects.toThrow(
+    await expect(service.pushSharedToOrigin(local.workspace.id)).rejects.toThrow(
       /No registered GitHub repo matches/,
     );
   });
@@ -810,7 +810,7 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     }); // materialize the clone
     // The project gets repointed at a second origin via the admin API.
     const origin2 = join(
-      await realpath(await mkdtemp(join(tmpdir(), 'wt-origin2-'))),
+      await realpath(await mkdtemp(join(tmpdir(), 'ws-origin2-'))),
       'origin.git',
     );
     await git(
@@ -851,27 +851,27 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
   });
 
   it('boot adoption RECOVERS the project for WORKER_ROOT trees whose origin IS a registered repo (the restart bug)', async () => {
-    // The production failure shape: worktrees cut from WORKER_ROOT whose repo origin is the
+    // The production failure shape: workspaces cut from WORKER_ROOT whose repo origin is the
     // registered GitHub repo. A restart used to re-adopt them with project '' and every push
     // failed as `Project "(none)"` until Dennis "re-registered" a repo that was fine all along.
     await git(workerRoot, 'remote', 'add', 'origin', ORIGIN_URL());
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'team intros',
       shared: 'team-intros',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    await commit(worktree.checkout, 'alex.md', 'hi\n');
+    await commit(workspace.checkout, 'alex.md', 'hi\n');
 
     const fresh = makeService(workerRoot, {
       registry: registry.projects,
       reposRoot,
     });
     await fresh.onApplicationBootstrap();
-    expect(fresh.get(worktree.id)?.project).toBe('proj'); // recovered, not ''
+    expect(fresh.get(workspace.id)?.project).toBe('proj'); // recovered, not ''
     // …and the whole push path works end-to-end after the restart, no re-registration needed.
-    const res = await fresh.publish(worktree.id);
+    const res = await fresh.publish(workspace.id);
     expect(res.integrated).toBe(true);
     expect(res.remote).toEqual({ pushed: true });
     expect(
@@ -879,35 +879,35 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     ).toBeTruthy();
   });
 
-  it('projectRecordFor falls back to the origin-URL match and backfills wt.project', async () => {
+  it('projectRecordFor falls back to the origin-URL match and backfills ws.project', async () => {
     await git(workerRoot, 'remote', 'add', 'origin', ORIGIN_URL());
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: '', // no association at all
     });
-    expect((await service.projectRecordFor(worktree.id))?.projectId).toBe(
+    expect((await service.projectRecordFor(workspace.id))?.projectId).toBe(
       'proj',
     );
-    expect(service.get(worktree.id)?.project).toBe('proj'); // healed in place
-    expect(await service.projectRecordFor('wt-999')).toBeUndefined();
+    expect(service.get(workspace.id)?.project).toBe('proj'); // healed in place
+    expect(await service.projectRecordFor('ws-999')).toBeUndefined();
   });
 
-  it('pull and publish sync the shared ref from origin first (a GitHub-advanced branch reaches the worktree)', async () => {
-    const { worktree } = await service.create({
+  it('pull and publish sync the shared ref from origin first (a GitHub-advanced branch reaches the workspace)', async () => {
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    await commit(worktree.checkout, 'a.txt', 'mine\n');
-    await service.publish(worktree.id); // shared/feat now exists on origin
+    await commit(workspace.checkout, 'a.txt', 'mine\n');
+    await service.publish(workspace.id); // shared/feat now exists on origin
     // A teammate on ANOTHER machine advances origin's shared/feat behind our back.
     const elsewhere = await realpath(
-      await mkdtemp(join(tmpdir(), 'wt-elsewhere-')),
+      await mkdtemp(join(tmpdir(), 'ws-elsewhere-')),
     );
     await git(elsewhere, 'clone', originDir, 'c');
     const oc = join(elsewhere, 'c');
@@ -917,18 +917,18 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     await commit(oc, 'remote.txt', 'remote work\n');
     await git(oc, 'push', 'origin', 'shared/feat');
 
-    const pulled = await service.pull(worktree.id);
+    const pulled = await service.pull(workspace.id);
     expect(pulled.integrated).toBe(true);
     expect(pulled.originFetched).toBe(true);
     expect(
-      await git(worktree.checkout, 'ls-tree', '--name-only', 'HEAD'),
+      await git(workspace.checkout, 'ls-tree', '--name-only', 'HEAD'),
     ).toContain('remote.txt');
 
     // Publish after another remote advance: fetched + merged in, not rejected at the push.
     await commit(oc, 'remote2.txt', 'more remote work\n');
     await git(oc, 'push', 'origin', 'shared/feat');
-    await commit(worktree.checkout, 'b.txt', 'more mine\n');
-    const res = await service.publish(worktree.id);
+    await commit(workspace.checkout, 'b.txt', 'more mine\n');
+    const res = await service.publish(workspace.id);
     expect(res.integrated).toBe(true);
     expect(res.remote).toEqual({ pushed: true });
     await git(oc, 'fetch', 'origin');
@@ -939,21 +939,21 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
   });
 
   it('sharedStatus reports published state and commits origin is missing', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       shared: 'feat',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    expect(await service.sharedStatus('wt-999')).toBeUndefined();
-    await commit(worktree.checkout, 'a.txt', 'x\n');
+    expect(await service.sharedStatus('ws-999')).toBeUndefined();
+    await commit(workspace.checkout, 'a.txt', 'x\n');
     // Committed but not published, origin never saw the branch.
-    let st = await service.sharedStatus(worktree.id);
+    let st = await service.sharedStatus(workspace.id);
     expect(st?.published).toBe(false);
     expect(st?.aheadOfOrigin).toBeUndefined();
-    await service.publish(worktree.id);
-    st = await service.sharedStatus(worktree.id);
+    await service.publish(workspace.id);
+    st = await service.sharedStatus(workspace.id);
     expect(st).toEqual({ published: true, aheadOfOrigin: 0 });
   });
 
@@ -977,8 +977,8 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
       reposRoot,
     });
     await fresh.onApplicationBootstrap();
-    const adoptedA = fresh.get(a.worktree.id);
-    const adoptedB = fresh.get(b.worktree.id);
+    const adoptedA = fresh.get(a.workspace.id);
+    const adoptedB = fresh.get(b.workspace.id);
     expect(adoptedA?.project).toBe('proj');
     expect(adoptedA?.repoRoot).toBe(join(reposRoot, 'local', 'proj'));
     expect(adoptedA?.sharedBranch).toBe('shared/feat');
@@ -986,7 +986,7 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     expect(adoptedB?.repoRoot).not.toBe(join(reposRoot, 'local', 'proj'));
   });
 
-  it('cuts a NEW worktree from the latest base after origin advances (not the frozen clone HEAD)', async () => {
+  it('cuts a NEW workspace from the latest base after origin advances (not the frozen clone HEAD)', async () => {
     // First create materializes the managed clone.
     await service.create({
       name: 'a',
@@ -996,191 +996,191 @@ describe('WorktreeService per-project repos + origin sync (real git, file:// rem
     });
     // Dennis merges a PR to main while the clone sits frozen.
     const newTip = await advanceOrigin(originDir, 'merged.txt', 'from main\n');
-    // A second worktree must start from the advanced base, not the stale local HEAD.
+    // A second workspace must start from the advanced base, not the stale local HEAD.
     const second = await service.create({
       name: 'b',
       ownerBot: 'riley',
       team: 'local',
       project: 'proj',
     });
-    expect(second.worktree.baseRef).toBe(newTip);
+    expect(second.workspace.baseRef).toBe(newTip);
     expect(
-      await readFile(join(second.worktree.checkout, 'merged.txt'), 'utf8'),
+      await readFile(join(second.workspace.checkout, 'merged.txt'), 'utf8'),
     ).toBe('from main\n');
   });
 
-  it('refreshFromBase merges origin base advances into an existing worktree', async () => {
-    const { worktree } = await service.create({
+  it('refreshFromBase merges origin base advances into an existing workspace', async () => {
+    const { workspace } = await service.create({
       name: 'a',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    await commit(worktree.checkout, 'local.txt', 'local work\n');
+    await commit(workspace.checkout, 'local.txt', 'local work\n');
     const newTip = await advanceOrigin(originDir, 'merged.txt', 'from main\n');
-    const res = await service.refreshFromBase(worktree.id);
+    const res = await service.refreshFromBase(workspace.id);
     expect(res.refreshed).toBe(true);
     expect(res.baseBranch).toBe('main');
     // Both the local work and origin's change are present after the merge.
-    expect(await readFile(join(worktree.checkout, 'local.txt'), 'utf8')).toBe(
+    expect(await readFile(join(workspace.checkout, 'local.txt'), 'utf8')).toBe(
       'local work\n',
     );
-    expect(await readFile(join(worktree.checkout, 'merged.txt'), 'utf8')).toBe(
+    expect(await readFile(join(workspace.checkout, 'merged.txt'), 'utf8')).toBe(
       'from main\n',
     );
-    expect(await git(worktree.checkout, 'log', '--format=%H')).toContain(
+    expect(await git(workspace.checkout, 'log', '--format=%H')).toContain(
       newTip,
     );
   });
 
   it('refreshFromBase leaves a conflict IN PROGRESS for a session to resolve', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    // The worktree and origin both change the SAME file from the seed → conflict.
-    await commit(worktree.checkout, 'README.md', 'worktree change\n');
+    // The workspace and origin both change the SAME file from the seed → conflict.
+    await commit(workspace.checkout, 'README.md', 'workspace change\n');
     await advanceOrigin(originDir, 'README.md', 'origin change\n');
-    const res = await service.refreshFromBase(worktree.id);
+    const res = await service.refreshFromBase(workspace.id);
     expect(res.refreshed).toBe(false);
     expect(res.conflicted).toBe(true);
     expect(res.files).toContain('README.md');
     // The merge is left in progress (MERGE_HEAD present) for the next turn to finish.
     await expect(
-      git(worktree.checkout, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'),
+      git(workspace.checkout, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'),
     ).resolves.toBeTruthy();
   });
 
   it('refreshFromBase reports a DIRTY tree and skips the merge (no clobber)', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'a',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
     // Uncommitted tracked change in the checkout — git would refuse to merge over it.
-    await writeFile(join(worktree.checkout, 'README.md'), 'uncommitted edit\n');
+    await writeFile(join(workspace.checkout, 'README.md'), 'uncommitted edit\n');
     await advanceOrigin(originDir, 'merged.txt', 'from main\n');
-    const res = await service.refreshFromBase(worktree.id);
+    const res = await service.refreshFromBase(workspace.id);
     expect(res.refreshed).toBe(false);
     expect(res.dirty).toBe(true);
     expect(res.baseBranch).toBe('main');
     // The uncommitted edit survives and the merge never happened (origin's file is absent).
-    expect(await readFile(join(worktree.checkout, 'README.md'), 'utf8')).toBe(
+    expect(await readFile(join(workspace.checkout, 'README.md'), 'utf8')).toBe(
       'uncommitted edit\n',
     );
     await expect(
-      readFile(join(worktree.checkout, 'merged.txt'), 'utf8'),
+      readFile(join(workspace.checkout, 'merged.txt'), 'utf8'),
     ).rejects.toThrow();
   });
 
-  it('refreshFromBase is a no-op for an unregistered worktree (no base to track)', async () => {
-    const { worktree } = await service.create({
+  it('refreshFromBase is a no-op for an unregistered workspace (no base to track)', async () => {
+    const { workspace } = await service.create({
       name: 'l',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    const res = await service.refreshFromBase(worktree.id);
+    const res = await service.refreshFromBase(workspace.id);
     expect(res.refreshed).toBe(false);
     expect(res.detail).toMatch(/no registered GitHub repo/i);
   });
 
   it('ensureSharedAtBase cuts the shared branch at the base divergence point, so the owner diff is non-empty', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'late',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    expect(worktree.sharedBranch).toBeUndefined();
-    await commit(worktree.checkout, 'alex.txt', 'owner work\n');
-    const base = await git(worktree.repoRoot, 'rev-parse', 'origin/main');
+    expect(workspace.sharedBranch).toBeUndefined();
+    await commit(workspace.checkout, 'alex.txt', 'owner work\n');
+    const base = await git(workspace.repoRoot, 'rev-parse', 'origin/main');
 
-    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    const res = await service.ensureSharedAtBase(workspace.id, 'ticket-9');
     expect(res).toEqual({ ok: true, sharedBranch: 'shared/ticket-9' });
     // Cut at the merge-base (origin/main) — NOT the branch tip (which would make the diff empty).
-    expect(await git(worktree.repoRoot, 'rev-parse', 'shared/ticket-9')).toBe(
+    expect(await git(workspace.repoRoot, 'rev-parse', 'shared/ticket-9')).toBe(
       base,
     );
     const range = await git(
-      worktree.checkout,
+      workspace.checkout,
       'diff',
       '--name-only',
-      `shared/ticket-9...${worktree.branch}`,
+      `shared/ticket-9...${workspace.branch}`,
     );
     expect(range).toContain('alex.txt');
-    expect(service.get(worktree.id)?.sharedBranch).toBe('shared/ticket-9');
+    expect(service.get(workspace.id)?.sharedBranch).toBe('shared/ticket-9');
     expect(
       await git(
-        worktree.repoRoot,
+        workspace.repoRoot,
         'config',
-        `branch.${worktree.branch}.agent-shared`,
+        `branch.${workspace.branch}.agent-shared`,
       ),
     ).toBe('shared/ticket-9');
   });
 
   it('ensureSharedAtBase excludes base-refresh merge commits from the owner range', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'refresh',
       ownerBot: 'alex',
       team: 'local',
       project: 'proj',
     });
-    await commit(worktree.checkout, 'alex.txt', 'owner work\n');
-    // Dennis merges something on main; the worktree refreshes (merges origin/main in) before review.
+    await commit(workspace.checkout, 'alex.txt', 'owner work\n');
+    // Dennis merges something on main; the workspace refreshes (merges origin/main in) before review.
     await advanceOrigin(originDir, 'trunk.txt', 'trunk moved\n');
-    await git(worktree.repoRoot, 'fetch', 'origin', 'main');
-    await git(worktree.checkout, 'merge', '--no-edit', 'origin/main');
+    await git(workspace.repoRoot, 'fetch', 'origin', 'main');
+    await git(workspace.checkout, 'merge', '--no-edit', 'origin/main');
 
-    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    const res = await service.ensureSharedAtBase(workspace.id, 'ticket-9');
     expect(res.ok).toBe(true);
     const range = await git(
-      worktree.checkout,
+      workspace.checkout,
       'diff',
       '--name-only',
-      `shared/ticket-9...${worktree.branch}`,
+      `shared/ticket-9...${workspace.branch}`,
     );
     // The owner's own file is in range; the base-refresh content (trunk.txt) is NOT.
     expect(range).toContain('alex.txt');
     expect(range).not.toContain('trunk.txt');
   });
 
-  it('ensureSharedAtBase returns a typed failure for an unregistered worktree (no PR possible)', async () => {
-    const { worktree } = await service.create({
+  it('ensureSharedAtBase returns a typed failure for an unregistered workspace (no PR possible)', async () => {
+    const { workspace } = await service.create({
       name: 'solo',
       ownerBot: 'alex',
       team: 'local',
       project: 'local',
     });
-    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    const res = await service.ensureSharedAtBase(workspace.id, 'ticket-9');
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toMatch(/no registered GitHub repo/i);
-    expect(service.get(worktree.id)?.sharedBranch).toBeUndefined();
+    expect(service.get(workspace.id)?.sharedBranch).toBeUndefined();
   });
 
   it('ensureSharedAtBase runs the origin identity guard before any authenticated fetch/promotion', async () => {
-    // 'late' is unregistered at create → the worktree lives in WORKER_ROOT (origin ≠ the project repo).
-    const { worktree } = await service.create({
+    // 'late' is unregistered at create → the workspace lives in WORKER_ROOT (origin ≠ the project repo).
+    const { workspace } = await service.create({
       name: 'early',
       ownerBot: 'alex',
       team: 'local',
       project: 'late',
     });
-    // Now register 'late' pointing at the project origin — the worktree's repo origin still doesn't match.
+    // Now register 'late' pointing at the project origin — the workspace's repo origin still doesn't match.
     registry.map.set('late', record('late', ORIGIN_URL()));
-    const res = await service.ensureSharedAtBase(worktree.id, 'ticket-9');
+    const res = await service.ensureSharedAtBase(workspace.id, 'ticket-9');
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toMatch(/origin|recreate/i);
-    expect(service.get(worktree.id)?.sharedBranch).toBeUndefined();
+    expect(service.get(workspace.id)?.sharedBranch).toBeUndefined();
   });
 });
 
-describe('WorktreeService per-worktree git identity (real git)', () => {
+describe('WorkspaceService per-workspace git identity (real git)', () => {
   let repo: string;
-  let service: WorktreeService;
+  let service: WorkspaceService;
 
   beforeEach(async () => {
     repo = await makeRepo();
@@ -1191,16 +1191,16 @@ describe('WorktreeService per-worktree git identity (real git)', () => {
     await rm(repo, { recursive: true, force: true });
   });
 
-  it('commits inside a worktree are authored as the owning employee; the base checkout is untouched', async () => {
-    const { worktree } = await service.create({
+  it('commits inside a workspace are authored as the owning employee; the base checkout is untouched', async () => {
+    const { workspace } = await service.create({
       name: 'intro',
       ownerBot: 'sam',
       team: 'local',
       project: 'local',
     });
-    await commit(worktree.checkout, 'sam.md', 'hi\n');
+    await commit(workspace.checkout, 'sam.md', 'hi\n');
     expect(
-      await git(worktree.checkout, 'log', '-1', '--format=%an <%ae>'),
+      await git(workspace.checkout, 'log', '-1', '--format=%an <%ae>'),
     ).toBe('Sam <sam@agents.noreply>');
 
     await writeFile(join(repo, 'root.md'), 'root\n');
@@ -1212,22 +1212,22 @@ describe('WorktreeService per-worktree git identity (real git)', () => {
   });
 
   it('adoption backfills identity onto trees from before it existed', async () => {
-    const { worktree } = await service.create({
+    const { workspace } = await service.create({
       name: 'old',
       ownerBot: 'maya',
       team: 'local',
       project: 'local',
     });
-    // Simulate a pre-identity tree: strip the per-worktree config the create just wrote.
+    // Simulate a pre-identity tree: strip the per-workspace config the create just wrote.
     await git(
-      worktree.checkout,
+      workspace.checkout,
       'config',
       '--worktree',
       '--unset',
       'user.name',
     );
     await git(
-      worktree.checkout,
+      workspace.checkout,
       'config',
       '--worktree',
       '--unset',
@@ -1236,9 +1236,9 @@ describe('WorktreeService per-worktree git identity (real git)', () => {
 
     const fresh = makeService(repo);
     await fresh.onApplicationBootstrap();
-    await commit(worktree.checkout, 'maya.md', 'hi\n');
+    await commit(workspace.checkout, 'maya.md', 'hi\n');
     expect(
-      await git(worktree.checkout, 'log', '-1', '--format=%an <%ae>'),
+      await git(workspace.checkout, 'log', '-1', '--format=%an <%ae>'),
     ).toBe('Maya <maya@agents.noreply>');
   });
 
@@ -1250,14 +1250,14 @@ describe('WorktreeService per-worktree git identity (real git)', () => {
       'add',
       '-b',
       'scratch',
-      join(repo, '.worktrees', 'wt-009-scratch'),
+      join(repo, '.workspaces', 'ws-009-scratch'),
     );
     const fresh = makeService(repo);
     await fresh.onApplicationBootstrap();
-    await commit(join(repo, '.worktrees', 'wt-009-scratch'), 'x.md', 'x\n');
+    await commit(join(repo, '.workspaces', 'ws-009-scratch'), 'x.md', 'x\n');
     expect(
       await git(
-        join(repo, '.worktrees', 'wt-009-scratch'),
+        join(repo, '.workspaces', 'ws-009-scratch'),
         'log',
         '-1',
         '--format=%an <%ae>',

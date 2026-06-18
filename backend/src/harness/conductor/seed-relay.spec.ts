@@ -43,7 +43,7 @@ describe('boardEventRelayPrompt', () => {
       employee: 'riley',
       prUrl: 'https://gh/pr/7',
       noteId: 42,
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
     };
     const selfReviewFailed: BoardEvent = {
       kind: 'self-review-failed',

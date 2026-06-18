@@ -1,17 +1,17 @@
 /**
- * A worktree is an employee-managed isolated work area: a full-repo git checkout cut off the repo
+ * A workspace is an employee-managed isolated work area: a full-repo git checkout cut off the repo
  * that WORKER_ROOT lives in. It is NOT a write grant — sessions decide read-only vs write per turn
- * (engine mode); the worktree just guarantees whatever they do can't touch the trunk or each other's
- * trees. One worktree can host several sessions (e.g. a parallel review).
+ * (engine mode); the workspace just guarantees whatever they do can't touch the trunk or each other's
+ * trees. One workspace can host several sessions (e.g. a parallel review).
  */
-export interface Worktree {
-  /** Registry id (`wt-NNN`) — what the worktree tools take. */
+export interface Workspace {
+  /** Registry id (`ws-NNN`) — what the workspace tools take. */
   id: string;
   /** The employee-supplied short name (slugified into the directory/branch). */
   name: string;
-  /** The branch checked out in this worktree. */
+  /** The branch checked out in this workspace. */
   branch: string;
-  /** The commit the branch was cut from ('' for a worktree re-adopted after a restart). */
+  /** The commit the branch was cut from ('' for a workspace re-adopted after a restart). */
   baseRef: string;
   /** The session working directory (checkout root + the repo-subdir WORKER_ROOT sits at). Engine cwd. */
   path: string;
@@ -26,12 +26,12 @@ export interface Worktree {
   /** The repo this checkout belongs to (WORKER_ROOT's repo, or a registered project's clone).
    * Remote ops verify this repo IS the project's registered repo before touching the network. */
   repoRoot: string;
-  /** The shared integration branch this worktree publishes to / pulls from (multi-employee feature
+  /** The shared integration branch this workspace publishes to / pulls from (multi-employee feature
    * work). Recorded durably in git branch config, so it survives restarts and re-attaches. */
   sharedBranch?: string;
 }
 
-export interface NewWorktree {
+export interface NewWorkspace {
   name: string;
   /** Check out this existing branch instead of cutting a fresh `agent/<owner>/…` one from HEAD. */
   branch?: string;
@@ -43,7 +43,7 @@ export interface NewWorktree {
   project: string;
 }
 
-/** The outcome of a publish/pull against a worktree's shared integration branch. */
+/** The outcome of a publish/pull against a workspace's shared integration branch. */
 export interface IntegrationResult {
   integrated: boolean;
   sharedBranch: string;
@@ -63,9 +63,9 @@ export interface IntegrationResult {
   originFetched?: boolean;
 }
 
-/** The outcome of refreshing a worktree's branch against its project's base branch (merge of
+/** The outcome of refreshing a workspace's branch against its project's base branch (merge of
  * `origin/<defaultBranch>`). Distinct from IntegrationResult: base refresh applies to UNSHARED
- * worktrees and reports the base branch, not a shared integration branch. */
+ * workspaces and reports the base branch, not a shared integration branch. */
 export interface BaseRefreshResult {
   /** True = merged origin's base in, or already current. False = no-op (unregistered project,
    * origin-guard refusal, or the fetch didn't land) or a conflict. */

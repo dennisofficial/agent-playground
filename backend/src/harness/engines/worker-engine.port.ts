@@ -15,7 +15,7 @@ export enum EWorkerEngineName {
 /**
  * The mode of one session turn. 'plan' = the engine's native read-only planning posture (agents
  * plan deeper when the engine itself enforces look-don't-touch, ending in a plan artifact);
- * 'execute' = write-capable within the session's worktree; 'investigate' = read-only like plan but
+ * 'execute' = write-capable within the session's workspace; 'investigate' = read-only like plan but
  * WITHOUT the native plan ceremony (no ExitPlanMode / plan artifact) — a fast, direct answer FROM the
  * codebase. Chosen per turn by the owning employee — approving a plan is simply the next turn
  * arriving with mode 'execute'. Both 'plan' and 'investigate' are read-only at the engine seam.

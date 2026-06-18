@@ -55,7 +55,7 @@ const payloadFor = (
   session: { id: 's1' } as PlanFinishedPayload['session'],
   planBody: 'original',
   engineSessionId: 'eng-0',
-  worktreePath: '/wt',
+  workspacePath: '/ws',
   keys: {},
   signal: new AbortController().signal,
   ...over,
@@ -86,14 +86,14 @@ describe('LifecycleRunner', () => {
         planBody: 'revised',
         engineSessionId: 'eng-1',
         // not in the contract — must be ignored:
-        worktreePath: '/hacked',
+        workspacePath: '/hacked',
       })),
     ]);
     const emp = employeeWith([lifecycleCap('self_review')]);
     const out = await runner.run(LifecycleEvent.PlanFinished, payloadFor(emp));
     expect(out.planBody).toBe('revised');
     expect(out.engineSessionId).toBe('eng-1');
-    expect(out.worktreePath).toBe('/wt'); // unchanged — contract enforced
+    expect(out.workspacePath).toBe('/ws'); // unchanged — contract enforced
   });
 
   it('chains blocking hooks in order, threading the transformed payload', async () => {

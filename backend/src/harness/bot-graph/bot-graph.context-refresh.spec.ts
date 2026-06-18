@@ -13,7 +13,7 @@ import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
-import type { WorktreeService } from '../worktrees/worktree.service';
+import type { WorkspaceService } from '../workspaces/workspace.service';
 import { makeEmployee } from '@harness/employees/employee.testing';
 import { BotGraphFactory } from './bot-graph.factory';
 
@@ -23,7 +23,7 @@ import { BotGraphFactory } from './bot-graph.factory';
  * model call — so the bot reasons against fresh state, not a frozen pre-turn snapshot.
  *
  * Invariants:
- *   (1) work refresh:    worktree list change is visible in the next model call
+ *   (1) work refresh:    workspace list change is visible in the next model call
  *   (2) memory refresh:  fetchMemory change is visible in the next model call
  *   (4) untagged → no route:   non-refresh tool loops straight back to llm (original behavior)
  *   (5) single recall event:   `recalled` stays the pre-LLM snapshot; refresh updates only `context`
@@ -101,36 +101,36 @@ async function runTurn(
 }
 
 describe('bot graph — post-tools context refresh', () => {
-  it('(1) work refresh: updated worktree list is visible in the post-refresh llm call', async () => {
+  it('(1) work refresh: updated workspace list is visible in the post-refresh llm call', async () => {
     const channel = new FakeChannel();
     channel.append({
       id: 'u-0',
       author: 'Dennis',
       authorId: 'dennis',
-      text: 'Alex, create a worktree.',
+      text: 'Alex, create a workspace.',
     });
 
     // Counter-based list mock: first call (during recallNode) → no trees, second (refreshContext) → one.
     let listCallCount = 0;
-    const worktrees: WorktreeService = {
+    const workspaces: WorkspaceService = {
       list: () => {
         listCallCount++;
         if (listCallCount <= 1) return [];
         return [
           {
-            id: 'wt-new',
+            id: 'ws-new',
             name: 'feature',
             branch: 'alex/feature',
             ownerBot: 'alex',
             sharedBranch: undefined,
             project: 'myproject',
-          } as unknown as ReturnType<WorktreeService['list']>[0],
+          } as unknown as ReturnType<WorkspaceService['list']>[0],
         ];
       },
-    } as unknown as WorktreeService;
+    } as unknown as WorkspaceService;
 
-    // A tool tagged ['work'] — its execution simulates the worktree being created.
-    const pokeTool = tool(async () => 'wt-new created', {
+    // A tool tagged ['work'] — its execution simulates the workspace being created.
+    const pokeTool = tool(async () => 'ws-new created', {
       name: 'poke',
       description: 'no-op probe',
       schema: z.object({}),
@@ -173,7 +173,7 @@ describe('bot graph — post-tools context refresh', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      worktrees,
+      workspaces,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -182,12 +182,12 @@ describe('bot graph — post-tools context refresh', () => {
     await runTurn(factory, 'alex:refresh-work:root');
 
     expect(invocations).toHaveLength(2);
-    // Step 1 — before the tool ran: no worktree in context yet.
+    // Step 1 — before the tool ran: no workspace in context yet.
     const step1 = invocations[0].map((m) => flat(m.content)).join('\n');
-    expect(step1).not.toContain('wt-new');
-    // Step 2 — after refreshContext: the new worktree line must be present.
+    expect(step1).not.toContain('ws-new');
+    // Step 2 — after refreshContext: the new workspace line must be present.
     const step2 = invocations[1].map((m) => flat(m.content)).join('\n');
-    expect(step2).toContain('wt-new');
+    expect(step2).toContain('ws-new');
 
     // Final state: context.work updated, recalled still the original (empty) snapshot.
     const graph = factory.getConductorGraph(ALEX);
@@ -196,7 +196,7 @@ describe('bot graph — post-tools context refresh', () => {
     });
     expect(
       (final.values as { context: { work: string } }).context.work,
-    ).toContain('wt-new');
+    ).toContain('ws-new');
     // recalled is the pre-LLM snapshot written by recallNode — NOT updated by refreshContext.
     expect((final.values as { recalled: string }).recalled).toBe('');
   });
@@ -260,7 +260,7 @@ describe('bot graph — post-tools context refresh', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -339,7 +339,7 @@ describe('bot graph — post-tools context refresh', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -359,28 +359,28 @@ describe('bot graph — post-tools context refresh', () => {
       id: 'u-0',
       author: 'Dennis',
       authorId: 'dennis',
-      text: 'Alex, create a worktree.',
+      text: 'Alex, create a workspace.',
     });
 
-    // Counter-based: recallNode (call 1) → empty; refreshContext (call 2) → new worktree.
+    // Counter-based: recallNode (call 1) → empty; refreshContext (call 2) → new workspace.
     let listCount = 0;
-    const worktrees: WorktreeService = {
+    const workspaces: WorkspaceService = {
       list: () => {
         listCount++;
         return listCount <= 1
           ? []
           : [
               {
-                id: 'wt-new',
+                id: 'ws-new',
                 name: 'feature',
                 branch: 'alex/feature',
                 ownerBot: 'alex',
                 sharedBranch: undefined,
                 project: 'myproject',
-              } as unknown as ReturnType<WorktreeService['list']>[0],
+              } as unknown as ReturnType<WorkspaceService['list']>[0],
             ];
       },
-    } as unknown as WorktreeService;
+    } as unknown as WorkspaceService;
 
     const pokeTool = tool(async () => 'created', {
       name: 'poke',
@@ -423,7 +423,7 @@ describe('bot graph — post-tools context refresh', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      worktrees,
+      workspaces,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -436,13 +436,13 @@ describe('bot graph — post-tools context refresh', () => {
       configurable: { thread_id: 'alex:refresh-single-recall:root' },
     });
 
-    // `context.work` was updated by refreshContext — the new worktree is there.
+    // `context.work` was updated by refreshContext — the new workspace is there.
     expect(
       (final.values as { context: { work: string } }).context.work,
-    ).toContain('wt-new');
+    ).toContain('ws-new');
 
     // `recalled` was written by recallNode (before the tool ran) and must NOT have been updated
-    // by refreshContext. The recallNode saw an empty worktree list, so recalled = ''.
+    // by refreshContext. The recallNode saw an empty workspace list, so recalled = ''.
     expect((final.values as { recalled: string }).recalled).toBe('');
   });
 });

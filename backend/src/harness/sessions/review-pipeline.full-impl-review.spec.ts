@@ -49,7 +49,7 @@ function buildRunner(reviewFull: {
     reviewFullImplementation,
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
-  const worktrees = { get: vi.fn(() => ({ path: '/tmp/wt' })) };
+  const workspaces = { get: vi.fn(() => ({ path: '/tmp/ws' })) };
   const svc = new PipelineRunnerService(
     runs as never,
     sectionStore as never,
@@ -61,7 +61,7 @@ function buildRunner(reviewFull: {
     proposals as never,
     review as never,
     boardEvents as never,
-    worktrees as never,
+    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
@@ -80,7 +80,7 @@ const newFeatureRun = async (runs: FakeRunStore, taskId: number): Promise<Row> =
     pipeline: 'dynamic',
     kind: 'feature',
     status: 'running',
-    worktreeId: 'wt-1',
+    workspaceId: 'ws-1',
     notifyThread: 'thread',
     project: 'proj',
   });
@@ -126,7 +126,7 @@ describe('handlePrGate — full-implementation review routing (Phase 5b)', () =>
       pipeline: 'bugfix',
       kind: 'bugfix',
       status: 'running',
-      worktreeId: 'wt-9',
+      workspaceId: 'ws-9',
       notifyThread: 'thread',
       project: 'proj',
     });
@@ -150,8 +150,8 @@ function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
   const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
   const ownerDiff = vi.fn(async () => ({ range: 'base...feat', files }));
-  const worktrees = {
-    get: () => ({ id: 'wt-1', path: '/tmp/wt', baseRef: 'base', branch: 'feat' }),
+  const workspaces = {
+    get: () => ({ id: 'ws-1', path: '/tmp/ws', baseRef: 'base', branch: 'feat' }),
     projectRecordFor: async () => ({ defaultBranch: 'main' }),
     ownerDiff,
   } as never;
@@ -161,7 +161,7 @@ function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
     employees,
     credCtx,
     creds,
-    worktrees,
+    workspaces,
     {} as never,
     {} as never,
     board,
@@ -181,7 +181,7 @@ describe('ReviewPipelineService.reviewFullImplementation', () => {
     const out = await f.svc.reviewFullImplementation({
       team: TEAM,
       taskId: 7,
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
     });
     expect(out.verdict).toBe('pass');
     expect(out.findings).toContain('coherent');
@@ -193,7 +193,7 @@ describe('ReviewPipelineService.reviewFullImplementation', () => {
     const out = await f.svc.reviewFullImplementation({
       team: TEAM,
       taskId: 7,
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
     });
     expect(out.verdict).toBe('changes');
   });
@@ -203,7 +203,7 @@ describe('ReviewPipelineService.reviewFullImplementation', () => {
     const out = await f.svc.reviewFullImplementation({
       team: TEAM,
       taskId: 7,
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
     });
     expect(out).toEqual({ verdict: 'pass', findings: '' });
     expect(f.engineRun).not.toHaveBeenCalled();

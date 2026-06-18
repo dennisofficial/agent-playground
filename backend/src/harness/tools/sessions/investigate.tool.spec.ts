@@ -5,7 +5,7 @@ import { InvestigateTool } from './investigate.tool';
 /**
  * The `investigate` tool: a read-only fact-grounding session on the INVESTIGATE engine recipe (the
  * execute engine, so the create-time engine pin matches), opened in the 'investigate' mode (never
- * 'plan'/'execute'), with low-friction worktree resolution (given → latest → auto-create). The
+ * 'plan'/'execute'), with low-friction workspace resolution (given → latest → auto-create). The
  * engine's read-only enforcement for the mode is covered at the engine seam; here we lock the tool's
  * wiring with the session-open path mocked.
  */
@@ -23,7 +23,7 @@ const ctx: { identity: Identity } = {
 };
 
 function makeTool(opts: {
-  worktrees?: { id: string }[];
+  workspaces?: { id: string }[];
   getById?: (id: string) => { id: string } | undefined;
 }) {
   const openSession = vi.fn((_opts: Record<string, unknown>) =>
@@ -31,13 +31,13 @@ function makeTool(opts: {
   );
   const createSession = { openSession };
   const created: Record<string, unknown>[] = [];
-  const worktrees = {
-    get: opts.getById ?? ((id: string) => ({ id, path: '/tmp/wt' })),
-    list: vi.fn(() => opts.worktrees ?? []),
+  const workspaces = {
+    get: opts.getById ?? ((id: string) => ({ id, path: '/tmp/ws' })),
+    list: vi.fn(() => opts.workspaces ?? []),
     create: vi.fn((input: Record<string, unknown>) => {
       created.push(input);
       return Promise.resolve({
-        worktree: { id: 'wt-new', branch: 'investigate' },
+        workspace: { id: 'ws-new', branch: 'investigate' },
       });
     }),
   };
@@ -51,58 +51,58 @@ function makeTool(opts: {
   const sessions = { update: vi.fn(() => Promise.resolve(undefined)) };
   const tool = new InvestigateTool(
     createSession as never,
-    worktrees as never,
+    workspaces as never,
     employees as never,
     projects as never,
     sessions as never,
   );
-  return { tool, openSession, worktrees, created, projects, sessions };
+  return { tool, openSession, workspaces, created, projects, sessions };
 }
 
 describe('investigate', () => {
-  it('opens a read-only investigate session on the investigate engine, reusing the latest worktree', async () => {
-    const { tool, openSession, worktrees } = makeTool({
-      worktrees: [{ id: 'wt-old' }, { id: 'wt-001' }],
+  it('opens a read-only investigate session on the investigate engine, reusing the latest workspace', async () => {
+    const { tool, openSession, workspaces } = makeTool({
+      workspaces: [{ id: 'ws-old' }, { id: 'ws-001' }],
     });
     const out = await tool.execute(
       { question: 'how does the gate work?' },
       ctx,
     );
-    expect(worktrees.create).not.toHaveBeenCalled();
+    expect(workspaces.create).not.toHaveBeenCalled();
     expect(openSession).toHaveBeenCalledTimes(1);
     const call = openSession.mock.calls[0][0];
     expect(call.mode).toBe('investigate');
-    expect(call.worktreeId).toBe('wt-001'); // the latest
+    expect(call.workspaceId).toBe('ws-001'); // the latest
     expect(call.engine).toBe('claude'); // investigate keeps the execute engine (model-only override)
     expect(call.openingTask).toContain('READ-ONLY');
     expect(call.openingTask).toContain('how does the gate work?');
     expect(out).toContain('sess-001');
   });
 
-  it('auto-opens a fresh worktree when the bot has none', async () => {
-    const { tool, openSession, worktrees, created } = makeTool({
-      worktrees: [],
+  it('auto-opens a fresh workspace when the bot has none', async () => {
+    const { tool, openSession, workspaces, created } = makeTool({
+      workspaces: [],
     });
     const out = await tool.execute({ question: 'where is X?' }, ctx);
-    expect(worktrees.create).toHaveBeenCalledTimes(1);
+    expect(workspaces.create).toHaveBeenCalledTimes(1);
     expect(created[0]).toMatchObject({
       ownerBot: 'alex',
       team: 'T1',
       project: 'proj',
     });
-    expect(openSession.mock.calls[0][0].worktreeId).toBe('wt-new');
-    expect(out).toContain('fresh worktree');
+    expect(openSession.mock.calls[0][0].workspaceId).toBe('ws-new');
+    expect(out).toContain('fresh workspace');
   });
 
-  it('errors (and opens nothing) on an unknown explicit worktreeId', async () => {
+  it('errors (and opens nothing) on an unknown explicit workspaceId', async () => {
     const { tool, openSession } = makeTool({ getById: () => undefined });
-    const out = await tool.execute({ question: 'q', worktreeId: 'nope' }, ctx);
-    expect(out).toContain('No worktree "nope"');
+    const out = await tool.execute({ question: 'q', workspaceId: 'nope' }, ctx);
+    expect(out).toContain('No workspace "nope"');
     expect(openSession).not.toHaveBeenCalled();
   });
 
   it('always requires the epistemic-output trailer, even with no intent', async () => {
-    const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+    const { tool, openSession } = makeTool({ workspaces: [{ id: 'ws-001' }] });
     await tool.execute({ question: 'does a Slack adapter exist?' }, ctx);
     const task = openSession.mock.calls[0][0].openingTask as string;
     expect(task).toContain('Confidence: high | medium | low');
@@ -111,7 +111,7 @@ describe('investigate', () => {
   });
 
   it('threads board_task_id to openSession as boardTaskId (the grounding artifact)', async () => {
-    const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+    const { tool, openSession } = makeTool({ workspaces: [{ id: 'ws-001' }] });
     await tool.execute(
       { question: 'how does X sit in the repo?', board_task_id: 42 },
       ctx,
@@ -120,7 +120,7 @@ describe('investigate', () => {
   });
 
   it('omits boardTaskId when board_task_id is not given', async () => {
-    const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+    const { tool, openSession } = makeTool({ workspaces: [{ id: 'ws-001' }] });
     await tool.execute({ question: 'q' }, ctx);
     expect(openSession.mock.calls[0][0].boardTaskId).toBeUndefined();
   });
@@ -132,7 +132,7 @@ describe('investigate', () => {
       ['review', 'trade-offs'],
     ];
     for (const [intent, needle] of cases) {
-      const { tool, openSession } = makeTool({ worktrees: [{ id: 'wt-001' }] });
+      const { tool, openSession } = makeTool({ workspaces: [{ id: 'ws-001' }] });
       await tool.execute({ question: 'q', intent }, ctx);
       const task = openSession.mock.calls[0][0].openingTask as string;
       expect(task).toContain('FOCUS:');

@@ -16,7 +16,7 @@ export interface HarnessToolContext {
 /**
  * Which part of the pre-LLM context a tool call can dirty. Used by the graph to decide which
  * context slices to recompute after a tool batch.
- * - 'work'      → worktrees + open sessions (create_worktree, remove_worktree, close_session)
+ * - 'work'      → workspaces + open sessions (create_workspace, remove_workspace, close_session)
  * - 'memory'    → semantic facts (remember, update_memory, forget)
  * - 'tasks'     → reminders plate (add_task, complete_task)
  * - 'pipelines' → in-flight pipeline runs (dispatch_pipeline, answer_section, attach/skip_design)

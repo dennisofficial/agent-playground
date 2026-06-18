@@ -28,7 +28,7 @@ export interface PlanFinishedPayload {
   /** The planning engine's resume handle — a blocking hook (which revises on that session) may
    * replace this so the revised plan's session id travels forward. */
   engineSessionId?: string;
-  readonly worktreePath: string;
+  readonly workspacePath: string;
   readonly keys: TenantKeys;
   readonly signal: AbortSignal;
   /** Stream a hook's engine progress to the session transcript (provided by the session runner). */
@@ -43,7 +43,7 @@ export interface LifecyclePayloads {
 /**
  * The per-event TRANSFORM CONTRACT: exactly which payload fields a blocking hook may return-and-
  * replace. The runner takes ONLY these keys from a hook's returned partial and ignores the rest, so
- * a hook can't quietly mutate read-only context (employee, session, worktreePath, keys, signal).
+ * a hook can't quietly mutate read-only context (employee, session, workspacePath, keys, signal).
  */
 export const TRANSFORM_CONTRACT: {
   [E in LifecycleEvent]: ReadonlyArray<keyof LifecyclePayloads[E]>;

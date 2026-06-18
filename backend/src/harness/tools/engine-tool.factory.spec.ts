@@ -5,7 +5,7 @@ import { makeEmployee } from '../employees/employee.testing';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
 import { EXECUTE_CODEX } from '../engines/engine-presets';
 import type { CreateSessionTool } from './sessions/session.tools';
-import type { WorktreeService } from '../worktrees/worktree.service';
+import type { WorkspaceService } from '../workspaces/workspace.service';
 import { EngineToolFactory } from './engine-tool.factory';
 
 /**
@@ -41,7 +41,7 @@ const config = {
   },
 };
 
-function build(opts: { worktrees?: string[] } = {}) {
+function build(opts: { workspaces?: string[] } = {}) {
   const opened: Array<Record<string, unknown>> = [];
   const createSession = {
     openSession: async (o: Record<string, unknown>) => {
@@ -49,33 +49,33 @@ function build(opts: { worktrees?: string[] } = {}) {
       return { sessionId: 'sess-research-1' };
     },
   } as unknown as CreateSessionTool;
-  const worktrees = {
+  const workspaces = {
     get: (id: string) =>
-      (opts.worktrees ?? []).includes(id) ? { id } : undefined,
-    list: () => (opts.worktrees ?? []).map((id) => ({ id })),
-  } as unknown as WorktreeService;
+      (opts.workspaces ?? []).includes(id) ? { id } : undefined,
+    list: () => (opts.workspaces ?? []).map((id) => ({ id })),
+  } as unknown as WorkspaceService;
   return {
-    factory: new EngineToolFactory(createSession, worktrees),
+    factory: new EngineToolFactory(createSession, workspaces),
     opened,
   };
 }
 
 describe('EngineToolFactory', () => {
   it('binds a tool per tool-capability', () => {
-    const { factory } = build({ worktrees: ['wt-1'] });
+    const { factory } = build({ workspaces: ['ws-1'] });
     const { tools } = factory.buildTools(nora(), CTX);
     expect(tools.map((t) => t.name)).toEqual(['deep_research']);
   });
 
-  it('opens a session on the capability spec engine, reusing a given worktree', async () => {
-    const { factory, opened } = build({ worktrees: ['wt-1'] });
+  it('opens a session on the capability spec engine, reusing a given workspace', async () => {
+    const { factory, opened } = build({ workspaces: ['ws-1'] });
     const { tools } = factory.buildTools(nora(), CTX);
     const out = await (
       tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }
-    ).invoke({ question: 'How does X price?', worktreeId: 'wt-1' }, config);
+    ).invoke({ question: 'How does X price?', workspaceId: 'ws-1' }, config);
     expect(opened).toHaveLength(1);
     expect(opened[0]).toMatchObject({
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
       mode: 'plan',
       engine: EWorkerEngineName.CODEX,
       openingTask: 'How does X price?',
@@ -83,23 +83,23 @@ describe('EngineToolFactory', () => {
     expect(out).toContain('deep_research session sess-research-1');
   });
 
-  it('falls back to the bot’s latest worktree when none is given', async () => {
-    const { factory, opened } = build({ worktrees: ['wt-1', 'wt-2'] });
+  it('falls back to the bot’s latest workspace when none is given', async () => {
+    const { factory, opened } = build({ workspaces: ['ws-1', 'ws-2'] });
     const { tools } = factory.buildTools(nora(), CTX);
     await (
       tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }
     ).invoke({ question: 'research this' }, config);
-    expect(opened[0]).toMatchObject({ worktreeId: 'wt-2' }); // latest
+    expect(opened[0]).toMatchObject({ workspaceId: 'ws-2' }); // latest
   });
 
-  it('nudges to create a worktree when the bot has none', async () => {
-    const { factory, opened } = build({ worktrees: [] });
+  it('nudges to create a workspace when the bot has none', async () => {
+    const { factory, opened } = build({ workspaces: [] });
     const { tools } = factory.buildTools(nora(), CTX);
     const out = await (
       tools[0] as { invoke: (a: unknown, c: unknown) => Promise<string> }
     ).invoke({ question: 'research this' }, config);
     expect(opened).toHaveLength(0);
-    expect(out).toContain('create_worktree');
+    expect(out).toContain('create_workspace');
   });
 
   it('returns no tools for an employee with no tool-capabilities', () => {

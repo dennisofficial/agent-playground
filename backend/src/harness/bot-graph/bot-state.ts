@@ -10,7 +10,7 @@ import type { RefreshScope } from '../tools/tool.types';
  * re-fetch every tool batch.
  * - `memory`    — semantic facts + cross-project facts (embedding-based; set once by `recall`)
  * - `tasks`     — the reminders plate (cheap SQL; refreshed by add_task / complete_task)
- * - `work`      — worktrees + open sessions (registry reads; refreshed by create/remove_worktree, close_session)
+ * - `work`      — workspaces + open sessions (registry reads; refreshed by create/remove_workspace, close_session)
  * - `pipelines` — in-flight pipeline runs (cheap SQL; refreshed by dispatch_pipeline / answer_section / design gates).
  *                 The "no blind orchestrator" slice: the lead sees live run state, never blind to automations.
  */
@@ -21,7 +21,7 @@ export interface ContextParts {
   pipelines: string;
 }
 
-/** Render order: facts/others → plate → worktrees/sessions → in-flight pipelines (lowest priority, last). */
+/** Render order: facts/others → plate → workspaces/sessions → in-flight pipelines (lowest priority, last). */
 export const renderContext = (c: ContextParts): string =>
   [c.memory, c.tasks, c.work, c.pipelines].filter((s) => s.trim()).join('\n\n');
 

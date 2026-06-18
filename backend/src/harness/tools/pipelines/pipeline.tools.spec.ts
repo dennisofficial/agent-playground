@@ -20,13 +20,13 @@ const ctx = {
 function makeTool(sessions: unknown[]) {
   const start = vi.fn(() => Promise.resolve({}));
   const board = { get: vi.fn(() => Promise.resolve({ project: 'proj' })) };
-  const worktrees = { get: vi.fn(() => ({ id: 'wt-1' })) };
+  const workspaces = { get: vi.fn(() => ({ id: 'ws-1' })) };
   const employees = { byId: vi.fn((id: string) => ({ id })) };
   const runner = { start };
   const sessionsReg = { list: vi.fn(() => Promise.resolve(sessions)) };
   const tool = new DispatchPipelineTool(
     board as never,
-    worktrees as never,
+    workspaces as never,
     employees as never,
     runner as never,
     sessionsReg as never,
@@ -36,7 +36,7 @@ function makeTool(sessions: unknown[]) {
 
 const featureArgs = {
   board_task_id: 5,
-  worktree_id: 'wt-1',
+  workspace_id: 'ws-1',
   kind: 'feature' as const,
   sections: [{ name: 'backend', role: 'phase_backend' }],
 };
@@ -81,7 +81,7 @@ describe('dispatch_pipeline grounding guard', () => {
     await tool.execute(
       {
         board_task_id: 5,
-        worktree_id: 'wt-1',
+        workspace_id: 'ws-1',
         kind: 'bugfix',
         role: 'phase_backend',
       },

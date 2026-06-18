@@ -26,7 +26,7 @@ function makeSession(over: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     task: 'Build the thing',
-    worktreeId: 'wt-1',
+    workspaceId: 'ws-1',
     status: 'idle',
     notifyThread: 'dev:root',
     ownerBot: 'alex',

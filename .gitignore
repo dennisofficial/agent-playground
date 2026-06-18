@@ -3,8 +3,8 @@ dist
 *.log
 .DS_Store
 
-# Per-worker git worktrees (one full-repo checkout per execute job) — see playground/src/workspace.ts
-.worktrees/
+# Per-worker git workspaces (one full-repo checkout per execute job) — see playground/src/workspace.ts
+.workspaces/
 
 # Worker engines' isolated config/state homes (CLAUDE_CONFIG_DIR / CODEX_HOME) — runtime session
 # transcripts + per-engine config, never committed. See backend/src/harness/engines/engine-home.ts

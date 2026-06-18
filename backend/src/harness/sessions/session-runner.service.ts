@@ -22,7 +22,7 @@ import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { MetricsEventsService } from '../metrics/metrics-events.service';
-import { WorktreeService } from '../worktrees/worktree.service';
+import { WorkspaceService } from '../workspaces/workspace.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
@@ -33,7 +33,7 @@ import {
 
 /**
  * Runs the employees' background sessions, one turn at a time. A turn is one engine run inside the
- * session's worktree: the engine loops internally until it has a report, the report lands as
+ * session's workspace: the engine loops internally until it has a report, the report lands as
  * `lastReport`, and the session goes 'idle' — OPEN, waiting for its owner to reply into it
  * (replySession), relay the outcome, or close it (closeSession). Every turn-end is the wake signal
  * the conductor relays through the owner bot; there is no STATUS-line protocol and no turn cap —
@@ -71,7 +71,7 @@ export class SessionRunnerService {
     private readonly persona: PersonaService,
     private readonly lifecycle: LifecycleRunner,
     private readonly worklog: WorklogStore,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
     private readonly metrics: MetricsEventsService,
@@ -92,7 +92,7 @@ export class SessionRunnerService {
     role: string;
     team: string;
     project: string;
-    worktreeId: string;
+    workspaceId: string;
     task: string;
     mode: WorkerMode;
     notifyThread: string;
@@ -109,7 +109,7 @@ export class SessionRunnerService {
     ).engine;
     const session = await this.sessions.create({
       task: opts.task,
-      worktreeId: opts.worktreeId,
+      workspaceId: opts.workspaceId,
       notifyThread: opts.notifyThread,
       engine,
       ownerBot: bot.id,
@@ -132,74 +132,74 @@ export class SessionRunnerService {
   }
 
   /**
-   * Refresh a worktree against its base branch when execution starts, and return a PREAMBLE to
+   * Refresh a workspace against its base branch when execution starts, and return a PREAMBLE to
    * prepend to the turn's opening message. Empty string on a clean refresh (or a benign "no base to
    * track" — unregistered local dev); otherwise a one-line heads-up so the bot knows it may be on a
    * stale base. A merge conflict gets the strongest preamble (resolve it first); a dirty tree / fetch
-   * miss / contention / error each get an actionable note pointing at `refresh_worktree`. Never
+   * miss / contention / error each get an actionable note pointing at `refresh_workspace`. Never
    * throws — staleness must not block the turn.
    */
   private async baseRefreshPreamble(
     sessionId: string,
-    worktree: { id: string },
+    workspace: { id: string },
   ): Promise<string> {
     const end = '\n\n';
     const otherLive = (
-      await this.sessions.list({ worktreeId: worktree.id })
+      await this.sessions.list({ workspaceId: workspace.id })
     ).some((s) => s.id !== sessionId && s.status === 'running');
     if (otherLive) {
       this.logger.warn(
-        `${sessionId}: another session is mid-turn in ${worktree.id} — skipping base refresh`,
+        `${sessionId}: another session is mid-turn in ${workspace.id} — skipping base refresh`,
       );
-      return `Heads up: this worktree wasn't updated against the base branch because another session is mid-turn in it — your base may be behind. Run \`refresh_worktree\` once it's free if you need the latest.${end}`;
+      return `Heads up: this workspace wasn't updated against the base branch because another session is mid-turn in it — your base may be behind. Run \`refresh_workspace\` once it's free if you need the latest.${end}`;
     }
     // A merge already in progress (e.g. this is a session opened to resolve a publish/pull conflict)
     // would make refreshFromBase throw via refuseMidMerge — short-circuit to the resolve instruction
     // instead of the generic "couldn't refresh" note, and point at the actual conflicted files.
-    const merge = await this.worktrees.mergeState(worktree.id);
+    const merge = await this.workspaces.mergeState(workspace.id);
     if (merge.inProgress) {
       this.logger.log(
-        `${sessionId}: merge in progress in ${worktree.id} — handing conflicts to the turn`,
+        `${sessionId}: merge in progress in ${workspace.id} — handing conflicts to the turn`,
       );
-      return `Before anything else: a merge is IN PROGRESS in this worktree with conflicts in: ${merge.files.join(', ') || '(unknown files)'}. Resolve the conflicts and commit the merge.${end}`;
+      return `Before anything else: a merge is IN PROGRESS in this workspace with conflicts in: ${merge.files.join(', ') || '(unknown files)'}. Resolve the conflicts and commit the merge.${end}`;
     }
     try {
-      const r = await this.worktrees.refreshFromBase(worktree.id);
+      const r = await this.workspaces.refreshFromBase(workspace.id);
       const base = r.baseBranch ?? 'the base branch';
       if (r.conflicted) {
         this.logger.log(
           `${sessionId}: base refresh hit conflicts (${r.baseBranch}) — handing them to the turn`,
         );
-        return `Before anything else: a merge of the base branch \`${base}\` into this worktree is IN PROGRESS with conflicts in: ${(r.files ?? []).join(', ') || '(unknown files)'}. Resolve the conflicts, commit the merge, then continue.${end}`;
+        return `Before anything else: a merge of the base branch \`${base}\` into this workspace is IN PROGRESS with conflicts in: ${(r.files ?? []).join(', ') || '(unknown files)'}. Resolve the conflicts, commit the merge, then continue.${end}`;
       }
       if (r.refreshed) {
         this.logger.log(
-          `${sessionId}: refreshed ${worktree.id} from ${r.baseBranch}`,
+          `${sessionId}: refreshed ${workspace.id} from ${r.baseBranch}`,
         );
         return '';
       }
       if (r.dirty) {
         this.logger.warn(
-          `${sessionId}: base refresh skipped (${worktree.id}) — dirty working tree`,
+          `${sessionId}: base refresh skipped (${workspace.id}) — dirty working tree`,
         );
-        return `Heads up: this worktree wasn't updated against \`${base}\` because it has uncommitted changes — your base may be behind. Commit your work, then run \`refresh_worktree\` before relying on it.${end}`;
+        return `Heads up: this workspace wasn't updated against \`${base}\` because it has uncommitted changes — your base may be behind. Commit your work, then run \`refresh_workspace\` before relying on it.${end}`;
       }
       if (r.baseBranch) {
         // Has a base to track but it didn't land (e.g. fetch miss) — actionable staleness.
         this.logger.warn(
-          `${sessionId}: base refresh did not land (${worktree.id}) — ${r.detail ?? 'unknown reason'}`,
+          `${sessionId}: base refresh did not land (${workspace.id}) — ${r.detail ?? 'unknown reason'}`,
         );
-        return `Heads up: this worktree wasn't updated against \`${base}\` (${r.detail ?? 'the refresh did not land'}) — your base may be behind. Run \`refresh_worktree\` to retry when ready.${end}`;
+        return `Heads up: this workspace wasn't updated against \`${base}\` (${r.detail ?? 'the refresh did not land'}) — your base may be behind. Run \`refresh_workspace\` to retry when ready.${end}`;
       }
       // No base branch to track at all (unregistered / guard) — working on local state is expected;
-      // a heads-up would be noise (and `refresh_worktree` would no-op too).
+      // a heads-up would be noise (and `refresh_workspace` would no-op too).
       this.logger.log(`${sessionId}: base refresh no-op — ${r.detail}`);
       return '';
     } catch (err) {
       this.logger.warn(
-        `${sessionId}: base refresh failed (${worktree.id}), proceeding on local state: ${err}`,
+        `${sessionId}: base refresh failed (${workspace.id}), proceeding on local state: ${err}`,
       );
-      return `Heads up: this worktree couldn't be updated against the base branch (an error occurred) — your base may be behind. Run \`refresh_worktree\` to retry; if it keeps failing, flag it to Dennis.${end}`;
+      return `Heads up: this workspace couldn't be updated against the base branch (an error occurred) — your base may be behind. Run \`refresh_workspace\` to retry; if it keeps failing, flag it to Dennis.${end}`;
     }
   }
 
@@ -225,23 +225,23 @@ export class SessionRunnerService {
       if (!session) return;
       const bot =
         this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-      const worktree = this.worktrees.get(session.worktreeId);
-      if (!worktree) {
+      const workspace = this.workspaces.get(session.workspaceId);
+      if (!workspace) {
         throw new Error(
-          `Worktree "${session.worktreeId}" no longer exists — the session has nowhere to run.`,
+          `Workspace "${session.workspaceId}" no longer exists — the session has nowhere to run.`,
         );
       }
-      // Entering execute (a fresh execute session, or a plan→execute flip): bring the worktree up
-      // to date with the base branch before the engine runs. A worktree cut during stand-up is
+      // Entering execute (a fresh execute session, or a plan→execute flip): bring the workspace up
+      // to date with the base branch before the engine runs. A workspace cut during stand-up is
       // stale by now (base moved while it sat idle / between sequential tickets). Skip if ANOTHER
       // session is mid-turn in the same checkout (a merge would mutate files under it) — this
       // session is already 'running', so it's excluded. The base merge never blocks the turn: a
       // CONFLICT is handed to the engine to resolve as its first act, and every OTHER non-clean
       // outcome (dirty tree, fetch miss, contention, error) is surfaced to the bot as a heads-up so
-      // it knows it may be on a stale base and can `refresh_worktree` after committing.
+      // it knows it may be on a stale base and can `refresh_workspace` after committing.
       if (enteringExecute) {
         message =
-          (await this.baseRefreshPreamble(sessionId, worktree)) + message;
+          (await this.baseRefreshPreamble(sessionId, workspace)) + message;
       }
       // Per-turn spec from the employee, by mode: 'plan' → plan recipe, 'investigate' → investigate
       // recipe (execute's engine on a top-tier model), else the execute recipe (model/effort/
@@ -254,7 +254,7 @@ export class SessionRunnerService {
       const { model, effort, systemPrompt } = spec;
 
       this.logger.log(
-        `${sessionId} turn ${session.turns + 1} — ${session.mode} on ${model ?? `${session.engine} default`}${effort ? ` (effort:${effort})` : ''} (${bot.name}, ${worktree.id})`,
+        `${sessionId} turn ${session.turns + 1} — ${session.mode} on ${model ?? `${session.engine} default`}${effort ? ` (effort:${effort})` : ''} (${bot.name}, ${workspace.id})`,
       );
       // Resolve THIS workspace's keys: passed into the claude/codex subprocess env (apiKey) AND
       // stashed in the credential context for the in-process langgraph engine's model builder.
@@ -263,7 +263,7 @@ export class SessionRunnerService {
         session.engine === EWorkerEngineName.CODEX
           ? keys.openai
           : keys.anthropic;
-      // Jail the in-process langgraph tools to the worktree for the turn (claude/codex also get
+      // Jail the in-process langgraph tools to the workspace for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
       // The single engine run for this turn, parametrized by message / model / resume-id.
       // `systemPrompt`/`effort`/`mode` are constant for the turn.
@@ -272,11 +272,11 @@ export class SessionRunnerService {
         turnModel: string | undefined,
         resumeId: string | undefined,
       ) =>
-        withActiveRoot(worktree.path, () =>
+        withActiveRoot(workspace.path, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
             this.engines.get(session.engine).run({
               task: turnMessage,
-              cwd: worktree.path,
+              cwd: workspace.path,
               systemPrompt,
               agentId: bot.id,
               sessionId: resumeId,
@@ -321,7 +321,7 @@ export class SessionRunnerService {
               engine: session.engine,
               boardTaskId: session.boardTaskId,
               agentId: bot.id,
-              worktree: worktree.id,
+              workspace: workspace.id,
               turn: session.turns + 1,
               parentChatTrace,
             },
@@ -385,7 +385,7 @@ export class SessionRunnerService {
           session,
           planBody,
           engineSessionId,
-          worktreePath: worktree.path,
+          workspacePath: workspace.path,
           keys,
           signal: ac.signal,
           onProgress: (e) =>
@@ -529,7 +529,7 @@ export class SessionRunnerService {
       const refusal = await this.executeRefusal(
         session.team,
         session.boardTaskId,
-        session.worktreeId,
+        session.workspaceId,
       );
       if (refusal) return { ok: false, reason: refusal };
     }
@@ -542,7 +542,7 @@ export class SessionRunnerService {
       const refusal = await this.executeRefusal(
         session.team,
         undefined,
-        session.worktreeId,
+        session.workspaceId,
       );
       if (refusal) return { ok: false, reason: refusal };
     }
@@ -553,7 +553,7 @@ export class SessionRunnerService {
         ? { qa: [...(session.qa ?? []), { q: session.lastReport, a: message }] }
         : {};
     // A real transition INTO execute (plan→execute flip) starts execution for this work — refresh
-    // the worktree against base. `session.mode` is still the pre-update value here.
+    // the workspace against base. `session.mode` is still the pre-update value here.
     const enteringExecute = mode === 'execute' && session.mode !== 'execute';
     await this.sessions.update(sessionId, {
       status: 'running',
@@ -579,7 +579,7 @@ export class SessionRunnerService {
    * only board-linked sessions are gated. Unknown dial values fail closed to 'all'. Also used by
    * create_session for execute-mode opens, so a fresh session can't bypass the gate.
    *
-   * MERGE-RESOLUTION EXCEPTION: when `worktreeId` is given and that worktree has a merge already in
+   * MERGE-RESOLUTION EXCEPTION: when `workspaceId` is given and that workspace has a merge already in
    * progress (MERGE_HEAD), an UNLINKED execute session is allowed — finishing a merge the harness
    * itself left behind (publish/pull/refresh) isn't new work to approve, it's forced cleanup (the
    * same reasoning as resumeInternal). Scoped to unlinked work only: a board-linked, non-approved
@@ -589,7 +589,7 @@ export class SessionRunnerService {
   async executeRefusal(
     team: string,
     boardTaskId: number | undefined,
-    worktreeId?: string,
+    workspaceId?: string,
   ): Promise<string | null> {
     const dial = this.env.get('EXECUTION_APPROVAL_MODE');
     if (dial === 'off') return null;
@@ -607,10 +607,10 @@ export class SessionRunnerService {
     if (boardTaskId === undefined) {
       if (dial === 'linked') return null;
       // Ad-hoc execute is normally refused — EXCEPT to finish a merge the harness left in this
-      // worktree (publish/pull/refresh leave MERGE_HEAD). Finishing it isn't new work to approve.
+      // workspace (publish/pull/refresh leave MERGE_HEAD). Finishing it isn't new work to approve.
       if (
-        worktreeId &&
-        (await this.worktrees.mergeState(worktreeId)).inProgress
+        workspaceId &&
+        (await this.workspaces.mergeState(workspaceId)).inProgress
       )
         return null;
       return `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Atlas reviews it and proposes it, and Dennis approves. Then execute.`;
@@ -636,7 +636,7 @@ export class SessionRunnerService {
    * pipeline's bounded fix loop and conflict-resolution call this; the bot never reaches a
    * 'self_review' session through a tool. Sets the session running in `mode`, awaits the turn, and
    * returns the resulting session ('idle' with lastReport, or 'failed'). A timeout aborts the turn.
-   * `enteringExecute` is false — the work already lives in the worktree; an internal fix/resolve turn
+   * `enteringExecute` is false — the work already lives in the workspace; an internal fix/resolve turn
    * must NOT trigger a base refresh that could clobber an in-progress merge.
    */
   async resumeInternal(
@@ -673,7 +673,7 @@ export class SessionRunnerService {
   /**
    * Close a session its owner is done with. Mid-turn ('running') the in-flight run is aborted and
    * its result discarded; 'idle'/'failed' sessions just close. Closing is when completed work is
-   * logged (a close with a report = a finished thread of work) — the worktree stays. `logWork: false`
+   * logged (a close with a report = a finished thread of work) — the workspace stays. `logWork: false`
    * suppresses that worklog write — used when the pipeline reclaims its own internal stage sessions,
    * which aren't standup-worthy and would otherwise flood `recent_work` under synthetic phase owners.
    */

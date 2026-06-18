@@ -49,7 +49,7 @@ describe('mark_pr_ready tool', () => {
       boardTask: task({ status: 'self_review', assignee: 'alex' }),
     });
     const out = await tool.execute(
-      { worktreeId: 'wt-001', board_task_id: 7 },
+      { workspaceId: 'ws-001', board_task_id: 7 },
       ctx('alex'),
     );
     expect(shipSharedPr).toHaveBeenCalledWith('local', 7);
@@ -62,7 +62,7 @@ describe('mark_pr_ready tool', () => {
       ship: { ok: false, reason: 'no open PR found for shared/feat' },
     });
     const out = await tool.execute(
-      { worktreeId: 'wt-001', board_task_id: 7 },
+      { workspaceId: 'ws-001', board_task_id: 7 },
       ctx('alex'),
     );
     expect(out).toContain('no open PR found for shared/feat');
@@ -73,7 +73,7 @@ describe('mark_pr_ready tool', () => {
       boardTask: task({ status: 'self_review', assignee: 'alex' }),
     });
     const out = await tool.execute(
-      { worktreeId: 'wt-001', board_task_id: 7 },
+      { workspaceId: 'ws-001', board_task_id: 7 },
       ctx('riley'),
     );
     expect(out).toContain('only they or the team lead');
@@ -85,7 +85,7 @@ describe('mark_pr_ready tool', () => {
       boardTask: task({ status: 'self_review', assignee: 'alex' }),
       isLead: true,
     });
-    await tool.execute({ worktreeId: 'wt-001', board_task_id: 7 }, ctx('atlas'));
+    await tool.execute({ workspaceId: 'ws-001', board_task_id: 7 }, ctx('atlas'));
     expect(shipSharedPr).toHaveBeenCalledWith('local', 7);
   });
 
@@ -94,7 +94,7 @@ describe('mark_pr_ready tool', () => {
       boardTask: task({ status: 'planning', assignee: 'alex' }),
     });
     const out = await tool.execute(
-      { worktreeId: 'wt-001', board_task_id: 7 },
+      { workspaceId: 'ws-001', board_task_id: 7 },
       ctx('alex'),
     );
     expect(out).toContain('not in execution');

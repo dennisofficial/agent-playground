@@ -16,7 +16,7 @@ import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
-import type { WorktreeService } from '../worktrees/worktree.service';
+import type { WorkspaceService } from '../workspaces/workspace.service';
 import { BotGraphFactory } from './bot-graph.factory';
 import { makeEmployee } from '@harness/employees/employee.testing';
 
@@ -110,7 +110,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -221,7 +221,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -335,7 +335,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -490,7 +490,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -649,7 +649,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -800,7 +800,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -878,7 +878,7 @@ describe('bot graph — poisoned-history self-healing', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorktreeService,
+      { list: () => [] } as unknown as WorkspaceService,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,

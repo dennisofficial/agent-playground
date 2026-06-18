@@ -14,7 +14,7 @@ import {
 
 /**
  * The repo's SHARED git dir for `cwd`. When the working directory is a subdir (or a linked
- * worktree), `.git` lives OUTSIDE it — codex's workspace-write sandbox must be granted it
+ * workspace), `.git` lives OUTSIDE it — codex's workspace-write sandbox must be granted it
  * explicitly or commit/push/merge fail. Best-effort: undefined when `cwd` isn't in a git repo.
  */
 function gitCommonDir(cwd: string): string | undefined {
@@ -78,13 +78,13 @@ export class CodexEngine implements WorkerEngine {
     opts: { model?: string; readOnly?: boolean } = {},
   ): ThreadOptions {
     const model = opts.model;
-    // Grant write access to the shared git dir (it's outside cwd — doubly so in a linked worktree,
+    // Grant write access to the shared git dir (it's outside cwd — doubly so in a linked workspace,
     // whose `.git` is a FILE pointing into the main repo) so an execute turn can commit/push/merge.
     // Not needed on a read-only (plan or investigate) turn.
     const gitDir = opts.readOnly ? undefined : gitCommonDir(cwd);
     return {
       workingDirectory: cwd,
-      // Confine writes/shell to the worktree; run autonomously (no interactive approval surface).
+      // Confine writes/shell to the workspace; run autonomously (no interactive approval surface).
       // Codex's read-only sandbox is how BOTH read-only modes (plan, investigate) are enforced — per
       // turn, so a session can plan/investigate on one turn and execute on the next. (Codex has no
       // separate plan ceremony beyond the read-only sandbox, so plan and investigate map identically

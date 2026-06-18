@@ -9,7 +9,7 @@ import { EmployeesModule } from '../employees/employees.module';
 import { MemoryModule } from '../memory/memory.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { SessionsModule } from '../sessions/sessions.module';
-import { WorktreesModule } from '../worktrees/worktrees.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { ShareArtifactTool } from './artifacts/share-artifact.tool';
 import {
   ForgetTool,
@@ -53,13 +53,13 @@ import {
 import { AddNoteTool, GetTicketTool } from './tasks/ticket.tools';
 import { ToolRegistry } from './tool.registry';
 import {
-  CreateWorktreeTool,
-  ListWorktreesTool,
-  PublishWorktreeTool,
-  PullWorktreeTool,
-  RefreshWorktreeTool,
-  RemoveWorktreeTool,
-} from './worktrees/worktree.tools';
+  CreateWorkspaceTool,
+  ListWorkspacesTool,
+  PublishWorkspaceTool,
+  PullWorkspaceTool,
+  RefreshWorkspaceTool,
+  RemoveWorkspaceTool,
+} from './workspaces/workspace.tools';
 import { ListPullRequestsTool } from './projects/list-pull-requests.tool';
 import { OnboardProjectTool } from './projects/onboard-project.tool';
 import {
@@ -67,8 +67,8 @@ import {
   ReferenceProjectTool,
   ReferenceRepoTool,
 } from './references/reference.tools';
-import { OpenPrTool } from './worktrees/open-pr.tool';
-import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
+import { OpenPrTool } from './workspaces/open-pr.tool';
+import { MarkPrReadyTool } from './workspaces/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
 import {
   AnswerSectionTool,
@@ -100,7 +100,7 @@ import {
     ProposalModule,
     SuggestionModule,
     SessionsModule,
-    WorktreesModule,
+    WorkspacesModule,
   ],
   services: [
     ToolRegistry,
@@ -109,13 +109,13 @@ import {
     // rooms (cross-room relay)
     ListRoomsTool,
     SendMessageTool,
-    // worktrees
-    CreateWorktreeTool,
-    ListWorktreesTool,
-    PublishWorktreeTool,
-    PullWorktreeTool,
-    RefreshWorktreeTool,
-    RemoveWorktreeTool,
+    // workspaces
+    CreateWorkspaceTool,
+    ListWorkspacesTool,
+    PublishWorkspaceTool,
+    PullWorkspaceTool,
+    RefreshWorkspaceTool,
+    RemoveWorkspaceTool,
     OpenPrTool,
     MarkPrReadyTool,
     // projects

@@ -33,7 +33,7 @@ function makeDataSource(): DataSource {
 
 const newSession = (overrides: Partial<NewSession> = {}): NewSession => ({
   task: 'plan the thing',
-  worktreeId: 'wt-001',
+  workspaceId: 'ws-001',
   notifyThread: 'C1:root',
   engine: EWorkerEngineName.CLAUDE,
   ownerBot: 'alex',

@@ -11,7 +11,7 @@ export type PipelineRunKind = 'feature' | 'bugfix';
  * 'awaiting_design' (a design section paused for the human's artifact), 'stage_decision' (paused at a
  * review-stage decision Atlas owns — a cross-section defect / blocker; resumes via the fix-up or
  * reopen-section tools), 'fixup' (a harness-opened fix-up session is running against the integrated
- * worktree; its report re-enters the PR gate), or undefined while building. */
+ * workspace; its report re-enters the PR gate), or undefined while building. */
 export type PlanningSubstep =
   | 'drafting'
   | 'advisory'
@@ -29,7 +29,7 @@ export interface PipelineRun {
   status: PipelineRunStatus;
   currentRole?: string;
   mode?: string;
-  worktreeId?: string;
+  workspaceId?: string;
   sessionId?: string;
   notifyThread?: string;
   project?: string;
@@ -53,7 +53,7 @@ export interface NewPipelineRun {
   status?: PipelineRunStatus;
   currentRole?: string;
   mode?: string;
-  worktreeId?: string;
+  workspaceId?: string;
   sessionId?: string;
   notifyThread?: string;
   project?: string;
@@ -73,7 +73,7 @@ interface PipelineRunRow {
   status: string;
   current_role: string | null;
   mode: string | null;
-  worktree_id: string | null;
+  workspace_id: string | null;
   session_id: string | null;
   notify_thread: string | null;
   project: string | null;
@@ -96,7 +96,7 @@ const toRun = (r: PipelineRunRow): PipelineRun => ({
   status: r.status as PipelineRunStatus,
   currentRole: r.current_role ?? undefined,
   mode: r.mode ?? undefined,
-  worktreeId: r.worktree_id ?? undefined,
+  workspaceId: r.workspace_id ?? undefined,
   sessionId: r.session_id ?? undefined,
   notifyThread: r.notify_thread ?? undefined,
   project: r.project ?? undefined,
@@ -129,7 +129,7 @@ export class PipelineRunStore {
     // current_role") and the INSERT never runs. Same applies to the UPDATE in update() below.
     const rows = await this.q(
       `INSERT INTO pipeline_runs
-         (team_id, task_id, pipeline, stage_index, status, "current_role", mode, worktree_id, session_id, notify_thread, project, kind, section_index, phase_index, planning_substep, overview, created_at, updated_at)
+         (team_id, task_id, pipeline, stage_index, status, "current_role", mode, workspace_id, session_id, notify_thread, project, kind, section_index, phase_index, planning_substep, overview, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
        RETURNING *`,
       [
@@ -140,7 +140,7 @@ export class PipelineRunStore {
         n.status ?? 'running',
         n.currentRole ?? null,
         n.mode ?? null,
-        n.worktreeId ?? null,
+        n.workspaceId ?? null,
         n.sessionId ?? null,
         n.notifyThread ?? null,
         n.project ?? null,
@@ -181,7 +181,7 @@ export class PipelineRunStore {
       status?: PipelineRunStatus;
       currentRole?: string | null;
       mode?: string | null;
-      worktreeId?: string | null;
+      workspaceId?: string | null;
       sessionId?: string | null;
       sectionIndex?: number;
       phaseIndex?: number;
@@ -199,7 +199,7 @@ export class PipelineRunStore {
     if (patch.status !== undefined) set('status', patch.status);
     if ('currentRole' in patch) set('"current_role"', patch.currentRole ?? null);
     if ('mode' in patch) set('mode', patch.mode ?? null);
-    if ('worktreeId' in patch) set('worktree_id', patch.worktreeId ?? null);
+    if ('workspaceId' in patch) set('workspace_id', patch.workspaceId ?? null);
     if ('sessionId' in patch) set('session_id', patch.sessionId ?? null);
     if (patch.sectionIndex !== undefined)
       set('section_index', patch.sectionIndex);

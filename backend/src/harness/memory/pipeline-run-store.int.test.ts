@@ -49,7 +49,7 @@ describe('PipelineRunStore + PipelineRunSectionStore (live Postgres)', () => {
       team: 'T1',
       taskId: 7,
       pipeline: 'feature',
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
       notifyThread: 'slack:T1:C1',
       project: 'proj',
       currentRole: 'phase_backend', // the reserved-word column
@@ -86,7 +86,7 @@ describe('PipelineRunStore + PipelineRunSectionStore (live Postgres)', () => {
       taskId: 9,
       pipeline: 'bugfix',
       kind: 'bugfix',
-      worktreeId: 'wt-2',
+      workspaceId: 'ws-2',
     });
     expect(bug.kind).toBe('bugfix');
     expect((await runs.getByTask('T1', 9))?.kind).toBe('bugfix');

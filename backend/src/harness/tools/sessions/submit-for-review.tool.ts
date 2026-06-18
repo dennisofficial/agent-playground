@@ -17,7 +17,7 @@ const submitForReviewSchema = z.object({
 });
 
 /**
- * The single "I'm done coding" gesture — replaces the publish_worktree + open_pr + mark_pr_ready trio
+ * The single "I'm done coding" gesture — replaces the publish_workspace + open_pr + mark_pr_ready trio
  * the employee used to have to remember. It hands the work to the harness review pipeline: the
  * pipeline reviews this owner's diff (cross-engine), fixes what it can in this session, publishes onto
  * the shared branch, and — once every owner on the ticket has submitted — opens the draft PR, runs a

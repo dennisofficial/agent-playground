@@ -49,10 +49,10 @@ export class TeamTaskPlan extends TimestampedEntity {
   @Column({ type: 'text', default: 'executing' })
   owner_status!: string;
 
-  /** The execute worktree this owner's work lives in — stamped at execute-session start so the
+  /** The execute workspace this owner's work lives in — stamped at execute-session start so the
    * integration barrier can find the shared branch / PR without re-deriving it. */
   @Column({ type: 'text', nullable: true })
-  execute_worktree_id!: string | null;
+  execute_workspace_id!: string | null;
 
   /** The shared integration branch (shared/<slug>) this owner publishes through. */
   @Column({ type: 'text', nullable: true })

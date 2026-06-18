@@ -22,7 +22,7 @@ const toMeta = (r: TokenMetaRow): GithubTokenMeta => ({
 /**
  * The named GitHub token store. Values are AES-encrypted at rest and WRITE-ONLY: every read path
  * except `resolve()` returns metadata, never ciphertext or plaintext. `resolve()` is the single
- * decrypt seam — its callers are the worktree remote sync and open_pr, which pass the token into
+ * decrypt seam — its callers are the workspace remote sync and open_pr, which pass the token into
  * git env / an Authorization header only, never into anything that renders into chat/LLM context.
  */
 export class GithubTokenStore {

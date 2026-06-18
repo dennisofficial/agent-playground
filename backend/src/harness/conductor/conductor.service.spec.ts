@@ -287,7 +287,7 @@ describe('ConductorService scheduling', () => {
     const base = {
       id: 'sess-002',
       task: 't',
-      worktreeId: 'wt-001',
+      workspaceId: 'ws-001',
       notifyThread: 'tui:test',
       ownerBot: 'alex',
       team: 'local',

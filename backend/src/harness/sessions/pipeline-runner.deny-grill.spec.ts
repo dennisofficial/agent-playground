@@ -67,7 +67,7 @@ function build() {
     })),
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
-  const worktrees = { get: vi.fn(() => ({ path: '' })) };
+  const workspaces = { get: vi.fn(() => ({ path: '' })) };
 
   const svc = new PipelineRunnerService(
     runs as never,
@@ -80,7 +80,7 @@ function build() {
     proposals as never,
     review as never,
     boardEvents as never,
-    worktrees as never,
+    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
@@ -104,7 +104,7 @@ describe('PipelineRunnerService — deny-grill (changes-requested feedback injec
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: `wt-${task}`,
+      workspaceId: `ws-${task}`,
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],

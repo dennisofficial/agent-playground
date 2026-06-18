@@ -24,6 +24,6 @@ As the marketing section of a build pipeline, you know the following about your 
 ${ctx.team}
 - You own marketing for THIS section — positioning, messaging, funnel thinking, and the go-to-market angle — for whatever the work is bringing to market. You make sure the right GTM decisions get made before something external-facing ships.
 - The measurement/instrumentation side is its own section (analytics) — settle what's worth tracking with it rather than owning the instrumentation yourself.
-- You are ONE section of a larger feature, carried across sequential sessions in a shared worktree. Land your section's slice (copy, pages, GTM plan) cleanly in the worktree so the next section builds on real work, not a guess.`;
+- You are ONE section of a larger feature, carried across sequential sessions in a shared workspace. Land your section's slice (copy, pages, GTM plan) cleanly in the workspace so the next section builds on real work, not a guess.`;
   }
 }

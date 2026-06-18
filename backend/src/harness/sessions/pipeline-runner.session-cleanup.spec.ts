@@ -12,8 +12,8 @@ import {
 
 /**
  * Pipeline stage sessions are owned by synthetic phase-configs that never call close_session, so the
- * driver must reclaim them itself — otherwise they pile up as idle/failed orphans in the run's worktree
- * and later deadlock worktree cleanup (remove_worktree refuses while any session is open). These tests
+ * driver must reclaim them itself — otherwise they pile up as idle/failed orphans in the run's workspace
+ * and later deadlock workspace cleanup (remove_workspace refuses while any session is open). These tests
  * pin that invariant: every stage session a run opens is closed by the time the run reaches a terminal
  * state, and the driver closes them WITHOUT a worklog write (intermediate turns aren't standup-worthy).
  *
@@ -83,7 +83,7 @@ function build(opts: { shipOk?: boolean } = {}) {
     })),
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
-  const worktrees = { get: vi.fn(() => ({ path: '' })) };
+  const workspaces = { get: vi.fn(() => ({ path: '' })) };
 
   const svc = new PipelineRunnerService(
     runs as never,
@@ -96,7 +96,7 @@ function build(opts: { shipOk?: boolean } = {}) {
     proposals as never,
     review as never,
     boardEvents as never,
-    worktrees as never,
+    workspaces as never,
     new FakePhaseStore() as never,
     new FakeCodingStore() as never,
     new FakeReviewStore() as never,
@@ -117,7 +117,7 @@ describe('PipelineRunnerService — stage-session reclaim', () => {
       Array.from({ length: n }, (_, i) => ({ id: i + 1, title: `p${i + 1}` })),
     )}\n\`\`\``;
 
-  it('closes every stage session a completed feature run opens (no idle orphans left in the worktree)', async () => {
+  it('closes every stage session a completed feature run opens (no idle orphans left in the workspace)', async () => {
     const { svc, runs, runner, openSessions } = build();
     const task = 7;
     const idle = async (lastReport = '') => {
@@ -143,7 +143,7 @@ describe('PipelineRunnerService — stage-session reclaim', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -175,7 +175,7 @@ describe('PipelineRunnerService — stage-session reclaim', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-2',
+      workspaceId: 'ws-2',
       notifyThread: 'thread',
       kind: 'bugfix',
       role: 'phase_backend',
@@ -214,7 +214,7 @@ describe('PipelineRunnerService — stage-session reclaim', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-3',
+      workspaceId: 'ws-3',
       notifyThread: 'thread',
       kind: 'bugfix',
       role: 'phase_backend',

@@ -1,7 +1,7 @@
 import type { Identity } from '../../domain/identity';
 import type { ProjectStore } from '../../projects/project-store';
 import type { ProjectRecord } from '../../projects/project.types';
-import type { WorktreeService } from '../../worktrees/worktree.service';
+import type { WorkspaceService } from '../../workspaces/workspace.service';
 import type { HarnessToolContext } from '../tool.types';
 import {
   ListReferenceProjectsTool,
@@ -36,20 +36,20 @@ const rec = (over: Partial<ProjectRecord> = {}): ProjectRecord => ({
 
 const projects = (list: ProjectRecord[]) =>
   ({ list: vi.fn(() => Promise.resolve(list)) }) as unknown as ProjectStore;
-const worktrees = () =>
+const workspaces = () =>
   ({
     ensureReferenceClone: vi.fn(() =>
       Promise.resolve({ path: '/refs/cubix-infra', gitUrl: 'g' }),
     ),
     referenceOrientation: vi.fn(() => Promise.resolve('Top level: src, README')),
-  }) as unknown as WorktreeService;
+  }) as unknown as WorkspaceService;
 
 describe('reference_project', () => {
   it('clones + orients a known catalog project', async () => {
-    const wt = worktrees();
-    const tool = new ReferenceProjectTool(projects([rec()]), wt);
+    const ws = workspaces();
+    const tool = new ReferenceProjectTool(projects([rec()]), ws);
     const out = await tool.execute({ name: 'cubix-infra' }, ctx);
-    expect(wt.ensureReferenceClone).toHaveBeenCalledWith('T1', {
+    expect(ws.ensureReferenceClone).toHaveBeenCalledWith('T1', {
       projectId: 'cubix-infra',
     });
     expect(out).toContain('/refs/cubix-infra');
@@ -57,13 +57,13 @@ describe('reference_project', () => {
   });
 
   it('matches by display name too', async () => {
-    const tool = new ReferenceProjectTool(projects([rec()]), worktrees());
+    const tool = new ReferenceProjectTool(projects([rec()]), workspaces());
     const out = await tool.execute({ name: 'Cubix Infra' }, ctx);
     expect(out).toContain('Referenced cubix-infra');
   });
 
   it('hands back an onboard Remedy when the project is unknown', async () => {
-    const tool = new ReferenceProjectTool(projects([]), worktrees());
+    const tool = new ReferenceProjectTool(projects([]), workspaces());
     const out = await tool.execute({ name: 'mystery' }, ctx);
     expect(out).toMatch(/Remedy:/);
     expect(out).toContain('onboard_project');
@@ -72,7 +72,7 @@ describe('reference_project', () => {
 
 describe('reference_repo', () => {
   it('rejects a non-GitHub URL', async () => {
-    const tool = new ReferenceRepoTool(worktrees());
+    const tool = new ReferenceRepoTool(workspaces());
     const out = await tool.execute({ url: 'http://example.com' }, ctx);
     expect(out).toMatch(/isn't an https/i);
   });

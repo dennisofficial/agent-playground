@@ -37,7 +37,7 @@ export const CONFLICT_RESOLVE_PROMPT = (p: {
   sharedBranch: string;
   files: string[];
 }): string =>
-  `Publishing your work onto the shared branch \`${p.sharedBranch}\` hit a MERGE CONFLICT — the merge is left IN PROGRESS in this worktree. Resolve the conflicts in: ${
+  `Publishing your work onto the shared branch \`${p.sharedBranch}\` hit a MERGE CONFLICT — the merge is left IN PROGRESS in this workspace. Resolve the conflicts in: ${
     p.files.join(', ') || '(run git status to see them)'
   }, keeping both sides' intent where they don't truly clash, then COMMIT the merge. Don't touch the PR — the harness republishes once the merge is committed.`;
 
@@ -61,15 +61,15 @@ VERDICT: CHANGES`;
 
 /** The final TICKET-LEVEL review over the whole feature's accumulated diff before the pipeline ships
  * its PR (Phase 5b) — INTEGRATION_REVIEW_PROMPT scoped to one ticket built section-by-section in ONE
- * worktree. Takes a ready git range (the runner computes base...branch) rather than the shared-branch
- * pair, since the pipeline accumulates on the worktree branch and only publishes at ship time. A
+ * workspace. Takes a ready git range (the runner computes base...branch) rather than the shared-branch
+ * pair, since the pipeline accumulates on the workspace branch and only publishes at ship time. A
  * `changes` verdict routes to the cross-section-defect decision (Atlas decides) instead of shipping. */
 export const FULL_IMPLEMENTATION_REVIEW_PROMPT = (p: {
   goal: string;
   ticket: string;
   range: string;
 }): string =>
-  `You are a code-review agent doing the FINAL whole-implementation pass before this feature's PR goes to Dennis. The feature was built section-by-section (backend, frontend, …) in ONE worktree; review the COMBINED changes in the git range \`${p.range}\` — run \`git diff ${p.range}\`. Focus on whether the sections fit TOGETHER: consistent contracts across the seams, nothing half-wired between sections, no contradictions or dead ends introduced where one section met another. Per-section reviews already covered each piece in isolation — your job is the integration. READ-ONLY.
+  `You are a code-review agent doing the FINAL whole-implementation pass before this feature's PR goes to Dennis. The feature was built section-by-section (backend, frontend, …) in ONE workspace; review the COMBINED changes in the git range \`${p.range}\` — run \`git diff ${p.range}\`. Focus on whether the sections fit TOGETHER: consistent contracts across the seams, nothing half-wired between sections, no contradictions or dead ends introduced where one section met another. Per-section reviews already covered each piece in isolation — your job is the integration. READ-ONLY.
 
 The work implements:
 ${p.ticket}

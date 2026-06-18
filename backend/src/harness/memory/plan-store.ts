@@ -33,7 +33,7 @@ export interface TaskPlan {
   leadStatus: PlanLeadStatus;
   sessionId?: string;
   ownerStatus: PlanOwnerStatus;
-  executeWorktreeId?: string;
+  executeWorkspaceId?: string;
   sharedBranch?: string;
   prUrl?: string;
   createdAt: string;
@@ -48,7 +48,7 @@ interface PlanRow {
   lead_status: PlanLeadStatus;
   session_id: string | null;
   owner_status: PlanOwnerStatus;
-  execute_worktree_id: string | null;
+  execute_workspace_id: string | null;
   shared_branch: string | null;
   pr_url: string | null;
   created_at: unknown;
@@ -63,7 +63,7 @@ const toPlan = (r: PlanRow): TaskPlan => ({
   leadStatus: r.lead_status,
   sessionId: r.session_id ?? undefined,
   ownerStatus: r.owner_status,
-  executeWorktreeId: r.execute_worktree_id ?? undefined,
+  executeWorkspaceId: r.execute_workspace_id ?? undefined,
   sharedBranch: r.shared_branch ?? undefined,
   prUrl: r.pr_url ?? undefined,
   createdAt: toIso(r.created_at),
@@ -178,19 +178,19 @@ export class PlanStore {
     return out;
   }
 
-  /** Stamp the execute context (worktree + shared branch) onto the task's plan row at execute-session
+  /** Stamp the execute context (workspace + shared branch) onto the task's plan row at execute-session
    * start, so the integration barrier can find them later. Idempotent. */
   async setExecuteContext(
     team: string,
     taskId: number,
-    ctx: { executeWorktreeId: string; sharedBranch?: string },
+    ctx: { executeWorkspaceId: string; sharedBranch?: string },
   ): Promise<TaskPlan | undefined> {
     const rows = await this.q(
       `UPDATE team_task_plans
-         SET execute_worktree_id = $3, shared_branch = $4, updated_at = now()
+         SET execute_workspace_id = $3, shared_branch = $4, updated_at = now()
        WHERE team_id = $1 AND task_id = $2
        RETURNING *`,
-      [team, taskId, ctx.executeWorktreeId, ctx.sharedBranch ?? null],
+      [team, taskId, ctx.executeWorkspaceId, ctx.sharedBranch ?? null],
     );
     return rows[0] ? toPlan(rows[0]) : undefined;
   }

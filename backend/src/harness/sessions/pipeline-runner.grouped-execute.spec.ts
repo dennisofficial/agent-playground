@@ -70,7 +70,7 @@ function build() {
     })),
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
-  const worktrees = { get: vi.fn(() => ({ path: '' })) };
+  const workspaces = { get: vi.fn(() => ({ path: '' })) };
 
   const svc = new PipelineRunnerService(
     runs as never,
@@ -83,7 +83,7 @@ function build() {
     proposals as never,
     review as never,
     boardEvents as never,
-    worktrees as never,
+    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
@@ -171,7 +171,7 @@ describe('PipelineRunnerService — grouped execution (Phase 4)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-201',
+      workspaceId: 'ws-201',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -219,7 +219,7 @@ describe('PipelineRunnerService — grouped execution (Phase 4)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-202',
+      workspaceId: 'ws-202',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -244,7 +244,7 @@ describe('PipelineRunnerService — grouped execution (Phase 4)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-203',
+      workspaceId: 'ws-203',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -298,7 +298,7 @@ describe('PipelineRunnerService — grouped execution (Phase 4)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-205',
+      workspaceId: 'ws-205',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -337,7 +337,7 @@ describe('PipelineRunnerService — grouped execution (Phase 4)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-206',
+      workspaceId: 'ws-206',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -361,7 +361,7 @@ describe('PipelineRunnerService — grouped execution (Phase 4)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-204',
+      workspaceId: 'ws-204',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],

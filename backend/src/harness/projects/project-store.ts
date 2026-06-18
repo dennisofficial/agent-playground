@@ -62,7 +62,7 @@ export class ProjectStore {
     return rows.map(toRecord);
   }
 
-  /** EVERY workspace's projects — for cross-tenant boot operations (worktree adoption). */
+  /** EVERY workspace's projects — for cross-tenant boot operations (workspace adoption). */
   async listAll(): Promise<ProjectRecord[]> {
     const rows = await this.q(
       `SELECT * FROM projects ORDER BY team_id, project_id`,

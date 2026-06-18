@@ -20,7 +20,7 @@ import type { WorkerEvent } from './worker-engine.port';
  *   - the CLI writes the plan file internally (never reaches canUseTool) and then calls
  *     ExitPlanMode with the FULL plan in its input — which the engine captures while DENYING the
  *     call, so a headless plan turn can never roll into execution;
- *   - the engine returns the captured plan as the turn's report, and the worktree stays untouched.
+ *   - the engine returns the captured plan as the turn's report, and the workspace stays untouched.
  * Runs only under `pnpm test:ai`.
  */
 describe('ClaudeEngine native plan mode (real LLM)', () => {
@@ -65,7 +65,7 @@ describe('ClaudeEngine native plan mode (real LLM)', () => {
       expect(events.some((e) => e.kind === 'tool' && e.name === 'Read')).toBe(
         true,
       );
-      // Nothing executed: the worktree is byte-identical.
+      // Nothing executed: the workspace is byte-identical.
       expect(await readFile(join(dir, 'calc.ts'), 'utf8')).toBe(calcBefore);
     } finally {
       await rm(dir, { recursive: true, force: true });

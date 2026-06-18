@@ -9,7 +9,7 @@ import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { ProjectsModule } from '../projects/projects.module';
-import { WorktreesModule } from '../worktrees/worktrees.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { PipelineRunnerService } from './pipeline-runner.service';
 import { PostgresSessionRegistry } from './postgres-session.registry';
 import { ReviewPipelineService } from './review-pipeline.service';
@@ -19,7 +19,7 @@ import { SessionRunnerService } from './session-runner.service';
 /**
  * Background sessions: the registry (the ledger of the employees' open engine conversations,
  * behind the SESSION_REGISTRY port) and the runner (one turn at a time, inside the session's
- * worktree). DURABLE: PostgresSessionRegistry persists session rows + the engine resume handle, so
+ * workspace). DURABLE: PostgresSessionRegistry persists session rows + the engine resume handle, so
  * sessions survive restarts (it reconciles interrupted `running` rows to 'failed' on boot). The
  * InMemorySessionRegistry stays in the tree as the v0 / unit-test double.
  */
@@ -34,7 +34,7 @@ import { SessionRunnerService } from './session-runner.service';
     MetricsModule,
     ProjectsModule,
     ProposalModule,
-    WorktreesModule,
+    WorkspacesModule,
   ],
   services: [
     { provide: SESSION_REGISTRY, useClass: PostgresSessionRegistry },

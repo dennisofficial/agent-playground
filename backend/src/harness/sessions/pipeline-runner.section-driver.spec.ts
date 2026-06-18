@@ -79,7 +79,7 @@ function build() {
     })),
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
-  const worktrees = { get: vi.fn(() => ({ path: '' })) };
+  const workspaces = { get: vi.fn(() => ({ path: '' })) };
   const notes = new FakeNoteStore();
 
   const svc = new PipelineRunnerService(
@@ -93,7 +93,7 @@ function build() {
     proposals as never,
     review as never,
     boardEvents as never,
-    worktrees as never,
+    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
@@ -115,7 +115,7 @@ function build() {
     proposals,
     review,
     boardEvents,
-    worktrees,
+    workspaces,
     notes,
   };
 }
@@ -156,7 +156,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: TASK,
-      worktreeId: 'wt-1',
+      workspaceId: 'ws-1',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [
@@ -239,7 +239,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 21,
-      worktreeId: 'wt-21',
+      workspaceId: 'ws-21',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -279,7 +279,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 9,
-      worktreeId: 'wt-2',
+      workspaceId: 'ws-2',
       notifyThread: 'thread',
       kind: 'bugfix',
       role: 'phase_backend',
@@ -307,7 +307,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 13,
-      worktreeId: 'wt-4',
+      workspaceId: 'ws-4',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -352,7 +352,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 15,
-      worktreeId: 'wt-5',
+      workspaceId: 'ws-5',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -396,7 +396,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 31,
-      worktreeId: 'wt-6',
+      workspaceId: 'ws-6',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [
@@ -433,20 +433,20 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
     expect((await runs.getByTask(TEAM, 31))?.status).toBe('done');
   });
 
-  it('attach_design unzips into the worktree and the next section builds against it', async () => {
-    const { svc, runs, runner, worktrees } = build();
-    const wtPath = mkdtempSync(join(tmpdir(), 'wt-'));
+  it('attach_design unzips into the workspace and the next section builds against it', async () => {
+    const { svc, runs, runner, workspaces } = build();
+    const wtPath = mkdtempSync(join(tmpdir(), 'ws-'));
     const srcDir = mkdtempSync(join(tmpdir(), 'design-src-'));
     writeFileSync(join(srcDir, 'tokens.json'), '{"color":"blue"}');
     const zipPath = join(srcDir, 'design.zip');
     execFileSync('zip', ['-j', zipPath, join(srcDir, 'tokens.json')]);
-    worktrees.get.mockReturnValue({ path: wtPath });
+    workspaces.get.mockReturnValue({ path: wtPath });
 
     await svc.start({
       team: TEAM,
       project: 'proj',
       taskId: 41,
-      worktreeId: 'wt-7',
+      workspaceId: 'ws-7',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [
@@ -475,7 +475,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 51,
-      worktreeId: 'wt-8',
+      workspaceId: 'ws-8',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'design', role: 'design' }],
@@ -492,7 +492,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 11,
-      worktreeId: 'wt-3',
+      workspaceId: 'ws-3',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -531,7 +531,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 81,
-      worktreeId: 'wt-10',
+      workspaceId: 'ws-10',
       notifyThread: 'thread',
       kind: 'feature',
       overview: 'HIGH-LEVEL: build a profile-picture upload across the stack.',
@@ -550,7 +550,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: 71,
-      worktreeId: 'wt-9',
+      workspaceId: 'ws-9',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -620,7 +620,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-91',
+      workspaceId: 'ws-91',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [
@@ -677,7 +677,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-92',
+      workspaceId: 'ws-92',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [
@@ -729,7 +729,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-93',
+      workspaceId: 'ws-93',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [
@@ -783,7 +783,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: `wt-${task}`,
+      workspaceId: `ws-${task}`,
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -831,7 +831,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
     const running = (await runs.getByTask(TEAM, task))!;
     expect(running.status).toBe('running');
     expect(running.planningSubstep).toBe('fixup');
-    // A fresh execute session opened in the integrated worktree.
+    // A fresh execute session opened in the integrated workspace.
     expect(
       runner.openStageSession.mock.calls.filter((c) => c[0].mode === 'execute')
         .length,
@@ -892,7 +892,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: `wt-${task}`,
+      workspaceId: `ws-${task}`,
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -921,7 +921,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: 'wt-94',
+      workspaceId: 'ws-94',
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -966,7 +966,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: `wt-${task}`,
+      workspaceId: `ws-${task}`,
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -1039,7 +1039,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: `wt-${task}`,
+      workspaceId: `ws-${task}`,
       notifyThread: 'thread',
       kind: 'feature',
       sections: [{ name: 'backend', role: 'phase_backend' }],

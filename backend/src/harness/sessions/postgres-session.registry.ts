@@ -34,7 +34,7 @@ import type {
 /** camelCase domain key → snake_case entity column, for partial updates. */
 const COLUMN: Record<string, keyof SessionEntity> = {
   task: 'task',
-  worktreeId: 'worktree_id',
+  workspaceId: 'workspace_id',
   status: 'status',
   notifyThread: 'notify_thread',
   ownerBot: 'owner_bot',
@@ -57,7 +57,7 @@ function toDomain(r: SessionEntity): Session {
   return {
     id: r.id,
     task: r.task,
-    worktreeId: r.worktree_id,
+    workspaceId: r.workspace_id,
     status: r.status as SessionStatus,
     notifyThread: r.notify_thread,
     ownerBot: r.owner_bot,
@@ -135,7 +135,7 @@ export class PostgresSessionRegistry
     const entity = this.repo.create({
       id: `sess-${randomUUID().slice(0, 8)}`,
       task: input.task,
-      worktree_id: input.worktreeId,
+      workspace_id: input.workspaceId,
       status: 'running', // create_session fires the first turn immediately
       notify_thread: input.notifyThread,
       owner_bot: input.ownerBot,
@@ -160,12 +160,12 @@ export class PostgresSessionRegistry
   async list(filter?: {
     ownerBot?: string;
     status?: SessionStatus;
-    worktreeId?: string;
+    workspaceId?: string;
   }): Promise<Session[]> {
     const where: Record<string, unknown> = {};
     if (filter?.ownerBot) where.owner_bot = filter.ownerBot;
     if (filter?.status) where.status = filter.status;
-    if (filter?.worktreeId) where.worktree_id = filter.worktreeId;
+    if (filter?.workspaceId) where.workspace_id = filter.workspaceId;
     const rows = await this.repo.find({
       where,
       // Creation order — `latest()` and the in-memory registry both relied on insertion order.

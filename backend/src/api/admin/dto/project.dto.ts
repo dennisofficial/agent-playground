@@ -1,7 +1,7 @@
 import { IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 
 const PROJECT_ID = /^[a-z0-9][a-z0-9._-]*$/;
-// HTTPS GitHub only — token auth doesn't work over ssh, and the worktree layer validates the same.
+// HTTPS GitHub only — token auth doesn't work over ssh, and the workspace layer validates the same.
 const GITHUB_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+?(\.git)?$/;
 
 export class CreateProjectDto {

@@ -25,7 +25,7 @@ import {
   SessionRunnerService,
   type ActionResult,
 } from '../../sessions/session-runner.service';
-import { WorktreeService } from '../../worktrees/worktree.service';
+import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
@@ -33,7 +33,7 @@ import type { HarnessToolContext, IHarnessTool } from '../tool.types';
  * A bot's session tools. The chat surface has NO filesystem/shell access at all — not even reads.
  * The chat-you is a PERSON: it plans, coordinates, and remembers, but its hands are background
  * SESSIONS — long-lived Claude Code-style workers it drives like an engineer. Every touch of a
- * codebase goes through a session running in a worktree; sessions stay open across turns (follow-ups
+ * codebase goes through a session running in a workspace; sessions stay open across turns (follow-ups
  * go into existing context) and the bot closes them when a thread of work is done. Each tool reads
  * the calling bot's identity from the tool context (set by the conductor) so sessions are scoped
  * per bot.
@@ -42,7 +42,7 @@ import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 const modeField = z
   .enum(['plan', 'execute'])
   .describe(
-    "'plan' = read-only (the engine's native planning posture — investigation, review, planning a change); 'execute' = can change the worktree.",
+    "'plan' = read-only (the engine's native planning posture — investigation, review, planning a change); 'execute' = can change the workspace.",
   );
 
 const reviewNoteField = z
@@ -59,7 +59,7 @@ function reviewFindingsBlock(noteId: number, body: string): string {
 }
 
 const createSessionSchema = z.object({
-  worktreeId: z.string().describe('The worktree this session runs in.'),
+  workspaceId: z.string().describe('The workspace this session runs in.'),
   task: z
     .string()
     .describe('A clear, self-contained opening message for the session.'),
@@ -80,13 +80,13 @@ export class CreateSessionTool implements IHarnessTool<
 > {
   readonly name = 'create_session';
   readonly description =
-    "Open a background session — a long-lived Claude Code-style worker — in a worktree and give it its first turn. Returns a session id; you're notified when the turn reports back, and the session STAYS OPEN for follow-ups (reply_session). Put any brief first-person heads-up in THIS message's text; once it's running you don't need to keep replying — just wait for the report-back, don't poll or babysit it.";
+    "Open a background session — a long-lived Claude Code-style worker — in a workspace and give it its first turn. Returns a session id; you're notified when the turn reports back, and the session STAYS OPEN for follow-ups (reply_session). Put any brief first-person heads-up in THIS message's text; once it's running you don't need to keep replying — just wait for the report-back, don't poll or babysit it.";
   readonly schema = createSessionSchema;
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     private readonly runner: SessionRunnerService,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
     private readonly employees: EmployeeRegistry,
     private readonly board: BoardStore,
     private readonly plans: PlanStore,
@@ -95,7 +95,7 @@ export class CreateSessionTool implements IHarnessTool<
 
   async execute(
     {
-      worktreeId,
+      workspaceId,
       task,
       mode,
       board_task_id,
@@ -104,10 +104,10 @@ export class CreateSessionTool implements IHarnessTool<
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
-    const worktree = this.worktrees.get(worktreeId);
-    if (!worktree)
+    const workspace = this.workspaces.get(workspaceId);
+    if (!workspace)
       throw new Error(
-        `No worktree "${worktreeId}" — create one first (create_worktree) or check list_worktrees.`,
+        `No workspace "${workspaceId}" — create one first (create_workspace) or check list_workspaces.`,
       );
     const boardTask =
       board_task_id !== undefined
@@ -120,18 +120,18 @@ export class CreateSessionTool implements IHarnessTool<
       const refusal = await this.runner.executeRefusal(
         id.team,
         board_task_id,
-        worktreeId,
+        workspaceId,
       );
       if (refusal) return `Can't open an execute session: ${refusal}`;
       // Drift guard: the ticket's slug is the single source of truth for its shared branch. If this
-      // worktree already sits on a DIFFERENT shared branch (e.g. a manual create_worktree(shared:)),
+      // workspace already sits on a DIFFERENT shared branch (e.g. a manual create_workspace(shared:)),
       // refuse — otherwise ensureShared keeps the stale branch and the sibling grouping diverges.
-      if (board_task_id !== undefined && boardTask && worktree.sharedBranch) {
-        const want = this.worktrees.sharedBranchName(
+      if (board_task_id !== undefined && boardTask && workspace.sharedBranch) {
+        const want = this.workspaces.sharedBranchName(
           boardTask.sharedSlug ?? `ticket-${board_task_id}`,
         );
-        if (worktree.sharedBranch !== want)
-          return `Can't open an execute session: ${worktreeId} is on ${worktree.sharedBranch}, but ticket #${board_task_id} lands on ${want}. Use a fresh worktree for this ticket.`;
+        if (workspace.sharedBranch !== want)
+          return `Can't open an execute session: ${workspaceId} is on ${workspace.sharedBranch}, but ticket #${board_task_id} lands on ${want}. Use a fresh workspace for this ticket.`;
       }
     }
     // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
@@ -181,7 +181,7 @@ export class CreateSessionTool implements IHarnessTool<
     }
     const { sessionId } = await this.openSession({
       identity: id,
-      worktreeId,
+      workspaceId,
       task,
       openingTask,
       mode,
@@ -192,29 +192,29 @@ export class CreateSessionTool implements IHarnessTool<
     // The board task starts EXECUTING once an execute session is live. CAS approved→executing AFTER
     // the session registered (a failed create can't strand the task), idempotent across owners (only
     // the first owner's start flips it; later owners find it already 'executing'). Stamp the execute
-    // worktree + shared branch on this owner's plan row so the integration barrier finds them later.
+    // workspace + shared branch on this owner's plan row so the integration barrier finds them later.
     // Both best-effort — they must never fail the session that's already running.
     if (mode === 'execute' && board_task_id !== undefined && boardTask) {
-      // Ensure the worktree is on the shared branch the TICKET names: its `shared_slug` (a feature
+      // Ensure the workspace is on the shared branch the TICKET names: its `shared_slug` (a feature
       // group landing on one PR), or `ticket-${id}` for standalone work. The drift guard above already
-      // rejected a worktree sitting on a conflicting shared branch, so this is a no-op or a clean cut.
-      const sharedBranch = await this.worktrees
+      // rejected a workspace sitting on a conflicting shared branch, so this is a no-op or a clean cut.
+      const sharedBranch = await this.workspaces
         .ensureShared(
-          worktreeId,
+          workspaceId,
           boardTask.sharedSlug ?? `ticket-${board_task_id}`,
         )
-        .catch(() => worktree.sharedBranch);
+        .catch(() => workspace.sharedBranch);
       await this.board
         .transition(id.team, board_task_id, 'approved', { status: 'executing' })
         .catch(() => undefined);
       await this.plans
         .setExecuteContext(id.team, board_task_id, {
-          executeWorktreeId: worktreeId,
-          sharedBranch: sharedBranch ?? worktree.sharedBranch,
+          executeWorkspaceId: workspaceId,
+          sharedBranch: sharedBranch ?? workspace.sharedBranch,
         })
         .catch(() => undefined);
     }
-    return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${worktreeId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
+    return `Opened ${sessionId} (${engineName}, ${mode}${board_task_id !== undefined ? `, board #${board_task_id}` : ''}) in ${workspaceId}: "${task}". You're notified when it reports back; it stays open for follow-ups until you close_session it.`;
   }
 
   /**
@@ -226,7 +226,7 @@ export class CreateSessionTool implements IHarnessTool<
    */
   async openSession(opts: {
     identity: Identity;
-    worktreeId: string;
+    workspaceId: string;
     /** Stored brief (titles list_sessions + the close-time worklog). */
     task: string;
     /** The actual first-turn message (may be enriched, e.g. the Option-B plan handoff). */
@@ -239,7 +239,7 @@ export class CreateSessionTool implements IHarnessTool<
   }): Promise<{ sessionId: string }> {
     const session = await this.sessions.create({
       task: opts.task,
-      worktreeId: opts.worktreeId,
+      workspaceId: opts.workspaceId,
       notifyThread: opts.identity.surface,
       engine: opts.engine,
       ownerBot: opts.identity.selfAgent,
@@ -251,7 +251,7 @@ export class CreateSessionTool implements IHarnessTool<
         : {}),
     });
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      // A fresh execute session starts execution for this work — refresh the worktree against base.
+      // A fresh execute session starts execution for this work — refresh the workspace against base.
       void this.runner.runSessionTurn(
         session.id,
         opts.openingTask,
@@ -346,7 +346,7 @@ export class CloseSessionTool implements IHarnessTool<
   readonly name = 'close_session';
   readonly refreshesContext = ['work'] as const;
   readonly description =
-    "Close a session you're done with (stops it if it's mid-turn and discards that turn's result). Its completed work is logged. The worktree stays until you remove_worktree it.";
+    "Close a session you're done with (stops it if it's mid-turn and discards that turn's result). Its completed work is logged. The workspace stays until you remove_workspace it.";
   readonly schema = closeSessionSchema;
 
   constructor(
@@ -416,7 +416,7 @@ export class CheckSessionTool implements IHarnessTool<
       session.status === 'idle' && session.lastReportKind === 'questions'
         ? ' — waiting on answers'
         : '';
-    const header = `${session.id} [${session.status}]${waiting} (${tier}, ${session.worktreeId}${board}, turn ${session.turns}): "${session.task}"`;
+    const header = `${session.id} [${session.status}]${waiting} (${tier}, ${session.workspaceId}${board}, turn ${session.turns}): "${session.task}"`;
     if (session.status === 'idle')
       return `${header}\nLast report: ${session.lastReport ?? '(none)'}`;
     if (session.status === 'failed')
@@ -436,7 +436,7 @@ export class ListSessionsTool implements IHarnessTool<
 > {
   readonly name = 'list_sessions';
   readonly description =
-    'Your sessions, open ones first: id, status, mode, worktree, and opening task. Check it when you pick work back up — an open session may already have the context you need.';
+    'Your sessions, open ones first: id, status, mode, workspace, and opening task. Check it when you pick work back up — an open session may already have the context you need.';
   readonly schema = listSessionsSchema;
 
   constructor(
@@ -459,7 +459,7 @@ export class ListSessionsTool implements IHarnessTool<
       .sort((a, b) => order[a.status] - order[b.status])
       .map(
         (s) =>
-          `- ${s.id} [${s.status}] (${s.mode}, ${s.worktreeId}${s.boardTaskId !== undefined ? `, board #${s.boardTaskId}` : ''}, turn ${s.turns}): "${s.task}"${s.status === 'idle' && s.lastReportKind === 'questions' ? ' — waiting on answers' : ''}`,
+          `- ${s.id} [${s.status}] (${s.mode}, ${s.workspaceId}${s.boardTaskId !== undefined ? `, board #${s.boardTaskId}` : ''}, turn ${s.turns}): "${s.task}"${s.status === 'idle' && s.lastReportKind === 'questions' ? ' — waiting on answers' : ''}`,
       )
       .join('\n');
   }

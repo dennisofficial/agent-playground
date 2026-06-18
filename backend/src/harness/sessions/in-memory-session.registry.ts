@@ -11,7 +11,7 @@ import type {
 /**
  * v0 in-process session registry — the connective tissue between the chat layer and the worker.
  * In-memory Map behind the async `SessionRegistry` port: sessions vanish on restart (their
- * worktrees are durable and re-adopted), `onUpdate` fires only within this process. The port is
+ * workspaces are durable and re-adopted), `onUpdate` fires only within this process. The port is
  * the swap point for a Postgres upgrade.
  */
 @Injectable()
@@ -26,7 +26,7 @@ export class InMemorySessionRegistry implements SessionRegistry {
     const session: Session = {
       id,
       task: input.task,
-      worktreeId: input.worktreeId,
+      workspaceId: input.workspaceId,
       status: 'running', // create_session fires the first turn immediately
       notifyThread: input.notifyThread,
       ownerBot: input.ownerBot,
@@ -52,14 +52,14 @@ export class InMemorySessionRegistry implements SessionRegistry {
   async list(filter?: {
     ownerBot?: string;
     status?: SessionStatus;
-    worktreeId?: string;
+    workspaceId?: string;
   }): Promise<Session[]> {
     let all = [...this.sessions.values()];
     if (filter?.ownerBot)
       all = all.filter((s) => s.ownerBot === filter.ownerBot);
     if (filter?.status) all = all.filter((s) => s.status === filter.status);
-    if (filter?.worktreeId)
-      all = all.filter((s) => s.worktreeId === filter.worktreeId);
+    if (filter?.workspaceId)
+      all = all.filter((s) => s.workspaceId === filter.workspaceId);
     return all;
   }
 

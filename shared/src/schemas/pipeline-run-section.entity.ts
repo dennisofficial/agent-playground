@@ -63,7 +63,7 @@ export class PipelineRunSection extends TimestampedEntity {
   @Column('int', { array: true, default: () => "'{}'" })
   depends_on!: number[];
 
-  /** Set once the section has committed work in the shared worktree (it enters `building`, or a design
+  /** Set once the section has committed work in the shared workspace (it enters `building`, or a design
    * section's artifact lands). A frozen section is IMMUTABLE: living-section ops may never reorder it
    * nor wedge a new section before it — you may only append after committed work. Replaces the implicit
    * done/building immutability the positional cursor relied on. */

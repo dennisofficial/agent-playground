@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AtlasEmployee } from './atlas.employee';
-import { MarkPrReadyTool } from '../../tools/worktrees/mark-pr-ready.tool';
-import { OpenPrTool } from '../../tools/worktrees/open-pr.tool';
+import { MarkPrReadyTool } from '../../tools/workspaces/mark-pr-ready.tool';
+import { OpenPrTool } from '../../tools/workspaces/open-pr.tool';
 
 /**
  * Atlas spreads DEFAULT_CHAT_TOOLSET and then adds lead-only tools. The allowlist→tools mapping does

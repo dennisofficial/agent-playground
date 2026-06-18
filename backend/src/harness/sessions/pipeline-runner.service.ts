@@ -32,7 +32,7 @@ import {
 } from '../memory/pipeline-coding-session-store';
 import { PipelinePhaseReviewStore } from '../memory/pipeline-phase-review-store';
 import { TicketNoteStore } from '../memory/ticket-note-store';
-import { WorktreeService } from '../worktrees/worktree.service';
+import { WorkspaceService } from '../workspaces/workspace.service';
 import { ReviewPipelineService } from './review-pipeline.service';
 import {
   SESSION_REGISTRY,
@@ -67,7 +67,7 @@ const CHANGES_REQUESTED_NOTE = /requested changes on the proposal[^:]*:\s*([\s\S
 /**
  * The stage-decision findings note `pauseForStageDecision` parks on the ticket (`Pipeline <stage> …
  * flagged a blocking issue:\n\n<findings>`). Used two ways: (a) recover the findings for a fixup
- * session — which can't open the ticket from its worktree (no get_ticket) — and (b) keep these machine
+ * session — which can't open the ticket from its workspace (no get_ticket) — and (b) keep these machine
  * notes OUT of the generic planning context (the fixup path inlines them instead). Group 1 is the
  * findings body. Same loose-coupling caveat as CHANGES_REQUESTED_NOTE — if the phrasing drifts the
  * match misses and the fixer degrades to a bare "clear the blocker" (the pre-fix behavior); never
@@ -83,7 +83,7 @@ export const DESIGN_ROLE = 'design';
  * them at dispatch, and may grow/reorder the still-pending tail mid-run); each section is planned
  * just-in-time (a plan session whose phase-config self-reviews on Codex → MD#2), gated for Dennis's
  * approval, then BUILT phase-by-phase (one execute session per phase, each followed by a review). Work
- * accumulates in ONE worktree; the last section's last phase ships ONE PR. A 'bugfix' run skips all of
+ * accumulates in ONE workspace; the last section's last phase ships ONE PR. A 'bugfix' run skips all of
  * it — a single execute session straight to the PR gate.
  *
  * STATE = EXPLICIT ROWS, not a positional cursor. The section/phase/coding-session/review rows each
@@ -109,7 +109,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     private readonly proposals: ProposalService,
     private readonly review: ReviewPipelineService,
     private readonly boardEvents: BoardEventsBus,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
     private readonly phaseStore: PipelineRunPhaseStore,
     private readonly codingStore: PipelineCodingSessionStore,
     private readonly reviewStore: PipelinePhaseReviewStore,
@@ -143,7 +143,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     team: string;
     project: string;
     taskId: number;
-    worktreeId: string;
+    workspaceId: string;
     notifyThread: string;
     kind: 'feature' | 'bugfix';
     /** feature: the declared section list (≥1). */
@@ -160,7 +160,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         taskId: opts.taskId,
         pipeline: 'bugfix',
         kind: 'bugfix',
-        worktreeId: opts.worktreeId,
+        workspaceId: opts.workspaceId,
         notifyThread: opts.notifyThread,
         project: opts.project,
       });
@@ -184,7 +184,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       taskId: opts.taskId,
       pipeline: DYNAMIC,
       kind: 'feature',
-      worktreeId: opts.worktreeId,
+      workspaceId: opts.workspaceId,
       notifyThread: opts.notifyThread,
       project: opts.project,
       planningSubstep: 'drafting',
@@ -437,7 +437,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
 
   /**
    * The defect list from the most-recent stage-decision note on this task — the input a fixup session
-   * needs but can't fetch (no get_ticket from a worktree). Newest-first; only the latest blocking
+   * needs but can't fetch (no get_ticket from a workspace). Newest-first; only the latest blocking
    * finding is live (a fresh stage decision supersedes an earlier one). Mirrors latestDenyFeedback.
    */
   private async latestStageFindings(
@@ -455,7 +455,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
   }
 
   /** The ticket context a bugfix session must have inlined — it can't open the ticket from its
-   * worktree: title + description (the bug report) + the parked research notes. */
+   * workspace: title + description (the bug report) + the parked research notes. */
   private async bugfixContext(run: PipelineRun): Promise<{
     title?: string;
     description?: string;
@@ -742,7 +742,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
 
   // ── design gate: human-produced artifact (interim) ──────────────────────────
 
-  /** Attach the human's design artifact (a local zip path): unzip into the worktree's `design/`, mark
+  /** Attach the human's design artifact (a local zip path): unzip into the workspace's `design/`, mark
    * the design section done, and advance to the implementer section (which builds against it). */
   async attachDesign(
     team: string,
@@ -752,23 +752,23 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const run = await this.runs.getByTask(team, taskId);
     if (!run || run.status !== 'paused' || run.planningSubstep !== 'awaiting_design')
       return { ok: false, message: `#${taskId} isn't waiting at a design gate.` };
-    if (!run.worktreeId) return { ok: false, message: `#${taskId} has no worktree.` };
-    const wt = this.worktrees.get(run.worktreeId);
-    if (!wt) return { ok: false, message: `Worktree '${run.worktreeId}' not found.` };
+    if (!run.workspaceId) return { ok: false, message: `#${taskId} has no workspace.` };
+    const ws = this.workspaces.get(run.workspaceId);
+    if (!ws) return { ok: false, message: `Workspace '${run.workspaceId}' not found.` };
     if (/^https?:\/\//i.test(source))
       return {
         ok: false,
         message:
           'For now, hand me a LOCAL path to the design zip (the online export lands in your Downloads), not a URL.',
       };
-    const designDir = join(wt.path, 'design');
+    const designDir = join(ws.path, 'design');
     try {
       mkdirSync(designDir, { recursive: true });
       await pExecFile('unzip', ['-o', source, '-d', designDir]);
     } catch (err) {
       return {
         ok: false,
-        message: `Couldn't unzip '${source}' into the worktree: ${err instanceof Error ? err.message : String(err)}.`,
+        message: `Couldn't unzip '${source}' into the workspace: ${err instanceof Error ? err.message : String(err)}.`,
       };
     }
     const design = await this.sectionStore.activeSection(run.id);
@@ -786,7 +786,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     await this.advanceToNextSection(refreshed);
     return {
       ok: true,
-      message: `Design attached to ${run.worktreeId} (design/). The next section is now planning/building against it.`,
+      message: `Design attached to ${run.workspaceId} (design/). The next section is now planning/building against it.`,
     };
   }
 
@@ -947,7 +947,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         {
           action: `dispatch_fixup_session(${run.taskId})`,
           description:
-            'fix it in a fresh session against the integrated worktree, then auto re-review + ship — the usual call for an integration/seam defect (or to verify a benign finding and ship).',
+            'fix it in a fresh session against the integrated workspace, then auto re-review + ship — the usual call for an integration/seam defect (or to verify a benign finding and ship).',
         },
         {
           action: `reopen_section(${run.taskId}, '<section>')`,
@@ -969,7 +969,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
 
   /**
    * dispatch_fixup_session: the ~90% cross-section-defect path. Opens a fresh execute session in the
-   * INTEGRATED worktree to fix the flagged defect; its report re-enters the PR gate (re-runs the
+   * INTEGRATED workspace to fix the flagged defect; its report re-enters the PR gate (re-runs the
    * full-impl review and ships if clean). Re-validates run state (mirror gatedRun) and returns a helpful
    * message — never throws — when the run isn't waiting on a review decision.
    */
@@ -981,8 +981,8 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const gated = await this.stageDecisionRun(team, taskId);
     if (!gated.ok) return { ok: false, message: gated.message };
     const run = gated.run;
-    if (!run.worktreeId)
-      return { ok: false, message: `#${taskId} has no worktree to fix in.` };
+    if (!run.workspaceId)
+      return { ok: false, message: `#${taskId} has no workspace to fix in.` };
     await this.runs.update(team, run.id, { status: 'running' });
     const refreshed = (await this.runs.get(team, run.id)) ?? run;
     const findings = await this.latestStageFindings(
@@ -999,7 +999,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (!sid)
       return {
         ok: false,
-        message: `Couldn't open a fix-up session for #${taskId} — check the worktree/project.`,
+        message: `Couldn't open a fix-up session for #${taskId} — check the workspace/project.`,
       };
     // Mark the run so the fix-up session's report re-enters the PR gate (set AFTER openSession, which
     // doesn't touch planning_substep).
@@ -1009,7 +1009,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     );
     return {
       ok: true,
-      message: `On it — a fix-up session is fixing the flagged issues in #${taskId}'s integrated worktree. It'll re-run the review and ship if clean; I'll surface the PR gate.`,
+      message: `On it — a fix-up session is fixing the flagged issues in #${taskId}'s integrated workspace. It'll re-run the review and ship if clean; I'll surface the PR gate.`,
     };
   }
 
@@ -1099,12 +1099,12 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
 
   // ── shared: PR gate (terminal for feature + bugfix) ─────────────────────────
 
-  /** Ship the accumulated worktree as ONE ready PR (reuse ReviewPipelineService.shipTask — no sibling
+  /** Ship the accumulated workspace as ONE ready PR (reuse ReviewPipelineService.shipTask — no sibling
    * fan-out). A ship failure fails the run loudly so it never reports a PR that didn't open. Driven
    * off the durable run (notify_thread), so it works with or without a live session (e.g. skip-to-PR). */
   private async handlePrGate(run: PipelineRun): Promise<void> {
-    if (!run.worktreeId) {
-      await this.failRun(run, 'PR gate with no worktree');
+    if (!run.workspaceId) {
+      await this.failRun(run, 'PR gate with no workspace');
       return;
     }
     // Phase 5b: the ticket-level full-implementation review runs BEFORE the ship (feature runs only — a
@@ -1116,7 +1116,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         .reviewFullImplementation({
           team: run.team,
           taskId: run.taskId,
-          worktreeId: run.worktreeId,
+          workspaceId: run.workspaceId,
         })
         .catch((err) => {
           this.logger.warn(`pipeline ${run.id}: full-impl review failed: ${err}`);
@@ -1134,7 +1134,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const shipped = await this.review.shipTask({
       team: run.team,
       taskId: run.taskId,
-      worktreeId: run.worktreeId,
+      workspaceId: run.workspaceId,
       notifyThread: run.notifyThread ?? '',
       findings: advisoryFindings,
     });
@@ -1145,7 +1145,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     this.logger.log(
       `pipeline ${run.id} (${run.kind}) shipped #${run.taskId}: ${shipped.prUrl}`,
     );
-    // The run is done — reclaim its final stage session so it doesn't block worktree cleanup later.
+    // The run is done — reclaim its final stage session so it doesn't block workspace cleanup later.
     await this.closeRunSession(run.sessionId);
     await this.runs.update(run.team, run.id, {
       status: 'done',
@@ -1515,9 +1515,9 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
   /**
    * Reclaim a stage session the driver is done with. Pipeline sessions are owned by synthetic
    * phase-configs (e.g. 'phase_backend') that never sit in chat and so never call close_session — so
-   * if the driver doesn't close them itself they pile up as idle/failed orphans in the run's worktree.
-   * An open session blocks worktree cleanup (remove_worktree refuses while any session is open), so a
-   * finished run's orphans deadlock Atlas when he later reclaims the worktree. Uses the runner's
+   * if the driver doesn't close them itself they pile up as idle/failed orphans in the run's workspace.
+   * An open session blocks workspace cleanup (remove_workspace refuses while any session is open), so a
+   * finished run's orphans deadlock Atlas when he later reclaims the workspace. Uses the runner's
    * low-level close (no ownership gate) and skips the worklog (intermediate stage turns aren't
    * standup-worthy; the PR + board events narrate the real outcome). Best-effort — never derails a run.
    */
@@ -1532,7 +1532,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       this.logger.warn(`pipeline: couldn't close session ${sessionId} — ${res.reason}`);
   }
 
-  /** Terminal failure: reclaim the active session (a failed run's worktree gets cleaned up later, so
+  /** Terminal failure: reclaim the active session (a failed run's workspace gets cleaned up later, so
    * its session must not linger as an orphan either), then mark the run failed. */
   private async failRun(run: PipelineRun, reason: string): Promise<void> {
     this.logger.warn(`pipeline ${run.id}: ${reason} — failing`);
@@ -1580,18 +1580,18 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     reopen?: PipelineRun,
   ): Promise<string | undefined> {
     const resolvedRole = role || reopen?.currentRole || '';
-    if (!run.worktreeId || !run.project || !run.notifyThread) {
-      await this.failRun(run, 'missing worktree/project/thread');
+    if (!run.workspaceId || !run.project || !run.notifyThread) {
+      await this.failRun(run, 'missing workspace/project/thread');
       return undefined;
     }
     // Reclaim the session this open supersedes before we overwrite run.sessionId — otherwise each
-    // phase/review transition strands the previous one as an idle orphan in the worktree.
+    // phase/review transition strands the previous one as an idle orphan in the workspace.
     await this.closeRunSession(run.sessionId);
     const session = await this.runner.openStageSession({
       role: resolvedRole,
       team: run.team,
       project: run.project,
-      worktreeId: run.worktreeId,
+      workspaceId: run.workspaceId,
       task,
       mode,
       notifyThread: run.notifyThread,
@@ -1624,7 +1624,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const designAvailable =
       priorSection?.phaseRole === DESIGN_ROLE && priorSection.status === 'done';
     const parts = [
-      `You are planning the "${section.name}" section of a larger feature, to be built in this worktree.`,
+      `You are planning the "${section.name}" section of a larger feature, to be built in this workspace.`,
       run.overview
         ? `The agreed HIGH-LEVEL PLAN for the whole feature (your north star — plan this section to fit it):\n${run.overview}`
         : undefined,
@@ -1636,10 +1636,10 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         ? `Dennis reviewed your previous plan for this section and SENT IT BACK with this direction — treat it as AUTHORITATIVE; it overrides your earlier assumptions:\n\n${denyFeedback}\n\nRe-plan the section to honor it. Grill the gaps: where his direction is ambiguous or trades off against the high-level plan, ASK before you commit (batch related questions) rather than guessing.`
         : undefined,
       prior
-        ? `Earlier sections already shipped into THIS worktree: ${prior}. Read the current worktree state before planning — build on what's there, don't redo it.`
+        ? `Earlier sections already shipped into THIS workspace: ${prior}. Read the current workspace state before planning — build on what's there, don't redo it.`
         : undefined,
       designAvailable
-        ? `The APPROVED design (specs + reference) is in the worktree under \`design/\` — your plan must implement it faithfully over the existing functional UI.`
+        ? `The APPROVED design (specs + reference) is in the workspace under \`design/\` — your plan must implement it faithfully over the existing functional UI.`
         : undefined,
       `Produce a HIGHLY DETAILED, fully-specified implementation plan for THIS section only. Break it into as many sequential PHASES as it needs — each phase a coherent, independently-committable chunk. Do NOT implement; this is a plan and goes to Dennis for approval before any code is written.`,
       `End your plan with a fenced code block tagged \`phases\` containing a JSON array, one object per phase, e.g.:\n\`\`\`phases\n[{"id":1,"title":"DB schema + migration","group":1},{"id":2,"title":"service + API endpoint","group":1},{"id":3,"title":"frontend wiring","group":2}]\n\`\`\`\nThe orchestrator parses it to chunk the build; if you omit it the whole plan runs as one phase. Optional \`"group"\`: CONSECUTIVE phases sharing a group number build in ONE coding session (one engine context — use it when phases are tightly coupled and benefit from shared context); omit it and each phase gets its own session.`,
@@ -1672,7 +1672,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         ? `phases ${group.map((p) => p.id).join(', ')}`
         : `phase ${group[0]?.id ?? groupIndex + 1}`;
     const parts = [
-      `You are implementing the "${sectionName}" section of a feature (board task #${args.taskId}) in this worktree — coding session ${groupIndex + 1} of ${groupCount}, covering ${groupLabel}.`,
+      `You are implementing the "${sectionName}" section of a feature (board task #${args.taskId}) in this workspace — coding session ${groupIndex + 1} of ${groupCount}, covering ${groupLabel}.`,
       args.intent
         ? `The agreed HIGH-LEVEL PLAN for the whole feature (your north star):\n${args.intent}`
         : undefined,
@@ -1683,7 +1683,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       args.handoffNotes
         ? `HANDOFF from the previous coding session(s) in this section — what they left you (interfaces exposed, decisions made, anything stubbed or still pending). Build on it, don't re-derive it:\n\n${args.handoffNotes}`
         : groupIndex > 0
-          ? `Earlier coding sessions already committed in this worktree — build on them, don't redo them.`
+          ? `Earlier coding sessions already committed in this workspace — build on them, don't redo them.`
           : undefined,
       `Implement ONLY these phases, test/smoke-validate your work, and commit cleanly (a commit per phase is fine).`,
       `End your report with a fenced \`handoff\` block for the NEXT coding session — the interfaces you exposed, decisions you made, and anything still stubbed or pending, e.g.:\n\`\`\`handoff\nExposed POST /api/upload (multipart, returns {id}). Stubbed the virus scan — the FE can assume 200 for now. Migration 123 adds the uploads table.\n\`\`\`\nKeep it tight and factual; the next session inherits it verbatim. If this is the last session, leave a short closing summary in the same block.`,
@@ -1700,7 +1700,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         ? `phases ${groupPhases.map((p) => p.planPhaseId).join(', ')}`
         : `phase ${groupPhases[0]?.planPhaseId ?? 1}`;
     return [
-      `You are reviewing — READ-ONLY — the work just committed for ${label} of the "${section.name}" section, in this worktree. Do NOT change files.`,
+      `You are reviewing — READ-ONLY — the work just committed for ${label} of the "${section.name}" section, in this workspace. Do NOT change files.`,
       `Review the recent changes for correctness, regressions, missed edge cases, and obvious quality issues.`,
       `End your report with a fenced block tagged \`verdict\`:\n\`\`\`verdict\n{"blocker": false, "summary": "one line"}\n\`\`\`\nSet "blocker" true ONLY if something must be fixed before the work can continue.`,
     ].join('\n\n');
@@ -1714,7 +1714,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       .filter(Boolean)
       .join('\n\n');
     return [
-      `You are fixing a bug in this worktree (board task #${run.taskId}).`,
+      `You are fixing a bug in this workspace (board task #${run.taskId}).`,
       report
         ? `The bug report from the ticket (you can't open the ticket from here, so it's inlined):\n\n${report}`
         : undefined,
@@ -1727,7 +1727,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       .join('\n\n');
   }
 
-  /** The fix-up session prompt (dispatch_fixup_session) — a focused pass over the INTEGRATED worktree to
+  /** The fix-up session prompt (dispatch_fixup_session) — a focused pass over the INTEGRATED workspace to
    * clear a review-flagged cross-section defect before the feature ships. The findings are parked as a
    * ticket note, so the session reads them off the ticket. */
   private fixupPrompt(
@@ -1735,7 +1735,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     opts?: { findings?: string; guidance?: string },
   ): string {
     return [
-      `You are clearing a review-flagged defect in the integrated worktree for board task #${run.taskId} — the feature is fully built (every section committed here); this is a focused fix-up pass before it ships.`,
+      `You are clearing a review-flagged defect in the integrated workspace for board task #${run.taskId} — the feature is fully built (every section committed here); this is a focused fix-up pass before it ships.`,
       opts?.findings
         ? `The review findings to clear (you can't open the ticket from here, so they're inlined):\n\n${opts.findings}`
         : `Review flagged a blocking issue on this work — clear it.`,

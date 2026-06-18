@@ -28,7 +28,7 @@ function makeSession(over: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     task: 'Build the thing',
-    worktreeId: 'wt-1',
+    workspaceId: 'ws-1',
     status: 'idle',
     notifyThread: 'dev:root',
     ownerBot: 'alex',
@@ -46,7 +46,7 @@ function makeSession(over: Partial<Session> = {}): Session {
 const planRow = (over: Partial<Record<string, unknown>> = {}) => ({
   employee: 'alex',
   ownerStatus: 'complete',
-  executeWorktreeId: 'wt-1',
+  executeWorkspaceId: 'ws-1',
   sharedBranch: SHARED,
   sessionId: 'sess-1',
   ...over,
@@ -57,7 +57,7 @@ function build(opts: {
   plansByTask?: Record<number, Array<Record<string, unknown>>>;
   reviewVerdict?: string;
   publishIntegrated?: boolean;
-  worktreeShared?: string | null;
+  workspaceShared?: string | null;
   selfHeal?: { ok: true; sharedBranch: string } | { ok: false; reason: string };
   noAnchor?: boolean;
   recNull?: boolean;
@@ -74,7 +74,7 @@ function build(opts: {
   const plansByTask: Record<number, Array<Record<string, unknown>>> =
     opts.plansByTask ?? {
       7: opts.noAnchor
-        ? [planRow({ executeWorktreeId: undefined, sharedBranch: undefined })]
+        ? [planRow({ executeWorkspaceId: undefined, sharedBranch: undefined })]
         : [planRow()],
     };
 
@@ -130,20 +130,20 @@ function build(opts: {
     sharedBranch: SHARED,
     files: opts.publishIntegrated === false ? ['a.ts'] : undefined,
   }));
-  const worktreeShared = opts.worktreeShared === undefined ? SHARED : opts.worktreeShared;
-  const worktree: { sharedBranch: string | null } & Record<string, unknown> = {
-    id: 'wt-1',
-    path: '/tmp/wt',
-    sharedBranch: worktreeShared,
+  const workspaceShared = opts.workspaceShared === undefined ? SHARED : opts.workspaceShared;
+  const workspace: { sharedBranch: string | null } & Record<string, unknown> = {
+    id: 'ws-1',
+    path: '/tmp/ws',
+    sharedBranch: workspaceShared,
     branch: 'agent/alex/7',
   };
   const ensureSharedAtBase = vi.fn(async () => {
     const r = opts.selfHeal ?? { ok: true, sharedBranch: SHARED };
-    if (r.ok) worktree.sharedBranch = r.sharedBranch;
+    if (r.ok) workspace.sharedBranch = r.sharedBranch;
     return r;
   });
-  const worktrees = {
-    get: () => worktree,
+  const workspaces = {
+    get: () => workspace,
     ensureSharedAtBase,
     sharedRef: async () => 'deadbeef',
     ownerDiff: async () => ({ range: 'deadbeef...agent/alex/7', files: ['a.ts'] }),
@@ -201,7 +201,7 @@ function build(opts: {
     employees,
     credCtx,
     creds,
-    worktrees,
+    workspaces,
     tokens,
     github,
     board,
@@ -261,12 +261,12 @@ describe('ReviewPipelineService.reviewOwner (per-owner review, unchanged)', () =
         { id: 7, status: 'executing', assignee: 'alex', project: 'proj', title: 'Build', description: 'desc', sharedSlug: 'feat' },
       ],
       reviewVerdict: 'ok\nVERDICT: PASS',
-      worktreeShared: null,
+      workspaceShared: null,
       selfHeal: { ok: true, sharedBranch: SHARED },
     });
     const out = await f.svc.reviewOwner(makeSession());
     expect(out).toEqual({ kind: 'complete' });
-    expect(f.ensureSharedAtBase).toHaveBeenCalledWith('wt-1', 'feat'); // slug, not ticket-7
+    expect(f.ensureSharedAtBase).toHaveBeenCalledWith('ws-1', 'feat'); // slug, not ticket-7
   });
 });
 

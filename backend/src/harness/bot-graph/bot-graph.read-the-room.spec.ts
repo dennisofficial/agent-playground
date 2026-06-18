@@ -13,7 +13,7 @@ import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
-import type { WorktreeService } from '../worktrees/worktree.service';
+import type { WorkspaceService } from '../workspaces/workspace.service';
 import {
   BotGraphFactory,
   type BotStateDelta,
@@ -111,7 +111,7 @@ const makeFactory = (
     } as unknown as ReconcileService,
     { buildModel: () => fakeModel } as unknown as ChatModelFactory,
     { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-    { list: () => [] } as unknown as WorktreeService,
+    { list: () => [] } as unknown as WorkspaceService,
     { list: async () => [] } as unknown as SessionRegistry,
     new MemorySaver() as unknown as PostgresSaver,
     { get: () => undefined } as unknown as EnvService,
@@ -283,7 +283,7 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
       id: 'u-0',
       author: 'Dennis',
       authorId: 'dennis',
-      text: 'Alex, check the worktree.',
+      text: 'Alex, check the workspace.',
     });
     const poke = tool(async () => 'poked', {
       name: 'poke',
@@ -307,7 +307,7 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
           });
           // Narration text + a tool call: must enter history INTACT (tool_use needs its result).
           return new AIMessage({
-            content: 'Checking the worktree…',
+            content: 'Checking the workspace…',
             tool_calls: [
               { name: 'poke', args: {}, id: 'call_1', type: 'tool_call' },
             ],
@@ -322,7 +322,7 @@ describe('bot graph — read-the-room (post-seam freshness check)', () => {
     // No suppression anywhere: the tool-call step posts its narration, and the teammate message
     // reaches step 2 through the NORMAL mid-thought fold-in, not a revision note.
     expect(deltas.some((d) => d.draft)).toBe(false);
-    expect(aiTexts(deltas)).toEqual(['Checking the worktree…', 'All good.']);
+    expect(aiTexts(deltas)).toEqual(['Checking the workspace…', 'All good.']);
     const step2 = invocations[1]
       .filter((m) => m.getType() === 'human')
       .map((m) => flat(m.content));

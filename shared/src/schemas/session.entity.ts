@@ -14,7 +14,7 @@ import { TimestampedEntity } from './classes/base.entity';
 @Entity({ name: 'sessions' })
 @Index(['owner_bot'])
 @Index(['status'])
-@Index(['worktree_id'])
+@Index(['workspace_id'])
 export class Session extends TimestampedEntity {
   /** App-generated id (`sess-<8hex>`) — the handle tools and relays address. */
   @PrimaryColumn({ type: 'text' })
@@ -24,9 +24,9 @@ export class Session extends TimestampedEntity {
   @Column({ type: 'text' })
   task!: string;
 
-  /** The worktree this session runs in (durable; re-adopted from git on boot). */
+  /** The workspace this session runs in (durable; re-adopted from git on boot). */
   @Column({ type: 'text' })
-  worktree_id!: string;
+  workspace_id!: string;
 
   // 'running' | 'idle' | 'closed' | 'failed'
   @Column({ type: 'text' })

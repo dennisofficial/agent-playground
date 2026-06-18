@@ -15,7 +15,7 @@ export type SessionStatus = 'running' | 'idle' | 'closed' | 'failed';
 
 /**
  * A session is a long-lived, interactive engine conversation — the employee's background
- * Claude Code-style worker. The employee creates it against a worktree, talks to it across turns
+ * Claude Code-style worker. The employee creates it against a workspace, talks to it across turns
  * (each turn runs to a report and relays back), and explicitly closes it when that thread of work
  * is done. Unlike the old one-shot jobs, every turn-end leaves the session OPEN with full context.
  */
@@ -23,8 +23,8 @@ export interface Session {
   id: string;
   /** The opening task — titles list_sessions and the worklog entry written on close. */
   task: string;
-  /** The worktree this session runs in. REQUIRED — every session lives in an isolated work area. */
-  worktreeId: string;
+  /** The workspace this session runs in. REQUIRED — every session lives in an isolated work area. */
+  workspaceId: string;
   status: SessionStatus;
   /** The chat surface/thread the session was opened from. Used for memory-identity scoping on the
    * relay turn; it does NOT route delivery yet — relays post to the process's single channel until
@@ -60,7 +60,7 @@ export interface Session {
    * on-disk clone `path` the engine reads (advisory in dev where the engine already reads any host
    * path; the container-mount seam in v2, where these paths become read-only mounts). `mode` is
    * 'read' in v1; the shape leaves room for a future 'write' (cross-repo) upgrade without a migration.
-   * The session's full read set is `[worktree.path, ...referencedProjects.map(r => r.path)]`. */
+   * The session's full read set is `[workspace.path, ...referencedProjects.map(r => r.path)]`. */
   referencedProjects?: Array<{
     projectId?: string;
     gitUrl: string;
@@ -76,7 +76,7 @@ export interface Session {
 
 export interface NewSession {
   task: string;
-  worktreeId: string;
+  workspaceId: string;
   notifyThread: string;
   engine: EWorkerEngineName;
   ownerBot: string;
@@ -91,7 +91,7 @@ export interface NewSession {
 /**
  * The session-registry port. The in-memory impl (`InMemorySessionRegistry`) is the v0; every method
  * is async anyway so a Postgres-backed impl can swap in behind this token without touching callers.
- * v0 limits: sessions vanish on restart (their worktrees survive and are re-adopted); `onUpdate`
+ * v0 limits: sessions vanish on restart (their workspaces survive and are re-adopted); `onUpdate`
  * only fires within this process.
  */
 export interface SessionRegistry {
@@ -100,7 +100,7 @@ export interface SessionRegistry {
   list(filter?: {
     ownerBot?: string;
     status?: SessionStatus;
-    worktreeId?: string;
+    workspaceId?: string;
   }): Promise<Session[]>;
   /** Most recently created session (optionally scoped to one owner) — used when a tool gets no id. */
   latest(ownerBot?: string): Promise<Session | undefined>;

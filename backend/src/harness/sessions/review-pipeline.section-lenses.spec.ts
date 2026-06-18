@@ -15,7 +15,7 @@ function makeSession(over: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     task: 'Build the backend',
-    worktreeId: 'wt-1',
+    workspaceId: 'ws-1',
     status: 'idle',
     notifyThread: 'dev:root',
     ownerBot: 'phase_backend',
@@ -73,10 +73,10 @@ function build(opts: {
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
   const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
 
-  const worktree = { id: 'wt-1', path: '/tmp/wt', baseRef: 'base', branch: 'feat' };
+  const workspace = { id: 'ws-1', path: '/tmp/ws', baseRef: 'base', branch: 'feat' };
   const ownerDiff = vi.fn(async () => ({ range: 'base...feat', files: ['a.ts'] }));
-  const worktrees = {
-    get: () => worktree,
+  const workspaces = {
+    get: () => workspace,
     projectRecordFor: async () => ({ defaultBranch: 'main' }),
     ownerDiff,
   } as never;
@@ -102,7 +102,7 @@ function build(opts: {
     employees,
     credCtx,
     creds,
-    worktrees,
+    workspaces,
     {} as never, // tokens — unused
     {} as never, // github — unused
     board,

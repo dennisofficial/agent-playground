@@ -11,7 +11,7 @@ import {
   SESSION_REGISTRY,
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
-import { WorktreeService } from '../../worktrees/worktree.service';
+import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 import { CreateSessionTool } from './session.tools';
@@ -30,11 +30,11 @@ const investigateSchema = z.object({
     .describe(
       "Why you're investigating — sharpens what the worker focuses on. 'trace' = walk a known flow/path; 'debug' = chase unexpected behavior or check whether a premise is even true; 'review' = judge a design's trade-offs/risks. Omit if none fits.",
     ),
-  worktreeId: z
+  workspaceId: z
     .string()
     .optional()
     .describe(
-      'Which worktree to read in. Omit to use your latest worktree (or to auto-open a fresh one if you have none) — you rarely need to set this.',
+      'Which workspace to read in. Omit to use your latest workspace (or to auto-open a fresh one if you have none) — you rarely need to set this.',
     ),
   board_task_id: z
     .number()
@@ -58,7 +58,7 @@ const investigateSchema = z.object({
  * WITHOUT the engine's native plan ceremony — the worker reads/greps and answers directly in one turn
  * instead of producing a plan artifact).
  *
- * It reuses `CreateSessionTool.openSession` (the shared worktree/ownership/ALS-detached path) on the
+ * It reuses `CreateSessionTool.openSession` (the shared workspace/ownership/ALS-detached path) on the
  * employee's INVESTIGATE engine recipe (execute's engine on a top-tier reasoning model — grounding
  * facts is worth the better model). The session stays open for read-only follow-ups (reply_session).
  * Like `create_session`, the answer relays back when the turn reports.
@@ -72,7 +72,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
 
   constructor(
     private readonly createSession: CreateSessionTool,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
     private readonly employees: EmployeeRegistry,
     private readonly projects: ProjectStore,
     @Inject(SESSION_REGISTRY)
@@ -80,7 +80,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
   ) {}
 
   async execute(
-    { question, intent, worktreeId, board_task_id, references }: z.infer<
+    { question, intent, workspaceId, board_task_id, references }: z.infer<
       typeof investigateSchema
     >,
     ctx: HarnessToolContext,
@@ -93,8 +93,8 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     // execute — investigate is a model-only override — so this is just sourcing it from one builder.)
     const engine = bot.investigateEngine(this.employees.context()).engine;
 
-    const wt = await this.resolveWorktree(id, worktreeId);
-    if ('error' in wt) return wt.error;
+    const ws = await this.resolveWorkspace(id, workspaceId);
+    if ('error' in ws) return ws.error;
 
     // Materialize any reference repos read-only so the worker can read them alongside the main repo.
     const refs = await this.resolveReferences(id.team, references ?? []);
@@ -103,7 +103,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     // The shared investigate template adds the read-only/cite-file:line framing, the optional
     // intent emphasis, and the REQUIRED Confidence/Couldn't-verify trailer (see engine.prompts.ts).
     const refBlock = refs.resolved.length
-      ? `\n\nReference repos you may ALSO read (read-only, paths outside the main worktree):\n${refs.resolved
+      ? `\n\nReference repos you may ALSO read (read-only, paths outside the main workspace):\n${refs.resolved
           .map((r) => `- ${r.label} at ${r.path}`)
           .join('\n')}`
       : '';
@@ -111,7 +111,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
       DEFAULT_INVESTIGATE_PROMPT({ question: opening, intent }) + refBlock;
     const { sessionId } = await this.createSession.openSession({
       identity: id,
-      worktreeId: wt.id,
+      workspaceId: ws.id,
       task: opening.slice(0, 80) || 'investigate',
       openingTask,
       mode: 'investigate',
@@ -138,7 +138,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     const missingNote = refs.missing.length
       ? `\nRemedy: couldn't resolve ${refs.missing.join(', ')} — onboard_project them (or check the name) if they should be readable, then re-run.`
       : '';
-    return `Investigating in ${wt.id}${wt.created ? ' (opened a fresh worktree)' : ''}: ${sessionId} (${engine}, read-only).${refNote} You're notified when it reports back; close_session it once you have your answer.${missingNote}`;
+    return `Investigating in ${ws.id}${ws.created ? ' (opened a fresh workspace)' : ''}: ${sessionId} (${engine}, read-only).${refNote} You're notified when it reports back; close_session it once you have your answer.${missingNote}`;
   }
 
   /**
@@ -172,7 +172,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
       if (!name) continue;
       try {
         if (GITHUB_URL.test(name)) {
-          const r = await this.worktrees.ensureReferenceClone(team, {
+          const r = await this.workspaces.ensureReferenceClone(team, {
             gitUrl: name,
           });
           resolved.push({ label: name, path: r.path, gitUrl: r.gitUrl });
@@ -186,7 +186,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
             missing.push(name);
             continue;
           }
-          const r = await this.worktrees.ensureReferenceClone(team, {
+          const r = await this.workspaces.ensureReferenceClone(team, {
             projectId: rec.projectId,
           });
           resolved.push({
@@ -204,37 +204,37 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
   }
 
   /**
-   * Resolve a worktree to read in: the given id, else the bot's latest, else auto-open a fresh one so
+   * Resolve a workspace to read in: the given id, else the bot's latest, else auto-open a fresh one so
    * investigate "just works" (a read-only session still needs a checkout to read). Read-only, so it's
-   * fine to reuse a worktree that has an execute session's in-progress changes — you're reading the
+   * fine to reuse a workspace that has an execute session's in-progress changes — you're reading the
    * current state of the work.
    */
-  private async resolveWorktree(
+  private async resolveWorkspace(
     id: Identity,
-    worktreeId?: string,
+    workspaceId?: string,
   ): Promise<{ id: string; created?: boolean } | { error: string }> {
-    if (worktreeId) {
-      const wt = this.worktrees.get(worktreeId);
-      return wt
-        ? { id: wt.id }
+    if (workspaceId) {
+      const ws = this.workspaces.get(workspaceId);
+      return ws
+        ? { id: ws.id }
         : {
-            error: `No worktree "${worktreeId}" — check list_worktrees, or omit it to use your latest.`,
+            error: `No workspace "${workspaceId}" — check list_workspaces, or omit it to use your latest.`,
           };
     }
-    const mine = this.worktrees.list({ ownerBot: id.selfAgent });
+    const mine = this.workspaces.list({ ownerBot: id.selfAgent });
     const latest = mine[mine.length - 1];
     if (latest) return { id: latest.id };
     try {
-      const { worktree } = await this.worktrees.create({
+      const { workspace } = await this.workspaces.create({
         name: 'investigate',
         ownerBot: id.selfAgent,
         team: id.team,
         project: id.project,
       });
-      return { id: worktree.id, created: true };
+      return { id: workspace.id, created: true };
     } catch (err) {
       return {
-        error: `Couldn't open a worktree to investigate in: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Couldn't open a workspace to investigate in: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
   }

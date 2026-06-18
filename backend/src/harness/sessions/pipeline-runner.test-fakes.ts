@@ -30,7 +30,7 @@ export class FakeRunStore {
       status: n.status ?? 'running',
       currentRole: n.currentRole,
       mode: n.mode,
-      worktreeId: n.worktreeId,
+      workspaceId: n.workspaceId,
       sessionId: n.sessionId,
       notifyThread: n.notifyThread,
       project: n.project,

@@ -9,7 +9,7 @@ import { SecretCipher } from './secret-cipher';
 
 /**
  * The project registry + GitHub token store — a SLIM module composable by BOTH the harness (via
- * WorktreesModule/ToolsModule) and the api app (admin REST), with zero imports from the rest of
+ * WorkspacesModule/ToolsModule) and the api app (admin REST), with zero imports from the rest of
  * the harness. Requires the hosting app's @Global DatabaseModule + EnvModule.
  *
  * Everything sits under `services:` (CreateModule's auto-exported bucket) — a plain `providers:`

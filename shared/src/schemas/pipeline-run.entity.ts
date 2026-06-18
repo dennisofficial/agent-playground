@@ -4,7 +4,7 @@ import { TimestampedEntity } from './classes/base.entity';
 /**
  * Durable state seam for orchestrator pipelines. A pipeline_run row tracks one execution of a named
  * pipeline (e.g. "feature") against a board task, carrying enough state to recover mid-pipeline on
- * restart — the in-process session/worktree handles vanish on restart, but this row's stage_index,
+ * restart — the in-process session/workspace handles vanish on restart, but this row's stage_index,
  * current_role, and session_id let the orchestrator re-enter at the correct stage.
  */
 @Entity({ name: 'pipeline_runs' })
@@ -42,9 +42,9 @@ export class PipelineRun extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   mode!: string | null;
 
-  /** The worktree id the active stage runs in. */
+  /** The workspace id the active stage runs in. */
   @Column({ type: 'text', nullable: true })
-  worktree_id!: string | null;
+  workspace_id!: string | null;
 
   /** The session id for the active stage's engine conversation. */
   @Column({ type: 'text', nullable: true })
@@ -55,7 +55,7 @@ export class PipelineRun extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   notify_thread!: string | null;
 
-  /** The project the pipeline's task belongs to — worktree/session context needed to re-open a stage. */
+  /** The project the pipeline's task belongs to — workspace/session context needed to re-open a stage. */
   @Column({ type: 'text', nullable: true })
   project!: string | null;
 

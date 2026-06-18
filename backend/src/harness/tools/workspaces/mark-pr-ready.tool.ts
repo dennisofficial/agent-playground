@@ -6,9 +6,9 @@ import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
 const markReadySchema = z.object({
-  worktreeId: z
+  workspaceId: z
     .string()
-    .describe('The worktree whose draft PR is ready for Dennis.'),
+    .describe('The workspace whose draft PR is ready for Dennis.'),
   board_task_id: z
     .number()
     .int()

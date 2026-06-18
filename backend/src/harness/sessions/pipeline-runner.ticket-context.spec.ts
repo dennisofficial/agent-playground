@@ -11,7 +11,7 @@ import {
 } from './pipeline-runner.test-fakes';
 
 /**
- * Durable ticket context at dispatch. An engine session can't open the ticket from its worktree (no
+ * Durable ticket context at dispatch. An engine session can't open the ticket from its workspace (no
  * get_ticket), so the runner INLINES the ticket's durable context into each dispatch seed:
  *  - section plan ← the freeform research/decision notes (machine-authored notes excluded);
  *  - bugfix ← the ticket title/description (the bug report) + research notes;
@@ -71,7 +71,7 @@ function build() {
     })),
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
-  const worktrees = { get: vi.fn(() => ({ path: '' })) };
+  const workspaces = { get: vi.fn(() => ({ path: '' })) };
 
   const svc = new PipelineRunnerService(
     runs as never,
@@ -84,7 +84,7 @@ function build() {
     proposals as never,
     review as never,
     boardEvents as never,
-    worktrees as never,
+    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
@@ -102,7 +102,7 @@ const startFeature = (svc: PipelineRunnerService, task: number) =>
     team: TEAM,
     project: 'proj',
     taskId: task,
-    worktreeId: `wt-${task}`,
+    workspaceId: `ws-${task}`,
     notifyThread: 'thread',
     kind: 'feature',
     sections: [{ name: 'backend', role: 'phase_backend' }],
@@ -170,7 +170,7 @@ describe('PipelineRunnerService — durable ticket context at dispatch', () => {
       team: TEAM,
       project: 'proj',
       taskId: task,
-      worktreeId: `wt-${task}`,
+      workspaceId: `ws-${task}`,
       notifyThread: 'thread',
       kind: 'bugfix',
       role: 'phase_backend',

@@ -17,7 +17,7 @@ import type { PlanStore } from '../memory/plan-store';
 import type { TeamSettingsStore } from '../memory/team-settings-store';
 import type { WorklogStore } from '../memory/worklog-store';
 import type { MetricsEventsService } from '../metrics/metrics-events.service';
-import type { WorktreeService } from '../worktrees/worktree.service';
+import type { WorkspaceService } from '../workspaces/workspace.service';
 import { InMemorySessionRegistry } from './in-memory-session.registry';
 import type { Session } from './session-registry.port';
 import { SessionRunnerService } from './session-runner.service';
@@ -29,13 +29,13 @@ const ALEX = makeEmployee({
   sortOrder: 10,
 });
 
-const WT = {
-  id: 'wt-001',
+const WS = {
+  id: 'ws-001',
   name: 'work',
-  branch: 'agent/alex/wt-001-work',
+  branch: 'agent/alex/ws-001-work',
   baseRef: 'abc',
-  path: '/tmp/wt-001-work',
-  checkout: '/tmp/wt-001-work',
+  path: '/tmp/ws-001-work',
+  checkout: '/tmp/ws-001-work',
   ownerBot: 'alex',
   project: 'local',
 };
@@ -43,7 +43,7 @@ const WT = {
 function buildRunner(
   engine: WorkerEngine,
   opts: {
-    worktree?: typeof WT | undefined;
+    workspace?: typeof WS | undefined;
     /** The EXECUTION_APPROVAL_MODE dial; legacy tests run un-gated ('off'). */
     approvalMode?: 'all' | 'linked' | 'off';
     /** Board tasks visible to the guard, keyed by id. */
@@ -54,17 +54,17 @@ function buildRunner(
     attachFails?: boolean;
     /** Simulate a `plan.finished` self-review hook transforming the plan body. */
     selfReview?: (planBody: string) => string;
-    /** What WorktreeService.refreshFromBase returns (default: a clean refresh). */
-    refreshResult?: Awaited<ReturnType<WorktreeService['refreshFromBase']>>;
-    /** Make WorktreeService.refreshFromBase reject (the thrown-error path). */
+    /** What WorkspaceService.refreshFromBase returns (default: a clean refresh). */
+    refreshResult?: Awaited<ReturnType<WorkspaceService['refreshFromBase']>>;
+    /** Make WorkspaceService.refreshFromBase reject (the thrown-error path). */
     refreshThrows?: boolean;
-    /** Initial WorktreeService.mergeState — the merge-resolution bypass signal. Mutate the returned
+    /** Initial WorkspaceService.mergeState — the merge-resolution bypass signal. Mutate the returned
      * `mergeRef` mid-test to simulate the bot committing the merge. */
     mergeInProgress?: boolean;
     mergeFiles?: string[];
   } = {},
 ) {
-  const worktree = 'worktree' in opts ? opts.worktree : WT;
+  const workspace = 'workspace' in opts ? opts.workspace : WS;
   const sessions = new InMemorySessionRegistry();
   const engines = { get: () => engine } as unknown as EngineRegistry;
   const ctx = { team: 'local', roster: 'Alex — backend engineer' };
@@ -92,8 +92,8 @@ function buildRunner(
     inProgress: opts.mergeInProgress ?? false,
     files: opts.mergeFiles ?? [],
   };
-  const worktrees = {
-    get: () => worktree,
+  const workspaces = {
+    get: () => workspace,
     refreshFromBase: async (id: string) => {
       refreshCalls.push(id);
       if (opts.refreshThrows) throw new Error('git merge blew up');
@@ -103,7 +103,7 @@ function buildRunner(
       inProgress: mergeRef.inProgress,
       files: mergeRef.files,
     }),
-  } as unknown as WorktreeService;
+  } as unknown as WorkspaceService;
   const creds = {
     resolve: async () => ({}),
   } as unknown as TenantCredentialService;
@@ -144,7 +144,7 @@ function buildRunner(
     persona,
     lifecycle,
     worklog,
-    worktrees,
+    workspaces,
     creds,
     credCtx,
     metrics,
@@ -167,7 +167,7 @@ function buildRunner(
 
 const newSession = {
   task: 'find the thing',
-  worktreeId: 'wt-001',
+  workspaceId: 'ws-001',
   notifyThread: 'tui:main',
   engine: EWorkerEngineName.CLAUDE,
   ownerBot: 'alex',
@@ -177,7 +177,7 @@ const newSession = {
 };
 
 describe('SessionRunnerService (fake engine, no LLM)', () => {
-  it('runs a turn in the worktree and leaves the session OPEN (idle), with no worklog yet', async () => {
+  it('runs a turn in the workspace and leaves the session OPEN (idle), with no worklog yet', async () => {
     const seen: Partial<RunWorkerArgs>[] = [];
     const fake: WorkerEngine = {
       name: EWorkerEngineName.CLAUDE,
@@ -203,7 +203,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     expect(after?.engineSessionId).toBe('engine-1');
     expect(after?.lastReport).toBe('Alex — Found it.');
     expect(after?.turns).toBe(1);
-    expect(seen[0]?.cwd).toBe(WT.path); // the turn ran in the worktree, not WORKER_ROOT
+    expect(seen[0]?.cwd).toBe(WS.path); // the turn ran in the workspace, not WORKER_ROOT
     expect(seen[0]?.mode).toBe('plan');
     expect(worklogged).toHaveLength(0); // worklog happens on close, not turn-end
     expect(updates).toEqual([
@@ -396,17 +396,17 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     expect((await sessions.get(session.id))?.status).toBe('idle');
   });
 
-  it('fails the turn loudly when the worktree is gone', async () => {
+  it('fails the turn loudly when the workspace is gone', async () => {
     const fake: WorkerEngine = {
       name: EWorkerEngineName.CLAUDE,
       run: async () => ({ result: 'x' }),
     };
-    const { runner, sessions } = buildRunner(fake, { worktree: undefined });
+    const { runner, sessions } = buildRunner(fake, { workspace: undefined });
     const session = await sessions.create(newSession);
     await runner.runSessionTurn(session.id, session.task);
     const after = await sessions.get(session.id);
     expect(after?.status).toBe('failed');
-    expect(after?.error).toContain('wt-001');
+    expect(after?.error).toContain('ws-001');
   });
 
   it('searchTranscript pages the full transcript and finds matching lines', async () => {
@@ -967,11 +967,11 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     run: async () => ({ result: 'Alex — done.', sessionId: 'e1' }),
   };
 
-  it('refreshes the worktree when a fresh execute session starts (enteringExecute)', async () => {
+  it('refreshes the workspace when a fresh execute session starts (enteringExecute)', async () => {
     const { runner, sessions, refreshCalls } = buildRunner(okEngine);
     const session = await sessions.create(execSession);
     await runner.runSessionTurn(session.id, session.task, undefined, true);
-    expect(refreshCalls).toEqual(['wt-001']);
+    expect(refreshCalls).toEqual(['ws-001']);
   });
 
   it('does NOT refresh on a plan turn', async () => {
@@ -988,7 +988,7 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     expect(refreshCalls).toEqual([]); // plan turn didn't refresh
     await runner.replySession(session.id, 'approved — build it', 'execute');
     await new Promise((r) => setTimeout(r, 20));
-    expect(refreshCalls).toEqual(['wt-001']);
+    expect(refreshCalls).toEqual(['ws-001']);
   });
 
   it('does NOT refresh again on a continuing execute→execute reply', async () => {
@@ -999,12 +999,12 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     await new Promise((r) => setTimeout(r, 20));
     await runner.replySession(session.id, 'keep going', 'execute'); // execute→execute
     await new Promise((r) => setTimeout(r, 20));
-    expect(refreshCalls).toEqual(['wt-001']); // only the flip refreshed
+    expect(refreshCalls).toEqual(['ws-001']); // only the flip refreshed
   });
 
-  it('skips the refresh when another session is mid-turn in the same worktree', async () => {
+  it('skips the refresh when another session is mid-turn in the same workspace', async () => {
     const { runner, sessions, refreshCalls } = buildRunner(okEngine);
-    // A second session on the SAME worktree, left 'running' (create defaults to running).
+    // A second session on the SAME workspace, left 'running' (create defaults to running).
     await sessions.create(execSession);
     const session = await sessions.create(execSession);
     await runner.runSessionTurn(session.id, session.task, undefined, true);
@@ -1076,20 +1076,20 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     expect(seen[0]?.task).toBe('do the work'); // untouched
   });
 
-  it('tells the bot when the tree is DIRTY (commit + refresh_worktree)', async () => {
+  it('tells the bot when the tree is DIRTY (commit + refresh_workspace)', async () => {
     const seen: Partial<RunWorkerArgs>[] = [];
     const { runner, sessions } = buildRunner(recordingEngine(seen), {
       refreshResult: {
         refreshed: false,
         dirty: true,
         baseBranch: 'main',
-        detail: 'the worktree has uncommitted changes',
+        detail: 'the workspace has uncommitted changes',
       },
     });
     const session = await sessions.create(execSession);
     await runner.runSessionTurn(session.id, 'do the work', undefined, true);
     expect(seen[0]?.task).toMatch(/uncommitted changes/);
-    expect(seen[0]?.task).toContain('refresh_worktree');
+    expect(seen[0]?.task).toContain('refresh_workspace');
     expect(seen[0]?.task).toContain('do the work');
   });
 
@@ -1105,7 +1105,7 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     const session = await sessions.create(execSession);
     await runner.runSessionTurn(session.id, 'do the work', undefined, true);
     expect(seen[0]?.task).toMatch(/may be behind/);
-    expect(seen[0]?.task).toContain('refresh_worktree');
+    expect(seen[0]?.task).toContain('refresh_workspace');
   });
 
   it('tells the bot when the refresh THREW', async () => {
@@ -1116,7 +1116,7 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     const session = await sessions.create(execSession);
     await runner.runSessionTurn(session.id, 'do the work', undefined, true);
     expect(seen[0]?.task).toMatch(/an error occurred/);
-    expect(seen[0]?.task).toContain('refresh_worktree');
+    expect(seen[0]?.task).toContain('refresh_workspace');
     expect(seen[0]?.task).toContain('do the work');
   });
 
@@ -1135,7 +1135,7 @@ describe('SessionRunnerService — base refresh on entering execute', () => {
     const { runner, sessions } = buildRunner(recordingEngine(seen), {
       refreshResult: {
         refreshed: false,
-        detail: 'no registered GitHub repo matches this worktree',
+        detail: 'no registered GitHub repo matches this workspace',
       },
     });
     const session = await sessions.create(execSession);

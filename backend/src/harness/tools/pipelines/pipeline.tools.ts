@@ -21,7 +21,7 @@ import {
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
 import { SessionRunnerService } from '../../sessions/session-runner.service';
-import { WorktreeService } from '../../worktrees/worktree.service';
+import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
@@ -52,9 +52,9 @@ const dispatchSchema = z.object({
     .describe(
       'The team-board task (#N) to run — one Dennis greenlit, whether he asked for it directly or you pulled it off the backlog with his go-ahead. No special status is required first.',
     ),
-  worktree_id: z
+  workspace_id: z
     .string()
-    .describe('The worktree the run happens in (create_worktree first).'),
+    .describe('The workspace the run happens in (create_workspace first).'),
   kind: z
     .enum(['feature', 'bugfix'])
     .optional()
@@ -85,21 +85,21 @@ const dispatchSchema = z.object({
 export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema> {
   readonly name = 'dispatch_pipeline';
   readonly description =
-    'Dispatch a board task Dennis has greenlit — one he asked for directly, or one you pulled off the backlog with his go-ahead. A feature runs your declared sections in order — each planned just-in-time (and gated for his approval at the plan gate) then built phase-by-phase with a fresh review after each, all in one worktree, shipping one PR. A bugfix runs a single execute session straight to a PR. It advances automatically; you are notified at each gate.';
+    'Dispatch a board task Dennis has greenlit — one he asked for directly, or one you pulled off the backlog with his go-ahead. A feature runs your declared sections in order — each planned just-in-time (and gated for his approval at the plan gate) then built phase-by-phase with a fresh review after each, all in one workspace, shipping one PR. A bugfix runs a single execute session straight to a PR. It advances automatically; you are notified at each gate.';
   readonly schema = dispatchSchema;
   readonly refreshesContext = ['pipelines'] as const;
   private readonly logger = new Logger(DispatchPipelineTool.name);
 
   constructor(
     private readonly board: BoardStore,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
     private readonly employees: EmployeeRegistry,
     private readonly runner: PipelineRunnerService,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
   async execute(
-    { board_task_id, worktree_id, kind, sections, role, overview }: z.infer<
+    { board_task_id, workspace_id, kind, sections, role, overview }: z.infer<
       typeof dispatchSchema
     >,
     ctx: HarnessToolContext,
@@ -108,9 +108,9 @@ export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema>
     const runKind = kind ?? 'feature';
     const task = await this.board.get(id.team, board_task_id);
     if (!task) return `No board task #${board_task_id} — check list_board.`;
-    const worktree = this.worktrees.get(worktree_id);
-    if (!worktree)
-      return `No worktree '${worktree_id}' — create one first (create_worktree).`;
+    const workspace = this.workspaces.get(workspace_id);
+    if (!workspace)
+      return `No workspace '${workspace_id}' — create one first (create_workspace).`;
 
     // Validate the phase-config role(s) resolve before starting (a typo'd role would otherwise fail
     // the run mid-flight).
@@ -152,7 +152,7 @@ export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema>
           team: id.team,
           project: task.project,
           taskId: board_task_id,
-          worktreeId: worktree_id,
+          workspaceId: workspace_id,
           notifyThread: id.surface,
           kind: runKind,
           sections:
@@ -169,14 +169,14 @@ export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema>
       );
     } catch (err) {
       this.logger.warn(
-        `dispatch_pipeline: starting ${runKind} for #${board_task_id} in ${worktree_id} failed: ${err}`,
+        `dispatch_pipeline: starting ${runKind} for #${board_task_id} in ${workspace_id} failed: ${err}`,
       );
       const detail = err instanceof Error ? err.message : String(err);
-      return `Couldn't start the ${runKind} run for #${board_task_id} in ${worktree_id}: ${detail}. Nothing is running — no run was created and the task is unchanged. Do NOT report this as dispatched; fix the cause and retry.`;
+      return `Couldn't start the ${runKind} run for #${board_task_id} in ${workspace_id}: ${detail}. Nothing is running — no run was created and the task is unchanged. Do NOT report this as dispatched; fix the cause and retry.`;
     }
     return runKind === 'bugfix'
-      ? `Dispatched a bugfix session for #${board_task_id} in ${worktree_id}. It runs straight to a PR — I'll surface it at the PR gate.`
-      : `Dispatched the ${sections!.length}-section pipeline for #${board_task_id} in ${worktree_id}. It's planning the first section now and will pause at its plan gate for your review.`;
+      ? `Dispatched a bugfix session for #${board_task_id} in ${workspace_id}. It runs straight to a PR — I'll surface it at the PR gate.`
+      : `Dispatched the ${sections!.length}-section pipeline for #${board_task_id} in ${workspace_id}. It's planning the first section now and will pause at its plan gate for your review.`;
   }
 }
 
@@ -244,7 +244,7 @@ export class AttachDesignTool
 {
   readonly name = 'attach_design';
   readonly description =
-    'Attach the design artifact Dennis produced to a pipeline paused at its design gate — unzips it into the worktree (design/) and resumes the run: the next section plans/builds against it. Use the LOCAL path he gives you.';
+    'Attach the design artifact Dennis produced to a pipeline paused at its design gate — unzips it into the workspace (design/) and resumes the run: the next section plans/builds against it. Use the LOCAL path he gives you.';
   readonly schema = attachDesignSchema;
   readonly refreshesContext = ['pipelines'] as const;
 
@@ -452,7 +452,7 @@ export class DispatchFixupSessionTool
 {
   readonly name = 'dispatch_fixup_session';
   readonly description =
-    "Resolve a review-flagged defect when a pipeline is paused at a review decision (a cross-section defect at the full-implementation review, or a section-review blocker). Opens a fresh session in the INTEGRATED worktree to fix the issue at the root cause, then auto re-runs the review and ships if clean. This is the usual call — use it for integration/seam defects, or to verify a benign finding and ship. Use reopen_section instead only when a section's PLAN was wrong.";
+    "Resolve a review-flagged defect when a pipeline is paused at a review decision (a cross-section defect at the full-implementation review, or a section-review blocker). Opens a fresh session in the INTEGRATED workspace to fix the issue at the root cause, then auto re-runs the review and ships if clean. This is the usual call — use it for integration/seam defects, or to verify a benign finding and ship. Use reopen_section instead only when a section's PLAN was wrong.";
   readonly schema = dispatchFixupSchema;
   readonly refreshesContext = ['pipelines'] as const;
 

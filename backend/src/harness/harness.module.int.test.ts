@@ -15,7 +15,7 @@ import {
 import { SessionRunnerService } from './sessions/session-runner.service';
 import { ToolRegistry } from './tools/tool.registry';
 import { DEFAULT_CHAT_TOOLSET } from './tools/default-toolset';
-import { WorktreeService } from './worktrees/worktree.service';
+import { WorkspaceService } from './workspaces/workspace.service';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
@@ -53,7 +53,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'close_session',
         'complete_task',
         'create_session',
-        'create_worktree',
+        'create_workspace',
         'forget',
         'investigate',
         'list_board',
@@ -61,15 +61,15 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'list_session_notes',
         'list_sessions',
         'list_tasks',
-        'list_worktrees',
+        'list_workspaces',
         'mark_pr_ready',
-        'publish_worktree',
-        'pull_worktree',
+        'publish_workspace',
+        'pull_workspace',
         'recall_facts',
         'recent_work',
-        'refresh_worktree',
+        'refresh_workspace',
         'remember',
-        'remove_worktree',
+        'remove_workspace',
         'reply_session',
         'resolve_session_note',
         'search_conversation_history',
@@ -125,7 +125,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
 
     expect(moduleRef.get(ChannelService)).toBeDefined();
     expect(moduleRef.get(SessionRunnerService)).toBeDefined();
-    expect(moduleRef.get(WorktreeService)).toBeDefined();
+    expect(moduleRef.get(WorkspaceService)).toBeDefined();
     expect(moduleRef.get<SessionRegistry>(SESSION_REGISTRY)).toBeDefined();
 
     await moduleRef.close();

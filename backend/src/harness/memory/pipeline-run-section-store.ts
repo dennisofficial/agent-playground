@@ -30,7 +30,7 @@ export interface SectionPhase {
   id: number;
   title?: string;
   /** Optional coding-session GROUP number from the plan (Phase 4): CONSECUTIVE phases sharing the same
-   * `group` build in ONE engine context (one shared worktree, tight context). Omitted ⇒ this phase is
+   * `group` build in ONE engine context (one shared workspace, tight context). Omitted ⇒ this phase is
    * its own group, preserving the 1-phase-per-session default. `phaseGroups` folds contiguous runs. */
   group?: number;
   /** Set true once this phase's post-phase review has completed — keeps boot-recovery from

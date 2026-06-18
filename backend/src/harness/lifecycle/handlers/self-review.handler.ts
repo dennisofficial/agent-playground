@@ -28,7 +28,7 @@ import {
  * so the revision keeps full investigation context). Returns the revised plan body (with a self-review
  * note) + the planning engine's new session id; returns void to keep the un-reviewed plan (no
  * critique, empty revision, or abort — the runner also isolates a throw). Both runs are jailed to the
- * worktree and read-only, but in different modes: the critique runs in 'investigate' (read-only,
+ * workspace and read-only, but in different modes: the critique runs in 'investigate' (read-only,
  * non-planning — it just returns objections), the revision in 'plan' (it re-emits the structured plan).
  */
 @Injectable()
@@ -54,7 +54,7 @@ export class SelfReviewHandler implements LifecycleHandler {
       session,
       planBody,
       engineSessionId,
-      worktreePath,
+      workspacePath,
       keys,
       signal,
       onProgress,
@@ -84,11 +84,11 @@ export class SelfReviewHandler implements LifecycleHandler {
     });
     const review = await traceSessionTurn(
       () =>
-        withActiveRoot(worktreePath, () =>
+        withActiveRoot(workspacePath, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
             this.engines.get(reviewSpec.engine).run({
               task: reviewPrompt,
-              cwd: worktreePath,
+              cwd: workspacePath,
               systemPrompt: reviewSpec.systemPrompt,
               agentId: employee.id,
               sessionId: undefined,
@@ -125,11 +125,11 @@ export class SelfReviewHandler implements LifecycleHandler {
     const revisionPrompt = REVISION_PROMPT({ critique });
     const revision = await traceSessionTurn(
       () =>
-        withActiveRoot(worktreePath, () =>
+        withActiveRoot(workspacePath, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
             this.engines.get(session.engine).run({
               task: revisionPrompt,
-              cwd: worktreePath,
+              cwd: workspacePath,
               systemPrompt: planSpec.systemPrompt,
               agentId: employee.id,
               sessionId: engineSessionId,

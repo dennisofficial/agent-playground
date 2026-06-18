@@ -22,7 +22,7 @@ import { TicketNoteStore } from '../memory/ticket-note-store';
 import { parseGithubRepo } from '../projects/git-auth';
 import { GithubApiService } from '../projects/github-api.service';
 import { GithubTokenStore } from '../projects/github-token-store';
-import { WorktreeService } from '../worktrees/worktree.service';
+import { WorkspaceService } from '../workspaces/workspace.service';
 import { EnvService } from '@core/config/env/env.service';
 import {
   CODE_REVIEW_PROMPT,
@@ -77,7 +77,7 @@ function aggregateTicketText(
 /**
  * The harness-driven PR self-review pipeline — the built-in replacement for the prose instruction
  * to self-review the PR, then mark it ready. It runs as a SessionsModule service
- * (it already has the engines, credentials, worktree and session runner it needs; ProjectsModule adds
+ * (it already has the engines, credentials, workspace and session runner it needs; ProjectsModule adds
  * the GitHub client) and is invoked by the `submit_for_review` tool.
  *
  * One employee owns a ticket. Tickets that share a `shared_slug` converge on ONE `shared/<slug>`
@@ -102,7 +102,7 @@ export class ReviewPipelineService {
     private readonly employees: EmployeeRegistry,
     private readonly credCtx: CredentialContext,
     private readonly creds: TenantCredentialService,
-    private readonly worktrees: WorktreeService,
+    private readonly workspaces: WorkspaceService,
     private readonly tokens: GithubTokenStore,
     private readonly github: GithubApiService,
     private readonly board: BoardStore,
@@ -135,17 +135,17 @@ export class ReviewPipelineService {
   private async runReview(
     bot: EmployeeDefinition,
     spec: EngineSpec,
-    worktreePath: string,
+    workspacePath: string,
     team: string,
     keys: TenantKeys,
     prompt: string,
   ): Promise<string> {
     const onEvent = (_e: WorkerEvent) => undefined;
-    const out = await withActiveRoot(worktreePath, () =>
+    const out = await withActiveRoot(workspacePath, () =>
       this.credCtx.run({ teamId: team, keys }, () =>
         this.engines.get(spec.engine).run({
           task: prompt,
-          cwd: worktreePath,
+          cwd: workspacePath,
           systemPrompt: spec.systemPrompt,
           agentId: bot.id,
           sessionId: undefined,
@@ -183,12 +183,12 @@ export class ReviewPipelineService {
    * The reusable review STAGE — review THIS session's own diff, run a bounded in-session fix loop,
    * then publish the reviewed work onto the shared branch. Returns {kind:'complete'} on a clean
    * publish (the CALLER owns the mark-complete / integrate / ship tail), or {kind:'blocked'} after a
-   * LOUD, recoverable owner_status='blocked' write + narration (missing worktree, exhausted fix loop,
+   * LOUD, recoverable owner_status='blocked' write + narration (missing workspace, exhausted fix loop,
    * or a publish conflict left in-progress for the owner to resolve). Shared by the peer reviewOwner()
    * and the Atlas pipeline's review stage.
    */
   async reviewStage(session: Session): Promise<OwnerReviewOutcome> {
-    const { team, ownerBot: employee, worktreeId } = session;
+    const { team, ownerBot: employee, workspaceId } = session;
     const taskId = session.boardTaskId;
     if (taskId === undefined)
       return {
@@ -206,23 +206,23 @@ export class ReviewPipelineService {
       return { kind: 'blocked', reason: `unknown employee '${employee}'` };
     }
     const ctx = this.employees.context();
-    const worktree = this.worktrees.get(worktreeId);
-    if (!worktree) {
+    const workspace = this.workspaces.get(workspaceId);
+    if (!workspace) {
       await this.failOwner(
         session,
         taskId,
-        `worktree ${worktreeId} no longer exists — can't run self-review`,
+        `workspace ${workspaceId} no longer exists — can't run self-review`,
       );
-      return { kind: 'blocked', reason: 'worktree gone' };
+      return { kind: 'blocked', reason: 'workspace gone' };
     }
     const task = await this.board.get(team, taskId);
-    // Self-heal: the worktree never joined a shared branch at execute start (the stamping no-op'd or
+    // Self-heal: the workspace never joined a shared branch at execute start (the stamping no-op'd or
     // these sessions predate it). Promote it at the base divergence point — using the ticket's shared
     // slug (or `ticket-N` solo) so the branch identity matches the sibling grouping — so the owner's
     // own diff is reviewable instead of silently giving up. A failure here is a loud recoverable dead end.
-    if (!worktree.sharedBranch) {
-      const healed = await this.worktrees.ensureSharedAtBase(
-        worktreeId,
+    if (!workspace.sharedBranch) {
+      const healed = await this.workspaces.ensureSharedAtBase(
+        workspaceId,
         task?.sharedSlug ?? `ticket-${taskId}`,
       );
       if (!healed.ok) {
@@ -235,12 +235,12 @@ export class ReviewPipelineService {
       }
     }
     // Backfill the plan row's execute context (idempotent) so the integration barrier's anchor lookup
-    // (`executeWorktreeId && sharedBranch`) can find this owner — a row promoted-but-never-stamped
+    // (`executeWorkspaceId && sharedBranch`) can find this owner — a row promoted-but-never-stamped
     // would otherwise mark 'complete' and then strand integrate() with no anchor.
     await this.plans
       .setExecuteContext(team, taskId, {
-        executeWorktreeId: worktreeId,
-        sharedBranch: worktree.sharedBranch,
+        executeWorkspaceId: workspaceId,
+        sharedBranch: workspace.sharedBranch,
       })
       .catch(() => undefined);
     const keys = await this.creds.resolve(team);
@@ -251,20 +251,20 @@ export class ReviewPipelineService {
 
     // The shared tip BEFORE we publish — the review diffs <preRef>...<ownerBranch> (three-dot), so an
     // owner reviewing after teammates have already integrated never re-reviews their work.
-    const preRef = await this.worktrees.sharedRef(worktreeId);
+    const preRef = await this.workspaces.sharedRef(workspaceId);
 
     // Review/fix loop runs LOCALLY (no publish yet) so the publish at the end carries the fixed work.
     if (preRef) {
       for (let pass = 0; pass <= MAX_FIX_PASSES; pass++) {
-        const { range, files } = await this.worktrees.ownerDiff(
-          worktreeId,
+        const { range, files } = await this.workspaces.ownerDiff(
+          workspaceId,
           preRef,
         );
         if (files.length === 0) break; // nothing of this owner's own to review
         const reviewText = await this.runReview(
           bot,
           this.reviewSpec(bot, ctx),
-          worktree.path,
+          workspace.path,
           team,
           keys,
           CODE_REVIEW_PROMPT({ goal, ticket: ticketText, range }),
@@ -292,9 +292,9 @@ export class ReviewPipelineService {
 
     // Publish the (now reviewed) work onto the shared branch. A conflict is left in-progress; seed the
     // owner to resolve and re-submit — do NOT mark complete.
-    const publish = await this.worktrees.publish(worktreeId).catch((err) => ({
+    const publish = await this.workspaces.publish(workspaceId).catch((err) => ({
       integrated: false as const,
-      sharedBranch: worktree.sharedBranch!,
+      sharedBranch: workspace.sharedBranch!,
       files: [String(err instanceof Error ? err.message : err)],
     }));
     if (!publish.integrated) {
@@ -321,22 +321,22 @@ export class ReviewPipelineService {
   }
 
   /**
-   * The git range covering a pipeline ticket's WHOLE accumulated work in its single worktree — the
-   * worktree branch since its cut point (`baseRef`, or the project's default branch as a fallback).
+   * The git range covering a pipeline ticket's WHOLE accumulated work in its single workspace — the
+   * workspace branch since its cut point (`baseRef`, or the project's default branch as a fallback).
    * Shared by the per-section multi-lens review and the final full-implementation review (the pipeline
-   * accumulates on the worktree branch and only publishes onto a shared branch at ship time, so there's
+   * accumulates on the workspace branch and only publishes onto a shared branch at ship time, so there's
    * no shared-branch pair to diff yet). Empty `files` ⇒ nothing to review.
    */
   private async ticketRange(
-    worktreeId: string,
+    workspaceId: string,
   ): Promise<{ range: string; files: string[] }> {
-    const wt = this.worktrees.get(worktreeId);
-    if (!wt) return { range: '', files: [] };
-    const rec = await this.worktrees.projectRecordFor(worktreeId);
-    const base = wt.baseRef && wt.baseRef.length > 0 ? wt.baseRef : rec?.defaultBranch;
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws) return { range: '', files: [] };
+    const rec = await this.workspaces.projectRecordFor(workspaceId);
+    const base = ws.baseRef && ws.baseRef.length > 0 ? ws.baseRef : rec?.defaultBranch;
     if (!base) return { range: '', files: [] };
-    return this.worktrees
-      .ownerDiff(worktreeId, base)
+    return this.workspaces
+      .ownerDiff(workspaceId, base)
       .catch(() => ({ range: '', files: [] as string[] }));
   }
 
@@ -349,19 +349,19 @@ export class ReviewPipelineService {
    * the run advances either way (the cross-section-defect gate / full-impl review is the hard stop), so a
    * lens that can't auto-clear narrates rather than wedging the pipeline. Called by the runner when a
    * section completes, before it advances. `session` is the section's just-finished review session — its
-   * worktree + engine context are reused for the lens reviews and the fix turns.
+   * workspace + engine context are reused for the lens reviews and the fix turns.
    */
   async reviewSectionLenses(
     session: Session,
     opts: { sectionName: string },
   ): Promise<{ ok: boolean; findings: string[] }> {
-    const { team, ownerBot: employee, worktreeId } = session;
+    const { team, ownerBot: employee, workspaceId } = session;
     const taskId = session.boardTaskId;
     if (taskId === undefined) return { ok: true, findings: [] };
     const bot = this.employees.byId(employee);
-    const worktree = this.worktrees.get(worktreeId);
-    if (!bot || !worktree) return { ok: true, findings: [] };
-    const { range, files } = await this.ticketRange(worktreeId);
+    const workspace = this.workspaces.get(workspaceId);
+    if (!bot || !workspace) return { ok: true, findings: [] };
+    const { range, files } = await this.ticketRange(workspaceId);
     if (files.length === 0) return { ok: true, findings: [] }; // nothing built to review
     const ctx = this.employees.context();
     const keys = await this.creds.resolve(team);
@@ -380,7 +380,7 @@ export class ReviewPipelineService {
           const text = await this.runReview(
             bot,
             spec,
-            worktree.path,
+            workspace.path,
             team,
             keys,
             LENS_REVIEW_PROMPT({
@@ -445,12 +445,12 @@ export class ReviewPipelineService {
   async reviewFullImplementation(opts: {
     team: string;
     taskId: number;
-    worktreeId: string;
+    workspaceId: string;
   }): Promise<{ verdict: 'pass' | 'changes'; findings: string }> {
-    const { team, taskId, worktreeId } = opts;
-    const worktree = this.worktrees.get(worktreeId);
-    if (!worktree) return { verdict: 'pass', findings: '' };
-    const { range, files } = await this.ticketRange(worktreeId);
+    const { team, taskId, workspaceId } = opts;
+    const workspace = this.workspaces.get(workspaceId);
+    if (!workspace) return { verdict: 'pass', findings: '' };
+    const { range, files } = await this.ticketRange(workspaceId);
     if (files.length === 0) return { verdict: 'pass', findings: '' };
     const bot = this.employees.teamLead();
     if (!bot) return { verdict: 'pass', findings: '' };
@@ -464,7 +464,7 @@ export class ReviewPipelineService {
     const reviewText = await this.runReview(
       bot,
       this.reviewSpec(bot, ctx),
-      worktree.path,
+      workspace.path,
       team,
       keys,
       FULL_IMPLEMENTATION_REVIEW_PROMPT({ goal, ticket: ticketText, range }),
@@ -486,12 +486,12 @@ export class ReviewPipelineService {
     const task = await this.board.get(team, taskId);
     if (!task) return;
     const plans = await this.plans.listForTask(team, taskId);
-    // The executing owner = the plan row that carries an execute worktree (robust to any stray
+    // The executing owner = the plan row that carries an execute workspace (robust to any stray
     // planning-only rows). One employee owns a ticket.
-    const anchor = plans.find((p) => p.executeWorktreeId && p.sharedBranch);
-    if (!anchor?.executeWorktreeId) {
+    const anchor = plans.find((p) => p.executeWorkspaceId && p.sharedBranch);
+    if (!anchor?.executeWorkspaceId) {
       this.logger.warn(
-        `integrate(#${taskId}): no plan row carries an execute worktree — cannot open the PR`,
+        `integrate(#${taskId}): no plan row carries an execute workspace — cannot open the PR`,
       );
       // Still 'executing' (no transition yet) → resubmittable; narrate the miss to the assignee.
       this.emitOwnerFailed(
@@ -499,11 +499,11 @@ export class ReviewPipelineService {
         taskId,
         task.assignee,
         undefined,
-        'no execute worktree is recorded for this ticket — re-run submit_for_review to retry',
+        'no execute workspace is recorded for this ticket — re-run submit_for_review to retry',
       );
       return;
     }
-    const worktreeId = anchor.executeWorktreeId;
+    const workspaceId = anchor.executeWorkspaceId;
     const owner = {
       employee: anchor.employee,
       notifyThread: await this.ownerRoom(anchor),
@@ -514,13 +514,13 @@ export class ReviewPipelineService {
       .transition(team, taskId, 'executing', { status: 'self_review' })
       .catch(() => undefined);
 
-    const rec = await this.worktrees.projectRecordFor(worktreeId);
+    const rec = await this.workspaces.projectRecordFor(workspaceId);
     if (!rec) {
       await this.failIntegration(
         team,
         taskId,
         owner,
-        'no registered GitHub repo matches this worktree — open the PR manually',
+        'no registered GitHub repo matches this workspace — open the PR manually',
       );
       return;
     }
@@ -543,7 +543,7 @@ export class ReviewPipelineService {
     let prUrl: string;
     try {
       const { sharedBranch } =
-        await this.worktrees.pushSharedToOrigin(worktreeId);
+        await this.workspaces.pushSharedToOrigin(workspaceId);
       const pr = await this.github.openPullRequest(auth.token, {
         owner: ghOwner,
         repo,
@@ -600,17 +600,17 @@ export class ReviewPipelineService {
     if (siblings.length > 1 && bot) {
       const ctx = this.employees.context();
       const keys = await this.creds.resolve(team);
-      const wt = this.worktrees.get(worktreeId);
+      const ws = this.workspaces.get(workspaceId);
       reviewText = await this.runReview(
         bot,
         this.reviewSpec(bot, ctx),
-        wt?.path ?? '',
+        ws?.path ?? '',
         team,
         keys,
         INTEGRATION_REVIEW_PROMPT({
           goal: task.sharedSlug ?? task.title,
           ticket: aggregateTicketText(siblings),
-          sharedBranch: anchor.sharedBranch ?? wt?.sharedBranch ?? '',
+          sharedBranch: anchor.sharedBranch ?? ws?.sharedBranch ?? '',
           base: rec.defaultBranch,
         }),
       ).catch(() => '');
@@ -654,11 +654,11 @@ export class ReviewPipelineService {
     const task = await this.board.get(team, taskId);
     if (!task) return { ok: false, reason: `board task #${taskId} is gone` };
     const plans = await this.plans.listForTask(team, taskId);
-    const anchor = plans.find((p) => p.executeWorktreeId && p.sharedBranch);
-    if (!anchor?.executeWorktreeId || !anchor.sharedBranch)
-      return { ok: false, reason: 'no execute worktree / shared branch for this ticket' };
-    const rec = await this.worktrees.projectRecordFor(anchor.executeWorktreeId);
-    if (!rec) return { ok: false, reason: 'no registered GitHub repo matches this worktree' };
+    const anchor = plans.find((p) => p.executeWorkspaceId && p.sharedBranch);
+    if (!anchor?.executeWorkspaceId || !anchor.sharedBranch)
+      return { ok: false, reason: 'no execute workspace / shared branch for this ticket' };
+    const rec = await this.workspaces.projectRecordFor(anchor.executeWorkspaceId);
+    if (!rec) return { ok: false, reason: 'no registered GitHub repo matches this workspace' };
     const auth = await this.tokens
       .resolve(rec.teamId, rec.tokenName)
       .catch(() => undefined);
@@ -742,7 +742,7 @@ export class ReviewPipelineService {
 
   /**
    * The single-task PR ship for the Atlas pipeline's PR gate — open (or find) the PR for THIS task's
-   * worktree and mark it ready, with NO sibling/sharedSlug fan-out (the peer `integrate`/`shipSharedPr`
+   * workspace and mark it ready, with NO sibling/sharedSlug fan-out (the peer `integrate`/`shipSharedPr`
    * path stays untouched). Self-heals a missing shared branch (the ticket's slug or `ticket-N`),
    * publishes the accumulated pipeline work, pushes to origin, opens a READY PR (base = the project's
    * default branch), flips the ticket → in_review, stamps the PR url, and narrates pr-ready. Loud-fail
@@ -751,23 +751,23 @@ export class ReviewPipelineService {
   async shipTask(opts: {
     team: string;
     taskId: number;
-    worktreeId: string;
+    workspaceId: string;
     notifyThread?: string;
     /** Advisory full-implementation-review findings to ride the PR as a self-review comment (Phase 5b);
      * the PR ships regardless — this is informational for Dennis's review. */
     findings?: string;
   }): Promise<{ ok: boolean; reason?: string; prUrl?: string }> {
-    const { team, taskId, worktreeId } = opts;
+    const { team, taskId, workspaceId } = opts;
     const task = await this.board.get(team, taskId);
     if (!task) return { ok: false, reason: `board task #${taskId} is gone` };
-    let worktree = this.worktrees.get(worktreeId);
-    if (!worktree)
-      return { ok: false, reason: `worktree ${worktreeId} no longer exists` };
-    // The PR opens off the worktree's shared branch; self-heal one at the base divergence point when
-    // the pipeline worktree never joined one (solo task → `ticket-N`, or the ticket's slug).
-    if (!worktree.sharedBranch) {
-      const healed = await this.worktrees.ensureSharedAtBase(
-        worktreeId,
+    let workspace = this.workspaces.get(workspaceId);
+    if (!workspace)
+      return { ok: false, reason: `workspace ${workspaceId} no longer exists` };
+    // The PR opens off the workspace's shared branch; self-heal one at the base divergence point when
+    // the pipeline workspace never joined one (solo task → `ticket-N`, or the ticket's slug).
+    if (!workspace.sharedBranch) {
+      const healed = await this.workspaces.ensureSharedAtBase(
+        workspaceId,
         task.sharedSlug ?? `ticket-${taskId}`,
       );
       if (!healed.ok)
@@ -775,15 +775,15 @@ export class ReviewPipelineService {
           ok: false,
           reason: `couldn't prepare a branch for the PR: ${healed.reason}`,
         };
-      worktree = this.worktrees.get(worktreeId);
-      if (!worktree)
-        return { ok: false, reason: `worktree ${worktreeId} disappeared` };
+      workspace = this.workspaces.get(workspaceId);
+      if (!workspace)
+        return { ok: false, reason: `workspace ${workspaceId} disappeared` };
     }
-    const wt = worktree; // const for the publish catch closure
+    const ws = workspace; // const for the publish catch closure
     // Publish the accumulated pipeline work onto the shared branch; a conflict is left in-progress.
-    const publish = await this.worktrees.publish(worktreeId).catch((err) => ({
+    const publish = await this.workspaces.publish(workspaceId).catch((err) => ({
       integrated: false as const,
-      sharedBranch: wt.sharedBranch ?? '(unknown)',
+      sharedBranch: ws.sharedBranch ?? '(unknown)',
       files: [String(err instanceof Error ? err.message : err)],
     }));
     if (!publish.integrated)
@@ -792,11 +792,11 @@ export class ReviewPipelineService {
         reason: `publishing onto ${publish.sharedBranch} hit a merge conflict (${(publish.files ?? []).join(', ') || 'see git status'}) — resolve it`,
       };
 
-    const rec = await this.worktrees.projectRecordFor(worktreeId);
+    const rec = await this.workspaces.projectRecordFor(workspaceId);
     if (!rec)
       return {
         ok: false,
-        reason: 'no registered GitHub repo matches this worktree',
+        reason: 'no registered GitHub repo matches this workspace',
       };
     const auth = await this.tokens
       .resolve(rec.teamId, rec.tokenName)
@@ -807,7 +807,7 @@ export class ReviewPipelineService {
     let prUrl: string;
     try {
       const { sharedBranch } =
-        await this.worktrees.pushSharedToOrigin(worktreeId);
+        await this.workspaces.pushSharedToOrigin(workspaceId);
       const pr = await this.github.openPullRequest(auth.token, {
         owner: ghOwner,
         repo,
@@ -898,19 +898,19 @@ export class ReviewPipelineService {
       employee: owner.employee,
       prUrl,
       noteId: note.id,
-      worktreeId: anchor.executeWorktreeId!,
+      workspaceId: anchor.executeWorkspaceId!,
       sessionId: anchor.sessionId,
       notifyThread: owner.notifyThread,
     });
   }
 
-  /** A ticket's executing owner (the plan row with an execute worktree) + its session's room. */
+  /** A ticket's executing owner (the plan row with an execute workspace) + its session's room. */
   private async ownerOf(
     team: string,
     taskId: number,
   ): Promise<{ employee: string; notifyThread?: string } | undefined> {
     const plans = await this.plans.listForTask(team, taskId);
-    const anchor = plans.find((p) => p.executeWorktreeId);
+    const anchor = plans.find((p) => p.executeWorkspaceId);
     if (!anchor) return undefined;
     return { employee: anchor.employee, notifyThread: await this.ownerRoom(anchor) };
   }

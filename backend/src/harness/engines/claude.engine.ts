@@ -75,7 +75,7 @@ function normalizeQuestions(raw: unknown[]): WorkerQuestion[] {
 
 /**
  * Re-applies the safety boundary to the SDK's built-in tools: file writes must stay inside the
- * worktree, and bash commands must clear the deny-list. Every non-auto-approved tool call routes
+ * workspace, and bash commands must clear the deny-list. Every non-auto-approved tool call routes
  * here — a programmatic gate (no interactive surface), so it never blocks waiting on a human.
  *
  * A 'plan' turn runs under the SDK's NATIVE plan mode (`permissionMode: 'plan'`) — the agent plans
@@ -255,7 +255,7 @@ export class ClaudeEngine implements WorkerEngine {
         },
       ),
       permissionMode: planMode ? 'plan' : 'default',
-      // Commits are authored via per-worktree git identity — suppress the SDK's default
+      // Commits are authored via per-workspace git identity — suppress the SDK's default
       // "Co-Authored-By: Claude" commit attribution so it can't muddy that. Inline settings:
       // settingSources stays [] (no config FILES are read).
       settings: { attribution: { commit: '', pr: '' } },

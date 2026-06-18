@@ -27,7 +27,7 @@ import { Subject } from 'rxjs';
  *                         note and the DECISION OWNER is woken to decide — ship it (mark_pr_ready) or
  *                         feed the notes into their open execute session and fix. The harness no longer
  *                         judges pass/fail here; the owner does. Carries the note id + mechanical
- *                         handles (the PR url, the owner's execute session + worktree).
+ *                         handles (the PR url, the owner's execute session + workspace).
  *  - `self-review-failed`→ a per-owner or integration review couldn't be auto-cleared (fix loop
  *                         exhausted, a publish conflict, or a GitHub failure) and needs the owner.
  *  - `pr-ready`         → self-review cleared, the PR is flipped to ready, the ticket is in_review.
@@ -85,8 +85,8 @@ export type BoardEvent =
       prUrl: string;
       /** The ticket note (#id) holding the full review findings — fed into a fix turn by id. */
       noteId: number;
-      /** Mechanical handles so the owner can act without hunting: their execute worktree + session. */
-      worktreeId: string;
+      /** Mechanical handles so the owner can act without hunting: their execute workspace + session. */
+      workspaceId: string;
       sessionId?: string;
       notifyThread?: string;
     }
@@ -146,7 +146,7 @@ export type BoardEvent =
       notifyThread?: string;
     }
   // A pipeline run hit a TERMINAL failure and was torn down (`failRun`): a session died, a propose/ship
-  // failed, a worktree/section went missing, etc. The run is flipped to 'failed' and its ticket reset to
+  // failed, a workspace/section went missing, etc. The run is flipped to 'failed' and its ticket reset to
   // 'open' (back on the backlog), but without this event the death is SILENT — logged + DB-only, nothing
   // wakes the orchestrator. So a crashed pipeline went unnoticed until Dennis asked. Narrated in Atlas's
   // voice so he tells Dennis it died + why and decides recovery (re-dispatch / loop Dennis in). This is

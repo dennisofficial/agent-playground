@@ -66,14 +66,14 @@ describe('Plan owner state + lifecycle (live Postgres)', () => {
     await plans.attach({ team: 'T1', taskId: t.id, employee: 'alex', planMd: 'plan' });
     let plan = await plans.get('T1', t.id);
     expect(plan?.ownerStatus).toBe('executing');
-    expect(plan?.executeWorktreeId).toBeUndefined();
+    expect(plan?.executeWorkspaceId).toBeUndefined();
 
     await plans.setExecuteContext('T1', t.id, {
-      executeWorktreeId: 'wt-9',
+      executeWorkspaceId: 'ws-9',
       sharedBranch: 'shared/x',
     });
     plan = await plans.get('T1', t.id);
-    expect(plan?.executeWorktreeId).toBe('wt-9');
+    expect(plan?.executeWorkspaceId).toBe('ws-9');
     expect(plan?.sharedBranch).toBe('shared/x');
   });
 

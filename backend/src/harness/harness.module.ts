@@ -12,12 +12,12 @@ import { SessionsModule } from './sessions/sessions.module';
 import { SkillsModule } from './skills/skills.module';
 import { SurfaceModule } from './surface/surface.module';
 import { ToolsModule } from './tools/tools.module';
-import { WorktreesModule } from './worktrees/worktrees.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
 
 /**
  * The harness composition root: one import for any app that hosts the AI-employee harness.
  * Domain modules land here as the migration progresses (channel, employees, tools, engines,
- * gate, worktrees, sessions, conductor, surface, skills). The `modules:` bucket re-exports each
+ * gate, workspaces, sessions, conductor, surface, skills). The `modules:` bucket re-exports each
  * one, so a hosting app (slack-app, or the headless api) imports only this
  * module.
  *
@@ -45,7 +45,7 @@ import { WorktreesModule } from './worktrees/worktrees.module';
     SkillsModule,
     LlmModule,
     EnginesModule,
-    WorktreesModule,
+    WorkspacesModule,
     SessionsModule,
     ConductorModule,
     SurfaceModule,
