@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localGitProvider } from '../workspaces/workspace-git.test-util';
 import { PipelineRunnerService } from './pipeline-runner.service';
 import { ReviewPipelineService } from './review-pipeline.service';
 import {
@@ -166,6 +167,7 @@ function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
     credCtx,
     creds,
     workspaces,
+    localGitProvider(workspaces),
     {} as never,
     {} as never,
     board,

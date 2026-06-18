@@ -25,6 +25,7 @@ import {
   SessionRunnerService,
   type ActionResult,
 } from '../../sessions/session-runner.service';
+import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
@@ -87,6 +88,7 @@ export class CreateSessionTool implements IHarnessTool<
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     private readonly runner: SessionRunnerService,
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     private readonly employees: EmployeeRegistry,
     private readonly board: BoardStore,
     private readonly plans: PlanStore,
@@ -198,7 +200,8 @@ export class CreateSessionTool implements IHarnessTool<
       // Ensure the workspace is on the shared branch the TICKET names: its `shared_slug` (a feature
       // group landing on one PR), or `ticket-${id}` for standalone work. The drift guard above already
       // rejected a workspace sitting on a conflicting shared branch, so this is a no-op or a clean cut.
-      const sharedBranch = await this.workspaces
+      const sharedBranch = await this.workspaceGit
+        .resolve({ team: id.team, project: id.project, workspaceId })
         .ensureShared(
           workspaceId,
           boardTask.sharedSlug ?? `ticket-${board_task_id}`,

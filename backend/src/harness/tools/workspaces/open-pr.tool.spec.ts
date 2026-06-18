@@ -3,6 +3,7 @@ import type { GithubTokenStore } from '../../projects/github-token-store';
 import type { ProjectRecord } from '../../projects/project.types';
 import type { WorkspaceService } from '../../workspaces/workspace.service';
 import type { Workspace } from '../../workspaces/workspace.types';
+import { localGitProvider } from '../../workspaces/workspace-git.test-util';
 import { OpenPrTool } from './open-pr.tool';
 
 const WS: Workspace = {
@@ -66,7 +67,18 @@ function build(opts: {
       };
     },
   } as unknown as GithubApiService;
-  return { tool: new OpenPrTool(workspaces, tokens, github), calls, prArgs };
+  // The async-git calls (projectRecordFor/pushSharedToOrigin) route through the provider; the mock
+  // `workspaces` already implements them, so resolving to it keeps every assertion intact.
+  return {
+    tool: new OpenPrTool(
+      workspaces,
+      localGitProvider(workspaces),
+      tokens,
+      github,
+    ),
+    calls,
+    prArgs,
+  };
 }
 
 describe('open_pr tool', () => {

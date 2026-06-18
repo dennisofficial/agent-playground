@@ -1,6 +1,7 @@
 import { makeEmployee } from '@harness/employees/employee.testing';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 import type { Identity } from '../../domain/identity';
+import { localGitProvider } from '../../workspaces/workspace-git.test-util';
 import {
   CheckSessionTool,
   CreateSessionTool,
@@ -79,6 +80,8 @@ function makeTool(opts: {
     sessions as never,
     runner as never,
     workspaces as never,
+    // ensureShared routes through the provider; resolving to the same mock keeps the spy assertion.
+    localGitProvider(workspaces as never),
     employees as never,
     board as never,
     plans as never,

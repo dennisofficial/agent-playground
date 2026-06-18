@@ -22,6 +22,7 @@ import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { MetricsEventsService } from '../metrics/metrics-events.service';
 import { TurnExecutor } from '../workspaces/turn-executor.service';
+import { WorkspaceGitProvider } from '../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../workspaces/workspace.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
@@ -72,6 +73,7 @@ export class SessionRunnerService {
     private readonly lifecycle: LifecycleRunner,
     private readonly worklog: WorklogStore,
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
     private readonly metrics: MetricsEventsService,
@@ -140,9 +142,17 @@ export class SessionRunnerService {
    * throws — staleness must not block the turn.
    */
   private async baseRefreshPreamble(
-    sessionId: string,
+    session: Session,
     workspace: { id: string },
   ): Promise<string> {
+    const sessionId = session.id;
+    // Route this session's git ops local/remote (local-only this phase; the sandbox once Phase 9 flips).
+    const git = this.workspaceGit.resolve({
+      team: session.team,
+      project: session.project,
+      workspaceId: workspace.id,
+      session,
+    });
     const end = '\n\n';
     const otherLive = (
       await this.sessions.list({ workspaceId: workspace.id })
@@ -156,7 +166,7 @@ export class SessionRunnerService {
     // A merge already in progress (e.g. this is a session opened to resolve a publish/pull conflict)
     // would make refreshFromBase throw via refuseMidMerge — short-circuit to the resolve instruction
     // instead of the generic "couldn't refresh" note, and point at the actual conflicted files.
-    const merge = await this.workspaces.mergeState(workspace.id);
+    const merge = await git.mergeState(workspace.id);
     if (merge.inProgress) {
       this.logger.log(
         `${sessionId}: merge in progress in ${workspace.id} — handing conflicts to the turn`,
@@ -164,7 +174,7 @@ export class SessionRunnerService {
       return `Before anything else: a merge is IN PROGRESS in this workspace with conflicts in: ${merge.files.join(', ') || '(unknown files)'}. Resolve the conflicts and commit the merge.${end}`;
     }
     try {
-      const r = await this.workspaces.refreshFromBase(workspace.id);
+      const r = await git.refreshFromBase(workspace.id);
       const base = r.baseBranch ?? 'the base branch';
       if (r.conflicted) {
         this.logger.log(
@@ -241,7 +251,7 @@ export class SessionRunnerService {
       // it knows it may be on a stale base and can `refresh_workspace` after committing.
       if (enteringExecute) {
         message =
-          (await this.baseRefreshPreamble(sessionId, workspace)) + message;
+          (await this.baseRefreshPreamble(session, workspace)) + message;
       }
       // Per-turn spec from the employee, by mode: 'plan' → plan recipe, 'investigate' → investigate
       // recipe (execute's engine on a top-tier model), else the execute recipe (model/effort/
@@ -619,7 +629,11 @@ export class SessionRunnerService {
       // workspace (publish/pull/refresh leave MERGE_HEAD). Finishing it isn't new work to approve.
       if (
         workspaceId &&
-        (await this.workspaces.mergeState(workspaceId)).inProgress
+        (
+          await this.workspaceGit
+            .resolve({ team, workspaceId })
+            .mergeState(workspaceId)
+        ).inProgress
       )
         return null;
       return `execution currently requires an APPROVED board task and this session isn't linked to one. Board the work (add_board_task), open the session with board_task_id, and plan first — your plan attaches to the ticket, Atlas reviews it and proposes it, and Dennis approves. Then execute.`;

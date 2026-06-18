@@ -1,5 +1,6 @@
 import { makeEmployee } from '@harness/employees/employee.testing';
 import type { Identity } from '../../domain/identity';
+import { localGitProvider } from '../../workspaces/workspace-git.test-util';
 import { InvestigateTool } from './investigate.tool';
 
 /**
@@ -52,6 +53,8 @@ function makeTool(opts: {
   const tool = new InvestigateTool(
     createSession as never,
     workspaces as never,
+    // create / ensureReferenceClone route through the provider; resolve to the same mock.
+    localGitProvider(workspaces as never),
     employees as never,
     projects as never,
     sessions as never,

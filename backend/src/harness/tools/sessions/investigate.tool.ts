@@ -11,6 +11,7 @@ import {
   SESSION_REGISTRY,
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
+import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
@@ -73,6 +74,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
   constructor(
     private readonly createSession: CreateSessionTool,
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     private readonly employees: EmployeeRegistry,
     private readonly projects: ProjectStore,
     @Inject(SESSION_REGISTRY)
@@ -172,9 +174,9 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
       if (!name) continue;
       try {
         if (GITHUB_URL.test(name)) {
-          const r = await this.workspaces.ensureReferenceClone(team, {
-            gitUrl: name,
-          });
+          const r = await this.workspaceGit
+            .resolve({ team })
+            .ensureReferenceClone(team, { gitUrl: name });
           resolved.push({ label: name, path: r.path, gitUrl: r.gitUrl });
         } else {
           const rec = catalog.find(
@@ -186,9 +188,9 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
             missing.push(name);
             continue;
           }
-          const r = await this.workspaces.ensureReferenceClone(team, {
-            projectId: rec.projectId,
-          });
+          const r = await this.workspaceGit
+            .resolve({ team })
+            .ensureReferenceClone(team, { projectId: rec.projectId });
           resolved.push({
             label: rec.projectId,
             path: r.path,
@@ -225,12 +227,14 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     const latest = mine[mine.length - 1];
     if (latest) return { id: latest.id };
     try {
-      const { workspace } = await this.workspaces.create({
-        name: 'investigate',
-        ownerBot: id.selfAgent,
-        team: id.team,
-        project: id.project,
-      });
+      const { workspace } = await this.workspaceGit
+        .resolve({ team: id.team, project: id.project })
+        .create({
+          name: 'investigate',
+          ownerBot: id.selfAgent,
+          team: id.team,
+          project: id.project,
+        });
       return { id: workspace.id, created: true };
     } catch (err) {
       return {

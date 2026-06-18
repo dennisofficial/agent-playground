@@ -25,6 +25,7 @@ import {
   TurnExecutor,
   type TurnRoutingCtx,
 } from '../workspaces/turn-executor.service';
+import { WorkspaceGitProvider } from '../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../workspaces/workspace.service';
 import { EnvService } from '@core/config/env/env.service';
 import {
@@ -106,6 +107,7 @@ export class ReviewPipelineService {
     private readonly credCtx: CredentialContext,
     private readonly creds: TenantCredentialService,
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     private readonly tokens: GithubTokenStore,
     private readonly github: GithubApiService,
     private readonly board: BoardStore,
@@ -226,12 +228,19 @@ export class ReviewPipelineService {
       return { kind: 'blocked', reason: 'workspace gone' };
     }
     const task = await this.board.get(team, taskId);
+    // This session's git port (local host today; the sandbox once Phase 9 flips routing on).
+    const git = this.workspaceGit.resolve({
+      team,
+      project: session.project,
+      workspaceId,
+      session,
+    });
     // Self-heal: the workspace never joined a shared branch at execute start (the stamping no-op'd or
     // these sessions predate it). Promote it at the base divergence point — using the ticket's shared
     // slug (or `ticket-N` solo) so the branch identity matches the sibling grouping — so the owner's
     // own diff is reviewable instead of silently giving up. A failure here is a loud recoverable dead end.
     if (!workspace.sharedBranch) {
-      const healed = await this.workspaces.ensureSharedAtBase(
+      const healed = await git.ensureSharedAtBase(
         workspaceId,
         task?.sharedSlug ?? `ticket-${taskId}`,
       );
@@ -261,15 +270,12 @@ export class ReviewPipelineService {
 
     // The shared tip BEFORE we publish — the review diffs <preRef>...<ownerBranch> (three-dot), so an
     // owner reviewing after teammates have already integrated never re-reviews their work.
-    const preRef = await this.workspaces.sharedRef(workspaceId);
+    const preRef = await git.sharedRef(workspaceId);
 
     // Review/fix loop runs LOCALLY (no publish yet) so the publish at the end carries the fixed work.
     if (preRef) {
       for (let pass = 0; pass <= MAX_FIX_PASSES; pass++) {
-        const { range, files } = await this.workspaces.ownerDiff(
-          workspaceId,
-          preRef,
-        );
+        const { range, files } = await git.ownerDiff(workspaceId, preRef);
         if (files.length === 0) break; // nothing of this owner's own to review
         const reviewText = await this.runReview(
           { team, project: session.project, workspaceId, session },
@@ -303,7 +309,7 @@ export class ReviewPipelineService {
 
     // Publish the (now reviewed) work onto the shared branch. A conflict is left in-progress; seed the
     // owner to resolve and re-submit — do NOT mark complete.
-    const publish = await this.workspaces.publish(workspaceId).catch((err) => ({
+    const publish = await git.publish(workspaceId).catch((err) => ({
       integrated: false as const,
       sharedBranch: workspace.sharedBranch!,
       files: [String(err instanceof Error ? err.message : err)],
@@ -343,10 +349,15 @@ export class ReviewPipelineService {
   ): Promise<{ range: string; files: string[] }> {
     const ws = this.workspaces.get(workspaceId);
     if (!ws) return { range: '', files: [] };
-    const rec = await this.workspaces.projectRecordFor(workspaceId);
+    const git = this.workspaceGit.resolve({
+      team: ws.team,
+      project: ws.project,
+      workspaceId,
+    });
+    const rec = await git.projectRecordFor(workspaceId);
     const base = ws.baseRef && ws.baseRef.length > 0 ? ws.baseRef : rec?.defaultBranch;
     if (!base) return { range: '', files: [] };
-    return this.workspaces
+    return git
       .ownerDiff(workspaceId, base)
       .catch(() => ({ range: '', files: [] as string[] }));
   }
@@ -521,13 +532,19 @@ export class ReviewPipelineService {
       employee: anchor.employee,
       notifyThread: await this.ownerRoom(anchor),
     };
+    // The integrate barrier has no live session — route on tenancy + the anchor's execute workspace.
+    const git = this.workspaceGit.resolve({
+      team,
+      project: task.project,
+      workspaceId,
+    });
 
     // executing → self_review (this ticket's work is published; review/ship pending). Idempotent.
     await this.board
       .transition(team, taskId, 'executing', { status: 'self_review' })
       .catch(() => undefined);
 
-    const rec = await this.workspaces.projectRecordFor(workspaceId);
+    const rec = await git.projectRecordFor(workspaceId);
     if (!rec) {
       await this.failIntegration(
         team,
@@ -555,8 +572,7 @@ export class ReviewPipelineService {
     const { owner: ghOwner, repo } = parseGithubRepo(rec.gitUrl);
     let prUrl: string;
     try {
-      const { sharedBranch } =
-        await this.workspaces.pushSharedToOrigin(workspaceId);
+      const { sharedBranch } = await git.pushSharedToOrigin(workspaceId);
       const pr = await this.github.openPullRequest(auth.token, {
         owner: ghOwner,
         repo,
@@ -671,7 +687,13 @@ export class ReviewPipelineService {
     const anchor = plans.find((p) => p.executeWorkspaceId && p.sharedBranch);
     if (!anchor?.executeWorkspaceId || !anchor.sharedBranch)
       return { ok: false, reason: 'no execute workspace / shared branch for this ticket' };
-    const rec = await this.workspaces.projectRecordFor(anchor.executeWorkspaceId);
+    const rec = await this.workspaceGit
+      .resolve({
+        team,
+        project: task.project,
+        workspaceId: anchor.executeWorkspaceId,
+      })
+      .projectRecordFor(anchor.executeWorkspaceId);
     if (!rec) return { ok: false, reason: 'no registered GitHub repo matches this workspace' };
     const auth = await this.tokens
       .resolve(rec.teamId, rec.tokenName)
@@ -777,10 +799,16 @@ export class ReviewPipelineService {
     let workspace = this.workspaces.get(workspaceId);
     if (!workspace)
       return { ok: false, reason: `workspace ${workspaceId} no longer exists` };
+    // The pipeline ship has no live session — route on tenancy + the pipeline's workspace.
+    const git = this.workspaceGit.resolve({
+      team,
+      project: task.project,
+      workspaceId,
+    });
     // The PR opens off the workspace's shared branch; self-heal one at the base divergence point when
     // the pipeline workspace never joined one (solo task → `ticket-N`, or the ticket's slug).
     if (!workspace.sharedBranch) {
-      const healed = await this.workspaces.ensureSharedAtBase(
+      const healed = await git.ensureSharedAtBase(
         workspaceId,
         task.sharedSlug ?? `ticket-${taskId}`,
       );
@@ -795,7 +823,7 @@ export class ReviewPipelineService {
     }
     const ws = workspace; // const for the publish catch closure
     // Publish the accumulated pipeline work onto the shared branch; a conflict is left in-progress.
-    const publish = await this.workspaces.publish(workspaceId).catch((err) => ({
+    const publish = await git.publish(workspaceId).catch((err) => ({
       integrated: false as const,
       sharedBranch: ws.sharedBranch ?? '(unknown)',
       files: [String(err instanceof Error ? err.message : err)],
@@ -806,7 +834,7 @@ export class ReviewPipelineService {
         reason: `publishing onto ${publish.sharedBranch} hit a merge conflict (${(publish.files ?? []).join(', ') || 'see git status'}) — resolve it`,
       };
 
-    const rec = await this.workspaces.projectRecordFor(workspaceId);
+    const rec = await git.projectRecordFor(workspaceId);
     if (!rec)
       return {
         ok: false,
@@ -820,8 +848,7 @@ export class ReviewPipelineService {
     const { owner: ghOwner, repo } = parseGithubRepo(rec.gitUrl);
     let prUrl: string;
     try {
-      const { sharedBranch } =
-        await this.workspaces.pushSharedToOrigin(workspaceId);
+      const { sharedBranch } = await git.pushSharedToOrigin(workspaceId);
       const pr = await this.github.openPullRequest(auth.token, {
         owner: ghOwner,
         repo,

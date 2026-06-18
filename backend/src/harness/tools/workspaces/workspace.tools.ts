@@ -4,6 +4,7 @@ import {
   SESSION_REGISTRY,
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
+import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
@@ -44,7 +45,7 @@ export class CreateWorkspaceTool implements IHarnessTool<
     'Create an isolated git workspace off the project repo — the work area your sessions run in. Cuts a fresh branch from the base by default. Returns the workspace id to open sessions against. Note: a fresh checkout has no installed dependencies; a session can run installs itself if it needs them.';
   readonly schema = createWorkspaceSchema;
 
-  constructor(private readonly workspaces: WorkspaceService) {}
+  constructor(private readonly workspaceGit: WorkspaceGitProvider) {}
 
   async execute(
     { name, branch, shared }: z.infer<typeof createWorkspaceSchema>,
@@ -52,14 +53,16 @@ export class CreateWorkspaceTool implements IHarnessTool<
   ): Promise<string> {
     const id = ctx.identity;
     try {
-      const { workspace, warning } = await this.workspaces.create({
-        name,
-        branch,
-        shared,
-        ownerBot: id.selfAgent,
-        team: id.team,
-        project: id.project,
-      });
+      const { workspace, warning } = await this.workspaceGit
+        .resolve({ team: id.team, project: id.project })
+        .create({
+          name,
+          branch,
+          shared,
+          ownerBot: id.selfAgent,
+          team: id.team,
+          project: id.project,
+        });
       const sharedNote = workspace.sharedBranch
         ? ` Publishing to shared branch ${workspace.sharedBranch}.`
         : '';
@@ -83,6 +86,7 @@ export class ListWorkspacesTool implements IHarnessTool<
 
   constructor(
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
@@ -101,7 +105,8 @@ export class ListWorkspacesTool implements IHarnessTool<
         // reconstructed from teammates' chat self-reports.
         let sharedNote = '';
         if (w.sharedBranch) {
-          const st = await this.workspaces
+          const st = await this.workspaceGit
+            .resolve({ team: w.team, project: w.project, workspaceId: w.id })
             .sharedStatus(w.id)
             .catch(() => undefined);
           const pub = st
@@ -140,6 +145,7 @@ export class RemoveWorkspaceTool implements IHarnessTool<
 
   constructor(
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
@@ -158,7 +164,9 @@ export class RemoveWorkspaceTool implements IHarnessTool<
         .join(', ')}. Close them first.`;
     }
     try {
-      await this.workspaces.remove(workspaceId);
+      await this.workspaceGit
+        .resolve({ team: ws.team, project: ws.project, workspaceId })
+        .remove(workspaceId);
       return `Removed ${workspaceId}. Branch ${ws.branch} survives with its commits.`;
     } catch (err) {
       return `Couldn't remove ${workspaceId}: ${err instanceof Error ? err.message : String(err)}`;
@@ -219,6 +227,7 @@ export class PublishWorkspaceTool implements IHarnessTool<
 
   constructor(
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
@@ -230,7 +239,9 @@ export class PublishWorkspaceTool implements IHarnessTool<
     const refusal = await midTurnRefusal(this.sessions, workspaceId, 'publish');
     if (refusal) return refusal;
     try {
-      const res = await this.workspaces.publish(workspaceId);
+      const res = await this.workspaceGit
+        .resolve({ team: ws.team, project: ws.project, workspaceId })
+        .publish(workspaceId);
       if (!res.integrated) return conflictReply(workspaceId, 'publish', res);
       const dirtyNote = res.dirty
         ? ' Note: the workspace has uncommitted changes — those were NOT published (only commits publish).'
@@ -264,6 +275,7 @@ export class PullWorkspaceTool implements IHarnessTool<
 
   constructor(
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
@@ -275,7 +287,9 @@ export class PullWorkspaceTool implements IHarnessTool<
     const refusal = await midTurnRefusal(this.sessions, workspaceId, 'pull');
     if (refusal) return refusal;
     try {
-      const res = await this.workspaces.pull(workspaceId);
+      const res = await this.workspaceGit
+        .resolve({ team: ws.team, project: ws.project, workspaceId })
+        .pull(workspaceId);
       if (!res.integrated) return conflictReply(workspaceId, 'pull', res);
       return `Pulled ${res.sharedBranch} into ${ws.branch}.${res.originFetched ? ' (Shared branch synced from GitHub first.)' : ' (Local shared branch only — origin was not synced.)'}`;
     } catch (err) {
@@ -301,6 +315,7 @@ export class RefreshWorkspaceTool implements IHarnessTool<
 
   constructor(
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
@@ -312,7 +327,9 @@ export class RefreshWorkspaceTool implements IHarnessTool<
     const refusal = await midTurnRefusal(this.sessions, workspaceId, 'refresh');
     if (refusal) return refusal;
     try {
-      const res = await this.workspaces.refreshFromBase(workspaceId);
+      const res = await this.workspaceGit
+        .resolve({ team: ws.team, project: ws.project, workspaceId })
+        .refreshFromBase(workspaceId);
       if (res.conflicted) return baseConflictReply(workspaceId, res);
       if (res.refreshed) {
         return `Refreshed ${ws.branch} with ${res.baseBranch}.`;

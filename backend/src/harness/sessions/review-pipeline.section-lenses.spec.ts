@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localGitProvider } from '../workspaces/workspace-git.test-util';
 import { ReviewPipelineService } from './review-pipeline.service';
 import type { Lens } from './section-review.prompts';
 import type { Session } from './session-registry.port';
@@ -107,6 +108,7 @@ function build(opts: {
     credCtx,
     creds,
     workspaces,
+    localGitProvider(workspaces),
     {} as never, // tokens — unused
     {} as never, // github — unused
     board,

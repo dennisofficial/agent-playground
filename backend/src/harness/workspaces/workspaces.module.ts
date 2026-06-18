@@ -8,9 +8,11 @@ import { ContainerManagerService } from './container-manager.service';
 import { CredentialProvisionerService } from './credential-provisioner.service';
 import { DaemonClient } from './daemon-client';
 import { DockerodeAdapter } from './dockerode.adapter';
+import { LocalWorkspaceAdapter } from './local-workspace.adapter';
 import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
 import { SandboxRegistry } from './sandbox-registry';
 import { TurnExecutor } from './turn-executor.service';
+import { WorkspaceGitProvider } from './workspace-git.provider';
 import { WorkspaceService } from './workspace.service';
 
 /**
@@ -40,6 +42,15 @@ import { WorkspaceService } from './workspace.service';
  *    dispatches over `DaemonClient`). It depends on `EngineRegistry` (EnginesModule) for the local
  *    fork and `AgentToolSourceResolver` (SkillsModule) for the remote tool-source resolve — both
  *    already in scope for SessionsModule, imported here so the seam composes inside this module.
+ *
+ * Phase 8 adds the GIT-routing sibling seam (the same fork, for async git ops instead of engine turns):
+ *  - `WorkspaceGitProvider` — `resolve(ctx)` returns the `WorkspaceGitPort` a consumer runs its async
+ *    git op against. Hard-false `isContainerized` this phase ⇒ ALWAYS the local adapter (behavior
+ *    unchanged); the dormant daemon branch is built + unit-tested only. Exported for every consumer that
+ *    used to call `WorkspaceService` for an async git method (session-runner, review-pipeline, the
+ *    workspace/session/reference/pipeline/open-pr tools).
+ *  - `LocalWorkspaceAdapter` — the pure 1:1 pass-through to `WorkspaceService` the provider returns
+ *    locally. (`DaemonGitAdapter` is constructed per-sandbox inside the provider, not a DI provider.)
  */
 @CreateModule({
   imports: [RedisModule, EnginesModule, ProjectsModule, SkillsModule],
@@ -51,6 +62,8 @@ import { WorkspaceService } from './workspace.service';
     CredentialProvisionerService,
     RemoteTurnDispatcher,
     TurnExecutor,
+    LocalWorkspaceAdapter,
+    WorkspaceGitProvider,
   ],
   chains: [
     {

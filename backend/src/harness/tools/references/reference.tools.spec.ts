@@ -2,6 +2,7 @@ import type { Identity } from '../../domain/identity';
 import type { ProjectStore } from '../../projects/project-store';
 import type { ProjectRecord } from '../../projects/project.types';
 import type { WorkspaceService } from '../../workspaces/workspace.service';
+import { localGitProvider } from '../../workspaces/workspace-git.test-util';
 import type { HarnessToolContext } from '../tool.types';
 import {
   ListReferenceProjectsTool,
@@ -47,7 +48,7 @@ const workspaces = () =>
 describe('reference_project', () => {
   it('clones + orients a known catalog project', async () => {
     const ws = workspaces();
-    const tool = new ReferenceProjectTool(projects([rec()]), ws);
+    const tool = new ReferenceProjectTool(projects([rec()]), localGitProvider(ws));
     const out = await tool.execute({ name: 'cubix-infra' }, ctx);
     expect(ws.ensureReferenceClone).toHaveBeenCalledWith('T1', {
       projectId: 'cubix-infra',
@@ -57,13 +58,19 @@ describe('reference_project', () => {
   });
 
   it('matches by display name too', async () => {
-    const tool = new ReferenceProjectTool(projects([rec()]), workspaces());
+    const tool = new ReferenceProjectTool(
+      projects([rec()]),
+      localGitProvider(workspaces()),
+    );
     const out = await tool.execute({ name: 'Cubix Infra' }, ctx);
     expect(out).toContain('Referenced cubix-infra');
   });
 
   it('hands back an onboard Remedy when the project is unknown', async () => {
-    const tool = new ReferenceProjectTool(projects([]), workspaces());
+    const tool = new ReferenceProjectTool(
+      projects([]),
+      localGitProvider(workspaces()),
+    );
     const out = await tool.execute({ name: 'mystery' }, ctx);
     expect(out).toMatch(/Remedy:/);
     expect(out).toContain('onboard_project');
@@ -72,7 +79,7 @@ describe('reference_project', () => {
 
 describe('reference_repo', () => {
   it('rejects a non-GitHub URL', async () => {
-    const tool = new ReferenceRepoTool(workspaces());
+    const tool = new ReferenceRepoTool(localGitProvider(workspaces()));
     const out = await tool.execute({ url: 'http://example.com' }, ctx);
     expect(out).toMatch(/isn't an https/i);
   });

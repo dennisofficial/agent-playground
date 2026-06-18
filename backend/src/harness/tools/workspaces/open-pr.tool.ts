@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { parseGithubRepo } from '../../projects/git-auth';
 import { GithubApiService } from '../../projects/github-api.service';
 import { GithubTokenStore } from '../../projects/github-token-store';
+import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { IHarnessTool } from '../tool.types';
@@ -28,6 +29,7 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
 
   constructor(
     private readonly workspaces: WorkspaceService,
+    private readonly workspaceGit: WorkspaceGitProvider,
     private readonly tokens: GithubTokenStore,
     private readonly github: GithubApiService,
   ) {}
@@ -42,9 +44,15 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
     if (!ws.sharedBranch) {
       return `${workspaceId} is not on a shared branch — create it with the \`shared\` option; the PR is opened from the shared branch.`;
     }
+    // The git port for this workspace's tenancy (local host today; the sandbox once Phase 9 flips on).
+    const git = this.workspaceGit.resolve({
+      team: ws.team,
+      project: ws.project,
+      workspaceId,
+    });
     // Resolves through the workspace's repo origin too, so a project association lost across a
     // restart (or a tree created pre-registration) recovers instead of failing as "(none)".
-    const rec = await this.workspaces.projectRecordFor(workspaceId);
+    const rec = await git.projectRecordFor(workspaceId);
     if (!rec) {
       return `No registered GitHub repo matches ${workspaceId} (project "${ws.project || '(none)'}") — Dennis can register it via the admin API; until then the shared branch stays local.`;
     }
@@ -58,8 +66,7 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
     }
     try {
       // Ensure origin actually has the branch (idempotent; also runs the repo identity guard).
-      const { sharedBranch } =
-        await this.workspaces.pushSharedToOrigin(workspaceId);
+      const { sharedBranch } = await git.pushSharedToOrigin(workspaceId);
       const { owner, repo } = parseGithubRepo(rec.gitUrl);
       const pr = await this.github.openPullRequest(auth.token, {
         owner,

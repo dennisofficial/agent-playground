@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { localGitProvider } from '../workspaces/workspace-git.test-util';
 import { ReviewPipelineService } from './review-pipeline.service';
 import type { Session } from './session-registry.port';
 
@@ -206,6 +207,8 @@ function build(opts: {
     credCtx,
     creds,
     workspaces,
+    // the async-git surface routes through the provider; resolve to the same mock service.
+    localGitProvider(workspaces),
     tokens,
     github,
     board,
