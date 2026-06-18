@@ -20,5 +20,19 @@ services:
       timeout: 5s
       retries: 10
 
+  # The host↔daemon communication bus (Redis Streams/pub-sub). Host 6380 (container 6379) so it runs
+  # alongside any personal Redis on the default 6379 — mirrors the Postgres 5433 choice. Workspace
+  # sandboxes reach it by service DNS on this compose network; the host harness via localhost:6380.
+  redis:
+    image: redis:7-alpine
+    container_name: agent-playground-redis
+    ports:
+      - '6380:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   pgdata:

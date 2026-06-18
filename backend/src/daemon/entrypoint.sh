@@ -48,8 +48,19 @@ trap shutdown SIGTERM SIGINT
 #    backs /var/lib/docker so images/containers are private + survive a daemon restart within the
 #    sandbox's life. Logs go to a file so they don't drown the daemon's stdout (the host tails the
 #    daemon's logs).
+# Storage driver: default to dockerd's own auto-detect (overlay2 on a real Linux host = the OVH prod
+# target — fast). But on Docker Desktop / any nested-overlay host, overlay2 cannot mount
+# overlay-on-overlay (`failed to mount … overlay … invalid argument`) — set DOCKERD_STORAGE_DRIVER=vfs
+# there (universally works, slower/more disk). The host's ContainerManager injects this per environment.
+storage_opt=""
+if [ -n "${DOCKERD_STORAGE_DRIVER:-}" ]; then
+  storage_opt="--storage-driver=${DOCKERD_STORAGE_DRIVER}"
+  log "inner dockerd storage-driver=${DOCKERD_STORAGE_DRIVER}"
+fi
+
 log "starting inner dockerd…"
-dockerd >/var/log/dockerd.log 2>&1 &
+# shellcheck disable=SC2086  # storage_opt is intentionally word-split (empty = no flag)
+dockerd ${storage_opt} >/var/log/dockerd.log 2>&1 &
 dockerd_pid=$!
 
 # 2) Wait for the inner socket to answer. The Node daemon ALSO gates its readiness marker on docker

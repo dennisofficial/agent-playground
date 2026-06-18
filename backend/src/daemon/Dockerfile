@@ -84,7 +84,11 @@ https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_C
     && rm -rf /var/lib/apt/lists/*
 
 # pnpm via corepack, pinned to the repo's packageManager (root package.json: pnpm@11.1.2).
-RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
+# corepack bundled with node:22.13 carries stale npm signing keys → "Internal Error: Cannot find
+# matching keyid" when it fetches pnpm. Upgrade corepack first so it has current keys (keeps signature
+# verification ON), then activate the pinned pnpm.
+RUN npm install --global corepack@latest \
+    && corepack enable && corepack prepare pnpm@11.1.2 --activate
 
 # The codex CLI on PATH at the SDK-matched version (agent shell convenience — see ARG notes above;
 # the engines themselves resolve their binaries from the pinned SDK packages, not from PATH).
@@ -112,7 +116,11 @@ RUN pnpm --filter "./packages/**" run build \
     && pnpm --filter "@workspace/shared" run build
 
 # Bake Playwright + chromium and its OS deps (the agent drives a real browser in-sandbox).
-RUN pnpm --filter backend exec playwright install --with-deps chromium
+# playwright is NOT a project dependency — it's a tool the AGENT invokes in its own shell — so install
+# the CLI globally (on PATH) rather than via `pnpm exec`. Browsers land at PLAYWRIGHT_BROWSERS_PATH
+# (/ms-playwright, set in the base stage); `--with-deps` runs apt-get (it updates its own lists).
+RUN npm install --global playwright \
+    && playwright install --with-deps chromium
 
 # Compile just the daemon nest-cli project → dist/daemon/main.js (+ the harness/_core/_lib it pulls).
 RUN pnpm --filter backend exec nest build daemon
@@ -123,7 +131,11 @@ RUN pnpm --filter backend exec nest build daemon
 # any aggressive manual deletion that strips them.
 # `confirmModulesPurge=false` is REQUIRED: re-installing with --prod over a full node_modules makes
 # pnpm PURGE the dev deps, and in a non-TTY build it would otherwise BLOCK on a confirmation prompt.
-RUN pnpm install --frozen-lockfile --prod --config.confirmModulesPurge=false
+# `--ignore-scripts`: the prod reinstall would otherwise re-run workspace `prepare` scripts (e.g.
+# shared's `tsup` build), but tsup is a dev dep that the prod prune strips → "tsup not found". shared/
+# dist is ALREADY built in stage 4, so skip lifecycle scripts here (the ESM SDK platform binaries are
+# plain optional-dep downloads, not build scripts, so they survive).
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts --config.confirmModulesPurge=false
 
 # -----------------------------------------------------------------------------
 # Stage 3: runtime — the lean image the sandbox actually runs.
