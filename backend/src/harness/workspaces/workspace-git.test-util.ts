@@ -29,9 +29,13 @@ export function fakeSandboxRegistry(
  * this phase. The helper collapses the adapter hop the mock service already stands in for.
  */
 export function localGitProvider(
-  git: Partial<WorkspaceGitPort> | WorkspaceService,
+  git: Partial<WorkspaceGitPort> | WorkspaceService = {},
 ): WorkspaceGitProvider {
   return {
     resolve: () => git as WorkspaceGitPort,
+    // The flag-off default: every consumer fork takes its LOCAL branch, and no daemon adapter is handed
+    // out. Phase-11 call-site forks (review/ship/open_pr/attachDesign) read these to choose host-vs-daemon.
+    isContainerized: () => false,
+    daemonFor: () => undefined,
   } as unknown as WorkspaceGitProvider;
 }

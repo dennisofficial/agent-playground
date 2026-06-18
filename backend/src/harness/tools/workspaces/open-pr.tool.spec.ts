@@ -177,3 +177,54 @@ describe('open_pr tool', () => {
     expect(calls).toEqual(['push']); // never reached the GitHub API
   });
 });
+
+describe('open_pr tool — containerized routing (host has NO git)', () => {
+  it('opens the DRAFT PR via the daemon, never the host workspace/github', async () => {
+    const openPr = vi.fn(async () => ({
+      url: 'https://github.com/dennis/proj/pull/9',
+      number: 9,
+      existing: false,
+    }));
+    const daemon = { openPr };
+    const hostGet = vi.fn(() => undefined); // host has no sandbox workspace row
+    const hostPr = vi.fn();
+    const workspaceGit = {
+      isContainerized: () => true,
+      daemonFor: () => daemon,
+    } as never;
+    const tool = new OpenPrTool(
+      { get: hostGet } as never,
+      workspaceGit,
+      { resolve: async () => undefined } as never,
+      { openPullRequest: hostPr } as never,
+    );
+    const out = await tool.execute({
+      workspaceId: 'sandbox-uuid-1',
+      title: 'Feature',
+      body: 'desc',
+    });
+    expect(openPr).toHaveBeenCalledWith({ title: 'Feature', body: 'desc', draft: true });
+    expect(out).toContain('Opened DRAFT PR: https://github.com/dennis/proj/pull/9');
+    // No host github / workspace lookup on the containerized path.
+    expect(hostGet).not.toHaveBeenCalled();
+    expect(hostPr).not.toHaveBeenCalled();
+  });
+
+  it('reports an existing PR with the existing wording', async () => {
+    const daemon = {
+      openPr: vi.fn(async () => ({
+        url: 'https://github.com/dennis/proj/pull/3',
+        number: 3,
+        existing: true,
+      })),
+    };
+    const tool = new OpenPrTool(
+      { get: () => undefined } as never,
+      { isContainerized: () => true, daemonFor: () => daemon } as never,
+      { resolve: async () => undefined } as never,
+      { openPullRequest: vi.fn() } as never,
+    );
+    const out = await tool.execute({ workspaceId: 'sandbox-uuid-1', title: 'T' });
+    expect(out).toContain("shared branch already exists: https://github.com/dennis/proj/pull/3");
+  });
+});

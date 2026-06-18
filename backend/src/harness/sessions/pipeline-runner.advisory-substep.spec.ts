@@ -9,7 +9,7 @@ import {
   FakeSectionStore,
   type Row,
 } from './pipeline-runner.test-fakes';
-import { fakeSandboxRegistry } from '../workspaces/workspace-git.test-util';
+import { fakeSandboxRegistry, localGitProvider } from '../workspaces/workspace-git.test-util';
 
 /**
  * The 'advisory' planningSubstep (Phase 3a): the one-shot codex_advisory self-review runs INSIDE the
@@ -89,6 +89,7 @@ function build() {
     reviewStore as never,
     notes as never,
     fakeSandboxRegistry() as never,
+    localGitProvider() as never,
   );
   return { svc, runs, runner, sessionRows };
 }

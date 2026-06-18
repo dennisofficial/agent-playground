@@ -29,6 +29,17 @@ const LABEL_TEAM = 'com.agent.team';
 const LABEL_PROJECT = 'com.agent.project';
 const LABEL_REPO = 'com.agent.repo';
 const LABEL_MANAGED = 'com.agent.managed';
+/**
+ * The short bootstrap token, persisted as a label so a sandbox RE-ADOPTED on boot can still serve the
+ * cred-pull channel (the in-process token doesn't survive a host restart). This is the ONLY secret on a
+ * label, and a DELIBERATE, scoped tradeoff: it's only the short bootstrap token (the cred-channel auth),
+ * NOT the GitHub PAT / LLM key (those never touch the container env — they ride the bus per request/run).
+ * A `docker inspect`-readable bootstrap token lets a local attacker pull the GitHub credential for that
+ * workspace; acceptable on the single-owner box, and the alternative (a host-side durable store) buys
+ * little when an attacker with socket access can already read far more. Without this, an adopted sandbox
+ * can't serve creds until it's recreated.
+ */
+const LABEL_BOOT_TOKEN = 'com.agent.boot-token';
 
 /** Resource defaults — conservative single-box limits (the locked privileged-DinD tradeoff makes
  * these a blast-radius backstop, not real isolation). Tunable later via env if needed. */
@@ -128,11 +139,14 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     const found = containers[0];
     if (!found) return undefined;
     const record = this.toRecord(found);
-    // A found-by-label sandbox keeps whatever token the registry already holds (created this process);
-    // an externally-running one has none until recreated.
+    // Prefer the in-process registry token (created this process), else fall back to the one recovered
+    // from the container label (`toRecord` already read it) — so a sandbox re-adopted across a restart
+    // still has its bootstrap token and can serve the cred-pull.
     return {
       ...record,
-      bootstrapToken: this.registry.get(record.workspaceId)?.bootstrapToken,
+      bootstrapToken:
+        this.registry.get(record.workspaceId)?.bootstrapToken ??
+        record.bootstrapToken,
     };
   }
 
@@ -169,6 +183,8 @@ export class ContainerManagerService implements OnApplicationBootstrap {
       [LABEL_TEAM]: sanitizeLabelValue(team),
       [LABEL_PROJECT]: sanitizeLabelValue(project),
       [LABEL_REPO]: sanitizeLabelValue(repo),
+      // Persisted so a re-adopted sandbox can recover it and keep serving the cred-pull (see LABEL_BOOT_TOKEN).
+      [LABEL_BOOT_TOKEN]: bootstrapToken,
     };
 
     const spec: CreateContainerSpec = {
@@ -274,9 +290,10 @@ export class ContainerManagerService implements OnApplicationBootstrap {
           );
           continue;
         }
-        // No bootstrap token survives a restart (it was never a label / never persisted) — an adopted
-        // sandbox can't serve the cred-channel until it's recreated. Documented limitation. We still
-        // WATCH its cred-req channel so a request gets a clean rejection (not silence) until recreate.
+        // The bootstrap token now SURVIVES a restart (persisted as `com.agent.boot-token`; `toRecord`
+        // recovered it), so an adopted sandbox can serve the cred-channel without being recreated. A
+        // sandbox created before this label existed (or with the label stripped) still adopts WITHOUT a
+        // token — its cred-req then gets a clean rejection (not silence) until recreate.
         this.registry.upsert(record);
         await this.credentials.watch(record.workspaceId);
         this.logger.log(
@@ -286,8 +303,10 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     });
   }
 
-  /** Parse a managed container's labels into a registry record (boot reconcile + find share this). */
+  /** Parse a managed container's labels into a registry record (boot reconcile + find share this). The
+   * bootstrap token is recovered from its label so a RE-ADOPTED sandbox can still serve the cred-pull. */
   private toRecord(c: ContainerSummary): SandboxRecord {
+    const bootstrapToken = c.labels[LABEL_BOOT_TOKEN];
     return {
       workspaceId: c.labels[LABEL_WORKSPACE] ?? '',
       team: c.labels[LABEL_TEAM] ?? '',
@@ -295,6 +314,7 @@ export class ContainerManagerService implements OnApplicationBootstrap {
       repo: c.labels[LABEL_REPO] ?? '',
       containerId: c.id,
       status: toStatus(c.state),
+      ...(bootstrapToken ? { bootstrapToken } : {}),
     };
   }
 

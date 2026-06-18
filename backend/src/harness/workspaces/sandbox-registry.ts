@@ -15,10 +15,12 @@ export interface SandboxRecord {
   /** The Docker container id backing this workspace. */
   containerId: string;
   status: SandboxStatus;
-  /** The short random bootstrap token issued to this sandbox — the cred-channel auth secret. NOT a
-   * label (a label is world-readable via `docker inspect`); known only in-process and re-issued on the
-   * sandbox's next (re)create. Undefined for a container ADOPTED on boot (the original token was never
-   * persisted — a re-adopted sandbox can't serve creds until it's recreated; documented limitation). */
+  /** The short random bootstrap token issued to this sandbox — the cred-channel auth secret. Persisted
+   * as the `com.agent.boot-token` container label (the single deliberate secret-on-a-label tradeoff — see
+   * ContainerManagerService.LABEL_BOOT_TOKEN; it's only the cred-channel auth, NOT the GitHub PAT / LLM
+   * key) so a sandbox re-adopted on boot recovers it from the label and keeps serving the cred-pull.
+   * Undefined only for a sandbox created before the label existed (or with the label stripped) — its
+   * cred-req then gets a clean rejection until recreate. */
   bootstrapToken?: string;
 }
 

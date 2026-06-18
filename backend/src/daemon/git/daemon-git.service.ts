@@ -1,6 +1,16 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { access, appendFile, mkdir, realpath } from 'node:fs/promises';
+import {
+  access,
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import {
@@ -51,6 +61,10 @@ export interface DaemonWorktree {
   branch: string;
   /** The on-disk checkout path — the engine's cwd. */
   path: string;
+  /** The base sha the worktree was CUT FROM (`origin/<base>` at create time). The durable diff base
+   * for `reviewRange` — matches the host `WorkspaceService` semantics of diffing against the recorded
+   * cut point rather than the live origin head (which may have advanced since the cut). */
+  baseSha: string;
 }
 
 /** The outcome of a publish/pull against the workspace's shared integration branch (mirrors the
@@ -329,7 +343,12 @@ export class DaemonGitService {
       );
     }
 
-    const wt: DaemonWorktree = { sessionId, branch, path: await realpath(checkout) };
+    const wt: DaemonWorktree = {
+      sessionId,
+      branch,
+      path: await realpath(checkout),
+      baseSha: startPoint,
+    };
     this.worktrees.set(sessionId, wt);
     this.logger.log(`session ${sessionId}: worktree ${branch} at ${wt.path}`);
     return wt.path;
@@ -594,6 +613,58 @@ export class DaemonGitService {
     return { range, files };
   }
 
+  /**
+   * Git-derived shared-branch status for `list_workspaces` — the in-sandbox counterpart to the host
+   * `WorkspaceService.sharedStatus`. `published` = the session's branch is an ancestor of the sandbox's
+   * shared branch (its work is on the shared branch); `aheadOfOrigin` = shared commits origin doesn't have
+   * yet (undefined when origin's ref is unknown locally). `undefined` when no shared branch exists yet.
+   * Read-only; closes the host-only `DaemonGitAdapter.sharedStatus` rejection.
+   */
+  async sharedStatus(
+    sessionId: string,
+  ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined> {
+    const wt = this.worktrees.get(sessionId);
+    if (!wt || !this.sharedBranch) return undefined;
+    const shared = this.sharedBranch;
+    const { root } = this.requireRepo();
+    const published = await this.git(
+      ['merge-base', '--is-ancestor', wt.branch, shared],
+      root,
+    ).then(
+      () => true,
+      () => false,
+    );
+    const ahead = await this.git(
+      ['rev-list', '--count', `origin/${shared}..${shared}`],
+      root,
+    ).then(
+      (s) => Number(s),
+      () => undefined,
+    );
+    return {
+      published,
+      ...(ahead !== undefined ? { aheadOfOrigin: ahead } : {}),
+    };
+  }
+
+  /**
+   * The review diff-scope for a session — the in-sandbox counterpart to the host
+   * `ReviewPipelineService.ticketRange`. The host diffs the workspace branch since its recorded CUT
+   * POINT (`baseRef`); here the equivalent durable base is the worktree's `baseSha` (captured at
+   * `createWorktree` from `origin/<base>`), so the range matches the host semantics rather than diffing
+   * against a possibly-advanced live origin head. Returns the range + changed files + the base branch
+   * name (for the review prompt). Empty `files` ⇒ nothing to review. The host doesn't need its
+   * `projectRecordFor`/`baseRef` lookup on the sandbox path — the daemon owns the base by construction.
+   */
+  async reviewRange(
+    sessionId: string,
+  ): Promise<{ range: string; files: string[]; baseBranch: string }> {
+    const wt = this.requireWorktree(sessionId);
+    const { baseBranch } = this.requireRepo();
+    const { range, files } = await this.ownerDiff(sessionId, wt.baseSha);
+    return { range, files, baseBranch };
+  }
+
   // ---- publish / pull / push ---------------------------------------------------------------------
 
   private requireShared(sessionId: string): {
@@ -755,6 +826,57 @@ export class DaemonGitService {
     return this.github.markReadyForReview(token, { owner, repo, number: prNumber });
   }
 
+  /** Post a comment on the workspace's PR (advisory self-review findings ride this — the pipeline ship's
+   * informational comment). Reuses `GithubApiService.commentOnPullRequest` verbatim; the daemon resolves
+   * its own repo coordinates + token, so the host never needs them on the containerized ship path. */
+  async commentPr(prNumber: number, body: string): Promise<void> {
+    const { owner, repo } = parseGithubRepo(this.requireRepo().gitUrl);
+    const { token } = await this.credentials.resolve();
+    await this.github.commentOnPullRequest(token, {
+      owner,
+      repo,
+      number: prNumber,
+      body,
+    });
+  }
+
+  // ---- design artifact (interim human-gate) ------------------------------------------------------
+
+  /**
+   * Write a design artifact (a base64-encoded zip the host sends over the git RPC) into the sandbox
+   * clone's `design/` — the in-sandbox counterpart to the host pipeline's `attachDesign` unzip into
+   * `workspace.path/design`. Writes to the CLONE ROOT (NOT a per-session worktree): at the design gate
+   * no engine session exists yet (the implementer session opens AFTER the gate), so there's no worktree
+   * to key off — the artifact lands at the shared clone root. KNOWN GAP (the same per-session-worktree
+   * accumulation gap that affects in-sandbox section pipelines generally): a later implementer worktree
+   * is cut from `origin/<base>` and so does NOT automatically see this clone-root `design/`; making the
+   * design flow into the implementer's worktree needs the broader in-sandbox accumulation work and is out
+   * of scope for this flag-off closure. The base64 transfer is the heaviest RPC payload but acceptable for
+   * v1. Returns a structured ok/message (never throws on an unzip failure — the caller relays the message).
+   */
+  async attachDesign(
+    artifactBase64: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    const { root } = this.requireRepo();
+    const designDir = join(root, 'design');
+    let tmp: string | undefined;
+    try {
+      tmp = await mkdtemp(join(tmpdir(), 'daemon-design-'));
+      const zipPath = join(tmp, 'design.zip');
+      await writeFile(zipPath, Buffer.from(artifactBase64, 'base64'));
+      await mkdir(designDir, { recursive: true });
+      await execFileAsync('unzip', ['-o', zipPath, '-d', designDir]);
+      return { ok: true, message: `design attached to ${designDir}` };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `couldn't unzip the design artifact into the sandbox: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    } finally {
+      if (tmp) await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   // ---- reference clones (read-only, for investigate) ---------------------------------------------
 
   /**
@@ -794,5 +916,30 @@ export class DaemonGitService {
       );
     }
     return { path: await realpath(root), gitUrl };
+  }
+
+  /**
+   * A quick at-a-glance orientation (top level + README head) for an in-sandbox reference-clone path —
+   * the in-sandbox counterpart to the host `WorkspaceService.referenceOrientation`. Same shape/limits so
+   * the chat-side peek reads identically whether the clone is host- or sandbox-resident. Closes the
+   * host-only `DaemonGitAdapter.referenceOrientation` rejection.
+   */
+  async referenceOrientation(path: string): Promise<string> {
+    const tree = await this.git(['ls-tree', '--name-only', 'HEAD'], path).catch(
+      () => '',
+    );
+    const top = tree.split('\n').filter(Boolean).slice(0, 40).join(', ');
+    let readme = '';
+    for (const name of ['README.md', 'README.MD', 'readme.md', 'README']) {
+      const r = await readFile(join(path, name), 'utf8').catch(() => undefined);
+      if (r) {
+        readme = r.slice(0, 1200);
+        break;
+      }
+    }
+    return [
+      `Top level: ${top || '(empty)'}`,
+      readme ? `README (head):\n${readme}` : '(no README found)',
+    ].join('\n\n');
   }
 }

@@ -69,6 +69,7 @@ function buildRunner(reviewFull: {
     reviewStore as never,
     notes as never,
     fakeSandboxRegistry() as never,
+    localGitProvider() as never,
   );
   return { svc, runs, shipTask, reviewFullImplementation, boardEvents, notes };
 }

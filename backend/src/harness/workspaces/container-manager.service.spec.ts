@@ -292,7 +292,8 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       status: 'stopped', // exited → stopped
     });
 
-    // Adopted sandboxes carry NO bootstrap token (never persisted) — but ARE watched for clean rejection.
+    // These fixtures predate the `com.agent.boot-token` label, so they adopt WITHOUT a token — but ARE
+    // watched for clean rejection. (A container created with the label recovers its token; see below.)
     expect(a!.bootstrapToken).toBeUndefined();
     expect(credentials.watch).toHaveBeenCalledWith(wsIdA);
     expect(credentials.watch).toHaveBeenCalledWith(wsIdB);
@@ -300,6 +301,44 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     // find() resolves the existing sandbox without a new container.
     const found = registry.find({ team: TEAM, project: PROJECT });
     expect(found?.workspaceId).toBe(wsIdA);
+  });
+
+  it('(e) create persists the bootstrap token as the com.agent.boot-token label', async () => {
+    const rec = await manager.ensureWorkspace(TEAM, PROJECT);
+    const spec = engine.created[0];
+    expect(spec.labels['com.agent.boot-token']).toBe(rec.bootstrapToken);
+    expect(rec.bootstrapToken).toBeDefined();
+  });
+
+  it('(e) a re-adopted sandbox RECOVERS its bootstrap token from the label (survives restart)', async () => {
+    const wsId = 'uuid-tok';
+    engine.seed(
+      {
+        name: `agent-ws-${wsId}`,
+        image: 'img',
+        env: [],
+        labels: {
+          'com.agent.managed': '1',
+          'com.agent.workspace': wsId,
+          'com.agent.team': TEAM,
+          'com.agent.project': PROJECT,
+          'com.agent.repo': REPO,
+          'com.agent.boot-token': 'persisted-token-123',
+        },
+        privileged: true,
+        binds: [],
+        restartPolicy: 'unless-stopped',
+      },
+      'running',
+    );
+    // Fresh process: a registry that never issued this token still recovers it from the label on reconcile,
+    // so the sandbox can keep serving the cred-pull without being recreated.
+    await manager.onApplicationBootstrap();
+    expect(registry.get(wsId)?.bootstrapToken).toBe('persisted-token-123');
+    // findRunning (the ensureWorkspace fast path) recovers it too.
+    const found = await manager.ensureWorkspace(TEAM, PROJECT);
+    expect(found.workspaceId).toBe(wsId);
+    expect(found.bootstrapToken).toBe('persisted-token-123');
   });
 
   it('destroyWorkspace stops + removes the container, unwatches creds, and clears readiness', async () => {

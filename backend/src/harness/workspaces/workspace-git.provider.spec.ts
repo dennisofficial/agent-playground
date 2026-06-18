@@ -36,7 +36,7 @@ class TestableProvider extends WorkspaceGitProvider {
   ) {
     super(local, daemonClient, noSandboxes);
   }
-  protected isContainerized(): boolean {
+  public override isContainerized(): boolean {
     return this.forceContainerized;
   }
 }

@@ -10,7 +10,7 @@ import {
   FakeSectionStore,
   type Row,
 } from './pipeline-runner.test-fakes';
-import { fakeSandboxRegistry } from '../workspaces/workspace-git.test-util';
+import { fakeSandboxRegistry, localGitProvider } from '../workspaces/workspace-git.test-util';
 
 /**
  * Phase 4 — grouped phase execution. A coding-session GROUP folds CONSECUTIVE phases into ONE execute
@@ -90,6 +90,7 @@ function build() {
     reviewStore as never,
     notes as never,
     fakeSandboxRegistry() as never,
+    localGitProvider() as never,
   );
   return {
     svc,

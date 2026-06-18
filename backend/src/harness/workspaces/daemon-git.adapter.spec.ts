@@ -105,6 +105,50 @@ describe('DaemonGitAdapter — host↔daemon identity mapping', () => {
     ]);
   });
 
+  it('sharedStatus is a per-worktree RPC (keyed off ctx.session.id)', async () => {
+    const { daemon, gitCall } = makeClient({ published: true, aheadOfOrigin: 0 });
+    const adapter = new DaemonGitAdapter(daemon, SANDBOX, CTX);
+    await adapter.sharedStatus('ws-1');
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'sharedStatus', [SESSION_ID]);
+  });
+
+  it('referenceOrientation is a PATH RPC (no session arg — like ensureReferenceClone)', async () => {
+    const { daemon, gitCall } = makeClient('Top level: src');
+    const adapter = new DaemonGitAdapter(daemon, SANDBOX, CTX);
+    await adapter.referenceOrientation('/refs/p');
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'referenceOrientation', [
+      '/refs/p',
+    ]);
+  });
+
+  it('off-port daemon ops: reviewRange (per-worktree), openPr/markReady/commentPr (sandbox-scoped), attachDesign (clone-root)', async () => {
+    const { daemon, gitCall } = makeClient({ url: 'http://pr/1', number: 7 });
+    const adapter = new DaemonGitAdapter(daemon, SANDBOX, CTX);
+
+    gitCall.mockClear();
+    await adapter.reviewRange();
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'reviewRange', [SESSION_ID]);
+
+    gitCall.mockClear();
+    const prArgs = { title: 't', body: 'b', draft: false };
+    await adapter.openPr(prArgs);
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'openPr', [prArgs]);
+
+    gitCall.mockClear();
+    await adapter.markReady(7);
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'markReady', [7]);
+
+    gitCall.mockClear();
+    await adapter.commentPr(7, 'findings');
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'commentPr', [7, 'findings']);
+
+    // attachDesign takes NO session id (the daemon writes to the clone root — the design gate has no
+    // engine session); just the base64 artifact.
+    gitCall.mockClear();
+    await adapter.attachDesign('YmFzZTY0');
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'attachDesign', ['YmFzZTY0']);
+  });
+
   it('a per-worktree op with NO session in ctx throws (the session is the worktree key)', async () => {
     const { daemon } = makeClient();
     const adapter = new DaemonGitAdapter(daemon, SANDBOX, {
@@ -115,16 +159,13 @@ describe('DaemonGitAdapter — host↔daemon identity mapping', () => {
     await expect(adapter.publish('ws-1')).rejects.toThrow(/needs ctx\.session/);
   });
 
-  it('host-only methods (no daemon counterpart) throw a clear unavailable error', async () => {
+  it('projectRecordFor (the one host-only method) throws a clear unavailable error', async () => {
     const { daemon } = makeClient();
     const adapter = new DaemonGitAdapter(daemon, SANDBOX, CTX);
+    // The single-repo daemon's clone IS the project — there's no multi-project record to resolve. The
+    // containerized review/ship/open_pr call sites fork on isContainerized and use the off-port daemon
+    // ops instead, so they never ask the daemon adapter for projectRecordFor.
     await expect(adapter.projectRecordFor('ws-1')).rejects.toThrow(
-      /no in-sandbox counterpart/,
-    );
-    await expect(adapter.sharedStatus('ws-1')).rejects.toThrow(
-      /no in-sandbox counterpart/,
-    );
-    await expect(adapter.referenceOrientation('/refs/p')).rejects.toThrow(
       /no in-sandbox counterpart/,
     );
   });

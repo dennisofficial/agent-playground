@@ -345,4 +345,93 @@ describe('DaemonGitService (real git, file:// origin)', () => {
       await rm(join(other.dir, '..'), { recursive: true, force: true });
     }
   });
+
+  // ── Phase 11: in-sandbox pipeline closure RPCs ──────────────────────────────────────────────────
+
+  it('reviewRange diffs the session branch since its recorded CUT SHA (matches host ticketRange)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
+    const path = await service.createWorktree('sess-1');
+    const cut = await git(root, 'rev-parse', 'origin/main');
+    await commit(path, 'feature.ts', 'export const x = 1;\n');
+    await commit(path, 'helper.ts', 'export const y = 2;\n');
+
+    const rr = await service.reviewRange('sess-1');
+    expect(rr.baseBranch).toBe('main');
+    // The range is <cutSha>...<branch> — the durable cut point, NOT the live origin head.
+    expect(rr.range).toBe(`${cut}...agent/sess-1`);
+    expect(rr.files.sort()).toEqual(['feature.ts', 'helper.ts']);
+  });
+
+  it('reviewRange does NOT widen when origin/base advances after the cut (uses the recorded baseSha)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
+    const path = await service.createWorktree('sess-1');
+    const cut = await git(root, 'rev-parse', 'origin/main');
+    await commit(path, 'mine.ts', 'mine\n');
+
+    // Advance origin/main behind the session's back (a teammate merged a PR).
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-adv-')));
+    await git(scratch, 'clone', origin.dir, 'c');
+    const oc = join(scratch, 'c');
+    await git(oc, 'config', 'user.email', 'o@test');
+    await git(oc, 'config', 'user.name', 'o');
+    await commit(oc, 'theirs.ts', 'theirs\n');
+    await git(oc, 'push', 'origin', 'main');
+    await rm(scratch, { recursive: true, force: true });
+
+    const rr = await service.reviewRange('sess-1');
+    // The diff base is the worktree's recorded cut sha, so the advanced origin file is NOT in scope.
+    expect(rr.range).toBe(`${cut}...agent/sess-1`);
+    expect(rr.files).toEqual(['mine.ts']);
+  });
+
+  it('sharedStatus reports published + aheadOfOrigin for the session branch', async () => {
+    await service.ensureClone(workspaceRoot, origin.url, 'main');
+    // No shared branch yet → undefined.
+    const path = await service.createWorktree('sess-1');
+    expect(await service.sharedStatus('sess-1')).toBeUndefined();
+
+    await commit(path, 'a.txt', 'work\n');
+    await service.ensureShared('sess-1', 'feat');
+    // Published onto shared (publish fast-forwards shared from the branch + pushes origin).
+    await service.publish('sess-1');
+    const st = await service.sharedStatus('sess-1');
+    expect(st?.published).toBe(true);
+    // Publish pushed shared to origin → nothing ahead.
+    expect(st?.aheadOfOrigin).toBe(0);
+  });
+
+  it('attachDesign unzips a base64 artifact into the clone root design/ (no session needed)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
+    // Build a tiny zip in a scratch dir, base64 it, and attach.
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-design-')));
+    await writeFile(join(scratch, 'spec.md'), '# design\n');
+    await execFileAsync('zip', ['-j', join(scratch, 'd.zip'), join(scratch, 'spec.md')]);
+    const b64 = (await readFile(join(scratch, 'd.zip'))).toString('base64');
+    await rm(scratch, { recursive: true, force: true });
+
+    const res = await service.attachDesign(b64);
+    expect(res.ok).toBe(true);
+    expect(await readFile(join(root, 'design', 'spec.md'), 'utf8')).toBe('# design\n');
+  });
+
+  it('attachDesign returns a structured failure (never throws) for a bad artifact', async () => {
+    await service.ensureClone(workspaceRoot, origin.url, 'main');
+    const res = await service.attachDesign('not-a-zip');
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/couldn't unzip/i);
+  });
+
+  it('referenceOrientation summarizes an in-sandbox reference clone (top level + README head)', async () => {
+    await service.ensureClone(workspaceRoot, origin.url, 'main');
+    const other = await makeBareOrigin();
+    try {
+      const ref = await service.ensureReferenceClone({ gitUrl: other.url });
+      const orient = await service.referenceOrientation(ref.path);
+      expect(orient).toContain('Top level:');
+      expect(orient).toContain('README.md');
+      expect(orient).toContain('hello'); // the README head (makeRepo seeds 'hello\n')
+    } finally {
+      await rm(join(other.dir, '..'), { recursive: true, force: true });
+    }
+  });
 });

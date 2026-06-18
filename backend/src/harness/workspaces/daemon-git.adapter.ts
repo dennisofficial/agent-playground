@@ -1,3 +1,4 @@
+import type { PullRequestResult } from '../projects/github-api.service';
 import type { ProjectRecord } from '../projects/project.types';
 import type {
   BaseRefreshResult,
@@ -26,12 +27,20 @@ import type { DaemonClient } from './daemon-client';
  * dispatch target) AND the resolving `ctx` (the source of the session worktree key). DORMANT until
  * `WORKSPACE_SANDBOX_ENABLED` lets a sandbox exist; exercised by unit tests with a fake `DaemonClient`.
  *
- * THREE host methods have NO daemon counterpart (not in the daemon git-RPC allowlist) — they are
- * HOST-REGISTRY / multi-project reads the single-repo daemon doesn't model: `projectRecordFor`,
- * `sharedStatus`, `referenceOrientation`. They throw a clear "not available in a sandbox" error so a
- * mis-route surfaces loudly rather than silently returning wrong data. The callers that use them
- * (list_workspaces' shared-status, the integrate barrier's project lookup, reference orientation) are
- * documented containerized gaps for a later phase; none is on the containerized hot path this phase.
+ * `sharedStatus` + `referenceOrientation` now route to real daemon RPCs (the daemon computes them from
+ * ITS tree / an in-sandbox reference clone). ONE host port method has NO daemon counterpart by design:
+ * `projectRecordFor` — a HOST-REGISTRY / multi-project read the single-repo daemon doesn't model (its
+ * clone IS the project, by construction). It stays a loud `unavailable()` rejection so a mis-route
+ * surfaces; the containerized callers that used to need it (the review/ship barrier, open_pr) now FORK
+ * at the call site on `WorkspaceGitProvider.isContainerized` and use the off-port daemon ops below
+ * instead, so they never ask the daemon adapter for `projectRecordFor`.
+ *
+ * OFF-PORT DAEMON OPS (`reviewRange`/`attachDesign`/`openPr`/`markReady`/`commentPr`): these are NOT on
+ * `WorkspaceGitPort` (which must stay byte-for-byte mirrorable by the pure-pass-through
+ * `LocalWorkspaceAdapter`). They're daemon-only — the host's containerized branch reaches them via
+ * `WorkspaceGitProvider.daemonFor(ctx)` (which narrows the port to a `DaemonGitAdapter`). The daemon is
+ * self-sufficient for them: it owns its repo + base + the GitHub credential, so `openPr`/`markReady`/
+ * `commentPr` need no host project record / token, and `reviewRange` needs no host `baseRef`.
  */
 export class DaemonGitAdapter implements WorkspaceGitPort {
   constructor(
@@ -149,19 +158,59 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
     return this.call('ensureReferenceClone', [target]);
   }
 
-  // ── host-only methods (no daemon counterpart) — loud unavailable, documented gaps ───────────────
+  /** Git-derived shared-branch status for list_workspaces — per-worktree (daemon keys off the session). */
+  sharedStatus(
+    _id: string,
+  ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined> {
+    return this.worktreeCall('sharedStatus');
+  }
 
+  /** Orientation for an IN-SANDBOX reference-clone path — a path op (no session), like ensureReferenceClone. */
+  referenceOrientation(path: string): Promise<string> {
+    return this.call('referenceOrientation', [path]);
+  }
+
+  // ── host-only method (no daemon counterpart) — loud unavailable; containerized callers fork instead ──
+
+  /** The single-repo daemon's clone IS the project, so there's no multi-project record to resolve. The
+   * containerized review/ship/open_pr call sites fork on `isContainerized` and use the off-port daemon
+   * ops (openPr/markReady/commentPr) rather than ever asking the daemon adapter for this. Loud reject. */
   projectRecordFor(_workspaceId: string): Promise<ProjectRecord | undefined> {
     return this.unavailable('projectRecordFor');
   }
 
-  sharedStatus(
-    _id: string,
-  ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined> {
-    return this.unavailable('sharedStatus');
+  // ── off-port daemon ops (NOT on WorkspaceGitPort) — reached via WorkspaceGitProvider.daemonFor ──────
+
+  /** The daemon computes the review diff-scope from ITS tree + the worktree's recorded cut sha (matches
+   * the host `ticketRange` "diff since the cut point" semantics). No host `projectRecordFor`/`baseRef`. */
+  reviewRange(): Promise<{ range: string; files: string[]; baseBranch: string }> {
+    return this.worktreeCall('reviewRange');
   }
 
-  referenceOrientation(_path: string): Promise<string> {
-    return this.unavailable('referenceOrientation');
+  /** Write the design artifact (a base64 zip) into the sandbox clone's `design/`. No session arg — the
+   * daemon writes to the CLONE ROOT (the design gate has no engine session; see DaemonGitService). */
+  attachDesign(
+    artifactBase64: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    return this.call('attachDesign', [artifactBase64]);
+  }
+
+  /** Open (or find) the workspace's PR — the daemon resolves repo/token/push itself (no host github). */
+  openPr(args: {
+    title: string;
+    body?: string;
+    draft?: boolean;
+  }): Promise<PullRequestResult> {
+    return this.call('openPr', [args]);
+  }
+
+  /** Flip the workspace's draft PR to ready-for-review (daemon-resolved repo/token). */
+  markReady(prNumber: number): Promise<{ isDraft: boolean }> {
+    return this.call('markReady', [prNumber]);
+  }
+
+  /** Post an advisory self-review comment on the workspace's PR (daemon-resolved repo/token). */
+  commentPr(prNumber: number, body: string): Promise<void> {
+    return this.call('commentPr', [prNumber, body]);
   }
 }

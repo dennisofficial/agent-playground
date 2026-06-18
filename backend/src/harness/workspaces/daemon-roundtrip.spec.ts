@@ -92,6 +92,15 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
       createWorktree: vi.fn(async () => '/workspace/repo/.workspaces/sess-1'),
       publish: vi.fn(async () => ({ integrated: true, sharedBranch: 'shared/x' })),
       openPr: vi.fn(async () => ({ number: 42, url: 'https://gh/pr/42' })),
+      // Phase 11 RPCs — exercised through the allowlist to prove the new entries are reachable.
+      reviewRange: vi.fn(async () => ({
+        range: 'cut...agent/sess-1',
+        files: ['a.ts'],
+        baseBranch: 'main',
+      })),
+      attachDesign: vi.fn(async () => ({ ok: true, message: 'attached' })),
+      markReady: vi.fn(async () => ({ isDraft: false })),
+      commentPr: vi.fn(async () => undefined),
     };
 
     const turns = new DaemonTurnService(
@@ -264,6 +273,21 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
     await expect(
       client.gitCall(WORKSPACE_ID, 'rmRfSlashEtc', []),
     ).rejects.toThrow(/unknown git RPC method 'rmRfSlashEtc'/);
+  });
+
+  it('(Phase 11) the new RPCs are on the allowlist and round-trip through the dispatcher', async () => {
+    const range = await client.gitCall(WORKSPACE_ID, 'reviewRange', ['sess-1']);
+    expect(git.reviewRange).toHaveBeenCalledWith('sess-1');
+    expect(range).toMatchObject({ range: 'cut...agent/sess-1', baseBranch: 'main' });
+
+    await client.gitCall(WORKSPACE_ID, 'attachDesign', ['YmFzZTY0']);
+    expect(git.attachDesign).toHaveBeenCalledWith('YmFzZTY0');
+
+    await client.gitCall(WORKSPACE_ID, 'markReady', [42]);
+    expect(git.markReady).toHaveBeenCalledWith(42);
+
+    await client.gitCall(WORKSPACE_ID, 'commentPr', [42, 'findings']);
+    expect(git.commentPr).toHaveBeenCalledWith(42, 'findings');
   });
 
   it('a git method that throws becomes an error reply that rejects gitCall', async () => {

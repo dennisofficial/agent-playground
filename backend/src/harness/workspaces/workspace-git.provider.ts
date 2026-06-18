@@ -51,6 +51,29 @@ export class WorkspaceGitProvider {
     return this.local;
   }
 
+  /**
+   * The DAEMON adapter for a containerized ctx, or `undefined` when the op runs locally. The seam for the
+   * OFF-PORT daemon ops (`reviewRange`/`attachDesign`/`openPr`/`markReady`/`commentPr`) — they're not on
+   * `WorkspaceGitPort` (which must stay byte-for-byte mirrorable by `LocalWorkspaceAdapter`), so a
+   * containerized call site that needs one forks on this: `const daemon = provider.daemonFor(ctx); if
+   * (daemon) { …daemon ops… } else { …today's host github flow… }`. Returns the SAME `DaemonGitAdapter`
+   * shape `resolve` produces on the containerized branch (bound to the sandbox uuid + ctx), so a daemon
+   * op and the port ops a caller mixes address the same in-sandbox worktree.
+   *
+   * FLAG-OFF SAFETY: `isContainerized` is always false (no sandbox exists), so this always returns
+   * `undefined` and every call site takes its unchanged local branch.
+   */
+  daemonFor(ctx: WorkspaceGitCtx): DaemonGitAdapter | undefined {
+    if (!this.isContainerized(ctx)) return undefined;
+    const workspaceId = this.sandboxId(ctx);
+    if (!workspaceId) {
+      throw new Error(
+        'WorkspaceGitProvider: a containerized daemon op needs a workspaceId (the sandbox to dispatch to).',
+      );
+    }
+    return new DaemonGitAdapter(this.daemon, workspaceId, ctx);
+  }
+
   /** The candidate sandbox id for a ctx — the session's workspace (preferred: the session is the unit a
    * sandbox hosts) else the ctx's workspace handle. Both hold the sandbox uuid for a containerized run. */
   private sandboxId(ctx: WorkspaceGitCtx): string | undefined {
@@ -68,8 +91,12 @@ export class WorkspaceGitProvider {
    *
    * FLAG-OFF SAFETY: `WORKSPACE_SANDBOX_ENABLED` false ⇒ no sandbox is ever created ⇒ `has()` is always
    * false ⇒ every git op resolves to the LOCAL adapter — byte-identical to pre-Phase-9.
+   *
+   * PUBLIC so a containerized call site can fork its own host-vs-daemon branch on the SAME discriminator
+   * the provider routes on (e.g. ReviewPipelineService's review/ship barrier, open_pr) before deciding
+   * whether to use `daemonFor(ctx)` or its unchanged host github flow.
    */
-  protected isContainerized(ctx: WorkspaceGitCtx): boolean {
+  public isContainerized(ctx: WorkspaceGitCtx): boolean {
     const id = this.sandboxId(ctx);
     return !!id && this.sandboxes.has(id);
   }

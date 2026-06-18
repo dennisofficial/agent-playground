@@ -9,7 +9,7 @@ import {
   FakeSectionStore,
   type Row,
 } from './pipeline-runner.test-fakes';
-import { fakeSandboxRegistry } from '../workspaces/workspace-git.test-util';
+import { fakeSandboxRegistry, localGitProvider } from '../workspaces/workspace-git.test-util';
 
 /**
  * Durable ticket context at dispatch. An engine session can't open the ticket from its workspace (no
@@ -91,6 +91,7 @@ function build() {
     reviewStore as never,
     notes as never,
     fakeSandboxRegistry() as never,
+    localGitProvider() as never,
   );
   return { svc, runs, runner, notes, board };
 }

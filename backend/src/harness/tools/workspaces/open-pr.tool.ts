@@ -39,6 +39,23 @@ export class OpenPrTool implements IHarnessTool<typeof openPrSchema> {
     title,
     body,
   }: z.infer<typeof openPrSchema>): Promise<string> {
+    // CONTAINERIZED: the host has no workspace row — the daemon owns the repo + token + push + PR. Open
+    // (or find) the DRAFT PR over the daemon RPC; it resolves repo/token itself. (No host
+    // `WorkspaceService.get` / `projectRecordFor` / `GithubApiService` on this path.)
+    if (this.workspaceGit.isContainerized({ workspaceId })) {
+      const daemon = this.workspaceGit.daemonFor({ workspaceId });
+      if (!daemon)
+        return `No live sandbox for ${workspaceId} — can't open the PR.`;
+      try {
+        const pr = await daemon.openPr({ title, body, draft: true });
+        return pr.existing
+          ? `A PR for this workspace's shared branch already exists: ${pr.url}`
+          : `Opened DRAFT PR: ${pr.url} — mark_pr_ready when it's ready for Dennis.`;
+      } catch (err) {
+        return `Couldn't open the PR: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
     const ws = this.workspaces.get(workspaceId);
     if (!ws) return `No workspace "${workspaceId}".`;
     if (!ws.sharedBranch) {

@@ -82,12 +82,17 @@ type GitRpcMethod = Extract<
   | 'ensureSharedAtBase'
   | 'sharedRef'
   | 'ownerDiff'
+  | 'sharedStatus'
+  | 'reviewRange'
   | 'publish'
   | 'pull'
   | 'pushSharedToOrigin'
   | 'openPr'
   | 'markReady'
+  | 'commentPr'
+  | 'attachDesign'
   | 'ensureReferenceClone'
+  | 'referenceOrientation'
 >;
 
 const GIT_RPC_METHODS: ReadonlySet<string> = new Set<GitRpcMethod>([
@@ -103,10 +108,15 @@ const GIT_RPC_METHODS: ReadonlySet<string> = new Set<GitRpcMethod>([
   'ensureSharedAtBase',
   'sharedRef',
   'ownerDiff',
+  'sharedStatus',
+  'reviewRange',
   'publish',
   'pull',
   'pushSharedToOrigin',
   'openPr',
   'markReady',
+  'commentPr',
+  'attachDesign',
   'ensureReferenceClone',
+  'referenceOrientation',
 ]);

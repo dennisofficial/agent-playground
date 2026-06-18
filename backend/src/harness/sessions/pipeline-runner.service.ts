@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { ProposalService } from '../approvals/proposal.service';
@@ -33,6 +34,7 @@ import {
 import { PipelinePhaseReviewStore } from '../memory/pipeline-phase-review-store';
 import { TicketNoteStore } from '../memory/ticket-note-store';
 import { SandboxRegistry } from '../workspaces/sandbox-registry';
+import { WorkspaceGitProvider } from '../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../workspaces/workspace.service';
 import { ReviewPipelineService } from './review-pipeline.service';
 import {
@@ -116,6 +118,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     private readonly reviewStore: PipelinePhaseReviewStore,
     private readonly notes: TicketNoteStore,
     private readonly sandboxes: SandboxRegistry,
+    private readonly workspaceGit: WorkspaceGitProvider,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -755,34 +758,57 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (!run || run.status !== 'paused' || run.planningSubstep !== 'awaiting_design')
       return { ok: false, message: `#${taskId} isn't waiting at a design gate.` };
     if (!run.workspaceId) return { ok: false, message: `#${taskId} has no workspace.` };
-    // KNOWN CONTAINERIZED GAP (Phase 9): attachDesign writes a design zip directly to the HOST FS
-    // (`ws.path/design`). A sandbox workspace has no host path — the design lives only inside the daemon's
-    // clone — so this write can't target it. Routing the unzip through a daemon op is out of scope this
-    // phase (the design gate is interim + human-driven). Refuse with a clear message rather than the
-    // misleading "not found" below. Acceptable: the flag is off, so no sandbox workspace ever reaches here.
-    if (this.sandboxes.has(run.workspaceId)) {
-      return {
-        ok: false,
-        message: `#${taskId} runs in a containerized sandbox — attaching a design zip to the host filesystem isn't supported yet for sandboxed work (known gap). Run this ticket in a local workspace, or skip the design gate.`,
-      };
-    }
-    const ws = this.workspaces.get(run.workspaceId);
-    if (!ws) return { ok: false, message: `Workspace '${run.workspaceId}' not found.` };
     if (/^https?:\/\//i.test(source))
       return {
         ok: false,
         message:
           'For now, hand me a LOCAL path to the design zip (the online export lands in your Downloads), not a URL.',
       };
-    const designDir = join(ws.path, 'design');
-    try {
-      mkdirSync(designDir, { recursive: true });
-      await pExecFile('unzip', ['-o', source, '-d', designDir]);
-    } catch (err) {
-      return {
-        ok: false,
-        message: `Couldn't unzip '${source}' into the workspace: ${err instanceof Error ? err.message : String(err)}.`,
-      };
+    // CONTAINERIZED: the sandbox has no host path — the design must land inside the daemon's clone. Read
+    // the local zip, base64-encode it, and ship it over the daemon git RPC (`attachDesign`), which unzips
+    // it into the sandbox clone's `design/`. NO session arg: the design gate has no engine session yet (the
+    // implementer session opens AFTER this), so the daemon writes to the CLONE ROOT. KNOWN GAP (the broader
+    // in-sandbox accumulation gap): the later implementer worktree is cut from origin/<base> and so won't
+    // automatically see this clone-root design/ — making it flow into the implementer's tree needs the
+    // wider accumulation work and is out of scope for this flag-off closure.
+    if (this.sandboxes.has(run.workspaceId)) {
+      const daemon = this.workspaceGit.daemonFor({ workspaceId: run.workspaceId });
+      if (!daemon)
+        return {
+          ok: false,
+          message: `#${taskId}'s sandbox isn't live — can't attach the design.`,
+        };
+      let b64: string;
+      try {
+        b64 = (await readFile(source)).toString('base64');
+      } catch (err) {
+        return {
+          ok: false,
+          message: `Couldn't read '${source}': ${err instanceof Error ? err.message : String(err)}.`,
+        };
+      }
+      const res = await daemon.attachDesign(b64).catch((err) => ({
+        ok: false as const,
+        message: `daemon attachDesign failed: ${err instanceof Error ? err.message : String(err)}`,
+      }));
+      if (!res.ok)
+        return {
+          ok: false,
+          message: `Couldn't attach the design into the sandbox: ${res.message}`,
+        };
+    } else {
+      const ws = this.workspaces.get(run.workspaceId);
+      if (!ws) return { ok: false, message: `Workspace '${run.workspaceId}' not found.` };
+      const designDir = join(ws.path, 'design');
+      try {
+        mkdirSync(designDir, { recursive: true });
+        await pExecFile('unzip', ['-o', source, '-d', designDir]);
+      } catch (err) {
+        return {
+          ok: false,
+          message: `Couldn't unzip '${source}' into the workspace: ${err instanceof Error ? err.message : String(err)}.`,
+        };
+      }
     }
     const design = await this.sectionStore.activeSection(run.id);
     if (design)
@@ -1123,6 +1149,13 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     // Phase 5b: the ticket-level full-implementation review runs BEFORE the ship (feature runs only — a
     // bugfix is a single session with no cross-section seams). `changes` → Atlas decides (don't ship);
     // `pass` → ship, and any advisory findings ride the PR self-review comment.
+    // The run's execute/aggregate session — its id keys the daemon worktree for a CONTAINERIZED review +
+    // ship (the host has no tree). Undefined on the local path (the host workspace row carries the tree)
+    // or when the session is gone (a containerized ship then loud-fails on the worktree-scoped daemon op,
+    // never silently — acceptable for this dormant flag-off path).
+    const runSession = run.sessionId
+      ? await this.sessions.get(run.sessionId).catch(() => undefined)
+      : undefined;
     let advisoryFindings: string | undefined;
     if (run.kind === 'feature') {
       const full = await this.review
@@ -1130,6 +1163,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
           team: run.team,
           taskId: run.taskId,
           workspaceId: run.workspaceId,
+          ...(runSession ? { session: runSession } : {}),
         })
         .catch((err) => {
           this.logger.warn(`pipeline ${run.id}: full-impl review failed: ${err}`);
@@ -1150,6 +1184,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       workspaceId: run.workspaceId,
       notifyThread: run.notifyThread ?? '',
       findings: advisoryFindings,
+      ...(runSession ? { session: runSession } : {}),
     });
     if (!shipped.ok) {
       await this.failRun(run, `shipTask failed — ${shipped.reason}`);
