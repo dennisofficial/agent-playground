@@ -47,10 +47,11 @@ export class AddressingGate {
   ): Promise<GateDecision> {
     const { bot, isDm, text } = opts;
     // Hard rules (no LLM): a 1:1 DM, a broadcast, or Atlas addressed by @ or name → always respond.
-    if (isDm) return 'respond';
-    if (this.employees.isBroadcast(text)) return 'respond';
+    if (isDm) return this.verdict(bot.id, 'respond', 'dm');
+    if (this.employees.isBroadcast(text))
+      return this.verdict(bot.id, 'respond', 'broadcast');
     if (this.employees.addressedBots(text).some((b) => b.id === bot.id))
-      return 'respond';
+      return this.verdict(bot.id, 'respond', 'addressed');
     // Ambiguous: not a DM, not a broadcast, not addressed to Atlas — let a cheap model judge.
     try {
       const model = this.models.buildGateModel();
@@ -69,12 +70,30 @@ export class AddressingGate {
           : JSON.stringify(res.content)
       ).toUpperCase();
       // Default to respond unless the model clearly said SKIP (fail-open).
-      return out.includes('SKIP') ? 'skip' : 'respond';
+      return out.includes('SKIP')
+        ? this.verdict(bot.id, 'skip', 'classifier')
+        : this.verdict(bot.id, 'respond', 'classifier');
     } catch (err) {
       this.logger.warn(
         `gate classify failed for ${bot.id}, defaulting to respond: ${err instanceof Error ? err.message : String(err)}`,
       );
       return 'respond';
     }
+  }
+
+  /**
+   * Log + return a gate decision. A SKIP is the otherwise-invisible event — the turn ends with no
+   * further log line — so it's the one a debugger reaches for ("why did Atlas stay quiet?") and is
+   * logged at LOG level. A RESPOND is immediately followed by a full turn's worth of logs, so it stays
+   * at DEBUG to avoid doubling every turn's opening line.
+   */
+  private verdict(
+    botId: string,
+    decision: GateDecision,
+    reason: string,
+  ): GateDecision {
+    if (decision === 'skip') this.logger.log(`gate ${botId}: skip (${reason})`);
+    else this.logger.debug(`gate ${botId}: respond (${reason})`);
+    return decision;
   }
 }

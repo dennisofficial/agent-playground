@@ -3,6 +3,7 @@ import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { EsmModule } from '../_lib/esm/esm.module';
 import { daemonEnvValidation } from './env.validation';
 import { DaemonEnginesModule } from './engines/daemon-engines.module';
+import { DaemonGitModule } from './git/daemon-git.module';
 
 /**
  * The DAEMON = the in-container NestJS app that runs Claude/Codex engine turns inside an isolated
@@ -21,8 +22,13 @@ import { DaemonEnginesModule } from './engines/daemon-engines.module';
  * DELIBERATELY ABSENT (vs the host harness): `DatabaseModule`, `MemoryModule`, `ConductorModule`,
  * `ChannelModule`, the DB-backed `SkillsModule`, and the roster. The daemon never touches Postgres.
  *
- * Phase 4 adds the daemon git service; Phase 5 adds the Redis communication layer (consumer loop +
- * dispatcher). This phase is just the skeleton — it must compile and boot.
+ *  - `DaemonGitModule` — the single-repo git owner (`DaemonGitService`) + the pluggable git credential
+ *    provider (`EnvGitCredentialProvider` behind `GIT_CREDENTIAL_PROVIDER`) + the verbatim
+ *    `GithubApiService` PR client. This is the daemon's entire git surface (clone/worktree/shared/
+ *    publish/PR), keyed by session id inside the one clone.
+ *
+ * Phase 5 adds the Redis communication layer (consumer loop + dispatcher) that drives both the engines
+ * and the git service.
  */
 @CreateModule({
   imports: [
@@ -33,6 +39,7 @@ import { DaemonEnginesModule } from './engines/daemon-engines.module';
     }),
     EsmModule,
     DaemonEnginesModule,
+    DaemonGitModule,
   ],
 })
 export class DaemonModule {}

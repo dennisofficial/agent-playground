@@ -40,6 +40,15 @@ export interface IDaemonEnvConfig {
   // per-session worktrees off this. Baked to /workspace/repo in the image; overridable.
   WORKSPACE_ROOT?: string;
 
+  // Git credential (the PAT path — `EnvGitCredentialProvider`). All OPTIONAL: a file:// fixture or an
+  // already-public repo needs no token, and Phase 5 swaps in a Redis-pull credential impl. Read
+  // directly from process.env by the provider (the daemon binds the host EnvService, typed over the
+  // host IEnvConfig, which doesn't carry these keys), so they're declared here only to document + let
+  // the schema validate them rather than the `.unknown(true)` catch-all silently passing typos.
+  GIT_TOKEN?: string; // GitHub PAT for authenticated clone/fetch/push (GIT_CONFIG_* extraheader)
+  GIT_AUTHOR_NAME?: string; // per-worktree commit author name (default 'Agent')
+  GIT_AUTHOR_EMAIL?: string; // per-worktree commit author email (default 'agent@agents.noreply')
+
   // HTTP listen port (read directly from process.env in main.ts). Declared so it validates; the
   // daemon has no inbound HTTP yet (Redis-driven, Phase 5) — reserved for a future /healthz.
   PORT?: number;
@@ -56,6 +65,10 @@ export const daemonEnvValidation = Joi.object<IDaemonEnvConfig, true>({
 
   AGENT_HOME_ROOT: Joi.string().optional().default('/workspace/.agent-home'),
   WORKSPACE_ROOT: Joi.string().optional().default('/workspace/repo'),
+
+  GIT_TOKEN: Joi.string().optional(),
+  GIT_AUTHOR_NAME: Joi.string().optional(),
+  GIT_AUTHOR_EMAIL: Joi.string().optional(),
 
   PORT: Joi.number().port().optional(),
 })

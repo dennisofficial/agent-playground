@@ -532,7 +532,39 @@ export class BotGraphNodes {
       };
     };
 
-    const toolsNode = new ToolNode(tools);
+    const rawToolsNode = new ToolNode(tools);
+
+    /**
+     * Wraps the prebuilt ToolNode to make tool activity visible in the console. A tool FAILURE is
+     * otherwise invisible here — ToolNode hands the error back to the model as a ToolMessage and logs
+     * nothing — so "why did that tool call fail?" couldn't be answered from logs alone. Every batch
+     * emits one DEBUG line (all calls, ok/error); each failed call also emits a WARN with the head of
+     * its error. The returned state is passed through untouched.
+     */
+    const toolsNode = async (
+      state: BotStateType,
+      config: RunnableConfig,
+    ): Promise<unknown> => {
+      const result = (await rawToolsNode.invoke(state, config)) as {
+        messages?: ToolMessage[];
+      };
+      const msgs = (result.messages ?? []).filter(
+        (m) => m.getType() === 'tool',
+      ) as ToolMessage[];
+      if (msgs.length) {
+        this.logger.debug(
+          `tools[${bot.id}]: ${msgs
+            .map((m) => `${m.name ?? '?'} ${summarizeToolResult(m)}`)
+            .join(' | ')}`,
+        );
+        for (const m of msgs)
+          if (m.status === 'error')
+            this.logger.warn(
+              `tool[${bot.id}] ${m.name ?? '?'} ${summarizeToolResult(m)}`,
+            );
+      }
+      return result;
+    };
 
     /** The first-person pause message `tool_loop_guard` emits when a stuck tool-loop persists past a
      * correction — a learning signal, not just a fuse (the conductor surfaces the AIMessage). */
@@ -644,7 +676,11 @@ export class BotGraphNodes {
             .then((w) => {
               next.work = w;
             })
-            .catch(() => {})
+            .catch((e) =>
+              this.logger.warn(
+                `refresh work failed for ${bot.id}, keeping prior slice: ${e}`,
+              ),
+            )
         : Promise.resolve();
       // Preserve the compaction note on mid-turn refreshes so the assembler slot stays
       // consistent. memorySuggestions is intentionally omitted (unchanged during a refresh).
@@ -661,7 +697,11 @@ export class BotGraphNodes {
             .then((m) => {
               next.memory = m;
             })
-            .catch(() => {})
+            .catch((e) =>
+              this.logger.warn(
+                `refresh memory failed for ${bot.id}, keeping prior slice: ${e}`,
+              ),
+            )
         : Promise.resolve();
       const refreshTasks = scopes.has('tasks')
         ? this.fetchService
@@ -669,7 +709,11 @@ export class BotGraphNodes {
             .then((t) => {
               next.tasks = t;
             })
-            .catch(() => {})
+            .catch((e) =>
+              this.logger.warn(
+                `refresh tasks failed for ${bot.id}, keeping prior slice: ${e}`,
+              ),
+            )
         : Promise.resolve();
       const refreshPipelines =
         scopes.has('pipelines') && bot.teamLead
@@ -678,7 +722,11 @@ export class BotGraphNodes {
               .then((p) => {
                 next.pipelines = p;
               })
-              .catch(() => {})
+              .catch((e) =>
+                this.logger.warn(
+                  `refresh pipelines failed for ${bot.id}, keeping prior slice: ${e}`,
+                ),
+              )
           : Promise.resolve();
       await Promise.all([
         refreshWork,
