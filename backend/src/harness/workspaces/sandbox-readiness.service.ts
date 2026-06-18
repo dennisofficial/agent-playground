@@ -44,8 +44,8 @@ const READY_RETRY_MS = 1_000;
  * transient Redis absence is caught, logged, and retried within the deadline rather than crashing the
  * turn. Only an exhausted deadline surfaces as a clear error.
  *
- * FLAG-OFF SAFETY: this is only reached on the REMOTE turn path (`RemoteTurnDispatcher`), which is
- * dormant unless `WORKSPACE_SANDBOX_ENABLED` created a sandbox — so with the flag off it never runs.
+ * Only reached on the REMOTE turn path (`RemoteTurnDispatcher`) + at create_workspace (realizing a work
+ * area), i.e. once a sandbox exists for a registered project.
  */
 @Injectable()
 export class SandboxReadinessService {

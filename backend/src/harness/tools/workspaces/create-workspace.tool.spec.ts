@@ -1,24 +1,19 @@
 /**
- * `create_workspace` CREATE-TIME POLICY: sandbox vs local.
+ * `create_workspace` CREATE-TIME POLICY (no flag — sandbox is the standard).
  *
- *   sandbox  ⇔  WORKSPACE_SANDBOX_ENABLED === true && ProjectStore.get(team, project) exists
- *   local    ⇔  otherwise (the unchanged path — through the git port's local adapter)
+ *   registered project   → SANDBOX work area (ensure the sandbox, realize the work-area worktree in the
+ *                           daemon, register a WorkspaceRegistry record).
+ *   unregistered project → REFUSE (a sandbox needs a clone URL; there is no local fallback).
  *
- * The sandbox path ensures the project's sandbox, then creates a durable WORK AREA inside it (a
- * branch/worktree its sessions share): it realizes the work-area worktree in the daemon
- * (`createWorktree(workAreaId, …)`) and registers a `WorkspaceRegistry` record. Verified with plain
- * fakes (no Nest, no Docker).
+ * Verified with plain fakes (no Nest, no Docker).
  */
 import { describe, expect, it, vi } from 'vitest';
-import type { EnvService } from '@core/config/env/env.service';
 import type { ProjectStore } from '../../projects/project-store';
 import type { ContainerManagerService } from '../../workspaces/container-manager.service';
 import type { DaemonClient } from '../../workspaces/daemon-client';
 import type { SandboxReadinessService } from '../../workspaces/sandbox-readiness.service';
 import type { SandboxRecord } from '../../workspaces/sandbox-registry';
 import { WorkspaceRegistry } from '../../workspaces/workspace-registry';
-import type { WorkspaceService } from '../../workspaces/workspace.service';
-import { localGitProvider } from '../../workspaces/workspace-git.test-util';
 import type { HarnessToolContext } from '../tool.types';
 import { CreateWorkspaceTool } from './workspace.tools';
 
@@ -31,11 +26,7 @@ const CTX = {
   },
 } as unknown as HarnessToolContext;
 
-function build(opts: { flag?: boolean; registered?: boolean }) {
-  const env = {
-    get: (k: string) =>
-      k === 'WORKSPACE_SANDBOX_ENABLED' ? (opts.flag ?? false) : undefined,
-  } as unknown as EnvService;
+function build(opts: { registered?: boolean }) {
   const projects = {
     get: vi.fn(async () =>
       opts.registered ? ({ projectId: 'proj' } as never) : undefined,
@@ -53,17 +44,6 @@ function build(opts: { flag?: boolean; registered?: boolean }) {
     }),
   );
   const containers = { ensureWorkspace } as unknown as ContainerManagerService;
-
-  const create = vi.fn(async () => ({
-    workspace: {
-      id: 'ws-001',
-      branch: 'agent/alex/ws-001-work',
-      sharedBranch: undefined,
-    },
-  }));
-  const localGit = { create } as unknown as WorkspaceService;
-  const workspaceGit = localGitProvider(localGit as never);
-  const workspaces = {} as unknown as WorkspaceService;
   const workAreas = new WorkspaceRegistry();
   const gitCall = vi.fn(async () => '/workspace/repo/.workspaces/wa');
   const daemon = { gitCall } as unknown as DaemonClient;
@@ -71,29 +51,25 @@ function build(opts: { flag?: boolean; registered?: boolean }) {
   const readiness = { waitForReady } as unknown as SandboxReadinessService;
 
   const tool = new CreateWorkspaceTool(
-    workspaceGit,
-    workspaces,
     containers,
     projects,
-    env,
     workAreas,
     daemon,
     readiness,
   );
-  return { tool, ensureWorkspace, create, workAreas, gitCall, waitForReady };
+  return { tool, ensureWorkspace, workAreas, gitCall, waitForReady };
 }
 
-describe('create_workspace create-time policy', () => {
-  it('flag ON + registered project → SANDBOX work area (realized in the daemon + registered)', async () => {
-    const { tool, ensureWorkspace, create, workAreas, gitCall, waitForReady } =
-      build({ flag: true, registered: true });
+describe('create_workspace create-time policy (containerized standard)', () => {
+  it('registered project → SANDBOX work area (realized in the daemon + registered)', async () => {
+    const { tool, ensureWorkspace, workAreas, gitCall, waitForReady } = build({
+      registered: true,
+    });
     const out = await tool.execute({ name: 'work' }, CTX);
 
     expect(ensureWorkspace).toHaveBeenCalledWith('T1', 'proj');
-    expect(create).not.toHaveBeenCalled(); // no local checkout cut
     expect(waitForReady).toHaveBeenCalledWith('sandbox-uuid-1');
 
-    // The work area's worktree is realized in the daemon, keyed by the new workAreaId.
     expect(gitCall).toHaveBeenCalledTimes(1);
     const [sandboxId, method, args] = gitCall.mock.calls[0] as unknown as [
       string,
@@ -106,9 +82,7 @@ describe('create_workspace create-time policy', () => {
     expect(workAreaId).toMatch(/^wa-/);
     expect(realizeOpts.ownerBot).toBe('alex');
 
-    // A work-area record was registered, mapping the workAreaId to its sandbox.
-    const rec = workAreas.get(workAreaId);
-    expect(rec).toMatchObject({
+    expect(workAreas.get(workAreaId)).toMatchObject({
       workAreaId,
       sandboxId: 'sandbox-uuid-1',
       team: 'T1',
@@ -119,25 +93,11 @@ describe('create_workspace create-time policy', () => {
     expect(out).toContain(workAreaId);
   });
 
-  it('flag OFF + registered project → LOCAL (the flag gates creation; no sandbox)', async () => {
-    const { tool, ensureWorkspace, create } = build({
-      flag: false,
-      registered: true,
-    });
+  it('unregistered project → REFUSE (no clone URL, no local fallback)', async () => {
+    const { tool, ensureWorkspace, gitCall } = build({ registered: false });
     const out = await tool.execute({ name: 'work' }, CTX);
     expect(ensureWorkspace).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(out).toContain('ws-001');
-  });
-
-  it('flag ON + UNregistered project → LOCAL (registered project is required for a sandbox)', async () => {
-    const { tool, ensureWorkspace, create } = build({
-      flag: true,
-      registered: false,
-    });
-    const out = await tool.execute({ name: 'work' }, CTX);
-    expect(ensureWorkspace).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(out).toContain('ws-001');
+    expect(gitCall).not.toHaveBeenCalled();
+    expect(out).toMatch(/no registered GitHub repo|register the project/i);
   });
 });

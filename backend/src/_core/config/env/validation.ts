@@ -130,13 +130,6 @@ export interface IEnvConfig {
   // produced by `pnpm daemon:build` and mounted read-only at /daemon in every sandbox — so the daemon
   // is MOUNTED, never baked into the (generic) image. Default `agent-daemon-build`.
   WORKSPACE_DAEMON_BUILD_VOLUME?: string;
-  // The Phase-9 master switch for containerized coding sessions. DEFAULT FALSE — when unset/false the
-  // create-time policy NEVER picks a sandbox, so no sandbox is ever created, `SandboxRegistry.has` is
-  // always false, and every turn + git op routes LOCAL (behavior byte-identical to pre-Phase-9). Set
-  // true ONLY once the sandbox infra (Docker socket + WORKSPACE_IMAGE + Redis) is stood up; even then a
-  // workspace containerizes only for a REGISTERED project on a claude/codex engine (langgraph stays
-  // host-side).
-  WORKSPACE_SANDBOX_ENABLED?: boolean;
   // 32-byte key (base64 or hex) encrypting stored GitHub tokens at rest. Unset → token writes
   // refuse loudly; local-only flows are unaffected.
   SECRETS_ENCRYPTION_KEY?: string;
@@ -270,8 +263,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_NETWORK: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   WORKSPACE_DAEMON_BUILD_VOLUME: Joi.string().optional(),
-  // Phase 9 containerized-session master switch (default false — see the interface note).
-  WORKSPACE_SANDBOX_ENABLED: Joi.boolean().optional().default(false),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
 

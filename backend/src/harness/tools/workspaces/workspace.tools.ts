@@ -1,6 +1,5 @@
 import { Inject } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { EnvService } from '@core/config/env/env.service';
 import { z } from 'zod';
 import { ProjectStore } from '../../projects/project-store';
 import {
@@ -13,30 +12,21 @@ import { SandboxReadinessService } from '../../workspaces/sandbox-readiness.serv
 import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceReader } from '../../workspaces/workspace-reader';
 import { WorkspaceRegistry } from '../../workspaces/workspace-registry';
-import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
 /**
- * The Phase-9 create-time policy: should a NEW workspace be a containerized sandbox or a local checkout?
- *
- *   sandbox  ⇔  WORKSPACE_SANDBOX_ENABLED && ProjectStore.get(team, project) exists
- *   local    ⇔  otherwise (today's path)
- *
- * The plan's full policy also requires the engine ∈ {claude, codex}. `create_workspace` does NOT know
- * the engine (the engine is fixed per SESSION, at create_session, not per workspace). So the workspace
- * decision is flag + registered-project here, and engine ≠ langgraph is enforced where the engine IS
- * known — at session creation (`CreateSessionTool` refuses a langgraph session in a sandbox workspace).
- * This is sound: with the flag off (the default) `get()` may match but the flag gates creation, so NO
- * sandbox is ever created and every workspace is local — behavior byte-identical to pre-Phase-9.
+ * The create-time policy: every workspace is a containerized sandbox work area (the new standard, no
+ * flag). A sandbox needs a clone URL, so this requires a REGISTERED project (its GitHub repo). An
+ * unregistered project can't be sandboxed → `create_workspace` refuses with a clear message rather than
+ * silently falling back (there is no host/local workspace path anymore). The engine ≠ langgraph half of
+ * the policy is enforced where the engine is known — at session creation (CreateSessionTool).
  */
-async function shouldContainerize(
-  env: EnvService,
+async function registeredProject(
   projects: ProjectStore,
   team: string,
   project: string,
 ): Promise<boolean> {
-  if (env.get('WORKSPACE_SANDBOX_ENABLED') !== true) return false;
   const registered = await projects.get(team, project).catch(() => undefined);
   return !!registered;
 }
@@ -78,11 +68,8 @@ export class CreateWorkspaceTool implements IHarnessTool<
   readonly schema = createWorkspaceSchema;
 
   constructor(
-    private readonly workspaceGit: WorkspaceGitProvider,
-    private readonly workspaces: WorkspaceService,
     private readonly containers: ContainerManagerService,
     private readonly projects: ProjectStore,
-    private readonly env: EnvService,
     private readonly workAreas: WorkspaceRegistry,
     private readonly daemon: DaemonClient,
     private readonly readiness: SandboxReadinessService,
@@ -94,59 +81,40 @@ export class CreateWorkspaceTool implements IHarnessTool<
   ): Promise<string> {
     const id = ctx.identity;
     try {
-      // CREATE-TIME POLICY: containerized sandbox vs local checkout. Decided ONCE, here, and stamped as
-      // the returned workspace id (a `workAreaId` for a sandbox, `ws-NNN` for local) — every later route
-      // reads it back through WorkspaceRegistry. With the flag off this is always false ⇒ local path.
-      if (
-        await shouldContainerize(this.env, this.projects, id.team, id.project)
-      ) {
-        // SANDBOX: ensure the project's sandbox (tier 1), then create a durable WORK AREA inside it
-        // (tier 2) — a branch/worktree the work area's SESSIONS share (tier 3). The work area's id is
-        // what the agent gets back and lands in Session.workspace_id. We realize its worktree NOW
-        // (cutting the branch, from the shared tip when `shared`) so a session's first git op finds a
-        // tree; the WorkspaceRegistry record is the host's metadata + routing handle.
-        const sandbox = await this.containers.ensureWorkspace(
-          id.team,
-          id.project,
-        );
-        const workAreaId = `wa-${randomUUID()}`;
-        await this.readiness.waitForReady(sandbox.workspaceId);
-        await this.daemon.gitCall(sandbox.workspaceId, 'createWorktree', [
-          workAreaId,
-          {
-            ...(branch ? { branch } : {}),
-            ...(shared ? { shared } : {}),
-            ownerBot: id.selfAgent,
-          },
-        ]);
-        this.workAreas.upsert({
-          workAreaId,
-          sandboxId: sandbox.workspaceId,
-          team: id.team,
-          project: id.project,
-          name,
-          ownerBot: id.selfAgent,
+      // Every workspace is a containerized sandbox work area (the standard — no flag). A sandbox needs a
+      // clone URL, so the project must be REGISTERED; an unregistered project can't be sandboxed, and
+      // there is no local fallback, so refuse with a clear next step.
+      if (!(await registeredProject(this.projects, id.team, id.project))) {
+        return `Can't create a workspace for ${id.team}/${id.project}: the project has no registered GitHub repo to clone. Register the project's repo first, then create_workspace.`;
+      }
+      // SANDBOX: ensure the project's sandbox (tier 1), then create a durable WORK AREA inside it
+      // (tier 2) — a branch/worktree the work area's SESSIONS share (tier 3). The work area's id is
+      // what the agent gets back and lands in Session.workspace_id. We realize its worktree NOW
+      // (cutting the branch, from the shared tip when `shared`) so a session's first git op finds a
+      // tree; the WorkspaceRegistry record is the host's metadata + routing handle.
+      const sandbox = await this.containers.ensureWorkspace(id.team, id.project);
+      const workAreaId = `wa-${randomUUID()}`;
+      await this.readiness.waitForReady(sandbox.workspaceId);
+      await this.daemon.gitCall(sandbox.workspaceId, 'createWorktree', [
+        workAreaId,
+        {
           ...(branch ? { branch } : {}),
           ...(shared ? { shared } : {}),
-        });
-        const sharedNote = shared ? ` Publishing to shared branch ${shared}.` : '';
-        return `Created work area ${workAreaId} ("${name}") in the ${id.team}/${id.project} sandbox.${sharedNote} Open sessions against it — they share its branch/worktree inside the sandbox.`;
-      }
-      // LOCAL — today's path, verbatim (through the git port's local adapter).
-      const { workspace, warning } = await this.workspaceGit
-        .resolve({ team: id.team, project: id.project })
-        .create({
-          name,
-          branch,
-          shared,
           ownerBot: id.selfAgent,
-          team: id.team,
-          project: id.project,
-        });
-      const sharedNote = workspace.sharedBranch
-        ? ` Publishing to shared branch ${workspace.sharedBranch}.`
-        : '';
-      return `Created ${workspace.id} on branch ${workspace.branch}.${sharedNote}${warning ? ` ${warning}` : ''}`;
+        },
+      ]);
+      this.workAreas.upsert({
+        workAreaId,
+        sandboxId: sandbox.workspaceId,
+        team: id.team,
+        project: id.project,
+        name,
+        ownerBot: id.selfAgent,
+        ...(branch ? { branch } : {}),
+        ...(shared ? { shared } : {}),
+      });
+      const sharedNote = shared ? ` Publishing to shared branch ${shared}.` : '';
+      return `Created work area ${workAreaId} ("${name}") in the ${id.team}/${id.project} sandbox.${sharedNote} Open sessions against it — they share its branch/worktree inside the sandbox.`;
     } catch (err) {
       return `Couldn't create the workspace: ${err instanceof Error ? err.message : String(err)}`;
     }

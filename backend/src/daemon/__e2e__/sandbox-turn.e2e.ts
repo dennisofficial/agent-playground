@@ -108,7 +108,6 @@ async function main(): Promise<number> {
   //  - WORKSPACE_DOCKER_STORAGE_DRIVER → vfs (Docker Desktop overlay-on-overlay can't mount).
   const env = makeEnv({
     WORKSPACE_IMAGE: process.env.WORKSPACE_IMAGE ?? 'agent-workspace-base',
-    WORKSPACE_SANDBOX_ENABLED: 'true',
     WORKSPACE_REDIS_URL:
       process.env.WORKSPACE_REDIS_URL ?? 'redis://agent-playground-redis:6379',
     WORKSPACE_NETWORK:
