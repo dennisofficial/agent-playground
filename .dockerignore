@@ -1,0 +1,39 @@
+# Keep the daemon image build context (repo root) lean + reproducible.
+# The build runs `pnpm install --frozen-lockfile` fresh inside the image, so host-installed
+# node_modules / build output / caches must NOT leak in (they'd bloat the context and could mismatch
+# the container's platform — e.g. the Mac's darwin codex binary vs the image's linux one).
+
+# Dependencies (reinstalled in-image from the lockfile)
+**/node_modules
+
+# Build output (recompiled in-image)
+**/dist
+backend/dist
+shared/dist
+packages/**/dist
+web/.next
+
+# Git internals (submodules are checked out as working trees and DO get copied)
+.git
+**/.git
+
+# Agent-runtime scratch (host-local; recreated per sandbox)
+.agent-home
+**/.agent-home
+.workspaces
+**/.workspaces
+.worktrees
+**/.worktrees
+
+# Local env + secrets (the container gets its env injected at run time, never baked)
+**/.env
+**/.env.*
+!**/.env.example
+**/.env.keys
+
+# Editor / OS noise
+**/.DS_Store
+**/*.log
+**/coverage
+**/.turbo
+**/.vitest

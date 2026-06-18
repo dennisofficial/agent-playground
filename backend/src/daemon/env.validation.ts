@@ -1,0 +1,65 @@
+import Joi from 'joi';
+
+/**
+ * The DAEMON's environment contract — DELIBERATELY MINIMAL. The daemon is the in-container NestJS app
+ * that runs Claude/Codex engine turns inside an isolated sandbox with NO database, NO Slack, NO LLM
+ * gate/extract models, NO roster. So unlike the host's `IEnvConfig` (validation.ts — Postgres, Slack,
+ * gateway, JWT, Langfuse, …), the daemon needs only the handful of vars its verbatim engines + skill
+ * loader + tools provider actually read at run time.
+ *
+ * Interface AND Joi rule are added together (required ⇔ non-optional field, `?:` ⇔ `.optional()`),
+ * exactly as the host convention prescribes (validation.ts). Consumed by the daemon's `EnvService`.
+ *
+ * IMPORTANT — engine-read keys: `claude.engine.ts` reads WORKER_MODEL + AGENT_HOME_ROOT;
+ * `codex.engine.ts` reads CODEX_MODEL + AGENT_HOME_ROOT; `skill-loader.service.ts` reads
+ * AGENT_HOME_ROOT. The API keys (ANTHROPIC_API_KEY / OPENAI_API_KEY) are kept OPTIONAL like the host
+ * keeps them: a per-run key arrives in the dispatch payload (Phase 5) and overrides the ambient env;
+ * the ambient env is the dev/standalone fallback. The HTTP listen PORT is read directly from
+ * process.env in main.ts (Cloud-Run/house convention), NOT via EnvService — declared here only so a
+ * stray value validates instead of being rejected.
+ */
+export interface IDaemonEnvConfig {
+  // System
+  NODE_ENV?: string;
+
+  // LLM provider keys — OPTIONAL: the per-run key (dispatch payload, Phase 5) overrides this; the
+  // ambient env is the dev/standalone fallback. The SDKs read these lazily from process.env.
+  ANTHROPIC_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+
+  // Engine model knobs (defaults applied in the engines, so optional).
+  WORKER_MODEL?: string; // claude.engine.ts: model ?? env.get('WORKER_MODEL')
+  CODEX_MODEL?: string; // codex.engine.ts: model ?? env.get('CODEX_MODEL')
+
+  // Root for the worker engines' per-agent config/state homes (CLAUDE_CONFIG_DIR / CODEX_HOME) and
+  // the skill cache — pinned at the sandbox's workspace volume so transcripts/skills survive a
+  // daemon restart. Baked to /workspace/.agent-home in the image; overridable.
+  AGENT_HOME_ROOT?: string;
+
+  // The sandbox's in-container repo root (the fresh clone). The daemon's git surface (Phase 4) cuts
+  // per-session worktrees off this. Baked to /workspace/repo in the image; overridable.
+  WORKSPACE_ROOT?: string;
+
+  // HTTP listen port (read directly from process.env in main.ts). Declared so it validates; the
+  // daemon has no inbound HTTP yet (Redis-driven, Phase 5) — reserved for a future /healthz.
+  PORT?: number;
+}
+
+export const daemonEnvValidation = Joi.object<IDaemonEnvConfig, true>({
+  NODE_ENV: Joi.string().optional(),
+
+  ANTHROPIC_API_KEY: Joi.string().optional(),
+  OPENAI_API_KEY: Joi.string().optional(),
+
+  WORKER_MODEL: Joi.string().optional(),
+  CODEX_MODEL: Joi.string().optional(),
+
+  AGENT_HOME_ROOT: Joi.string().optional().default('/workspace/.agent-home'),
+  WORKSPACE_ROOT: Joi.string().optional().default('/workspace/repo'),
+
+  PORT: Joi.number().port().optional(),
+})
+  // The container env carries far more than the daemon validates (PATH, HOME, REDIS_URL in Phase 5,
+  // a bootstrap token, inner-docker vars, …). Joi would otherwise REJECT every unknown key — allow
+  // them through so the minimal contract validates the keys it cares about without policing the rest.
+  .unknown(true);

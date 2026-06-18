@@ -27,6 +27,15 @@
       "compilerOptions": {
         "tsConfigPath": "src/slack-app/tsconfig.json"
       }
+    },
+    "daemon": {
+      "type": "application",
+      "root": "src/daemon",
+      "entryFile": "daemon/main",
+      "sourceRoot": "src/daemon",
+      "compilerOptions": {
+        "tsConfigPath": "src/daemon/tsconfig.json"
+      }
     }
   }
 }
