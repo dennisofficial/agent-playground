@@ -52,6 +52,25 @@ const DEFAULT_PIDS_LIMIT = 2048;
  * explicitly is a no-op but documents intent (and `WORKSPACE_RUNTIME=sysbox-runc` flips it). */
 const DEFAULT_RUNTIME = 'runc';
 
+/** Where the Linux-built daemon is MOUNTED read-only inside every sandbox, and its entry file. The build
+ * is a named volume produced by `pnpm daemon:build` (not baked into the generic image), so a daemon code
+ * change is a `pnpm daemon:build` + restart, never an image rebuild. */
+const DAEMON_MOUNT = '/daemon';
+const DAEMON_ENTRY = `${DAEMON_MOUNT}/backend/dist/daemon/main.js`;
+/** Default name of the daemon-build volume (override via `WORKSPACE_DAEMON_BUILD_VOLUME`). */
+const DEFAULT_DAEMON_BUILD_VOLUME = 'agent-daemon-build';
+
+/** In-sandbox roots the daemon reads. Defaults also live in the daemon's `env.validation.ts`; injected
+ * here per-container so the GENERIC image bakes no runtime env (the host owns the deployment shape).
+ * NOTE: deliberately NO `NODE_ENV=production` — these are dev workspaces, not prod servers. */
+const SANDBOX_AGENT_HOME_ROOT = '/workspace/.agent-home';
+const SANDBOX_WORKSPACE_ROOT = '/workspace/repo';
+
+/** The per-sandbox inner-docker storage volume name (private `/var/lib/docker` — the collision fix). */
+function dockerStorageVolume(workspaceId: string): string {
+  return `agent-ws-docker-${workspaceId}`;
+}
+
 /** Map a uuid into a Docker-safe container name. Docker names allow `[a-zA-Z0-9][a-zA-Z0-9_.-]+`. */
 function containerName(uuid: string): string {
   const safe = uuid.replace(/[^a-zA-Z0-9_.-]/g, '-');
@@ -81,6 +100,8 @@ function sanitizeLabelValue(v: string): string {
 export class ContainerManagerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ContainerManagerService.name);
   private readonly ops = createMutex();
+  /** Caches the one-time daemon-build presence check (the build volume doesn't change under us). */
+  private buildChecked = false;
 
   constructor(
     @Inject(CONTAINER_ENGINE) private readonly engine: ContainerEnginePort,
@@ -154,9 +175,16 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     const image = this.env.get('WORKSPACE_IMAGE');
     if (!image) {
       throw new Error(
-        'WORKSPACE_IMAGE is not set — set it to the sandbox base image (pinned by digest in deploy).',
+        'WORKSPACE_IMAGE is not set — set it to the generic workspace base image (pinned by digest in deploy).',
       );
     }
+    const buildVolume =
+      this.env.get('WORKSPACE_DAEMON_BUILD_VOLUME') ??
+      DEFAULT_DAEMON_BUILD_VOLUME;
+    // Fail loudly + early if the mounted daemon build is missing (rather than spawning a sandbox whose
+    // daemon can't start). Checked once per process — the build volume doesn't change under us.
+    await this.ensureBuildPresent(image, buildVolume);
+
     const { gitUrl: repo, baseBranch } = await this.repoCoordinates(
       team,
       project,
@@ -187,29 +215,43 @@ export class ContainerManagerService implements OnApplicationBootstrap {
       [LABEL_BOOT_TOKEN]: bootstrapToken,
     };
 
+    const dockerVolume = dockerStorageVolume(workspaceId);
     const spec: CreateContainerSpec = {
       name,
       image,
       // The daemon connects OUT to Redis and consumes ws:{WORKSPACE_ID}:cmds; the bootstrap token auths
       // the cred-pull channel. NO secrets here beyond the short bootstrap token (the GitHub PAT + LLM
       // key arrive over the bus per-request / per-run, never baked into the container env). The repo
-      // coordinates (NON-secret) drive the daemon's clone-on-boot (Phase 11); the storage driver is set
-      // only when non-empty (so the entrypoint auto-detects on a host that doesn't need it).
+      // coordinates (NON-secret) drive the daemon's clone-on-boot; the storage driver is set only when
+      // non-empty (so the entrypoint auto-detects on a host that doesn't need it).
+      //
+      // The runtime env that the GENERIC image deliberately no longer bakes (so the host owns the
+      // deployment shape and the image stays project-agnostic): the mounted-daemon entry, the in-sandbox
+      // roots, and the relaxed-guard signal. NO NODE_ENV=production — these are dev workspaces.
       env: [
         `REDIS_URL=${redisUrl}`,
         `WORKSPACE_ID=${workspaceId}`,
         `DAEMON_BOOTSTRAP_TOKEN=${bootstrapToken}`,
         `WORKSPACE_REPO_URL=${repo}`,
         `WORKSPACE_BASE_BRANCH=${baseBranch}`,
+        `DAEMON_ENTRY=${DAEMON_ENTRY}`,
+        `AGENT_HOME_ROOT=${SANDBOX_AGENT_HOME_ROOT}`,
+        `WORKSPACE_ROOT=${SANDBOX_WORKSPACE_ROOT}`,
+        `SANDBOX_GUARD_RELAXED=true`,
         ...(storageDriver ? [`DOCKERD_STORAGE_DRIVER=${storageDriver}`] : []),
       ],
       labels,
-      privileged: true, // inner DinD (Phase 10) — the locked tradeoff
+      privileged: true, // inner DinD — the locked tradeoff
       runtime: this.env.get('WORKSPACE_RUNTIME') ?? DEFAULT_RUNTIME,
       network,
-      // A per-sandbox named volume for the inner Docker's storage so `/var/lib/docker` is private + the
-      // host's docker-storage is never shared (the collision fix). Volume name = the workspace id.
-      binds: [`agent-ws-docker-${workspaceId}:/var/lib/docker`],
+      binds: [
+        // The Linux-built daemon, mounted READ-ONLY (not baked into the image). DAEMON_ENTRY points here.
+        `${buildVolume}:${DAEMON_MOUNT}:ro`,
+        // A per-sandbox named volume for the inner Docker's storage so `/var/lib/docker` is private + the
+        // host's docker-storage is never shared (the collision fix). Created+labelled just below so the
+        // boot orphan-sweep can find it (a bind-auto-created volume carries no labels). NEVER shared.
+        `${dockerVolume}:/var/lib/docker`,
+      ],
       restartPolicy: 'unless-stopped',
       memoryBytes: DEFAULT_MEMORY_BYTES,
       nanoCpus: DEFAULT_NANO_CPUS,
@@ -220,6 +262,12 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     this.logger.log(
       `creating sandbox ${workspaceId} (${name}) for ${team}/${project}`,
     );
+    // Create + LABEL the inner-docker volume before the container, so it's findable by the boot
+    // orphan-sweep (`listVolumes({label})` only sees labelled volumes) and removed on teardown.
+    await this.engine.createVolume(dockerVolume, {
+      [LABEL_MANAGED]: '1',
+      [LABEL_WORKSPACE]: workspaceId,
+    });
     const handle = await this.engine.createContainer(spec);
     await this.engine.startContainer(handle.id);
 
@@ -237,7 +285,33 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     return record;
   }
 
-  /** Stop + remove a sandbox container. Idempotent: an unknown/gone workspace is a no-op. */
+  /**
+   * Verify the mounted daemon build actually contains its entry file before spawning any sandbox.
+   * Throws a clear "run `pnpm daemon:build`" error otherwise (the daemon is mounted from `buildVolume`,
+   * not baked into the image). Cached: only the FIRST `create` pays the throwaway-container check.
+   */
+  private async ensureBuildPresent(
+    image: string,
+    buildVolume: string,
+  ): Promise<void> {
+    if (this.buildChecked) return;
+    const present = await this.engine.daemonBuildPresent(
+      buildVolume,
+      image,
+      DAEMON_ENTRY,
+    );
+    if (!present) {
+      throw new Error(
+        `Daemon build not found in volume "${buildVolume}" (missing ${DAEMON_ENTRY}). ` +
+          'Run `pnpm daemon:build` to (re)populate it before spawning sandboxes.',
+      );
+    }
+    this.buildChecked = true;
+  }
+
+  /** Stop + remove a sandbox container AND its inner-docker storage volume. Idempotent: an unknown/gone
+   * workspace is a no-op. Removing the ~GiB `/var/lib/docker` volume is the disk-leak fix — a container
+   * removed without it leaves its volume behind (the ENOSPC root cause). */
   async destroyWorkspace(workspaceId: string): Promise<void> {
     await this.ops(async () => {
       const rec = this.registry.get(workspaceId);
@@ -256,6 +330,14 @@ export class ContainerManagerService implements OnApplicationBootstrap {
         .catch((err) =>
           this.logger.warn(`remove ${workspaceId} failed: ${String(err)}`),
         );
+      // Reclaim the inner-docker volume now the container holding it is gone (best-effort).
+      await this.engine
+        .removeVolume(dockerStorageVolume(workspaceId))
+        .catch((err) =>
+          this.logger.warn(
+            `remove volume for ${workspaceId} failed: ${String(err)}`,
+          ),
+        );
       await this.credentials.unwatch(workspaceId);
       // Drop any cached readiness — a recreated sandbox gets a fresh uuid, but clearing keeps the
       // gate's cache honest and bounded (no entries linger for destroyed workspaces).
@@ -273,6 +355,34 @@ export class ContainerManagerService implements OnApplicationBootstrap {
         `sandbox reconciliation skipped: ${err instanceof Error ? err.message : err}`,
       ),
     );
+    // After the registry is rebuilt from live containers, reclaim any managed inner-docker volume whose
+    // sandbox is gone (the disk-leak fix — orphaned ~GiB volumes accumulate otherwise).
+    await this.sweepOrphanVolumes().catch((err) =>
+      this.logger.warn(
+        `orphan-volume sweep skipped: ${err instanceof Error ? err.message : err}`,
+      ),
+    );
+  }
+
+  /** Remove managed inner-docker volumes (label `com.agent.managed=1`) with no live sandbox in the
+   * registry. Mirrors `reconcile()` (containers) for volumes; runs once at boot after reconcile, so the
+   * registry is authoritative. The daemon-build + pnpm-store volumes are unlabelled, so never swept. */
+  private async sweepOrphanVolumes(): Promise<void> {
+    await this.ops(async () => {
+      const vols = await this.engine.listVolumes({
+        label: [`${LABEL_MANAGED}=1`],
+      });
+      for (const v of vols) {
+        const wsId = v.labels[LABEL_WORKSPACE];
+        if (wsId && this.registry.get(wsId)) continue; // a live sandbox still owns it
+        this.logger.log(`sweeping orphan volume ${v.name} (no live sandbox)`);
+        await this.engine
+          .removeVolume(v.name)
+          .catch((err) =>
+            this.logger.warn(`sweep ${v.name} failed: ${String(err)}`),
+          );
+      }
+    });
   }
 
   async reconcile(): Promise<void> {

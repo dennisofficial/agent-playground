@@ -72,6 +72,17 @@ export interface ListContainersFilter {
   label?: string[];
 }
 
+/** One managed volume as `listVolumes`/`inspectVolume` report it (the sweep parses labels off this). */
+export interface VolumeSummary {
+  name: string;
+  labels: ContainerLabels;
+}
+
+/** Filters for `listVolumes` — `label` matches `key` or `key=value` (same semantics as containers). */
+export interface ListVolumesFilter {
+  label?: string[];
+}
+
 /**
  * The minimal Docker surface Phase 6 needs. Every method is async (the dockerode client is async) and
  * id-based after create, so the manager never holds a live dockerode object — only opaque ids.
@@ -94,4 +105,30 @@ export interface ContainerEnginePort {
 
   /** Inspect one container's current labels + state, or undefined if it's gone. */
   inspectContainer(id: string): Promise<ContainerSummary | undefined>;
+
+  /** Create a named volume with the given labels (idempotent — an existing volume of the same name is
+   * returned). The manager labels each per-sandbox volume so the boot orphan-sweep can find leaked ones
+   * (Docker label filters apply to volume OBJECTS, so a bind-auto-created volume — which carries no
+   * labels — is invisible to `listVolumes({label})`; we must create+label it up front). */
+  createVolume(name: string, labels?: ContainerLabels): Promise<void>;
+
+  /** Remove a named volume (best-effort — a missing volume is a no-op; a volume still in use throws). */
+  removeVolume(name: string): Promise<void>;
+
+  /** List volumes, optionally filtered by label (`key` or `key=value`). */
+  listVolumes(filter?: ListVolumesFilter): Promise<VolumeSummary[]>;
+
+  /** Inspect one volume's labels, or undefined if it doesn't exist. */
+  inspectVolume(name: string): Promise<VolumeSummary | undefined>;
+
+  /** Pre-spawn guard: whether the mounted daemon build actually contains its entry file. Runs a
+   * throwaway container that mounts `volume` read-only at `/daemon` and `test -f`s `entryPath` — volume
+   * existence alone is insufficient (a named volume's contents aren't host-readable on Docker Desktop,
+   * and a half-populated volume would still "exist"). `false` ⇒ the host fails loudly with "run
+   * `pnpm daemon:build`" rather than spawning a sandbox whose daemon can't start. */
+  daemonBuildPresent(
+    volume: string,
+    image: string,
+    entryPath: string,
+  ): Promise<boolean>;
 }

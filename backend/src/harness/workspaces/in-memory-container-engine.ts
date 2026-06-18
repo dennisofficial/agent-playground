@@ -1,9 +1,12 @@
 import type {
   ContainerEnginePort,
   ContainerHandle,
+  ContainerLabels,
   ContainerSummary,
   CreateContainerSpec,
   ListContainersFilter,
+  ListVolumesFilter,
+  VolumeSummary,
 } from './container-engine.port';
 
 /** One created container as the fake tracks it — the verbatim create spec + a state + a synthetic id. */
@@ -30,11 +33,18 @@ export interface FakeContainer {
  */
 export class InMemoryContainerEngine implements ContainerEnginePort {
   private readonly containers = new Map<string, FakeContainer>();
+  /** name → labels, modelling Docker's named-volume store (the manager's per-sandbox volumes). */
+  private readonly volumes = new Map<string, ContainerLabels>();
   private seq = 0;
 
   /** Synthetic-id counter exposed so a test can assert "find didn't create a second container". */
   readonly created: CreateContainerSpec[] = [];
   readonly removed: string[] = [];
+  /** Volume call logs for assertions (the disk-leak fix). */
+  readonly createdVolumes: string[] = [];
+  readonly removedVolumes: string[] = [];
+  /** Drives `daemonBuildPresent` (the pre-spawn guard) — flip to false to exercise the loud failure. */
+  buildPresent = true;
 
   /** TEST HELPER: inject a container as if it already existed on the host before this process booted. */
   seed(spec: CreateContainerSpec, state: FakeContainer['state'] = 'running'): string {
@@ -86,6 +96,46 @@ export class InMemoryContainerEngine implements ContainerEnginePort {
   inspectContainer(id: string): Promise<ContainerSummary | undefined> {
     const c = this.containers.get(id);
     return Promise.resolve(c ? this.summary(c) : undefined);
+  }
+
+  /** TEST HELPER: inject a volume as if it already existed on the host before this process booted
+   * (the orphan-sweep scenario). */
+  seedVolume(name: string, labels: ContainerLabels = {}): void {
+    this.volumes.set(name, { ...labels });
+  }
+
+  createVolume(name: string, labels?: ContainerLabels): Promise<void> {
+    // Idempotent, like Docker: re-creating an existing name keeps it (last labels win — matches our
+    // create-before-container flow where the name is the per-sandbox uuid).
+    this.volumes.set(name, { ...(labels ?? {}) });
+    this.createdVolumes.push(name);
+    return Promise.resolve();
+  }
+
+  removeVolume(name: string): Promise<void> {
+    // A missing volume is a no-op (mirrors the adapter's 404 tolerance).
+    this.volumes.delete(name);
+    this.removedVolumes.push(name);
+    return Promise.resolve();
+  }
+
+  listVolumes(filter?: ListVolumesFilter): Promise<VolumeSummary[]> {
+    const wanted = filter?.label ?? [];
+    const out: VolumeSummary[] = [];
+    for (const [name, labels] of this.volumes) {
+      if (!wanted.every((w) => matchesLabel(labels, w))) continue;
+      out.push({ name, labels: { ...labels } });
+    }
+    return Promise.resolve(out);
+  }
+
+  inspectVolume(name: string): Promise<VolumeSummary | undefined> {
+    const labels = this.volumes.get(name);
+    return Promise.resolve(labels ? { name, labels: { ...labels } } : undefined);
+  }
+
+  daemonBuildPresent(): Promise<boolean> {
+    return Promise.resolve(this.buildPresent);
   }
 
   private summary(c: FakeContainer): ContainerSummary {

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Sandbox daemon ENTRYPOINT (Phase 10 — privileged DinD).
+# Sandbox daemon ENTRYPOINT (privileged DinD).
 #
-# The container runs `--privileged` with a per-sandbox `/var/lib/docker` volume (set by the host's
-# ContainerManagerService). This script brings up the INNER Docker engine, waits until its socket is
-# ready, then hands off (exec) to the Node daemon — so the agent's `docker compose up` is fully private
-# to the sandbox (the collision fix the whole feature exists for).
+# The container runs `--privileged` with a per-sandbox `/var/lib/docker` volume AND the daemon build
+# mounted read-only at /daemon (both set by the host's ContainerManagerService). This script brings up
+# the INNER Docker engine, waits until its socket is ready, then hands off to the MOUNTED Node daemon
+# (DAEMON_ENTRY) — so the agent's `docker compose up` is fully private to the sandbox (the collision fix
+# the whole feature exists for).
 #
 # Lifecycle:
 #   1) Start `dockerd` in the background (privileged; default unix socket /var/run/docker.sock).
@@ -21,8 +22,10 @@ set -euo pipefail
 
 log() { echo "[entrypoint] $*"; }
 
+# The daemon is MOUNTED at /daemon (a named volume built by `pnpm daemon:build`), not baked into the
+# image — the host injects DAEMON_ENTRY pointing into that mount. Default matches the host's mount path.
 DOCKERD_READY_TIMEOUT="${DOCKERD_READY_TIMEOUT:-120}"
-DAEMON_ENTRY="${DAEMON_ENTRY:-/repo/backend/dist/daemon/main.js}"
+DAEMON_ENTRY="${DAEMON_ENTRY:-/daemon/backend/dist/daemon/main.js}"
 
 dockerd_pid=""
 daemon_pid=""

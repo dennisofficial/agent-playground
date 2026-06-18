@@ -22,7 +22,7 @@ const REPO = 'https://github.com/acme/proj-1';
 
 function makeEnv(over: Record<string, string> = {}): EnvService {
   const values: Record<string, string | undefined> = {
-    WORKSPACE_IMAGE: 'agent-sandbox:pinned',
+    WORKSPACE_IMAGE: 'agent-workspace-base:pinned',
     REDIS_URL: 'redis://redis-host:6379',
     ...over,
   };
@@ -85,7 +85,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
 
     // uuid name, sanitized
     expect(spec.name).toMatch(/^agent-ws-[0-9a-f-]{36}$/);
-    expect(spec.image).toBe('agent-sandbox:pinned');
+    expect(spec.image).toBe('agent-workspace-base:pinned');
 
     // privileged DinD, restart policy, runtime default
     expect(spec.privileged).toBe(true);
@@ -126,6 +126,20 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(spec.binds).toContain(
       `agent-ws-docker-${rec.workspaceId}:/var/lib/docker`,
     );
+    // the Linux daemon build is MOUNTED read-only at /daemon (not baked into the image)
+    expect(spec.binds).toContain('agent-daemon-build:/daemon:ro');
+    // that docker-storage volume is explicitly created + labelled (so the boot sweep can find leaks)
+    expect(engine.createdVolumes).toContain(`agent-ws-docker-${rec.workspaceId}`);
+
+    // host-injected runtime env that the GENERIC image no longer bakes — incl. the mounted-daemon entry,
+    // the in-sandbox roots, and the relaxed-guard signal. Deliberately NO NODE_ENV=production.
+    expect(spec.env).toContain(
+      'DAEMON_ENTRY=/daemon/backend/dist/daemon/main.js',
+    );
+    expect(spec.env).toContain('AGENT_HOME_ROOT=/workspace/.agent-home');
+    expect(spec.env).toContain('WORKSPACE_ROOT=/workspace/repo');
+    expect(spec.env).toContain('SANDBOX_GUARD_RELAXED=true');
+    expect(spec.env.some((e) => e.startsWith('NODE_ENV='))).toBe(false);
 
     // resource limits set
     expect(spec.memoryBytes).toBeGreaterThan(0);
@@ -341,14 +355,41 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(found.bootstrapToken).toBe('persisted-token-123');
   });
 
-  it('destroyWorkspace stops + removes the container, unwatches creds, and clears readiness', async () => {
+  it('destroyWorkspace stops + removes the container AND its inner-docker volume, unwatches creds, clears readiness', async () => {
     const rec = await manager.ensureWorkspace(TEAM, PROJECT);
     await manager.destroyWorkspace(rec.workspaceId);
 
     expect(engine.removed).toContain(rec.containerId);
+    // The disk-leak fix: the ~GiB /var/lib/docker volume is reclaimed too.
+    expect(engine.removedVolumes).toContain(`agent-ws-docker-${rec.workspaceId}`);
     expect(registry.get(rec.workspaceId)).toBeUndefined();
     expect(credentials.unwatch).toHaveBeenCalledWith(rec.workspaceId);
     expect(readiness.forget).toHaveBeenCalledWith(rec.workspaceId);
+  });
+
+  it('ensureWorkspace fails loudly when the daemon build is missing from the volume', async () => {
+    engine.buildPresent = false; // simulate a volume that exists but has no dist/daemon/main.js
+    await expect(manager.ensureWorkspace(TEAM, PROJECT)).rejects.toThrow(
+      /pnpm daemon:build/,
+    );
+    expect(engine.created).toHaveLength(0); // never spawned the container
+  });
+
+  it('boot sweep reclaims a managed inner-docker volume with no live sandbox, but keeps live ones', async () => {
+    // A leaked volume (no container) + a volume owned by a live sandbox.
+    engine.seedVolume('agent-ws-docker-orphan', {
+      'com.agent.managed': '1',
+      'com.agent.workspace': 'orphan',
+    });
+    const rec = await manager.ensureWorkspace(TEAM, PROJECT); // creates a live sandbox + its volume
+
+    await manager.onApplicationBootstrap();
+
+    expect(engine.removedVolumes).toContain('agent-ws-docker-orphan');
+    // the live sandbox's volume is NOT swept
+    expect(engine.removedVolumes).not.toContain(
+      `agent-ws-docker-${rec.workspaceId}`,
+    );
   });
 
   it('reconciliation is resilient to a Docker-absent host (no throw)', async () => {

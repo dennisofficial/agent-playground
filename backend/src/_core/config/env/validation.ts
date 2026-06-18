@@ -121,9 +121,15 @@ export interface IEnvConfig {
   // The Docker network each sandbox joins so the service-DNS Redis resolves from inside the container.
   // Default `agent-playground_default` (the compose default network). Sandboxes still publish NO ports. (Phase 11)
   WORKSPACE_NETWORK?: string;
-  // The inner dockerd storage driver injected per environment: empty (auto/overlay2) on a real Linux
-  // host (OVH prod), `vfs` on Docker Desktop where overlay-on-overlay can't mount. Default empty. (Phase 11)
+  // The inner dockerd storage driver injected per environment. TEST/DEV-ONLY escape hatch: leave EMPTY
+  // in production (auto → overlay2 on a real Linux host); set `vfs` ONLY on Docker Desktop where
+  // overlay-on-overlay can't mount. A Linux smoke test asserts real workspaces use overlay2, so vfs
+  // can't silently become the prod default.
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
+  // The named Docker volume holding the Linux-built daemon (`dist` + node_modules + @workspace dists),
+  // produced by `pnpm daemon:build` and mounted read-only at /daemon in every sandbox — so the daemon
+  // is MOUNTED, never baked into the (generic) image. Default `agent-daemon-build`.
+  WORKSPACE_DAEMON_BUILD_VOLUME?: string;
   // The Phase-9 master switch for containerized coding sessions. DEFAULT FALSE — when unset/false the
   // create-time policy NEVER picks a sandbox, so no sandbox is ever created, `SandboxRegistry.has` is
   // always false, and every turn + git op routes LOCAL (behavior byte-identical to pre-Phase-9). Set
@@ -263,6 +269,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_REDIS_URL: Joi.string().uri().optional(),
   WORKSPACE_NETWORK: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
+  WORKSPACE_DAEMON_BUILD_VOLUME: Joi.string().optional(),
   // Phase 9 containerized-session master switch (default false — see the interface note).
   WORKSPACE_SANDBOX_ENABLED: Joi.boolean().optional().default(false),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),

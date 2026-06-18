@@ -4,9 +4,12 @@ import { EnvService } from '@core/config/env/env.service';
 import type {
   ContainerEnginePort,
   ContainerHandle,
+  ContainerLabels,
   ContainerSummary,
   CreateContainerSpec,
   ListContainersFilter,
+  ListVolumesFilter,
+  VolumeSummary,
 } from './container-engine.port';
 
 /**
@@ -118,6 +121,64 @@ export class DockerodeAdapter implements ContainerEnginePort {
     } catch (err) {
       if (isNotFound(err)) return undefined;
       throw err;
+    }
+  }
+
+  async createVolume(name: string, labels?: ContainerLabels): Promise<void> {
+    // Idempotent: Docker's volume-create returns the existing volume when the name already exists.
+    await this.docker().createVolume({ Name: name, Labels: labels ?? {} });
+  }
+
+  async removeVolume(name: string): Promise<void> {
+    try {
+      await this.docker().getVolume(name).remove();
+    } catch (err) {
+      // A volume that's already gone is not an error for our teardown/sweep intent. A 409 (still in
+      // use by a container) IS surfaced — the caller removes the container first.
+      if (!isNotFound(err)) throw err;
+    }
+  }
+
+  async listVolumes(filter?: ListVolumesFilter): Promise<VolumeSummary[]> {
+    const res = await this.docker().listVolumes(
+      filter?.label ? { filters: { label: filter.label } } : {},
+    );
+    // dockerode types `Volumes` as possibly-null; older daemons can omit it.
+    return (res.Volumes ?? []).map((v) => ({
+      name: v.Name,
+      labels: v.Labels ?? {},
+    }));
+  }
+
+  async inspectVolume(name: string): Promise<VolumeSummary | undefined> {
+    try {
+      const data = await this.docker().getVolume(name).inspect();
+      return { name: data.Name, labels: data.Labels ?? {} };
+    } catch (err) {
+      if (isNotFound(err)) return undefined;
+      throw err;
+    }
+  }
+
+  async daemonBuildPresent(
+    volume: string,
+    image: string,
+    entryPath: string,
+  ): Promise<boolean> {
+    // Throwaway `test -f <entryPath>` against the build volume. Override the image ENTRYPOINT (which
+    // would otherwise start the inner dockerd → daemon) so the container is purely the test command.
+    const container = await this.docker().createContainer({
+      Image: image,
+      Entrypoint: ['test', '-f', entryPath],
+      Cmd: [],
+      HostConfig: { Binds: [`${volume}:/daemon:ro`], AutoRemove: false },
+    });
+    try {
+      await container.start();
+      const res = (await container.wait()) as { StatusCode?: number };
+      return res.StatusCode === 0;
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
     }
   }
 }

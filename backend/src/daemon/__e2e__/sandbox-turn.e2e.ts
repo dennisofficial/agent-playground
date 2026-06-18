@@ -5,8 +5,9 @@
  *
  * Drives the REAL host wiring against a REAL privileged sandbox to prove the full loop:
  *
- *   ensureWorkspace → a real `agent-daemon:dev` sandbox spawns (privileged DinD, joined to the compose
- *   network), CLONES a public repo on boot (Phase 11 clone-on-boot), writes its ready marker → host
+ *   ensureWorkspace → a real `agent-workspace-base` sandbox spawns (privileged DinD, the daemon MOUNTED
+ *   from the agent-daemon-build volume, joined to the compose network), CLONES a public repo on boot,
+ *   writes its ready marker → host
  *   waits on it → dispatch a REAL Claude `execute` turn over Redis → the engine, running INSIDE the
  *   sandbox in the cloned repo's worktree, writes a trivial HTTP server, starts it, and curls localhost
  *   → we stream the WorkerEvents and assert the final result reports the localhost response.
@@ -20,11 +21,12 @@
  * RUN (from `backend/`):
  *   pnpm dev:env -- npx tsx src/daemon/__e2e__/sandbox-turn.e2e.ts
  *
- * Prereqs (already stood up by the orchestrator):
- *   - image `agent-daemon:dev` built
+ * Prereqs:
+ *   - `pnpm daemon:build` has run (builds the generic `agent-workspace-base` image + populates the
+ *     `agent-daemon-build` volume the sandbox mounts the daemon from)
  *   - compose Redis up: host `localhost:6380`, service DNS `agent-playground-redis:6379` on network
  *     `agent-playground_default`
- *   - Docker Desktop host → inner dockerd needs `vfs` storage driver
+ *   - Docker Desktop host → inner dockerd needs `vfs` storage driver (test-only)
  *   - `ANTHROPIC_API_KEY` in the ambient env (dev:env / dotenvx injects it)
  *
  * The script reads its config from env (defaults match the orchestrator's setup) and exits non-zero on
@@ -105,12 +107,14 @@ async function main(): Promise<number> {
   //  - WORKSPACE_NETWORK → the compose network so that DNS resolves from inside the sandbox.
   //  - WORKSPACE_DOCKER_STORAGE_DRIVER → vfs (Docker Desktop overlay-on-overlay can't mount).
   const env = makeEnv({
-    WORKSPACE_IMAGE: process.env.WORKSPACE_IMAGE ?? 'agent-daemon:dev',
+    WORKSPACE_IMAGE: process.env.WORKSPACE_IMAGE ?? 'agent-workspace-base',
     WORKSPACE_SANDBOX_ENABLED: 'true',
     WORKSPACE_REDIS_URL:
       process.env.WORKSPACE_REDIS_URL ?? 'redis://agent-playground-redis:6379',
     WORKSPACE_NETWORK:
       process.env.WORKSPACE_NETWORK ?? 'agent-playground_default',
+    // TEST-ONLY: Docker Desktop overlay-on-overlay can't mount, so the e2e forces vfs. Real Linux hosts
+    // leave this empty (auto → overlay2); a Linux smoke test asserts that.
     WORKSPACE_DOCKER_STORAGE_DRIVER:
       process.env.WORKSPACE_DOCKER_STORAGE_DRIVER ?? 'vfs',
     DOCKER_SOCKET_PATH: process.env.DOCKER_SOCKET_PATH,
@@ -145,7 +149,7 @@ async function main(): Promise<number> {
   let workspaceId: string | undefined;
   try {
     // ── 1) ensureWorkspace → spawn a real sandbox; it clones the public repo on boot ──────────────
-    log(`ensureWorkspace(${TEAM}, ${PROJECT}) — spawning sandbox from agent-daemon:dev…`);
+    log(`ensureWorkspace(${TEAM}, ${PROJECT}) — spawning sandbox from agent-workspace-base…`);
     const rec = await manager.ensureWorkspace(TEAM, PROJECT);
     workspaceId = rec.workspaceId;
     log(

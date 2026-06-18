@@ -1,7 +1,7 @@
-# Keep the daemon image build context (repo root) lean + reproducible.
-# The build runs `pnpm install --frozen-lockfile` fresh inside the image, so host-installed
-# node_modules / build output / caches must NOT leak in (they'd bloat the context and could mismatch
-# the container's platform — e.g. the Mac's darwin codex binary vs the image's linux one).
+# Keep the GENERIC workspace base-image build context (repo root) lean. The base image bakes NO repo
+# code (it only COPYs backend/src/daemon/entrypoint.sh) — the daemon is built separately into a volume
+# by `pnpm daemon:build` (a `docker run` bind-mount, to which this .dockerignore does NOT apply). So
+# these excludes just stop host node_modules / build output / caches from bloating the build context.
 
 # Dependencies (reinstalled in-image from the lockfile)
 **/node_modules
