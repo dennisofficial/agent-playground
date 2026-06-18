@@ -140,7 +140,9 @@ describe('Phase 6 credential-pull channel (in-memory Redis)', () => {
     );
   });
 
-  it('rejects when no GitHub token resolves for the project', async () => {
+  it('serves an EMPTY-token credential when no GitHub token resolves (public-repo tolerance)', async () => {
+    // No resolvable token is NOT a failure: a public repo clones/fetches with no auth header. The host
+    // serves `{token:''}` so the daemon's `gitAuthEnv` yields {} and an unauthenticated clone proceeds.
     seedSandbox(registry);
     provisioner = new CredentialProvisionerService(
       redis,
@@ -153,8 +155,11 @@ describe('Phase 6 credential-pull channel (in-memory Redis)', () => {
     process.env.DAEMON_BOOTSTRAP_TOKEN = ISSUED_TOKEN;
     const daemonProvider = new RedisGitCredentialProvider(redis);
 
-    await expect(daemonProvider.resolve()).rejects.toThrow(
-      /no GitHub token resolvable/,
-    );
+    const cred = await daemonProvider.resolve();
+    expect(cred).toEqual({
+      token: '',
+      authorName: 'Agent',
+      authorEmail: 'agent@agents.noreply',
+    });
   });
 });

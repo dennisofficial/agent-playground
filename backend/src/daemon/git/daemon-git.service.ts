@@ -114,6 +114,12 @@ export class DaemonGitService {
   private sharedBranch?: string;
   /** Live per-session worktrees, keyed by session id. */
   private readonly worktrees = new Map<string, DaemonWorktree>();
+  /** Resolves once the boot clone (`ensureClone`) has completed — the readiness gate and the turn path
+   * await this so no worktree op runs against a not-yet-cloned repo. Settled by `markCloned`/`markCloneFailed`,
+   * which `DaemonBootstrapService` calls. Undefined until `expectClone()` is told a clone is coming. */
+  private cloneGate?: Promise<void>;
+  private resolveCloneGate?: () => void;
+  private rejectCloneGate?: (err: Error) => void;
 
   constructor(
     @Inject(GIT_CREDENTIAL_PROVIDER)
@@ -152,10 +158,12 @@ export class DaemonGitService {
   }
 
   /** The git auth env for one authenticated op against this clone's origin — token resolved JUST NOW
-   * (so a GitHub-App impl mints a fresh short-lived token per call). */
+   * (so a GitHub-App impl mints a fresh short-lived token per call). TOLERANT of a missing credential:
+   * a PUBLIC repo resolves no token, so fetch/clone carry no auth header (returns {}); a private op then
+   * fails at git with a legible auth error rather than here. */
   private async authEnv(): Promise<Record<string, string>> {
-    const { token } = await this.credentials.resolve();
-    return gitAuthEnv(this.requireRepo().gitUrl, token);
+    const cred = await this.credentials.resolve().catch(() => undefined);
+    return gitAuthEnv(this.requireRepo().gitUrl, cred?.token);
   }
 
   /** The remote-op identity guard: the clone's origin must still BE the configured `gitUrl`. By
@@ -189,8 +197,19 @@ export class DaemonGitService {
     if (!(await exists(join(workspaceRoot, '.git')))) {
       const parent = join(workspaceRoot, '..');
       await mkdir(parent, { recursive: true });
-      const cred = await this.credentials.resolve();
-      const auth = gitAuthEnv(gitUrl, cred.token);
+      // Resolve the credential, but TOLERATE its absence — a PUBLIC repo needs no token, so a
+      // credential-resolution failure (host has no PAT for the project, or the cred channel refused)
+      // must not block a public clone. `gitAuthEnv` already returns {} for an empty/undefined token, so
+      // a no-token clone simply carries no auth header. A genuinely PRIVATE repo then fails at the clone
+      // itself with git's own "Authentication failed", which is the correct, legible error.
+      const cred = await this.credentials.resolve().catch((err) => {
+        this.logger.warn(
+          `no git credential resolved (${err instanceof Error ? err.message : String(err)}) — ` +
+            `attempting an UNAUTHENTICATED clone (works for a public repo).`,
+        );
+        return undefined;
+      });
+      const auth = gitAuthEnv(gitUrl, cred?.token);
       this.logger.log(`cloning ${gitUrl} (base ${baseBranch}) → ${workspaceRoot}`);
       await this.git(
         ['clone', '--branch', baseBranch, gitUrl, workspaceRoot],
@@ -227,6 +246,42 @@ export class DaemonGitService {
     return root;
   }
 
+  // ---- clone-readiness gate ----------------------------------------------------------------------
+  //
+  // The boot clone (`DaemonBootstrapService`) runs asynchronously after the DI graph is up. The
+  // readiness marker must not be written — and a turn's `createWorktree` must not run — until that
+  // clone has completed. These three methods coordinate that: `expectClone()` arms the gate the moment
+  // the bootstrapper knows a clone is coming, `markCloned`/`markCloneFailed` settle it, and
+  // `whenCloned()` is what readiness + the turn path await. With NO clone expected (a dev/standalone
+  // daemon whose repo is already present, or a fixture), the gate resolves immediately.
+
+  /** Arm the clone gate — called by `DaemonBootstrapService` before it starts the boot clone, so any
+   * early `whenCloned()` awaits the in-flight clone rather than resolving prematurely. Idempotent. */
+  expectClone(): void {
+    if (this.cloneGate) return;
+    this.cloneGate = new Promise<void>((resolve, reject) => {
+      this.resolveCloneGate = resolve;
+      this.rejectCloneGate = reject;
+    });
+  }
+
+  /** Settle the clone gate as successful (boot clone finished). No-op if not armed. */
+  markCloned(): void {
+    this.resolveCloneGate?.();
+  }
+
+  /** Settle the clone gate as failed (boot clone threw) — `whenCloned()` then rejects, so readiness
+   * signals WITHOUT a clone and a turn fails loudly instead of running against a missing repo. */
+  markCloneFailed(err: Error): void {
+    this.rejectCloneGate?.(err);
+  }
+
+  /** Await the boot clone. Resolves immediately when no clone is expected (gate never armed); otherwise
+   * settles when `markCloned`/`markCloneFailed` is called. The turn path + readiness gate await this. */
+  async whenCloned(): Promise<void> {
+    if (this.cloneGate) await this.cloneGate;
+  }
+
   /** Where per-session worktrees live inside the clone. */
   private worktreesDir(): string {
     return join(this.requireRepo().root, '.workspaces');
@@ -253,7 +308,13 @@ export class DaemonGitService {
     const startPoint = await this.freshBaseRef();
     await this.git(['worktree', 'add', '-b', branch, checkout, startPoint], root);
 
-    const cred = await this.credentials.resolve();
+    // Identity is best-effort: a public-repo session has no resolvable credential, so fall back to a
+    // stable generic author rather than failing the worktree create over attribution.
+    const cred = await this.credentials.resolve().catch(() => ({
+      token: '',
+      authorName: 'Agent',
+      authorEmail: 'agent@agents.noreply',
+    }));
     await this.setWorktreeIdentity(checkout, cred);
 
     // Populate submodules in the worktree too (the clone's are init'd, but a fresh worktree's

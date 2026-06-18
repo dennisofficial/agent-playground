@@ -42,10 +42,22 @@ export class DockerodeAdapter implements ContainerEnginePort {
       Image: spec.image,
       Env: spec.env,
       Labels: spec.labels,
+      // Join a named network so the daemon can reach the compose Redis by service DNS. Both forms are
+      // set: HostConfig.NetworkMode (the primary attach) AND a NetworkingConfig.EndpointsConfig entry
+      // (so the network is attached even when NetworkMode is otherwise interpreted) — they agree on the
+      // same network name. Undefined → omit both (Docker's default bridge).
+      ...(spec.network
+        ? {
+            NetworkingConfig: {
+              EndpointsConfig: { [spec.network]: {} },
+            },
+          }
+        : {}),
       // No ExposedPorts / no PortBindings — sandboxes have NO inbound network / NO published ports.
       HostConfig: {
         Privileged: spec.privileged,
         ...(spec.runtime ? { Runtime: spec.runtime } : {}),
+        ...(spec.network ? { NetworkMode: spec.network } : {}),
         Binds: spec.binds,
         RestartPolicy: { Name: spec.restartPolicy },
         ...(spec.memoryBytes !== undefined

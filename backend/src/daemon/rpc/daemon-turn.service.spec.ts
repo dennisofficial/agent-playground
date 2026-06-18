@@ -57,6 +57,7 @@ describe('DaemonTurnService.handleRun — PORT injection', () => {
     } as never;
     const tools = { prime: vi.fn(async () => undefined) } as never;
     const git = {
+      whenCloned: vi.fn(async () => undefined),
       worktreePath: () => '/workspace/repo/.workspaces/sess',
       createWorktree: vi.fn(async () => '/workspace/repo/.workspaces/sess'),
     } as never;

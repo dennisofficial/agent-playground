@@ -13,6 +13,7 @@ import type { ProjectStore } from '../projects/project-store';
 import { ContainerManagerService } from './container-manager.service';
 import type { CredentialProvisionerService } from './credential-provisioner.service';
 import { InMemoryContainerEngine } from './in-memory-container-engine';
+import type { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
 
 const TEAM = 'team-1';
@@ -45,10 +46,18 @@ function makeCredentials(): CredentialProvisionerService {
   } as unknown as CredentialProvisionerService;
 }
 
+function makeReadiness(): SandboxReadinessService {
+  return {
+    waitForReady: vi.fn(async () => undefined),
+    forget: vi.fn(),
+  } as unknown as SandboxReadinessService;
+}
+
 describe('ContainerManagerService (in-memory container engine)', () => {
   let engine: InMemoryContainerEngine;
   let registry: SandboxRegistry;
   let credentials: CredentialProvisionerService;
+  let readiness: SandboxReadinessService;
   let manager: ContainerManagerService;
 
   beforeEach(() => {
@@ -57,12 +66,14 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     engine = new InMemoryContainerEngine();
     registry = new SandboxRegistry();
     credentials = makeCredentials();
+    readiness = makeReadiness();
     manager = new ContainerManagerService(
       engine,
       makeEnv(),
       makeProjects(),
       registry,
       credentials,
+      readiness,
     );
   });
 
@@ -90,8 +101,9 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       'com.agent.repo': REPO,
     });
 
-    // env: REDIS_URL + WORKSPACE_ID + a short random DAEMON_BOOTSTRAP_TOKEN; NO secrets baked in
-    expect(spec.env).toContain('REDIS_URL=redis://redis-host:6379');
+    // env: the SANDBOX-reachable Redis URL (WORKSPACE_REDIS_URL default, NOT the host's REDIS_URL) +
+    // WORKSPACE_ID + a short random DAEMON_BOOTSTRAP_TOKEN; NO secrets baked in.
+    expect(spec.env).toContain('REDIS_URL=redis://agent-playground-redis:6379');
     expect(spec.env).toContain(`WORKSPACE_ID=${rec.workspaceId}`);
     const tokenEnv = spec.env.find((e) =>
       e.startsWith('DAEMON_BOOTSTRAP_TOKEN='),
@@ -99,6 +111,15 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(tokenEnv).toBeDefined();
     expect(tokenEnv!.slice('DAEMON_BOOTSTRAP_TOKEN='.length).length).toBeGreaterThanOrEqual(
       32,
+    );
+
+    // Phase 11: the clone-on-boot repo coordinates (from ProjectStore) + the joined network are injected.
+    expect(spec.env).toContain(`WORKSPACE_REPO_URL=${REPO}`);
+    expect(spec.env).toContain('WORKSPACE_BASE_BRANCH=main'); // ProjectRecord has no defaultBranch → default
+    expect(spec.network).toBe('agent-playground_default');
+    // Storage driver NOT injected when WORKSPACE_DOCKER_STORAGE_DRIVER is unset (entrypoint auto-detects).
+    expect(spec.env.some((e) => e.startsWith('DOCKERD_STORAGE_DRIVER='))).toBe(
+      false,
     );
 
     // per-sandbox docker-storage volume mount for the inner DinD
@@ -155,6 +176,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       makeProjects(),
       registry,
       credentials,
+      readiness,
     );
     await expect(manager.ensureWorkspace(TEAM, PROJECT)).rejects.toThrow(
       /WORKSPACE_IMAGE is not set/,
@@ -169,9 +191,30 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       makeProjects(),
       registry,
       credentials,
+      readiness,
     );
     await manager.ensureWorkspace(TEAM, PROJECT);
     expect(engine.created[0].runtime).toBe('sysbox-runc');
+  });
+
+  it('(Phase 11) WORKSPACE_REDIS_URL / WORKSPACE_NETWORK / WORKSPACE_DOCKER_STORAGE_DRIVER override the defaults', async () => {
+    manager = new ContainerManagerService(
+      engine,
+      makeEnv({
+        WORKSPACE_REDIS_URL: 'redis://custom-redis:6399',
+        WORKSPACE_NETWORK: 'my-net',
+        WORKSPACE_DOCKER_STORAGE_DRIVER: 'vfs',
+      }),
+      makeProjects(),
+      registry,
+      credentials,
+      readiness,
+    );
+    await manager.ensureWorkspace(TEAM, PROJECT);
+    const spec = engine.created[0];
+    expect(spec.env).toContain('REDIS_URL=redis://custom-redis:6399');
+    expect(spec.network).toBe('my-net');
+    expect(spec.env).toContain('DOCKERD_STORAGE_DRIVER=vfs');
   });
 
   it('(b) boot reconciliation rebuilds the registry from labelled containers', async () => {
@@ -259,13 +302,14 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(found?.workspaceId).toBe(wsIdA);
   });
 
-  it('destroyWorkspace stops + removes the container and unwatches creds', async () => {
+  it('destroyWorkspace stops + removes the container, unwatches creds, and clears readiness', async () => {
     const rec = await manager.ensureWorkspace(TEAM, PROJECT);
     await manager.destroyWorkspace(rec.workspaceId);
 
     expect(engine.removed).toContain(rec.containerId);
     expect(registry.get(rec.workspaceId)).toBeUndefined();
     expect(credentials.unwatch).toHaveBeenCalledWith(rec.workspaceId);
+    expect(readiness.forget).toHaveBeenCalledWith(rec.workspaceId);
   });
 
   it('reconciliation is resilient to a Docker-absent host (no throw)', async () => {
@@ -280,6 +324,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       makeProjects(),
       registry,
       credentials,
+      readiness,
     );
     await expect(manager.onApplicationBootstrap()).resolves.toBeUndefined();
     expect(registry.list()).toHaveLength(0);

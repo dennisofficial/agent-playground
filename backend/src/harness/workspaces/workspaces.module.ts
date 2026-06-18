@@ -10,6 +10,7 @@ import { DaemonClient } from './daemon-client';
 import { DockerodeAdapter } from './dockerode.adapter';
 import { LocalWorkspaceAdapter } from './local-workspace.adapter';
 import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
+import { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
 import { TurnExecutor } from './turn-executor.service';
 import { WorkspaceGitProvider } from './workspace-git.provider';
@@ -51,6 +52,12 @@ import { WorkspaceService } from './workspace.service';
  *    workspace/session/reference/pipeline/open-pr tools).
  *  - `LocalWorkspaceAdapter` — the pure 1:1 pass-through to `WorkspaceService` the provider returns
  *    locally. (`DaemonGitAdapter` is constructed per-sandbox inside the provider, not a DI provider.)
+ *
+ * Phase 10 (host half) adds the READINESS GATE — `SandboxReadinessService`. The in-sandbox daemon XADDs
+ * a durable `ws:{id}:ready` marker once inner Docker + its consumer loop are up; this service blocks the
+ * FIRST remote turn (`RemoteTurnDispatcher`) on that marker so a `docker compose` turn never races a
+ * not-yet-ready daemon. It consumes the same `REDIS_STREAM_PORT` seam; the manager clears its cache on
+ * `destroyWorkspace`.
  */
 @CreateModule({
   imports: [RedisModule, EnginesModule, ProjectsModule, SkillsModule],
@@ -58,6 +65,7 @@ import { WorkspaceService } from './workspace.service';
     WorkspaceService,
     DaemonClient,
     SandboxRegistry,
+    SandboxReadinessService,
     ContainerManagerService,
     CredentialProvisionerService,
     RemoteTurnDispatcher,

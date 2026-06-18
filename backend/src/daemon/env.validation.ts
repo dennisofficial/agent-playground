@@ -40,6 +40,14 @@ export interface IDaemonEnvConfig {
   // per-session worktrees off this. Baked to /workspace/repo in the image; overridable.
   WORKSPACE_ROOT?: string;
 
+  // The repo coordinates the host injects at container creation (Phase 11 clone-on-boot). The daemon's
+  // `DaemonBootstrapService` clones WORKSPACE_REPO_URL (base WORKSPACE_BASE_BRANCH) into WORKSPACE_ROOT
+  // on boot, before any turn runs. OPTIONAL: a dev/standalone daemon (no WORKSPACE_ID) doesn't clone;
+  // WORKSPACE_BASE_BRANCH defaults to 'main' in the bootstrapper. Read directly from process.env by
+  // `DaemonBootstrapService` (same pattern as WORKSPACE_ID); declared here so they validate.
+  WORKSPACE_REPO_URL?: string;
+  WORKSPACE_BASE_BRANCH?: string;
+
   // Redis connection URL (Phase 5) — the daemon connects OUT to it (the only network it needs) to
   // consume its command stream + stream turn events back. OPTIONAL: the client is lazy/resilient, so
   // the daemon boots with Redis absent (the consumer loop retries until it appears); unset → a
@@ -83,6 +91,9 @@ export const daemonEnvValidation = Joi.object<IDaemonEnvConfig, true>({
 
   AGENT_HOME_ROOT: Joi.string().optional().default('/workspace/.agent-home'),
   WORKSPACE_ROOT: Joi.string().optional().default('/workspace/repo'),
+
+  WORKSPACE_REPO_URL: Joi.string().optional(),
+  WORKSPACE_BASE_BRANCH: Joi.string().optional(),
 
   REDIS_URL: Joi.string().uri().optional(),
   WORKSPACE_ID: Joi.string().optional(),

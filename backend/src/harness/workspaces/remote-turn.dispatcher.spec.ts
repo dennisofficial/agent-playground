@@ -22,6 +22,7 @@ import type { AgentToolSourceResolver } from '../skills/agent-tool-source-resolv
 import type { McpServerConfig, SkillSource } from '../skills/skill.types';
 import type { DaemonClient } from './daemon-client';
 import type { RunCommandPayload } from './daemon-protocol';
+import type { SandboxReadinessService } from './sandbox-readiness.service';
 import type { SandboxRecord } from './sandbox-registry';
 import type { SandboxRegistry } from './sandbox-registry';
 import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
@@ -68,6 +69,7 @@ function build(over: {
     mcpServers: McpServerConfig[];
   }>;
   dispatchRun?: DaemonClient['dispatchRun'];
+  waitForReady?: () => Promise<void>;
 } = {}) {
   const resolveForSession = vi.fn(
     over.resolveForSession ?? (async () => SANDBOX),
@@ -85,13 +87,22 @@ function build(over: {
   ) as unknown as DaemonClient['dispatchRun'];
   const daemon = { dispatchRun } as unknown as DaemonClient;
 
-  const dispatcher = new RemoteTurnDispatcher(sandboxes, toolSources, daemon);
-  return { dispatcher, resolveForSession, forAgent, dispatchRun };
+  const waitForReady = vi.fn(over.waitForReady ?? (async () => undefined));
+  const readiness = { waitForReady } as unknown as SandboxReadinessService;
+
+  const dispatcher = new RemoteTurnDispatcher(
+    sandboxes,
+    toolSources,
+    daemon,
+    readiness,
+  );
+  return { dispatcher, resolveForSession, forAgent, dispatchRun, waitForReady };
 }
 
 describe('RemoteTurnDispatcher.dispatch', () => {
   it('resolves the sandbox + tool sources and builds the wire payload (no cwd/onEvent/signal)', async () => {
-    const { dispatcher, resolveForSession, forAgent, dispatchRun } = build();
+    const { dispatcher, resolveForSession, forAgent, dispatchRun, waitForReady } =
+      build();
     const ctx: TurnRoutingCtx = {
       team: 'team-1',
       project: 'proj-1',
@@ -106,6 +117,8 @@ describe('RemoteTurnDispatcher.dispatch', () => {
       team: 'team-1',
       project: 'proj-1',
     });
+    // The readiness gate is awaited on the RESOLVED sandbox uuid before the run is dispatched.
+    expect(waitForReady).toHaveBeenCalledWith('sandbox-uuid-123');
     expect(forAgent).toHaveBeenCalledWith('alex');
 
     // dispatchRun(workspaceId, payload, onEvent, signal)
@@ -183,6 +196,20 @@ describe('RemoteTurnDispatcher.dispatch', () => {
 
     expect(seen).toEqual(events); // every event streamed through to the caller's onEvent
     expect(out).toEqual({ result: 'final-report', sessionId: 'engine-next-88' });
+  });
+
+  it('does NOT dispatch the run when the readiness gate fails (sandbox never readied)', async () => {
+    const { dispatcher, dispatchRun, waitForReady } = build({
+      waitForReady: async () => {
+        throw new Error('sandbox sandbox-uuid-123 did not signal ready');
+      },
+    });
+    const ctx: TurnRoutingCtx = { team: 'team-1', project: 'proj-1' };
+    await expect(
+      dispatcher.dispatch(ctx, EWorkerEngineName.CLAUDE, makeArgs()),
+    ).rejects.toThrow(/did not signal ready/);
+    expect(waitForReady).toHaveBeenCalledWith('sandbox-uuid-123');
+    expect(dispatchRun).not.toHaveBeenCalled();
   });
 
   it('refuses langgraph (it stays host-side)', async () => {

@@ -86,6 +86,8 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
     } as unknown as DaemonEngineRegistry;
     tools = { prime: vi.fn(async () => ({ skillNames: [], skillsPrompt: '', mcpServers: [] })) };
     git = {
+      // The turn path awaits the boot clone (Phase 11) before resolving cwd — resolve immediately.
+      whenCloned: vi.fn(async () => undefined),
       worktreePath: vi.fn(() => '/workspace/repo/.workspaces/sess-1'),
       createWorktree: vi.fn(async () => '/workspace/repo/.workspaces/sess-1'),
       publish: vi.fn(async () => ({ integrated: true, sharedBranch: 'shared/x' })),

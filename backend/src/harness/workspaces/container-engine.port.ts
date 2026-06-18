@@ -36,6 +36,10 @@ export interface CreateContainerSpec {
   runtime?: string;
   /** Volume binds, e.g. `<vol>:/var/lib/docker` (the per-sandbox inner-docker storage). */
   binds: string[];
+  /** The Docker network the sandbox joins (HostConfig.NetworkMode) — so the daemon can reach a
+   * service-DNS Redis (e.g. `agent-playground-redis`) on the compose network. Undefined → Docker's
+   * default bridge (no service DNS). The sandbox still publishes NO ports inbound. */
+  network?: string;
   /** Docker restart policy name — `unless-stopped` so a sandbox survives a host reboot. */
   restartPolicy: string;
   /** Hard memory limit in bytes (HostConfig.Memory). */

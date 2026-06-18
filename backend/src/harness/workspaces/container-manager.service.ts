@@ -16,6 +16,7 @@ import {
   type CreateContainerSpec,
 } from './container-engine.port';
 import { CredentialProvisionerService } from './credential-provisioner.service';
+import { SandboxReadinessService } from './sandbox-readiness.service';
 import {
   SandboxRegistry,
   type SandboxRecord,
@@ -76,6 +77,7 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     private readonly projects: ProjectStore,
     private readonly registry: SandboxRegistry,
     private readonly credentials: CredentialProvisionerService,
+    private readonly readiness: SandboxReadinessService,
   ) {
     // One-directional DI: register the lazy-create entry point so `SandboxRegistry.resolveForSession`
     // can ensure a sandbox without injecting this service back (no DI cycle).
@@ -141,11 +143,25 @@ export class ContainerManagerService implements OnApplicationBootstrap {
         'WORKSPACE_IMAGE is not set — set it to the sandbox base image (pinned by digest in deploy).',
       );
     }
-    const repo = await this.repoUrl(team, project);
+    const { gitUrl: repo, baseBranch } = await this.repoCoordinates(
+      team,
+      project,
+    );
     const workspaceId = randomUUID();
     const name = containerName(workspaceId);
     const bootstrapToken = randomBytes(24).toString('hex');
-    const redisUrl = this.env.get('REDIS_URL') ?? 'redis://127.0.0.1:6379';
+    // The Redis URL the SANDBOX uses — NOT the host's `REDIS_URL` (which may be `127.0.0.1:6380`,
+    // unreachable from inside a container). `WORKSPACE_REDIS_URL` is the sandbox-reachable address
+    // (service DNS on the shared network, default `redis://agent-playground-redis:6379`).
+    const redisUrl =
+      this.env.get('WORKSPACE_REDIS_URL') ??
+      'redis://agent-playground-redis:6379';
+    // The Docker network the sandbox joins so service-DNS Redis resolves. Default the compose default.
+    const network =
+      this.env.get('WORKSPACE_NETWORK') ?? 'agent-playground_default';
+    // Inner dockerd storage driver — empty (auto/overlay2) on a real Linux host; `vfs` on Docker
+    // Desktop where overlay-on-overlay can't mount. Empty → not injected (entrypoint auto-detects).
+    const storageDriver = this.env.get('WORKSPACE_DOCKER_STORAGE_DRIVER') ?? '';
 
     const labels: ContainerLabels = {
       [LABEL_MANAGED]: '1',
@@ -160,15 +176,21 @@ export class ContainerManagerService implements OnApplicationBootstrap {
       image,
       // The daemon connects OUT to Redis and consumes ws:{WORKSPACE_ID}:cmds; the bootstrap token auths
       // the cred-pull channel. NO secrets here beyond the short bootstrap token (the GitHub PAT + LLM
-      // key arrive over the bus per-request / per-run, never baked into the container env).
+      // key arrive over the bus per-request / per-run, never baked into the container env). The repo
+      // coordinates (NON-secret) drive the daemon's clone-on-boot (Phase 11); the storage driver is set
+      // only when non-empty (so the entrypoint auto-detects on a host that doesn't need it).
       env: [
         `REDIS_URL=${redisUrl}`,
         `WORKSPACE_ID=${workspaceId}`,
         `DAEMON_BOOTSTRAP_TOKEN=${bootstrapToken}`,
+        `WORKSPACE_REPO_URL=${repo}`,
+        `WORKSPACE_BASE_BRANCH=${baseBranch}`,
+        ...(storageDriver ? [`DOCKERD_STORAGE_DRIVER=${storageDriver}`] : []),
       ],
       labels,
       privileged: true, // inner DinD (Phase 10) — the locked tradeoff
       runtime: this.env.get('WORKSPACE_RUNTIME') ?? DEFAULT_RUNTIME,
+      network,
       // A per-sandbox named volume for the inner Docker's storage so `/var/lib/docker` is private + the
       // host's docker-storage is never shared (the collision fix). Volume name = the workspace id.
       binds: [`agent-ws-docker-${workspaceId}:/var/lib/docker`],
@@ -219,6 +241,9 @@ export class ContainerManagerService implements OnApplicationBootstrap {
           this.logger.warn(`remove ${workspaceId} failed: ${String(err)}`),
         );
       await this.credentials.unwatch(workspaceId);
+      // Drop any cached readiness — a recreated sandbox gets a fresh uuid, but clearing keeps the
+      // gate's cache honest and bounded (no entries linger for destroyed workspaces).
+      this.readiness.forget(workspaceId);
       this.registry.remove(workspaceId);
     });
   }
@@ -273,11 +298,19 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     };
   }
 
-  /** The project's registered GitHub repo URL (for the `com.agent.repo` label). Empty when the project
-   * isn't registered — Phase 9 only containerizes registered projects, but this stays tolerant. */
-  private async repoUrl(team: string, project: string): Promise<string> {
+  /** The project's registered repo coordinates: the GitHub URL (for the `com.agent.repo` label AND the
+   * daemon's clone-on-boot `WORKSPACE_REPO_URL`) + the PR base branch (`WORKSPACE_BASE_BRANCH`, default
+   * `main`). Empty/default when the project isn't registered — Phase 9 only containerizes registered
+   * projects, but this stays tolerant. */
+  private async repoCoordinates(
+    team: string,
+    project: string,
+  ): Promise<{ gitUrl: string; baseBranch: string }> {
     const rec = await this.projects.get(team, project).catch(() => undefined);
-    return rec?.gitUrl ?? '';
+    return {
+      gitUrl: rec?.gitUrl ?? '',
+      baseBranch: rec?.defaultBranch ?? 'main',
+    };
   }
 }
 

@@ -81,7 +81,11 @@ export class DaemonTurnService {
       });
 
       // 2) Resolve cwd = the session's worktree (create on first turn, else reuse). `createWorktree`
-      //    is idempotent — it returns the existing checkout path when one already exists.
+      //    is idempotent — it returns the existing checkout path when one already exists. AWAIT the boot
+      //    clone first (Phase 11): a turn that races ahead of clone-on-boot must not hit "No clone yet".
+      //    `whenCloned()` resolves immediately when no clone is expected; a failed clone rejects → this
+      //    run fails with a legible error frame.
+      await this.git.whenCloned();
       const cwd =
         this.git.worktreePath(payload.sessionId) ??
         (await this.git.createWorktree(payload.sessionId));

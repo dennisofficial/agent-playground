@@ -131,15 +131,13 @@ export class CredentialProvisionerService implements OnApplicationShutdown {
     const resolved = await this.tokens
       .resolve(project.teamId, project.tokenName)
       .catch(() => undefined);
-    if (!resolved?.token) {
-      return {
-        ok: false,
-        error: `no GitHub token resolvable for ${rec.team}/${rec.project}`,
-      };
-    }
-    // gitAuthEnv only applies token auth to HTTPS GitHub remotes; a non-GitHub repo gets {} — surface
-    // that as a clear failure rather than handing back an unusable credential.
-    if (Object.keys(gitAuthEnv(project.gitUrl, resolved.token)).length === 0) {
+    const token = resolved?.token ?? '';
+    // PUBLIC-REPO TOLERANCE: no resolvable token is NOT a failure — a public repo clones/fetches with no
+    // auth header. We serve an EMPTY-token credential so the daemon's `gitAuthEnv` yields {} and the
+    // clone proceeds unauthenticated; a genuinely private repo then fails at git with a legible
+    // "Authentication failed", which is the correct error surface. A token present on a NON-GitHub remote
+    // is still a hard failure (the token is unusable there) — only the no-token case is tolerated.
+    if (token && Object.keys(gitAuthEnv(project.gitUrl, token)).length === 0) {
       return {
         ok: false,
         error: `repo ${project.gitUrl} is not an HTTPS GitHub remote — token auth doesn't apply`,
@@ -148,14 +146,16 @@ export class CredentialProvisionerService implements OnApplicationShutdown {
 
     const credential: GitCredentialPayload = {
       kind: 'pat',
-      token: resolved.token,
+      token,
       // The PAT-owner / bot identity. v1: a stable bot author keyed off the token name (the PAT's GitHub
       // login isn't resolved here to avoid an extra API round-trip on the hot path); Phase later can mint
       // a real identity. Provider-neutral envelope leaves room for a GitHub-App author.
       authorName: 'Agent',
       authorEmail: 'agent@agents.noreply',
     };
-    this.logger.log(`issued git credential to ${workspaceId} (kind=pat)`);
+    this.logger.log(
+      `issued git credential to ${workspaceId} (kind=pat, token=${token ? 'present' : 'EMPTY/public'})`,
+    );
     return { ok: true, credential };
   }
 

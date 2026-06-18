@@ -114,6 +114,16 @@ export interface IEnvConfig {
   DOCKER_SOCKET_PATH?: string; // host Docker socket the manager spawns sandboxes on (default /var/run/docker.sock)
   WORKSPACE_IMAGE?: string; // the sandbox base image (pin by digest in deploy); required to spawn a sandbox
   WORKSPACE_RUNTIME?: string; // OCI runtime for sandboxes (default 'runc'; reserve 'sysbox-runc' hardening)
+  // The Redis URL the SANDBOX uses (NOT the host's REDIS_URL, which is often a host-only loopback like
+  // 127.0.0.1:6380). Injected into each sandbox so the daemon reaches Redis by SERVICE DNS on the shared
+  // network. Default `redis://agent-playground-redis:6379` (the compose service). (Phase 11)
+  WORKSPACE_REDIS_URL?: string;
+  // The Docker network each sandbox joins so the service-DNS Redis resolves from inside the container.
+  // Default `agent-playground_default` (the compose default network). Sandboxes still publish NO ports. (Phase 11)
+  WORKSPACE_NETWORK?: string;
+  // The inner dockerd storage driver injected per environment: empty (auto/overlay2) on a real Linux
+  // host (OVH prod), `vfs` on Docker Desktop where overlay-on-overlay can't mount. Default empty. (Phase 11)
+  WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
   // The Phase-9 master switch for containerized coding sessions. DEFAULT FALSE — when unset/false the
   // create-time policy NEVER picks a sandbox, so no sandbox is ever created, `SandboxRegistry.has` is
   // always false, and every turn + git op routes LOCAL (behavior byte-identical to pre-Phase-9). Set
@@ -248,6 +258,11 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   DOCKER_SOCKET_PATH: Joi.string().optional(),
   WORKSPACE_IMAGE: Joi.string().optional(),
   WORKSPACE_RUNTIME: Joi.string().optional(),
+  // Phase 11 sandbox-reachability injection (Redis service-DNS URL, the joined network, inner-docker
+  // storage driver). All optional with sensible compose defaults applied in ContainerManagerService.
+  WORKSPACE_REDIS_URL: Joi.string().uri().optional(),
+  WORKSPACE_NETWORK: Joi.string().optional(),
+  WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   // Phase 9 containerized-session master switch (default false — see the interface note).
   WORKSPACE_SANDBOX_ENABLED: Joi.boolean().optional().default(false),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),

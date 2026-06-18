@@ -11,6 +11,7 @@ import {
   REDIS_STREAM_PORT,
   type RedisStreamPort,
 } from '../../_lib/redis/redis.port';
+import { DaemonGitService } from '../git/daemon-git.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -43,6 +44,7 @@ export class DaemonReadinessService implements OnApplicationBootstrap {
 
   constructor(
     @Inject(REDIS_STREAM_PORT) private readonly redis: RedisStreamPort,
+    private readonly git: DaemonGitService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -62,6 +64,22 @@ export class DaemonReadinessService implements OnApplicationBootstrap {
         'WORKSPACE_ID unset — readiness marker NOT written (standalone/dev daemon).',
       );
       return;
+    }
+
+    // Gate readiness on the boot CLONE (Phase 11): the host must not dispatch a turn before the
+    // sandbox's fresh clone exists, or the turn's first `createWorktree` throws "No clone yet".
+    // `whenCloned()` resolves immediately when no clone is expected (the gate was never armed —
+    // dev/standalone or a fixture), and otherwise settles when `DaemonBootstrapService` finishes the
+    // clone. A FAILED clone rejects here — we still signal (below) so a non-git turn can run and the
+    // failure is loud, rather than wedging boot.
+    try {
+      await this.git.whenCloned();
+      this.logger.log('boot clone ready (or none expected) — proceeding to readiness');
+    } catch (err) {
+      this.logger.error(
+        `boot clone failed (${err instanceof Error ? err.message : String(err)}) — ` +
+          `signaling ready anyway; git turns will fail until a clone exists`,
+      );
     }
 
     let innerDocker = false;

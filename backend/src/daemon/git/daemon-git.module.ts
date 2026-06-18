@@ -1,5 +1,6 @@
 import { CreateModule } from '@workspace/nestjs-core';
 import { GithubApiService } from '@harness/projects/github-api.service';
+import { DaemonBootstrapService } from './daemon-bootstrap.service';
 import { DaemonGitService } from './daemon-git.service';
 import {
   EnvGitCredentialProvider,
@@ -20,9 +21,14 @@ import { RedisGitCredentialProvider } from './redis-git-credential.provider';
  *  - `GithubApiService` — REUSED VERBATIM from the host (a zero-dep fetch PR client) for `openPr`/`markReady`.
  *
  * `services` auto-exports `DaemonGitService` so the consumer loop (git RPCs) + readiness path inject it.
+ *
+ * `DaemonBootstrapService` (`OnApplicationBootstrap`) is the clone-on-boot step (Phase 11): once this
+ * module is in the daemon graph it clones the host-injected repo (`WORKSPACE_REPO_URL` /
+ * `WORKSPACE_BASE_BRANCH`) into `WORKSPACE_ROOT` and arms `DaemonGitService`'s clone gate so the
+ * readiness marker isn't written until the clone completes.
  */
 @CreateModule({
-  services: [DaemonGitService, GithubApiService],
+  services: [DaemonGitService, GithubApiService, DaemonBootstrapService],
   providers: [EnvGitCredentialProvider, RedisGitCredentialProvider],
   chains: [
     {

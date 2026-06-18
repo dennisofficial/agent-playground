@@ -7,6 +7,7 @@ import {
 } from '../engines/worker-engine.port';
 import { DaemonClient } from './daemon-client';
 import type { RunCommandPayload } from './daemon-protocol';
+import { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
 import type { TurnRoutingCtx } from './turn-executor.service';
 
@@ -19,6 +20,9 @@ import type { TurnRoutingCtx } from './turn-executor.service';
  * It:
  *  1. resolves (and lazily ensures) the sandbox for the session's `(team, project)` via
  *     `SandboxRegistry.resolveForSession` → the `workspaceId` to dispatch to;
+ *  1b. GATES on readiness: `SandboxReadinessService.waitForReady(workspaceId)` blocks the FIRST turn to
+ *     a freshly-spawned sandbox until its daemon signals ready (inner Docker up + consumer loop running),
+ *     so we never dispatch a `docker compose` turn before the engine is reachable. Cached after the first;
  *  2. resolves the agent's host-side tool INPUTS (skill sources + MCP servers) via
  *     `AgentToolSourceResolver.forAgent` — the daemon has no DB, so the host ships these;
  *  3. builds the `RunCommandPayload` from `args` MINUS `onEvent`/`signal`/`cwd` (functions don't cross
@@ -37,6 +41,7 @@ export class RemoteTurnDispatcher {
     private readonly sandboxes: SandboxRegistry,
     private readonly toolSources: AgentToolSourceResolver,
     private readonly daemon: DaemonClient,
+    private readonly readiness: SandboxReadinessService,
   ) {}
 
   async dispatch(
@@ -56,6 +61,12 @@ export class RemoteTurnDispatcher {
       team: ctx.team,
       project: ctx.project,
     });
+
+    // 1b. Gate on readiness — block the FIRST turn until the sandbox's daemon has signaled ready (inner
+    // Docker up + consumer loop running), so we never dispatch a `docker compose` (or any engine) turn
+    // before the daemon is reachable. Cheap + cached after the first turn; bounded — throws a clear
+    // error if the daemon never readies.
+    await this.readiness.waitForReady(sandbox.workspaceId);
 
     // 2. Host-resolve the agent's tool inputs (the daemon has no DB).
     const { skillSources, mcpServers } = await this.toolSources.forAgent(
