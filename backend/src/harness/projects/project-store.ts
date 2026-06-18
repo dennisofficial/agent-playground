@@ -14,6 +14,7 @@ interface ProjectRow {
   team_id: string;
   project_id: string;
   display_name: string;
+  description: string | null;
   git_url: string;
   default_branch: string;
   token_name: string | null;
@@ -25,6 +26,7 @@ const toRecord = (r: ProjectRow): ProjectRecord => ({
   teamId: r.team_id,
   projectId: r.project_id,
   displayName: r.display_name,
+  description: r.description ?? null,
   gitUrl: r.git_url,
   defaultBranch: r.default_branch,
   tokenName: r.token_name,
@@ -72,12 +74,13 @@ export class ProjectStore {
   async create(input: NewProject): Promise<ProjectRecord> {
     try {
       const rows = await this.q(
-        `INSERT INTO projects (team_id, project_id, display_name, git_url, default_branch, token_name)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        `INSERT INTO projects (team_id, project_id, display_name, description, git_url, default_branch, token_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [
           input.teamId,
           input.projectId,
           input.displayName,
+          input.description ?? null,
           input.gitUrl,
           input.defaultBranch ?? 'main',
           input.tokenName ?? null,
@@ -104,6 +107,7 @@ export class ProjectStore {
       sets.push(`${col} = $${args.length}`);
     };
     if (patch.displayName !== undefined) add('display_name', patch.displayName);
+    if (patch.description !== undefined) add('description', patch.description);
     if (patch.gitUrl !== undefined) add('git_url', patch.gitUrl);
     if (patch.defaultBranch !== undefined)
       add('default_branch', patch.defaultBranch);

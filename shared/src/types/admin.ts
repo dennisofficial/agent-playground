@@ -79,6 +79,8 @@ export interface ProjectRecord {
   teamId: string;
   projectId: string;
   displayName: string;
+  /** One-line catalog blurb shown to Atlas (what the project is); null when unset. */
+  description: string | null;
   /** HTTPS GitHub URL (validated at the API edge). */
   gitUrl: string;
   /** The PR base branch. */
@@ -93,6 +95,7 @@ export interface NewProject {
   teamId: string;
   projectId: string;
   displayName: string;
+  description?: string | null;
   gitUrl: string;
   defaultBranch?: string;
   tokenName?: string | null;

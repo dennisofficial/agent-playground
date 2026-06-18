@@ -345,6 +345,50 @@ describe('ConductorService scheduling', () => {
   });
 });
 
+describe('ConductorService section-questions notice', () => {
+  it('posts the verbatim questions as a system message and runs exactly one (seed) turn', async () => {
+    let runs = 0;
+    const { conductor, channel, cursors, events, fireBoardEvent } =
+      await buildConductor({
+        run: () => {
+          runs++;
+          // The seed turn consumes the just-posted system message; it emits nothing itself.
+          return { deltas: [], cursorAfter: channel.length };
+        },
+      });
+
+    fireBoardEvent({
+      kind: 'section-questions',
+      team: 'local',
+      taskId: 9,
+      section: 'backend',
+      questions: 'Q1: which package?\nQ2: SSE or WebSocket?',
+    });
+    await conductor.whenIdle();
+
+    // (a) exactly one system message — authored 'system', not-from-human — carries the VERBATIM
+    // questions, on the channel (durable + Atlas's shared context) AND the bus (→ Slack surface).
+    const systemMsgs = events.filter(
+      (e): e is Extract<ConductorEvent, { kind: 'message' }> =>
+        e.kind === 'message' && e.authorId === 'system',
+    );
+    expect(systemMsgs).toHaveLength(1);
+    expect(systemMsgs[0].fromHuman).toBe(false);
+    expect(systemMsgs[0].channelId).toBe('tui:test');
+    expect(systemMsgs[0].text).toContain(
+      'Q1: which package?\nQ2: SSE or WebSocket?',
+    );
+    expect(
+      channel.snapshot().filter((m) => m.authorId === 'system'),
+    ).toHaveLength(1);
+
+    // (b) the system message did NOT trigger a second gated turn: exactly one (seed) turn ran and
+    // Atlas's cursor advanced past it (so post-turn hasWork() is empty).
+    expect(runs).toBe(1);
+    expect(cursors.get('alex', 'tui:test')).toBe(1);
+  });
+});
+
 // ── in-graph gate reactions ─────────────────────────────────────────────────────────────────────
 
 /** The gate reaction events emitted this turn, in order. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardEvent } from '../memory/board-events.bus';
-import { boardEventRelayPrompt } from './seed-relay';
+import { boardEventRelayPrompt, sectionQuestionsNotice } from './seed-relay';
 
 describe('boardEventRelayPrompt', () => {
   // The partition that keeps the conductor and PipelineRunnerService from double-handling: the plan-gate
@@ -71,6 +71,37 @@ describe('boardEventRelayPrompt', () => {
     expect(reviewFailed).toContain('fix loop exhausted');
   });
 
+  it('narrates a terminal run-failed with the reason, the section, and the open-backlog recovery', () => {
+    const failed: BoardEvent = {
+      kind: 'run-failed',
+      team: 't',
+      taskId: 2,
+      reason: 'session sess-9 (kind=feature, mode=plan) failed',
+      section: 'backend',
+    };
+    const prompt = boardEventRelayPrompt(failed);
+    expect(prompt).toContain('#2');
+    expect(prompt).toMatch(/failed/i);
+    expect(prompt).toContain('session sess-9 (kind=feature, mode=plan) failed');
+    expect(prompt).toContain('backend');
+    // Tells Atlas the ticket is recoverable (back on the open backlog) and that recovery is his to drive.
+    expect(prompt).toMatch(/open backlog/i);
+    expect(prompt).toMatch(/re-dispatch/i);
+  });
+
+  it('run-failed omits the section clause for a ticket-level/bugfix failure', () => {
+    const failed: BoardEvent = {
+      kind: 'run-failed',
+      team: 't',
+      taskId: 5,
+      reason: 'shipTask failed — ship blew up',
+    };
+    const prompt = boardEventRelayPrompt(failed);
+    expect(prompt).toContain('#5');
+    expect(prompt).toContain('ship blew up');
+    expect(prompt).not.toMatch(/while on the '/);
+  });
+
   it('renders a stage-decision wake-up with the findings + the action menu', () => {
     const decision: BoardEvent = {
       kind: 'stage-decision',
@@ -91,5 +122,72 @@ describe('boardEventRelayPrompt', () => {
     expect(prompt).toContain("reopen_section(7, '<section>')");
     // The run is paused on Atlas's call.
     expect(prompt).toMatch(/paused/i);
+  });
+
+  it('renders an advisory stage-findings relay with the chip/park/skip menu (not paused)', () => {
+    const found: BoardEvent = {
+      kind: 'stage-findings',
+      team: 't',
+      taskId: 7,
+      stage: 'phase_backend',
+      section: 'backend',
+      findings: '- the auth middleware double-reads the body\n- dead config flag LEGACY_MODE',
+    };
+    const prompt = boardEventRelayPrompt(found);
+    expect(prompt).toContain('#7');
+    expect(prompt).toContain('backend');
+    expect(prompt).toContain('double-reads the body');
+    // The triage menu — chip vs silent park vs skip — and explicitly NOT paused (advisory).
+    expect(prompt).toContain('suggest_task');
+    expect(prompt).toContain('enqueue_finding');
+    expect(prompt).not.toMatch(/paused/i);
+  });
+
+  // The questions now reach the channel via `sectionQuestionsNotice` (a deterministic system post),
+  // so the seed must NOT restate them — it carries only the routing instruction. Guards against a
+  // regression where the verbatim questions leak back into the prompt (the duplication we removed).
+  it('section-questions seed routes by number WITHOUT restating the questions', () => {
+    const event: BoardEvent = {
+      kind: 'section-questions',
+      team: 't',
+      taskId: 9,
+      section: 'backend',
+      questions: 'Q1: which package?\nQ2: SSE or WebSocket?',
+    };
+    const prompt = boardEventRelayPrompt(event);
+    expect(prompt).toContain('#9');
+    expect(prompt).toContain('answer_section(9');
+    // The verbatim questions are deliberately absent — they live on the channel now.
+    expect(prompt).not.toContain('which package?');
+    expect(prompt).not.toContain('SSE or WebSocket?');
+    expect(prompt).toMatch(/posted to the channel/i);
+  });
+});
+
+describe('sectionQuestionsNotice', () => {
+  it('renders a header + the VERBATIM questions for a section run', () => {
+    const notice = sectionQuestionsNotice({
+      kind: 'section-questions',
+      team: 't',
+      taskId: 9,
+      section: 'backend',
+      questions: 'Q1: which package?\nQ2: SSE or WebSocket?',
+    });
+    expect(notice).toContain('Pipeline #9');
+    expect(notice).toContain('backend');
+    // Verbatim, unaltered — this is the whole point of the deterministic notice.
+    expect(notice).toContain('Q1: which package?\nQ2: SSE or WebSocket?');
+  });
+
+  it('omits the section for a bugfix run (no section)', () => {
+    const notice = sectionQuestionsNotice({
+      kind: 'section-questions',
+      team: 't',
+      taskId: 4,
+      questions: 'Q1: reproduce on main?',
+    });
+    expect(notice).toContain('Pipeline #4');
+    expect(notice).not.toContain(' · ');
+    expect(notice).toContain('Q1: reproduce on main?');
   });
 });

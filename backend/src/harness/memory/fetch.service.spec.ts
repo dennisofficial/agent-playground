@@ -9,6 +9,7 @@ import type { SemanticMemory } from './semantic-memory';
 import type { TaskStore } from './task-store';
 import type { BoardStore } from './board-store';
 import type { SessionNoteStore } from './session-note.store';
+import type { ProjectStore } from '../projects/project-store';
 import type { Task } from './task-store';
 import type { BoardTask } from './board-store';
 import type { SessionNote } from './session-note.store';
@@ -35,6 +36,8 @@ const stubPipelineSections = (sections: unknown[] = []) =>
   ({
     listForRun: vi.fn().mockResolvedValue(sections),
   }) as unknown as PipelineRunSectionStore;
+const stubProjects = (list: unknown[] = []) =>
+  ({ list: vi.fn().mockResolvedValue(list) }) as unknown as ProjectStore;
 
 /** Build a FetchService with mocked dependencies. */
 function makeService(opts: {
@@ -61,7 +64,7 @@ function makeService(opts: {
   } as unknown as SessionNoteStore;
 
   return {
-    svc: new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections()),
+    svc: new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections(), stubProjects()),
     semantic,
     tasks,
     board,
@@ -111,7 +114,7 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const sessionNotes = {
         listOpen: vi.fn().mockResolvedValue([]),
       } as unknown as SessionNoteStore;
-      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections());
+      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections(), stubProjects());
       const result = await svc.fetchContext(makeBot(), id);
       expect(result).toContain('Standing context:');
       expect(result).toContain('backend engineer');
@@ -205,7 +208,7 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const sessionNotes = {
         listOpen: vi.fn().mockResolvedValue([]),
       } as unknown as SessionNoteStore;
-      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections());
+      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections(), stubProjects());
       const result = await svc.fetchContext(makeBot(), id);
       // Should still return standing context, no board section
       expect(result).toContain('Standing context:');
@@ -430,7 +433,7 @@ describe('FetchService.fetchContext (Phase 3 assembler)', () => {
       const sessionNotes = {
         listOpen: vi.fn().mockRejectedValue(new Error('db error')),
       } as unknown as SessionNoteStore;
-      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections());
+      const svc = new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections(), stubProjects());
       const result = await svc.fetchContext(makeBot(), id);
       expect(result).toContain('Standing context:');
       expect(result).not.toContain('Open notes (this thread):');
@@ -511,6 +514,7 @@ describe('FetchService.fetchPipelines (no-blind awareness slice)', () => {
       { listOpen: vi.fn() } as unknown as SessionNoteStore,
       stubPipelineRuns(runs),
       stubPipelineSections(sections),
+      stubProjects(),
     );
 
   it('returns "" when no runs are active', async () => {

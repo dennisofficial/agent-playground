@@ -21,7 +21,7 @@ interface ResponseLike {
  * The interactivity receiver (block_actions, view_submission, …) — IN-PROCESS. Slack sends a
  * form-encoded `payload=<json>`; the response BODY is meaningful (a view_submission may answer
  * `response_action: errors`), so `respond` is wired to THIS HTTP response and the router's
- * handler (Jarvis) calls it. The post-route call is the idempotent safety net.
+ * handler (the onboarding guard) calls it. The post-route call is the idempotent safety net.
  */
 @Controller('slack/interactivity')
 @UseGuards(SlackSignatureGuard)

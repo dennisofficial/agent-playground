@@ -29,21 +29,27 @@ function build() {
   const codingStore = new FakeCodingStore();
   const reviewStore = new FakeReviewStore();
   // A session-tracking registry (like the cleanup spec): openStageSession registers an idle session and
-  // closeSession flips it closed, so the driver's reclaim + the boot-idempotency guard run for real.
+  // closeSession flips it closed, so the driver's reclaim runs for real. `inFlight` models the runner's
+  // in-process AbortController map — the boot-idempotency / restart-resume liveness signal: a fresh open
+  // is in-flight, a close clears it, and a restart (`inFlight.clear()`) loses every controller.
   const sessionRows = new Map<string, Row>();
+  const inFlight = new Set<string>();
   let sessSeq = 0;
   const openStageSession = vi.fn(async (opts: Row) => {
     const session: Row = { id: `sess-${++sessSeq}`, status: 'idle', ...opts };
     sessionRows.set(session.id as string, session);
+    inFlight.add(session.id as string);
     return session;
   });
   const closeSession = vi.fn(async (id: string, _o?: { logWork?: boolean }) => {
     const r = sessionRows.get(id);
     if (!r || r.status === 'closed') return { ok: false, reason: 'gone' };
     r.status = 'closed';
+    inFlight.delete(id);
     return { ok: true };
   });
-  const runner = { openStageSession, closeSession };
+  const isTurnInFlight = (id: string) => inFlight.has(id);
+  const runner = { openStageSession, closeSession, isTurnInFlight };
   const sessions = {
     onUpdate: vi.fn(),
     async get(id: string): Promise<Row | undefined> {
@@ -53,7 +59,7 @@ function build() {
   };
   const board = {
     update: vi.fn(async (..._a: unknown[]) => undefined),
-    get: vi.fn(),
+    get: vi.fn(async (..._a: unknown[]): Promise<Row | undefined> => undefined),
   };
   const employees = {
     byId: (id: string) => ({ id }),
@@ -103,6 +109,7 @@ function build() {
     runner,
     sessions,
     sessionRows,
+    inFlight,
     board,
     plans,
     proposals,
@@ -896,7 +903,7 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
   });
 
   it('boot idempotency: reopenCurrentStep twice opens exactly one session for a live row', async () => {
-    const { svc, runs, runner, sessionRows } = build();
+    const { svc, runs, runner, inFlight } = build();
     const task = 94;
     const idle = async (lastReport = '') => {
       const run = (await runs.getByTask(TEAM, task))!;
@@ -925,16 +932,139 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
       team: TEAM,
       taskId: task,
     });
-    // Now a phase is building (execute session open). Simulate a restart: the in-memory registry loses
-    // its sessions (the documented v0 behavior).
-    const crashed = (await runs.getByTask(TEAM, task))!;
-    sessionRows.delete(crashed.sessionId as string);
+    // Now a phase is building (execute session open). Simulate a restart: the process loses every
+    // in-flight AbortController (the durable session row survives, but its turn is dead).
+    inFlight.clear();
     const before = runner.openStageSession.mock.calls.length;
 
     const reopen = (svc as never as { reopenCurrentStep: (r: Row) => Promise<void> })
       .reopenCurrentStep;
-    await reopen.call(svc, (await runs.getByTask(TEAM, task))!); // session gone → opens one
-    await reopen.call(svc, (await runs.getByTask(TEAM, task))!); // session alive → skips
+    await reopen.call(svc, (await runs.getByTask(TEAM, task))!); // turn not in flight → opens one
+    await reopen.call(svc, (await runs.getByTask(TEAM, task))!); // freshly reopened turn live → skips
     expect(runner.openStageSession.mock.calls.length - before).toBe(1);
+  });
+
+  // A harness restart must RESUME an actively-building run from its durable rows, not fail it. The
+  // regression: the durable PostgresSessionRegistry reconciles the interrupted session to 'failed' on
+  // boot, and resumePipelines used to route a 'failed' session through onSessionUpdate → failRun,
+  // terminally killing the run + dumping the ticket back on the backlog (the bug Dennis hit). Drive a
+  // run to a phase-2 build (phase 1 already done), simulate the restart, and assert it resumes.
+  const driveToPhase2 = async (svc: PipelineRunnerService, runs: FakeRunStore, task: number) => {
+    const idle = async (lastReport = '') => {
+      const run = (await runs.getByTask(TEAM, task))!;
+      await (svc as never as Driver).onSessionUpdate({
+        id: run.sessionId,
+        status: 'idle',
+        boardTaskId: task,
+        team: TEAM,
+        notifyThread: 'thread',
+        project: 'proj',
+        lastReport,
+      });
+    };
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: `wt-${task}`,
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    await idle(planMd(2)); // plan → gate
+    await (svc as never as BoardDriver).onBoardEvent({
+      kind: 'ticket-approved',
+      team: TEAM,
+      taskId: task,
+    });
+    await idle(); // phase 1 execute done → review
+    await idle('```verdict\n{"blocker":false,"summary":"ok"}\n```'); // review done → phase 2 execute
+  };
+
+  for (const restart of [
+    {
+      label: 'reconciled-failed session (durable registry on boot)',
+      mutate: (row: Row) => (row.status = 'failed'),
+    },
+    {
+      label: 'stale-running session (reconcile-vs-resume boot race)',
+      mutate: (row: Row) => (row.status = 'running'), // reconcile hasn't run yet — the race Codex flagged
+    },
+  ]) {
+    it(`restart resumes a building run — ${restart.label} — instead of failing it`, async () => {
+      const { svc, runs, sectionStore, phaseStore, runner, sessionRows, inFlight, board, boardEvents } =
+        build();
+      const task = 77;
+      await driveToPhase2(svc, runs, task);
+
+      const run = (await runs.getByTask(TEAM, task))!;
+      const section = (await sectionStore.listForRun(run.id as string))[0];
+      const phasesBefore = await phaseStore.listForSection(section.id as string);
+      expect(phasesBefore.find((p) => p.planPhaseId === 1)?.status).toBe('done'); // phase 1 finished
+      expect(phasesBefore.find((p) => p.planPhaseId === 2)?.status).toBe('building');
+
+      // Simulate the restart: the live execute session is reconciled (or left stale), and the process
+      // loses every in-flight controller.
+      const live = sessionRows.get(run.sessionId as string)!;
+      restart.mutate(live);
+      inFlight.clear();
+      const before = runner.openStageSession.mock.calls.length;
+
+      await svc.resumePipelines();
+
+      const resumed = (await runs.getByTask(TEAM, task))!;
+      expect(resumed.status).toBe('running'); // NOT 'failed'
+      // failRun would reset the ticket to 'open' and emit a run-failed board event — neither happened.
+      expect(
+        board.update.mock.calls.some(
+          (c) => (c[2] as { status?: string } | undefined)?.status === 'open',
+        ),
+      ).toBe(false);
+      expect(
+        boardEvents.emit.mock.calls.some((c) => (c[0] as Row).kind === 'run-failed'),
+      ).toBe(false);
+      // Exactly one new stage session opened for the live (phase-2) step.
+      expect(runner.openStageSession.mock.calls.length - before).toBe(1);
+      expect(runner.openStageSession.mock.calls.at(-1)?.[0].mode).toBe('execute');
+      // Prior progress survived: phase 1 still done.
+      const phasesAfter = await phaseStore.listForSection(section.id as string);
+      expect(phasesAfter.find((p) => p.planPhaseId === 1)?.status).toBe('done');
+    });
+  }
+
+  it('restart resumes an interrupted PLAN session (re-plans the section, never fails the run)', async () => {
+    const { svc, runs, sectionStore, runner, sessionRows, inFlight, board, boardEvents } = build();
+    const task = 78;
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: `wt-${task}`,
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    // start() opened the section's plan session; it never reported (no planMd) — the section is still
+    // 'planning'. Simulate the restart mid-plan.
+    const run = (await runs.getByTask(TEAM, task))!;
+    sessionRows.get(run.sessionId as string)!.status = 'failed';
+    inFlight.clear();
+    const before = runner.openStageSession.mock.calls.length;
+
+    await svc.resumePipelines();
+
+    const resumed = (await runs.getByTask(TEAM, task))!;
+    expect(resumed.status).toBe('running'); // NOT 'failed'
+    expect(
+      boardEvents.emit.mock.calls.some((c) => (c[0] as Row).kind === 'run-failed'),
+    ).toBe(false);
+    expect(
+      board.update.mock.calls.some(
+        (c) => (c[2] as { status?: string } | undefined)?.status === 'open',
+      ),
+    ).toBe(false);
+    expect(runner.openStageSession.mock.calls.length - before).toBe(1);
+    expect(runner.openStageSession.mock.calls.at(-1)?.[0].mode).toBe('plan'); // re-plans
+    expect((await sectionStore.listForRun(run.id as string))[0].status).toBe('planning');
   });
 });

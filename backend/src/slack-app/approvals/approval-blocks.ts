@@ -2,7 +2,7 @@ import type { DescriptionChangeEvent } from '@harness/approvals/board-notifier.p
 import type { PlanProposalEvent } from '@harness/approvals/proposal-presenter.port';
 
 /**
- * The approval card's Block Kit surfaces — pure constants/builders, no I/O (the jarvis-blocks
+ * The approval card's Block Kit surfaces — pure constants/builders, no I/O (the onboarding-guard-blocks
  * twin). The card is the Slack rendering of board state, not a store: the button `value` carries
  * only the task id; team/channel/ts ride the click payload, so verdicts are fully stateless and
  * survive restarts. Only universal block types (section/context/actions) — no `markdown` block,

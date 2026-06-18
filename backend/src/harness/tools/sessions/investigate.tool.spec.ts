@@ -47,12 +47,16 @@ function makeTool(opts: {
     fallbackOwner: () => alex,
     context: () => ({ team: 'local', roster: 'Alex' }),
   };
+  const projects = { list: vi.fn(() => Promise.resolve([])) };
+  const sessions = { update: vi.fn(() => Promise.resolve(undefined)) };
   const tool = new InvestigateTool(
     createSession as never,
     worktrees as never,
     employees as never,
+    projects as never,
+    sessions as never,
   );
-  return { tool, openSession, worktrees, created };
+  return { tool, openSession, worktrees, created, projects, sessions };
 }
 
 describe('investigate', () => {

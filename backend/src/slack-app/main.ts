@@ -68,4 +68,24 @@ async function bootstrap() {
   await app.listen(port);
   log.log(`Slack ingress listening on :${port}.`);
 }
-void bootstrap();
+
+// A stray DETACHED rejection — a fire-and-forget background task (e.g. a transient Postgres
+// connection timeout during boot reconciliation) — must NOT take down the whole multi-tenant server.
+// Node's default is to crash on an unhandled rejection; log it loudly and keep serving instead.
+// Genuine boot failures are still fatal via bootstrap().catch below.
+process.on('unhandledRejection', (reason) => {
+  new Logger('SlackApp').error(
+    `Unhandled promise rejection (kept process alive): ${
+      reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)
+    }`,
+  );
+});
+
+bootstrap().catch((err: unknown) => {
+  // Boot itself failed (DB unreachable, a lifecycle hook threw, …) — fail CLEANLY with a readable
+  // reason and a non-zero exit, instead of an unhandled-rejection stack dump that exits anyway.
+  new Logger('SlackApp').error(
+    `Fatal: harness failed to boot — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+  );
+  process.exit(1);
+});

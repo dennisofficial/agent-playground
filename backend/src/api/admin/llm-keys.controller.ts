@@ -18,7 +18,7 @@ import { PutLlmKeyDto } from './dto/llm-key.dto';
 /**
  * Admin CRUD for tenant LLM provider keys ('anthropic' | 'openai'). WRITE-ONLY for values: every
  * response is metadata (provider/timestamps) — a stored key can be rotated or deleted, never read
- * back. Jarvis's keys modal and the web admin are both clients of this same store; a key landing
+ * back. The onboarding guard's keys modal and the web admin are both clients of this same store; a key landing
  * here flips the harness process out of pending-keys mode within one readiness poll.
  */
 @Controller('tenants/:teamId/llm-keys')

@@ -5,7 +5,7 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { access, appendFile, mkdir, realpath } from 'node:fs/promises';
+import { access, appendFile, mkdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { promisify } from 'node:util';
@@ -86,6 +86,9 @@ export class WorktreeService implements OnApplicationBootstrap {
   private readonly logger = new Logger(WorktreeService.name);
   private readonly worktrees = new Map<string, Worktree>();
   private readonly gitOps = createMutex();
+  /** A SEPARATE mutex for read-only reference clones — kept off `gitOps` so a (possibly slow)
+   * reference fetch never stalls real worktree work, while same-ref concurrent calls still serialize. */
+  private readonly refOps = createMutex();
   private counter = 0;
   /** Per-repo layout cache (clone/realpath are the expensive parts). Registry RECORDS are read
    * fresh on every use — only the repo on disk is cached. Failed builds are evicted (retryable). */
@@ -266,6 +269,92 @@ export class WorktreeService implements OnApplicationBootstrap {
       );
     }
     return layout;
+  }
+
+  /**
+   * Materialize a READ-ONLY clone of another GitHub repo so a session can READ it without it being
+   * the channel's main project. Unlike a worktree this is a plain shallow clone — no branch, no
+   * publish path — living UNDER `<REPOS_ROOT>/<teamId>/_refs/<slug>` (a sibling of the managed clones;
+   * `_refs` can't collide with a projectId, which must start alphanumeric). Kept current on each call.
+   * Container future: this path becomes a read-only mount. Registered project → repo + auth from the
+   * registry; a bare gitUrl → the team's DEFAULT token. Returns the on-disk path the engine reads.
+   */
+  async ensureReferenceClone(
+    team: string,
+    target: { projectId: string } | { gitUrl: string },
+  ): Promise<{ path: string; projectId?: string; gitUrl: string }> {
+    let gitUrl: string;
+    let projectId: string | undefined;
+    let token: string | undefined;
+    let slug: string;
+    if ('projectId' in target) {
+      const rec = await this.projects.get(team, target.projectId);
+      if (!rec)
+        throw new Error(
+          `No registered project "${target.projectId}" in this workspace.`,
+        );
+      gitUrl = rec.gitUrl;
+      projectId = rec.projectId;
+      token = await this.tokenFor(rec);
+      slug = rec.projectId;
+    } else {
+      gitUrl = target.gitUrl;
+      token = (await this.tokens.resolve(team).catch(() => undefined))?.token;
+      slug = slugify(
+        gitUrl
+          .replace(/\.git$/, '')
+          .split('/')
+          .slice(-2)
+          .join('-'),
+      );
+    }
+    const refsDir = join(this.reposRoot(), team, '_refs');
+    const root = join(refsDir, slug);
+    return this.refOps(async () => {
+      const auth = gitAuthEnv(gitUrl, token);
+      if (!(await exists(join(root, '.git')))) {
+        await mkdir(refsDir, { recursive: true });
+        this.logger.log(`reference clone ${gitUrl} → ${root} (team ${team})`);
+        await this.git(['clone', '--depth', '1', gitUrl, root], refsDir, auth);
+      } else {
+        // Keep it current — fetch the tracked branch and hard-reset (read-only, no local work to lose).
+        const branch = await this.git(
+          ['rev-parse', '--abbrev-ref', 'HEAD'],
+          root,
+        ).catch(() => 'HEAD');
+        await this.git(
+          ['fetch', '--depth', '1', 'origin', branch],
+          root,
+          auth,
+        ).catch(() => {});
+        await this.git(['reset', '--hard', `origin/${branch}`], root).catch(
+          () => {},
+        );
+      }
+      return { path: await realpath(root), projectId, gitUrl };
+    });
+  }
+
+  /** A quick at-a-glance orientation for a reference clone — the top-level entries + the README head
+   * — computed in-harness (no engine) so chat-Atlas gets a useful peek without dispatching a session. */
+  async referenceOrientation(path: string): Promise<string> {
+    const tree = await this.git(
+      ['ls-tree', '--name-only', 'HEAD'],
+      path,
+    ).catch(() => '');
+    const top = tree.split('\n').filter(Boolean).slice(0, 40).join(', ');
+    let readme = '';
+    for (const name of ['README.md', 'README.MD', 'readme.md', 'README']) {
+      const r = await readFile(join(path, name), 'utf8').catch(() => undefined);
+      if (r) {
+        readme = r.slice(0, 1200);
+        break;
+      }
+    }
+    return [
+      `Top level: ${top || '(empty)'}`,
+      readme ? `README (head):\n${readme}` : '(no README found)',
+    ].join('\n\n');
   }
 
   private nextId(): string {

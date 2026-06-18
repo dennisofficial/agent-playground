@@ -126,6 +126,41 @@ export type BoardEvent =
       /** The section the defect was scoped to, when it's a per-section call (undefined = ticket-level). */
       section?: string;
       notifyThread?: string;
+    }
+  // A build/execute stage noticed something OUT OF SCOPE while working and emitted it (a ```findings```
+  // block in its report). ADVISORY, not a gate: the run is NOT paused and there's nothing for Atlas to
+  // unblock — it just reaches him (the single voice, the only one who can post to Dennis) so he can
+  // triage it with the tools he already has: suggest_task it (a chip), enqueue_finding it (silent park),
+  // or skip it. Distinct from `stage-decision`, which PAUSES the run on a call Atlas must make. Without
+  // this the finding dies in the stage's transcript (the report is parsed only for handoff/verdict).
+  | {
+      kind: 'stage-findings';
+      team: string;
+      taskId: number;
+      /** The stage that flagged them, e.g. 'phase_backend' (label only). */
+      stage: string;
+      /** The section the stage was building (undefined for a bugfix run). */
+      section?: string;
+      /** The out-of-scope discoveries, verbatim from the stage's `findings` block. */
+      findings: string;
+      notifyThread?: string;
+    }
+  // A pipeline run hit a TERMINAL failure and was torn down (`failRun`): a session died, a propose/ship
+  // failed, a worktree/section went missing, etc. The run is flipped to 'failed' and its ticket reset to
+  // 'open' (back on the backlog), but without this event the death is SILENT — logged + DB-only, nothing
+  // wakes the orchestrator. So a crashed pipeline went unnoticed until Dennis asked. Narrated in Atlas's
+  // voice so he tells Dennis it died + why and decides recovery (re-dispatch / loop Dennis in). This is
+  // the failure-side symmetry of the forward events above; `self-review-failed` covers the review stage,
+  // this covers every OTHER terminal failure the section-driver can hit.
+  | {
+      kind: 'run-failed';
+      team: string;
+      taskId: number;
+      /** Why the run died — the `failRun` reason (dev-facing, but the concrete handle for recovery). */
+      reason: string;
+      /** The section active when it died, when known (undefined = ticket-level / bugfix run). */
+      section?: string;
+      notifyThread?: string;
     };
 
 @Injectable()

@@ -38,7 +38,11 @@ import {
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
-import { boardEventRelayPrompt, sessionRelayPrompt } from './seed-relay';
+import {
+  boardEventRelayPrompt,
+  sectionQuestionsNotice,
+  sessionRelayPrompt,
+} from './seed-relay';
 import { SessionRunnerService } from '../sessions/session-runner.service';
 import {
   type BotStateDelta,
@@ -311,8 +315,45 @@ export class ConductorService
     const thread = 'notifyThread' in event ? event.notifyThread : undefined;
     const channelId =
       thread && this.registry.get(thread) ? thread : this.channel.surfaceId;
+    // Queue the seed BEFORE posting any system notice: `channel.notify()` is synchronous, so the
+    // notice's `channel.append` fires `schedule()` inline — with the seed already queued, the
+    // gate-bypassed seed turn claims Atlas and absorbs the notice in the same turn (no redundant
+    // gated room-delivery turn fires on the system message).
     this.seedQueue.push({ channelId, prompt });
+    // Section questions: deterministically surface the VERBATIM questions to the channel so Dennis
+    // (and Atlas's shared context) see them regardless of what Atlas's follow-up turn does. The seed
+    // (trimmed) then carries only the routing instruction, not the questions themselves.
+    if (event.kind === 'section-questions')
+      this.postSystemNotice(channelId, sectionQuestionsNotice(event));
     this.schedule();
+  }
+
+  /**
+   * Post a deterministic, non-LLM "system" message to a room: append it to the channel (durable + in
+   * Atlas's shared context) and emit it so the SurfaceBridge mirrors it to Slack. Authored as `system`
+   * (≠ any bot id) so Atlas's llm node reads it as incoming context (`System: …`) rather than filtering
+   * it as its own. Used for harness-driven notices that must reach the human regardless of any LLM turn.
+   */
+  private postSystemNotice(channelId: string, text: string): void {
+    const id = `system:${this.mintTag}:${this.emitSeq++}`;
+    this.channel.append({
+      id,
+      channelId,
+      author: 'System',
+      authorId: 'system',
+      authorBotId: 'system',
+      text,
+    });
+    this.emit({
+      id,
+      kind: 'message',
+      channelId,
+      authorId: 'system',
+      authorName: 'System',
+      fromHuman: false,
+      text,
+      ts: clock(),
+    });
   }
 
   /** Append a human message from a known author (the ChatSurface inbound path). `opts.id` is the

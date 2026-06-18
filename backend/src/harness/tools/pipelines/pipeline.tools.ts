@@ -442,7 +442,7 @@ const dispatchFixupSchema = z.object({
     .string()
     .optional()
     .describe(
-      "Optional steer for the fix-up session (how you read the finding / what to prioritize). The full review findings are already on the ticket, so this is just your overlay.",
+      "Optional steer for the fix-up session (how you read the finding / what to prioritize). The review findings are seeded into the session automatically, so this is just your overlay on top of them.",
     ),
 });
 

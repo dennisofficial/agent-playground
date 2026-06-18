@@ -1,6 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { engineHomeDir } from '../engines/engine-home';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
@@ -97,13 +97,25 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     const ctx = this.employees.context();
     // provisionable() = the chat roster ∪ the pipeline phase-configs — every identity that runs engine
     // turns and therefore needs a scoped per-engine home (NOT just list(), the chat roster).
-    for (const emp of this.employees.provisionable()) {
-      const startedAt = Date.now();
-      await this.provision(emp, ctx, root);
-      this.logger.log(
-        `provisioned ${emp.id}: ${this.forAgent(emp.id).skillNames.length} skill(s) (${Date.now() - startedAt}ms)`,
-      );
-    }
+    // Provision employees CONCURRENTLY: each writes its own per-engine home dir (no collision), and
+    // the loader dedupes/serializes the shared git skill cache, so employees sharing a skills repo
+    // await one sync instead of re-fetching it serially. One employee's failure is isolated (logged,
+    // not rethrown) so it never aborts the others' provisioning or the boot sweep.
+    await Promise.all(
+      this.employees.provisionable().map(async (emp) => {
+        const startedAt = Date.now();
+        try {
+          await this.provision(emp, ctx, root);
+          this.logger.log(
+            `provisioned ${emp.id}: ${this.forAgent(emp.id).skillNames.length} skill(s) (${Date.now() - startedAt}ms)`,
+          );
+        } catch (err) {
+          this.logger.error(
+            `provisioning ${emp.id} failed (skipped): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }),
+    );
   }
 
   /**
@@ -171,9 +183,9 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     for (const engine of engines) {
       const kind = engineKind(engine);
       if (kind === 'claude')
-        this.writeClaudeHome(engineHomeDir(root, 'claude', emp.id), skills);
+        await this.writeClaudeHome(engineHomeDir(root, 'claude', emp.id), skills);
       else if (kind === 'codex')
-        this.writeCodexHome(
+        await this.writeCodexHome(
           engineHomeDir(root, 'codex', emp.id),
           mcpServers,
           skills,
@@ -200,30 +212,33 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
 
   /** Make the claude config dir's `skills/` folder an exact mirror of `skills` — the whole folder is
    * rebuilt so a skill removed from the set has its symlink pruned (not left orphaned). Idempotent. */
-  private writeClaudeHome(home: string, skills: LoadedSkill[]): void {
+  private async writeClaudeHome(
+    home: string,
+    skills: LoadedSkill[],
+  ): Promise<void> {
     const skillsDir = join(home, 'skills');
-    rmSync(skillsDir, { recursive: true, force: true });
-    mkdirSync(skillsDir, { recursive: true });
+    await rm(skillsDir, { recursive: true, force: true });
+    await mkdir(skillsDir, { recursive: true });
     for (const skill of skills) {
-      symlinkSync(skill.dir, join(skillsDir, skill.name), 'dir');
+      await symlink(skill.dir, join(skillsDir, skill.name), 'dir');
     }
   }
 
   /** Mirror codex's `config.toml` (MCP) + `AGENTS.md` (skills listing) in CODEX_HOME — written when
    * non-empty, DELETED when empty so a cleared list doesn't leave a stale file behind. Idempotent. */
-  private writeCodexHome(
+  private async writeCodexHome(
     home: string,
     mcpServers: ReadonlyArray<McpServerConfig>,
     skills: LoadedSkill[],
-  ): void {
+  ): Promise<void> {
     const configToml = join(home, 'config.toml');
     if (mcpServers.length)
-      writeFileSync(configToml, renderCodexMcpToml(mcpServers));
-    else rmSync(configToml, { force: true });
+      await writeFile(configToml, renderCodexMcpToml(mcpServers));
+    else await rm(configToml, { force: true });
 
     const agentsMd = join(home, 'AGENTS.md');
-    if (skills.length) writeFileSync(agentsMd, renderSkillsMarkdown(skills));
-    else rmSync(agentsMd, { force: true });
+    if (skills.length) await writeFile(agentsMd, renderSkillsMarkdown(skills));
+    else await rm(agentsMd, { force: true });
   }
 }
 

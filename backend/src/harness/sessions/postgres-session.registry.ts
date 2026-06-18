@@ -47,6 +47,7 @@ const COLUMN: Record<string, keyof SessionEntity> = {
   lastReport: 'last_report',
   lastReportKind: 'last_report_kind',
   qa: 'qa',
+  referencedProjects: 'referenced_projects',
   boardTaskId: 'board_task_id',
   planAttached: 'plan_attached',
   error: 'error',
@@ -74,6 +75,9 @@ function toDomain(r: SessionEntity): Session {
       ? { lastReportKind: r.last_report_kind as 'plan' | 'questions' }
       : {}),
     ...(r.qa != null ? { qa: r.qa } : {}),
+    ...(r.referenced_projects != null
+      ? { referencedProjects: r.referenced_projects }
+      : {}),
     ...(r.board_task_id != null ? { boardTaskId: r.board_task_id } : {}),
     ...(r.plan_attached != null ? { planAttached: r.plan_attached } : {}),
     ...(r.error != null ? { error: r.error } : {}),

@@ -19,12 +19,15 @@ const interactivityItem = (): SlackInbound => ({
 function makeRouter(
   interceptor?: SlackInboundInterceptor,
   approvals?: SlackInboundInterceptor,
+  suggestions?: SlackInboundInterceptor,
 ) {
   const surface = { handleMessageEvent: vi.fn(async () => {}) };
   const router = new SlackInboundRouter(
     surface as never,
     interceptor,
     approvals,
+    undefined, // commands
+    suggestions,
   );
   return { router, surface };
 }
@@ -70,11 +73,11 @@ describe('SlackInboundRouter', () => {
     expect(surface.handleMessageEvent).not.toHaveBeenCalled();
   });
 
-  it('tries the approval interceptor AFTER Jarvis: Jarvis-false → approval handles; approval-true consumes', async () => {
+  it('tries the approval interceptor AFTER the guard: the guard-false → approval handles; approval-true consumes', async () => {
     const order: string[] = [];
-    const jarvis = {
+    const guard = {
       maybeHandle: vi.fn(async () => {
-        order.push('jarvis');
+        order.push('guard');
         return false;
       }),
     };
@@ -84,16 +87,44 @@ describe('SlackInboundRouter', () => {
         return true;
       }),
     };
-    const { router, surface } = makeRouter(jarvis, approvals);
+    const { router, surface } = makeRouter(guard, approvals);
     await router.route(eventItem({ type: 'message', text: 'hi' }));
-    expect(order).toEqual(['jarvis', 'approvals']);
+    expect(order).toEqual(['guard', 'approvals']);
     expect(surface.handleMessageEvent).not.toHaveBeenCalled();
   });
 
-  it('a Jarvis-consumed item never reaches the approval interceptor', async () => {
-    const jarvis = { maybeHandle: vi.fn(async () => true) };
+  it('tries the suggestion interceptor AFTER approvals: approval-false → suggestion handles', async () => {
+    const order: string[] = [];
+    const approvals = {
+      maybeHandle: vi.fn(async () => {
+        order.push('approvals');
+        return false;
+      }),
+    };
+    const suggestions = {
+      maybeHandle: vi.fn(async () => {
+        order.push('suggestions');
+        return true;
+      }),
+    };
+    const { router, surface } = makeRouter(undefined, approvals, suggestions);
+    await router.route(interactivityItem());
+    expect(order).toEqual(['approvals', 'suggestions']);
+    expect(surface.handleMessageEvent).not.toHaveBeenCalled();
+  });
+
+  it('an approval-consumed item never reaches the suggestion interceptor', async () => {
     const approvals = { maybeHandle: vi.fn(async () => true) };
-    const { router } = makeRouter(jarvis, approvals);
+    const suggestions = { maybeHandle: vi.fn(async () => true) };
+    const { router } = makeRouter(undefined, approvals, suggestions);
+    await router.route(interactivityItem());
+    expect(suggestions.maybeHandle).not.toHaveBeenCalled();
+  });
+
+  it('a the guard-consumed item never reaches the approval interceptor', async () => {
+    const guard = { maybeHandle: vi.fn(async () => true) };
+    const approvals = { maybeHandle: vi.fn(async () => true) };
+    const { router } = makeRouter(guard, approvals);
     await router.route(interactivityItem());
     expect(approvals.maybeHandle).not.toHaveBeenCalled();
   });

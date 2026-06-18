@@ -38,7 +38,8 @@ function build() {
     r.status = 'closed';
     return { ok: true };
   });
-  const runner = { openStageSession, closeSession };
+  // No turns survive a restart, so the boot-recovery liveness guard always reads false here.
+  const runner = { openStageSession, closeSession, isTurnInFlight: () => false };
   const sessions = {
     onUpdate: vi.fn(),
     async get(id: string): Promise<Row | undefined> {

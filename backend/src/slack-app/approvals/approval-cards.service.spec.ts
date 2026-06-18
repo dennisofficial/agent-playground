@@ -339,12 +339,12 @@ describe('ApprovalCardsService — verdicts', () => {
 
   it('foreign action_ids and callback_ids fall through (return false)', async () => {
     const { service } = makeService({ installedBy: 'U-BOSS' });
-    expect(await service.maybeHandle(click('jarvis:setup_keys'))).toBe(false);
+    expect(await service.maybeHandle(click('keys:setup'))).toBe(false);
     const foreignModal: Extract<SlackInbound, { kind: 'interactivity' }> = {
       kind: 'interactivity',
       payload: {
         type: 'view_submission',
-        view: { callback_id: 'jarvis:keys' },
+        view: { callback_id: 'keys:modal' },
       },
       respond: vi.fn(() => Promise.resolve()),
     };

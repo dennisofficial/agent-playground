@@ -97,6 +97,7 @@ function build() {
     codingStore,
     runner,
     sessionRows,
+    boardEvents,
   };
 }
 
@@ -287,6 +288,69 @@ describe('PipelineRunnerService — grouped execution (Phase 4)', () => {
     const p3 = phaseRows.find((p) => p.planPhaseId === 3)!;
     expect(p2.codingSessionId).toBe(pending.id);
     expect(p3.codingSessionId).toBe(pending.id);
+  });
+
+  it("relays a build report's ```findings``` block to Atlas (advisory) and still advances to review", async () => {
+    const { svc, runs, runner, boardEvents } = build();
+    const task = 205;
+    const { idle, approve } = drive(svc, runs, task);
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: 'wt-205',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    await idle(groupedPlanMd([1])); // single phase → gate
+    await approve(); // group 1 execute building
+
+    // The execute reports a handoff AND an out-of-scope findings block.
+    await idle(
+      '```handoff\nExposed POST /api/upload.\n```\n\n```findings\n- dead config flag LEGACY_MODE\n```',
+    );
+
+    const found = boardEvents.emit.mock.calls
+      .map((c) => c[0] as Row)
+      .find((e) => e.kind === 'stage-findings');
+    expect(found).toBeDefined();
+    expect(found!.taskId).toBe(task);
+    expect(found!.section).toBe('backend');
+    expect(found!.stage).toBe('phase_backend');
+    expect(found!.findings).toContain('LEGACY_MODE');
+    expect(found!.notifyThread).toBe('thread');
+
+    // Advisory — the run did NOT pause: a review session (mode investigate) opened.
+    expect(
+      runner.openStageSession.mock.calls.some(
+        (c) => c[0].mode === 'investigate',
+      ),
+    ).toBe(true);
+  });
+
+  it('emits no stage-findings when the build report has no findings block', async () => {
+    const { svc, runs, boardEvents } = build();
+    const task = 206;
+    const { idle, approve } = drive(svc, runs, task);
+    await svc.start({
+      team: TEAM,
+      project: 'proj',
+      taskId: task,
+      worktreeId: 'wt-206',
+      notifyThread: 'thread',
+      kind: 'feature',
+      sections: [{ name: 'backend', role: 'phase_backend' }],
+    });
+    await idle(groupedPlanMd([1]));
+    await approve();
+    await idle('```handoff\nExposed POST /api/upload.\n```'); // no findings block
+
+    expect(
+      boardEvents.emit.mock.calls
+        .map((c) => c[0] as Row)
+        .some((e) => e.kind === 'stage-findings'),
+    ).toBe(false);
   });
 
   it('refuses a regroup that touches an already-building phase', async () => {

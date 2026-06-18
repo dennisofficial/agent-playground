@@ -76,6 +76,13 @@ export class Session extends TimestampedEntity {
   @Column({ type: 'jsonb', nullable: true })
   qa!: { q: string; a: string }[] | null;
 
+  /** Read-only reference repos attached to this session for grounding (clone path + access mode).
+   * Survives a resume so a restarted session still knows its read set (the v2 container mounts). */
+  @Column({ type: 'jsonb', nullable: true })
+  referenced_projects!:
+    | { projectId?: string; gitUrl: string; path: string; mode: 'read' }[]
+    | null;
+
   /** The team-board task this session works, when linked (the approval guard's anchor). */
   @Column({ type: 'int', nullable: true })
   board_task_id!: number | null;

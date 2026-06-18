@@ -51,7 +51,7 @@ export class SlackEventsController {
         .catch((err) => this.logger.error(`suspend ${teamId} failed: ${err}`));
       return {};
     }
-    // Fire-and-forget into the router (Jarvis interceptor → surface); the 200 has already returned.
+    // Fire-and-forget into the router (onboarding guard → surface); the 200 has already returned.
     void this.router.route({ kind: 'event', body, respond: async () => {} });
     return {};
   }

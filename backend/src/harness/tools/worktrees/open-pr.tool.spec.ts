@@ -23,6 +23,7 @@ const REC: ProjectRecord = {
   teamId: 'local',
   projectId: 'proj',
   displayName: 'Proj',
+  description: null,
   gitUrl: 'https://github.com/dennis/proj',
   defaultBranch: 'main',
   tokenName: null,

@@ -20,6 +20,30 @@ export interface PullRequestResult {
   existing: boolean;
 }
 
+/** A repo as resolved during onboarding (the subset onboard_project needs to register it). */
+export interface RepoInfo {
+  /** "<owner>/<repo>". */
+  fullName: string;
+  owner: string;
+  name: string;
+  /** The HTTPS clone/registry URL (no `.git` suffix). */
+  htmlUrl: string;
+  defaultBranch: string;
+  private: boolean;
+  /** GitHub's repo description, if any — seeds the project catalog blurb. */
+  description: string | null;
+}
+
+/** Parse an `https://github.com/<owner>/<repo>` URL into its parts (drops any `.git`). null if it isn't one. */
+export function parseGithubRepoUrl(
+  url: string,
+): { owner: string; repo: string } | null {
+  const m = url
+    .trim()
+    .match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
 /** A single open PR returned by `listOpenPullRequests`. */
 export interface PullRequestSummary {
   number: number;
@@ -227,6 +251,77 @@ export class GithubApiService {
         `GitHub refused the PR comment (${res.status}): ${errBody.message ?? 'no detail'}`,
       );
     }
+  }
+
+  private toRepoInfo(r: {
+    full_name: string;
+    owner: { login: string };
+    name: string;
+    html_url: string;
+    default_branch: string;
+    private: boolean;
+    description: string | null;
+  }): RepoInfo {
+    return {
+      fullName: r.full_name,
+      owner: r.owner.login,
+      name: r.name,
+      htmlUrl: r.html_url,
+      defaultBranch: r.default_branch,
+      private: r.private,
+      description: r.description ?? null,
+    };
+  }
+
+  /** Fetch one repo the token can see — the onboarding probe. null on 404/403 (not found OR no access,
+   * which onboarding treats the same: "I can't reach it, collect a token"); throws on other failures. */
+  async getRepo(
+    token: string,
+    owner: string,
+    repo: string,
+  ): Promise<RepoInfo | null> {
+    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}`, {
+      headers: this.headers(token),
+    });
+    if (res.ok)
+      return this.toRepoInfo(
+        (await res.json()) as Parameters<typeof this.toRepoInfo>[0],
+      );
+    if (res.status === 404 || res.status === 403) return null;
+    const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(
+      `GitHub couldn't load ${owner}/${repo} (${res.status}): ${errBody.message ?? 'no detail'}`,
+    );
+  }
+
+  /**
+   * Repos accessible to the token whose NAME matches `name` (case-insensitive) — the by-name onboarding
+   * resolver. Reads the token's own repo list (owner + collaborator + org member), one page of 100
+   * (enough at Dennis's scale; larger orgs would need pagination — caller notes the cap). Read-only.
+   */
+  async searchAccessibleRepos(
+    token: string,
+    name: string,
+  ): Promise<RepoInfo[]> {
+    const want = name.trim().toLowerCase();
+    const res = await this.fetchImpl(
+      `${API}/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member`,
+      { headers: this.headers(token) },
+    );
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      throw new Error(
+        `GitHub couldn't list your repos (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
+    }
+    const repos = (await res.json()) as Array<
+      Parameters<typeof this.toRepoInfo>[0]
+    >;
+    return repos
+      .map((r) => this.toRepoInfo(r))
+      .filter((r) => r.name.toLowerCase() === want);
   }
 
   /** List the open PRs on a repo (up to 50, newest first). */

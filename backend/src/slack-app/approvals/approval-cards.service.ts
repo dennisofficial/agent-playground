@@ -43,7 +43,7 @@ const APPROVAL_PREFIX = 'approval:';
  * (the lead's summary + Approve / Request changes / Deny), then each employee's full plan as
  * thread replies under it. The card is a rendering of board state, never a store.
  *
- * INBOUND (`SlackInboundInterceptor`, after Jarvis): a card click is just another ingestion. The
+ * INBOUND (`SlackInboundInterceptor`, after the onboarding guard): a card click is just another ingestion. The
  * clicker must be the BOSS (tenant.installed_by, or APPROVAL_BOSS_USER_ID for dev workspaces that
  * never OAuth-installed; fail-closed when neither is set). The verdict is applied with an atomic
  * compare-and-set on the board (double clicks and stale cards lose harmlessly), recorded as a

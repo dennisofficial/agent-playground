@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Identity, recallProjects } from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
+import { ProjectStore } from '../projects/project-store';
 import { ACTIVE_BOARD_STATUSES, BoardStore } from './board-store';
 import { PipelineRunStore } from './pipeline-run-store';
 import { PipelineRunSectionStore } from './pipeline-run-section-store';
@@ -17,6 +18,8 @@ const BOARD_TASK_CAP = 5;
 const NOTES_CAP = 10;
 // Cap on in-flight pipeline runs shown in the pipelines slot.
 const PIPELINE_CAP = 5;
+// Cap on reference projects (other registered projects) shown in the standing-context catalog.
+const REFERENCE_CAP = 8;
 
 /** Priority order for note kinds: blockers surface first, then todos, hypotheses, handoffs. */
 const NOTE_KIND_ORDER: Record<string, number> = {
@@ -65,6 +68,7 @@ export class FetchService {
     private readonly sessionNotes: SessionNoteStore,
     private readonly pipelineRuns: PipelineRunStore,
     private readonly pipelineSections: PipelineRunSectionStore,
+    private readonly projects: ProjectStore,
   ) {}
 
   /**
@@ -98,6 +102,25 @@ export class FetchService {
     const coreLines: string[] = [`Role: ${bot.role}, project: ${id.project}.`];
     if (prefs) coreLines.push(prefs);
     parts.push(`Standing context:\n${coreLines.join('\n')}`);
+
+    // ── Reference catalog ───────────────────────────────────────────────────────────────────────
+    // The OTHER registered projects in this workspace — what can be read read-only via
+    // reference_project / investigate(references) WITHOUT being told a path. Small + high-value
+    // (knowing a sibling repo even exists, e.g. "reference cubix-infra"), so it's always-on but
+    // hard-capped; the full list/blurbs are on-demand via list_reference_projects.
+    const others = (await this.projects.list(id.team).catch(() => [])).filter(
+      (p) => p.projectId !== id.project,
+    );
+    if (others.length > 0) {
+      const shown = others.slice(0, REFERENCE_CAP);
+      const more = others.length - shown.length;
+      const lines = shown
+        .map((p) => `- ${p.projectId}${p.description ? ` — ${p.description}` : ''}`)
+        .join('\n');
+      parts.push(
+        `Reference projects you can read read-only (reference_project / investigate references):\n${lines}${more > 0 ? `\n…and ${more} more (list_reference_projects)` : ''}`,
+      );
+    }
 
     // ── 2. Active board tasks (planning / executing / self_review) ──────────────────────────────
     // Directly-actionable working state: what the bot is currently planning or executing on the team

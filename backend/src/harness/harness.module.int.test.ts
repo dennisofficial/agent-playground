@@ -98,6 +98,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'list_pull_requests',
         'approve_plan',
         'propose_plan',
+        'suggest_task',
         'open_standup',
         'close_standup',
         'dispatch_pipeline',
@@ -110,6 +111,10 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
         'dispatch_fixup_session',
         'reopen_section',
         'check_pipeline',
+        'reference_project',
+        'reference_repo',
+        'list_reference_projects',
+        'onboard_project',
       ].sort(),
     );
 

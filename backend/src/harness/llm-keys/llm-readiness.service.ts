@@ -10,7 +10,7 @@ import { TenantCredentialService } from './tenant-credential.service';
  *
  * `isReady` is a synchronous cached-set check (the scheduler calls it per room); `ensureChecked`
  * kicks an async re-check for an unknown workspace and `ready$` emits the teamId on the pending→ready
- * edge so the conductor can release that workspace's backlog. Jarvis calls `refresh` right after a
+ * edge so the conductor can release that workspace's backlog. the onboarding guard calls `refresh` right after a
  * key-modal submission for an instant flip.
  */
 @Injectable()
@@ -19,7 +19,7 @@ export class LlmReadinessService {
   private readonly readyTeams = new Set<string>();
   private readonly checking = new Set<string>();
 
-  /** Emits a teamId on its pending→ready edge. Subscribers (conductor, Jarvis) react. */
+  /** Emits a teamId on its pending→ready edge. Subscribers (conductor, onboarding guard) react. */
   readonly ready$ = new Subject<string>();
 
   constructor(private readonly creds: TenantCredentialService) {}
@@ -31,7 +31,7 @@ export class LlmReadinessService {
 
   /**
    * Re-evaluate a workspace's key availability; flips the cached set and emits `ready$` on the edge.
-   * Safe to call from anywhere (Jarvis after a modal submit, tests). Returns the readiness.
+   * Safe to call from anywhere (the onboarding guard after a modal submit, tests). Returns the readiness.
    */
   async refresh(teamId: string): Promise<boolean> {
     if (this.readyTeams.has(teamId)) return true;

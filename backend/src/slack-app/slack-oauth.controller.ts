@@ -12,7 +12,7 @@ const page = (title: string, detail: string): string =>
 /**
  * The OAuth install redirect — "install the app = the workspace exists". Exchanges the code and
  * upserts the workspace row (bot token encrypted at rest via SECRETS_ENCRYPTION_KEY). NO
- * provisioning: the one running process simply starts serving that team_id; Jarvis greets the
+ * provisioning: the one running process simply starts serving that team_id; the onboarding guard (keyless) or Atlas (ready) greets the
  * workspace in-channel once it's invited. Reinstall = token rotation (the ciphertext refreshes).
  */
 @Controller('slack/oauth')
@@ -61,7 +61,7 @@ export class SlackOauthController {
       this.logger.log(`workspace ${teamId} (“${oauth.team?.name}”) installed`);
       return page(
         'Installed 🎉',
-        'Head back to Slack and invite the app to a channel — Jarvis will take it from there.',
+        'Head back to Slack and invite the app to a channel — it will walk you through setup from there.',
       );
     } catch (err) {
       this.logger.error(`oauth exchange failed: ${err}`);

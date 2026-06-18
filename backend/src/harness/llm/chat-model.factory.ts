@@ -57,6 +57,15 @@ export class ChatModelFactory {
       ],
       thinking: { type: 'adaptive', display: 'summarized' },
       maxTokens: CHAT_MAX_OUTPUT_TOKENS,
+      // MANDATORY at this maxTokens. The Anthropic SDK refuses any NON-streaming request whose
+      // maxTokens could exceed its 10-minute timeout: it throws once
+      // `(3600 * maxTokens) / 128000 > 600`, i.e. maxTokens > ~21.3K — model-independent. At 64K we
+      // are far over the line, so `.invoke()` would throw "Streaming is required …" every turn.
+      // `streaming: true` makes LangChain consume the streaming endpoint and aggregate the chunks
+      // into one complete AIMessage in memory — `.invoke()` callers are unchanged (still get the full
+      // reply + tool calls + usage), they just no longer hit the non-streaming guard. Only this model
+      // needs it; the gate/extract/guard builders cap at ≤512 tokens, well under the threshold.
+      streaming: true,
       temperature,
     });
   }

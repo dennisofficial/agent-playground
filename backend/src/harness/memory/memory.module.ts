@@ -21,6 +21,7 @@ import { EmployeesModule } from '../employees/employees.module';
 import { CredentialContext } from '../llm-keys/credential-context';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { LlmModule } from '../llm/llm.module';
+import { ProjectsModule } from '../projects/projects.module';
 import { MemoryConsolidationService } from './memory-consolidation.service';
 import { BoardEventsBus } from './board-events.bus';
 import { BoardStore } from './board-store';
@@ -72,6 +73,8 @@ import { WorklogStore } from './worklog-store';
     LlmModule,
     LlmKeysModule,
     EmployeesModule,
+    // FetchService surfaces the reference-project catalog (other registered projects) in standing context.
+    ProjectsModule,
   ],
   // CHECKPOINTER lives in its own junction module (see checkpointer.module.ts for why);
   // re-exported here so existing importers of MemoryModule keep resolving the token.

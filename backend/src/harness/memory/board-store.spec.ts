@@ -158,3 +158,49 @@ describe('BoardStore.transition() — compare-and-set semantics', () => {
     expect(sql).not.toMatch(/assignee/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BoardStore.dropOpen() — guarded candidate prune (suggestion dismiss)
+// ---------------------------------------------------------------------------
+
+describe('BoardStore.dropOpen() — guarded delete', () => {
+  it('deletes an open, un-depended-on candidate and returns the row', async () => {
+    const dropped = makeRow({ id: 9, status: 'open', title: 'Prune me' });
+    // DELETE RETURNING → pg tuple [rows, count].
+    const { store, query } = buildStore([[[dropped], 1]]);
+
+    const result = await store.dropOpen('local', 9);
+
+    expect(typeof result).not.toBe('string');
+    expect((result as { id: number }).id).toBe(9);
+    // Single statement (the atomic guarded DELETE) — no follow-up read on the happy path.
+    expect(query).toHaveBeenCalledOnce();
+    const [sql] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toMatch(/DELETE FROM team_tasks/);
+    expect(sql).toMatch(/status = 'open'/);
+    expect(sql).toMatch(/NOT EXISTS/); // reverse-dependency guard
+  });
+
+  it("returns 'missing' when the row is gone", async () => {
+    // DELETE matches nothing, then the follow-up read finds no row.
+    const { store } = buildStore([[[], 0], []]);
+    expect(await store.dropOpen('local', 9)).toBe('missing');
+  });
+
+  it("returns 'not-open' when the row was already picked up", async () => {
+    const { store } = buildStore([
+      [[], 0],
+      [makeRow({ id: 9, status: 'planning' })],
+    ]);
+    expect(await store.dropOpen('local', 9)).toBe('not-open');
+  });
+
+  it("returns 'has-dependents' when an open row another task depends on can't be pruned", async () => {
+    // DELETE refused by NOT EXISTS, the follow-up read shows it's still open.
+    const { store } = buildStore([
+      [[], 0],
+      [makeRow({ id: 9, status: 'open' })],
+    ]);
+    expect(await store.dropOpen('local', 9)).toBe('has-dependents');
+  });
+});

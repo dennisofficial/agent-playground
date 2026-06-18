@@ -1,14 +1,16 @@
 /**
- * Jarvis's Block Kit surfaces — pure constants/builders, no I/O. The keys modal is THE secrets
- * path: a `view_submission` payload is never a chat message, so keys reach the encrypted store
- * without ever touching Slack history or the harness channel log.
+ * The keyless-onboarding-guard Block Kit surfaces — pure constants/builders, no I/O. The keys modal is
+ * THE secrets path: a `view_submission` payload is never a chat message, so keys reach the encrypted
+ * store without ever touching Slack history or the harness channel log.
+ *
+ * Voiceless on purpose — this is a deterministic setup circuit-breaker, not a character. The
+ * conversational onboarding (greeting, linking a repo, references) is Atlas's, post-keys.
  */
 
-export const JARVIS_NAME = 'Jarvis';
-export const JARVIS_ICON_EMOJI = ':robot_face:';
-
-export const SETUP_KEYS_ACTION_ID = 'jarvis:setup_keys';
-export const KEYS_MODAL_CALLBACK_ID = 'jarvis:keys';
+export const SETUP_KEYS_ACTION_ID = 'keys:setup';
+export const KEYS_MODAL_CALLBACK_ID = 'keys:modal';
+/** Shared prefix so the router slot can namespace on it. */
+export const KEYS_PREFIX = 'keys:';
 
 /** Modal input coordinates — `view.state.values[blockId][actionId].value`. */
 export const KEYS_MODAL_BLOCKS = {
@@ -35,39 +37,18 @@ export const setupButtonBlocks = (text: string) => ({
   ],
 });
 
-export const GREETING_PENDING =
-  "Hi, I'm Jarvis — I'll get your AI team set up. The team runs on your own LLM API " +
-  'keys (Anthropic + OpenAI, both required). Click the button to add them securely — ' +
-  '*never paste keys in chat*.';
-
-export const NUDGE_PENDING =
-  'The team is still waiting on its LLM keys — hit the button above (or ask me to repost it) ' +
-  'and they’ll come online right away.';
+/** Terse, voiceless: the workspace can't run until its LLM keys are in. */
+export const KEYS_PROMPT =
+  'This workspace needs its own LLM API keys (Anthropic + OpenAI) before the team can run. ' +
+  'Add them securely below — *never paste keys in chat*.';
 
 export const KEY_IN_CHAT_WARNING =
-  '⚠️ That looks like an API key — never paste keys in chat (Slack keeps history). I have NOT ' +
-  'stored it; please revoke it if it was real, then use the *Set up keys* button instead.';
+  '⚠️ That looks like an API key — never paste keys in chat (Slack keeps history). It has NOT ' +
+  'been stored; revoke it if it was real, then use the *Set up keys* button.';
 
-export const REPO_PROMPT =
-  'This channel isn’t linked to a repository yet. Paste the GitHub URL ' +
-  '(`https://github.com/owner/repo`) and I’ll wire it up — the channel name becomes the project.';
+export const KEYS_STORED = 'Keys stored securely — bringing the team online…';
 
-export const KEYS_STORED =
-  'Keys stored securely — bringing the engines online…';
-
-export const ENGINES_ONLINE =
-  'All keys are in — engines are online and the team is live. 🎉';
-
-export const repoLinked = (gitUrl: string): string =>
-  `Linked this channel to ${gitUrl} — the team can work this repo now. If it’s private, add a ` +
-  'GitHub token via the *Set up keys* button.';
-
-export const repoAlreadyLinked = (gitUrl: string): string =>
-  `This channel’s project is already linked to ${gitUrl}.`;
-
-export const repoConflict = (existingUrl: string): string =>
-  `This channel’s project is already linked to ${existingUrl} — update it via the admin API/UI ` +
-  'if it should point elsewhere.';
+export const ENGINES_ONLINE = 'Keys are in — the team is live.';
 
 /** The keys modal. `private_metadata` carries the origin channel so the submission handler knows
  * where to confirm. */
@@ -78,7 +59,7 @@ export const keysModalView = (
   type: 'modal' as const,
   callback_id: KEYS_MODAL_CALLBACK_ID,
   private_metadata: originChannelId,
-  title: { type: 'plain_text' as const, text: 'Team setup — API keys' },
+  title: { type: 'plain_text' as const, text: 'Workspace setup — API keys' },
   submit: { type: 'plain_text' as const, text: 'Save keys' },
   close: { type: 'plain_text' as const, text: 'Cancel' },
   blocks: [

@@ -64,6 +64,16 @@ const DYNAMIC = 'dynamic';
  * captures the actual direction (everything after the colon); `(no notes)` means he denied without text.
  */
 const CHANGES_REQUESTED_NOTE = /requested changes on the proposal[^:]*:\s*([\s\S]*)/i;
+/**
+ * The stage-decision findings note `pauseForStageDecision` parks on the ticket (`Pipeline <stage> …
+ * flagged a blocking issue:\n\n<findings>`). Used two ways: (a) recover the findings for a fixup
+ * session — which can't open the ticket from its worktree (no get_ticket) — and (b) keep these machine
+ * notes OUT of the generic planning context (the fixup path inlines them instead). Group 1 is the
+ * findings body. Same loose-coupling caveat as CHANGES_REQUESTED_NOTE — if the phrasing drifts the
+ * match misses and the fixer degrades to a bare "clear the blocker" (the pre-fix behavior); never
+ * throws.
+ */
+const STAGE_FINDINGS_NOTE = /flagged a blocking issue:\s*([\s\S]*)/i;
 /** Sentinel section role for a DESIGN section — a human gate that produces the `design/` artifact the
  * NEXT section implements, rather than a phase-config that runs engine turns. */
 export const DESIGN_ROLE = 'design';
@@ -157,7 +167,8 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       await this.board
         .update(opts.team, opts.taskId, { status: 'executing' })
         .catch(() => undefined);
-      await this.openSession(run, opts.role, 'execute', this.bugfixPrompt(run));
+      const ctx = await this.bugfixContext(run);
+      await this.openSession(run, opts.role, 'execute', this.bugfixPrompt(run, ctx));
       return (await this.runs.get(opts.team, run.id)) ?? run;
     }
 
@@ -257,11 +268,21 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     });
     const refreshed = (await this.runs.get(run.team, run.id)) ?? run;
     const sections = await this.sectionStore.listForRun(run.id);
+    const contextNotes = await this.ticketContextNotes(
+      refreshed.team,
+      refreshed.taskId,
+    );
     const sid = await this.openSession(
       refreshed,
       section.phaseRole,
       'plan',
-      this.sectionPlanPrompt(refreshed, section, sections, denyFeedback),
+      this.sectionPlanPrompt(
+        refreshed,
+        section,
+        sections,
+        denyFeedback,
+        contextNotes,
+      ),
     );
     if (sid) await this.sectionStore.update(section.id, { activeSessionId: sid });
   }
@@ -382,6 +403,71 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       return text && text !== '(no notes)' ? text : undefined;
     }
     return undefined;
+  }
+
+  /**
+   * The freeform research/decision notes parked on a ticket — the durable context a planning (or
+   * bugfix) session needs but can't fetch itself (sessions have no get_ticket). Newest-first under a
+   * char budget so a long trail can't blow up the seed, rendered oldest-first as a research log.
+   * EXCLUDES machine-authored notes: the approval card's changes-requested verdicts (they already reach
+   * planning via denyFeedback) and the stage-decision findings (the fixup path inlines those instead).
+   * Returns '' when there's nothing worth seeding.
+   */
+  private async ticketContextNotes(team: string, taskId: number): Promise<string> {
+    const { notes } = await this.notes.listForTask(team, taskId, { pageSize: 30 });
+    const research = notes.filter(
+      (n) =>
+        !CHANGES_REQUESTED_NOTE.test(n.body) && !STAGE_FINDINGS_NOTE.test(n.body),
+    );
+    const MAX = 8000;
+    const picked: string[] = [];
+    let used = 0;
+    for (const n of research) {
+      // Newest-first: when the budget is tight, prefer the most recent notes.
+      const block = `[${n.author} · ${n.createdAt.slice(0, 10)}]\n${n.body.trim()}`;
+      if (picked.length && used + block.length > MAX) break;
+      picked.push(block);
+      used += block.length;
+    }
+    if (!picked.length) return '';
+    const omitted = research.length - picked.length;
+    picked.reverse(); // render oldest-first — reads as a log
+    return picked.join('\n\n') + (omitted ? `\n\n(+${omitted} older note(s) on the ticket)` : '');
+  }
+
+  /**
+   * The defect list from the most-recent stage-decision note on this task — the input a fixup session
+   * needs but can't fetch (no get_ticket from a worktree). Newest-first; only the latest blocking
+   * finding is live (a fresh stage decision supersedes an earlier one). Mirrors latestDenyFeedback.
+   */
+  private async latestStageFindings(
+    team: string,
+    taskId: number,
+  ): Promise<string | undefined> {
+    const { notes } = await this.notes.listForTask(team, taskId, { pageSize: 20 });
+    for (const note of notes) {
+      const m = note.body.match(STAGE_FINDINGS_NOTE);
+      if (!m) continue;
+      const text = m[1]?.trim();
+      return text || undefined;
+    }
+    return undefined;
+  }
+
+  /** The ticket context a bugfix session must have inlined — it can't open the ticket from its
+   * worktree: title + description (the bug report) + the parked research notes. */
+  private async bugfixContext(run: PipelineRun): Promise<{
+    title?: string;
+    description?: string;
+    contextNotes?: string;
+  }> {
+    const task = await this.board.get(run.team, run.taskId).catch(() => undefined);
+    const contextNotes = await this.ticketContextNotes(run.team, run.taskId);
+    return {
+      title: task?.title,
+      description: task?.description || undefined,
+      contextNotes: contextNotes || undefined,
+    };
   }
 
   /** Dennis approved the active section's plan: parse its phases, materialize the phase + coding-session
@@ -899,11 +985,15 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       return { ok: false, message: `#${taskId} has no worktree to fix in.` };
     await this.runs.update(team, run.id, { status: 'running' });
     const refreshed = (await this.runs.get(team, run.id)) ?? run;
+    const findings = await this.latestStageFindings(
+      refreshed.team,
+      refreshed.taskId,
+    );
     const sid = await this.openSession(
       refreshed,
       refreshed.currentRole ?? '',
       'execute',
-      this.fixupPrompt(refreshed, guidance),
+      this.fixupPrompt(refreshed, { findings, guidance }),
       refreshed,
     );
     if (!sid)
@@ -1091,6 +1181,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     }
 
     if (run.kind === 'bugfix') {
+      this.relayStageFindings(run, undefined, session); // out-of-scope discoveries → Atlas (advisory)
       await this.handlePrGate(run); // single execute session done → ship
       return;
     }
@@ -1122,10 +1213,12 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       if (!coding) return; // defensive: building section with no live group
       if (coding.status === 'building') {
         // The group's execute session just finished — capture the handoff it left for the NEXT group
-        // (parsed from its report), then open the group's review.
+        // (parsed from its report), relay any out-of-scope findings to Atlas (advisory), then open the
+        // group's review.
         const handoff = parseHandoff(session.lastReport ?? '');
         if (handoff)
           await this.codingStore.update(coding.id, { handoffOut: handoff });
+        this.relayStageFindings(run, section, session);
         await this.openGroupReview(run, coding);
         return;
       }
@@ -1155,6 +1248,30 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
       taskId: run.taskId,
       section: section?.name,
       questions: session.lastReport ?? '(no questions text)',
+      notifyThread: run.notifyThread,
+    });
+  }
+
+  /** Relay a build/execute stage's OUT-OF-SCOPE findings (a ```findings``` block in its report) to
+   * Atlas so he can triage them (suggest_task / enqueue_finding / skip). ADVISORY only — emits the
+   * event and returns; the run is NOT paused and keeps advancing. No-op when the report has no block. */
+  private relayStageFindings(
+    run: PipelineRun,
+    section: { name: string; phaseRole: string } | undefined,
+    session: Session,
+  ): void {
+    const findings = parseFindings(session.lastReport ?? '');
+    if (!findings) return;
+    this.logger.log(
+      `pipeline ${run.id}: ${section?.name ?? 'bugfix'} stage flagged out-of-scope findings — relaying to Atlas (advisory)`,
+    );
+    this.boardEvents.emit({
+      kind: 'stage-findings',
+      team: run.team,
+      taskId: run.taskId,
+      stage: section?.phaseRole ?? 'bugfix',
+      section: section?.name,
+      findings,
       notifyThread: run.notifyThread,
     });
   }
@@ -1327,12 +1444,18 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         const session = run.sessionId
           ? await this.sessions.get(run.sessionId)
           : undefined;
-        if (session && (session.status === 'idle' || session.status === 'failed')) {
-          await this.onSessionUpdate(session); // process the missed turn-end
+        if (session?.status === 'idle') {
+          // A turn genuinely COMPLETED during downtime — process the missed turn-end (advance the
+          // gate / open the next step).
+          await this.onSessionUpdate(session);
           continue;
         }
-        if (session && session.status === 'closed') continue; // owner closed — manual
-        // Session gone / stale-'running' (turn died on restart): re-open the current step.
+        if (session?.status === 'closed') continue; // owner closed — manual
+        // 'failed' (a turn interrupted by the restart, reconciled to 'failed' on boot), stale
+        // 'running' (the reconcile hasn't run yet — Nest runs bootstrap hooks concurrently — but at
+        // boot no turn is in flight, so the row is still stale), or session gone: RESUME the live
+        // step from the durable rows. NOT onSessionUpdate/failRun — a restart is not a pipeline
+        // failure; the completed sections/phases survive and the step just re-opens.
         await this.reopenCurrentStep(run);
       } catch (err) {
         this.logger.warn(`pipeline ${run.id}: boot resume failed: ${err}`);
@@ -1340,20 +1463,30 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     }
   }
 
-  /** Re-open whatever step the durable rows say is live (boot recovery). IDEMPOTENT: if the run's
-   * active session is still alive, the step is already live — re-running this opens no duplicate. */
+  /** Re-open whatever step the durable rows say is live (boot recovery). IDEMPOTENT: if a turn for
+   * the run's active session is genuinely in-flight in THIS process (e.g. we already reopened it
+   * earlier in this same boot pass), the step is already live — re-running opens no duplicate. The
+   * guard is on the in-process controller, NOT persisted status: at boot a 'running' ROW is stale
+   * (its turn died with the old process), so status can't distinguish stale from live. */
   private async reopenCurrentStep(run: PipelineRun): Promise<void> {
-    if (run.sessionId) {
-      const live = await this.sessions.get(run.sessionId);
-      if (live && (live.status === 'idle' || live.status === 'running')) return;
-    }
+    if (run.sessionId && this.runner.isTurnInFlight(run.sessionId)) return;
     if (run.planningSubstep === 'fixup') {
-      // A fix-up session died on restart — re-open it (its report re-enters the PR gate).
-      await this.openSession(run, '', 'execute', this.fixupPrompt(run), run);
+      // A fix-up session died on restart — re-open it (its report re-enters the PR gate). The findings
+      // are recovered from the ticket note (the worker can't read the ticket itself); guidance is lost
+      // on restart, which is fine — the findings are the authoritative input.
+      const findings = await this.latestStageFindings(run.team, run.taskId);
+      await this.openSession(
+        run,
+        '',
+        'execute',
+        this.fixupPrompt(run, { findings }),
+        run,
+      );
       return;
     }
     if (run.kind === 'bugfix') {
-      await this.openSession(run, '', 'execute', this.bugfixPrompt(run), run);
+      const ctx = await this.bugfixContext(run);
+      await this.openSession(run, '', 'execute', this.bugfixPrompt(run, ctx), run);
       return;
     }
     const section = await this.sectionStore.activeSection(run.id);
@@ -1406,6 +1539,26 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     const latest = (await this.runs.get(run.team, run.id)) ?? run;
     await this.closeRunSession(latest.sessionId);
     await this.runs.update(run.team, run.id, { status: 'failed' });
+    // The section live at the moment of death — context for Atlas's narration (best-effort).
+    const section = await this.sectionStore
+      .activeSection(run.id)
+      .catch(() => undefined);
+    // Dispatch left the ticket in 'planning'/'executing'; a crashed attempt isn't a closed ticket, so put
+    // it back on the OPEN backlog — otherwise it's orphaned in an active status and Atlas must hand-reset
+    // it before he can re-dispatch (exactly the manual cleanup he had to do). Best-effort, like dispatch.
+    await this.board
+      .update(run.team, run.taskId, { status: 'open' })
+      .catch(() => undefined);
+    // Wake Atlas: the orchestrator can't orchestrate blind. Auto-flows through the conductor's relay
+    // (boardEventRelayPrompt → injectSeed) the same as every other pipeline board event.
+    this.boardEvents.emit({
+      kind: 'run-failed',
+      team: run.team,
+      taskId: run.taskId,
+      reason,
+      section: section?.name,
+      notifyThread: run.notifyThread,
+    });
   }
 
   /** The positional index of a section in its run's ordinal-ordered list (dual-writes section_index
@@ -1460,6 +1613,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     section: PipelineRunSection,
     sections: PipelineRunSection[],
     denyFeedback?: string,
+    contextNotes?: string,
   ): string {
     const idx = sections.findIndex((s) => s.id === section.id);
     const prior = sections
@@ -1475,6 +1629,9 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
         ? `The agreed HIGH-LEVEL PLAN for the whole feature (your north star — plan this section to fit it):\n${run.overview}`
         : undefined,
       section.brief ? `This section's focus: ${section.brief}` : undefined,
+      contextNotes
+        ? `CONTEXT captured on the ticket before this work was planned — research, findings, and decisions parked during discovery (you can't open the ticket from here, so it's inlined). Treat it as background to build on; where it conflicts with the high-level plan or Dennis's direction, those win:\n\n${contextNotes}`
+        : undefined,
       denyFeedback
         ? `Dennis reviewed your previous plan for this section and SENT IT BACK with this direction — treat it as AUTHORITATIVE; it overrides your earlier assumptions:\n\n${denyFeedback}\n\nRe-plan the section to honor it. Grill the gaps: where his direction is ambiguous or trades off against the high-level plan, ASK before you commit (batch related questions) rather than guessing.`
         : undefined,
@@ -1549,22 +1706,44 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     ].join('\n\n');
   }
 
-  private bugfixPrompt(run: PipelineRun): string {
+  private bugfixPrompt(
+    run: PipelineRun,
+    ctx?: { title?: string; description?: string; contextNotes?: string },
+  ): string {
+    const report = [ctx?.title && `Title: ${ctx.title}`, ctx?.description?.trim()]
+      .filter(Boolean)
+      .join('\n\n');
     return [
-      `You are fixing a bug in this worktree (board task #${run.taskId}). The ticket has the description, logs, and repro.`,
+      `You are fixing a bug in this worktree (board task #${run.taskId}).`,
+      report
+        ? `The bug report from the ticket (you can't open the ticket from here, so it's inlined):\n\n${report}`
+        : undefined,
+      ctx?.contextNotes
+        ? `CONTEXT parked on the ticket — research, findings, and decisions from discovery:\n\n${ctx.contextNotes}`
+        : undefined,
       `Reproduce it, fix it at the root cause, validate the fix (run/curl/test as appropriate), and commit cleanly. Report what was wrong and what you changed.`,
-    ].join('\n\n');
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   /** The fix-up session prompt (dispatch_fixup_session) — a focused pass over the INTEGRATED worktree to
    * clear a review-flagged cross-section defect before the feature ships. The findings are parked as a
    * ticket note, so the session reads them off the ticket. */
-  private fixupPrompt(run: PipelineRun, guidance?: string): string {
+  private fixupPrompt(
+    run: PipelineRun,
+    opts?: { findings?: string; guidance?: string },
+  ): string {
     return [
       `You are clearing a review-flagged defect in the integrated worktree for board task #${run.taskId} — the feature is fully built (every section committed here); this is a focused fix-up pass before it ships.`,
-      `Read the ticket and its latest notes for the review findings (the flagged issues are parked there).${guidance ? ` Atlas's steer: ${guidance}` : ''}`,
+      opts?.findings
+        ? `The review findings to clear (you can't open the ticket from here, so they're inlined):\n\n${opts.findings}`
+        : `Review flagged a blocking issue on this work — clear it.`,
+      opts?.guidance ? `Atlas's steer on top of that: ${opts.guidance}` : undefined,
       `Fix the issues at the root cause across whatever sections they span, validate (run/test as appropriate), and commit cleanly. Don't open or touch any PR — the harness re-reviews and ships once you're done. If a finding turns out to be a non-issue, address the rest and note briefly why you skipped it.`,
-    ].join('\n\n');
+    ]
+      .filter(Boolean)
+      .join('\n\n');
   }
 }
 
@@ -1601,6 +1780,14 @@ function parsePhases(planMd: string): SectionPhase[] | null {
  * coding session (interfaces, decisions, stubs). Null when absent. */
 function parseHandoff(report: string): string | null {
   return parseFenced(report, 'handoff');
+}
+
+/** Extract a build session's `findings` block — OUT-OF-SCOPE discoveries it noticed while working
+ * (the worker ethos: "stay in scope, note the rest"). Null/empty when absent. Relayed to Atlas (the
+ * single voice) to triage; never auto-acted on. */
+function parseFindings(report: string): string | null {
+  const body = parseFenced(report, 'findings')?.trim();
+  return body ? body : null;
 }
 
 /** Parse a review's `verdict` JSON block, or null. */

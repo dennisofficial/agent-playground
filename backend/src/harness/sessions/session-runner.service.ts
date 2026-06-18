@@ -747,6 +747,17 @@ export class SessionRunnerService {
     return `Transcript lines ${start + 1}–${end} of ${lines.length} (page ${page}/${pages}, 1 = latest):\n${lines.slice(start, end).join('\n')}`;
   }
 
+  /**
+   * Whether a turn for `sessionId` is genuinely executing in THIS process right now (an
+   * AbortController is registered). Boot-safe liveness: a persisted 'running' row whose process
+   * died has no controller, so it reads false and boot recovery treats it as interrupted. The
+   * controller is registered synchronously by `runSessionTurn` before its first await, so a session
+   * reads in-flight the instant `openStageSession` returns.
+   */
+  isTurnInFlight(sessionId: string): boolean {
+    return this.controllers.has(sessionId);
+  }
+
   /** Abort every in-flight turn (graceful shutdown). */
   abortAll(): void {
     for (const [sessionId, controller] of this.controllers) {

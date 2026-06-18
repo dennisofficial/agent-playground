@@ -1,12 +1,12 @@
 import { ChannelRegistryService } from '@harness/channel/channel-registry.service';
+import { channelWelcomeSeed } from '@harness/conductor/seed-relay';
+import { ConductorService } from '@harness/conductor/conductor.service';
 import { DEFAULT_TEAM } from '@harness/domain/identity';
+import { EmployeeRegistry } from '@harness/employees/employee.registry';
 import { LlmReadinessService } from '@harness/llm-keys/llm-readiness.service';
 import { ProviderKeyStore } from '@harness/llm-keys/provider-key.store';
 import { GithubTokenStore } from '@harness/projects/github-token-store';
-import {
-  ProjectConflictError,
-  ProjectStore,
-} from '@harness/projects/project-store';
+import { ProjectStore } from '@harness/projects/project-store';
 import {
   Injectable,
   Logger,
@@ -22,24 +22,16 @@ import type {
   SlackInboundInterceptor,
   SlackInteractivityPayload,
 } from '../slack-inbound.types';
-import { extractGithubUrl } from './github-url';
 import {
-  ENGINES_ONLINE,
-  GREETING_PENDING,
-  JARVIS_ICON_EMOJI,
-  JARVIS_NAME,
   KEY_IN_CHAT_WARNING,
   KEYS_MODAL_BLOCKS,
   KEYS_MODAL_CALLBACK_ID,
+  KEYS_PROMPT,
   KEYS_STORED,
-  NUDGE_PENDING,
-  REPO_PROMPT,
   SETUP_KEYS_ACTION_ID,
   keysModalView,
-  repoConflict,
-  repoLinked,
   setupButtonBlocks,
-} from './jarvis-blocks';
+} from './onboarding-guard-blocks';
 
 /** Something key/token-shaped pasted as chat — warn, never store, never echo. */
 const KEY_IN_CHAT =
@@ -50,35 +42,36 @@ const OPENAI_KEY = /^sk-[\w-]{8,}$/;
 /** Permissive — classic 40-hex PATs, ghp_…, github_pat_…; just refuse whitespace/shorties. */
 const GITHUB_TOKEN = /^\S{20,}$/;
 
-/** Re-prompt suppression: identical Jarvis prompts in a channel are throttled to one per window
- * (consumed messages still get SOME response — silence would read as a swallowed message). */
+/** Re-prompt suppression: the keys prompt in a channel is throttled to one per window. */
 const REPOST_WINDOW_MS = 60_000;
 
 const TOKEN_NAME_ONBOARDING = 'onboarding';
 
 /**
- * The deterministic setup concierge — the router's pre-conductor interceptor. NO LLM anywhere
- * (the tenant has no funded keys yet; scripted is better for setup anyway). Two jobs:
+ * The deterministic, VOICELESS keyless guard — the router's pre-conductor interceptor, all that
+ * survives of the old "Jarvis" concierge. NO LLM (the workspace has no funded keys yet, and running
+ * Atlas requires the very keys this collects — so key entry can't be an Atlas turn). Two jobs:
  *
- * 1. PENDING KEYS: consume EVERY human channel message (the conductor is hard-gated anyway, and
- *    consumed messages never enter the channel log, so nothing piles up to re-bill when keys
- *    land). Greet + offer the keys modal; warn on key-looking text.
- * 2. PROJECT-LESS CHANNELS (even when ready): consume messages until a `projects` row exists —
- *    otherwise the conductor would schedule bots whose worktree ops silently fall back to
- *    WORKER_ROOT (wrong on a tenant box). A GitHub URL message creates the project (channel-name
- *    slug = project id); anything else gets the repo prompt.
+ * 1. KEYLESS GATE: while a workspace has no funded keys, consume EVERY human channel message (the
+ *    conductor is hard-gated anyway, and consumed messages never enter the channel log, so nothing
+ *    piles up to re-bill when keys land). Surface the keys modal (the only non-admin key entry path)
+ *    and warn on key-shaped chat.
+ * 2. JOIN HAND-OFF: when the app is added to a channel, register the room; if keyless, prompt for
+ *    keys; if READY, hand the welcome to ATLAS via a gate-bypassed seed (Atlas greets + offers to
+ *    onboard a repo — see channelWelcomeSeed). Once keys land, greeted channels get the same Atlas
+ *    welcome instead of a scripted "online" line.
  *
- * All state is derived (readiness, registry, projects rows) except per-boot greeting/throttle
- * dedupe — a restart mid-onboarding re-greets, accepted.
+ * Everything conversational (greeting, linking a repo, references) is Atlas's now; this is just the
+ * circuit-breaker. Project-less channels are NOT consumed here — Atlas drives that onboarding, and
+ * the dispatch tools guard against an unlinked repo.
  */
 @Injectable()
-export class JarvisService
+export class OnboardingGuardService
   implements SlackInboundInterceptor, OnModuleInit, OnApplicationShutdown
 {
-  private readonly logger = new Logger(JarvisService.name);
-  /** Channels greeted while pending — where the engines-online confirmation lands. */
+  private readonly logger = new Logger(OnboardingGuardService.name);
+  /** Channels prompted while pending — where the Atlas welcome lands once keys arrive. */
   private readonly greetedPending = new Set<string>();
-  /** Per-channel last prompt (key + at) — the repost throttle. */
   private readonly lastPrompt = new Map<string, { key: string; at: number }>();
   private readySub?: Subscription;
 
@@ -90,11 +83,13 @@ export class JarvisService
     private readonly providerKeys: ProviderKeyStore,
     private readonly githubTokens: GithubTokenStore,
     private readonly projects: ProjectStore,
+    private readonly conductor: ConductorService,
+    private readonly employees: EmployeeRegistry,
   ) {}
 
   onModuleInit(): void {
     this.readySub = this.readiness.ready$.subscribe((teamId) => {
-      void this.announceEnginesOnline(teamId);
+      void this.greetReadyChannels(teamId);
     });
   }
 
@@ -102,15 +97,13 @@ export class JarvisService
     this.readySub?.unsubscribe();
   }
 
-  /** Per-(team,channel) key for the greeting/throttle sets (a Slack channel id isn't unique across
-   * workspaces). */
   private k(teamId: string, channel: string): string {
     return `${teamId}|${channel}`;
   }
 
   /** Router contract: true = consumed, never reaches the conductor or the channel log. */
   async maybeHandle(item: SlackInbound): Promise<boolean> {
-    if (item.kind === 'command') return false; // slash commands belong to the command handler
+    if (item.kind === 'command') return false;
     if (item.kind === 'interactivity') {
       const teamId = item.payload.team?.id ?? DEFAULT_TEAM;
       return this.handleInteractivity(item, teamId);
@@ -126,17 +119,15 @@ export class JarvisService
 
   // ── Channel events ───────────────────────────────────────────────────────────────────────────
 
-  /** The app invited to a channel — register the room and open the right setup conversation. */
+  /** The app invited to a channel — register the room, then prompt for keys (keyless) or hand the
+   * welcome to Atlas (ready). */
   private async handleJoined(
     event: SlackInboundEvent,
     teamId: string,
   ): Promise<boolean> {
     if (!event.channel) return false;
-    if (event.user !== (await this.directory.selfUserIdFor(teamId))) {
-      // Someone other than this app joined — not Jarvis's business (single voice: no puppet bots
-      // to recognise). Let it pass through.
-      return false;
-    }
+    if (event.user !== (await this.directory.selfUserIdFor(teamId)))
+      return false; // someone else joined — not our concern
     const channel = event.channel;
     const inviter =
       typeof event.inviter === 'string' && event.inviter
@@ -146,18 +137,15 @@ export class JarvisService
 
     if (!this.readiness.isReady(teamId)) {
       this.greetedPending.add(this.k(teamId, channel));
-      await this.postBlocks(
-        teamId,
-        channel,
-        setupButtonBlocks(GREETING_PENDING),
-      );
-    } else if (!(await this.projectOf(teamId, channel))) {
-      await this.post(teamId, channel, REPO_PROMPT, 'repo-prompt');
+      await this.postBlocks(teamId, channel, setupButtonBlocks(KEYS_PROMPT));
+    } else {
+      await this.seedWelcome(teamId, channel);
     }
     return true; // nobody downstream handles member_joined_channel
   }
 
-  /** Plain top-level human messages only — everything else is the surface's (non-)business. */
+  /** Keyless guard ONLY — consume human messages while the workspace has no keys. Once ready, this
+   * returns false so the message flows to the conductor (Atlas), which owns all conversation. */
   private async handleMessage(
     event: SlackInboundEvent,
     teamId: string,
@@ -167,9 +155,10 @@ export class JarvisService
     if (event.user === (await this.directory.selfUserIdFor(teamId)))
       return false;
     if (event.thread_ts && event.thread_ts !== event.ts) return false;
+    if (this.readiness.isReady(teamId)) return false; // ready → Atlas's turn, not ours
+
     const channel = event.channel;
     const text = event.text ?? '';
-
     const author = await this.directory.resolveUser(teamId, event.user);
     await this.directory.ensureChannelRegistered(
       channel,
@@ -177,75 +166,21 @@ export class JarvisService
       author.authorId,
     );
 
-    if (!this.readiness.isReady(teamId)) {
-      // Consume EVERYTHING while keyless — see the class doc.
-      if (KEY_IN_CHAT.test(text)) {
-        await this.post(teamId, channel, KEY_IN_CHAT_WARNING, 'key-warning');
-        return true;
-      }
-      if (!this.greetedPending.has(this.k(teamId, channel))) {
-        this.greetedPending.add(this.k(teamId, channel));
-        await this.postBlocks(
-          teamId,
-          channel,
-          setupButtonBlocks(GREETING_PENDING),
-        );
-      } else {
-        await this.postBlocks(
-          teamId,
-          channel,
-          setupButtonBlocks(NUDGE_PENDING),
-          'nudge',
-        );
-      }
+    if (KEY_IN_CHAT.test(text)) {
+      await this.post(teamId, channel, KEY_IN_CHAT_WARNING, 'key-warning');
       return true;
     }
-
-    // Ready: only project-less channels are Jarvis's business.
-    const slug = await this.projectlessSlugOf(teamId, channel);
-    if (!slug) return false;
-    const gitUrl = extractGithubUrl(text);
-    if (!gitUrl) {
-      await this.post(teamId, channel, REPO_PROMPT, 'repo-prompt');
-      return true;
-    }
-    return this.linkRepo(teamId, channel, slug, gitUrl);
-  }
-
-  private async linkRepo(
-    teamId: string,
-    channel: string,
-    slug: string,
-    gitUrl: string,
-  ): Promise<boolean> {
-    const displayName =
-      this.registry
-        .get(`slack:${teamId}:${channel}`)
-        ?.displayName.replace(/^#/, '') ?? slug;
-    try {
-      await this.projects.create({
-        teamId,
-        projectId: slug,
-        displayName,
-        gitUrl,
-      });
-      await this.post(teamId, channel, repoLinked(gitUrl));
-    } catch (err) {
-      if (!(err instanceof ProjectConflictError)) throw err;
-      // Raced/duplicate submission — idempotent on the same URL, explicit on a different one.
-      const existing = await this.projects.get(teamId, slug);
-      await this.post(
-        teamId,
-        channel,
-        existing && existing.gitUrl !== gitUrl
-          ? repoConflict(existing.gitUrl)
-          : repoLinked(gitUrl),
-      );
-    }
+    this.greetedPending.add(this.k(teamId, channel));
+    await this.postBlocks(
+      teamId,
+      channel,
+      setupButtonBlocks(KEYS_PROMPT),
+      'keys-prompt',
+    );
     return true;
   }
 
-  // ── Interactivity (button + modal) ───────────────────────────────────────────────────────────
+  // ── Interactivity (keys modal) ─────────────────────────────────────────────────────────────────
 
   private async handleInteractivity(
     item: Extract<SlackInbound, { kind: 'interactivity' }>,
@@ -289,18 +224,15 @@ export class JarvisService
     const github = input(KEYS_MODAL_BLOCKS.github);
 
     const errors: Record<string, string> = {};
-    if (!ANTHROPIC_KEY.test(anthropic)) {
+    if (!ANTHROPIC_KEY.test(anthropic))
       errors[KEYS_MODAL_BLOCKS.anthropic.blockId] =
         'That does not look like an Anthropic key (sk-ant-…).';
-    }
-    if (!OPENAI_KEY.test(openai)) {
+    if (!OPENAI_KEY.test(openai))
       errors[KEYS_MODAL_BLOCKS.openai.blockId] =
         'That does not look like an OpenAI key (sk-…).';
-    }
-    if (github && !GITHUB_TOKEN.test(github)) {
+    if (github && !GITHUB_TOKEN.test(github))
       errors[KEYS_MODAL_BLOCKS.github.blockId] =
         'That does not look like a GitHub token (ghp_… / github_pat_…).';
-    }
     if (Object.keys(errors).length > 0) {
       await item.respond({ response_action: 'errors', errors });
       return true;
@@ -310,14 +242,8 @@ export class JarvisService
       await this.providerKeys.put(teamId, 'anthropic', anthropic);
       await this.providerKeys.put(teamId, 'openai', openai);
       if (github)
-        await this.githubTokens.put(
-          teamId,
-          TOKEN_NAME_ONBOARDING,
-          github,
-          true,
-        );
+        await this.githubTokens.put(teamId, TOKEN_NAME_ONBOARDING, github, true);
     } catch (err) {
-      // Cipher unset/misconfigured — surface it inside the modal, keys never land half-stored.
       this.logger.error(`key storage failed: ${err}`);
       await item.respond({
         response_action: 'errors',
@@ -337,40 +263,40 @@ export class JarvisService
     return true;
   }
 
-  private async announceEnginesOnline(teamId: string): Promise<void> {
-    // ready$ fires for ONE workspace — announce only its greeted channels.
+  /** ready$ fires for ONE workspace — hand the Atlas welcome to each channel greeted while pending. */
+  private async greetReadyChannels(teamId: string): Promise<void> {
     const prefix = `${teamId}|`;
     const keys = [...this.greetedPending].filter((k) => k.startsWith(prefix));
     for (const key of keys) {
       this.greetedPending.delete(key);
       const channel = key.slice(prefix.length);
-      await this.post(teamId, channel, ENGINES_ONLINE).catch((err) =>
-        this.logger.warn(`engines-online post to ${channel} failed: ${err}`),
+      await this.seedWelcome(teamId, channel).catch((err) =>
+        this.logger.warn(`welcome seed for ${channel} failed: ${err}`),
       );
     }
   }
 
-  // ── State derivation + posting ───────────────────────────────────────────────────────────────
-
-  private async projectOf(teamId: string, channel: string): Promise<boolean> {
-    const slug = this.registry.get(`slack:${teamId}:${channel}`)?.project;
-    if (!slug) return false;
-    return !!(await this.projects.get(teamId, slug));
+  /** Hand the new-channel welcome to Atlas (gate-bypassed seed) — he greets in his own voice. */
+  private async seedWelcome(teamId: string, channel: string): Promise<void> {
+    const info = this.registry.get(`slack:${teamId}:${channel}`);
+    const project = info?.project ?? '';
+    const hasProject = project
+      ? !!(await this.projects.get(teamId, project).catch(() => undefined))
+      : false;
+    const atlas = this.employees.teamLead();
+    this.conductor.injectSeed(
+      atlas.id,
+      `slack:${teamId}:${channel}`,
+      channelWelcomeSeed({
+        displayName: info?.displayName ?? channel,
+        project,
+        hasProject,
+      }),
+    );
   }
 
-  /** The channel's project slug IFF it has no projects row yet (Jarvis's ready-mode business). */
-  private async projectlessSlugOf(
-    teamId: string,
-    channel: string,
-  ): Promise<string | undefined> {
-    const slug = this.registry.get(`slack:${teamId}:${channel}`)?.project;
-    if (!slug) return undefined;
-    return (await this.projects.get(teamId, slug)) ? undefined : slug;
-  }
+  // ── Posting (voiceless — the workspace app's own identity, no character override) ───────────────
 
-  /** Post as Jarvis, via the workspace's ears app. `throttleKey` suppresses identical re-prompts
-   * within the repost window — consumed messages always got a response recently enough to not read
-   * as swallowed. */
   private async post(
     teamId: string,
     channel: string,
@@ -379,12 +305,7 @@ export class JarvisService
   ): Promise<void> {
     if (throttleKey && this.throttled(teamId, channel, throttleKey)) return;
     const web = await this.clients.clientFor(teamId);
-    await web?.chat.postMessage({
-      channel,
-      text,
-      username: JARVIS_NAME,
-      icon_emoji: JARVIS_ICON_EMOJI,
-    });
+    await web?.chat.postMessage({ channel, text });
   }
 
   private async postBlocks(
@@ -399,8 +320,6 @@ export class JarvisService
       channel,
       text: msg.text,
       blocks: msg.blocks as never,
-      username: JARVIS_NAME,
-      icon_emoji: JARVIS_ICON_EMOJI,
     });
   }
 

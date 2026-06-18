@@ -277,6 +277,33 @@ export class BoardStore {
     return task;
   }
 
+  /**
+   * Prune an un-started CANDIDATE off the board (e.g. dismissing a task-suggestion chip). Atomic +
+   * doubly guarded: deletes ONLY a still-`open` row (so it can never nuke claimed/in-flight work or
+   * race a pickup), AND only when NO other task depends on it. `depends_on` is a soft id array —
+   * `claim()`/`blockersOf()` treat a *missing* dependency as satisfied, so hard-deleting a depended-on
+   * task would silently unblock its dependent; the `NOT EXISTS` clause refuses that. On no delete a
+   * follow-up read names why (the `claim()` refusal idiom). Returns the deleted row on success.
+   */
+  async dropOpen(
+    team: string,
+    id: number,
+  ): Promise<BoardTask | 'missing' | 'not-open' | 'has-dependents'> {
+    const rows = await this.q(
+      `DELETE FROM team_tasks t
+       WHERE t.id = $1 AND t.team_id = $2 AND t.status = 'open'
+         AND NOT EXISTS (SELECT 1 FROM team_tasks d
+                         WHERE d.team_id = $2 AND $1 = ANY(d.depends_on))
+       RETURNING *`,
+      [id, team],
+    );
+    if (rows[0]) return toBoardTask(rows[0]);
+    const existing = await this.get(team, id);
+    if (!existing) return 'missing';
+    if (existing.status !== 'open') return 'not-open';
+    return 'has-dependents';
+  }
+
   /** A single board task by id within a team (for authority checks), or undefined. */
   async get(team: string, id: number): Promise<BoardTask | undefined> {
     const rows = await this.q(

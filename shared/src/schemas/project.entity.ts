@@ -22,6 +22,12 @@ export class Project extends TimestampedEntity {
   @Column({ type: 'text' })
   display_name!: string;
 
+  /** One-line "what this project is" — the blurb Atlas sees in the reference-project catalog so it
+   * knows the repo exists and what it's for before being asked. Null for projects registered before
+   * this column / via the bare admin path. */
+  @Column({ type: 'text', nullable: true })
+  description!: string | null;
+
   /** HTTPS GitHub URL only (validated at the API edge); cloned to `<REPOS_ROOT>/<project_id>`. */
   @Column({ type: 'text' })
   git_url!: string;

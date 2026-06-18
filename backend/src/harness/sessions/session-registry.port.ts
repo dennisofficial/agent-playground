@@ -56,6 +56,17 @@ export interface Session {
   /** The team-board task this session works, when linked. The approval guard's anchor: an execute
    * turn on a linked session is refused until the task is 'approved'. */
   boardTaskId?: number;
+  /** Reference projects/repos attached to this session for READ-ONLY grounding — each carries the
+   * on-disk clone `path` the engine reads (advisory in dev where the engine already reads any host
+   * path; the container-mount seam in v2, where these paths become read-only mounts). `mode` is
+   * 'read' in v1; the shape leaves room for a future 'write' (cross-repo) upgrade without a migration.
+   * The session's full read set is `[worktree.path, ...referencedProjects.map(r => r.path)]`. */
+  referencedProjects?: Array<{
+    projectId?: string;
+    gitUrl: string;
+    path: string;
+    mode: 'read';
+  }>;
   /** Whether the last turn's finished plan was durably attached to the linked board task (set on
    * plan-kind turn-ends of linked sessions; false = the attach FAILED and the owner should park
    * the plan on the ticket via add_note). Cleared on every other turn-end like lastReportKind. */

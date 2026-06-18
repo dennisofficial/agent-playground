@@ -1,6 +1,9 @@
 import { EnvService } from '@core/config/env/env.service';
 import { BOARD_NOTIFIER } from '@harness/approvals/board-notifier.port';
+import { PROJECT_ONBOARD_PRESENTER } from '@harness/approvals/project-onboard-presenter.port';
+import { ProjectOnboardModule } from '@harness/approvals/project-onboard.module';
 import { PROPOSAL_PRESENTER } from '@harness/approvals/proposal-presenter.port';
+import { TASK_SUGGESTION_PRESENTER } from '@harness/approvals/task-suggestion-presenter.port';
 import { ChannelModule } from '@harness/channel/channel.module';
 import { ConductorModule } from '@harness/conductor/conductor.module';
 import { EmployeesModule } from '@harness/employees/employees.module';
@@ -15,7 +18,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SocketModeClient } from '@slack/socket-mode';
 import { Tenant } from '@workspace/shared/schemas';
 import { ApprovalCardsService } from './approvals/approval-cards.service';
-import { JarvisService } from './jarvis/jarvis.service';
+import { SuggestionCardsService } from './approvals/suggestion-cards.service';
+import { OnboardingGuardService } from './onboarding/onboarding-guard.service';
+import { ProjectOnboardCardsService } from './onboarding/project-onboard-cards.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import { SlackCommandService } from './slack-commands.service';
 import { SlackDirectoryService } from './slack-directory.service';
@@ -24,7 +29,9 @@ import { SlackInboundRouter } from './slack-inbound.router';
 import {
   APPROVAL_INTERCEPTOR,
   COMMAND_INTERCEPTOR,
-  JARVIS_INTERCEPTOR,
+  ONBOARDING_GUARD_INTERCEPTOR,
+  PROJECT_ONBOARD_INTERCEPTOR,
+  SUGGESTION_INTERCEPTOR,
 } from './slack-inbound.types';
 import { SlackSocketTransport } from './slack-socket-transport';
 import { SLACK_SOCKET_MODE_CLIENT } from './slack.tokens';
@@ -47,6 +54,7 @@ import { TenantSlackClients } from './tenant-slack-clients';
     LlmKeysModule,
     MemoryModule,
     ProjectsModule,
+    ProjectOnboardModule,
     TypeOrmModule.forFeature([Tenant]),
   ],
   providers: [
@@ -70,15 +78,32 @@ import { TenantSlackClients } from './tenant-slack-clients';
     SlackFileUploadService,
     SlackInboundRouter,
     SlackSocketTransport,
-    JarvisService,
+    OnboardingGuardService,
     ApprovalCardsService,
+    SuggestionCardsService,
+    ProjectOnboardCardsService,
     SlackCommandService,
-    { provide: JARVIS_INTERCEPTOR, useExisting: JarvisService },
+    {
+      provide: ONBOARDING_GUARD_INTERCEPTOR,
+      useExisting: OnboardingGuardService,
+    },
     { provide: APPROVAL_INTERCEPTOR, useExisting: ApprovalCardsService },
+    { provide: SUGGESTION_INTERCEPTOR, useExisting: SuggestionCardsService },
+    {
+      provide: PROJECT_ONBOARD_INTERCEPTOR,
+      useExisting: ProjectOnboardCardsService,
+    },
     { provide: COMMAND_INTERCEPTOR, useExisting: SlackCommandService },
     // The plan-proposal OUTBOUND PORT's Slack adapter (propose_plan → approval card) — bound here
     // exactly like CHAT_SURFACE; headless/TUI hosts bind nothing and get the chat-words fallback.
     { provide: PROPOSAL_PRESENTER, useExisting: ApprovalCardsService },
+    // The task-suggestion OUTBOUND PORT's Slack adapter (suggest_task → clickable chip) — same idiom.
+    { provide: TASK_SUGGESTION_PRESENTER, useExisting: SuggestionCardsService },
+    // The project-onboarding OUTBOUND PORT's Slack adapter (onboard_project → card → modal) — same idiom.
+    {
+      provide: PROJECT_ONBOARD_PRESENTER,
+      useExisting: ProjectOnboardCardsService,
+    },
     { provide: CHAT_SURFACE, useExisting: SlackChatSurface },
     // The artifact-upload port's Slack adapter (share_artifact → filesUploadV2 + chat.update).
     { provide: ARTIFACT_SINK, useExisting: SlackFileUploadService },
@@ -93,6 +118,12 @@ import { TenantSlackClients } from './tenant-slack-clients';
     // propose_plan resolves no presenter and degrades to chat-words. (APPROVAL_INTERCEPTOR
     // needs no export: its consumer, SlackInboundRouter, lives in this module.)
     PROPOSAL_PRESENTER,
+    // Same as PROPOSAL_PRESENTER — exported so the harness's suggest_task (SuggestionService,
+    // registered in ToolsModule) resolves the chip adapter; without it suggestions degrade to chat-words.
+    TASK_SUGGESTION_PRESENTER,
+    // Exported so the harness's onboard_project (ProjectOnboardService, ToolsModule) resolves the
+    // card/modal adapter; without it onboarding degrades to asking Dennis in chat.
+    PROJECT_ONBOARD_PRESENTER,
     // Like PROPOSAL_PRESENTER, BOARD_NOTIFIER must be exported for the global module to reach
     // UpdateBoardTaskTool (registered in ToolsModule, which imports SlackSurfaceModule globally).
     BOARD_NOTIFIER,

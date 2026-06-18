@@ -75,6 +75,7 @@ const record = (projectId: string, gitUrl: string): ProjectRecord => ({
   teamId: 'local',
   projectId,
   displayName: projectId,
+  description: null,
   gitUrl,
   defaultBranch: 'main',
   tokenName: null,

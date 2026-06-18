@@ -59,7 +59,7 @@ function build(opts: { shipOk?: boolean } = {}) {
   const runner = { openStageSession, closeSession };
   const board = {
     update: vi.fn(async (..._a: unknown[]) => undefined),
-    get: vi.fn(),
+    get: vi.fn(async (..._a: unknown[]): Promise<Row | undefined> => undefined),
   };
   const employees = {
     byId: (id: string) => ({ id }),
@@ -104,7 +104,7 @@ function build(opts: { shipOk?: boolean } = {}) {
   );
   const openSessions = () =>
     [...sessionRows.values()].filter((s) => s.status !== 'closed');
-  return { svc, runs, runner, openSessions, sessionRows };
+  return { svc, runs, runner, board, boardEvents, openSessions, sessionRows };
 }
 
 const TEAM = 'T1';
@@ -169,7 +169,7 @@ describe('PipelineRunnerService — stage-session reclaim', () => {
   });
 
   it('reclaims the session when a run fails (a failed stage session is closed too)', async () => {
-    const { svc, runs, runner, openSessions } = build();
+    const { svc, runs, runner, board, boardEvents, openSessions } = build();
     const task = 9;
     await svc.start({
       team: TEAM,
@@ -195,6 +195,16 @@ describe('PipelineRunnerService — stage-session reclaim', () => {
     expect(runner.closeSession).toHaveBeenCalledWith(run.sessionId, {
       logWork: false,
     });
+
+    // The orchestrator can't orchestrate blind: a terminal failure WAKES Atlas (run-failed event)…
+    const failed = boardEvents.emit.mock.calls
+      .map((c) => c[0] as { kind: string; taskId: number; reason: string })
+      .find((e) => e.kind === 'run-failed');
+    expect(failed).toBeDefined();
+    expect(failed!.taskId).toBe(task);
+    expect(failed!.reason).toMatch(/failed/i);
+    // …and the orphaned ticket is reset to 'open' so it's immediately re-dispatchable (no hand-reset).
+    expect(board.update).toHaveBeenCalledWith(TEAM, task, { status: 'open' });
   });
 
   it('reclaims the session when the terminal PR ship fails', async () => {

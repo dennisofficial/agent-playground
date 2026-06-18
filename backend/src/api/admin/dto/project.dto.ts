@@ -15,6 +15,11 @@ export class CreateProjectDto {
   @IsNotEmpty()
   displayName!: string;
 
+  /** One-line "what this project is" for the reference catalog. */
+  @IsOptional()
+  @IsString()
+  description?: string;
+
   @Matches(GITHUB_URL, {
     message: 'gitUrl must be an https://github.com/<owner>/<repo> URL',
   })
@@ -35,6 +40,11 @@ export class UpdateProjectDto {
   @IsString()
   @IsNotEmpty()
   displayName?: string;
+
+  /** null clears the blurb. */
+  @IsOptional()
+  @IsString()
+  description?: string | null;
 
   @IsOptional()
   @Matches(GITHUB_URL, {

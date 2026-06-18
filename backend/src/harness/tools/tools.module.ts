@@ -1,6 +1,8 @@
 import { DiscoveryModule } from '@nestjs/core';
 import { CreateModule } from '@workspace/nestjs-core';
+import { ProjectOnboardModule } from '../approvals/project-onboard.module';
 import { ProposalModule } from '../approvals/proposal.module';
+import { SuggestionModule } from '../approvals/suggestion.module';
 import { ChannelModule } from '../channel/channel.module';
 import { ConductorEventsModule } from '../conductor/conductor-events.module';
 import { EmployeesModule } from '../employees/employees.module';
@@ -41,6 +43,7 @@ import {
   UpdateBoardTaskTool,
 } from './tasks/board.tools';
 import { ApprovePlanTool, ProposePlanTool } from './tasks/proposal.tools';
+import { SuggestTaskTool } from './tasks/suggest-task.tool';
 import { CloseStandupTool, OpenStandupTool } from './tasks/standup.tools';
 import {
   AddTaskTool,
@@ -58,6 +61,12 @@ import {
   RemoveWorktreeTool,
 } from './worktrees/worktree.tools';
 import { ListPullRequestsTool } from './projects/list-pull-requests.tool';
+import { OnboardProjectTool } from './projects/onboard-project.tool';
+import {
+  ListReferenceProjectsTool,
+  ReferenceProjectTool,
+  ReferenceRepoTool,
+} from './references/reference.tools';
 import { OpenPrTool } from './worktrees/open-pr.tool';
 import { MarkPrReadyTool } from './worktrees/mark-pr-ready.tool';
 import { RecentWorkTool } from './worklog/recent-work.tool';
@@ -87,7 +96,9 @@ import {
     EmployeesModule,
     MemoryModule,
     ProjectsModule,
+    ProjectOnboardModule,
     ProposalModule,
+    SuggestionModule,
     SessionsModule,
     WorktreesModule,
   ],
@@ -109,6 +120,11 @@ import {
     MarkPrReadyTool,
     // projects
     ListPullRequestsTool,
+    // reference projects (read-only cross-project grounding) + self-onboarding
+    ReferenceProjectTool,
+    ReferenceRepoTool,
+    ListReferenceProjectsTool,
+    OnboardProjectTool,
     // sessions
     CreateSessionTool,
     ReplySessionTool,
@@ -148,6 +164,8 @@ import {
     ProposePlanTool,
     OpenStandupTool,
     CloseStandupTool,
+    // task-suggestion chip (lead-only proactive work proposal)
+    SuggestTaskTool,
     // artifacts
     ShareArtifactTool,
     // pipelines (orchestrator dispatch + backlog enqueue + design gate + living sections + review decisions)

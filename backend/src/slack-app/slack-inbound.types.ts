@@ -78,16 +78,24 @@ export type SlackInbound =
       respond: (body?: unknown) => Promise<void>;
     };
 
-/** The router's deterministic pre-conductor interceptor slot (Jarvis). Optional — absent, the
- * router goes straight to the chat surface. Return true = consumed (never reaches the conductor
- * or the channel log). */
-export const JARVIS_INTERCEPTOR = Symbol('JARVIS_INTERCEPTOR');
-/** Second interceptor slot, tried AFTER Jarvis: the plan-approval cards' verdict handling
+/** The router's deterministic pre-conductor interceptor slot — the voiceless keyless onboarding guard.
+ * Optional — absent, the router goes straight to the chat surface. Return true = consumed (never
+ * reaches the conductor or the channel log). */
+export const ONBOARDING_GUARD_INTERCEPTOR = Symbol(
+  'ONBOARDING_GUARD_INTERCEPTOR',
+);
+/** Second interceptor slot, tried AFTER the onboarding guard: the plan-approval cards' verdict handling
  * (`approval:*` action_ids / callback_ids — namespaced, so the two never overlap). */
 export const APPROVAL_INTERCEPTOR = Symbol('APPROVAL_INTERCEPTOR');
 /** Slash-command handler slot — the router dispatches `kind: 'command'` items straight here
  * (commands never reach the conductor or the chat surface). */
 export const COMMAND_INTERCEPTOR = Symbol('COMMAND_INTERCEPTOR');
+/** Task-suggestion chip slot, tried AFTER the approval interceptor: the chip's disposition handling
+ * (`suggestion:*` action_ids — namespaced, so it never overlaps the `approval:*` cards). */
+export const SUGGESTION_INTERCEPTOR = Symbol('SUGGESTION_INTERCEPTOR');
+/** Project-onboarding card/modal slot (`onboard:*` action_ids / callback_id — namespaced): the button
+ * opens the onboarding modal, the submission registers the repo. Tried after the suggestion slot. */
+export const PROJECT_ONBOARD_INTERCEPTOR = Symbol('PROJECT_ONBOARD_INTERCEPTOR');
 export interface SlackInboundInterceptor {
   maybeHandle(item: SlackInbound): Promise<boolean>;
 }
