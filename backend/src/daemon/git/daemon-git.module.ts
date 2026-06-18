@@ -4,25 +4,38 @@ import { DaemonGitService } from './daemon-git.service';
 import {
   EnvGitCredentialProvider,
   GIT_CREDENTIAL_PROVIDER,
+  type GitCredentialProvider,
 } from './git-credential.provider';
+import { RedisGitCredentialProvider } from './redis-git-credential.provider';
 
 /**
- * The daemon's git module — wires the single-repo `DaemonGitService` with its two collaborators:
- *  - `GIT_CREDENTIAL_PROVIDER` bound to `EnvGitCredentialProvider` (PAT from the ambient env). Phase 5
- *    swaps in a Redis-pull impl behind this same token without touching `DaemonGitService`.
- *  - `GithubApiService` — REUSED VERBATIM from the host (a zero-dep, constructor-less fetch PR client),
- *    instantiated here for `openPr`/`markReady`.
+ * The daemon's git module — wires the single-repo `DaemonGitService` with its collaborators:
+ *  - `GIT_CREDENTIAL_PROVIDER` bound by a FACTORY that picks the credential source at boot:
+ *      • `RedisGitCredentialProvider` (the cred-pull channel, Phase 6) when `REDIS_URL` AND `WORKSPACE_ID`
+ *        are both present — i.e. running as a real sandbox daemon; the host serves the GitHub credential
+ *        just-in-time over Redis, so nothing sensitive is baked into the image/env.
+ *      • `EnvGitCredentialProvider` (the PAT-from-env path) otherwise — keeps dev/local/standalone runs
+ *        working with `GIT_TOKEN` in the ambient env, no Redis/host required.
+ *    Either way `DaemonGitService` is untouched (it injects the SAME token + async `resolve()` contract).
+ *  - `GithubApiService` — REUSED VERBATIM from the host (a zero-dep fetch PR client) for `openPr`/`markReady`.
  *
- * `services` auto-exports `DaemonGitService` so the Phase 5 consumer loop (git RPCs) and a future
- * readiness path (`ensureClone`) can inject it. No DB, no lifecycle hook — the clone is created on
- * demand.
+ * `services` auto-exports `DaemonGitService` so the consumer loop (git RPCs) + readiness path inject it.
  */
 @CreateModule({
-  services: [DaemonGitService, EnvGitCredentialProvider, GithubApiService],
+  services: [DaemonGitService, GithubApiService],
+  providers: [EnvGitCredentialProvider, RedisGitCredentialProvider],
   chains: [
     {
       provide: GIT_CREDENTIAL_PROVIDER,
-      useExisting: EnvGitCredentialProvider,
+      // WORKSPACE_ID + REDIS_URL present → pull credentials from the host over Redis; else env-PAT.
+      useFactory: (
+        envProvider: EnvGitCredentialProvider,
+        redisProvider: RedisGitCredentialProvider,
+      ): GitCredentialProvider =>
+        process.env.WORKSPACE_ID?.trim() && process.env.REDIS_URL?.trim()
+          ? redisProvider
+          : envProvider,
+      inject: [EnvGitCredentialProvider, RedisGitCredentialProvider],
     },
   ],
 })

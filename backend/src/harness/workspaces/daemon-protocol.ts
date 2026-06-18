@@ -22,6 +22,13 @@
  *
  *   run:{correlationId}:abort   (pub/sub)
  *     The host PUBLISHes when the run's AbortSignal fires; the daemon aborts that run's controller.
+ *
+ *   ws:{workspaceId}:cred-req / cred-reply:{nonce}   (pub/sub, NON-persisted, bootstrap-token-authed)
+ *     The just-in-time credential pull (Phase 6). The daemon PUBLISHes a `{nonce, bootstrapToken}`
+ *     request on its workspace's cred-req channel; the host validates the bootstrap token against the
+ *     one it issued for that workspace, resolves the GitHub credential, and PUBLISHes the reply on the
+ *     per-nonce reply channel. Pub/sub (not a stream) on purpose: a credential must NEVER persist on the
+ *     bus — it lives only for the round-trip. The token never appears in logs.
  */
 import { randomUUID } from 'node:crypto';
 import type {
@@ -147,6 +154,42 @@ export type GitReplyFrame =
   | { ok: false; error: string };
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
+// Credential-pull channel (daemon → host → daemon) — the just-in-time git-credential round-trip
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The credential REQUEST the daemon publishes on `ws:{workspaceId}:cred-req`. The host authenticates it
+ * by comparing `bootstrapToken` against the short random token it issued for this workspace at container
+ * creation (and tracks in `SandboxRegistry`). The `nonce` namespaces the matching reply channel.
+ */
+export interface CredentialRequest {
+  /** A fresh per-request id — the reply lands on `cred-reply:{nonce}`. */
+  nonce: string;
+  /** The `DAEMON_BOOTSTRAP_TOKEN` the daemon was started with — proves it's THIS workspace's daemon. */
+  bootstrapToken: string;
+}
+
+/**
+ * The resolved git credential the host sends back. PROVIDER-NEUTRAL: `kind:'pat'` today (the
+ * `GithubTokenStore`-resolved PAT + the PAT owner / bot author identity); a future `kind:'github-app'`
+ * can carry a minted installation token under the SAME envelope without changing the wire contract.
+ */
+export interface GitCredentialPayload {
+  kind: 'pat';
+  /** The GitHub token — rides in `GIT_CONFIG_*` via `gitAuthEnv`, never logged. */
+  token: string;
+  /** The git author name set on the in-sandbox per-session worktree config. */
+  authorName: string;
+  /** The git author email set on the in-sandbox per-session worktree config. */
+  authorEmail: string;
+}
+
+/** The credential REPLY frame on `cred-reply:{nonce}` — the credential, or a reason it couldn't issue. */
+export type CredentialReply =
+  | { ok: true; credential: GitCredentialPayload }
+  | { ok: false; error: string };
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
 // Key builders — the ONLY place stream/channel names are constructed (host + daemon agree here).
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -165,6 +208,14 @@ export const replyStream = (correlationId: string): string =>
 /** The per-run abort pub/sub channel. */
 export const abortChannel = (correlationId: string): string =>
   `run:${correlationId}:abort`;
+
+/** The per-workspace credential-REQUEST pub/sub channel (daemon publishes, host subscribes). */
+export const credRequestChannel = (workspaceId: string): string =>
+  `ws:${workspaceId}:cred-req`;
+
+/** The per-nonce credential-REPLY pub/sub channel (host publishes, daemon subscribes). */
+export const credReplyChannel = (nonce: string): string =>
+  `cred-reply:${nonce}`;
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 // Correlation id

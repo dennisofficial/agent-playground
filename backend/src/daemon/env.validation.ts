@@ -52,6 +52,12 @@ export interface IDaemonEnvConfig {
   // standalone/dev boot and simply doesn't start the loop). Declared here so it validates.
   WORKSPACE_ID?: string;
 
+  // The short random bootstrap token the host issues at container creation (Phase 6), used to AUTH the
+  // just-in-time credential pull (`ws:{WORKSPACE_ID}:cred-req`). Read directly from process.env by
+  // `RedisGitCredentialProvider` (same pattern as WORKSPACE_ID). OPTIONAL: a dev/standalone daemon with
+  // no host falls back to the env-PAT credential provider. Declared here so it validates.
+  DAEMON_BOOTSTRAP_TOKEN?: string;
+
   // Git credential (the PAT path — `EnvGitCredentialProvider`). All OPTIONAL: a file:// fixture or an
   // already-public repo needs no token, and Phase 5 swaps in a Redis-pull credential impl. Read
   // directly from process.env by the provider (the daemon binds the host EnvService, typed over the
@@ -80,6 +86,7 @@ export const daemonEnvValidation = Joi.object<IDaemonEnvConfig, true>({
 
   REDIS_URL: Joi.string().uri().optional(),
   WORKSPACE_ID: Joi.string().optional(),
+  DAEMON_BOOTSTRAP_TOKEN: Joi.string().optional(),
 
   GIT_TOKEN: Joi.string().optional(),
   GIT_AUTHOR_NAME: Joi.string().optional(),

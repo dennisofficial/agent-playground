@@ -109,6 +109,11 @@ export interface IEnvConfig {
   // in a stable, durable location. Code default: <repoRoot>/.agent-home (gitignored). Point at a
   // persistent volume in deployment.
   AGENT_HOME_ROOT?: string;
+  // Sandbox lifecycle (Phase 6 — the host spawns per-workspace DinD sandboxes via dockerode).
+  // ALL optional: containerized sessions are unavailable until set (dev/local runs locally, unchanged).
+  DOCKER_SOCKET_PATH?: string; // host Docker socket the manager spawns sandboxes on (default /var/run/docker.sock)
+  WORKSPACE_IMAGE?: string; // the sandbox base image (pin by digest in deploy); required to spawn a sandbox
+  WORKSPACE_RUNTIME?: string; // OCI runtime for sandboxes (default 'runc'; reserve 'sysbox-runc' hardening)
   // 32-byte key (base64 or hex) encrypting stored GitHub tokens at rest. Unset → token writes
   // refuse loudly; local-only flows are unaffected.
   SECRETS_ENCRYPTION_KEY?: string;
@@ -232,6 +237,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
   AGENT_HOME_ROOT: Joi.string().optional(),
+  // Sandbox lifecycle (Phase 6)
+  DOCKER_SOCKET_PATH: Joi.string().optional(),
+  WORKSPACE_IMAGE: Joi.string().optional(),
+  WORKSPACE_RUNTIME: Joi.string().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
 

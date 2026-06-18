@@ -23,10 +23,12 @@ allowBuilds:
   '@node-rs/argon2': true
   '@swc/core': true
   better-sqlite3: true
+  cpu-features: false
   esbuild: true
   msgpackr-extract: true
   protobufjs: true
   sharp: true
+  ssh2: false
   unrs-resolver: true
 overrides:
   '@langchain/core': 1.1.48
