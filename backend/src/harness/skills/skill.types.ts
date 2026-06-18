@@ -43,3 +43,17 @@ export type McpServerConfig =
       url: string;
       headers?: Record<string, string>;
     };
+
+/**
+ * What an engine needs at run time for ONE employee: which skills to enable and the MCP servers.
+ * Lives here (the neutral types module — no DB/host imports) so the in-container daemon can serve
+ * this shape without pulling in `EngineHomeProvisioner` or any TypeORM-backed code.
+ */
+export interface ResolvedAgentTools {
+  /** Resolved skill names — Claude enables these natively via its `skills` option. */
+  skillNames: string[];
+  /** A pre-rendered skills listing for the PROMPT-LEVEL engines (codex/langgraph have no native skill
+   * packages) — empty when the employee has no skills. */
+  skillsPrompt: string;
+  mcpServers: ReadonlyArray<McpServerConfig>;
+}

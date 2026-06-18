@@ -3,7 +3,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { execFileSync } from 'node:child_process';
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { OPENAI_CODEX_SDK } from '../../_lib/esm/esm.module';
-import { EngineHomeProvisioner } from '../skills/engine-home-provisioner.service';
+import { AGENT_TOOLS_PROVIDER } from './agent-tools-provider.port';
+import type { IAgentToolsProvider } from './agent-tools-provider.port';
 import { engineHomeDir } from './engine-home';
 import {
   EWorkerEngineName,
@@ -46,7 +47,8 @@ export class CodexEngine implements WorkerEngine {
     @Inject(OPENAI_CODEX_SDK)
     private readonly sdk: typeof import('@openai/codex-sdk'),
     private readonly env: EnvService,
-    private readonly provisioner: EngineHomeProvisioner,
+    @Inject(AGENT_TOOLS_PROVIDER)
+    private readonly provisioner: IAgentToolsProvider,
   ) {}
 
   private getCodex(agentId: string, apiKey?: string): Codex {

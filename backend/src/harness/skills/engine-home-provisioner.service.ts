@@ -1,30 +1,25 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { engineHomeDir } from '../engines/engine-home';
+import type { IAgentToolsProvider } from '../engines/agent-tools-provider.port';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeContext } from '../employees/employee-context';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { EmployeeMcpStore } from '../employee-skills/employee-mcp.store';
 import { EmployeeSkillStore } from '../employee-skills/employee-skill.store';
+import { AgentToolSourceResolver } from './agent-tool-source-resolver.service';
+import {
+  renderSkillsMarkdown,
+  writeClaudeHome,
+  writeCodexHome,
+} from './engine-home-materializer';
 import { SkillLoaderService } from './skill-loader.service';
-import type {
-  LoadedSkill,
-  McpServerConfig,
-  SkillSource,
-} from './skill.types';
+import type { ResolvedAgentTools } from './skill.types';
 
-/** What an engine needs at run time for one employee: which skills to enable and the MCP servers. */
-export interface ResolvedAgentTools {
-  /** Resolved skill names — Claude enables these natively via its `skills` option. */
-  skillNames: string[];
-  /** A pre-rendered skills listing for the PROMPT-LEVEL engines (codex/langgraph have no native skill
-   * packages) — empty when the employee has no skills. */
-  skillsPrompt: string;
-  mcpServers: ReadonlyArray<McpServerConfig>;
-}
+// `ResolvedAgentTools` moved to the neutral `skill.types` module (so the daemon can import it without
+// pulling in this DB-backed file). Re-export here so existing importers don't break.
+export type { ResolvedAgentTools } from './skill.types';
 
 const EMPTY: ResolvedAgentTools = {
   skillNames: [],
@@ -50,9 +45,15 @@ const EMPTY: ResolvedAgentTools = {
  * dependency is the shared skill cache, which lives under the same base).
  */
 @Injectable()
-export class EngineHomeProvisioner implements OnApplicationBootstrap {
+export class EngineHomeProvisioner
+  implements OnApplicationBootstrap, IAgentToolsProvider
+{
   private readonly logger = new Logger(EngineHomeProvisioner.name);
   private readonly byAgent = new Map<string, ResolvedAgentTools>();
+  // The code-declared ∪ DB-grant union lives in ONE place (`AgentToolSourceResolver`), shared with the
+  // dispatch payload the host ships to the daemon. We build it from our already-injected stores rather
+  // than injecting it, so the 5-arg constructor (relied on by the unit spec) stays unchanged.
+  private readonly sources: AgentToolSourceResolver;
 
   constructor(
     private readonly employees: EmployeeRegistry,
@@ -60,7 +61,13 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     private readonly env: EnvService,
     private readonly skillStore: EmployeeSkillStore,
     private readonly mcpStore: EmployeeMcpStore,
-  ) {}
+  ) {
+    this.sources = new AgentToolSourceResolver(
+      employees,
+      skillStore,
+      mcpStore,
+    );
+  }
 
   onApplicationBootstrap(): void {
     // Provisioning clones/syncs git skill sources and materializes each employee's per-engine home —
@@ -136,21 +143,6 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     await this.provision(emp, this.employees.context(), this.env.get('AGENT_HOME_ROOT'));
   }
 
-  /** The DB-granted skills + MCP for an employee (global tier). */
-  private async resolveGrants(emp: EmployeeDefinition): Promise<{
-    skillSources: ReadonlyArray<SkillSource>;
-    mcpServers: ReadonlyArray<McpServerConfig>;
-  }> {
-    const [skills, mcp] = await Promise.all([
-      this.skillStore.listForEmployee(emp.id),
-      this.mcpStore.listForEmployee(emp.id),
-    ]);
-    return {
-      skillSources: skills.map((s) => s.source),
-      mcpServers: mcp.map((m) => m.config),
-    };
-  }
-
   /** Resolve an employee's tool set (code-declared ∪ DB grants) and make its per-engine homes an
    * exact mirror of it. */
   private async provision(
@@ -158,19 +150,15 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     ctx: EmployeeContext,
     root: string | undefined,
   ): Promise<void> {
-    const resolvedGrants = await this.resolveGrants(emp);
-    const skillSources = [
-      ...(emp.skills ?? []),
-      ...resolvedGrants.skillSources,
-    ];
+    // The code-declared ∪ DB-grant union (declared-first ordering) comes from the shared resolver —
+    // the SAME inputs the host ships to the daemon, so host + daemon materialize identical homes.
+    const { skillSources, mcpServers: mcpInputs } =
+      await this.sources.forEmployee(emp);
     // Code-declared and DB-granted lists can overlap (same skill/server name) — DEDUPE by name so a
     // duplicate doesn't (a) crash `writeClaudeHome` with an EEXIST on the second symlink to the same
     // `skills/<name>`, or (b) emit a duplicate `[mcp_servers.<name>]` block in codex's config.toml.
     // First occurrence wins (declared before granted).
-    const mcpServers = dedupeByKey(
-      [...(emp.mcpServers ?? []), ...resolvedGrants.mcpServers],
-      (s) => s.name,
-    );
+    const mcpServers = dedupeByKey(mcpInputs, (s) => s.name);
     const skills = dedupeByKey(
       await this.loader.resolve(skillSources),
       (s) => s.name,
@@ -183,9 +171,9 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
     for (const engine of engines) {
       const kind = engineKind(engine);
       if (kind === 'claude')
-        await this.writeClaudeHome(engineHomeDir(root, 'claude', emp.id), skills);
+        await writeClaudeHome(engineHomeDir(root, 'claude', emp.id), skills);
       else if (kind === 'codex')
-        await this.writeCodexHome(
+        await writeCodexHome(
           engineHomeDir(root, 'codex', emp.id),
           mcpServers,
           skills,
@@ -208,37 +196,6 @@ export class EngineHomeProvisioner implements OnApplicationBootstrap {
   /** What the engines pass at run time for this employee (empty for un-provisioned employees). */
   forAgent(agentId: string): ResolvedAgentTools {
     return this.byAgent.get(agentId) ?? EMPTY;
-  }
-
-  /** Make the claude config dir's `skills/` folder an exact mirror of `skills` — the whole folder is
-   * rebuilt so a skill removed from the set has its symlink pruned (not left orphaned). Idempotent. */
-  private async writeClaudeHome(
-    home: string,
-    skills: LoadedSkill[],
-  ): Promise<void> {
-    const skillsDir = join(home, 'skills');
-    await rm(skillsDir, { recursive: true, force: true });
-    await mkdir(skillsDir, { recursive: true });
-    for (const skill of skills) {
-      await symlink(skill.dir, join(skillsDir, skill.name), 'dir');
-    }
-  }
-
-  /** Mirror codex's `config.toml` (MCP) + `AGENTS.md` (skills listing) in CODEX_HOME — written when
-   * non-empty, DELETED when empty so a cleared list doesn't leave a stale file behind. Idempotent. */
-  private async writeCodexHome(
-    home: string,
-    mcpServers: ReadonlyArray<McpServerConfig>,
-    skills: LoadedSkill[],
-  ): Promise<void> {
-    const configToml = join(home, 'config.toml');
-    if (mcpServers.length)
-      await writeFile(configToml, renderCodexMcpToml(mcpServers));
-    else await rm(configToml, { force: true });
-
-    const agentsMd = join(home, 'AGENTS.md');
-    if (skills.length) await writeFile(agentsMd, renderSkillsMarkdown(skills));
-    else await rm(agentsMd, { force: true });
   }
 }
 
@@ -272,38 +229,4 @@ function enginesFor(
   ]);
   for (const cap of emp.capabilities(ctx)) engines.add(cap.spec(ctx).engine);
   return engines;
-}
-
-const tomlStr = (v: string): string =>
-  `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-
-/** Render `[mcp_servers.*]` blocks codex reads from CODEX_HOME/config.toml. stdio is fully
- * supported; http is best-effort (codex's streamable-http MCP schema varies by version). */
-function renderCodexMcpToml(servers: ReadonlyArray<McpServerConfig>): string {
-  const blocks = servers.map((s) => {
-    if (s.transport === 'stdio') {
-      const lines = [
-        `[mcp_servers.${s.name}]`,
-        `command = ${tomlStr(s.command)}`,
-      ];
-      if (s.args?.length)
-        lines.push(`args = [${s.args.map(tomlStr).join(', ')}]`);
-      if (s.env && Object.keys(s.env).length) {
-        lines.push(`[mcp_servers.${s.name}.env]`);
-        for (const [k, v] of Object.entries(s.env))
-          lines.push(`${k} = ${tomlStr(v)}`);
-      }
-      return lines.join('\n');
-    }
-    // http — best-effort; verify against the codex version in use.
-    return [`[mcp_servers.${s.name}]`, `url = ${tomlStr(s.url)}`].join('\n');
-  });
-  return `# Generated by EngineHomeProvisioner — per-employee MCP servers. Do not edit by hand.\n\n${blocks.join('\n\n')}\n`;
-}
-
-function renderSkillsMarkdown(skills: LoadedSkill[]): string {
-  const items = skills
-    .map((s) => `- **${s.name}** — ${s.description} (files at \`${s.dir}\`)`)
-    .join('\n');
-  return `# Skills available to you\n\nYou have these skills; read a skill's directory for its full instructions before using it.\n\n${items}\n`;
 }

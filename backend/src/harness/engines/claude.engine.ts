@@ -8,7 +8,8 @@ import { EnvService } from '@core/config/env/env.service';
 import { engineHomeDir } from './engine-home';
 import { Inject, Injectable } from '@nestjs/common';
 import { ANTHROPIC_AGENT_SDK } from '../../_lib/esm/esm.module';
-import { EngineHomeProvisioner } from '../skills/engine-home-provisioner.service';
+import { AGENT_TOOLS_PROVIDER } from './agent-tools-provider.port';
+import type { IAgentToolsProvider } from './agent-tools-provider.port';
 import type { McpServerConfig } from '../skills/skill.types';
 import { bashDenyReason, bashWriteReason, isInsideRoot } from './guard';
 import { CLAUDE_DENIALS } from './engine.prompts';
@@ -172,7 +173,8 @@ export class ClaudeEngine implements WorkerEngine {
     @Inject(ANTHROPIC_AGENT_SDK)
     private readonly sdk: typeof import('@anthropic-ai/claude-agent-sdk'),
     private readonly env: EnvService,
-    private readonly provisioner: EngineHomeProvisioner,
+    @Inject(AGENT_TOOLS_PROVIDER)
+    private readonly provisioner: IAgentToolsProvider,
   ) {}
 
   async run({

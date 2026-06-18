@@ -12,7 +12,8 @@ import { ChatModelFactory } from '../llm/chat-model.factory';
 import { calculateCost, extractMessageUsage } from '../llm/usage-format';
 import type { MessageUsage } from '../domain/conductor-events';
 import { CHECKPOINTER } from '../memory/checkpointer.module';
-import { EngineHomeProvisioner } from '../skills/engine-home-provisioner.service';
+import { AGENT_TOOLS_PROVIDER } from './agent-tools-provider.port';
+import type { IAgentToolsProvider } from './agent-tools-provider.port';
 import type { McpServerConfig } from '../skills/skill.types';
 import { planningTools, workerTools } from './worker-tools';
 import {
@@ -77,7 +78,8 @@ export class LanggraphEngine implements WorkerEngine {
   constructor(
     @Inject(CHECKPOINTER) private readonly checkpointer: PostgresSaver,
     private readonly models: ChatModelFactory,
-    private readonly provisioner: EngineHomeProvisioner,
+    @Inject(AGENT_TOOLS_PROVIDER)
+    private readonly provisioner: IAgentToolsProvider,
   ) {}
 
   // A read-only turn (plan or investigate) gets a READ-ONLY tool set (no write_file/str_replace/bash)
