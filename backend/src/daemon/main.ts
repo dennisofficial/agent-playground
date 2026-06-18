@@ -24,12 +24,14 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
 
-  // No HTTP listener yet — the Redis consumer loop (Phase 5) is what gives the daemon work. For now
-  // the context is up and the engines + tools provider are resolvable; log readiness and idle.
+  // No HTTP listener — the daemon is Redis-driven: the consumer loop (Phase 5) gives it work, the
+  // readiness service (Phase 10) waits for inner Docker then writes the ready marker, and the shutdown
+  // service (Phase 10) reaps process groups + downs inner compose stacks. The context is up here and
+  // the engines + tools provider are resolvable; the lifecycle hooks own the rest.
   log.log(
     `Daemon booted — application context ready (engines + tools provider resolved). ` +
       `Workspace root: ${process.env.WORKSPACE_ROOT ?? '/workspace/repo'}. ` +
-      `Awaiting work (Redis layer arrives in Phase 5).`,
+      `Consuming Redis commands; readiness gated on inner Docker.`,
   );
 }
 

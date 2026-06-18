@@ -11,7 +11,13 @@ import { ANTHROPIC_AGENT_SDK } from '../../_lib/esm/esm.module';
 import { AGENT_TOOLS_PROVIDER } from './agent-tools-provider.port';
 import type { IAgentToolsProvider } from './agent-tools-provider.port';
 import type { McpServerConfig } from '../skills/skill.types';
-import { bashDenyReason, bashWriteReason, isInsideRoot } from './guard';
+import {
+  bashDenyReason,
+  bashWriteReason,
+  isInsideRoot,
+  relaxedSandboxGuard,
+} from './guard';
+import { spawnInOwnGroup } from './process-group';
 import { CLAUDE_DENIALS } from './engine.prompts';
 import {
   EWorkerEngineName,
@@ -270,6 +276,13 @@ export class ClaudeEngine implements WorkerEngine {
         CLAUDE_CONFIG_DIR: claudeConfigDir,
         ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
       },
+      // In-sandbox self-validation hardening (Phase 10): spawn the CLI subprocess as its own process-
+      // group leader so backgrounded dev servers (`pnpm dev &`, `next dev`) it starts are reaped with
+      // it on abort/shutdown. ONLY in the relaxed-sandbox (daemon) posture — on the HOST the flag is
+      // never set, the hook is omitted, and the SDK's own spawn runs exactly as before (byte-identical).
+      ...(relaxedSandboxGuard()
+        ? { spawnClaudeCodeProcess: spawnInOwnGroup }
+        : {}),
       ...(sessionId ? { resume: sessionId } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
       ...(effort ? { effort } : {}),

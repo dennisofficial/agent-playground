@@ -92,3 +92,38 @@ export function bashWriteReason(command: string): string | null {
   }
   return null;
 }
+
+/**
+ * RELAXED SANDBOX GUARD — daemon-only self-validation posture (Phase 10).
+ *
+ * Inside a disposable sandbox the engine *is* the isolation: an EXECUTE turn must be free to
+ * `pnpm install`, start long-running dev servers in the background (`pnpm dev &`), `curl localhost`,
+ * and `docker compose up` its own backing services — none of which can collide with the host or other
+ * sandboxes, because the container's filesystem/network/Docker are all private to it. So in this mode
+ * we drop the read-only-flavored extra restrictions (`bashWriteReason` — irrelevant on an execute turn
+ * anyway, and only ever applied on read-only turns) and, for Codex, grant the workspace-write sandbox
+ * network access (its workspace-write mode blocks the network by default — that's what stops `curl`
+ * and `pnpm install`).
+ *
+ * What does NOT relax, ever:
+ *  - `bashDenyReason` (rm -rf /, fork bombs, mkfs, dd, sudo, redirects into system dirs) stays active.
+ *  - The path jail (`isInsideRoot`/`resolveInCwd`) stays active — writes are still confined to the
+ *    session's worktree (a relaxed bash guard is not a license to escape the checkout).
+ *  - READ-ONLY turns (plan/investigate) are unaffected — they keep the full read-only guard. Relaxation
+ *    is execute-only.
+ *
+ * Gating: a single env switch the daemon/image sets (`SANDBOX_GUARD_RELAXED=true`). Read DIRECTLY from
+ * `process.env` — NOT via the typed `EnvService` — exactly like the daemon reads `WORKSPACE_ID` /
+ * `DAEMON_BOOTSTRAP_TOKEN`, so the host's `EnvService`/`IEnvConfig` typing is untouched and the HOST
+ * (where the flag is never set) behaves byte-identically to before. Parsed once at module load: the
+ * value is fixed for a process's lifetime, and avoiding a per-call `process.env` read keeps the hot
+ * `canUseTool` path allocation-free.
+ */
+const SANDBOX_GUARD_RELAXED =
+  (process.env.SANDBOX_GUARD_RELAXED ?? '').trim().toLowerCase() === 'true';
+
+/** True only inside a sandbox daemon that opted into the relaxed execute posture (env-gated). The host
+ * never sets the flag, so this is always false there — host behavior is unchanged. */
+export function relaxedSandboxGuard(): boolean {
+  return SANDBOX_GUARD_RELAXED;
+}

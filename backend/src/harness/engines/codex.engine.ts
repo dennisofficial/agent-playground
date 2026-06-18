@@ -6,6 +6,7 @@ import { OPENAI_CODEX_SDK } from '../../_lib/esm/esm.module';
 import { AGENT_TOOLS_PROVIDER } from './agent-tools-provider.port';
 import type { IAgentToolsProvider } from './agent-tools-provider.port';
 import { engineHomeDir } from './engine-home';
+import { relaxedSandboxGuard } from './guard';
 import {
   EWorkerEngineName,
   IWorkerUsage,
@@ -84,6 +85,14 @@ export class CodexEngine implements WorkerEngine {
     // whose `.git` is a FILE pointing into the main repo) so an execute turn can commit/push/merge.
     // Not needed on a read-only (plan or investigate) turn.
     const gitDir = opts.readOnly ? undefined : gitCommonDir(cwd);
+    // In-sandbox self-validation (Phase 10): an EXECUTE turn in the relaxed-sandbox (daemon) posture
+    // needs the network, but Codex's `workspace-write` sandbox BLOCKS the network by default — that's
+    // what stops `pnpm install` / `curl localhost` / fetching deps. Grant it network access in that
+    // posture ONLY (and only on a write turn — a read-only sandbox stays fully locked down). The
+    // sandbox container is the isolation boundary, so this never widens host behavior: on the HOST the
+    // relaxed flag is unset → `networkAccessEnabled` is omitted and the sandbox is exactly as before.
+    // Writes stay confined to the worktree (still `workspace-write`, not `danger-full-access`).
+    const sandboxNetwork = !opts.readOnly && relaxedSandboxGuard();
     return {
       workingDirectory: cwd,
       // Confine writes/shell to the workspace; run autonomously (no interactive approval surface).
@@ -97,6 +106,7 @@ export class CodexEngine implements WorkerEngine {
       // Live web search is the whole point of using Codex for research, and a model-side tool
       // separate from the shell sandbox — safe to leave on even in a read-only plan turn.
       webSearchMode: 'live',
+      ...(sandboxNetwork ? { networkAccessEnabled: true } : {}),
       ...(gitDir ? { additionalDirectories: [gitDir] } : {}),
       ...(model ? { model } : {}),
     };

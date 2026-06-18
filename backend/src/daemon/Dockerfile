@@ -55,8 +55,12 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 #  - git: the daemon owns git (Phase 4) — clone/worktree/publish inside the sandbox.
 #  - gh: GitHub CLI (PR surface alongside GithubApiService).
 #  - curl/ca-certificates/gnupg: TLS + fetching apt keys + the agent's `curl localhost` self-checks.
-#  - the Docker CLI + compose plugin (docker.com apt repo) for the inner privileged DinD (Phase 10):
-#    `docker compose up` is PRIVATE to the sandbox (the collision fix the whole feature exists for).
+#  - iptables: dockerd REQUIRES it to program the inner bridge network (compose service networking).
+#  - the FULL inner Docker (docker.com apt repo) for the privileged DinD (Phase 10) — `docker compose
+#    up` PRIVATE to the sandbox (the collision fix the whole feature exists for):
+#      • docker-ce-cli + docker-compose-plugin — the CLI + `docker compose` (agent-facing).
+#      • docker-ce + containerd.io           — the ENGINE: `dockerd` + the OCI runtime. WITHOUT these
+#        the CLI has nothing to talk to; the entrypoint starts dockerd before the daemon.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
       gh \
@@ -64,6 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       gnupg \
       lsb-release \
+      iptables \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg \
          | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
@@ -74,6 +79,8 @@ https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_C
     && apt-get update && apt-get install -y --no-install-recommends \
       docker-ce-cli \
       docker-compose-plugin \
+      docker-ce \
+      containerd.io \
     && rm -rf /var/lib/apt/lists/*
 
 # pnpm via corepack, pinned to the repo's packageManager (root package.json: pnpm@11.1.2).
@@ -128,6 +135,13 @@ FROM base AS runtime
 ENV NODE_ENV=production
 ENV AGENT_HOME_ROOT=/workspace/.agent-home
 ENV WORKSPACE_ROOT=/workspace/repo
+# The relaxed-sandbox guard posture (Phase 10): the container IS the isolation, so an EXECUTE turn may
+# freely run pnpm install / background dev servers / curl localhost / docker compose. Gated purely by
+# this env var — set ONLY here, in the image, so the HOST (which never sets it) is byte-identical. Also
+# the signal DaemonReadinessService uses to expect + wait for inner Docker.
+ENV SANDBOX_GUARD_RELAXED=true
+# The compiled daemon entry (dist is flat: all nest-cli apps share outDir ../../dist).
+ENV DAEMON_ENTRY=/repo/backend/dist/daemon/main.js
 WORKDIR /workspace
 
 # Ship the built app + its pruned prod node_modules + the workspace manifests. We copy the whole
@@ -135,6 +149,12 @@ WORKDIR /workspace
 # the submodule packages) stays intact — the daemon resolves @workspace/* and the ESM SDKs through it.
 COPY --from=build /repo /repo
 
-# Entrypoint: the compiled daemon. dist is flat (all nest-cli apps share outDir ../../dist), so the
-# daemon entry is /repo/backend/dist/daemon/main.js.
-CMD ["node", "/repo/backend/dist/daemon/main.js"]
+# The privileged-DinD entrypoint: starts the inner dockerd, waits for its socket, then runs the daemon
+# (and forwards SIGTERM for clean shutdown). Lives in the daemon source dir; copied + made executable.
+COPY backend/src/daemon/entrypoint.sh /usr/local/bin/daemon-entrypoint.sh
+RUN chmod +x /usr/local/bin/daemon-entrypoint.sh
+
+# ENTRYPOINT (not CMD): the script owns inner-Docker startup → daemon handoff. The container must be run
+# `--privileged` with a /var/lib/docker volume (the host's ContainerManagerService does both); a
+# non-privileged run will fail at the dockerd-ready wait with a clear FATAL in the log.
+ENTRYPOINT ["/usr/local/bin/daemon-entrypoint.sh"]

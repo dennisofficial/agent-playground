@@ -213,6 +213,26 @@ export const abortChannel = (correlationId: string): string =>
 export const credRequestChannel = (workspaceId: string): string =>
   `ws:${workspaceId}:cred-req`;
 
+/**
+ * The per-workspace READINESS stream (daemon → host). The daemon XADDs a single `ReadyFrame` once the
+ * sandbox is fully up — engines resolvable AND (when inner Docker is expected) `docker info` succeeds —
+ * so the host never dispatches a turn that needs `docker compose` before the inner engine is reachable.
+ * A stream (not a transient pub/sub) on purpose: it's durable, so a host that connects/queries AFTER
+ * the daemon became ready still sees the marker (the credential round-trip's timing problem doesn't
+ * apply here).
+ */
+export const readyKey = (workspaceId: string): string =>
+  `ws:${workspaceId}:ready`;
+
+/** The readiness marker frame the daemon writes once the sandbox is fully up. */
+export interface ReadyFrame {
+  ready: true;
+  /** Whether the inner Docker daemon was confirmed reachable (`docker info` ok) before signaling. */
+  innerDocker: boolean;
+  /** Daemon-clock ms when readiness was signaled (diagnostics only). */
+  at: number;
+}
+
 /** The per-nonce credential-REPLY pub/sub channel (host publishes, daemon subscribes). */
 export const credReplyChannel = (nonce: string): string =>
   `cred-reply:${nonce}`;

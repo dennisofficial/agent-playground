@@ -17,6 +17,31 @@ import { DaemonAgentToolsProvider } from '../engines/daemon-agent-tools-provider
 import { DaemonGitService } from '../git/daemon-git.service';
 
 /**
+ * The base of the per-session dev-server PORT window and its width. 3100 keeps clear of the
+ * conventional 3000 a developer or a host-bound service uses, and of common framework defaults; the
+ * 900-wide window is far more than the handful of sessions one sandbox holds, so distinct sessions land
+ * on distinct ports with negligible collision risk. (The sandbox has no inbound host ports — these are
+ * purely INTERNAL to the container, exposed later via the daemon→Caddy mapping in Phase 11.)
+ */
+export const SESSION_PORT_BASE = 3100;
+export const SESSION_PORT_SPAN = 900;
+
+/**
+ * Deterministic, distinct PORT for a session id — stable across the session's turns. A small FNV-1a
+ * hash folded into `[BASE, BASE+SPAN)`: pure, no shared counter (so it survives a daemon restart and
+ * needs no registry), and a given session always maps to the same port. Exported for the unit spec.
+ */
+export function portForSession(sessionId: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < sessionId.length; i++) {
+    h ^= sessionId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  // >>> 0 → unsigned; modulo the span, offset by the base.
+  return SESSION_PORT_BASE + ((h >>> 0) % SESSION_PORT_SPAN);
+}
+
+/**
  * Reconstitutes a HOST `engines.get(engine).run({...})` call INSIDE the sandbox from a 'run' command.
  *
  * This is the daemon's "Claude Code" turn handler — the in-container counterpart to
@@ -60,6 +85,21 @@ export class DaemonTurnService {
       const cwd =
         this.git.worktreePath(payload.sessionId) ??
         (await this.git.createWorktree(payload.sessionId));
+
+      // 2b) PER-SESSION PORT (Phase 10 self-validation). Two dev servers in ONE sandbox must not both
+      //     grab 3000 — so give each session a deterministic, distinct PORT (and PORT_RANGE_START as a
+      //     base hint for frameworks/tools that allocate a span). Set on process.env right before the
+      //     run so the engines — which build the subprocess env from `...process.env` — carry it into
+      //     the CLI, and any framework that honors PORT (Next, Nest, Vite, CRA, …) picks it up.
+      //     Deterministic per session id (stable across a session's turns; collision-resistant within
+      //     the small set of sessions one sandbox holds). Idempotent: re-setting the same session's
+      //     value each turn is a no-op. LIMIT: process.env is process-global, so two DIFFERENT sessions
+      //     running truly concurrently in one sandbox briefly share whichever was set last — acceptable
+      //     because PORT is read by the framework at server-start (inside the engine's own subprocess
+      //     env snapshot), the values are distinct per session, and the sandbox is disposable.
+      const port = portForSession(payload.sessionId);
+      process.env.PORT = String(port);
+      process.env.PORT_RANGE_START = String(port);
 
       // 3) Bridge the abort channel → this run's controller. Subscribe BEFORE the run starts so an
       //    abort published during a slow boot still aborts it.
