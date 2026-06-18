@@ -35,7 +35,6 @@ import { PipelinePhaseReviewStore } from '../memory/pipeline-phase-review-store'
 import { TicketNoteStore } from '../memory/ticket-note-store';
 import { SandboxRegistry } from '../workspaces/sandbox-registry';
 import { WorkspaceGitProvider } from '../workspaces/workspace-git.provider';
-import { WorkspaceService } from '../workspaces/workspace.service';
 import { ReviewPipelineService } from './review-pipeline.service';
 import {
   SESSION_REGISTRY,
@@ -112,12 +111,10 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     private readonly proposals: ProposalService,
     private readonly review: ReviewPipelineService,
     private readonly boardEvents: BoardEventsBus,
-    private readonly workspaces: WorkspaceService,
     private readonly phaseStore: PipelineRunPhaseStore,
     private readonly codingStore: PipelineCodingSessionStore,
     private readonly reviewStore: PipelinePhaseReviewStore,
     private readonly notes: TicketNoteStore,
-    private readonly sandboxes: SandboxRegistry,
     private readonly workspaceGit: WorkspaceGitProvider,
   ) {}
 
@@ -797,18 +794,11 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
           message: `Couldn't attach the design into the sandbox: ${res.message}`,
         };
     } else {
-      const ws = this.workspaces.get(run.workspaceId);
-      if (!ws) return { ok: false, message: `Workspace '${run.workspaceId}' not found.` };
-      const designDir = join(ws.path, 'design');
-      try {
-        mkdirSync(designDir, { recursive: true });
-        await pExecFile('unzip', ['-o', source, '-d', designDir]);
-      } catch (err) {
-        return {
-          ok: false,
-          message: `Couldn't unzip '${source}' into the workspace: ${err instanceof Error ? err.message : String(err)}.`,
-        };
-      }
+      // Every work area lives in a sandbox; a non-live one is an orphan (its sandbox was wiped/gone).
+      return {
+        ok: false,
+        message: `#${taskId}'s work area '${run.workspaceId}' isn't a live sandbox — can't attach the design.`,
+      };
     }
     const design = await this.sectionStore.activeSection(run.id);
     if (design)

@@ -1,18 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import type { WorkAreaFilter } from './workspace-registry';
 import { WorkspaceRegistry } from './workspace-registry';
-import { WorkspaceService } from './workspace.service';
 
 /**
  * The agent-facing READ view of a workspace — what `list_workspaces` / existence-checks / the bots'
- * work-context render. A unified projection over BOTH metadata sources so a `workAreaId` (sandbox work
- * area) and a `ws-NNN` (local checkout) both resolve:
- *   - sandbox work areas → `WorkspaceRegistry` (the host's middle-tier record);
- *   - local checkouts    → `WorkspaceService` (the host worktree manager).
- * (In the all-sandbox end state the local source is removed and only the registry remains.)
+ * work-context render. Every workspace is now a sandbox WORK AREA (the all-sandbox standard), so this
+ * projects `WorkspaceRegistry` records. Routing/git ops go through `WorkspaceGitProvider`; this is purely
+ * the metadata read seam that used to be `WorkspaceService.get`/`list`.
  */
 export interface WorkspaceView {
-  /** The id the tools take — a `workAreaId` (`wa-<uuid>`) for a sandbox work area, `ws-NNN` for local. */
+  /** The id the tools take — a `workAreaId` (`wa-<uuid>`). */
   id: string;
   name: string;
   /** The git branch ('' when not yet known/realized). */
@@ -22,81 +19,48 @@ export interface WorkspaceView {
   ownerBot: string;
   /** The shared integration branch this workspace publishes to / pulls from, if any. */
   sharedBranch?: string;
-  /** True when the workspace is a containerized sandbox work area (its git lives inside the daemon). */
+  /** Always true — every workspace is a containerized sandbox work area. */
   containerized: boolean;
 }
 
+/** Project a `WorkAreaRecord` into the agent-facing view. */
+function viewOf(wa: {
+  workAreaId: string;
+  name: string;
+  branch?: string;
+  team: string;
+  project: string;
+  ownerBot: string;
+  shared?: string;
+}): WorkspaceView {
+  return {
+    id: wa.workAreaId,
+    name: wa.name,
+    branch: wa.branch ?? '',
+    team: wa.team,
+    project: wa.project,
+    ownerBot: wa.ownerBot,
+    ...(wa.shared ? { sharedBranch: wa.shared } : {}),
+    containerized: true,
+  };
+}
+
 /**
- * Assembles the unified `WorkspaceView` the workspace tools read, so a sandbox work area (registered in
- * `WorkspaceRegistry`, with its checkout inside the daemon) is just as visible to `list_workspaces` and
- * existence checks as a local `ws-NNN`. Routing/git ops still go through `WorkspaceGitProvider`; this is
- * purely the metadata read seam that used to be `WorkspaceService.get`/`list` directly.
+ * Assembles the `WorkspaceView` the workspace tools read, from `WorkspaceRegistry` (the host's work-area
+ * records). The metadata read seam — keeps the tools off the (now-deleted) `WorkspaceService`.
  */
 @Injectable()
 export class WorkspaceReader {
-  constructor(
-    private readonly local: WorkspaceService,
-    private readonly workAreas: WorkspaceRegistry,
-  ) {}
+  constructor(private readonly workAreas: WorkspaceRegistry) {}
 
-  /** A workspace by id — a sandbox work area (preferred) else a local checkout, or undefined. */
+  /** A workspace (work area) by id, or undefined. */
   get(id: string): WorkspaceView | undefined {
     const wa = this.workAreas.get(id);
-    if (wa)
-      return {
-        id: wa.workAreaId,
-        name: wa.name,
-        branch: wa.branch ?? '',
-        team: wa.team,
-        project: wa.project,
-        ownerBot: wa.ownerBot,
-        ...(wa.shared ? { sharedBranch: wa.shared } : {}),
-        containerized: true,
-      };
-    const ws = this.local.get(id);
-    if (ws)
-      return {
-        id: ws.id,
-        name: ws.name,
-        branch: ws.branch,
-        team: ws.team,
-        project: ws.project,
-        ownerBot: ws.ownerBot,
-        ...(ws.sharedBranch ? { sharedBranch: ws.sharedBranch } : {}),
-        containerized: false,
-      };
-    return undefined;
+    return wa ? viewOf(wa) : undefined;
   }
 
-  /** All workspaces (sandbox work areas ∪ local checkouts), optionally filtered. */
+  /** All work areas, optionally filtered. */
   list(filter?: WorkAreaFilter): WorkspaceView[] {
-    const sandbox: WorkspaceView[] = this.workAreas.list(filter).map((wa) => ({
-      id: wa.workAreaId,
-      name: wa.name,
-      branch: wa.branch ?? '',
-      team: wa.team,
-      project: wa.project,
-      ownerBot: wa.ownerBot,
-      ...(wa.shared ? { sharedBranch: wa.shared } : {}),
-      containerized: true,
-    }));
-    const local: WorkspaceView[] = this.local
-      .list(filter?.ownerBot ? { ownerBot: filter.ownerBot } : undefined)
-      .filter(
-        (w) =>
-          (!filter?.team || w.team === filter.team) &&
-          (!filter?.project || w.project === filter.project),
-      )
-      .map((w) => ({
-        id: w.id,
-        name: w.name,
-        branch: w.branch,
-        team: w.team,
-        project: w.project,
-        ownerBot: w.ownerBot,
-        ...(w.sharedBranch ? { sharedBranch: w.sharedBranch } : {}),
-        containerized: false,
-      }));
-    return [...sandbox, ...local];
+    return this.workAreas.list(filter).map(viewOf);
   }
 }

@@ -1,60 +1,45 @@
 import { Injectable } from '@nestjs/common';
 import { DaemonClient } from './daemon-client';
 import { DaemonGitAdapter } from './daemon-git.adapter';
-import { LocalWorkspaceAdapter } from './local-workspace.adapter';
 import { SandboxRegistry } from './sandbox-registry';
 import { WorkspaceRegistry } from './workspace-registry';
 import type { WorkspaceGitCtx, WorkspaceGitPort } from './workspace-git.port';
 
 /**
- * The git-routing seam (Phase 8). `resolve(ctx)` returns the `WorkspaceGitPort` a consumer should run
- * its async git op against — the LOCAL host adapter today, the in-sandbox DAEMON adapter once Phase 9
- * flips `isContainerized` on. Every consumer that touched `WorkspaceService` for an async git method now
- * does `this.workspaceGit.resolve(ctx).<method>(...)` instead.
+ * The git-routing seam. `resolve(ctx)` returns the `WorkspaceGitPort` a consumer runs its async git op
+ * against — always the in-sandbox `DaemonGitAdapter` (every workspace is a sandbox work area; there is no
+ * local path). The adapter is constructed PER-RESOLVE bound to the `(sandboxId, workAreaId)` resolved via
+ * `WorkspaceRegistry`, so it substitutes the host workspace-id arg with the daemon's per-worktree key
+ * (`workAreaId`) on each forwarded call (no session needed).
  *
- * Mirrors `TurnExecutor` (Phase 7), the engine-execution sibling seam:
- *   - `isContainerized(ctx)` is HARD-FALSE this phase (a clearly-marked Phase-9 seam). The live path is
- *     therefore 100% LOCAL — `resolve` always returns `LocalWorkspaceAdapter`, a pure pass-through to
- *     `WorkspaceService`, so runtime behavior is UNCHANGED after this phase.
- *   - the remote `DaemonGitAdapter` branch is built but DORMANT, exercised ONLY by unit tests via the
- *     test-only `isContainerized` override (same shape as `TestableTurnExecutor`).
- *
- * `resolve` is SYNCHRONOUS on purpose so call sites stay `resolve(ctx).method(...)` with no extra await.
- * The daemon adapter is keyed off `ctx.workspaceId` — the sandbox uuid for a containerized session
- * (Phase 0's identity decision: the renamed `workspace_id` holds `ws-NNN` locally, the sandbox uuid for
- * containerized sessions — one column, no second id).
+ * `resolve` is SYNCHRONOUS so call sites stay `resolve(ctx).method(...)` with no extra await; it THROWS
+ * when the ctx's work area doesn't resolve to a live sandbox (a routing bug / orphaned work area).
  */
 @Injectable()
 export class WorkspaceGitProvider {
   constructor(
-    private readonly local: LocalWorkspaceAdapter,
     private readonly daemon: DaemonClient,
     private readonly sandboxes: SandboxRegistry,
     private readonly workAreas: WorkspaceRegistry,
   ) {}
 
-  /** The port to run `ctx`'s git op against — the in-sandbox daemon when `ctx`'s work area resolves to a
-   * live sandbox, else the local host adapter. The daemon adapter is constructed PER-RESOLVE bound to the
-   * `(sandboxId, workAreaId)` resolved via `WorkspaceRegistry` — so it substitutes the host workspace-id
-   * arg with the daemon's per-worktree key (`workAreaId`) on each forwarded call (no session needed). */
+  /** The port to run `ctx`'s git op against — the in-sandbox daemon adapter for the ctx's work area.
+   * Throws if the work area doesn't resolve to a live sandbox (its sandbox is gone / not a work area). */
   resolve(ctx: WorkspaceGitCtx): WorkspaceGitPort {
     const daemonAdapter = this.daemonFor(ctx);
-    if (daemonAdapter) return daemonAdapter;
-    // LOCAL — the pass-through adapter delegates verbatim to WorkspaceService.
-    return this.local;
+    if (!daemonAdapter) {
+      throw new Error(
+        `No live sandbox for workspace "${this.workAreaId(ctx) ?? '(none)'}" — its work area or sandbox is gone.`,
+      );
+    }
+    return daemonAdapter;
   }
 
   /**
-   * The DAEMON adapter for a containerized ctx, or `undefined` when the op runs locally. The seam for the
-   * OFF-PORT daemon ops (`reviewRange`/`attachDesign`/`openPr`/`markReady`/`commentPr`) — they're not on
-   * `WorkspaceGitPort` (which must stay byte-for-byte mirrorable by `LocalWorkspaceAdapter`), so a
-   * containerized call site that needs one forks on this: `const daemon = provider.daemonFor(ctx); if
-   * (daemon) { …daemon ops… } else { …today's host github flow… }`. Returns the SAME `DaemonGitAdapter`
-   * shape `resolve` produces on the containerized branch (bound to the sandbox uuid + ctx), so a daemon
-   * op and the port ops a caller mixes address the same in-sandbox worktree.
-   *
-   * FLAG-OFF SAFETY: `isContainerized` is always false (no sandbox exists), so this always returns
-   * `undefined` and every call site takes its unchanged local branch.
+   * The DAEMON adapter for `ctx`'s work area, or `undefined` when it doesn't resolve to a live sandbox.
+   * Also the seam for the OFF-PORT daemon ops (`reviewRange`/`attachDesign`/`openPr`/`markReady`/
+   * `commentPr`) — not on `WorkspaceGitPort`; a call site that needs one does `const d =
+   * provider.daemonFor(ctx); if (d) { …daemon ops… }`. Same `DaemonGitAdapter` `resolve` returns.
    */
   daemonFor(ctx: WorkspaceGitCtx): DaemonGitAdapter | undefined {
     const workAreaId = this.workAreaId(ctx);

@@ -8,7 +8,6 @@ import { ContainerManagerService } from './container-manager.service';
 import { CredentialProvisionerService } from './credential-provisioner.service';
 import { DaemonClient } from './daemon-client';
 import { DockerodeAdapter } from './dockerode.adapter';
-import { LocalWorkspaceAdapter } from './local-workspace.adapter';
 import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
 import { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
@@ -16,7 +15,6 @@ import { TurnExecutor } from './turn-executor.service';
 import { WorkspaceGitProvider } from './workspace-git.provider';
 import { WorkspaceReader } from './workspace-reader';
 import { WorkspaceRegistry } from './workspace-registry';
-import { WorkspaceService } from './workspace.service';
 
 /**
  * Employee-managed git workspaces — the isolated work areas sessions run in. In-memory registry over
@@ -64,7 +62,6 @@ import { WorkspaceService } from './workspace.service';
 @CreateModule({
   imports: [RedisModule, EnginesModule, ProjectsModule, SkillsModule],
   services: [
-    WorkspaceService,
     DaemonClient,
     SandboxRegistry,
     SandboxReadinessService,
@@ -72,7 +69,6 @@ import { WorkspaceService } from './workspace.service';
     CredentialProvisionerService,
     RemoteTurnDispatcher,
     TurnExecutor,
-    LocalWorkspaceAdapter,
     WorkspaceGitProvider,
     WorkspaceRegistry,
     WorkspaceReader,

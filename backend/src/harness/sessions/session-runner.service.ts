@@ -21,10 +21,8 @@ import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { MetricsEventsService } from '../metrics/metrics-events.service';
-import { SandboxRegistry } from '../workspaces/sandbox-registry';
 import { TurnExecutor } from '../workspaces/turn-executor.service';
 import { WorkspaceGitProvider } from '../workspaces/workspace-git.provider';
-import { WorkspaceService } from '../workspaces/workspace.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
 import {
@@ -73,7 +71,6 @@ export class SessionRunnerService {
     private readonly persona: PersonaService,
     private readonly lifecycle: LifecycleRunner,
     private readonly worklog: WorklogStore,
-    private readonly workspaces: WorkspaceService,
     private readonly workspaceGit: WorkspaceGitProvider,
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
@@ -82,7 +79,6 @@ export class SessionRunnerService {
     private readonly env: EnvService,
     private readonly plans: PlanStore,
     private readonly settings: TeamSettingsStore,
-    private readonly sandboxes: SandboxRegistry,
   ) {}
 
   /**
@@ -237,21 +233,17 @@ export class SessionRunnerService {
       if (!session) return;
       const bot =
         this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
-      // CONTAINERIZED? A sandbox session's checkout lives INSIDE the daemon (the session's work area
-      // worktree) — there is no host workspace row and no host cwd (the daemon resolves it). So the
-      // host-path lookup below is LOCAL-ONLY: skip it (and its throw) for a containerized session, and
-      // pass cwd='' through the seam (the daemon overrides it; cwd doesn't cross the wire anyway). With
-      // the flag off, this is always false ⇒ the unchanged local path.
+      // Every session runs in its work area's worktree INSIDE the daemon — there is no host checkout
+      // and no host cwd (the daemon resolves cwd from the work area's worktree; cwd doesn't cross the
+      // wire). A session whose work area's sandbox is gone (e.g. wiped) is an orphan with nowhere to run.
       const containerized = this.workspaceGit.isContainerized({ session });
-      const workspace = this.workspaces.get(session.workspaceId);
-      if (!containerized && !workspace) {
+      if (!containerized) {
         throw new Error(
-          `Workspace "${session.workspaceId}" no longer exists — the session has nowhere to run.`,
+          `Workspace "${session.workspaceId}" is no longer a live sandbox — the session has nowhere to run.`,
         );
       }
-      // The host cwd for the turn: the workspace checkout locally, empty for a sandbox (daemon-resolved).
-      const cwd = containerized ? '' : workspace!.path;
-      // A stable workspace handle for the base-refresh preamble + trace metadata, valid in both paths.
+      const cwd = ''; // daemon-resolved
+      // A stable workspace handle for the base-refresh preamble + trace metadata.
       const workspaceRef = { id: session.workspaceId };
       // Entering execute (a fresh execute session, or a plan→execute flip): bring the workspace up
       // to date with the base branch before the engine runs. A workspace cut during stand-up is

@@ -63,12 +63,10 @@ function buildRunner(reviewFull: {
     proposals as never,
     review as never,
     boardEvents as never,
-    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
     notes as never,
-    fakeSandboxRegistry() as never,
     localGitProvider() as never,
   );
   return { svc, runs, shipTask, reviewFullImplementation, boardEvents, notes };
@@ -157,11 +155,10 @@ function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
   const employees = { byId: () => bot, teamLead: () => bot, context: () => ({}) } as never;
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
   const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
-  const ownerDiff = vi.fn(async () => ({ range: 'base...feat', files }));
+  const reviewRange = vi.fn(async () => ({ range: 'base...feat', files, baseBranch: 'main' }));
   const workspaces = {
-    get: () => ({ id: 'ws-1', path: '/tmp/ws', baseRef: 'base', branch: 'feat' }),
-    projectRecordFor: async () => ({ defaultBranch: 'main' }),
-    ownerDiff,
+    get: () => ({ id: 'ws-1', name: 'ws-1', branch: 'feat', team: 't', project: 'p', ownerBot: 'alex' }),
+    reviewRange,
   } as never;
   const board = { get: async () => ({ title: 'Feature', description: 'desc' }) } as never;
   const svc = new ReviewPipelineService(
@@ -170,7 +167,7 @@ function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
     credCtx,
     creds,
     workspaces,
-    localGitProvider(workspaces),
+    localGitProvider(workspaces, { containerizedIds: new Set(['ws-1']) }),
     {} as never,
     {} as never,
     board,

@@ -81,6 +81,15 @@ function build() {
   };
   const boardEvents = { emit: vi.fn(), onEvent: vi.fn() };
   const workspaces = { get: vi.fn(() => ({ path: '' })) };
+  // attach_design routes through the in-sandbox daemon (the only path now). Always-containerized stub.
+  const designDaemon = {
+    attachDesign: vi.fn(async () => ({ ok: true, message: 'attached' })),
+  };
+  const workspaceGit = {
+    isContainerized: () => true,
+    daemonFor: () => designDaemon,
+    resolve: () => ({}),
+  };
   const notes = new FakeNoteStore();
 
   const svc = new PipelineRunnerService(
@@ -94,16 +103,15 @@ function build() {
     proposals as never,
     review as never,
     boardEvents as never,
-    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
     notes as never,
-    fakeSandboxRegistry() as never,
-    localGitProvider() as never,
+    workspaceGit as never,
   );
   return {
     svc,
+    designDaemon,
     runs,
     sectionStore,
     phaseStore,
@@ -436,14 +444,12 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
     expect((await runs.getByTask(TEAM, 31))?.status).toBe('done');
   });
 
-  it('attach_design unzips into the workspace and the next section builds against it', async () => {
-    const { svc, runs, runner, workspaces } = build();
-    const wtPath = mkdtempSync(join(tmpdir(), 'ws-'));
+  it('attach_design ships the design into the sandbox (daemon) and the next section builds against it', async () => {
+    const { svc, runs, runner, designDaemon } = build();
     const srcDir = mkdtempSync(join(tmpdir(), 'design-src-'));
     writeFileSync(join(srcDir, 'tokens.json'), '{"color":"blue"}');
     const zipPath = join(srcDir, 'design.zip');
     execFileSync('zip', ['-j', zipPath, join(srcDir, 'tokens.json')]);
-    workspaces.get.mockReturnValue({ path: wtPath });
 
     await svc.start({
       team: TEAM,
@@ -461,7 +467,11 @@ describe('PipelineRunnerService — section-driver FSM (explicit rows)', () => {
 
     const r = await svc.attachDesign(TEAM, 41, zipPath);
     expect(r.ok).toBe(true);
-    expect(existsSync(join(wtPath, 'design', 'tokens.json'))).toBe(true);
+    // The local zip is read, base64-encoded, and shipped to the daemon (which unzips it in-sandbox).
+    expect(designDaemon.attachDesign).toHaveBeenCalledTimes(1);
+    expect(
+      typeof (designDaemon.attachDesign.mock.calls[0] as unknown[])[0],
+    ).toBe('string');
 
     const resumed = (await runs.getByTask(TEAM, 41))!;
     expect(resumed.planningSubstep).toBe('drafting'); // advanced to the implementer's plan

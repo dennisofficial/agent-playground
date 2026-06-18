@@ -12,7 +12,7 @@ import {
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
 import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
-import { WorkspaceService } from '../../workspaces/workspace.service';
+import { WorkspaceReader } from '../../workspaces/workspace-reader';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 import { CreateSessionTool } from './session.tools';
@@ -73,7 +73,7 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
 
   constructor(
     private readonly createSession: CreateSessionTool,
-    private readonly workspaces: WorkspaceService,
+    private readonly workspaces: WorkspaceReader,
     private readonly workspaceGit: WorkspaceGitProvider,
     private readonly employees: EmployeeRegistry,
     private readonly projects: ProjectStore,

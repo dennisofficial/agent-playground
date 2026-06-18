@@ -78,12 +78,16 @@ function build(opts: {
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
   const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
 
-  const workspace = { id: 'ws-1', path: '/tmp/ws', baseRef: 'base', branch: 'feat' };
-  const ownerDiff = vi.fn(async () => ({ range: 'base...feat', files: ['a.ts'] }));
+  const workspace = { id: 'ws-1', name: 'ws-1', branch: 'feat', team: 't', project: 'p', ownerBot: 'alex' };
+  // The review diff scope now comes from the daemon (`reviewRange`), keyed off the work area.
+  const reviewRange = vi.fn(async () => ({
+    range: 'base...feat',
+    files: ['a.ts'],
+    baseBranch: 'main',
+  }));
   const workspaces = {
     get: () => workspace,
-    projectRecordFor: async () => ({ defaultBranch: 'main' }),
-    ownerDiff,
+    reviewRange,
   } as never;
 
   const board = {
@@ -108,7 +112,7 @@ function build(opts: {
     credCtx,
     creds,
     workspaces,
-    localGitProvider(workspaces),
+    localGitProvider(workspaces, { containerizedIds: new Set(['ws-1']) }),
     {} as never, // tokens — unused
     {} as never, // github — unused
     board,
@@ -119,7 +123,7 @@ function build(opts: {
     {} as never, // env — unused
     {} as never, // sessions — unused
   );
-  return { svc, engineRun, resumeInternal, noteAdd, boardEmit, ownerDiff };
+  return { svc, engineRun, resumeInternal, noteAdd, boardEmit, reviewRange };
 }
 
 /** The lenses reviewed across all engine runs, in call order. */
@@ -158,7 +162,7 @@ describe('ReviewPipelineService.reviewSectionLenses (Phase 5a)', () => {
 
   it('nothing-to-review (empty diff) short-circuits before any engine run', async () => {
     const f = build({ verdicts: { correctness: 'changes' } });
-    f.ownerDiff.mockResolvedValueOnce({ range: '', files: [] });
+    f.reviewRange.mockResolvedValueOnce({ range: '', files: [], baseBranch: 'main' });
     const out = await f.svc.reviewSectionLenses(makeSession(), { sectionName: 'backend' });
     expect(out).toEqual({ ok: true, findings: [] });
     expect(f.engineRun).not.toHaveBeenCalled();

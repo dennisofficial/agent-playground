@@ -97,12 +97,10 @@ function build(opts: { shipOk?: boolean } = {}) {
     proposals as never,
     review as never,
     boardEvents as never,
-    workspaces as never,
     new FakePhaseStore() as never,
     new FakeCodingStore() as never,
     new FakeReviewStore() as never,
     new FakeNoteStore() as never,
-    fakeSandboxRegistry() as never,
     localGitProvider() as never,
   );
   const openSessions = () =>

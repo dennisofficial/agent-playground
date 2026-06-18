@@ -1,7 +1,7 @@
 import type { Identity } from '../../domain/identity';
 import type { ProjectStore } from '../../projects/project-store';
 import type { ProjectRecord } from '../../projects/project.types';
-import type { WorkspaceService } from '../../workspaces/workspace.service';
+import type { WorkspaceGitPort } from '../../workspaces/workspace-git.port';
 import { localGitProvider } from '../../workspaces/workspace-git.test-util';
 import type { HarnessToolContext } from '../tool.types';
 import {
@@ -43,7 +43,7 @@ const workspaces = () =>
       Promise.resolve({ path: '/refs/cubix-infra', gitUrl: 'g' }),
     ),
     referenceOrientation: vi.fn(() => Promise.resolve('Top level: src, README')),
-  }) as unknown as WorkspaceService;
+  }) as unknown as WorkspaceGitPort;
 
 describe('reference_project', () => {
   it('clones + orients a known catalog project', async () => {

@@ -1,5 +1,4 @@
 import type { SandboxRegistry } from './sandbox-registry';
-import type { WorkspaceService } from './workspace.service';
 import type { WorkspaceGitPort } from './workspace-git.port';
 import type { WorkspaceGitProvider } from './workspace-git.provider';
 
@@ -29,7 +28,7 @@ export function fakeSandboxRegistry(
  * this phase. The helper collapses the adapter hop the mock service already stands in for.
  */
 export function localGitProvider(
-  git: Partial<WorkspaceGitPort> | WorkspaceService = {},
+  git: Partial<WorkspaceGitPort> = {},
   opts: {
     /** Work-area ids to treat as containerized (`isContainerized`/`daemonFor` fire for them). */
     containerizedIds?: ReadonlySet<string>;

@@ -34,7 +34,7 @@ import { DEFAULT_CHAT_TOOLSET } from '../tools/default-toolset';
 import { EngineToolFactory } from '../tools/engine-tool.factory';
 import { ToolRegistry } from '../tools/tool.registry';
 import type { RefreshScope } from '../tools/tool.types';
-import { WorkspaceService } from '../workspaces/workspace.service';
+import { WorkspaceReader } from '../workspaces/workspace-reader';
 import {
   GAP_THRESHOLD_DEFAULT_MS,
   buildTimeContext,
@@ -116,7 +116,7 @@ export class BotGraphNodes {
     private readonly reconcile: ReconcileService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
-    private readonly workspaces: WorkspaceService,
+    private readonly workspaces: WorkspaceReader,
     private readonly sessions: SessionRegistry,
     gapThresholdMs: number,
     private readonly engineTools?: EngineToolFactory,

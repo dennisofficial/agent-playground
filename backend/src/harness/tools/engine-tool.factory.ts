@@ -6,7 +6,7 @@ import { isToolCapability, type ToolCapability } from '../employees/capability';
 import type { EmployeeContext } from '../employees/employee-context';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { getIdentity } from '../domain/identity';
-import { WorkspaceService } from '../workspaces/workspace.service';
+import { WorkspaceReader } from '../workspaces/workspace-reader';
 import { CreateSessionTool } from './sessions/session.tools';
 
 /**
@@ -25,7 +25,7 @@ import { CreateSessionTool } from './sessions/session.tools';
 export class EngineToolFactory {
   constructor(
     private readonly createSession: CreateSessionTool,
-    private readonly workspaces: WorkspaceService,
+    private readonly workspaces: WorkspaceReader,
   ) {}
 
   /** Build the StructuredTools for a bot's tool-capabilities. */

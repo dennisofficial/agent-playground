@@ -26,7 +26,7 @@ import {
   type TurnRoutingCtx,
 } from '../workspaces/turn-executor.service';
 import { WorkspaceGitProvider } from '../workspaces/workspace-git.provider';
-import { WorkspaceService } from '../workspaces/workspace.service';
+import { WorkspaceReader } from '../workspaces/workspace-reader';
 import { EnvService } from '@core/config/env/env.service';
 import {
   CODE_REVIEW_PROMPT,
@@ -106,7 +106,7 @@ export class ReviewPipelineService {
     private readonly employees: EmployeeRegistry,
     private readonly credCtx: CredentialContext,
     private readonly creds: TenantCredentialService,
-    private readonly workspaces: WorkspaceService,
+    private readonly reader: WorkspaceReader,
     private readonly workspaceGit: WorkspaceGitProvider,
     private readonly tokens: GithubTokenStore,
     private readonly github: GithubApiService,
@@ -230,7 +230,7 @@ export class ReviewPipelineService {
     // CONTAINERIZED: the host has NO workspace row — the in-sandbox worktree (keyed by session.id) holds
     // the work, and the review engine turn runs there (cwd overridden off session.id, so `workspacePath`
     // is unused). LOCAL: the host workspace must exist (the tree the review reads).
-    const workspace = this.workspaces.get(workspaceId);
+    const workspace = this.reader.get(workspaceId);
     if (!containerized && !workspace) {
       await this.failOwner(
         session,
@@ -239,7 +239,7 @@ export class ReviewPipelineService {
       );
       return { kind: 'blocked', reason: 'workspace gone' };
     }
-    const workspacePath = workspace?.path ?? '';
+    const workspacePath = ''; // daemon-resolved (the work area's worktree)
     const task = await this.board.get(team, taskId);
     // Whether the workspace already has a shared branch. LOCAL: the host row. CONTAINERIZED: ask the
     // daemon (sharedRef truthy ⇒ a shared branch exists; the daemon owns the real name).
@@ -366,28 +366,14 @@ export class ReviewPipelineService {
    */
   private async ticketRange(
     ctx: TurnRoutingCtx,
-    workspaceId: string,
   ): Promise<{ range: string; files: string[] }> {
-    if (this.workspaceGit.isContainerized(ctx)) {
-      const daemon = this.workspaceGit.daemonFor(ctx);
-      if (!daemon) return { range: '', files: [] };
-      return daemon
-        .reviewRange()
-        .then(({ range, files }) => ({ range, files }))
-        .catch(() => ({ range: '', files: [] as string[] }));
-    }
-    const ws = this.workspaces.get(workspaceId);
-    if (!ws) return { range: '', files: [] };
-    const git = this.workspaceGit.resolve({
-      team: ws.team,
-      project: ws.project,
-      workspaceId,
-    });
-    const rec = await git.projectRecordFor(workspaceId);
-    const base = ws.baseRef && ws.baseRef.length > 0 ? ws.baseRef : rec?.defaultBranch;
-    if (!base) return { range: '', files: [] };
-    return git
-      .ownerDiff(workspaceId, base)
+    // The daemon owns the tree + the recorded cut sha — it computes the review scope (`reviewRange`
+    // diffs the work area's branch since its cut point). A ctx with no live sandbox has nothing to diff.
+    const daemon = this.workspaceGit.daemonFor(ctx);
+    if (!daemon) return { range: '', files: [] };
+    return daemon
+      .reviewRange()
+      .then(({ range, files }) => ({ range, files }))
       .catch(() => ({ range: '', files: [] as string[] }));
   }
 
@@ -421,10 +407,10 @@ export class ReviewPipelineService {
       session,
     };
     const containerized = this.workspaceGit.isContainerized(routeCtx);
-    const workspace = this.workspaces.get(workspaceId);
+    const workspace = this.reader.get(workspaceId);
     if (!containerized && !workspace) return { ok: true, findings: [] };
-    const workspacePath = workspace?.path ?? '';
-    const { range, files } = await this.ticketRange(routeCtx, workspaceId);
+    const workspacePath = ''; // daemon-resolved (the work area's worktree)
+    const { range, files } = await this.ticketRange(routeCtx);
     if (files.length === 0) return { ok: true, findings: [] }; // nothing built to review
     const ctx = this.employees.context();
     const keys = await this.creds.resolve(team);
@@ -526,10 +512,10 @@ export class ReviewPipelineService {
       ...(session ? { session } : {}),
     };
     const containerized = this.workspaceGit.isContainerized(routeCtx);
-    const workspace = this.workspaces.get(workspaceId);
+    const workspace = this.reader.get(workspaceId);
     if (!containerized && !workspace) return { verdict: 'pass', findings: '' };
-    const workspacePath = workspace?.path ?? '';
-    const { range, files } = await this.ticketRange(routeCtx, workspaceId);
+    const workspacePath = ''; // daemon-resolved (the work area's worktree)
+    const { range, files } = await this.ticketRange(routeCtx);
     if (files.length === 0) return { verdict: 'pass', findings: '' };
     const ctx = this.employees.context();
     const keys = await this.creds.resolve(team);
@@ -692,12 +678,12 @@ export class ReviewPipelineService {
     if (siblings.length > 1 && bot) {
       const ctx = this.employees.context();
       const keys = await this.creds.resolve(team);
-      const ws = this.workspaces.get(workspaceId);
+      const ws = this.reader.get(workspaceId);
       reviewText = await this.runReview(
         { team, project: task.project, workspaceId },
         bot,
         this.reviewSpec(bot, ctx),
-        ws?.path ?? '',
+        '',
         team,
         keys,
         INTEGRATION_REVIEW_PROMPT({
@@ -878,7 +864,7 @@ export class ReviewPipelineService {
     // CONTAINERIZED: the host has no row, so ask the daemon via sharedRef (truthy ⇒ a shared branch
     // exists). Either way, a missing shared branch is self-healed below.
     let sharedBranch: string | undefined;
-    let workspace = this.workspaces.get(workspaceId);
+    let workspace = this.reader.get(workspaceId);
     if (containerized) {
       sharedBranch = (await git.sharedRef(workspaceId).catch(() => undefined))
         ? 'shared' // sentinel: a shared branch exists (the daemon owns the real name)
@@ -901,7 +887,7 @@ export class ReviewPipelineService {
           reason: `couldn't prepare a branch for the PR: ${healed.reason}`,
         };
       if (!containerized) {
-        workspace = this.workspaces.get(workspaceId);
+        workspace = this.reader.get(workspaceId);
         if (!workspace)
           return { ok: false, reason: `workspace ${workspaceId} disappeared` };
       }

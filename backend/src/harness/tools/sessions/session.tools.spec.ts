@@ -95,20 +95,19 @@ function makeTool(opts: {
   const tool = new CreateSessionTool(
     sessions as never,
     runner as never,
-    workspaces as never,
     // ensureShared routes through the provider; resolving to the same mock keeps the spy assertion.
-    // A containerized workspace id flips the provider's isContainerized (the detection seam).
+    // Every workspace is a sandbox work area now — 'ws-001' (the default the gate tests use) is
+    // containerized, plus any explicit id a sandbox test passes.
     localGitProvider(workspaces as never, {
-      containerizedIds: opts.containerizedWorkspaceId
-        ? new Set([opts.containerizedWorkspaceId])
-        : undefined,
+      containerizedIds: new Set([
+        'ws-001',
+        ...(opts.containerizedWorkspaceId ? [opts.containerizedWorkspaceId] : []),
+      ]),
     }),
     employees as never,
     board as never,
     plans as never,
     notes as never,
-    sandboxes,
-    daemon,
   );
   return { tool, created, runner, board, plans, notes, ensureShared, gitCall };
 }
@@ -234,20 +233,8 @@ describe('create_session × the approval gate', () => {
     expect(ensureShared).toHaveBeenCalledWith('ws-001', 'ticket-7');
   });
 
-  it('drift guard: refuses an execute open when the workspace is on a different shared branch than the ticket lands on', async () => {
-    const { tool, created } = makeTool({
-      boardTask: { id: 7, title: 'API', sharedSlug: 'payment-flow' },
-      refusal: null,
-      workspaceShared: 'shared/something-else',
-    });
-    const out = await tool.execute(
-      { workspaceId: 'ws-001', task: 'go', mode: 'execute', board_task_id: 7 },
-      ctx,
-    );
-    expect(out).toContain('shared/something-else');
-    expect(out).toContain('shared/payment-flow');
-    expect(created).toHaveLength(0); // never opened
-  });
+  // (The host-side shared-branch drift guard was removed with the local path: a work area's shared
+  // branch lives in the daemon and a work area is created per task, so there's no stale host row.)
 
   it('falls back to the plain task when an execute session has no attached plan', async () => {
     const { tool, runner } = makeTool({

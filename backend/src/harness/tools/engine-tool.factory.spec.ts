@@ -5,7 +5,7 @@ import { makeEmployee } from '../employees/employee.testing';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
 import { EXECUTE_CODEX } from '../engines/engine-presets';
 import type { CreateSessionTool } from './sessions/session.tools';
-import type { WorkspaceService } from '../workspaces/workspace.service';
+import type { WorkspaceReader } from '../workspaces/workspace-reader';
 import { EngineToolFactory } from './engine-tool.factory';
 
 /**
@@ -53,7 +53,7 @@ function build(opts: { workspaces?: string[] } = {}) {
     get: (id: string) =>
       (opts.workspaces ?? []).includes(id) ? { id } : undefined,
     list: () => (opts.workspaces ?? []).map((id) => ({ id })),
-  } as unknown as WorkspaceService;
+  } as unknown as WorkspaceReader;
   return {
     factory: new EngineToolFactory(createSession, workspaces),
     opened,

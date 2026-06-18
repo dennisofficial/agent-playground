@@ -17,7 +17,7 @@ import type { PlanStore } from '../memory/plan-store';
 import type { TeamSettingsStore } from '../memory/team-settings-store';
 import type { WorklogStore } from '../memory/worklog-store';
 import type { MetricsEventsService } from '../metrics/metrics-events.service';
-import type { WorkspaceService } from '../workspaces/workspace.service';
+import type { WorkspaceGitPort } from '../workspaces/workspace-git.port';
 import {
   fakeSandboxRegistry,
   localGitProvider,
@@ -58,11 +58,11 @@ function buildRunner(
     attachFails?: boolean;
     /** Simulate a `plan.finished` self-review hook transforming the plan body. */
     selfReview?: (planBody: string) => string;
-    /** What WorkspaceService.refreshFromBase returns (default: a clean refresh). */
-    refreshResult?: Awaited<ReturnType<WorkspaceService['refreshFromBase']>>;
-    /** Make WorkspaceService.refreshFromBase reject (the thrown-error path). */
+    /** What WorkspaceGitPort.refreshFromBase returns (default: a clean refresh). */
+    refreshResult?: Awaited<ReturnType<WorkspaceGitPort['refreshFromBase']>>;
+    /** Make WorkspaceGitPort.refreshFromBase reject (the thrown-error path). */
     refreshThrows?: boolean;
-    /** Initial WorkspaceService.mergeState — the merge-resolution bypass signal. Mutate the returned
+    /** Initial WorkspaceGitPort.mergeState — the merge-resolution bypass signal. Mutate the returned
      * `mergeRef` mid-test to simulate the bot committing the merge. */
     mergeInProgress?: boolean;
     mergeFiles?: string[];
@@ -113,7 +113,7 @@ function buildRunner(
       inProgress: mergeRef.inProgress,
       files: mergeRef.files,
     }),
-  } as unknown as WorkspaceService;
+  } as unknown as WorkspaceGitPort;
   const creds = {
     resolve: async () => ({}),
   } as unknown as TenantCredentialService;
@@ -154,9 +154,12 @@ function buildRunner(
     persona,
     lifecycle,
     worklog,
-    workspaces,
-    // mergeState / refreshFromBase route through the provider; resolve to the same mock service.
-    localGitProvider(workspaces),
+    // Every session is containerized: the work area resolves to a live sandbox (so isContainerized is
+    // true). A missing workspace ⇒ not containerized ⇒ the runner fails the turn (the "gone" case).
+    // mergeState / refreshFromBase route through the provider → the same mock git surface.
+    localGitProvider(workspaces, {
+      containerizedIds: workspace ? new Set([workspace.id]) : new Set(),
+    }),
     creds,
     credCtx,
     metrics,
@@ -164,8 +167,6 @@ function buildRunner(
     env,
     plans,
     settings,
-    // Phase 9: routing discriminator — local path (has() === false) for every existing session spec.
-    fakeSandboxRegistry(),
   );
   return {
     runner,
@@ -217,7 +218,7 @@ describe('SessionRunnerService (fake engine, no LLM)', () => {
     expect(after?.engineSessionId).toBe('engine-1');
     expect(after?.lastReport).toBe('Alex — Found it.');
     expect(after?.turns).toBe(1);
-    expect(seen[0]?.cwd).toBe(WS.path); // the turn ran in the workspace, not WORKER_ROOT
+    expect(seen[0]?.cwd).toBe(''); // daemon-resolved cwd (the work area's worktree); not a host pace, not WORKER_ROOT
     expect(seen[0]?.mode).toBe('plan');
     expect(worklogged).toHaveLength(0); // worklog happens on close, not turn-end
     expect(updates).toEqual([

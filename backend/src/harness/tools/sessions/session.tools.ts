@@ -25,10 +25,7 @@ import {
   SessionRunnerService,
   type ActionResult,
 } from '../../sessions/session-runner.service';
-import { DaemonClient } from '../../workspaces/daemon-client';
-import { SandboxRegistry } from '../../workspaces/sandbox-registry';
 import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
-import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
@@ -89,14 +86,11 @@ export class CreateSessionTool implements IHarnessTool<
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     private readonly runner: SessionRunnerService,
-    private readonly workspaces: WorkspaceService,
     private readonly workspaceGit: WorkspaceGitProvider,
     private readonly employees: EmployeeRegistry,
     private readonly board: BoardStore,
     private readonly plans: PlanStore,
     private readonly notes: TicketNoteStore,
-    private readonly sandboxes: SandboxRegistry,
-    private readonly daemon: DaemonClient,
   ) {}
 
   async execute(
@@ -110,16 +104,11 @@ export class CreateSessionTool implements IHarnessTool<
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
-    // CONTAINERIZED? The workspace id is a `workAreaId` that resolves (via WorkspaceRegistry) to a live
-    // sandbox. A work area's checkout lives inside the daemon (no host `WorkspaceService` row), so the
-    // local existence + drift-guard checks below are LOCAL-ONLY. With the flag off this is always false
-    // and every path is the unchanged local one.
+    // Every workspace is a work area inside a sandbox (the daemon owns its checkout). A workspaceId that
+    // doesn't resolve to a LIVE sandbox is unusable — refuse with the create_workspace next step.
     const containerized = this.workspaceGit.isContainerized({ workspaceId });
-    const workspace = this.workspaces.get(workspaceId);
-    if (!containerized && !workspace)
-      throw new Error(
-        `No workspace "${workspaceId}" — create one first (create_workspace) or check list_workspaces.`,
-      );
+    if (!containerized)
+      return `No live sandbox workspace "${workspaceId}" — create one with create_workspace, or check list_workspaces.`;
     const boardTask =
       board_task_id !== undefined
         ? await this.board.get(id.team, board_task_id)
@@ -134,23 +123,8 @@ export class CreateSessionTool implements IHarnessTool<
         workspaceId,
       );
       if (refusal) return `Can't open an execute session: ${refusal}`;
-      // Drift guard: the ticket's slug is the single source of truth for its shared branch. If this
-      // workspace already sits on a DIFFERENT shared branch (e.g. a manual create_workspace(shared:)),
-      // refuse — otherwise ensureShared keeps the stale branch and the sibling grouping diverges.
-      // LOCAL-ONLY: a sandbox workspace's shared branch lives in the daemon, not on a host row, and a
-      // sandbox is freshly created per task so there's no stale host-side shared branch to drift from.
-      if (
-        !containerized &&
-        board_task_id !== undefined &&
-        boardTask &&
-        workspace!.sharedBranch
-      ) {
-        const want = this.workspaces.sharedBranchName(
-          boardTask.sharedSlug ?? `ticket-${board_task_id}`,
-        );
-        if (workspace!.sharedBranch !== want)
-          return `Can't open an execute session: ${workspaceId} is on ${workspace!.sharedBranch}, but ticket #${board_task_id} lands on ${want}. Use a fresh workspace for this ticket.`;
-      }
+      // (No host-side shared-branch drift guard: a work area's shared branch lives in the daemon, and a
+      // work area is created per task via create_workspace, so there's no stale host row to drift from.)
     }
     // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
     // and an execute session on the same employee can run different engines (Option B). Fixed at
@@ -223,9 +197,7 @@ export class CreateSessionTool implements IHarnessTool<
       // Ensure the workspace is on the shared branch the TICKET names: its `shared_slug` (a feature
       // group landing on one PR), or `ticket-${id}` for standalone work. The drift guard above already
       // rejected a workspace sitting on a conflicting shared branch, so this is a no-op or a clean cut.
-      // For containerized work the git op runs in the daemon keyed by the session id (carry `session`
-      // in the ctx); locally it runs on the host workspace. The pre-existing host sharedBranch is the
-      // fallback only for a local workspace (a sandbox has no host row).
+      // The git op runs in the daemon keyed by the work area (the provider resolves it from workspaceId).
       const sharedBranch = await this.workspaceGit
         .resolve({
           team: id.team,
@@ -237,14 +209,14 @@ export class CreateSessionTool implements IHarnessTool<
           workspaceId,
           boardTask.sharedSlug ?? `ticket-${board_task_id}`,
         )
-        .catch(() => workspace?.sharedBranch);
+        .catch(() => undefined);
       await this.board
         .transition(id.team, board_task_id, 'approved', { status: 'executing' })
         .catch(() => undefined);
       await this.plans
         .setExecuteContext(id.team, board_task_id, {
           executeWorkspaceId: workspaceId,
-          sharedBranch: sharedBranch ?? workspace?.sharedBranch,
+          sharedBranch,
         })
         .catch(() => undefined);
     }

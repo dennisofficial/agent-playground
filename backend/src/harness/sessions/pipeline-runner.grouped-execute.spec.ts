@@ -84,12 +84,10 @@ function build() {
     proposals as never,
     review as never,
     boardEvents as never,
-    workspaces as never,
     phaseStore as never,
     codingStore as never,
     reviewStore as never,
     notes as never,
-    fakeSandboxRegistry() as never,
     localGitProvider() as never,
   );
   return {

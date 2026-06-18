@@ -21,7 +21,7 @@ import {
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
 import { SessionRunnerService } from '../../sessions/session-runner.service';
-import { WorkspaceService } from '../../workspaces/workspace.service';
+import { WorkspaceReader } from '../../workspaces/workspace-reader';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
@@ -92,7 +92,7 @@ export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema>
 
   constructor(
     private readonly board: BoardStore,
-    private readonly workspaces: WorkspaceService,
+    private readonly workspaces: WorkspaceReader,
     private readonly employees: EmployeeRegistry,
     private readonly runner: PipelineRunnerService,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,

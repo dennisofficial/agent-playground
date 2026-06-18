@@ -15,7 +15,7 @@ import {
 import { SessionRunnerService } from './sessions/session-runner.service';
 import { ToolRegistry } from './tools/tool.registry';
 import { DEFAULT_CHAT_TOOLSET } from './tools/default-toolset';
-import { WorkspaceService } from './workspaces/workspace.service';
+import { WorkspaceReader } from './workspaces/workspace-reader';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 
 /**
@@ -125,7 +125,7 @@ describe('HarnessModule (full DI assembly, live Postgres)', () => {
 
     expect(moduleRef.get(ChannelService)).toBeDefined();
     expect(moduleRef.get(SessionRunnerService)).toBeDefined();
-    expect(moduleRef.get(WorkspaceService)).toBeDefined();
+    expect(moduleRef.get(WorkspaceReader)).toBeDefined();
     expect(moduleRef.get<SessionRegistry>(SESSION_REGISTRY)).toBeDefined();
 
     await moduleRef.close();

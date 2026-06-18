@@ -19,7 +19,7 @@ import {
 } from '../sessions/session-registry.port';
 import { EngineToolFactory } from '../tools/engine-tool.factory';
 import { ToolRegistry } from '../tools/tool.registry';
-import { WorkspaceService } from '../workspaces/workspace.service';
+import { WorkspaceReader } from '../workspaces/workspace-reader';
 import { GAP_THRESHOLD_DEFAULT_MS } from './channel-render';
 import { BotState } from './bot-state';
 import { BotGraphNodes } from './bot-graph.nodes';
@@ -79,7 +79,7 @@ export class BotGraphFactory {
     private readonly reconcile: ReconcileService,
     private readonly models: ChatModelFactory,
     private readonly persona: PersonaService,
-    private readonly workspaces: WorkspaceService,
+    private readonly workspaces: WorkspaceReader,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     @Inject(CHECKPOINTER) private readonly checkpointer: PostgresSaver,
     env: EnvService,

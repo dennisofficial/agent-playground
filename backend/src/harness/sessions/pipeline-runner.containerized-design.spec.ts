@@ -75,12 +75,10 @@ function build() {
     stub() as never, // proposals
     review as never,
     { emit: noop, onEvent: noop } as never, // boardEvents
-    workspaces as never,
     stub() as never, // phaseStore
     stub() as never, // codingStore
     stub() as never, // reviewStore
     stub() as never, // notes
-    sandboxes as never,
     workspaceGit as never,
   );
   return { svc, attachDesign, daemon, workspaceGit, hostGet };

@@ -13,7 +13,7 @@ import type { FetchService } from '../memory/fetch.service';
 import type { ReconcileService } from '../memory/reconcile.service';
 import type { SessionRegistry } from '../sessions/session-registry.port';
 import type { ToolRegistry } from '../tools/tool.registry';
-import type { WorkspaceService } from '../workspaces/workspace.service';
+import type { WorkspaceReader } from '../workspaces/workspace-reader';
 import { makeEmployee } from '@harness/employees/employee.testing';
 import { BotGraphFactory } from './bot-graph.factory';
 
@@ -112,7 +112,7 @@ describe('bot graph — post-tools context refresh', () => {
 
     // Counter-based list mock: first call (during recallNode) → no trees, second (refreshContext) → one.
     let listCallCount = 0;
-    const workspaces: WorkspaceService = {
+    const workspaces: WorkspaceReader = {
       list: () => {
         listCallCount++;
         if (listCallCount <= 1) return [];
@@ -124,10 +124,10 @@ describe('bot graph — post-tools context refresh', () => {
             ownerBot: 'alex',
             sharedBranch: undefined,
             project: 'myproject',
-          } as unknown as ReturnType<WorkspaceService['list']>[0],
+          } as unknown as ReturnType<WorkspaceReader['list']>[0],
         ];
       },
-    } as unknown as WorkspaceService;
+    } as unknown as WorkspaceReader;
 
     // A tool tagged ['work'] — its execution simulates the workspace being created.
     const pokeTool = tool(async () => 'ws-new created', {
@@ -260,7 +260,7 @@ describe('bot graph — post-tools context refresh', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorkspaceService,
+      { list: () => [] } as unknown as WorkspaceReader,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -339,7 +339,7 @@ describe('bot graph — post-tools context refresh', () => {
       } as unknown as ReconcileService,
       { buildModel: () => fakeModel } as unknown as ChatModelFactory,
       { chatPromptFor: () => 'persona' } as unknown as PersonaService,
-      { list: () => [] } as unknown as WorkspaceService,
+      { list: () => [] } as unknown as WorkspaceReader,
       { list: async () => [] } as unknown as SessionRegistry,
       new MemorySaver() as unknown as PostgresSaver,
       { get: () => undefined } as unknown as EnvService,
@@ -364,7 +364,7 @@ describe('bot graph — post-tools context refresh', () => {
 
     // Counter-based: recallNode (call 1) → empty; refreshContext (call 2) → new workspace.
     let listCount = 0;
-    const workspaces: WorkspaceService = {
+    const workspaces: WorkspaceReader = {
       list: () => {
         listCount++;
         return listCount <= 1
@@ -377,10 +377,10 @@ describe('bot graph — post-tools context refresh', () => {
                 ownerBot: 'alex',
                 sharedBranch: undefined,
                 project: 'myproject',
-              } as unknown as ReturnType<WorkspaceService['list']>[0],
+              } as unknown as ReturnType<WorkspaceReader['list']>[0],
             ];
       },
-    } as unknown as WorkspaceService;
+    } as unknown as WorkspaceReader;
 
     const pokeTool = tool(async () => 'created', {
       name: 'poke',
