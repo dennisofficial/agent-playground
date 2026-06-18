@@ -132,7 +132,8 @@ describe('RemoteTurnDispatcher.dispatch', () => {
     // The payload carries the engine, the resolved sources, and the resume mapping.
     expect(payload).toEqual({
       engine: 'claude',
-      sessionId: 'sess-42', // harness session id (worktree key)
+      workAreaId: 'ws-001', // the work area = the daemon's worktree key (ctx.workspaceId here)
+      sessionId: 'sess-42', // the harness session id (per-session dev port + tracing)
       task: 'fix the bug',
       systemPrompt: 'you are alex',
       agentId: 'alex',
@@ -154,7 +155,7 @@ describe('RemoteTurnDispatcher.dispatch', () => {
     expect(signal).toBe(args.signal);
   });
 
-  it('maps codex and falls back to the workspaceId for the harness session id when no session', async () => {
+  it('maps codex and falls back to the workspaceId for both ids when no session', async () => {
     const { dispatcher, dispatchRun } = build();
     const ctx: TurnRoutingCtx = {
       team: 'team-1',
@@ -165,7 +166,8 @@ describe('RemoteTurnDispatcher.dispatch', () => {
     const payload = (dispatchRun as unknown as { mock: { calls: unknown[][] } })
       .mock.calls[0][1] as RunCommandPayload;
     expect(payload.engine).toBe('codex');
-    expect(payload.sessionId).toBe('ws-009'); // ctx.workspaceId fallback
+    expect(payload.workAreaId).toBe('ws-009'); // ctx.workspaceId is the work area (worktree key)
+    expect(payload.sessionId).toBe('ws-009'); // no session → workAreaId fallback for the session id too
   });
 
   it('streams onEvent and returns the daemon result', async () => {

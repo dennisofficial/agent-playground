@@ -8,6 +8,7 @@ import type {
 import type { Session } from '../sessions/session-registry.port';
 import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
 import { SandboxRegistry } from './sandbox-registry';
+import { WorkspaceRegistry } from './workspace-registry';
 
 /**
  * The minimal context a turn needs to be ROUTED (local host vs. remote sandbox). Deliberately not the
@@ -46,6 +47,7 @@ export class TurnExecutor {
     private readonly engines: EngineRegistry,
     private readonly remote: RemoteTurnDispatcher,
     private readonly sandboxes: SandboxRegistry,
+    private readonly workAreas: WorkspaceRegistry,
   ) {}
 
   /**
@@ -69,19 +71,16 @@ export class TurnExecutor {
   /**
    * The routing POLICY — whether this turn runs in an isolated sandbox (Phase 9).
    *
-   * THE DISCRIMINATOR: a turn is containerized IFF its `workspaceId` is a LIVE SANDBOX, i.e.
-   * `SandboxRegistry.has(workspaceId)`. No engine/project re-check happens here — the create-time policy
-   * (in `create_workspace`, gated by `WORKSPACE_SANDBOX_ENABLED` + a registered project + a claude/codex
-   * engine) ALREADY decided sandbox-vs-local, and stamped the choice as the session's `workspace_id`
-   * (the sandbox uuid for a containerized session, `ws-NNN` for a local one). Routing just reads that
-   * decision back off the registry. `WorkspaceGitProvider.isContainerized` uses the SAME predicate, so a
-   * session's turns and its git ops always route together.
-   *
-   * FLAG-OFF SAFETY: with `WORKSPACE_SANDBOX_ENABLED` false, no sandbox is ever created, so `has()` is
-   * always false and every turn stays local — byte-identical to pre-Phase-9. (The unit test forces the
-   * branch via the test-only subclass override.)
+   * THE DISCRIMINATOR: a turn is containerized IFF its `workAreaId` resolves through `WorkspaceRegistry`
+   * to a LIVE sandbox (`SandboxRegistry.has(sandboxId)`). `create_workspace` registered the work area and
+   * stamped its `workAreaId` onto the session's `workspace_id`; routing just resolves that back to the
+   * owning sandbox. `WorkspaceGitProvider.isContainerized` uses the SAME predicate, so a session's turns
+   * and its git ops always route together. (The unit test forces the branch via the test-only override.)
    */
   protected isContainerized(ctx: TurnRoutingCtx): boolean {
-    return !!ctx.workspaceId && this.sandboxes.has(ctx.workspaceId);
+    const workAreaId = ctx.session?.workspaceId ?? ctx.workspaceId;
+    if (!workAreaId) return false;
+    const sandboxId = this.workAreas.sandboxIdFor(workAreaId);
+    return !!sandboxId && this.sandboxes.has(sandboxId);
   }
 }

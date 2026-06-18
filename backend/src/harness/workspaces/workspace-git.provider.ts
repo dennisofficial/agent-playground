@@ -3,6 +3,7 @@ import { DaemonClient } from './daemon-client';
 import { DaemonGitAdapter } from './daemon-git.adapter';
 import { LocalWorkspaceAdapter } from './local-workspace.adapter';
 import { SandboxRegistry } from './sandbox-registry';
+import { WorkspaceRegistry } from './workspace-registry';
 import type { WorkspaceGitCtx, WorkspaceGitPort } from './workspace-git.port';
 
 /**
@@ -29,25 +30,17 @@ export class WorkspaceGitProvider {
     private readonly local: LocalWorkspaceAdapter,
     private readonly daemon: DaemonClient,
     private readonly sandboxes: SandboxRegistry,
+    private readonly workAreas: WorkspaceRegistry,
   ) {}
 
-  /** The port to run `ctx`'s git op against — local host today, in-sandbox daemon once a workspace is
-   * a live sandbox. The daemon adapter is constructed PER-RESOLVE bound to the sandbox uuid AND the ctx,
-   * so it can substitute the host workspace-id arg with the daemon's per-worktree key (`ctx.session.id`)
-   * on each forwarded call (the host↔daemon identity mapping). */
+  /** The port to run `ctx`'s git op against — the in-sandbox daemon when `ctx`'s work area resolves to a
+   * live sandbox, else the local host adapter. The daemon adapter is constructed PER-RESOLVE bound to the
+   * `(sandboxId, workAreaId)` resolved via `WorkspaceRegistry` — so it substitutes the host workspace-id
+   * arg with the daemon's per-worktree key (`workAreaId`) on each forwarded call (no session needed). */
   resolve(ctx: WorkspaceGitCtx): WorkspaceGitPort {
-    if (this.isContainerized(ctx)) {
-      // The sandbox to dispatch to: the session's/ctx's workspace id (= the sandbox uuid for a
-      // containerized run). Required on the remote path — without it there's no container to reach.
-      const workspaceId = this.sandboxId(ctx);
-      if (!workspaceId) {
-        throw new Error(
-          'WorkspaceGitProvider: a containerized git op needs a workspaceId (the sandbox to dispatch to).',
-        );
-      }
-      return new DaemonGitAdapter(this.daemon, workspaceId, ctx);
-    }
-    // LOCAL — today's path. The pass-through adapter delegates verbatim to WorkspaceService.
+    const daemonAdapter = this.daemonFor(ctx);
+    if (daemonAdapter) return daemonAdapter;
+    // LOCAL — the pass-through adapter delegates verbatim to WorkspaceService.
     return this.local;
   }
 
@@ -64,40 +57,32 @@ export class WorkspaceGitProvider {
    * `undefined` and every call site takes its unchanged local branch.
    */
   daemonFor(ctx: WorkspaceGitCtx): DaemonGitAdapter | undefined {
-    if (!this.isContainerized(ctx)) return undefined;
-    const workspaceId = this.sandboxId(ctx);
-    if (!workspaceId) {
-      throw new Error(
-        'WorkspaceGitProvider: a containerized daemon op needs a workspaceId (the sandbox to dispatch to).',
-      );
-    }
-    return new DaemonGitAdapter(this.daemon, workspaceId, ctx);
+    const workAreaId = this.workAreaId(ctx);
+    if (!workAreaId) return undefined;
+    const sandboxId = this.workAreas.sandboxIdFor(workAreaId);
+    if (!sandboxId || !this.sandboxes.has(sandboxId)) return undefined;
+    return new DaemonGitAdapter(this.daemon, sandboxId, workAreaId);
   }
 
-  /** The candidate sandbox id for a ctx — the session's workspace (preferred: the session is the unit a
-   * sandbox hosts) else the ctx's workspace handle. Both hold the sandbox uuid for a containerized run. */
-  private sandboxId(ctx: WorkspaceGitCtx): string | undefined {
+  /** The work area a ctx addresses — the session's workspace (the session belongs to a work area) else
+   * the ctx's workspace handle. Both hold the `workAreaId` (`session.workspace_id` is the workAreaId). */
+  private workAreaId(ctx: WorkspaceGitCtx): string | undefined {
     return ctx.session?.workspaceId ?? ctx.workspaceId;
   }
 
   /**
-   * The routing POLICY — whether this git op runs inside an isolated sandbox (Phase 9).
+   * The routing POLICY — whether this git op runs inside an isolated sandbox.
    *
-   * THE DISCRIMINATOR (identical to `TurnExecutor.isContainerized`): the op's workspace id is a LIVE
-   * SANDBOX, i.e. `SandboxRegistry.has(workspaceId)`. The create-time policy already decided sandbox vs
-   * local and stamped it as the session's `workspace_id`; this just reads it back. No project/engine
-   * re-check at routing time. The two seams (turn + git) share the predicate so a session's turns and
-   * git ops always route together.
-   *
-   * FLAG-OFF SAFETY: `WORKSPACE_SANDBOX_ENABLED` false ⇒ no sandbox is ever created ⇒ `has()` is always
-   * false ⇒ every git op resolves to the LOCAL adapter — byte-identical to pre-Phase-9.
+   * THE DISCRIMINATOR (identical to `TurnExecutor.isContainerized`): the op's `workAreaId` resolves
+   * through `WorkspaceRegistry` to a sandbox that is LIVE in `SandboxRegistry`. `create_workspace` stamped
+   * the work area's `workAreaId` onto the session's `workspace_id` and registered it → this reads that
+   * back. The two seams (turn + git) share the predicate so a session's turns and git ops route together.
    *
    * PUBLIC so a containerized call site can fork its own host-vs-daemon branch on the SAME discriminator
    * the provider routes on (e.g. ReviewPipelineService's review/ship barrier, open_pr) before deciding
    * whether to use `daemonFor(ctx)` or its unchanged host github flow.
    */
   public isContainerized(ctx: WorkspaceGitCtx): boolean {
-    const id = this.sandboxId(ctx);
-    return !!id && this.sandboxes.has(id);
+    return this.daemonFor(ctx) !== undefined;
   }
 }

@@ -20,11 +20,14 @@ import {
 } from '../engines/worker-engine.port';
 import type { RemoteTurnDispatcher } from './remote-turn.dispatcher';
 import type { SandboxRegistry } from './sandbox-registry';
+import { WorkspaceRegistry } from './workspace-registry';
 import { TurnExecutor, type TurnRoutingCtx } from './turn-executor.service';
 
 /** A SandboxRegistry stand-in — `has()` defaults false (the local path); the test-only subclass forces
  * the routing decision directly, so this is just a constructor placeholder. */
 const noSandboxes = { has: () => false } as unknown as SandboxRegistry;
+/** An empty work-area registry (no work area resolves to a sandbox ⇒ local). */
+const noWorkAreas = new WorkspaceRegistry();
 
 const CTX: TurnRoutingCtx = {
   team: 'team-1',
@@ -55,7 +58,7 @@ class TestableTurnExecutor extends TurnExecutor {
     remote: RemoteTurnDispatcher,
     private readonly forceContainerized: boolean,
   ) {
-    super(engines, remote, noSandboxes);
+    super(engines, remote, noSandboxes, noWorkAreas);
   }
   protected isContainerized(): boolean {
     return this.forceContainerized;
@@ -70,8 +73,8 @@ describe('TurnExecutor fork', () => {
     const dispatch = vi.fn();
     const remote = { dispatch } as unknown as RemoteTurnDispatcher;
 
-    // The real executor — isContainerized is hard-false this phase, so this exercises the live default.
-    const exec = new TurnExecutor(engines, remote, noSandboxes);
+    // The real executor — no work area resolves to a sandbox, so this exercises the local default.
+    const exec = new TurnExecutor(engines, remote, noSandboxes, noWorkAreas);
     const args = makeArgs();
     const out = await exec.run(CTX, EWorkerEngineName.CLAUDE, args);
 
@@ -113,46 +116,55 @@ describe('TurnExecutor fork', () => {
     const dispatch = vi.fn(async () => RESULT);
     const remote = { dispatch } as unknown as RemoteTurnDispatcher;
 
-    const exec = new TurnExecutor(engines, remote, noSandboxes);
+    const exec = new TurnExecutor(engines, remote, noSandboxes, noWorkAreas);
     await exec.run(CTX, EWorkerEngineName.CODEX, makeArgs());
 
     expect(run).toHaveBeenCalledTimes(1); // local
     expect(dispatch).not.toHaveBeenCalled(); // dormant remote
   });
 
-  it('THE DISCRIMINATOR: routes REMOTE when SandboxRegistry.has(workspaceId) is true (real isContainerized)', async () => {
+  it('THE DISCRIMINATOR: routes REMOTE when the workArea resolves to a LIVE sandbox (real isContainerized)', async () => {
     const run = vi.fn(async () => RESULT);
     const engines = {
       get: () => ({ name: EWorkerEngineName.CLAUDE, run }),
     } as unknown as EngineRegistry;
     const dispatch = vi.fn(async () => RESULT);
     const remote = { dispatch } as unknown as RemoteTurnDispatcher;
-    // The real policy: a workspace id the registry knows ⇒ containerized.
+    // The real policy: a workAreaId that resolves (via WorkspaceRegistry) to a live sandbox ⇒ remote.
     const has = vi.fn((id: string) => id === 'sandbox-uuid-1');
     const sandboxes = { has } as unknown as SandboxRegistry;
+    const workAreas = new WorkspaceRegistry();
+    workAreas.upsert({
+      workAreaId: 'wa-1',
+      sandboxId: 'sandbox-uuid-1',
+      team: 't',
+      project: 'p',
+      name: 'wa-1',
+      ownerBot: 'alex',
+    });
 
-    const exec = new TurnExecutor(engines, remote, sandboxes);
+    const exec = new TurnExecutor(engines, remote, sandboxes, workAreas);
 
-    // A live sandbox id → remote.
+    // A work area whose sandbox is live → remote.
     await exec.run(
-      { team: 't', project: 'p', workspaceId: 'sandbox-uuid-1' },
+      { team: 't', project: 'p', workspaceId: 'wa-1' },
       EWorkerEngineName.CLAUDE,
       makeArgs(),
     );
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
 
-    // A local ws-NNN id (not in the registry) → local.
+    // An unknown work area id (not in the registry) → local.
     dispatch.mockClear();
     await exec.run(
-      { team: 't', project: 'p', workspaceId: 'ws-001' },
+      { team: 't', project: 'p', workspaceId: 'wa-unknown' },
       EWorkerEngineName.CLAUDE,
       makeArgs(),
     );
     expect(run).toHaveBeenCalledTimes(1);
     expect(dispatch).not.toHaveBeenCalled();
 
-    // No workspace id at all → local (never reaches has()).
+    // No workspace id at all → local.
     run.mockClear();
     await exec.run(
       { team: 't', project: 'p' },

@@ -62,7 +62,11 @@ export const DAEMON_CONSUMER_GROUP = 'daemon';
 export interface RunCommandPayload {
   /** Which containerized engine runs this turn (langgraph never reaches the daemon). */
   engine: 'claude' | 'codex';
-  /** The harness session id — the daemon keys the worktree (the engine cwd) off this. */
+  /** The WORK AREA this turn runs in — the daemon keys the worktree (the engine cwd) off this, so all
+   * sessions in a work area share one checkout (a review session sees the build session's tree). */
+  workAreaId: string;
+  /** The harness session id — DISTINCT from the work area (a work area hosts several sessions). Used for
+   * the deterministic per-session dev-server PORT + tracing, NOT as the worktree key. */
   sessionId: string;
   /** The opening/reply message for the turn (RunWorkerArgs.task). */
   task: string;

@@ -86,9 +86,12 @@ export class DaemonTurnService {
       //    `whenCloned()` resolves immediately when no clone is expected; a failed clone rejects → this
       //    run fails with a legible error frame.
       await this.git.whenCloned();
+      // Resolve cwd = the WORK AREA's worktree (created at create_workspace; created here only as a
+      // fallback, e.g. an investigate session whose work area wasn't pre-realized). Idempotent — sessions
+      // in the same work area share this checkout.
       const cwd =
-        this.git.worktreePath(payload.sessionId) ??
-        (await this.git.createWorktree(payload.sessionId));
+        this.git.worktreePath(payload.workAreaId) ??
+        (await this.git.createWorktree(payload.workAreaId));
 
       // 2b) PER-SESSION PORT (Phase 10 self-validation). Two dev servers in ONE sandbox must not both
       //     grab 3000 — so give each session a deterministic, distinct PORT (and PORT_RANGE_START as a

@@ -11,7 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   GithubApiService,
@@ -53,11 +53,12 @@ function slugify(name: string): string {
   );
 }
 
-/** A per-session git worktree inside the sandbox's single clone. */
+/** A per-WORK-AREA git worktree inside the sandbox's single clone. One work area = one branch/worktree;
+ * the SESSIONS in a work area share it (so a review session sees the build session's tree). */
 export interface DaemonWorktree {
-  /** The session this worktree belongs to (its key). */
-  sessionId: string;
-  /** The branch checked out in it (`agent/<sessionId>`). */
+  /** The work area this worktree belongs to (its key) — the host's `workAreaId` (`wa-<uuid>`). */
+  workAreaId: string;
+  /** The branch checked out in it. */
   branch: string;
   /** The on-disk checkout path — the engine's cwd. */
   path: string;
@@ -105,7 +106,7 @@ export interface DaemonBaseRefreshResult {
  * publish/pull/merge, base refresh, owner diff, the `.git/info/exclude` write) and drops the rest.
  *
  * The agent-facing unit is the SESSION: each coding session gets its own `git worktree` (branch
- * `agent/<sessionId>`) under `<clone>/.workspaces/<sessionId>`, isolated from sibling sessions. The
+ * `agent/<workAreaId>`) under `<clone>/.workspaces/<workAreaId>`, isolated from sibling sessions. The
  * shared-branch model is preserved but collapsed to ONE shared branch for the whole sandbox: sessions
  * `publish` their committed work onto it and the workspace ships ONE PR (shared → origin).
  *
@@ -165,9 +166,9 @@ export class DaemonGitService {
     return this.repo;
   }
 
-  private requireWorktree(sessionId: string): DaemonWorktree {
-    const wt = this.worktrees.get(sessionId);
-    if (!wt) throw new Error(`No worktree for session "${sessionId}".`);
+  private requireWorktree(workAreaId: string): DaemonWorktree {
+    const wt = this.worktrees.get(workAreaId);
+    if (!wt) throw new Error(`No worktree for session "${workAreaId}".`);
     return wt;
   }
 
@@ -257,6 +258,9 @@ export class DaemonGitService {
       () => gitUrl,
     );
     this.repo = { root, baseBranch, gitUrl: origin || gitUrl };
+    // Re-adopt any work-area worktrees that survived a daemon restart (the in-memory map is empty after
+    // a restart, but `.workspaces/<workAreaId>` checkouts persist on the writable layer).
+    await this.adoptWorktrees();
     return root;
   }
 
@@ -296,33 +300,88 @@ export class DaemonGitService {
     if (this.cloneGate) await this.cloneGate;
   }
 
-  /** Where per-session worktrees live inside the clone. */
+  /** Where per-work-area worktrees live inside the clone. */
   private worktreesDir(): string {
     return join(this.requireRepo().root, '.workspaces');
   }
 
-  // ---- per-session worktrees ---------------------------------------------------------------------
+  // ---- per-work-area worktrees -------------------------------------------------------------------
 
   /**
-   * Cut a fresh per-session worktree off the latest base: fetch `origin/<base>`, then
-   * `git worktree add -b agent/<sessionId> <dir> origin/<base>`, and set the worktree's author
-   * identity from the resolved credential. Idempotent for an already-open session (returns its path).
-   * Returns the checkout path (the engine's cwd).
+   * Realize the work area's worktree and `git worktree add` it at `.workspaces/<workAreaId>` — the dir is
+   * the workAreaId VERBATIM (`wa-<uuid>`, already path-safe) so the daemon can re-adopt worktrees from
+   * `git worktree list --porcelain` after a restart. Idempotent for an already-open work area (returns its
+   * path) — this is what makes the SESSIONS in a work area share one worktree. Mirrors the host
+   * `WorkspaceService.create` branch/shared sequencing:
+   *  - opts.branch  → check out this existing branch, else create it; default `agent/[owner/]<workAreaId>`.
+   *  - opts.shared  → join/start the sandbox's shared integration branch; the personal branch is cut FROM
+   *                   its tip so everyone on the feature starts from the same base.
+   *  - opts.ownerBot → folded into the default branch name for readability.
    */
-  async createWorktree(sessionId: string): Promise<string> {
-    const existing = this.worktrees.get(sessionId);
+  async createWorktree(
+    workAreaId: string,
+    opts: { branch?: string; shared?: string; ownerBot?: string } = {},
+  ): Promise<string> {
+    const existing = this.worktrees.get(workAreaId);
     if (existing) return existing.path;
-    const { root, baseBranch } = this.requireRepo();
-    const slug = slugify(sessionId);
-    const branch = `agent/${slug}`;
-    const checkout = join(this.worktreesDir(), slug);
+    if (opts.branch?.startsWith('shared/')) {
+      throw new Error(
+        'Shared branches are never checked out — pass `shared` to join one, not `branch`.',
+      );
+    }
+    const { root } = this.requireRepo();
+    const checkout = join(this.worktreesDir(), workAreaId);
     await mkdir(this.worktreesDir(), { recursive: true });
 
-    // Cut from the freshly-fetched base so a session that opens late starts current.
-    const startPoint = await this.freshBaseRef();
-    await this.git(['worktree', 'add', '-b', branch, checkout, startPoint], root);
+    // Resolve the shared integration branch (single-repo: the FIRST shared branch wins for the sandbox).
+    let shared = opts.shared
+      ? (this.sharedBranch ?? this.sharedBranchName(opts.shared))
+      : undefined;
+    const freshBase = await this.freshBaseRef();
+    if (shared) await this.ensureSharedBranch(shared, freshBase);
 
-    // Identity is best-effort: a public-repo session has no resolvable credential, so fall back to a
+    let branch: string;
+    let baseSha: string;
+    if (opts.branch) {
+      branch = opts.branch;
+      const branchExists = await this.git(
+        ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`],
+        root,
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (branchExists) {
+        // Re-attach: a recorded shared association is the truth (a reopened work area keeps publish/pull).
+        const recorded = await this.readSharedConfig(branch);
+        if (recorded && shared && recorded !== shared) {
+          throw new Error(
+            `Branch ${branch} already publishes to ${recorded} — it can't join ${shared}.`,
+          );
+        }
+        shared = recorded ?? shared;
+        baseSha = await this.git(['rev-parse', branch], root);
+        await this.git(['worktree', 'add', checkout, branch], root);
+      } else {
+        baseSha = shared ? await this.git(['rev-parse', shared], root) : freshBase;
+        await this.git(['worktree', 'add', '-b', branch, checkout, baseSha], root);
+      }
+    } else {
+      const owner = opts.ownerBot ? `${slugify(opts.ownerBot)}/` : '';
+      branch = `agent/${owner}${slugify(workAreaId)}`;
+      baseSha = shared ? await this.git(['rev-parse', shared], root) : freshBase;
+      await this.git(['worktree', 'add', '-b', branch, checkout, baseSha], root);
+    }
+
+    if (shared) {
+      await this.git(
+        ['config', `branch.${branch}.${SHARED_CONFIG_KEY}`, shared],
+        root,
+      );
+      this.sharedBranch = shared;
+    }
+
+    // Identity is best-effort: a public-repo work area has no resolvable credential, so fall back to a
     // stable generic author rather than failing the worktree create over attribution.
     const cred = await this.credentials.resolve().catch(() => ({
       token: '',
@@ -344,13 +403,15 @@ export class DaemonGitService {
     }
 
     const wt: DaemonWorktree = {
-      sessionId,
+      workAreaId,
       branch,
       path: await realpath(checkout),
-      baseSha: startPoint,
+      baseSha,
     };
-    this.worktrees.set(sessionId, wt);
-    this.logger.log(`session ${sessionId}: worktree ${branch} at ${wt.path}`);
+    this.worktrees.set(workAreaId, wt);
+    this.logger.log(
+      `work area ${workAreaId}: worktree ${branch} at ${wt.path}${shared ? ` (shared: ${shared})` : ''}`,
+    );
     return wt.path;
   }
 
@@ -387,24 +448,108 @@ export class DaemonGitService {
     }
   }
 
-  worktreePath(sessionId: string): string | undefined {
-    return this.worktrees.get(sessionId)?.path;
+  worktreePath(workAreaId: string): string | undefined {
+    return this.worktrees.get(workAreaId)?.path;
   }
 
   listWorktrees(): DaemonWorktree[] {
     return [...this.worktrees.values()];
   }
 
+  /**
+   * The host's metadata bridge: rebuild the work-area view from DURABLE git state
+   * (`git worktree list --porcelain`), NOT the in-memory map — so it's correct even after a daemon
+   * restart (the map is empty then, but `.workspaces/<workAreaId>` checkouts survive). The host
+   * `WorkspaceReader`/registry reconcile from this. Each entry: workAreaId (the dir basename), its branch,
+   * path, and its recorded shared branch. The main clone worktree (not under `.workspaces/`) is excluded.
+   */
+  async describeWorktrees(): Promise<
+    Array<{ workAreaId: string; branch: string; path: string; shared?: string }>
+  > {
+    if (!this.repo) return [];
+    const wtDir = this.worktreesDir();
+    const porcelain = await this.git(
+      ['worktree', 'list', '--porcelain'],
+      this.repo.root,
+    ).catch(() => '');
+
+    const entries: Array<{
+      workAreaId: string;
+      branch: string;
+      path: string;
+      shared?: string;
+    }> = [];
+    let curPath: string | undefined;
+    let curBranch = '';
+    const flush = async (): Promise<void> => {
+      if (curPath && curPath.startsWith(wtDir)) {
+        const shared = curBranch
+          ? await this.readSharedConfig(curBranch)
+          : undefined;
+        entries.push({
+          workAreaId: basename(curPath),
+          branch: curBranch,
+          path: curPath,
+          ...(shared ? { shared } : {}),
+        });
+      }
+      curPath = undefined;
+      curBranch = '';
+    };
+    for (const line of porcelain.split('\n')) {
+      if (line.startsWith('worktree ')) {
+        await flush();
+        curPath = line.slice('worktree '.length).trim();
+      } else if (line.startsWith('branch ')) {
+        curBranch = line
+          .slice('branch '.length)
+          .trim()
+          .replace(/^refs\/heads\//, '');
+      } else if (line === '') {
+        await flush();
+      }
+    }
+    await flush();
+    return entries;
+  }
+
+  /**
+   * Rebuild the in-memory worktree map from durable git state — called after clone-on-boot so a turn or
+   * git op after a daemon RESTART finds its work area's worktree (the host re-dispatches the same
+   * workAreaId). Without this, `worktreePath` returns undefined post-restart and `createWorktree` would
+   * collide with the surviving on-disk branch/dir.
+   */
+  async adoptWorktrees(): Promise<void> {
+    const found = await this.describeWorktrees();
+    let adopted = 0;
+    for (const w of found) {
+      if (this.worktrees.has(w.workAreaId)) continue;
+      const baseSha = await this.git(
+        ['rev-parse', w.branch],
+        this.requireRepo().root,
+      ).catch(() => '');
+      this.worktrees.set(w.workAreaId, {
+        workAreaId: w.workAreaId,
+        branch: w.branch,
+        path: w.path,
+        baseSha,
+      });
+      if (w.shared && !this.sharedBranch) this.sharedBranch = w.shared;
+      adopted++;
+    }
+    if (adopted) this.logger.log(`adopted ${adopted} work-area worktree(s) from git`);
+  }
+
   /** Remove a session's worktree checkout. The branch (and its commits) survive — work is never lost. */
-  async removeWorktree(sessionId: string): Promise<void> {
-    const wt = this.worktrees.get(sessionId);
-    if (!wt) throw new Error(`No worktree for session "${sessionId}".`);
+  async removeWorktree(workAreaId: string): Promise<void> {
+    const wt = this.worktrees.get(workAreaId);
+    if (!wt) throw new Error(`No worktree for session "${workAreaId}".`);
     await this.git(
       ['worktree', 'remove', '--force', wt.path],
       this.requireRepo().root,
     );
-    this.worktrees.delete(sessionId);
-    this.logger.log(`session ${sessionId}: worktree removed (branch ${wt.branch} kept)`);
+    this.worktrees.delete(workAreaId);
+    this.logger.log(`session ${workAreaId}: worktree removed (branch ${wt.branch} kept)`);
   }
 
   // ---- merge state / base refresh ----------------------------------------------------------------
@@ -432,9 +577,9 @@ export class DaemonGitService {
 
   /** Read-only: whether a merge is in progress in this session's worktree, and the conflicted paths. */
   async mergeState(
-    sessionId: string,
+    workAreaId: string,
   ): Promise<{ inProgress: boolean; files: string[] }> {
-    const wt = this.worktrees.get(sessionId);
+    const wt = this.worktrees.get(workAreaId);
     if (!wt) return { inProgress: false, files: [] };
     const inProgress = await this.mergeInProgress(wt.path);
     return {
@@ -448,8 +593,8 @@ export class DaemonGitService {
    * merge it into the worktree. A dirty tree (git would refuse), a fetch miss, or a conflict are
    * structured no-ops (`refreshed:false` + detail/conflicted), never throws — same shape as the host.
    */
-  async refreshFromBase(sessionId: string): Promise<DaemonBaseRefreshResult> {
-    const wt = this.requireWorktree(sessionId);
+  async refreshFromBase(workAreaId: string): Promise<DaemonBaseRefreshResult> {
+    const wt = this.requireWorktree(workAreaId);
     await this.refuseMidMerge(wt.path);
     const { root, baseBranch } = this.requireRepo();
     const dirty = !!(
@@ -527,11 +672,11 @@ export class DaemonGitService {
    * (see `ensureSharedAtBase`) cuts elsewhere. Returns the shared branch name.
    */
   async ensureShared(
-    sessionId: string,
+    workAreaId: string,
     name: string,
     startPoint?: string,
   ): Promise<string> {
-    const wt = this.requireWorktree(sessionId);
+    const wt = this.requireWorktree(workAreaId);
     const { root } = this.requireRepo();
     // Single-repo: the FIRST shared branch wins for the whole sandbox; later sessions join it.
     const shared = this.sharedBranch ?? this.sharedBranchName(name);
@@ -544,7 +689,7 @@ export class DaemonGitService {
       root,
     );
     this.sharedBranch = shared;
-    this.logger.log(`session ${sessionId}: ${wt.branch} → shared branch ${shared}`);
+    this.logger.log(`session ${workAreaId}: ${wt.branch} → shared branch ${shared}`);
     return shared;
   }
 
@@ -556,11 +701,11 @@ export class DaemonGitService {
    * refuses.
    */
   async ensureSharedAtBase(
-    sessionId: string,
+    workAreaId: string,
     name: string,
   ): Promise<{ ok: true; sharedBranch: string } | { ok: false; reason: string }> {
-    const wt = this.worktrees.get(sessionId);
-    if (!wt) return { ok: false, reason: `no worktree for session ${sessionId}` };
+    const wt = this.worktrees.get(workAreaId);
+    if (!wt) return { ok: false, reason: `no worktree for session ${workAreaId}` };
     if (this.sharedBranch) return { ok: true, sharedBranch: this.sharedBranch };
     const guard = await this.originGuard();
     if (guard) return { ok: false, reason: guard };
@@ -582,13 +727,13 @@ export class DaemonGitService {
         reason: `couldn't resolve the base divergence point (merge-base ${wt.branch}..origin/${baseBranch})`,
       };
     }
-    const shared = await this.ensureShared(sessionId, name, startPoint);
+    const shared = await this.ensureShared(workAreaId, name, startPoint);
     return { ok: true, sharedBranch: shared };
   }
 
   /** The current tip sha of the sandbox's shared branch (captured before publish so a self-review can
    * diff `<sharedRef>...<ownerBranch>`). Undefined if no shared branch exists yet. */
-  async sharedRef(sessionId: string): Promise<string | undefined> {
+  async sharedRef(workAreaId: string): Promise<string | undefined> {
     if (!this.sharedBranch) return undefined;
     return this.git(
       ['rev-parse', this.sharedBranch],
@@ -598,10 +743,10 @@ export class DaemonGitService {
 
   /** The git range isolating a session's own contribution: changed files in `<sinceRef>...<branch>`. */
   async ownerDiff(
-    sessionId: string,
+    workAreaId: string,
     sinceRef: string,
   ): Promise<{ range: string; files: string[] }> {
-    const wt = this.requireWorktree(sessionId);
+    const wt = this.requireWorktree(workAreaId);
     const range = `${sinceRef}...${wt.branch}`;
     const out = await this.git(['diff', '--name-only', range], wt.path).catch(
       () => '',
@@ -621,9 +766,9 @@ export class DaemonGitService {
    * Read-only; closes the host-only `DaemonGitAdapter.sharedStatus` rejection.
    */
   async sharedStatus(
-    sessionId: string,
+    workAreaId: string,
   ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined> {
-    const wt = this.worktrees.get(sessionId);
+    const wt = this.worktrees.get(workAreaId);
     if (!wt || !this.sharedBranch) return undefined;
     const shared = this.sharedBranch;
     const { root } = this.requireRepo();
@@ -657,24 +802,24 @@ export class DaemonGitService {
    * `projectRecordFor`/`baseRef` lookup on the sandbox path — the daemon owns the base by construction.
    */
   async reviewRange(
-    sessionId: string,
+    workAreaId: string,
   ): Promise<{ range: string; files: string[]; baseBranch: string }> {
-    const wt = this.requireWorktree(sessionId);
+    const wt = this.requireWorktree(workAreaId);
     const { baseBranch } = this.requireRepo();
-    const { range, files } = await this.ownerDiff(sessionId, wt.baseSha);
+    const { range, files } = await this.ownerDiff(workAreaId, wt.baseSha);
     return { range, files, baseBranch };
   }
 
   // ---- publish / pull / push ---------------------------------------------------------------------
 
-  private requireShared(sessionId: string): {
+  private requireShared(workAreaId: string): {
     wt: DaemonWorktree;
     shared: string;
   } {
-    const wt = this.requireWorktree(sessionId);
+    const wt = this.requireWorktree(workAreaId);
     if (!this.sharedBranch) {
       throw new Error(
-        `session ${sessionId} is not on a shared branch — call ensureShared first.`,
+        `session ${workAreaId} is not on a shared branch — call ensureShared first.`,
       );
     }
     return { wt, shared: this.sharedBranch };
@@ -700,8 +845,8 @@ export class DaemonGitService {
    * conflict the merge is left IN PROGRESS in the worktree and the conflicted paths returned. Always
    * also pushes the shared branch to origin (the daemon's clone always has a known origin).
    */
-  async publish(sessionId: string): Promise<DaemonIntegrationResult> {
-    const { wt, shared } = this.requireShared(sessionId);
+  async publish(workAreaId: string): Promise<DaemonIntegrationResult> {
+    const { wt, shared } = this.requireShared(workAreaId);
     await this.refuseMidMerge(wt.path);
     await this.fetchSharedFromOrigin(shared);
     const dirty = !!(
@@ -739,8 +884,8 @@ export class DaemonGitService {
 
   /** Merge the shared integration branch into a session's worktree (take teammates' published work),
    * syncing the shared ref from origin first. Same conflict shape as publish. */
-  async pull(sessionId: string): Promise<DaemonIntegrationResult> {
-    const { wt, shared } = this.requireShared(sessionId);
+  async pull(workAreaId: string): Promise<DaemonIntegrationResult> {
+    const { wt, shared } = this.requireShared(workAreaId);
     await this.refuseMidMerge(wt.path);
     const originFetched = await this.fetchSharedFromOrigin(shared);
     try {
@@ -784,9 +929,9 @@ export class DaemonGitService {
   /** Push the sandbox's shared branch to origin (for open_pr — also publish's engine). Throws on a
    * missing shared branch or an origin-guard refusal. */
   async pushSharedToOrigin(
-    sessionId: string,
+    workAreaId: string,
   ): Promise<{ sharedBranch: string; gitUrl: string }> {
-    const { shared } = this.requireShared(sessionId);
+    const { shared } = this.requireShared(workAreaId);
     const { root, gitUrl } = this.requireRepo();
     const guard = await this.originGuard();
     if (guard) throw new Error(guard);

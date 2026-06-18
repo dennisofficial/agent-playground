@@ -74,12 +74,16 @@ export class RemoteTurnDispatcher {
     );
 
     // 3. Build the wire payload. `onEvent`/`signal`/`cwd` are intentionally OMITTED: the first two are
-    // functions, and the daemon resolves cwd from the session's in-sandbox worktree. The harness
-    // session id (the daemon's worktree-mapping key) is the live session id when present, else the
-    // workspace id as a stable fallback.
-    const harnessSessionId = ctx.session?.id ?? ctx.workspaceId ?? sandbox.workspaceId;
+    // functions, and the daemon resolves cwd from the WORK AREA's in-sandbox worktree. Two ids cross:
+    //  - workAreaId — the daemon's worktree key (sessions in a work area share its tree). `session.
+    //    workspace_id` IS the workAreaId; `ctx.workspaceId` carries it for session-less callers.
+    //  - sessionId  — the harness session, for the deterministic per-session dev-server PORT + tracing.
+    const workAreaId =
+      ctx.session?.workspaceId ?? ctx.workspaceId ?? sandbox.workspaceId;
+    const harnessSessionId = ctx.session?.id ?? workAreaId;
     const payload: RunCommandPayload = {
       engine: engineName === EWorkerEngineName.CODEX ? 'codex' : 'claude',
+      workAreaId,
       sessionId: harnessSessionId,
       task: args.task,
       systemPrompt: args.systemPrompt,

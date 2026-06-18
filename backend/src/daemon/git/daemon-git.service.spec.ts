@@ -119,7 +119,53 @@ describe('DaemonGitService (real git, file:// origin)', () => {
     expect(await git(path, 'log', '-1', '--format=%an <%ae>')).toBe(
       'Agent <agent@agents.noreply>',
     );
-    expect(service.listWorktrees().map((w) => w.sessionId)).toEqual(['sess-1']);
+    expect(service.listWorktrees().map((w) => w.workAreaId)).toEqual(['sess-1']);
+  });
+
+  it('createWorktree honours an explicit branch + shared, and the dir is the workAreaId verbatim (adoptable)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
+    const path = await service.createWorktree('wa-001', {
+      branch: 'feature/login',
+      shared: 'ticket-42',
+      ownerBot: 'alex',
+    });
+    // The checkout dir is the workAreaId verbatim (so it round-trips through `git worktree list`).
+    expect(path.endsWith('/.workspaces/wa-001')).toBe(true);
+    expect(await git(path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('feature/login');
+    // shared was joined + recorded on the branch.
+    expect(
+      await git(root, 'config', 'branch.feature/login.agent-shared'),
+    ).toBe('shared/ticket-42');
+  });
+
+  it('sessions SHARE a work area: two createWorktree calls with the same workAreaId return one worktree', async () => {
+    await service.ensureClone(workspaceRoot, origin.url, 'main');
+    const a = await service.createWorktree('wa-shared');
+    const b = await service.createWorktree('wa-shared'); // a second session in the same work area
+    expect(b).toBe(a);
+    expect(service.listWorktrees()).toHaveLength(1);
+  });
+
+  it('describeWorktrees + adoptWorktrees rebuild from durable git state (survives a daemon restart)', async () => {
+    await service.ensureClone(workspaceRoot, origin.url, 'main');
+    await service.createWorktree('wa-aaa');
+    await service.createWorktree('wa-bbb', { shared: 'feat' });
+
+    const described = await service.describeWorktrees();
+    expect(described.map((w) => w.workAreaId).sort()).toEqual(['wa-aaa', 'wa-bbb']);
+    expect(described.find((w) => w.workAreaId === 'wa-bbb')?.shared).toBe('shared/feat');
+
+    // A FRESH service over the SAME clone (a daemon restart): the in-memory map is empty until ensureClone
+    // re-adopts the surviving worktrees from git.
+    const restarted = makeService();
+    expect(restarted.listWorktrees()).toHaveLength(0);
+    await restarted.ensureClone(workspaceRoot, origin.url, 'main');
+    expect(restarted.listWorktrees().map((w) => w.workAreaId).sort()).toEqual([
+      'wa-aaa',
+      'wa-bbb',
+    ]);
+    // The adopted work area resolves its path, so a post-restart turn finds its cwd.
+    expect(restarted.worktreePath('wa-aaa')).toBeTruthy();
   });
 
   it('isolates sibling sessions: each worktree has its own branch and checkout', async () => {

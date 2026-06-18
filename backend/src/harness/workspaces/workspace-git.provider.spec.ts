@@ -1,110 +1,126 @@
 /**
- * Phase 8 — `WorkspaceGitProvider.resolve` fork (mirrors the `TurnExecutor` fork tests).
+ * `WorkspaceGitProvider.resolve` fork (mirrors the `TurnExecutor` fork tests).
  *
- *  (a) LOCAL (the production default, isContainerized=false): `resolve(ctx)` returns the injected
- *      `LocalWorkspaceAdapter` — the live hot path stays 100% local this phase.
- *  (b) REMOTE (isContainerized forced true via a test-only subclass): `resolve(ctx)` returns a
- *      `DaemonGitAdapter` bound to ctx's workspace id — and a containerized op with NO workspace id
- *      throws (there'd be no sandbox to dispatch to).
+ *  (a) LOCAL: a ctx whose work area doesn't resolve to a live sandbox → the injected `LocalWorkspaceAdapter`.
+ *  (b) REMOTE: a ctx whose `workAreaId` resolves (via `WorkspaceRegistry`) to a LIVE sandbox
+ *      (`SandboxRegistry.has`) → a `DaemonGitAdapter` bound to `(sandboxId, workAreaId)`. No session needed.
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { DaemonClient } from './daemon-client';
 import { DaemonGitAdapter } from './daemon-git.adapter';
 import { LocalWorkspaceAdapter } from './local-workspace.adapter';
 import type { SandboxRegistry } from './sandbox-registry';
-import type { WorkspaceGitCtx } from './workspace-git.port';
 import { WorkspaceGitProvider } from './workspace-git.provider';
-
-const CTX: WorkspaceGitCtx = {
-  team: 'team-1',
-  project: 'proj-1',
-  workspaceId: 'ws-001',
-};
+import { WorkspaceRegistry } from './workspace-registry';
 
 const daemon = {} as unknown as DaemonClient;
-/** A SandboxRegistry stand-in — `has()` defaults false (the local path); the forced subclass overrides
- * the routing decision directly. */
+/** A SandboxRegistry stand-in — only `sandbox-uuid-1` is live. */
+const liveSandboxes = {
+  has: vi.fn((id: string) => id === 'sandbox-uuid-1'),
+} as unknown as SandboxRegistry;
 const noSandboxes = { has: () => false } as unknown as SandboxRegistry;
 
-/** A provider whose routing policy is forced (so the dormant remote branch is exercised regardless of
- * the real registry-driven `isContainerized`). */
-class TestableProvider extends WorkspaceGitProvider {
-  constructor(
-    local: LocalWorkspaceAdapter,
-    daemonClient: DaemonClient,
-    private readonly forceContainerized: boolean,
-  ) {
-    super(local, daemonClient, noSandboxes);
-  }
-  public override isContainerized(): boolean {
-    return this.forceContainerized;
-  }
+/** A WorkspaceRegistry with one work area (`wa-1`) living in the live sandbox. */
+function workAreasWithWa1(): WorkspaceRegistry {
+  const reg = new WorkspaceRegistry();
+  reg.upsert({
+    workAreaId: 'wa-1',
+    sandboxId: 'sandbox-uuid-1',
+    team: 't',
+    project: 'p',
+    name: 'wa-1',
+    ownerBot: 'alex',
+  });
+  return reg;
 }
 
 describe('WorkspaceGitProvider.resolve fork', () => {
-  it('(a) LOCAL: returns the LocalWorkspaceAdapter (the live default — isContainerized hard-false)', () => {
+  it('(a) LOCAL: a work area with no live sandbox returns the LocalWorkspaceAdapter', () => {
     const local = {} as unknown as LocalWorkspaceAdapter;
-    const provider = new WorkspaceGitProvider(local, daemon, noSandboxes);
-    expect(provider.resolve(CTX)).toBe(local);
+    const provider = new WorkspaceGitProvider(
+      local,
+      daemon,
+      noSandboxes,
+      new WorkspaceRegistry(),
+    );
+    expect(provider.resolve({ team: 't', project: 'p', workspaceId: 'ws-001' })).toBe(
+      local,
+    );
+    expect(
+      provider.isContainerized({ team: 't', project: 'p', workspaceId: 'ws-001' }),
+    ).toBe(false);
   });
 
-  it('(b) REMOTE (forced true): returns a DaemonGitAdapter, NOT the local adapter', () => {
+  it('(b) REMOTE: a workArea resolving to a live sandbox returns a DaemonGitAdapter', () => {
     const local = {} as unknown as LocalWorkspaceAdapter;
-    const provider = new TestableProvider(local, daemon, true);
-    const port = provider.resolve(CTX);
+    const provider = new WorkspaceGitProvider(
+      local,
+      daemon,
+      liveSandboxes,
+      workAreasWithWa1(),
+    );
+    const port = provider.resolve({ team: 't', project: 'p', workspaceId: 'wa-1' });
     expect(port).toBeInstanceOf(DaemonGitAdapter);
     expect(port).not.toBe(local);
+    expect(
+      provider.isContainerized({ team: 't', project: 'p', workspaceId: 'wa-1' }),
+    ).toBe(true);
   });
 
-  it('(b) REMOTE: keys the daemon adapter off the session workspace id when a session is present', () => {
+  it('(b) REMOTE: the session workspace id (the workAreaId) is consulted when a session is present', () => {
     const local = {} as unknown as LocalWorkspaceAdapter;
-    const provider = new TestableProvider(local, daemon, true);
+    const provider = new WorkspaceGitProvider(
+      local,
+      daemon,
+      liveSandboxes,
+      workAreasWithWa1(),
+    );
     const port = provider.resolve({
       team: 't',
       project: 'p',
-      session: { workspaceId: 'sandbox-uuid-9' } as never,
+      session: { workspaceId: 'wa-1' } as never,
     });
     expect(port).toBeInstanceOf(DaemonGitAdapter);
   });
 
-  it('(b) REMOTE: throws when a containerized op has no workspace id (no sandbox to reach)', () => {
+  it('a containerized-looking ctx whose sandbox is GONE falls back to local (no live container)', () => {
     const local = {} as unknown as LocalWorkspaceAdapter;
-    const provider = new TestableProvider(local, daemon, true);
-    expect(() => provider.resolve({ team: 't', project: 'p' })).toThrow(
-      /needs a workspaceId/,
+    // The work area exists but its sandbox is not live.
+    const provider = new WorkspaceGitProvider(
+      local,
+      daemon,
+      noSandboxes,
+      workAreasWithWa1(),
+    );
+    expect(provider.resolve({ team: 't', project: 'p', workspaceId: 'wa-1' })).toBe(
+      local,
     );
   });
 
-  it('isContainerized defaults OFF (the live hot path stays local this phase)', () => {
+  it('no workspace id at all → local', () => {
     const local = {} as unknown as LocalWorkspaceAdapter;
-    const provider = new WorkspaceGitProvider(local, daemon, noSandboxes);
-    // Even with full team/project/workspace context, the real policy returns the local adapter.
-    expect(provider.resolve(CTX)).toBe(local);
+    const provider = new WorkspaceGitProvider(
+      local,
+      daemon,
+      liveSandboxes,
+      workAreasWithWa1(),
+    );
+    expect(provider.resolve({ team: 't', project: 'p' })).toBe(local);
   });
 
-  it('THE DISCRIMINATOR: returns the daemon adapter when SandboxRegistry.has is true (real isContainerized)', () => {
+  it('daemonFor returns the adapter for a live work area, undefined otherwise', () => {
     const local = {} as unknown as LocalWorkspaceAdapter;
-    const has = vi.fn((id: string) => id === 'sandbox-uuid-1');
-    const sandboxes = { has } as unknown as SandboxRegistry;
-    const provider = new WorkspaceGitProvider(local, daemon, sandboxes);
-
-    // A live sandbox id → the daemon adapter.
-    const remote = provider.resolve({
-      team: 't',
-      project: 'p',
-      workspaceId: 'sandbox-uuid-1',
-    });
-    expect(remote).toBeInstanceOf(DaemonGitAdapter);
-
-    // A local ws-NNN id (not a sandbox) → the local adapter.
-    expect(provider.resolve(CTX)).toBe(local);
-
-    // The session's workspace id is consulted too (the sandbox hosts the session).
-    const viaSession = provider.resolve({
-      team: 't',
-      project: 'p',
-      session: { workspaceId: 'sandbox-uuid-1' } as never,
-    });
-    expect(viaSession).toBeInstanceOf(DaemonGitAdapter);
+    const provider = new WorkspaceGitProvider(
+      local,
+      daemon,
+      liveSandboxes,
+      workAreasWithWa1(),
+    );
+    expect(
+      provider.daemonFor({ team: 't', project: 'p', workspaceId: 'wa-1' }),
+    ).toBeInstanceOf(DaemonGitAdapter);
+    expect(
+      provider.daemonFor({ team: 't', project: 'p', workspaceId: 'wa-unknown' }),
+    ).toBeUndefined();
   });
 });

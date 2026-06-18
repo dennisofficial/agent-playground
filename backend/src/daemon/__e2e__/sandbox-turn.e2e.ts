@@ -179,6 +179,7 @@ async function main(): Promise<number> {
 
     const payload: RunCommandPayload = {
       engine: EWorkerEngineName.CLAUDE,
+      workAreaId: `e2e-wa-${Date.now()}`,
       sessionId: `e2e-sess-${Date.now()}`,
       task,
       systemPrompt:

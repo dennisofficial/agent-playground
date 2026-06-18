@@ -65,6 +65,7 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
 
   const basePayload = (over: Partial<RunCommandPayload> = {}): RunCommandPayload => ({
     engine: 'claude',
+    workAreaId: 'wa-1',
     sessionId: 'sess-1',
     task: 'do the thing',
     systemPrompt: 'you are a worker',
@@ -217,7 +218,8 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
 
     await client.dispatchRun(WORKSPACE_ID, basePayload(), () => undefined);
 
-    expect(git.createWorktree).toHaveBeenCalledWith('sess-1');
+    // cwd resolves off the WORK AREA (payload.workAreaId), not the harness session id.
+    expect(git.createWorktree).toHaveBeenCalledWith('wa-1');
     expect(cwd).toBe('/workspace/repo/.workspaces/sess-1');
   });
 

@@ -68,11 +68,12 @@ describe('DaemonTurnService.handleRun — PORT injection', () => {
     return new DaemonTurnService(engines, tools, git, redis);
   }
 
-  const cmd = (sessionId: string): RunCommand => ({
+  const cmd = (sessionId: string, workAreaId = sessionId): RunCommand => ({
     type: 'run',
     correlationId: 'cid-1',
     payload: {
       engine: 'claude',
+      workAreaId,
       sessionId,
       task: 'do it',
       systemPrompt: 'sys',
