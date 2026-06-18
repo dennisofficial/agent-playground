@@ -55,7 +55,11 @@ function build(opts: {
     const lens = lensOf(o.task);
     return { result: `findings for ${lens}\nVERDICT: ${verdicts[lens].toUpperCase()}` };
   });
-  const engines = { get: () => ({ run: engineRun }) } as never;
+  // TurnExecutor double: Phase 7 routes LOCAL (isContainerized=false) → engineRun(args), the verbatim
+  // local-branch delegation, so the lens-review assertions stay byte-identical.
+  const turnExecutor = {
+    run: (_ctx: unknown, _name: unknown, args: unknown) => engineRun(args as never),
+  } as never;
 
   const bot = {
     id: 'phase_backend',
@@ -98,7 +102,7 @@ function build(opts: {
   const runner = { resumeInternal } as never;
 
   const svc = new ReviewPipelineService(
-    engines,
+    turnExecutor,
     employees,
     credCtx,
     creds,

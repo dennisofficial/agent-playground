@@ -1,12 +1,16 @@
 import { CreateModule } from '@workspace/nestjs-core';
 import { RedisModule } from '../../_lib/redis/redis.module';
+import { EnginesModule } from '../engines/engines.module';
 import { ProjectsModule } from '../projects/projects.module';
+import { SkillsModule } from '../skills/skills.module';
 import { CONTAINER_ENGINE } from './container-engine.port';
 import { ContainerManagerService } from './container-manager.service';
 import { CredentialProvisionerService } from './credential-provisioner.service';
 import { DaemonClient } from './daemon-client';
 import { DockerodeAdapter } from './dockerode.adapter';
+import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
 import { SandboxRegistry } from './sandbox-registry';
+import { TurnExecutor } from './turn-executor.service';
 import { WorkspaceService } from './workspace.service';
 
 /**
@@ -28,15 +32,25 @@ import { WorkspaceService } from './workspace.service';
  *  - `CredentialProvisionerService` — the host side of the just-in-time GitHub cred-pull channel.
  * Nothing CALLS `ensureWorkspace` yet (Phase 9 wires session lifecycle); the registered ensurer is
  * consumed by Phase 7's `RemoteTurnDispatcher`.
+ *
+ * Phase 7 adds the unified turn-execution seam:
+ *  - `TurnExecutor` — the single `engines.get().run()` fork (local host vs. remote sandbox), exported
+ *    for the three engine consumers (SessionRunnerService, ReviewPipelineService, SelfReviewHandler);
+ *  - `RemoteTurnDispatcher` — its dormant remote branch (resolves the sandbox + tool sources and
+ *    dispatches over `DaemonClient`). It depends on `EngineRegistry` (EnginesModule) for the local
+ *    fork and `AgentToolSourceResolver` (SkillsModule) for the remote tool-source resolve — both
+ *    already in scope for SessionsModule, imported here so the seam composes inside this module.
  */
 @CreateModule({
-  imports: [RedisModule, ProjectsModule],
+  imports: [RedisModule, EnginesModule, ProjectsModule, SkillsModule],
   services: [
     WorkspaceService,
     DaemonClient,
     SandboxRegistry,
     ContainerManagerService,
     CredentialProvisionerService,
+    RemoteTurnDispatcher,
+    TurnExecutor,
   ],
   chains: [
     {

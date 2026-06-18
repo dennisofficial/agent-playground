@@ -140,7 +140,11 @@ describe('handlePrGate — full-implementation review routing (Phase 5b)', () =>
 
 function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
   const engineRun = vi.fn(async () => ({ result: verdictText }));
-  const engines = { get: () => ({ run: engineRun }) } as never;
+  // TurnExecutor double: Phase 7 routes LOCAL (isContainerized=false) → engineRun(args), the verbatim
+  // local-branch delegation, so the runReview assertions stay byte-identical.
+  const turnExecutor = {
+    run: (_ctx: unknown, _name: unknown, _args: unknown) => engineRun(),
+  } as never;
   const bot = {
     id: 'atlas',
     capabilities: () => [],
@@ -157,7 +161,7 @@ function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
   } as never;
   const board = { get: async () => ({ title: 'Feature', description: 'desc' }) } as never;
   const svc = new ReviewPipelineService(
-    engines,
+    turnExecutor,
     employees,
     credCtx,
     creds,

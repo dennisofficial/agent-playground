@@ -4,7 +4,6 @@ import type { EmployeeDefinition } from '../employees/employee.types';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import { SELF_REVIEW } from '../employees/capabilities/self-review.capability';
 import type { EngineSpec } from '../engines/engine-spec';
-import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
 import {
   EWorkerEngineName,
@@ -22,6 +21,10 @@ import { TicketNoteStore } from '../memory/ticket-note-store';
 import { parseGithubRepo } from '../projects/git-auth';
 import { GithubApiService } from '../projects/github-api.service';
 import { GithubTokenStore } from '../projects/github-token-store';
+import {
+  TurnExecutor,
+  type TurnRoutingCtx,
+} from '../workspaces/turn-executor.service';
 import { WorkspaceService } from '../workspaces/workspace.service';
 import { EnvService } from '@core/config/env/env.service';
 import {
@@ -98,7 +101,7 @@ export class ReviewPipelineService {
   private readonly logger = new Logger(ReviewPipelineService.name);
 
   constructor(
-    private readonly engines: EngineRegistry,
+    private readonly turnExecutor: TurnExecutor,
     private readonly employees: EmployeeRegistry,
     private readonly credCtx: CredentialContext,
     private readonly creds: TenantCredentialService,
@@ -131,8 +134,15 @@ export class ReviewPipelineService {
     return cap ? cap.spec(ctx) : bot.executeEngine(ctx);
   }
 
-  /** Run a read-only review turn (investigate mode) and return its prose result, or ''. */
+  /**
+   * Run a read-only review turn (investigate mode) and return its prose result, or ''. Routed through
+   * the Phase-7 `TurnExecutor` seam: `ctx` carries the tenancy + workspace so the turn CAN route to a
+   * sandbox later; today it resolves LOCAL (isContainerized=false), delegating verbatim to
+   * `engines.get(spec.engine).run({ cwd: workspacePath, ... })` inside the same withActiveRoot/credCtx
+   * wrapping — byte-identical to the pre-Phase-7 call.
+   */
   private async runReview(
+    ctx: TurnRoutingCtx,
     bot: EmployeeDefinition,
     spec: EngineSpec,
     workspacePath: string,
@@ -143,7 +153,7 @@ export class ReviewPipelineService {
     const onEvent = (_e: WorkerEvent) => undefined;
     const out = await withActiveRoot(workspacePath, () =>
       this.credCtx.run({ teamId: team, keys }, () =>
-        this.engines.get(spec.engine).run({
+        this.turnExecutor.run(ctx, spec.engine, {
           task: prompt,
           cwd: workspacePath,
           systemPrompt: spec.systemPrompt,
@@ -262,6 +272,7 @@ export class ReviewPipelineService {
         );
         if (files.length === 0) break; // nothing of this owner's own to review
         const reviewText = await this.runReview(
+          { team, project: session.project, workspaceId, session },
           bot,
           this.reviewSpec(bot, ctx),
           workspace.path,
@@ -378,6 +389,7 @@ export class ReviewPipelineService {
       const results = await Promise.all(
         failing.map(async (lens) => {
           const text = await this.runReview(
+            { team, project: session.project, workspaceId, session },
             bot,
             spec,
             workspace.path,
@@ -462,6 +474,7 @@ export class ReviewPipelineService {
       ? `${task.title}\n\n${task.description}`.trim()
       : `#${taskId}`;
     const reviewText = await this.runReview(
+      { team, project: task?.project ?? '', workspaceId },
       bot,
       this.reviewSpec(bot, ctx),
       workspace.path,
@@ -602,6 +615,7 @@ export class ReviewPipelineService {
       const keys = await this.creds.resolve(team);
       const ws = this.workspaces.get(workspaceId);
       reviewText = await this.runReview(
+        { team, project: task.project, workspaceId },
         bot,
         this.reviewSpec(bot, ctx),
         ws?.path ?? '',

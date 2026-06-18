@@ -2,7 +2,6 @@ import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type ChatTracePointer, traceSessionTurn } from '@workspace/langfuse';
-import { EngineRegistry } from '../engines/engine.registry';
 import { withActiveRoot } from '../engines/guard';
 import {
   EWorkerEngineName,
@@ -22,6 +21,7 @@ import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { MetricsEventsService } from '../metrics/metrics-events.service';
+import { TurnExecutor } from '../workspaces/turn-executor.service';
 import { WorkspaceService } from '../workspaces/workspace.service';
 import { coherenceNote, echoesOwnName } from './coherence-check';
 import { renderQaAppendix, renderQuestionsReport } from './question-report';
@@ -66,7 +66,7 @@ export class SessionRunnerService {
 
   constructor(
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
-    private readonly engines: EngineRegistry,
+    private readonly turnExecutor: TurnExecutor,
     private readonly employees: EmployeeRegistry,
     private readonly persona: PersonaService,
     private readonly lifecycle: LifecycleRunner,
@@ -267,6 +267,15 @@ export class SessionRunnerService {
       // `cwd` for their own subprocess sandbox).
       // The single engine run for this turn, parametrized by message / model / resume-id.
       // `systemPrompt`/`effort`/`mode` are constant for the turn.
+      // Routing context for the turn-execution seam (Phase 7). LOCAL today (isContainerized=false), so
+      // turnExecutor.run delegates VERBATIM to engines.get(session.engine).run({...}) — the exact call,
+      // exact args (cwd/onEvent/signal included), inside the same withActiveRoot/credCtx/trace wrapping.
+      const routingCtx = {
+        team: session.team,
+        project: session.project,
+        workspaceId: session.workspaceId,
+        session,
+      };
       const runEngineTurn = (
         turnMessage: string,
         turnModel: string | undefined,
@@ -274,7 +283,7 @@ export class SessionRunnerService {
       ) =>
         withActiveRoot(workspace.path, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
-            this.engines.get(session.engine).run({
+            this.turnExecutor.run(routingCtx, session.engine, {
               task: turnMessage,
               cwd: workspace.path,
               systemPrompt,

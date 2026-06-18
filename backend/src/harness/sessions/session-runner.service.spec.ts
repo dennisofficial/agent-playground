@@ -1,10 +1,10 @@
 import type { EnvService } from '@core/config/env/env.service';
-import type { EngineRegistry } from '../engines/engine.registry';
 import {
   EWorkerEngineName,
   RunWorkerArgs,
   WorkerEngine,
 } from '../engines/worker-engine.port';
+import type { TurnExecutor } from '../workspaces/turn-executor.service';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import { makeEmployee } from '../employees/employee.testing';
 import type { PersonaService } from '../employees/persona.service';
@@ -66,7 +66,13 @@ function buildRunner(
 ) {
   const workspace = 'workspace' in opts ? opts.workspace : WS;
   const sessions = new InMemorySessionRegistry();
-  const engines = { get: () => engine } as unknown as EngineRegistry;
+  // TurnExecutor double: routes LOCAL (Phase 7 isContainerized=false), delegating verbatim to the fake
+  // engine's run(args) — exactly what the production local branch does. This keeps the runner's behavior
+  // (and these assertions) byte-identical to the pre-Phase-7 `engines.get(name).run(args)` call.
+  const turnExecutor = {
+    run: (_ctx: unknown, _name: unknown, args: RunWorkerArgs) =>
+      engine.run(args),
+  } as unknown as TurnExecutor;
   const ctx = { team: 'local', roster: 'Alex — backend engineer' };
   const employees = {
     byId: () => ALEX,
@@ -139,7 +145,7 @@ function buildRunner(
   } as unknown as TeamSettingsStore;
   const runner = new SessionRunnerService(
     sessions,
-    engines,
+    turnExecutor,
     employees,
     persona,
     lifecycle,

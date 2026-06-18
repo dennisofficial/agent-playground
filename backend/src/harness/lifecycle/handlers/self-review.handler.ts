@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { traceSessionTurn } from '@workspace/langfuse';
-import { EngineRegistry } from '../../engines/engine.registry';
 import type { EngineSpec } from '../../engines/engine-spec';
 import { withActiveRoot } from '../../engines/guard';
 import { DEFAULT_REVIEW_PROMPT } from '../../engines/engine.prompts';
@@ -14,6 +13,10 @@ import { SELF_REVIEW } from '../../employees/capabilities/self-review.capability
 import { CredentialContext } from '../../llm-keys/credential-context';
 import { BoardStore } from '../../memory/board-store';
 import { toGenerationUsage } from '../../llm/usage-format';
+import {
+  TurnExecutor,
+  type TurnRoutingCtx,
+} from '../../workspaces/turn-executor.service';
 import type { LifecycleHandler } from '../lifecycle.handler';
 import {
   LifecycleEvent,
@@ -37,7 +40,7 @@ export class SelfReviewHandler implements LifecycleHandler {
   private readonly logger = new Logger(SelfReviewHandler.name);
 
   constructor(
-    private readonly engines: EngineRegistry,
+    private readonly turnExecutor: TurnExecutor,
     private readonly employees: EmployeeRegistry,
     private readonly credCtx: CredentialContext,
     private readonly board: BoardStore,
@@ -64,6 +67,17 @@ export class SelfReviewHandler implements LifecycleHandler {
       engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
     const onEvent = (e: WorkerEvent) => onProgress?.(e);
 
+    // Routing context for the Phase-7 turn-execution seam — the plan self-review runs in the session's
+    // workspace, so it carries the same tenancy + workspace. LOCAL today (isContainerized=false):
+    // turnExecutor.run delegates verbatim to engines.get(...).run({ cwd: workspacePath, ... }) inside the
+    // unchanged withActiveRoot/credCtx/trace wrapping.
+    const routingCtx: TurnRoutingCtx = {
+      team: session.team,
+      project: session.project,
+      workspaceId: session.workspaceId,
+      session,
+    };
+
     const task =
       session.boardTaskId !== undefined
         ? await this.board.get(session.team, session.boardTaskId)
@@ -86,7 +100,7 @@ export class SelfReviewHandler implements LifecycleHandler {
       () =>
         withActiveRoot(workspacePath, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
-            this.engines.get(reviewSpec.engine).run({
+            this.turnExecutor.run(routingCtx, reviewSpec.engine, {
               task: reviewPrompt,
               cwd: workspacePath,
               systemPrompt: reviewSpec.systemPrompt,
@@ -127,7 +141,7 @@ export class SelfReviewHandler implements LifecycleHandler {
       () =>
         withActiveRoot(workspacePath, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
-            this.engines.get(session.engine).run({
+            this.turnExecutor.run(routingCtx, session.engine, {
               task: revisionPrompt,
               cwd: workspacePath,
               systemPrompt: planSpec.systemPrompt,

@@ -81,7 +81,11 @@ function build(opts: {
   const engineRun = vi.fn(async () => ({
     result: opts.reviewVerdict ?? 'Looks good.\nVERDICT: PASS',
   }));
-  const engines = { get: () => ({ run: engineRun }) } as never;
+  // TurnExecutor double: Phase 7 routes LOCAL (isContainerized=false) → engineRun(args), the verbatim
+  // local-branch delegation, so the runReview assertions stay byte-identical.
+  const turnExecutor = {
+    run: (_ctx: unknown, _name: unknown, _args: unknown) => engineRun(),
+  } as never;
 
   const reviewSpecCap = { name: 'self_review', spec: () => ({ engine: 'codex', systemPrompt: 'sp' }) };
   const bot = {
@@ -197,7 +201,7 @@ function build(opts: {
   } as never;
 
   const svc = new ReviewPipelineService(
-    engines,
+    turnExecutor,
     employees,
     credCtx,
     creds,

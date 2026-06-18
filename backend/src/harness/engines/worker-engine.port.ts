@@ -119,6 +119,20 @@ export interface IWorkerUsage {
   model?: string;
 }
 
+/**
+ * The resolve shape of one engine run — the report, the engine's resume handle, and the optional
+ * plan/questions/usage. Named so the Phase-7 turn-execution seam (`TurnExecutor`/`RemoteTurnDispatcher`)
+ * and the daemon wire (`RunResult`) share ONE type with `WorkerEngine.run`'s return — local and remote
+ * paths are then byte-identical at the type level, not just by convention.
+ */
+export interface EngineRunResult {
+  result: string;
+  sessionId?: string;
+  questions?: WorkerQuestion[];
+  planText?: string;
+  usage?: IWorkerUsage;
+}
+
 export interface WorkerEngine {
   readonly name: EWorkerEngineName;
   /** Run one turn to completion (the engine loops internally until it has a report). Returns the
@@ -127,11 +141,5 @@ export interface WorkerEngine {
    * the owner answers on the next turn); `planText` when a plan was captured (Claude engines set
    * result to the plan today). `usage` carries token/cost counts for Langfuse generation tracking.
    * All optional so Codex/LangGraph compile unchanged before they populate usage. */
-  run(args: RunWorkerArgs): Promise<{
-    result: string;
-    sessionId?: string;
-    questions?: WorkerQuestion[];
-    planText?: string;
-    usage?: IWorkerUsage;
-  }>;
+  run(args: RunWorkerArgs): Promise<EngineRunResult>;
 }

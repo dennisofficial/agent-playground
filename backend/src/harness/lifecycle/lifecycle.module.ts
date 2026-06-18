@@ -1,9 +1,9 @@
 import { CreateModule } from '@workspace/nestjs-core';
 import { EmployeesModule } from '../employees/employees.module';
 import { PersonaService } from '../employees/persona.service';
-import { EnginesModule } from '../engines/engines.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { SelfReviewHandler } from './handlers/self-review.handler';
 import { LIFECYCLE_HANDLERS } from './lifecycle.handler';
 import { EMPLOYEE_CONTEXT_PROVIDER, LifecycleRunner } from './lifecycle.runner';
@@ -14,9 +14,12 @@ import { EMPLOYEE_CONTEXT_PROVIDER, LifecycleRunner } from './lifecycle.runner';
  * SessionsModule — handlers stream progress via the payload's `onProgress` callback rather than the
  * session registry — so the session runner can import THIS module to emit `plan.finished` without a
  * cycle.
+ *
+ * Imports WorkspacesModule for the Phase-7 `TurnExecutor` seam (the self-review handler routes its two
+ * engine runs through it). No cycle: WorkspacesModule imports neither LifecycleModule nor SessionsModule.
  */
 @CreateModule({
-  imports: [EmployeesModule, EnginesModule, MemoryModule, LlmKeysModule],
+  imports: [EmployeesModule, WorkspacesModule, MemoryModule, LlmKeysModule],
   services: [
     LifecycleRunner,
     SelfReviewHandler,
