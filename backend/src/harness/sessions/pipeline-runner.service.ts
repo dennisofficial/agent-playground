@@ -32,6 +32,7 @@ import {
 } from '../memory/pipeline-coding-session-store';
 import { PipelinePhaseReviewStore } from '../memory/pipeline-phase-review-store';
 import { TicketNoteStore } from '../memory/ticket-note-store';
+import { SandboxRegistry } from '../workspaces/sandbox-registry';
 import { WorkspaceService } from '../workspaces/workspace.service';
 import { ReviewPipelineService } from './review-pipeline.service';
 import {
@@ -114,6 +115,7 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     private readonly codingStore: PipelineCodingSessionStore,
     private readonly reviewStore: PipelinePhaseReviewStore,
     private readonly notes: TicketNoteStore,
+    private readonly sandboxes: SandboxRegistry,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -753,6 +755,17 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (!run || run.status !== 'paused' || run.planningSubstep !== 'awaiting_design')
       return { ok: false, message: `#${taskId} isn't waiting at a design gate.` };
     if (!run.workspaceId) return { ok: false, message: `#${taskId} has no workspace.` };
+    // KNOWN CONTAINERIZED GAP (Phase 9): attachDesign writes a design zip directly to the HOST FS
+    // (`ws.path/design`). A sandbox workspace has no host path — the design lives only inside the daemon's
+    // clone — so this write can't target it. Routing the unzip through a daemon op is out of scope this
+    // phase (the design gate is interim + human-driven). Refuse with a clear message rather than the
+    // misleading "not found" below. Acceptable: the flag is off, so no sandbox workspace ever reaches here.
+    if (this.sandboxes.has(run.workspaceId)) {
+      return {
+        ok: false,
+        message: `#${taskId} runs in a containerized sandbox — attaching a design zip to the host filesystem isn't supported yet for sandboxed work (known gap). Run this ticket in a local workspace, or skip the design gate.`,
+      };
+    }
     const ws = this.workspaces.get(run.workspaceId);
     if (!ws) return { ok: false, message: `Workspace '${run.workspaceId}' not found.` };
     if (/^https?:\/\//i.test(source))

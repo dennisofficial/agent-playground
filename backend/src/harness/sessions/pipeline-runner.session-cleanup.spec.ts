@@ -9,6 +9,7 @@ import {
   FakeSectionStore,
   type Row,
 } from './pipeline-runner.test-fakes';
+import { fakeSandboxRegistry } from '../workspaces/workspace-git.test-util';
 
 /**
  * Pipeline stage sessions are owned by synthetic phase-configs that never call close_session, so the
@@ -101,6 +102,7 @@ function build(opts: { shipOk?: boolean } = {}) {
     new FakeCodingStore() as never,
     new FakeReviewStore() as never,
     new FakeNoteStore() as never,
+    fakeSandboxRegistry() as never,
   );
   const openSessions = () =>
     [...sessionRows.values()].filter((s) => s.status !== 'closed');

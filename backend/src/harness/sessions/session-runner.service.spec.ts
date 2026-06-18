@@ -18,7 +18,10 @@ import type { TeamSettingsStore } from '../memory/team-settings-store';
 import type { WorklogStore } from '../memory/worklog-store';
 import type { MetricsEventsService } from '../metrics/metrics-events.service';
 import type { WorkspaceService } from '../workspaces/workspace.service';
-import { localGitProvider } from '../workspaces/workspace-git.test-util';
+import {
+  fakeSandboxRegistry,
+  localGitProvider,
+} from '../workspaces/workspace-git.test-util';
 import { InMemorySessionRegistry } from './in-memory-session.registry';
 import type { Session } from './session-registry.port';
 import { SessionRunnerService } from './session-runner.service';
@@ -161,6 +164,8 @@ function buildRunner(
     env,
     plans,
     settings,
+    // Phase 9: routing discriminator — local path (has() === false) for every existing session spec.
+    fakeSandboxRegistry(),
   );
   return {
     runner,

@@ -5,7 +5,7 @@ import type {
   NewWorkspace,
   Workspace,
 } from './workspace.types';
-import type { WorkspaceGitPort } from './workspace-git.port';
+import type { WorkspaceGitCtx, WorkspaceGitPort } from './workspace-git.port';
 import type { DaemonClient } from './daemon-client';
 
 /**
@@ -13,25 +13,33 @@ import type { DaemonClient } from './daemon-client';
  * over Redis (the Phase-5 typed git RPC: `DaemonClient.gitCall(workspaceId, method, args)`), returning
  * the daemon's result.
  *
- * DORMANT THIS PHASE. `isContainerized` is hard-false until Phase 9, so the provider never resolves to
- * this adapter at runtime; it is built and exercised ONLY by unit tests with a fake `DaemonClient`. The
- * daemon's `DaemonGitService` already implements the matching surface (Phase 4).
+ * THE HOST↔DAEMON IDENTITY MAPPING (Phase 9 — the crux):
+ *   - The HOST `WorkspaceGitPort` is keyed by the host `workspaceId` (here = the SANDBOX uuid).
+ *   - The daemon's `DaemonGitService` keys per-WORKTREE ops by the HARNESS SESSION ID — one sandbox
+ *     (one repo) hosts MANY worktrees, one per session (`agent/<sessionId>` under `.workspaces/`).
+ *   So for every per-worktree method we DROP the host workspace-id arg and SUBSTITUTE `ctx.session.id`
+ *   (the daemon's worktree key) as the daemon method's leading arg. `RemoteTurnDispatcher` (Phase 7)
+ *   keys the engine cwd off the SAME `ctx.session.id` (its `RunCommandPayload.sessionId`), so a turn's
+ *   cwd and its git ops always address the SAME in-sandbox worktree.
  *
- * Bound to a single `workspaceId` — the SANDBOX (one container = one repo) the RPCs dispatch to. The
- * provider constructs one per resolved sandbox.
+ * Constructed PER-RESOLVE by `WorkspaceGitProvider.resolve(ctx)`, bound to the sandbox uuid (the RPC
+ * dispatch target) AND the resolving `ctx` (the source of the session worktree key). DORMANT until
+ * `WORKSPACE_SANDBOX_ENABLED` lets a sandbox exist; exercised by unit tests with a fake `DaemonClient`.
  *
- * IDENTITY NOTE (Phase-9 seam): the host `WorkspaceService` keys ops by `ws-NNN`, whereas the daemon's
- * `DaemonGitService` keys per-worktree ops by the HARNESS SESSION ID (one container = one repo, a
- * worktree per session). This adapter forwards the host-side positional args verbatim to `gitCall`; the
- * arg-shape translation (host workspace id ⇒ daemon session id for the per-worktree methods) is wired
- * when Phase 9 flips routing on and supplies real session context. Until then nothing reaches here, so
- * the verbatim forward is correct for the unit-test contract (each method maps 1:1 to a typed RPC).
+ * THREE host methods have NO daemon counterpart (not in the daemon git-RPC allowlist) — they are
+ * HOST-REGISTRY / multi-project reads the single-repo daemon doesn't model: `projectRecordFor`,
+ * `sharedStatus`, `referenceOrientation`. They throw a clear "not available in a sandbox" error so a
+ * mis-route surfaces loudly rather than silently returning wrong data. The callers that use them
+ * (list_workspaces' shared-status, the integrate barrier's project lookup, reference orientation) are
+ * documented containerized gaps for a later phase; none is on the containerized hot path this phase.
  */
 export class DaemonGitAdapter implements WorkspaceGitPort {
   constructor(
     private readonly daemon: DaemonClient,
     /** The sandbox the git RPCs dispatch to (`DaemonClient.gitCall`'s first arg). */
     private readonly workspaceId: string,
+    /** The resolving ctx — its `session.id` is the daemon's per-worktree key (the identity mapping). */
+    private readonly ctx: WorkspaceGitCtx,
   ) {}
 
   /** Dispatch one `DaemonGitService` method as a typed git RPC and return its (typed) result. */
@@ -39,86 +47,121 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
     return this.daemon.gitCall(this.workspaceId, method, args) as Promise<T>;
   }
 
+  /** Dispatch a per-worktree method: substitute the host workspace-id arg with the daemon's worktree key
+   * (`ctx.session.id`) and prepend it to `rest`. Surfaces a missing session as a REJECTED promise (the
+   * methods are async-contract — a caller's `await`/`.catch()` must see it, not a sync throw). A
+   * containerized git op without a session is a routing bug (the session IS the worktree). */
+  private worktreeCall<T>(method: string, rest: unknown[] = []): Promise<T> {
+    const sessionId = this.ctx.session?.id;
+    if (!sessionId) {
+      return Promise.reject(
+        new Error(
+          'DaemonGitAdapter: a per-worktree git op needs ctx.session (the daemon keys the worktree off the harness session id).',
+        ),
+      );
+    }
+    return this.call<T>(method, [sessionId, ...rest]);
+  }
+
+  /** A rejected promise for a host-only method the single-repo daemon doesn't model (loud, not
+   * silent-wrong; rejected so the async contract holds for `.catch()` callers). */
+  private unavailable<T>(method: string): Promise<T> {
+    return Promise.reject(
+      new Error(
+        `DaemonGitAdapter: '${method}' has no in-sandbox counterpart (host-registry/multi-project op) — known containerized gap.`,
+      ),
+    );
+  }
+
+  // ── per-worktree methods: host workspace-id arg → daemon session-id key ──────────────────────────
+
+  /** create_workspace's git side. In a sandbox the worktree is the session's; the daemon cuts it keyed
+   * by session id (NewWorkspace's name/branch/shared aren't the daemon's per-worktree primitive — the
+   * shared branch is established later via ensureShared). Returns a Workspace shell the tool reads. */
   create(
-    input: NewWorkspace,
+    _input: NewWorkspace,
   ): Promise<{ workspace: Workspace; warning?: string }> {
-    return this.call('create', [input]);
+    return this.worktreeCall('createWorktree');
   }
 
-  remove(id: string): Promise<void> {
-    return this.call('remove', [id]);
+  remove(_id: string): Promise<void> {
+    return this.worktreeCall('removeWorktree');
   }
 
-  refreshFromBase(id: string): Promise<BaseRefreshResult> {
-    return this.call('refreshFromBase', [id]);
+  refreshFromBase(_id: string): Promise<BaseRefreshResult> {
+    return this.worktreeCall('refreshFromBase');
   }
 
   mergeState(
-    workspaceId: string,
+    _workspaceId: string,
   ): Promise<{ inProgress: boolean; files: string[] }> {
-    return this.call('mergeState', [workspaceId]);
+    return this.worktreeCall('mergeState');
   }
 
   ensureShared(
-    id: string,
+    _id: string,
     name: string,
     startPoint?: string,
   ): Promise<string | undefined> {
-    return this.call('ensureShared', [id, name, startPoint]);
+    return this.worktreeCall('ensureShared', [name, startPoint]);
   }
 
   ensureSharedAtBase(
-    id: string,
+    _id: string,
     name: string,
   ): Promise<
     { ok: true; sharedBranch: string } | { ok: false; reason: string }
   > {
-    return this.call('ensureSharedAtBase', [id, name]);
+    return this.worktreeCall('ensureSharedAtBase', [name]);
   }
 
-  sharedRef(id: string): Promise<string | undefined> {
-    return this.call('sharedRef', [id]);
+  sharedRef(_id: string): Promise<string | undefined> {
+    return this.worktreeCall('sharedRef');
   }
 
   ownerDiff(
-    id: string,
+    _id: string,
     sinceRef: string,
   ): Promise<{ range: string; files: string[] }> {
-    return this.call('ownerDiff', [id, sinceRef]);
+    return this.worktreeCall('ownerDiff', [sinceRef]);
   }
 
-  publish(id: string): Promise<IntegrationResult> {
-    return this.call('publish', [id]);
+  publish(_id: string): Promise<IntegrationResult> {
+    return this.worktreeCall('publish');
   }
 
-  pull(id: string): Promise<IntegrationResult> {
-    return this.call('pull', [id]);
+  pull(_id: string): Promise<IntegrationResult> {
+    return this.worktreeCall('pull');
   }
 
   pushSharedToOrigin(
-    id: string,
+    _id: string,
   ): Promise<{ sharedBranch: string; gitUrl: string }> {
-    return this.call('pushSharedToOrigin', [id]);
+    return this.worktreeCall('pushSharedToOrigin');
   }
 
-  projectRecordFor(workspaceId: string): Promise<ProjectRecord | undefined> {
-    return this.call('projectRecordFor', [workspaceId]);
+  // ── reference clones: the daemon resolves credentials itself, so the host `team` arg is dropped ──
+
+  ensureReferenceClone(
+    _team: string,
+    target: { projectId: string } | { gitUrl: string },
+  ): Promise<{ path: string; projectId?: string; gitUrl: string }> {
+    return this.call('ensureReferenceClone', [target]);
+  }
+
+  // ── host-only methods (no daemon counterpart) — loud unavailable, documented gaps ───────────────
+
+  projectRecordFor(_workspaceId: string): Promise<ProjectRecord | undefined> {
+    return this.unavailable('projectRecordFor');
   }
 
   sharedStatus(
-    id: string,
+    _id: string,
   ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined> {
-    return this.call('sharedStatus', [id]);
+    return this.unavailable('sharedStatus');
   }
 
-  ensureReferenceClone(
-    team: string,
-    target: { projectId: string } | { gitUrl: string },
-  ): Promise<{ path: string; projectId?: string; gitUrl: string }> {
-    return this.call('ensureReferenceClone', [team, target]);
-  }
-
-  referenceOrientation(path: string): Promise<string> {
-    return this.call('referenceOrientation', [path]);
+  referenceOrientation(_path: string): Promise<string> {
+    return this.unavailable('referenceOrientation');
   }
 }

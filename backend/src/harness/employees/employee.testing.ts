@@ -38,10 +38,22 @@ export const makeEmployee = (
 ): EmployeeDefinition => {
   const name = over.name ?? 'Alex';
   const engine = over.engine ?? EWorkerEngineName.CLAUDE;
+  // LANGGRAPH has no engine preset (it's an in-process engine, host-only); build a minimal spec so a
+  // test can exercise langgraph-engine policy (e.g. the Phase-9 sandbox refusal). CODEX/CLAUDE keep
+  // their presets.
+  const langgraphSpec = { engine: EWorkerEngineName.LANGGRAPH } as const;
   const planPreset =
-    engine === EWorkerEngineName.CODEX ? PLAN_CODEX : PLAN_CLAUDE;
+    engine === EWorkerEngineName.LANGGRAPH
+      ? langgraphSpec
+      : engine === EWorkerEngineName.CODEX
+        ? PLAN_CODEX
+        : PLAN_CLAUDE;
   const execPreset =
-    engine === EWorkerEngineName.CODEX ? EXECUTE_CODEX : EXECUTE_CLAUDE;
+    engine === EWorkerEngineName.LANGGRAPH
+      ? langgraphSpec
+      : engine === EWorkerEngineName.CODEX
+        ? EXECUTE_CODEX
+        : EXECUTE_CLAUDE;
   const roleContext = over.roleContext ?? 'ctx';
   const caps = over.capabilities ?? [];
   return {

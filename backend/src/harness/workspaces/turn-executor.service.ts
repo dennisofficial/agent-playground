@@ -7,6 +7,7 @@ import type {
 } from '../engines/worker-engine.port';
 import type { Session } from '../sessions/session-registry.port';
 import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
+import { SandboxRegistry } from './sandbox-registry';
 
 /**
  * The minimal context a turn needs to be ROUTED (local host vs. remote sandbox). Deliberately not the
@@ -44,6 +45,7 @@ export class TurnExecutor {
   constructor(
     private readonly engines: EngineRegistry,
     private readonly remote: RemoteTurnDispatcher,
+    private readonly sandboxes: SandboxRegistry,
   ) {}
 
   /**
@@ -65,17 +67,21 @@ export class TurnExecutor {
   }
 
   /**
-   * The routing POLICY — whether this turn runs in an isolated sandbox.
+   * The routing POLICY — whether this turn runs in an isolated sandbox (Phase 9).
    *
-   * PHASE 7: HARD-FALSE. The remote path is built but DORMANT; the live hot path stays 100% local so
-   * runtime behavior is unchanged after this phase. The remote branch is exercised ONLY by unit tests
-   * (via the test-only override below) until Phase 9 implements + flips the real policy.
+   * THE DISCRIMINATOR: a turn is containerized IFF its `workspaceId` is a LIVE SANDBOX, i.e.
+   * `SandboxRegistry.has(workspaceId)`. No engine/project re-check happens here — the create-time policy
+   * (in `create_workspace`, gated by `WORKSPACE_SANDBOX_ENABLED` + a registered project + a claude/codex
+   * engine) ALREADY decided sandbox-vs-local, and stamped the choice as the session's `workspace_id`
+   * (the sandbox uuid for a containerized session, `ws-NNN` for a local one). Routing just reads that
+   * decision back off the registry. `WorkspaceGitProvider.isContainerized` uses the SAME predicate, so a
+   * session's turns and its git ops always route together.
    *
-   * PHASE 9 (TODO): return `true` when the turn targets a REGISTERED project AND `engineName` !==
-   * langgraph (langgraph + chat/conductor stay host-side) — resolved from `ctx.team`/`ctx.project`
-   * against `ProjectStore`, gated by the deployment's container config.
+   * FLAG-OFF SAFETY: with `WORKSPACE_SANDBOX_ENABLED` false, no sandbox is ever created, so `has()` is
+   * always false and every turn stays local — byte-identical to pre-Phase-9. (The unit test forces the
+   * branch via the test-only subclass override.)
    */
-  protected isContainerized(_ctx: TurnRoutingCtx): boolean {
-    return false;
+  protected isContainerized(ctx: TurnRoutingCtx): boolean {
+    return !!ctx.workspaceId && this.sandboxes.has(ctx.workspaceId);
   }
 }

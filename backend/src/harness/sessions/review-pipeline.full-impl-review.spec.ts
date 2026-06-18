@@ -11,6 +11,7 @@ import {
   FakeSectionStore,
   type Row,
 } from './pipeline-runner.test-fakes';
+import { fakeSandboxRegistry } from '../workspaces/workspace-git.test-util';
 
 /**
  * Phase 5b — the ticket-level full-implementation review at the PR gate. Two halves: (1) the runner's
@@ -67,6 +68,7 @@ function buildRunner(reviewFull: {
     codingStore as never,
     reviewStore as never,
     notes as never,
+    fakeSandboxRegistry() as never,
   );
   return { svc, runs, shipTask, reviewFullImplementation, boardEvents, notes };
 }

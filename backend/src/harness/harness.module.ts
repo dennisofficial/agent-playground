@@ -45,6 +45,13 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     SkillsModule,
     LlmModule,
     EnginesModule,
+    // WorkspacesModule MUST precede SessionsModule (Phase 9 boot ordering): the
+    // `ContainerManagerService.onApplicationBootstrap` sandbox adoption (rebuilds `SandboxRegistry` from
+    // Docker labels) has to run BEFORE `PostgresSessionRegistry.onApplicationBootstrap` finalizes orphaned
+    // `running` sessions, so the latter can consult sandbox presence (a session whose sandbox re-adopted
+    // is genuinely resumable vs. one whose sandbox is gone). Nest fires `onApplicationBootstrap` in module
+    // dependency/registration order, and SessionsModule imports WorkspacesModule, so this listing order
+    // (and the import edge) both guarantee WorkspacesModule initializes first. Do not reorder.
     WorkspacesModule,
     SessionsModule,
     ConductorModule,

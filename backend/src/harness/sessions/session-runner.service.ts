@@ -2,7 +2,7 @@ import { AsyncLocalStorageProviderSingleton } from '@langchain/core/singletons';
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type ChatTracePointer, traceSessionTurn } from '@workspace/langfuse';
-import { withActiveRoot } from '../engines/guard';
+import { ROOT, withActiveRoot } from '../engines/guard';
 import {
   EWorkerEngineName,
   WorkerEvent,
@@ -21,6 +21,7 @@ import { PlanStore } from '../memory/plan-store';
 import { TeamSettingsStore } from '../memory/team-settings-store';
 import { WorklogStore } from '../memory/worklog-store';
 import { MetricsEventsService } from '../metrics/metrics-events.service';
+import { SandboxRegistry } from '../workspaces/sandbox-registry';
 import { TurnExecutor } from '../workspaces/turn-executor.service';
 import { WorkspaceGitProvider } from '../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../workspaces/workspace.service';
@@ -81,6 +82,7 @@ export class SessionRunnerService {
     private readonly env: EnvService,
     private readonly plans: PlanStore,
     private readonly settings: TeamSettingsStore,
+    private readonly sandboxes: SandboxRegistry,
   ) {}
 
   /**
@@ -235,12 +237,22 @@ export class SessionRunnerService {
       if (!session) return;
       const bot =
         this.employees.byId(session.ownerBot) ?? this.employees.fallbackOwner();
+      // CONTAINERIZED? A sandbox session's checkout lives INSIDE the daemon — there is no host
+      // workspace row and no host cwd (the daemon resolves cwd from the session's in-sandbox worktree).
+      // So the host-path lookup below is LOCAL-ONLY: skip it (and its throw) for a containerized session,
+      // and pass cwd='' through the seam (the daemon overrides it; cwd doesn't cross the wire anyway).
+      // With the flag off, `has()` is always false ⇒ the unchanged local path.
+      const containerized = this.sandboxes.has(session.workspaceId);
       const workspace = this.workspaces.get(session.workspaceId);
-      if (!workspace) {
+      if (!containerized && !workspace) {
         throw new Error(
           `Workspace "${session.workspaceId}" no longer exists — the session has nowhere to run.`,
         );
       }
+      // The host cwd for the turn: the workspace checkout locally, empty for a sandbox (daemon-resolved).
+      const cwd = containerized ? '' : workspace!.path;
+      // A stable workspace handle for the base-refresh preamble + trace metadata, valid in both paths.
+      const workspaceRef = { id: session.workspaceId };
       // Entering execute (a fresh execute session, or a plan→execute flip): bring the workspace up
       // to date with the base branch before the engine runs. A workspace cut during stand-up is
       // stale by now (base moved while it sat idle / between sequential tickets). Skip if ANOTHER
@@ -251,7 +263,7 @@ export class SessionRunnerService {
       // it knows it may be on a stale base and can `refresh_workspace` after committing.
       if (enteringExecute) {
         message =
-          (await this.baseRefreshPreamble(session, workspace)) + message;
+          (await this.baseRefreshPreamble(session, workspaceRef)) + message;
       }
       // Per-turn spec from the employee, by mode: 'plan' → plan recipe, 'investigate' → investigate
       // recipe (execute's engine on a top-tier model), else the execute recipe (model/effort/
@@ -264,7 +276,7 @@ export class SessionRunnerService {
       const { model, effort, systemPrompt } = spec;
 
       this.logger.log(
-        `${sessionId} turn ${session.turns + 1} — ${session.mode} on ${model ?? `${session.engine} default`}${effort ? ` (effort:${effort})` : ''} (${bot.name}, ${workspace.id})`,
+        `${sessionId} turn ${session.turns + 1} — ${session.mode} on ${model ?? `${session.engine} default`}${effort ? ` (effort:${effort})` : ''} (${bot.name}, ${workspaceRef.id}${containerized ? ', sandbox' : ''})`,
       );
       // Resolve THIS workspace's keys: passed into the claude/codex subprocess env (apiKey) AND
       // stashed in the credential context for the in-process langgraph engine's model builder.
@@ -291,11 +303,15 @@ export class SessionRunnerService {
         turnModel: string | undefined,
         resumeId: string | undefined,
       ) =>
-        withActiveRoot(workspace.path, () =>
+        // Local: jail the in-process langgraph tools to the workspace checkout. Containerized: there's
+        // no host checkout (cwd=''), and the engine (claude/codex) runs in the daemon with its own cwd,
+        // so fall back to the process ROOT for any incidental host-side resolution (langgraph never
+        // containerizes, so the in-process tools never run on this path anyway).
+        withActiveRoot(cwd || ROOT, () =>
           this.credCtx.run({ teamId: session.team, keys }, () =>
             this.turnExecutor.run(routingCtx, session.engine, {
               task: turnMessage,
-              cwd: workspace.path,
+              cwd,
               systemPrompt,
               agentId: bot.id,
               sessionId: resumeId,
@@ -340,7 +356,7 @@ export class SessionRunnerService {
               engine: session.engine,
               boardTaskId: session.boardTaskId,
               agentId: bot.id,
-              workspace: workspace.id,
+              workspace: workspaceRef.id,
               turn: session.turns + 1,
               parentChatTrace,
             },
@@ -404,7 +420,9 @@ export class SessionRunnerService {
           session,
           planBody,
           engineSessionId,
-          workspacePath: workspace.path,
+          // Local: the host checkout. Containerized: '' (the SelfReviewHandler routes its review/revision
+          // turns through the same TurnExecutor seam with the session in ctx, so the daemon resolves cwd).
+          workspacePath: cwd,
           keys,
           signal: ac.signal,
           onProgress: (e) =>

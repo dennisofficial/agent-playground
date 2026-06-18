@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DaemonClient } from './daemon-client';
 import { DaemonGitAdapter } from './daemon-git.adapter';
 import { LocalWorkspaceAdapter } from './local-workspace.adapter';
+import { SandboxRegistry } from './sandbox-registry';
 import type { WorkspaceGitCtx, WorkspaceGitPort } from './workspace-git.port';
 
 /**
@@ -27,38 +28,49 @@ export class WorkspaceGitProvider {
   constructor(
     private readonly local: LocalWorkspaceAdapter,
     private readonly daemon: DaemonClient,
+    private readonly sandboxes: SandboxRegistry,
   ) {}
 
-  /** The port to run `ctx`'s git op against — local host today, in-sandbox daemon once Phase 9 flips on. */
+  /** The port to run `ctx`'s git op against — local host today, in-sandbox daemon once a workspace is
+   * a live sandbox. The daemon adapter is constructed PER-RESOLVE bound to the sandbox uuid AND the ctx,
+   * so it can substitute the host workspace-id arg with the daemon's per-worktree key (`ctx.session.id`)
+   * on each forwarded call (the host↔daemon identity mapping). */
   resolve(ctx: WorkspaceGitCtx): WorkspaceGitPort {
     if (this.isContainerized(ctx)) {
       // The sandbox to dispatch to: the session's/ctx's workspace id (= the sandbox uuid for a
       // containerized run). Required on the remote path — without it there's no container to reach.
-      const workspaceId = ctx.session?.workspaceId ?? ctx.workspaceId;
+      const workspaceId = this.sandboxId(ctx);
       if (!workspaceId) {
         throw new Error(
           'WorkspaceGitProvider: a containerized git op needs a workspaceId (the sandbox to dispatch to).',
         );
       }
-      return new DaemonGitAdapter(this.daemon, workspaceId);
+      return new DaemonGitAdapter(this.daemon, workspaceId, ctx);
     }
     // LOCAL — today's path. The pass-through adapter delegates verbatim to WorkspaceService.
     return this.local;
   }
 
+  /** The candidate sandbox id for a ctx — the session's workspace (preferred: the session is the unit a
+   * sandbox hosts) else the ctx's workspace handle. Both hold the sandbox uuid for a containerized run. */
+  private sandboxId(ctx: WorkspaceGitCtx): string | undefined {
+    return ctx.session?.workspaceId ?? ctx.workspaceId;
+  }
+
   /**
-   * The routing POLICY — whether this git op runs inside an isolated sandbox.
+   * The routing POLICY — whether this git op runs inside an isolated sandbox (Phase 9).
    *
-   * PHASE 8: HARD-FALSE. The remote path is built but DORMANT; the live hot path stays 100% local so
-   * runtime behavior is unchanged after this phase. The remote branch is exercised ONLY by unit tests
-   * (via a test-only subclass override) until Phase 9 implements + flips the real policy.
+   * THE DISCRIMINATOR (identical to `TurnExecutor.isContainerized`): the op's workspace id is a LIVE
+   * SANDBOX, i.e. `SandboxRegistry.has(workspaceId)`. The create-time policy already decided sandbox vs
+   * local and stamped it as the session's `workspace_id`; this just reads it back. No project/engine
+   * re-check at routing time. The two seams (turn + git) share the predicate so a session's turns and
+   * git ops always route together.
    *
-   * PHASE 9 (TODO): return `true` when the op targets a REGISTERED project AND the session's engine !==
-   * langgraph — resolved from `ctx.team`/`ctx.project` against `ProjectStore`, the SAME policy as
-   * `TurnExecutor.isContainerized` (the two seams must agree so a session's turns and git ops route
-   * together).
+   * FLAG-OFF SAFETY: `WORKSPACE_SANDBOX_ENABLED` false ⇒ no sandbox is ever created ⇒ `has()` is always
+   * false ⇒ every git op resolves to the LOCAL adapter — byte-identical to pre-Phase-9.
    */
-  protected isContainerized(_ctx: WorkspaceGitCtx): boolean {
-    return false;
+  protected isContainerized(ctx: WorkspaceGitCtx): boolean {
+    const id = this.sandboxId(ctx);
+    return !!id && this.sandboxes.has(id);
   }
 }

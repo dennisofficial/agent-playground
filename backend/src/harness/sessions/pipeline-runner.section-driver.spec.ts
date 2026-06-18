@@ -13,6 +13,7 @@ import {
   FakeSectionStore,
   type Row,
 } from './pipeline-runner.test-fakes';
+import { fakeSandboxRegistry } from '../workspaces/workspace-git.test-util';
 
 /**
  * Drives the EXPLICIT-ROW section-driver state machine end-to-end with in-memory fakes (no engines/DB).
@@ -98,6 +99,7 @@ function build() {
     codingStore as never,
     reviewStore as never,
     notes as never,
+    fakeSandboxRegistry() as never,
   );
   return {
     svc,

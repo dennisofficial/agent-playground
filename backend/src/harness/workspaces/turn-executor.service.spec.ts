@@ -19,7 +19,12 @@ import {
   type RunWorkerArgs,
 } from '../engines/worker-engine.port';
 import type { RemoteTurnDispatcher } from './remote-turn.dispatcher';
+import type { SandboxRegistry } from './sandbox-registry';
 import { TurnExecutor, type TurnRoutingCtx } from './turn-executor.service';
+
+/** A SandboxRegistry stand-in — `has()` defaults false (the local path); the test-only subclass forces
+ * the routing decision directly, so this is just a constructor placeholder. */
+const noSandboxes = { has: () => false } as unknown as SandboxRegistry;
 
 const CTX: TurnRoutingCtx = {
   team: 'team-1',
@@ -50,7 +55,7 @@ class TestableTurnExecutor extends TurnExecutor {
     remote: RemoteTurnDispatcher,
     private readonly forceContainerized: boolean,
   ) {
-    super(engines, remote);
+    super(engines, remote, noSandboxes);
   }
   protected isContainerized(): boolean {
     return this.forceContainerized;
@@ -66,7 +71,7 @@ describe('TurnExecutor fork', () => {
     const remote = { dispatch } as unknown as RemoteTurnDispatcher;
 
     // The real executor — isContainerized is hard-false this phase, so this exercises the live default.
-    const exec = new TurnExecutor(engines, remote);
+    const exec = new TurnExecutor(engines, remote, noSandboxes);
     const args = makeArgs();
     const out = await exec.run(CTX, EWorkerEngineName.CLAUDE, args);
 
@@ -108,10 +113,52 @@ describe('TurnExecutor fork', () => {
     const dispatch = vi.fn(async () => RESULT);
     const remote = { dispatch } as unknown as RemoteTurnDispatcher;
 
-    const exec = new TurnExecutor(engines, remote);
+    const exec = new TurnExecutor(engines, remote, noSandboxes);
     await exec.run(CTX, EWorkerEngineName.CODEX, makeArgs());
 
     expect(run).toHaveBeenCalledTimes(1); // local
     expect(dispatch).not.toHaveBeenCalled(); // dormant remote
+  });
+
+  it('THE DISCRIMINATOR: routes REMOTE when SandboxRegistry.has(workspaceId) is true (real isContainerized)', async () => {
+    const run = vi.fn(async () => RESULT);
+    const engines = {
+      get: () => ({ name: EWorkerEngineName.CLAUDE, run }),
+    } as unknown as EngineRegistry;
+    const dispatch = vi.fn(async () => RESULT);
+    const remote = { dispatch } as unknown as RemoteTurnDispatcher;
+    // The real policy: a workspace id the registry knows ⇒ containerized.
+    const has = vi.fn((id: string) => id === 'sandbox-uuid-1');
+    const sandboxes = { has } as unknown as SandboxRegistry;
+
+    const exec = new TurnExecutor(engines, remote, sandboxes);
+
+    // A live sandbox id → remote.
+    await exec.run(
+      { team: 't', project: 'p', workspaceId: 'sandbox-uuid-1' },
+      EWorkerEngineName.CLAUDE,
+      makeArgs(),
+    );
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+
+    // A local ws-NNN id (not in the registry) → local.
+    dispatch.mockClear();
+    await exec.run(
+      { team: 't', project: 'p', workspaceId: 'ws-001' },
+      EWorkerEngineName.CLAUDE,
+      makeArgs(),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(dispatch).not.toHaveBeenCalled();
+
+    // No workspace id at all → local (never reaches has()).
+    run.mockClear();
+    await exec.run(
+      { team: 't', project: 'p' },
+      EWorkerEngineName.CLAUDE,
+      makeArgs(),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });

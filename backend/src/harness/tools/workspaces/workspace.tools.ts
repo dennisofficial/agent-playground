@@ -1,13 +1,40 @@
 import { Inject } from '@nestjs/common';
+import { EnvService } from '@core/config/env/env.service';
 import { z } from 'zod';
+import { ProjectStore } from '../../projects/project-store';
 import {
   SESSION_REGISTRY,
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
+import { ContainerManagerService } from '../../workspaces/container-manager.service';
 import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
+
+/**
+ * The Phase-9 create-time policy: should a NEW workspace be a containerized sandbox or a local checkout?
+ *
+ *   sandbox  ⇔  WORKSPACE_SANDBOX_ENABLED && ProjectStore.get(team, project) exists
+ *   local    ⇔  otherwise (today's path)
+ *
+ * The plan's full policy also requires the engine ∈ {claude, codex}. `create_workspace` does NOT know
+ * the engine (the engine is fixed per SESSION, at create_session, not per workspace). So the workspace
+ * decision is flag + registered-project here, and engine ≠ langgraph is enforced where the engine IS
+ * known — at session creation (`CreateSessionTool` refuses a langgraph session in a sandbox workspace).
+ * This is sound: with the flag off (the default) `get()` may match but the flag gates creation, so NO
+ * sandbox is ever created and every workspace is local — behavior byte-identical to pre-Phase-9.
+ */
+async function shouldContainerize(
+  env: EnvService,
+  projects: ProjectStore,
+  team: string,
+  project: string,
+): Promise<boolean> {
+  if (env.get('WORKSPACE_SANDBOX_ENABLED') !== true) return false;
+  const registered = await projects.get(team, project).catch(() => undefined);
+  return !!registered;
+}
 
 /**
  * A bot's workspace tools — managing the isolated work areas its sessions run in. All non-terminal
@@ -45,7 +72,13 @@ export class CreateWorkspaceTool implements IHarnessTool<
     'Create an isolated git workspace off the project repo — the work area your sessions run in. Cuts a fresh branch from the base by default. Returns the workspace id to open sessions against. Note: a fresh checkout has no installed dependencies; a session can run installs itself if it needs them.';
   readonly schema = createWorkspaceSchema;
 
-  constructor(private readonly workspaceGit: WorkspaceGitProvider) {}
+  constructor(
+    private readonly workspaceGit: WorkspaceGitProvider,
+    private readonly workspaces: WorkspaceService,
+    private readonly containers: ContainerManagerService,
+    private readonly projects: ProjectStore,
+    private readonly env: EnvService,
+  ) {}
 
   async execute(
     { name, branch, shared }: z.infer<typeof createWorkspaceSchema>,
@@ -53,6 +86,23 @@ export class CreateWorkspaceTool implements IHarnessTool<
   ): Promise<string> {
     const id = ctx.identity;
     try {
+      // CREATE-TIME POLICY: containerized sandbox vs local checkout. Decided ONCE, here, and stamped as
+      // the returned workspace id (the sandbox uuid for a sandbox, `ws-NNN` for local) — every later
+      // route reads it back off SandboxRegistry. With the flag off this is always false ⇒ local path.
+      if (
+        await shouldContainerize(this.env, this.projects, id.team, id.project)
+      ) {
+        // SANDBOX: spawn (or reuse) the project's sandbox; the sandbox uuid IS the workspace id the
+        // agent gets back and that lands in Session.workspace_id. The branch/shared inputs are agent
+        // intent that the in-sandbox daemon realizes per-session later (createWorktree + ensureShared);
+        // there's no host checkout to cut here.
+        const sandbox = await this.containers.ensureWorkspace(
+          id.team,
+          id.project,
+        );
+        return `Created sandbox workspace ${sandbox.workspaceId} for ${id.team}/${id.project}. Open sessions against it; each session gets its own isolated worktree inside the sandbox.`;
+      }
+      // LOCAL — today's path, verbatim (through the git port's local adapter).
       const { workspace, warning } = await this.workspaceGit
         .resolve({ team: id.team, project: id.project })
         .create({

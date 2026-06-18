@@ -25,6 +25,8 @@ import {
   SessionRunnerService,
   type ActionResult,
 } from '../../sessions/session-runner.service';
+import { DaemonClient } from '../../workspaces/daemon-client';
+import { SandboxRegistry } from '../../workspaces/sandbox-registry';
 import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceService } from '../../workspaces/workspace.service';
 import { HarnessTool } from '../harness-tool.decorator';
@@ -93,6 +95,8 @@ export class CreateSessionTool implements IHarnessTool<
     private readonly board: BoardStore,
     private readonly plans: PlanStore,
     private readonly notes: TicketNoteStore,
+    private readonly sandboxes: SandboxRegistry,
+    private readonly daemon: DaemonClient,
   ) {}
 
   async execute(
@@ -106,8 +110,13 @@ export class CreateSessionTool implements IHarnessTool<
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
+    // CONTAINERIZED? A sandbox workspace id is a live sandbox uuid (the create-time policy stamped it).
+    // A sandbox workspace has NO host `WorkspaceService` row — its checkout lives inside the daemon — so
+    // the local existence + drift-guard checks below are LOCAL-ONLY. With the flag off this is always
+    // false and every path is the unchanged local one.
+    const containerized = this.sandboxes.has(workspaceId);
     const workspace = this.workspaces.get(workspaceId);
-    if (!workspace)
+    if (!containerized && !workspace)
       throw new Error(
         `No workspace "${workspaceId}" — create one first (create_workspace) or check list_workspaces.`,
       );
@@ -128,12 +137,19 @@ export class CreateSessionTool implements IHarnessTool<
       // Drift guard: the ticket's slug is the single source of truth for its shared branch. If this
       // workspace already sits on a DIFFERENT shared branch (e.g. a manual create_workspace(shared:)),
       // refuse — otherwise ensureShared keeps the stale branch and the sibling grouping diverges.
-      if (board_task_id !== undefined && boardTask && workspace.sharedBranch) {
+      // LOCAL-ONLY: a sandbox workspace's shared branch lives in the daemon, not on a host row, and a
+      // sandbox is freshly created per task so there's no stale host-side shared branch to drift from.
+      if (
+        !containerized &&
+        board_task_id !== undefined &&
+        boardTask &&
+        workspace!.sharedBranch
+      ) {
         const want = this.workspaces.sharedBranchName(
           boardTask.sharedSlug ?? `ticket-${board_task_id}`,
         );
-        if (workspace.sharedBranch !== want)
-          return `Can't open an execute session: ${workspaceId} is on ${workspace.sharedBranch}, but ticket #${board_task_id} lands on ${want}. Use a fresh workspace for this ticket.`;
+        if (workspace!.sharedBranch !== want)
+          return `Can't open an execute session: ${workspaceId} is on ${workspace!.sharedBranch}, but ticket #${board_task_id} lands on ${want}. Use a fresh workspace for this ticket.`;
       }
     }
     // The engine is the employee's spec for THIS session's role (plan/execute) — so a plan session
@@ -145,6 +161,13 @@ export class CreateSessionTool implements IHarnessTool<
     const engineName = (
       mode === 'plan' ? bot.planEngine(engCtx) : bot.executeEngine(engCtx)
     ).engine;
+    // ENGINE ENFORCEMENT for containerized sessions: the create-time WORKSPACE policy (flag + registered
+    // project) couldn't see the engine, so the engine ≠ langgraph half of the policy is enforced HERE,
+    // where the engine IS known. The in-sandbox daemon only runs claude/codex (langgraph + chat/conductor
+    // stay host-side); a langgraph session in a sandbox would have nowhere to run. Refuse loudly.
+    if (containerized && engineName === EWorkerEngineName.LANGGRAPH) {
+      return `Can't open this session in sandbox ${workspaceId}: ${bot.name}'s ${mode} engine is langgraph, which runs only on the host. Use a local workspace for langgraph work.`;
+    }
     // OPTION B handoff: a fresh execute session is seeded from the APPROVED PLAN (the durable ticket
     // artifact), not the planning session's investigation noise. When this is an execute session on a
     // board task with the owner's attached plan, the engine's first message IS the enriched plan
@@ -181,7 +204,7 @@ export class CreateSessionTool implements IHarnessTool<
         .catch(() => undefined);
       if (note) openingTask += `\n\n${reviewFindingsBlock(note.id, note.body)}`;
     }
-    const { sessionId } = await this.openSession({
+    const { sessionId, session } = await this.openSession({
       identity: id,
       workspaceId,
       task,
@@ -200,20 +223,28 @@ export class CreateSessionTool implements IHarnessTool<
       // Ensure the workspace is on the shared branch the TICKET names: its `shared_slug` (a feature
       // group landing on one PR), or `ticket-${id}` for standalone work. The drift guard above already
       // rejected a workspace sitting on a conflicting shared branch, so this is a no-op or a clean cut.
+      // For containerized work the git op runs in the daemon keyed by the session id (carry `session`
+      // in the ctx); locally it runs on the host workspace. The pre-existing host sharedBranch is the
+      // fallback only for a local workspace (a sandbox has no host row).
       const sharedBranch = await this.workspaceGit
-        .resolve({ team: id.team, project: id.project, workspaceId })
+        .resolve({
+          team: id.team,
+          project: id.project,
+          workspaceId,
+          ...(session ? { session } : {}),
+        })
         .ensureShared(
           workspaceId,
           boardTask.sharedSlug ?? `ticket-${board_task_id}`,
         )
-        .catch(() => workspace.sharedBranch);
+        .catch(() => workspace?.sharedBranch);
       await this.board
         .transition(id.team, board_task_id, 'approved', { status: 'executing' })
         .catch(() => undefined);
       await this.plans
         .setExecuteContext(id.team, board_task_id, {
           executeWorkspaceId: workspaceId,
-          sharedBranch: sharedBranch ?? workspace.sharedBranch,
+          sharedBranch: sharedBranch ?? workspace?.sharedBranch,
         })
         .catch(() => undefined);
     }
@@ -239,7 +270,7 @@ export class CreateSessionTool implements IHarnessTool<
     boardTaskId?: number;
     /** Best-effort link back to the spawning chat turn's trace (for Langfuse session linkage). */
     parentChatTrace?: ChatTracePointer;
-  }): Promise<{ sessionId: string }> {
+  }): Promise<{ sessionId: string; session: Session }> {
     const session = await this.sessions.create({
       task: opts.task,
       workspaceId: opts.workspaceId,
@@ -253,6 +284,18 @@ export class CreateSessionTool implements IHarnessTool<
         ? { boardTaskId: opts.boardTaskId }
         : {}),
     });
+    // EAGER PER-SESSION WORKTREE (containerized only): a sandbox hosts MANY sessions, each its own
+    // daemon-side git worktree keyed by THIS session's id. The daemon's run handler lazily creates the
+    // worktree on the first turn, but git ops that run BEFORE that first turn lands (e.g. the execute
+    // path's `ensureShared` right after this returns) need a tree already. So create it now, synchronously
+    // before firing the turn. Idempotent on the daemon side (createWorktree returns the existing path).
+    // Best-effort: a failure here is logged via the thrown RPC, but must not strand the session create —
+    // the run handler's lazy create is the backstop. LOCAL sessions skip this entirely (flag off path).
+    if (this.sandboxes.has(opts.workspaceId)) {
+      await this.daemon
+        .gitCall(opts.workspaceId, 'createWorktree', [session.id])
+        .catch(() => undefined);
+    }
     AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
       // A fresh execute session starts execution for this work — refresh the workspace against base.
       void this.runner.runSessionTurn(
@@ -262,7 +305,7 @@ export class CreateSessionTool implements IHarnessTool<
         opts.mode === 'execute',
       );
     });
-    return { sessionId: session.id };
+    return { sessionId: session.id, session };
   }
 }
 

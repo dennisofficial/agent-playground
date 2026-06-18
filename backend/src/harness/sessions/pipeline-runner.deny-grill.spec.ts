@@ -9,6 +9,7 @@ import {
   FakeSectionStore,
   type Row,
 } from './pipeline-runner.test-fakes';
+import { fakeSandboxRegistry } from '../workspaces/workspace-git.test-util';
 
 /**
  * Deny-grill (Phase 3c): a 'ticket-changes-requested' verdict re-plans the active section AND carries
@@ -85,6 +86,7 @@ function build() {
     codingStore as never,
     reviewStore as never,
     notes as never,
+    fakeSandboxRegistry() as never,
   );
   return { svc, runs, runner, notes };
 }

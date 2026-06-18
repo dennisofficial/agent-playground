@@ -1,15 +1,27 @@
 /**
- * Phase 8 — `DaemonGitAdapter` maps each git op to a typed Redis RPC.
+ * Phase 9 — `DaemonGitAdapter` maps each host `WorkspaceGitPort` op to a typed daemon git RPC, applying
+ * THE HOST↔DAEMON IDENTITY MAPPING: the host port is keyed by the host workspace id (the sandbox uuid),
+ * but the daemon keys per-WORKTREE ops by the HARNESS SESSION ID (one sandbox ⊃ many session worktrees).
+ * So for every per-worktree method the adapter DROPS the host workspace-id arg and SUBSTITUTES
+ * `ctx.session.id` as the daemon method's leading arg.
  *
- * DORMANT at runtime (the provider never resolves to it until Phase 9), so it is verified purely against
- * a FAKE `DaemonClient`: each method must call `gitCall(workspaceId, method, positionalArgs)` and return
- * its result. `workspaceId` is the SANDBOX the adapter was constructed for (the dispatch target).
+ * DORMANT at runtime (the provider only resolves to it once a sandbox exists), so verified purely against
+ * a FAKE `DaemonClient`. `workspaceId` is the SANDBOX the adapter dispatches to.
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { DaemonClient } from './daemon-client';
 import { DaemonGitAdapter } from './daemon-git.adapter';
+import type { WorkspaceGitCtx } from './workspace-git.port';
 
 const SANDBOX = 'sandbox-uuid-1';
+const SESSION_ID = 'sess-42';
+// The ctx the provider resolves the adapter with — its session.id is the daemon's worktree key.
+const CTX: WorkspaceGitCtx = {
+  team: 't',
+  project: 'p',
+  workspaceId: SANDBOX,
+  session: { id: SESSION_ID, workspaceId: SANDBOX } as never,
+};
 
 function makeClient(returns: unknown = { ok: true }) {
   const gitCall = vi.fn(async () => returns);
@@ -17,78 +29,60 @@ function makeClient(returns: unknown = { ok: true }) {
   return { daemon, gitCall };
 }
 
-describe('DaemonGitAdapter (typed git RPC over DaemonClient)', () => {
-  it('forwards each method to gitCall(workspaceId, method, args) and returns the result', async () => {
+describe('DaemonGitAdapter — host↔daemon identity mapping', () => {
+  it('per-worktree ops: substitute the host workspace-id arg with ctx.session.id and dispatch to the sandbox', async () => {
     const returns = { sentinel: true };
     const { daemon, gitCall } = makeClient(returns);
-    const adapter = new DaemonGitAdapter(daemon, SANDBOX);
+    const adapter = new DaemonGitAdapter(daemon, SANDBOX, CTX);
 
     const newWs = { name: 'n', ownerBot: 'a', team: 't', project: 'p' };
-    const refTarget = { gitUrl: 'https://github.com/d/p' };
 
+    // Each host call → gitCall(SANDBOX, daemonMethod, [SESSION_ID, ...rest]). The host workspace-id arg
+    // ('ws-1' below) is DROPPED in favor of the session id; trailing args (name/startPoint/sinceRef) ride.
     const cases: Array<{
       run: () => Promise<unknown>;
       method: string;
       args: unknown[];
     }> = [
-      { run: () => adapter.create(newWs), method: 'create', args: [newWs] },
-      { run: () => adapter.remove('ws-1'), method: 'remove', args: ['ws-1'] },
+      // create_workspace's git side → createWorktree keyed by the session id (input dropped).
+      { run: () => adapter.create(newWs), method: 'createWorktree', args: [SESSION_ID] },
+      { run: () => adapter.remove('ws-1'), method: 'removeWorktree', args: [SESSION_ID] },
       {
         run: () => adapter.refreshFromBase('ws-1'),
         method: 'refreshFromBase',
-        args: ['ws-1'],
+        args: [SESSION_ID],
       },
       {
         run: () => adapter.mergeState('ws-1'),
         method: 'mergeState',
-        args: ['ws-1'],
+        args: [SESSION_ID],
       },
       {
         run: () => adapter.ensureShared('ws-1', 'feat', 'sha'),
         method: 'ensureShared',
-        args: ['ws-1', 'feat', 'sha'],
+        args: [SESSION_ID, 'feat', 'sha'],
       },
       {
         run: () => adapter.ensureSharedAtBase('ws-1', 'feat'),
         method: 'ensureSharedAtBase',
-        args: ['ws-1', 'feat'],
+        args: [SESSION_ID, 'feat'],
       },
       {
         run: () => adapter.sharedRef('ws-1'),
         method: 'sharedRef',
-        args: ['ws-1'],
+        args: [SESSION_ID],
       },
       {
         run: () => adapter.ownerDiff('ws-1', 'sha'),
         method: 'ownerDiff',
-        args: ['ws-1', 'sha'],
+        args: [SESSION_ID, 'sha'],
       },
-      { run: () => adapter.publish('ws-1'), method: 'publish', args: ['ws-1'] },
-      { run: () => adapter.pull('ws-1'), method: 'pull', args: ['ws-1'] },
+      { run: () => adapter.publish('ws-1'), method: 'publish', args: [SESSION_ID] },
+      { run: () => adapter.pull('ws-1'), method: 'pull', args: [SESSION_ID] },
       {
         run: () => adapter.pushSharedToOrigin('ws-1'),
         method: 'pushSharedToOrigin',
-        args: ['ws-1'],
-      },
-      {
-        run: () => adapter.projectRecordFor('ws-1'),
-        method: 'projectRecordFor',
-        args: ['ws-1'],
-      },
-      {
-        run: () => adapter.sharedStatus('ws-1'),
-        method: 'sharedStatus',
-        args: ['ws-1'],
-      },
-      {
-        run: () => adapter.ensureReferenceClone('t', refTarget),
-        method: 'ensureReferenceClone',
-        args: ['t', refTarget],
-      },
-      {
-        run: () => adapter.referenceOrientation('/refs/p'),
-        method: 'referenceOrientation',
-        args: ['/refs/p'],
+        args: [SESSION_ID],
       },
     ];
 
@@ -96,9 +90,42 @@ describe('DaemonGitAdapter (typed git RPC over DaemonClient)', () => {
       gitCall.mockClear();
       const out = await c.run();
       expect(gitCall).toHaveBeenCalledTimes(1);
-      // Always dispatched to the SANDBOX the adapter was built for, with the method name + positional args.
       expect(gitCall).toHaveBeenCalledWith(SANDBOX, c.method, c.args);
       expect(out).toBe(returns);
     }
+  });
+
+  it('ensureReferenceClone drops the host team arg (the daemon resolves its own credential)', async () => {
+    const { daemon, gitCall } = makeClient();
+    const adapter = new DaemonGitAdapter(daemon, SANDBOX, CTX);
+    const target = { gitUrl: 'https://github.com/d/p' };
+    await adapter.ensureReferenceClone('t', target);
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'ensureReferenceClone', [
+      target,
+    ]);
+  });
+
+  it('a per-worktree op with NO session in ctx throws (the session is the worktree key)', async () => {
+    const { daemon } = makeClient();
+    const adapter = new DaemonGitAdapter(daemon, SANDBOX, {
+      team: 't',
+      project: 'p',
+      workspaceId: SANDBOX,
+    });
+    await expect(adapter.publish('ws-1')).rejects.toThrow(/needs ctx\.session/);
+  });
+
+  it('host-only methods (no daemon counterpart) throw a clear unavailable error', async () => {
+    const { daemon } = makeClient();
+    const adapter = new DaemonGitAdapter(daemon, SANDBOX, CTX);
+    await expect(adapter.projectRecordFor('ws-1')).rejects.toThrow(
+      /no in-sandbox counterpart/,
+    );
+    await expect(adapter.sharedStatus('ws-1')).rejects.toThrow(
+      /no in-sandbox counterpart/,
+    );
+    await expect(adapter.referenceOrientation('/refs/p')).rejects.toThrow(
+      /no in-sandbox counterpart/,
+    );
   });
 });

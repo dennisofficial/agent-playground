@@ -347,6 +347,12 @@ export class ReviewPipelineService {
   private async ticketRange(
     workspaceId: string,
   ): Promise<{ range: string; files: string[] }> {
+    // HOST-REGISTRY READ (Phase-9 gap, documented): this resolves off the host `WorkspaceService` row
+    // (`ws.team/project/baseRef`) and uses the host-only `git.projectRecordFor`. A containerized workspace
+    // has no host row, so `get` returns undefined and we return an empty range — i.e. the full-impl /
+    // section-lens reviews that call this degrade to a clean pass for a sandboxed ticket. Activating those
+    // review surfaces in-sandbox needs a daemon-side range/project lookup; out of scope this phase (flag
+    // off ⇒ no sandbox ⇒ this is the unchanged local path).
     const ws = this.workspaces.get(workspaceId);
     if (!ws) return { range: '', files: [] };
     const git = this.workspaceGit.resolve({
@@ -532,11 +538,21 @@ export class ReviewPipelineService {
       employee: anchor.employee,
       notifyThread: await this.ownerRoom(anchor),
     };
-    // The integrate barrier has no live session — route on tenancy + the anchor's execute workspace.
+    // Phase-9 ctx threading: the integrate barrier has no LIVE session of its own, but the anchor plan
+    // row records the execute session id — load it so a containerized git op (e.g. pushSharedToOrigin)
+    // keys the daemon worktree off the right session id. Falls back to the workspaceId-only ctx for a
+    // local run (or when the session is gone). KNOWN CONTAINERIZED GAP: this method also calls the
+    // host-only `git.projectRecordFor` (no daemon counterpart — the daemon's single-repo clone IS the
+    // project), so a fully containerized integrate barrier needs a daemon-side project/origin lookup; out
+    // of scope this phase (the flag is off, so integrate never routes to a sandbox).
+    const anchorSession = anchor.sessionId
+      ? await this.sessions.get(anchor.sessionId).catch(() => undefined)
+      : undefined;
     const git = this.workspaceGit.resolve({
       team,
       project: task.project,
       workspaceId,
+      ...(anchorSession ? { session: anchorSession } : {}),
     });
 
     // executing → self_review (this ticket's work is published; review/ship pending). Idempotent.

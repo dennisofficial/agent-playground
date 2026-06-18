@@ -94,6 +94,17 @@ export class SandboxRegistry {
     return this.byWorkspaceId.get(workspaceId);
   }
 
+  /**
+   * Whether `workspaceId` is a live sandbox — THE Phase-9 routing discriminator. A session/workspace is
+   * containerized IFF its `workspaceId` is a sandbox uuid this registry knows. `TurnExecutor` and
+   * `WorkspaceGitProvider` both gate `isContainerized` on this: the local `ws-NNN` ids never appear here
+   * (they're managed by `WorkspaceService`), so every local session reads false. The create-time policy
+   * already decided sandbox-vs-local; routing just consults the resulting registry presence.
+   */
+  has(workspaceId: string): boolean {
+    return this.byWorkspaceId.has(workspaceId);
+  }
+
   /** The record for a `(team, project)`, if a sandbox already exists for it (no create). */
   find(scope: SessionScope): SandboxRecord | undefined {
     const id = this.byKey.get(this.workspaceKey(scope));

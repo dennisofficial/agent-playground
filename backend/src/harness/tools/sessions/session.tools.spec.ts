@@ -1,7 +1,12 @@
 import { makeEmployee } from '@harness/employees/employee.testing';
 import { EWorkerEngineName } from '@harness/engines/worker-engine.port';
 import type { Identity } from '../../domain/identity';
-import { localGitProvider } from '../../workspaces/workspace-git.test-util';
+import type { DaemonClient } from '../../workspaces/daemon-client';
+import type { SandboxRegistry } from '../../workspaces/sandbox-registry';
+import {
+  fakeSandboxRegistry,
+  localGitProvider,
+} from '../../workspaces/workspace-git.test-util';
 import {
   CheckSessionTool,
   CreateSessionTool,
@@ -36,6 +41,7 @@ function makeTool(opts: {
   engine?: EWorkerEngineName;
   note?: { id: number; body: string } | undefined;
   workspaceShared?: string; // the workspace's existing sharedBranch (for the drift guard)
+  containerizedWorkspaceId?: string; // mark this workspace id a live sandbox (Phase 9 routing)
 }) {
   const created: Record<string, unknown>[] = [];
   const sessions = {
@@ -76,6 +82,16 @@ function makeTool(opts: {
     setExecuteContext: vi.fn(() => Promise.resolve(undefined)),
   };
   const notes = { get: vi.fn(() => Promise.resolve(opts.note)) };
+  // Phase 9: local path (has() === false for ws-001) for every existing create_session spec; the daemon
+  // client is never reached on the local path (the eager createWorktree is sandbox-only). A test can mark
+  // a workspace id containerized to exercise the sandbox path.
+  const sandboxes: SandboxRegistry = fakeSandboxRegistry(
+    opts.containerizedWorkspaceId
+      ? new Set([opts.containerizedWorkspaceId])
+      : new Set(),
+  );
+  const gitCall = vi.fn(async () => undefined);
+  const daemon = { gitCall } as unknown as DaemonClient;
   const tool = new CreateSessionTool(
     sessions as never,
     runner as never,
@@ -86,8 +102,10 @@ function makeTool(opts: {
     board as never,
     plans as never,
     notes as never,
+    sandboxes,
+    daemon,
   );
-  return { tool, created, runner, board, plans, notes, ensureShared };
+  return { tool, created, runner, board, plans, notes, ensureShared, gitCall };
 }
 
 describe('create_session × the approval gate', () => {
@@ -276,6 +294,54 @@ describe('create_session × the approval gate', () => {
     );
     // 3rd arg of runSessionTurn is the parent-chat-trace pointer (for the session-turn observation).
     expect(runner.runSessionTurn.mock.calls[0]?.[2]).toEqual(parentChatTrace);
+  });
+});
+
+describe('create_session × containerized (sandbox) workspace', () => {
+  const SANDBOX = 'sandbox-uuid-1';
+
+  it('opens against a sandbox workspace with no host row (the local existence throw is skipped)', async () => {
+    const { tool, created } = makeTool({ containerizedWorkspaceId: SANDBOX });
+    const out = await tool.execute(
+      { workspaceId: SANDBOX, task: 'do it', mode: 'plan' },
+      ctx,
+    );
+    // No "No workspace" throw even though WorkspaceService.get returns a host stub it never uses.
+    expect(out).toContain('Opened sess-001');
+    expect(created).toHaveLength(1);
+    expect(created[0]?.workspaceId).toBe(SANDBOX);
+  });
+
+  it('eagerly creates the daemon worktree (gitCall(sandbox, "createWorktree", [sessionId])) before the turn', async () => {
+    const { tool, gitCall } = makeTool({ containerizedWorkspaceId: SANDBOX });
+    await tool.execute(
+      { workspaceId: SANDBOX, task: 'do it', mode: 'plan' },
+      ctx,
+    );
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'createWorktree', ['sess-001']);
+  });
+
+  it('refuses a langgraph session in a sandbox (the daemon only runs claude/codex)', async () => {
+    const { tool, created, gitCall } = makeTool({
+      containerizedWorkspaceId: SANDBOX,
+      engine: EWorkerEngineName.LANGGRAPH,
+    });
+    const out = await tool.execute(
+      { workspaceId: SANDBOX, task: 'do it', mode: 'plan' },
+      ctx,
+    );
+    expect(out).toContain('langgraph');
+    expect(created).toHaveLength(0); // nothing created
+    expect(gitCall).not.toHaveBeenCalled(); // no eager worktree either
+  });
+
+  it('a LOCAL session never touches the daemon (the eager worktree is sandbox-only)', async () => {
+    const { tool, gitCall } = makeTool({}); // ws-001 is not a sandbox
+    await tool.execute(
+      { workspaceId: 'ws-001', task: 'do it', mode: 'plan' },
+      ctx,
+    );
+    expect(gitCall).not.toHaveBeenCalled();
   });
 });
 
