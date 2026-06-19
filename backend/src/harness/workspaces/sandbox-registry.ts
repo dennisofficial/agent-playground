@@ -10,6 +10,16 @@ export interface SandboxRecord {
   workspaceId: string;
   team: string;
   project: string;
+  /** The git branch this per-branch sandbox (workstation) lives on — the KEY differentiator now that a
+   * sandbox is keyed `(team, project, branch)`. Label `com.agent.branch`; injected as `WORKSPACE_BRANCH`
+   * so the daemon checks it out at boot. '' on a sandbox that predates per-branch identity. */
+  branch: string;
+  /** What the branch is cut FROM when it doesn't yet exist (label `com.agent.base-ref`, env
+   * `WORKSPACE_BASE_REF`). Survives a restart so the daemon can still create the branch from the right ref. */
+  baseRef: string;
+  /** Where the branch refreshes-from / opens its PR INTO (label `com.agent.upstream`, env
+   * `WORKSPACE_UPSTREAM`). */
+  upstream: string;
   /** The project's GitHub repo URL (label `com.agent.repo`) — informational/diagnostic. */
   repo: string;
   /** The Docker container id backing this workspace. */
@@ -24,28 +34,32 @@ export interface SandboxRecord {
   bootstrapToken?: string;
 }
 
-/** What `resolveForSession` needs to key + create a workspace — the session's tenancy. */
+/** What `resolveForSession`/`find` need to key a workstation — the session's tenancy AND its branch (a
+ * sandbox is now per-branch: `(team, project, branch)`). */
 export interface SessionScope {
   team: string;
   project: string;
+  /** The git branch this workstation is on — the per-branch sandbox key. */
+  branch: string;
 }
 
 /** The lazy ensure-the-sandbox callback the manager registers (one-directional DI: Manager → Registry). */
 export type EnsureWorkspaceFn = (
   team: string,
   project: string,
+  branch: string,
+  baseRef: string,
+  upstream: string,
 ) => Promise<SandboxRecord>;
 
 /**
  * The in-memory map of `workspaceId ↔ SandboxRecord` (Phase 6). Rebuilt on boot by
  * `ContainerManagerService` from Docker labels; this registry itself is not durable.
  *
- * SCOPING (v1, documented): one workspace per `(team, project)`. The plan's end-state is one workspace
- * per UNIT OF WORK (per task), but Phase 6 has no session-lifecycle wiring yet (that's Phase 9), so
- * there's no task id to key on here. `(team, project)` is the coarsest correct key that still isolates
- * tenants + projects; Phase 9 narrows it to per-task by passing a richer scope into `workspaceKey`.
- * The KEY is logical (`<team>/<project>`); the workspace ID is the container's uuid — the registry maps
- * the logical key to the uuid so two calls for the same `(team, project)` reuse the same sandbox.
+ * SCOPING: one WORKSTATION (sandbox) per `(team, project, branch)` — long-lived, re-entered by branch.
+ * The KEY is logical (`<team>/<project>/<branch>`); the workspace ID is the container's uuid — the
+ * registry maps the logical key to the uuid so two `create_workspace` calls deriving the SAME branch
+ * reuse the same workstation (idempotent re-entry).
  *
  * To avoid a DI cycle with `ContainerManagerService` (which both WRITES records here on create/reconcile
  * AND is the thing `resolveForSession` must call to lazily create) the manager registers its
@@ -56,13 +70,13 @@ export type EnsureWorkspaceFn = (
 export class SandboxRegistry {
   private readonly logger = new Logger(SandboxRegistry.name);
   private readonly byWorkspaceId = new Map<string, SandboxRecord>();
-  /** logical `<team>/<project>` key → workspaceId (uuid). */
+  /** logical `<team>/<project>/<branch>` key → workspaceId (uuid). */
   private readonly byKey = new Map<string, string>();
   private ensurer?: EnsureWorkspaceFn;
 
-  /** The v1 scoping key: one workspace per `(team, project)`. Documented above. */
+  /** The scoping key: one workstation per `(team, project, branch)`. Documented above. */
   workspaceKey(scope: SessionScope): string {
-    return `${scope.team}/${scope.project}`;
+    return `${scope.team}/${scope.project}/${scope.branch}`;
   }
 
   /** The manager binds its lazy-create entry point here at construction (breaks the DI cycle). */
@@ -127,11 +141,14 @@ export class SandboxRegistry {
   }
 
   /**
-   * Resolve the sandbox for a session's `(team, project)`: return the existing record, else lazily
-   * `ensureWorkspace` (create + start the container). Phase 7's `RemoteTurnDispatcher` calls this to get
-   * the `workspaceId` to dispatch a run to.
+   * Resolve the workstation for a session's `(team, project, branch)`: return the existing record, else
+   * lazily `ensureWorkspace` (create + start the container). The branch's `baseRef`/`upstream` are needed
+   * to create the workstation, so they're carried on the scope (a re-entry reuses the existing one, so they
+   * only matter on a fresh create).
    */
-  async resolveForSession(scope: SessionScope): Promise<SandboxRecord> {
+  async resolveForSession(
+    scope: SessionScope & { baseRef?: string; upstream?: string },
+  ): Promise<SandboxRecord> {
     const existing = this.find(scope);
     if (existing && existing.status !== 'gone') return existing;
     if (!this.ensurer) {
@@ -142,6 +159,12 @@ export class SandboxRegistry {
     this.logger.log(
       `no live sandbox for ${this.workspaceKey(scope)} — ensuring one`,
     );
-    return this.ensurer(scope.team, scope.project);
+    return this.ensurer(
+      scope.team,
+      scope.project,
+      scope.branch,
+      scope.baseRef ?? scope.branch,
+      scope.upstream ?? scope.branch,
+    );
   }
 }

@@ -89,9 +89,9 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
     git = {
       // The turn path awaits the boot clone (Phase 11) before resolving cwd — resolve immediately.
       whenCloned: vi.fn(async () => undefined),
-      worktreePath: vi.fn(() => '/workspace/repo/.workspaces/sess-1'),
-      createWorktree: vi.fn(async () => '/workspace/repo/.workspaces/sess-1'),
-      publish: vi.fn(async () => ({ integrated: true, sharedBranch: 'shared/x' })),
+      // The workstation is a single per-branch checkout; the turn cwd is the clone root.
+      root: vi.fn(() => '/workspace/repo'),
+      publish: vi.fn(async () => ({ integrated: true, remote: { pushed: true } })),
       openPr: vi.fn(async () => ({ number: 42, url: 'https://gh/pr/42' })),
       // Phase 11 RPCs — exercised through the allowlist to prove the new entries are reachable.
       reviewRange: vi.fn(async () => ({
@@ -196,7 +196,7 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
 
     expect(captured).toBeDefined();
     expect(captured!.task).toBe('investigate X');
-    expect(captured!.cwd).toBe('/workspace/repo/.workspaces/sess-1'); // daemon-supplied, not from wire
+    expect(captured!.cwd).toBe('/workspace/repo'); // daemon-supplied clone root, not from wire
     expect(captured!.systemPrompt).toBe('you are a worker');
     expect(captured!.agentId).toBe('atlas');
     expect(captured!.sessionId).toBe('prior-engine-sess'); // resumeSessionId → engine resume handle
@@ -208,8 +208,7 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
     expect(captured!.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('creates the worktree when none exists yet (cwd resolution)', async () => {
-    git.worktreePath = vi.fn(() => undefined); // no existing worktree
+  it('runs the turn in the workstation clone root (single checkout)', async () => {
     let cwd: string | undefined;
     engine.impl = async (args) => {
       cwd = args.cwd;
@@ -218,9 +217,9 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
 
     await client.dispatchRun(WORKSPACE_ID, basePayload(), () => undefined);
 
-    // cwd resolves off the WORK AREA (payload.workAreaId), not the harness session id.
-    expect(git.createWorktree).toHaveBeenCalledWith('wa-1');
-    expect(cwd).toBe('/workspace/repo/.workspaces/sess-1');
+    // The sandbox is a per-branch workstation: cwd is the single clone root, not a per-area worktree.
+    expect(git.root).toHaveBeenCalled();
+    expect(cwd).toBe('/workspace/repo');
   });
 
   it('(b) aborting the host signal fires the daemon run AbortController', async () => {
@@ -268,7 +267,7 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
   it('(d) a git call resolves with the method return value', async () => {
     const value = await client.gitCall(WORKSPACE_ID, 'publish', ['sess-1']);
     expect(git.publish).toHaveBeenCalledWith('sess-1');
-    expect(value).toEqual({ integrated: true, sharedBranch: 'shared/x' });
+    expect(value).toEqual({ integrated: true, remote: { pushed: true } });
   });
 
   it('a git call to an unknown method rejects (allowlist guard)', async () => {

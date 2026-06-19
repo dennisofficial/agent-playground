@@ -58,8 +58,8 @@ describe('DaemonTurnService.handleRun — PORT injection', () => {
     const tools = { prime: vi.fn(async () => undefined) } as never;
     const git = {
       whenCloned: vi.fn(async () => undefined),
-      worktreePath: () => '/workspace/repo/.workspaces/sess',
-      createWorktree: vi.fn(async () => '/workspace/repo/.workspaces/sess'),
+      // The workstation is ONE clone checked out on its branch — every turn's cwd is the clone root.
+      root: () => '/workspace/repo',
     } as never;
     const redis = {
       xadd: vi.fn(async () => '1-0'),

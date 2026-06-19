@@ -1,10 +1,10 @@
 /**
- * `DaemonGitAdapter` maps each host `WorkspaceGitPort` op to a typed daemon git RPC, applying THE
- * HOST↔DAEMON IDENTITY MAPPING: the RPC dispatch target is the SANDBOX uuid, and the daemon keys
- * per-WORKTREE ops by the WORK AREA id (one sandbox ⊃ many work-area worktrees; the sessions in a work
- * area share its tree). So for every per-worktree method the adapter DROPS the host workspace-id arg and
- * SUBSTITUTES `workAreaId` as the daemon method's leading arg — no session needed, so workspace-id-only
- * ops (publish/pull/refresh/remove) route cleanly too. Verified against a FAKE `DaemonClient`.
+ * `DaemonGitAdapter` maps each host `WorkspaceGitPort` op to a typed daemon git RPC under THE
+ * WORKSTATION model: a sandbox IS one fresh clone checked out on ONE branch, so the daemon's per-branch
+ * RPCs (`publish`/`pull`/`refreshFromBase`/`mergeState`/`ownerDiff`/`reviewRange`) take NO leading id arg
+ * — the daemon already knows its one branch. The host `workspaceId` the port methods carry is vestigial
+ * and DROPPED; only genuine payload args (the `ownerDiff` sinceRef, the off-port PR args) ride. Verified
+ * against a FAKE `DaemonClient`.
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { DaemonClient } from './daemon-client';
@@ -19,57 +19,37 @@ function makeClient(returns: unknown = { ok: true }) {
   return { daemon, gitCall };
 }
 
-describe('DaemonGitAdapter — host↔daemon identity mapping', () => {
-  it('per-worktree ops: substitute the host workspace-id arg with the workAreaId and dispatch to the sandbox', async () => {
+describe('DaemonGitAdapter — workstation per-branch RPCs', () => {
+  it('per-branch ops: drop the vestigial host workspace-id arg; only real payload args ride', async () => {
     const returns = { sentinel: true };
     const { daemon, gitCall } = makeClient(returns);
     const adapter = new DaemonGitAdapter(daemon, SANDBOX, WORK_AREA);
 
-    // Each host call → gitCall(SANDBOX, daemonMethod, [WORK_AREA, ...rest]). The host workspace-id arg
-    // ('ws-1' below) is DROPPED in favor of the work area id; trailing args (name/startPoint/sinceRef) ride.
+    // Each host call → gitCall(SANDBOX, daemonMethod, [...realArgs]). The host workspace-id arg ('ws-1'
+    // below) is DROPPED — the daemon's single checkout IS the branch, so its per-branch RPCs need no key.
+    // Only genuine payload (ownerDiff's sinceRef) rides.
     const cases: Array<{
       run: () => Promise<unknown>;
       method: string;
       args: unknown[];
     }> = [
-      { run: () => adapter.remove('ws-1'), method: 'removeWorktree', args: [WORK_AREA] },
       {
         run: () => adapter.refreshFromBase('ws-1'),
         method: 'refreshFromBase',
-        args: [WORK_AREA],
+        args: [],
       },
       {
         run: () => adapter.mergeState('ws-1'),
         method: 'mergeState',
-        args: [WORK_AREA],
-      },
-      {
-        run: () => adapter.ensureShared('ws-1', 'feat', 'sha'),
-        method: 'ensureShared',
-        args: [WORK_AREA, 'feat', 'sha'],
-      },
-      {
-        run: () => adapter.ensureSharedAtBase('ws-1', 'feat'),
-        method: 'ensureSharedAtBase',
-        args: [WORK_AREA, 'feat'],
-      },
-      {
-        run: () => adapter.sharedRef('ws-1'),
-        method: 'sharedRef',
-        args: [WORK_AREA],
+        args: [],
       },
       {
         run: () => adapter.ownerDiff('ws-1', 'sha'),
         method: 'ownerDiff',
-        args: [WORK_AREA, 'sha'],
+        args: ['sha'],
       },
-      { run: () => adapter.publish('ws-1'), method: 'publish', args: [WORK_AREA] },
-      { run: () => adapter.pull('ws-1'), method: 'pull', args: [WORK_AREA] },
-      {
-        run: () => adapter.pushSharedToOrigin('ws-1'),
-        method: 'pushSharedToOrigin',
-        args: [WORK_AREA],
-      },
+      { run: () => adapter.publish('ws-1'), method: 'publish', args: [] },
+      { run: () => adapter.pull('ws-1'), method: 'pull', args: [] },
     ];
 
     for (const c of cases) {
@@ -91,13 +71,6 @@ describe('DaemonGitAdapter — host↔daemon identity mapping', () => {
     ]);
   });
 
-  it('sharedStatus is a per-worktree RPC (keyed off the workAreaId)', async () => {
-    const { daemon, gitCall } = makeClient({ published: true, aheadOfOrigin: 0 });
-    const adapter = new DaemonGitAdapter(daemon, SANDBOX, WORK_AREA);
-    await adapter.sharedStatus('ws-1');
-    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'sharedStatus', [WORK_AREA]);
-  });
-
   it('referenceOrientation is a PATH RPC (no work-area arg — like ensureReferenceClone)', async () => {
     const { daemon, gitCall } = makeClient('Top level: src');
     const adapter = new DaemonGitAdapter(daemon, SANDBOX, WORK_AREA);
@@ -107,13 +80,13 @@ describe('DaemonGitAdapter — host↔daemon identity mapping', () => {
     ]);
   });
 
-  it('off-port daemon ops: reviewRange (per-worktree), openPr/markReady/commentPr (sandbox-scoped), attachDesign (clone-root)', async () => {
+  it('off-port daemon ops: reviewRange (no id arg), openPr/markReady/commentPr (sandbox-scoped), attachDesign (clone-root)', async () => {
     const { daemon, gitCall } = makeClient({ url: 'http://pr/1', number: 7 });
     const adapter = new DaemonGitAdapter(daemon, SANDBOX, WORK_AREA);
 
     gitCall.mockClear();
     await adapter.reviewRange();
-    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'reviewRange', [WORK_AREA]);
+    expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'reviewRange', []);
 
     gitCall.mockClear();
     const prArgs = { title: 't', body: 'b', draft: false };
@@ -132,14 +105,6 @@ describe('DaemonGitAdapter — host↔daemon identity mapping', () => {
     gitCall.mockClear();
     await adapter.attachDesign('YmFzZTY0');
     expect(gitCall).toHaveBeenCalledWith(SANDBOX, 'attachDesign', ['YmFzZTY0']);
-  });
-
-  it('create() is NOT the work-area create path (create_workspace dispatches createWorktree directly) — loud reject', async () => {
-    const { daemon } = makeClient();
-    const adapter = new DaemonGitAdapter(daemon, SANDBOX, WORK_AREA);
-    await expect(
-      adapter.create({ name: 'n', ownerBot: 'a', team: 't', project: 'p' }),
-    ).rejects.toThrow(/no in-sandbox counterpart/);
   });
 
   it('projectRecordFor (the one host-only method) throws a clear unavailable error', async () => {

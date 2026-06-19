@@ -15,6 +15,7 @@ const REC: ProjectRecord = {
   description: null,
   gitUrl: 'https://github.com/dennis/proj',
   defaultBranch: 'main',
+  branchingPolicy: null,
   tokenName: null,
   createdAt: '',
   updatedAt: '',

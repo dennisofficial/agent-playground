@@ -167,7 +167,7 @@ export class BotGraphNodes {
         .slice(0, CAP)
         .map(
           (w) =>
-            `- ${w.id} "${w.name}" — branch ${w.branch}${w.sharedBranch ? `, shared: ${w.sharedBranch}` : ''}, project: ${w.project || 'NONE (GitHub pushes will fail — flag it if a push is needed)'}`,
+            `- ${w.id} "${w.name}" — branch ${w.branch}, project: ${w.project || 'NONE (GitHub pushes will fail — flag it if a push is needed)'}`,
         )
         .join('\n');
       const more = trees.length - CAP;

@@ -5,9 +5,10 @@ import {
 } from '@langchain/core/messages';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { MultiServerMCPClient } from '@langchain/mcp-adapters';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { createAgent } from 'langchain';
 import { flattenContent } from '../domain/text';
+import { CredentialRotationBus } from '../llm-keys/credential-rotation.bus';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { calculateCost, extractMessageUsage } from '../llm/usage-format';
 import type { MessageUsage } from '../domain/conductor-events';
@@ -80,7 +81,15 @@ export class LanggraphEngine implements WorkerEngine {
     private readonly models: ChatModelFactory,
     @Inject(AGENT_TOOLS_PROVIDER)
     private readonly provisioner: IAgentToolsProvider,
-  ) {}
+    @Optional() rotation?: CredentialRotationBus,
+  ) {
+    // The memoized agents bake the Anthropic key (via buildModel) at build time — drop them on a
+    // rotation so the next turn rebuilds against the fresh key. (mcpClients aren't key-bound.)
+    rotation?.rotated$.subscribe(() => {
+      this.baseAgents.clear();
+      this.mcpAgents.clear();
+    });
+  }
 
   // A read-only turn (plan or investigate) gets a READ-ONLY tool set (no write_file/str_replace/bash)
   // so it physically cannot mutate the workspace — matching the engine-enforced read-only of the

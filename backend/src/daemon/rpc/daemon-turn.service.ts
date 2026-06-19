@@ -80,18 +80,13 @@ export class DaemonTurnService {
         mcpServers: payload.mcpServers,
       });
 
-      // 2) Resolve cwd = the session's worktree (create on first turn, else reuse). `createWorktree`
-      //    is idempotent — it returns the existing checkout path when one already exists. AWAIT the boot
-      //    clone first (Phase 11): a turn that races ahead of clone-on-boot must not hit "No clone yet".
-      //    `whenCloned()` resolves immediately when no clone is expected; a failed clone rejects → this
-      //    run fails with a legible error frame.
+      // 2) Resolve cwd = the workstation's single CLONE ROOT. The sandbox is a per-branch workstation:
+      //    ONE clone checked out directly on its branch, shared by every session in the sandbox (no inner
+      //    worktrees, so `payload.workAreaId` is ignored). AWAIT the boot clone first: a turn that races
+      //    ahead of clone-on-boot must not hit "No clone yet". `whenCloned()` resolves immediately when no
+      //    clone is expected; a failed clone rejects → this run fails with a legible error frame.
       await this.git.whenCloned();
-      // Resolve cwd = the WORK AREA's worktree (created at create_workspace; created here only as a
-      // fallback, e.g. an investigate session whose work area wasn't pre-realized). Idempotent — sessions
-      // in the same work area share this checkout.
-      const cwd =
-        this.git.worktreePath(payload.workAreaId) ??
-        (await this.git.createWorktree(payload.workAreaId));
+      const cwd = this.git.root();
 
       // 2b) PER-SESSION PORT (Phase 10 self-validation). Two dev servers in ONE sandbox must not both
       //     grab 3000 — so give each session a deterministic, distinct PORT (and PORT_RANGE_START as a

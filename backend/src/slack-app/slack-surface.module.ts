@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { BOARD_NOTIFIER } from '@harness/approvals/board-notifier.port';
 import { PROJECT_ONBOARD_PRESENTER } from '@harness/approvals/project-onboard-presenter.port';
 import { ProjectOnboardModule } from '@harness/approvals/project-onboard.module';
+import { ROTATE_KEYS_PRESENTER } from '@harness/llm-keys/rotate-keys-presenter.port';
 import { PROPOSAL_PRESENTER } from '@harness/approvals/proposal-presenter.port';
 import { TASK_SUGGESTION_PRESENTER } from '@harness/approvals/task-suggestion-presenter.port';
 import { ChannelModule } from '@harness/channel/channel.module';
@@ -21,6 +22,7 @@ import { ApprovalCardsService } from './approvals/approval-cards.service';
 import { SuggestionCardsService } from './approvals/suggestion-cards.service';
 import { OnboardingGuardService } from './onboarding/onboarding-guard.service';
 import { ProjectOnboardCardsService } from './onboarding/project-onboard-cards.service';
+import { RotateKeysCardsService } from './onboarding/rotate-keys-cards.service';
 import { SlackChatSurface } from './slack-chat-surface';
 import { SlackCommandService } from './slack-commands.service';
 import { SlackDirectoryService } from './slack-directory.service';
@@ -31,6 +33,7 @@ import {
   COMMAND_INTERCEPTOR,
   ONBOARDING_GUARD_INTERCEPTOR,
   PROJECT_ONBOARD_INTERCEPTOR,
+  ROTATE_KEYS_INTERCEPTOR,
   SUGGESTION_INTERCEPTOR,
 } from './slack-inbound.types';
 import { SlackSocketTransport } from './slack-socket-transport';
@@ -82,6 +85,7 @@ import { TenantSlackClients } from './tenant-slack-clients';
     ApprovalCardsService,
     SuggestionCardsService,
     ProjectOnboardCardsService,
+    RotateKeysCardsService,
     SlackCommandService,
     {
       provide: ONBOARDING_GUARD_INTERCEPTOR,
@@ -104,6 +108,13 @@ import { TenantSlackClients } from './tenant-slack-clients';
       provide: PROJECT_ONBOARD_PRESENTER,
       useExisting: ProjectOnboardCardsService,
     },
+    // The credential-rotation card/modal slot + OUTBOUND PORT's Slack adapter (rotate_keys / the
+    // system credential-health guard → update-keys card → modal) — same idiom.
+    {
+      provide: ROTATE_KEYS_INTERCEPTOR,
+      useExisting: RotateKeysCardsService,
+    },
+    { provide: ROTATE_KEYS_PRESENTER, useExisting: RotateKeysCardsService },
     { provide: CHAT_SURFACE, useExisting: SlackChatSurface },
     // The artifact-upload port's Slack adapter (share_artifact → filesUploadV2 + chat.update).
     { provide: ARTIFACT_SINK, useExisting: SlackFileUploadService },
@@ -124,6 +135,9 @@ import { TenantSlackClients } from './tenant-slack-clients';
     // Exported so the harness's onboard_project (ProjectOnboardService, ToolsModule) resolves the
     // card/modal adapter; without it onboarding degrades to asking Dennis in chat.
     PROJECT_ONBOARD_PRESENTER,
+    // Exported so the harness's rotate_keys tool + the credential-health guard resolve the
+    // card/modal adapter; without it rotation degrades to asking Dennis in chat.
+    ROTATE_KEYS_PRESENTER,
     // Like PROPOSAL_PRESENTER, BOARD_NOTIFIER must be exported for the global module to reach
     // UpdateBoardTaskTool (registered in ToolsModule, which imports SlackSurfaceModule globally).
     BOARD_NOTIFIER,

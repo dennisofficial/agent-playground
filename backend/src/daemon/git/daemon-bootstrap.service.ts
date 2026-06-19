@@ -51,12 +51,18 @@ export class DaemonBootstrapService implements OnApplicationBootstrap {
     const repoUrl = process.env.WORKSPACE_REPO_URL?.trim();
     const baseBranch =
       process.env.WORKSPACE_BASE_BRANCH?.trim() || 'main';
+    // The per-branch workstation coordinates the host injects: the branch this sandbox lives on, the ref
+    // to cut it from when it's new, and what it refreshes-from / PRs into. All default to the base branch
+    // (a base-branch workstation or a host that didn't inject them).
+    const branch = process.env.WORKSPACE_BRANCH?.trim() || baseBranch;
+    const baseRef = process.env.WORKSPACE_BASE_REF?.trim() || baseBranch;
+    const upstream = process.env.WORKSPACE_UPSTREAM?.trim() || baseBranch;
     const workspaceRoot =
       process.env.WORKSPACE_ROOT?.trim() || '/workspace/repo';
 
     if (!repoUrl) {
       // A real sandbox with no repo coordinates is a host misconfiguration. Don't arm the gate (so a
-      // non-git turn could still run) but warn loudly — the first turn's worktree op will fail clearly.
+      // non-git turn could still run) but warn loudly — the first turn's git op will fail clearly.
       this.logger.error(
         `WORKSPACE_REPO_URL unset for sandbox ${workspaceId} — NO clone-on-boot; the first turn's ` +
           `git op will fail with "No clone yet". (Host ContainerManager must inject WORKSPACE_REPO_URL.)`,
@@ -67,7 +73,11 @@ export class DaemonBootstrapService implements OnApplicationBootstrap {
     // Arm the gate SYNCHRONOUSLY (before the async clone) so readiness can't race past it.
     this.git.expectClone();
 
-    void this.cloneOnBoot(workspaceRoot, repoUrl, baseBranch).then(
+    void this.cloneOnBoot(workspaceRoot, repoUrl, baseBranch, {
+      branch,
+      baseRef,
+      upstream,
+    }).then(
       () => this.git.markCloned(),
       (err: unknown) => {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -83,11 +93,18 @@ export class DaemonBootstrapService implements OnApplicationBootstrap {
     workspaceRoot: string,
     repoUrl: string,
     baseBranch: string,
+    workstation: { branch: string; baseRef: string; upstream: string },
   ): Promise<void> {
     this.logger.log(
-      `clone-on-boot: ${repoUrl} (base ${baseBranch}) → ${workspaceRoot}`,
+      `clone-on-boot: ${repoUrl} → ${workspaceRoot} (branch ${workstation.branch}, ` +
+        `cut from ${workstation.baseRef}, upstream ${workstation.upstream})`,
     );
-    const root = await this.git.ensureClone(workspaceRoot, repoUrl, baseBranch);
+    const root = await this.git.ensureClone(
+      workspaceRoot,
+      repoUrl,
+      baseBranch,
+      workstation,
+    );
     this.logger.log(`clone-on-boot complete — repo ready at ${root}`);
   }
 }

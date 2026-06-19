@@ -226,20 +226,12 @@ export class InvestigateTool implements IHarnessTool<typeof investigateSchema> {
     const mine = this.workspaces.list({ ownerBot: id.selfAgent });
     const latest = mine[mine.length - 1];
     if (latest) return { id: latest.id };
-    try {
-      const { workspace } = await this.workspaceGit
-        .resolve({ team: id.team, project: id.project })
-        .create({
-          name: 'investigate',
-          ownerBot: id.selfAgent,
-          team: id.team,
-          project: id.project,
-        });
-      return { id: workspace.id, created: true };
-    } catch (err) {
-      return {
-        error: `Couldn't open a workspace to investigate in: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
+    // WORKSTATION model: a workspace is a per-branch SANDBOX realized by create_workspace (the daemon
+    // checks the branch out at boot) — there's no port-side cut-a-branch path anymore. With no workspace
+    // to read in, point the bot at create_workspace rather than silently failing.
+    return {
+      error:
+        'You have no workstation to investigate in yet. Create one first with create_workspace (e.g. kind=base to read the integration branch), then investigate.',
+    };
   }
 }

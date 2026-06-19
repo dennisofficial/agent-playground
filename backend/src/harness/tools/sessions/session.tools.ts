@@ -191,32 +191,18 @@ export class CreateSessionTool implements IHarnessTool<
     // The board task starts EXECUTING once an execute session is live. CAS approved→executing AFTER
     // the session registered (a failed create can't strand the task), idempotent across owners (only
     // the first owner's start flips it; later owners find it already 'executing'). Stamp the execute
-    // workspace + shared branch on this owner's plan row so the integration barrier finds them later.
+    // workspace on this owner's plan row so the integration barrier finds it later.
     // Both best-effort — they must never fail the session that's already running.
     if (mode === 'execute' && board_task_id !== undefined && boardTask) {
-      // Ensure the workspace is on the shared branch the TICKET names: its `shared_slug` (a feature
-      // group landing on one PR), or `ticket-${id}` for standalone work. The drift guard above already
-      // rejected a workspace sitting on a conflicting shared branch, so this is a no-op or a clean cut.
-      // The git op runs in the daemon keyed by the work area (the provider resolves it from workspaceId).
-      const sharedBranch = await this.workspaceGit
-        .resolve({
-          team: id.team,
-          project: id.project,
-          workspaceId,
-          ...(session ? { session } : {}),
-        })
-        .ensureShared(
-          workspaceId,
-          boardTask.sharedSlug ?? `ticket-${board_task_id}`,
-        )
-        .catch(() => undefined);
+      // Workstations model: the session sits DIRECTLY on the workstation's feature branch — there is no
+      // shared integration branch to ensure/cut anymore (a feature is one branch the whole team works).
+      void session;
       await this.board
         .transition(id.team, board_task_id, 'approved', { status: 'executing' })
         .catch(() => undefined);
       await this.plans
         .setExecuteContext(id.team, board_task_id, {
           executeWorkspaceId: workspaceId,
-          sharedBranch,
         })
         .catch(() => undefined);
     }

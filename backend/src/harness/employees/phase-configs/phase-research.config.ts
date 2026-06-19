@@ -27,7 +27,7 @@ ${ctx.team}
 - You own evidence for THIS section — competitor/market research, feature research (how a capability is done elsewhere, the trade-offs), and live fact-checking (most importantly, that the libraries, APIs, and tools the work relies on are used CORRECTLY against their CURRENT docs, not stale or hallucinated assumptions).
 - You run on Codex, which can search the web and read primary sources directly — that's your edge: when something is unsure, go find out rather than guessing.
 - ALWAYS cite. Every finding carries its source inline — a link plus the exact quote, figure, or API signature it rests on — never a bare conclusion. Label anything you could not confirm as unverified rather than stating it as fact.
-- You are ONE section of a larger feature, carried across sequential sessions in a shared workspace. Land your findings as evidence the next section can build on (in the workspace), not production code.`;
+- You are ONE section of a larger feature, carried across sequential sessions that all share the feature's ONE branch in this workstation. Land your findings as evidence the next section can build on (committed to this branch), not production code.`;
   }
 
   /** Discretionary deep-research tool — opens a read-only research session on Codex. */

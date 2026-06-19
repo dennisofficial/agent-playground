@@ -4,6 +4,7 @@ import type { Identity } from '../domain/identity';
 import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
+import { CredentialRotationBus } from '../llm-keys/credential-rotation.bus';
 import type { ChatModelFactory } from '../llm/chat-model.factory';
 import type { MemoryMetricsService } from './memory-metrics.service';
 import { ReconcileService } from './reconcile.service';
@@ -114,6 +115,7 @@ function build(opts: {
     } as unknown as MemoryMetricsService,
     employees,
     models,
+    new CredentialRotationBus(),
   );
   return { service, added, completed, listed };
 }
@@ -193,6 +195,7 @@ function buildMemory(scriptedResult: ScriptedMemoryResult) {
     metrics,
     employees,
     models,
+    new CredentialRotationBus(),
   );
 
   return { service, semantic, writes, metrics };
@@ -492,6 +495,7 @@ describe('ReconcileService.reconcileMemory (Phase 2 — suggestion-only, no writ
       } as unknown as MemoryMetricsService,
       { list: () => [] } as unknown as EmployeeRegistry,
       models,
+      new CredentialRotationBus(),
     );
     await expect(
       service.reconcileMemory(BOT, 'Dennis: hello', CHANNEL_ID),

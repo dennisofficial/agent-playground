@@ -62,9 +62,13 @@ export class OnboardProjectTool implements IHarnessTool<typeof onboardSchema> {
 
     switch (outcome.status) {
       case 'registered':
-        return `✅ Onboarded ${outcome.projectId} (read-only).\nRemedy: reference_project({ name: "${outcome.projectId}" }) to read it now.`;
+        return outcome.linkedAsMain
+          ? `✅ Linked ${outcome.projectId} as this channel's repo — it's the project you build here now (create_workspace to start). Its other repos stay read-only references.`
+          : `✅ Onboarded ${outcome.projectId} (read-only reference).\nRemedy: reference_project({ name: "${outcome.projectId}" }) to read it now.`;
       case 'already-registered':
-        return `${outcome.projectId} is already registered in this workspace.\nRemedy: reference_project({ name: "${outcome.projectId}" }) to read it.`;
+        return outcome.linkedAsMain
+          ? `✅ Linked ${outcome.projectId} as this channel's repo — it's the project you build here now (create_workspace to start).`
+          : `${outcome.projectId} is already registered in this workspace.\nRemedy: reference_project({ name: "${outcome.projectId}" }) to read it.`;
       case 'needs-input':
         return outcome.presented
           ? `Couldn't auto-register "${label}" (${outcome.reason}). I posted an onboarding card in the channel for Dennis to finish — he supplies the repo/token in a modal, and you'll be woken to retry the reference once it's registered. Don't re-run onboard_project for it meanwhile.`

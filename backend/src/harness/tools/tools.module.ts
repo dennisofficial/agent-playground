@@ -6,6 +6,7 @@ import { SuggestionModule } from '../approvals/suggestion.module';
 import { ChannelModule } from '../channel/channel.module';
 import { ConductorEventsModule } from '../conductor/conductor-events.module';
 import { EmployeesModule } from '../employees/employees.module';
+import { LlmKeysModule } from '../llm-keys/llm-keys.module';
 import { MemoryModule } from '../memory/memory.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { SessionsModule } from '../sessions/sessions.module';
@@ -57,11 +58,14 @@ import {
   ListWorkspacesTool,
   PublishWorkspaceTool,
   PullWorkspaceTool,
+  QueryBranchesTool,
   RefreshWorkspaceTool,
   RemoveWorkspaceTool,
 } from './workspaces/workspace.tools';
 import { ListPullRequestsTool } from './projects/list-pull-requests.tool';
 import { OnboardProjectTool } from './projects/onboard-project.tool';
+import { RotateKeysTool } from './credentials/rotate-keys.tool';
+import { FallBackToApiKeyTool } from './credentials/fall-back-to-api-key.tool';
 import {
   ListReferenceProjectsTool,
   ReferenceProjectTool,
@@ -94,6 +98,7 @@ import {
     ChannelModule,
     ConductorEventsModule,
     EmployeesModule,
+    LlmKeysModule,
     MemoryModule,
     ProjectsModule,
     ProjectOnboardModule,
@@ -111,6 +116,7 @@ import {
     SendMessageTool,
     // workspaces
     CreateWorkspaceTool,
+    QueryBranchesTool,
     ListWorkspacesTool,
     PublishWorkspaceTool,
     PullWorkspaceTool,
@@ -125,6 +131,9 @@ import {
     ReferenceRepoTool,
     ListReferenceProjectsTool,
     OnboardProjectTool,
+    // credential rotation (lead-only)
+    RotateKeysTool,
+    FallBackToApiKeyTool,
     // sessions
     CreateSessionTool,
     ReplySessionTool,

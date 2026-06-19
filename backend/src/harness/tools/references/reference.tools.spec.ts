@@ -29,6 +29,7 @@ const rec = (over: Partial<ProjectRecord> = {}): ProjectRecord => ({
   description: 'SSE infra patterns',
   gitUrl: 'https://github.com/dennis/cubix-infra',
   defaultBranch: 'main',
+  branchingPolicy: null,
   tokenName: null,
   createdAt: '',
   updatedAt: '',

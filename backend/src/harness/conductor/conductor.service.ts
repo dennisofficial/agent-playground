@@ -38,9 +38,13 @@ import {
   type SessionRegistry,
 } from '../sessions/session-registry.port';
 import { BoardEventsBus, type BoardEvent } from '../memory/board-events.bus';
+import { isAuthError } from '../llm-keys/auth-error';
+import { CredentialHealthService } from '../llm-keys/credential-health.service';
+import { engineProvider } from '../llm-keys/tenant-credential.service';
 import {
   boardEventRelayPrompt,
   sectionQuestionsNotice,
+  sessionAuthFailureAddendum,
   sessionRelayPrompt,
 } from './seed-relay';
 import { SessionRunnerService } from '../sessions/session-runner.service';
@@ -144,6 +148,7 @@ export class ConductorService
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
     private readonly boardEvents: BoardEventsBus,
+    private readonly credentialHealth: CredentialHealthService,
   ) {}
 
   /** Atlas — the single orchestrator (the one `teamLead`). */
@@ -236,7 +241,9 @@ export class ConductorService
           .catch((err) =>
             this.logger.warn(`running-sessions count refresh failed: ${err}`),
           );
-        this.maybeRelaySession(session);
+        void this.maybeRelaySession(session).catch((err) =>
+          this.logger.warn(`session relay failed: ${err}`),
+        );
       }),
     );
     // Narrate the human-facing PIPELINE board events (PR opened/ready, self-review verdict) in chat —
@@ -293,13 +300,26 @@ export class ConductorService
    * relays. Sessions owned by a SPECIALIST (pipeline stages) are skipped: PipelineRunnerService drives
    * those, so relaying them here would both wake the wrong actor and double-handle the turn-end.
    */
-  private maybeRelaySession(session: Session): void {
+  private async maybeRelaySession(session: Session): Promise<void> {
     if (session.status !== 'idle' && session.status !== 'failed') return;
     if (session.ownerBot !== this.atlas().id) return;
     const channelId = this.registry.get(session.notifyThread)
       ? session.notifyThread
       : this.channel.surfaceId;
-    this.seedQueue.push({ channelId, prompt: sessionRelayPrompt(session) });
+    let prompt = sessionRelayPrompt(session);
+    // An AUTH failure isn't a normal "retry it" — it needs a credential update. Append the rotate
+    // guidance, resolving the live engine-auth MODE so subscription failures route to "ask before
+    // falling back" (no new persisted field — we classify the stored error + look up the mode now).
+    if (session.status === 'failed' && isAuthError(session.error)) {
+      const auth = await this.creds
+        .engineAuth(session.team, session.engine)
+        .catch(() => undefined);
+      prompt += sessionAuthFailureAddendum(
+        engineProvider(session.engine),
+        auth?.mode === 'subscription',
+      );
+    }
+    this.seedQueue.push({ channelId, prompt });
     this.schedule();
   }
 
@@ -792,6 +812,15 @@ export class ConductorService
       }
       this.emitError(err);
       failed = true;
+      // The harness's OWN Anthropic key just 401'd in Atlas's chat graph — he can't rescue himself
+      // (his model IS the dead key), so the SYSTEM posts the update-keys card directly (throttled).
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isAuthError(msg))
+        void this.credentialHealth.reportAuthError(
+          info.teamId,
+          channelId,
+          'anthropic',
+        );
     } finally {
       // Safety-flush a deferred message (e.g. the graph ended/errored before the tool result
       // arrived). Posts without file_ids rather than silently dropping the message.

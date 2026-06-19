@@ -13,6 +13,7 @@ import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
+import type { CredentialHealthService } from '../llm-keys/credential-health.service';
 import type {
   Session,
   SessionRegistry,
@@ -229,6 +230,7 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     creds,
     credCtx,
     boardEvents,
+    { reportAuthError: async () => {} } as unknown as CredentialHealthService,
   );
   await conductor.onApplicationBootstrap();
   return {

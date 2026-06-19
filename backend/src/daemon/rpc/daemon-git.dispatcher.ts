@@ -71,22 +71,12 @@ export class DaemonGitDispatcher {
 type GitRpcMethod = Extract<
   keyof DaemonGitService,
   | 'ensureClone'
-  | 'createWorktree'
-  | 'listWorktrees'
-  | 'removeWorktree'
-  | 'worktreePath'
   | 'refreshFromBase'
   | 'mergeState'
-  | 'sharedBranchName'
-  | 'ensureShared'
-  | 'ensureSharedAtBase'
-  | 'sharedRef'
   | 'ownerDiff'
-  | 'sharedStatus'
   | 'reviewRange'
   | 'publish'
   | 'pull'
-  | 'pushSharedToOrigin'
   | 'openPr'
   | 'markReady'
   | 'commentPr'
@@ -97,22 +87,12 @@ type GitRpcMethod = Extract<
 
 const GIT_RPC_METHODS: ReadonlySet<string> = new Set<GitRpcMethod>([
   'ensureClone',
-  'createWorktree',
-  'listWorktrees',
-  'removeWorktree',
-  'worktreePath',
   'refreshFromBase',
   'mergeState',
-  'sharedBranchName',
-  'ensureShared',
-  'ensureSharedAtBase',
-  'sharedRef',
   'ownerDiff',
-  'sharedStatus',
   'reviewRange',
   'publish',
   'pull',
-  'pushSharedToOrigin',
   'openPr',
   'markReady',
   'commentPr',

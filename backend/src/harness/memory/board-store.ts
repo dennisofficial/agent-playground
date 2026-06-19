@@ -189,6 +189,20 @@ export class BoardStore {
   }
 
   /**
+   * Re-key this team's board tasks from one project to another — used when a channel's main repo is
+   * linked during onboarding and its project id changes, so pre-link board work stays visible under
+   * the new project. Returns the number of rows moved.
+   */
+  async reproject(team: string, from: string, to: string): Promise<number> {
+    if (from === to) return 0;
+    const rows = await this.q(
+      `UPDATE team_tasks SET project = $3, updated_at = now() WHERE team_id = $1 AND project = $2 RETURNING id`,
+      [team, from, to],
+    );
+    return rows.length;
+  }
+
+  /**
    * Atomically claim a task and start it: open, unassigned (or pre-assigned to this bot), and with
    * every dependency done. The single conditional UPDATE is the claim lock — two simultaneous
    * claimants can't both win. On refusal, a follow-up read names WHY for the tool message.

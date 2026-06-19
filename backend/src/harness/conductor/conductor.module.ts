@@ -4,6 +4,7 @@ import { ChannelModule } from '../channel/channel.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { LlmModule } from '../llm/llm.module';
 import { LlmKeysModule } from '../llm-keys/llm-keys.module';
+import { CredentialHealthService } from '../llm-keys/credential-health.service';
 import { MemoryModule } from '../memory/memory.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { ConductorEventsModule } from './conductor-events.module';
@@ -27,7 +28,7 @@ import { ConductorService } from './conductor.service';
     MemoryModule,
     SessionsModule,
   ],
-  services: [ConductorService],
+  services: [ConductorService, CredentialHealthService],
   exports: [ConductorEventsModule],
 })
 export class ConductorModule {}

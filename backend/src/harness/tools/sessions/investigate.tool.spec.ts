@@ -82,19 +82,15 @@ describe('investigate', () => {
     expect(out).toContain('sess-001');
   });
 
-  it('auto-opens a fresh workspace when the bot has none', async () => {
-    const { tool, openSession, workspaces, created } = makeTool({
+  it('points at create_workspace when the bot has no workstation (no port-side cut anymore)', async () => {
+    const { tool, openSession, workspaces } = makeTool({
       workspaces: [],
     });
     const out = await tool.execute({ question: 'where is X?' }, ctx);
-    expect(workspaces.create).toHaveBeenCalledTimes(1);
-    expect(created[0]).toMatchObject({
-      ownerBot: 'alex',
-      team: 'T1',
-      project: 'proj',
-    });
-    expect(openSession.mock.calls[0][0].workspaceId).toBe('ws-new');
-    expect(out).toContain('fresh workspace');
+    // WORKSTATION model: a workspace is a per-branch SANDBOX realized by create_workspace — there's no
+    // port-side cut-a-branch fallback. With none to read in, the tool tells the bot to create one.
+    expect(openSession).not.toHaveBeenCalled();
+    expect(out).toContain('create_workspace');
   });
 
   it('errors (and opens nothing) on an unknown explicit workspaceId', async () => {

@@ -15,7 +15,6 @@ import { BoardStore, type BoardStatus } from '../memory/board-store';
 import { BoardEventsBus } from '../memory/board-events.bus';
 import { PlanStore, type TaskPlan } from '../memory/plan-store';
 import { TicketNoteStore } from '../memory/ticket-note-store';
-import { parseGithubRepo } from '../projects/git-auth';
 import { GithubApiService } from '../projects/github-api.service';
 import { GithubTokenStore } from '../projects/github-token-store';
 import {
@@ -184,12 +183,14 @@ export class ReviewPipelineService {
   }
 
   /**
-   * The reusable review STAGE — review THIS session's own diff, run a bounded in-session fix loop,
-   * then publish the reviewed work onto the shared branch. Returns {kind:'complete'} on a clean
-   * publish (the CALLER owns the mark-complete / integrate / ship tail), or {kind:'blocked'} after a
-   * LOUD, recoverable owner_status='blocked' write + narration (missing workspace, exhausted fix loop,
-   * or a publish conflict left in-progress for the owner to resolve). Shared by the peer reviewOwner()
-   * and the Atlas pipeline's review stage.
+   * The reusable review STAGE — review THIS session's branch diff, run a bounded in-session fix loop,
+   * then publish (push the feature branch to origin). WORKSTATION model: a feature is ONE branch the team
+   * commits to directly — there's no shared integration branch to promote/diff against, so the review
+   * scope is the daemon's `reviewRange` (merge-base(branch, upstream)...branch) and publish is a plain
+   * push. Returns {kind:'complete'} on a clean publish (the CALLER owns the mark-complete / integrate /
+   * ship tail), or {kind:'blocked'} after a LOUD, recoverable owner_status='blocked' write + narration
+   * (unknown employee, exhausted fix loop, or a publish conflict left in-progress for the owner to
+   * resolve). Shared by the peer reviewOwner() and the Atlas pipeline's review stage.
    */
   async reviewStage(session: Session): Promise<OwnerReviewOutcome> {
     const { team, ownerBot: employee, workspaceId } = session;
@@ -210,62 +211,21 @@ export class ReviewPipelineService {
       return { kind: 'blocked', reason: `unknown employee '${employee}'` };
     }
     const ctx = this.employees.context();
-    // This session's git port (local host today; the sandbox once Phase 9 flips routing on).
+    // This session's git port — always the in-sandbox daemon adapter (the work is in the sandbox clone).
     const routeCtx: TurnRoutingCtx = {
       team,
       project: session.project,
       workspaceId,
       session,
     };
-    const containerized = this.workspaceGit.isContainerized(routeCtx);
     const git = this.workspaceGit.resolve(routeCtx);
-    // CONTAINERIZED: the host has NO workspace row — the in-sandbox worktree (keyed by session.id) holds
-    // the work, and the review engine turn runs there (cwd overridden off session.id, so `workspacePath`
-    // is unused). LOCAL: the host workspace must exist (the tree the review reads).
-    const workspace = this.reader.get(workspaceId);
-    if (!containerized && !workspace) {
-      await this.failOwner(
-        session,
-        taskId,
-        `workspace ${workspaceId} no longer exists — can't run self-review`,
-      );
-      return { kind: 'blocked', reason: 'workspace gone' };
-    }
-    const workspacePath = ''; // daemon-resolved (the work area's worktree)
+    const workspacePath = ''; // daemon-resolved (the sandbox checkout)
     const task = await this.board.get(team, taskId);
-    // Whether the workspace already has a shared branch. LOCAL: the host row. CONTAINERIZED: ask the
-    // daemon (sharedRef truthy ⇒ a shared branch exists; the daemon owns the real name).
-    const hasShared = containerized
-      ? !!(await git.sharedRef(workspaceId).catch(() => undefined))
-      : !!workspace?.sharedBranch;
-    // Self-heal: the workspace never joined a shared branch at execute start (the stamping no-op'd or
-    // these sessions predate it). Promote it at the base divergence point — using the ticket's shared
-    // slug (or `ticket-N` solo) so the branch identity matches the sibling grouping — so the owner's
-    // own diff is reviewable instead of silently giving up. A failure here is a loud recoverable dead end.
-    if (!hasShared) {
-      const healed = await git.ensureSharedAtBase(
-        workspaceId,
-        task?.sharedSlug ?? `ticket-${taskId}`,
-      );
-      if (!healed.ok) {
-        await this.failOwner(
-          session,
-          taskId,
-          `couldn't prepare a shared branch for review: ${healed.reason}`,
-        );
-        return { kind: 'blocked', reason: healed.reason };
-      }
-    }
-    // Backfill the plan row's execute context (idempotent) so the integration barrier's anchor lookup
-    // (`executeWorkspaceId && sharedBranch`) can find this owner — a row promoted-but-never-stamped
-    // would otherwise mark 'complete' and then strand integrate() with no anchor. (The host row's
-    // sharedBranch may still be null for a containerized session — its integrate barrier is a documented
-    // host-only gap; the daemon owns the real shared branch.)
+    // Backfill the plan row's execute workspace (idempotent) so the integration barrier's anchor lookup
+    // (`executeWorkspaceId`) can find this owner. The shared_branch column is neutralized in the
+    // workstation model — a feature is one branch, recorded on the daemon, not a host shared ref.
     await this.plans
-      .setExecuteContext(team, taskId, {
-        executeWorkspaceId: workspaceId,
-        sharedBranch: workspace?.sharedBranch,
-      })
+      .setExecuteContext(team, taskId, { executeWorkspaceId: workspaceId })
       .catch(() => undefined);
     const keys = await this.creds.resolve(team);
     const ticketText = task
@@ -273,15 +233,14 @@ export class ReviewPipelineService {
       : session.task;
     const goal = task?.title ?? session.task;
 
-    // The shared tip BEFORE we publish — the review diffs <preRef>...<ownerBranch> (three-dot), so an
-    // owner reviewing after teammates have already integrated never re-reviews their work.
-    const preRef = await git.sharedRef(workspaceId);
-
-    // Review/fix loop runs LOCALLY (no publish yet) so the publish at the end carries the fixed work.
-    if (preRef) {
-      for (let pass = 0; pass <= MAX_FIX_PASSES; pass++) {
-        const { range, files } = await git.ownerDiff(workspaceId, preRef);
-        if (files.length === 0) break; // nothing of this owner's own to review
+    // The review scope: the feature branch's contribution since it diverged from its upstream — the
+    // daemon's `reviewRange` (merge-base(branch, upstream)...branch). WORKSTATION model: the feature IS
+    // this one branch (multiple sessions commit to it directly — no per-owner personal branch), so the
+    // branch's whole contribution over its base IS the review scope; there's no separate "owner's own
+    // diff" to isolate. Empty files ⇒ nothing committed yet (skip the loop; publish still pushes).
+    {
+      const { range, files } = await this.ticketRange(routeCtx);
+      for (let pass = 0; files.length > 0 && pass <= MAX_FIX_PASSES; pass++) {
         const reviewText = await this.runReview(
           routeCtx,
           bot,
@@ -312,30 +271,38 @@ export class ReviewPipelineService {
       }
     }
 
-    // Publish the (now reviewed) work onto the shared branch. A conflict is left in-progress; seed the
-    // owner to resolve and re-submit — do NOT mark complete.
+    // Publish the (now reviewed) work — push the feature branch to origin (the team syncs via origin, no
+    // shared branch). On a non-integrated result the owner must intervene before we mark complete: a push
+    // REJECTED because a teammate advanced the SAME branch on origin needs a `pull` (fetch+merge
+    // origin/<branch>) first, not an in-tree conflict resolve; a real in-progress merge (rare here) leaves
+    // conflicted `files`. Both block + seed the owner, then return — do NOT mark complete.
     const publish = await git.publish(workspaceId).catch((err) => ({
       integrated: false as const,
-      sharedBranch: workspace?.sharedBranch ?? '(shared)',
-      files: [String(err instanceof Error ? err.message : err)],
+      sharedBranch: '(branch)',
+      files: [String(err instanceof Error ? err.message : err)] as string[],
+      remote: undefined as { pushed: boolean; detail?: string } | undefined,
     }));
     if (!publish.integrated) {
       await this.plans.setOwnerStatus(team, taskId, 'blocked');
+      const files = publish.files ?? [];
+      // A push rejection (origin advanced) is reported on `remote`, not as in-tree conflicts — instruct a
+      // pull. A genuine in-tree merge conflict (files present) gets the resolve prompt.
+      const detail = publish.remote?.detail;
+      const pushRejected = !!publish.remote && publish.remote.pushed === false;
+      const guidance = pushRejected
+        ? `Pushing ${publish.sharedBranch} to origin was rejected — a teammate advanced the branch first (${detail ?? 'see git status'}). pull_workspace to take their commits, then submit_for_review again.`
+        : `publishing ${publish.sharedBranch} hit a merge conflict (${files.join(', ') || 'see git status'}) — resolve it, then submit_for_review again`;
       await this.runner
         .resumeInternal(
           session.id,
           CONFLICT_RESOLVE_PROMPT({
             sharedBranch: publish.sharedBranch,
-            files: publish.files ?? [],
+            files,
           }),
           { mode: 'execute', timeoutMs: INTERNAL_TURN_TIMEOUT_MS },
         )
         .catch(() => undefined);
-      this.emitFailed(
-        session,
-        taskId,
-        `publishing onto ${publish.sharedBranch} hit a merge conflict (${(publish.files ?? []).join(', ') || 'see git status'}) — resolve it, then submit_for_review again`,
-      );
+      this.emitFailed(session, taskId, guidance);
       return { kind: 'blocked', reason: 'publish conflict' };
     }
 
@@ -343,24 +310,17 @@ export class ReviewPipelineService {
   }
 
   /**
-   * The git range covering a pipeline ticket's WHOLE accumulated work in its single workspace — the
-   * workspace branch since its cut point (`baseRef`, or the project's default branch as a fallback).
-   * Shared by the per-section multi-lens review and the final full-implementation review (the pipeline
-   * accumulates on the workspace branch and only publishes onto a shared branch at ship time, so there's
-   * no shared-branch pair to diff yet). Empty `files` ⇒ nothing to review.
-   *
-   * FORKS on `isContainerized(ctx)`:
-   *  - CONTAINERIZED: the host has NO tree + NO project record — ask the daemon for the review scope
-   *    (`reviewRange`), which diffs the session's branch since its recorded cut sha (matching the local
-   *    `baseRef` semantics). The `ctx.session` carries the daemon's worktree key.
-   *  - LOCAL (the only live path while the flag is off): UNCHANGED — resolve off the host `WorkspaceService`
-   *    row + host-only `git.projectRecordFor` + `git.ownerDiff`, exactly as before.
+   * The git range covering a feature's WHOLE accumulated work in its workstation — the branch since it
+   * diverged from its UPSTREAM (`merge-base(branch, upstream)...branch`). WORKSTATION model: a feature is
+   * ONE branch the whole team commits to directly, so the review scope is the branch's contribution over
+   * its base, computed entirely in the sandbox by the daemon's `reviewRange` — no shared-branch pair, no
+   * host tree, no host `projectRecordFor`. Shared by the per-section multi-lens review and the final
+   * full-implementation review. Empty `files` ⇒ nothing to review. A ctx with no live sandbox has nothing
+   * to diff (degrades to empty, so a review hiccup never strands a finished build).
    */
   private async ticketRange(
     ctx: TurnRoutingCtx,
   ): Promise<{ range: string; files: string[] }> {
-    // The daemon owns the tree + the recorded cut sha — it computes the review scope (`reviewRange`
-    // diffs the work area's branch since its cut point). A ctx with no live sandbox has nothing to diff.
     const daemon = this.workspaceGit.daemonFor(ctx);
     if (!daemon) return { range: '', files: [] };
     return daemon
@@ -528,13 +488,14 @@ export class ReviewPipelineService {
   }
 
   /**
-   * Task-level barrier (fired when THIS ticket's owner publishes). Opens the shared-branch DRAFT PR,
-   * then — once every ticket sharing the branch is published — runs the final integration review and
-   * ships. The harness NEVER judges pass/fail on the review (that non-deterministic gate was the #49
-   * loop); INTEGRATION_REVIEW_MODE picks the hand-off: 'advisory' (default) auto-ships + comments
-   * findings, 'gated' parks findings and seeds the owner. SIBLING-AWARE: tickets sharing a `shared_slug`
-   * land on ONE PR and ship together once all are published (the last to finish ships); a solo ticket
-   * ships on its own and skips the integration review (its per-owner pass already covered the diff).
+   * Task-level barrier (fired when THIS ticket's owner publishes). Opens the feature branch's DRAFT PR via
+   * the daemon, then — once every ticket sharing the feature workstation is published — runs the final
+   * integration review and ships. The harness NEVER judges pass/fail on the review (that non-deterministic
+   * gate was the #49 loop); INTEGRATION_REVIEW_MODE picks the hand-off: 'advisory' (default) auto-ships +
+   * comments findings, 'gated' parks findings and seeds the owner. WORKSTATION model: tickets sharing a
+   * `shared_slug` run in the SAME feature workstation (one branch) — so they're literally on ONE branch/PR,
+   * not merged via a shared branch. They ship together once all are published (the last to finish ships); a
+   * solo ticket ships on its own and skips the integration review (its per-owner pass already covered it).
    * Idempotent on the status CAS, so a re-trip is harmless.
    */
   async integrate(team: string, taskId: number): Promise<void> {
@@ -542,8 +503,10 @@ export class ReviewPipelineService {
     if (!task) return;
     const plans = await this.plans.listForTask(team, taskId);
     // The executing owner = the plan row that carries an execute workspace (robust to any stray
-    // planning-only rows). One employee owns a ticket.
-    const anchor = plans.find((p) => p.executeWorkspaceId && p.sharedBranch);
+    // planning-only rows). One employee owns a ticket. WORKSTATION model: the anchor is the execute
+    // workspace ALONE — shared_branch is neutralized (a feature is one branch the daemon owns), so the old
+    // `&& sharedBranch` predicate would strand every workstation row.
+    const anchor = plans.find((p) => p.executeWorkspaceId);
     if (!anchor?.executeWorkspaceId) {
       this.logger.warn(
         `integrate(#${taskId}): no plan row carries an execute workspace — cannot open the PR`,
@@ -563,62 +526,38 @@ export class ReviewPipelineService {
       employee: anchor.employee,
       notifyThread: await this.ownerRoom(anchor),
     };
-    // Phase-9 ctx threading: the integrate barrier has no LIVE session of its own, but the anchor plan
-    // row records the execute session id — load it so a containerized git op (e.g. pushSharedToOrigin)
-    // keys the daemon worktree off the right session id. Falls back to the workspaceId-only ctx for a
-    // local run (or when the session is gone). KNOWN CONTAINERIZED GAP: this method also calls the
-    // host-only `git.projectRecordFor` (no daemon counterpart — the daemon's single-repo clone IS the
-    // project), so a fully containerized integrate barrier needs a daemon-side project/origin lookup; out
-    // of scope this phase (the flag is off, so integrate never routes to a sandbox).
+    // The barrier has no LIVE session of its own, but the anchor plan row records the execute session id —
+    // load it so the daemon git ops key the right sandbox checkout. The daemon owns the repo + token + push
+    // + PR (no host project record / github client).
     const anchorSession = anchor.sessionId
       ? await this.sessions.get(anchor.sessionId).catch(() => undefined)
       : undefined;
-    const git = this.workspaceGit.resolve({
+    const routeCtx: TurnRoutingCtx = {
       team,
       project: task.project,
       workspaceId,
       ...(anchorSession ? { session: anchorSession } : {}),
-    });
+    };
+    const daemon = this.workspaceGit.daemonFor(routeCtx);
+    if (!daemon) {
+      await this.failIntegration(
+        team,
+        taskId,
+        owner,
+        `no live sandbox for ${workspaceId} — open the PR manually`,
+      );
+      return;
+    }
 
     // executing → self_review (this ticket's work is published; review/ship pending). Idempotent.
     await this.board
       .transition(team, taskId, 'executing', { status: 'self_review' })
       .catch(() => undefined);
 
-    const rec = await git.projectRecordFor(workspaceId);
-    if (!rec) {
-      await this.failIntegration(
-        team,
-        taskId,
-        owner,
-        'no registered GitHub repo matches this workspace — open the PR manually',
-      );
-      return;
-    }
-    const auth = await this.tokens
-      .resolve(rec.teamId, rec.tokenName)
-      .catch(() => undefined);
-    if (!auth) {
-      await this.failIntegration(
-        team,
-        taskId,
-        owner,
-        'no GitHub token is stored for this project — open the PR manually',
-      );
-      return;
-    }
-
-    // Ensure origin has the branch (also runs the repo-identity guard) and open/find the DRAFT PR.
-    // Title prefers the slug (the PR may carry several tickets); body is fleshed out at ship time.
-    const { owner: ghOwner, repo } = parseGithubRepo(rec.gitUrl);
+    // Open/find the DRAFT PR (branch → its upstream) via the daemon — it resolves repo/token/push itself.
     let prUrl: string;
     try {
-      const { sharedBranch } = await git.pushSharedToOrigin(workspaceId);
-      const pr = await this.github.openPullRequest(auth.token, {
-        owner: ghOwner,
-        repo,
-        head: sharedBranch,
-        base: rec.defaultBranch,
+      const pr = await daemon.openPr({
         title: task.sharedSlug ?? task.title,
         body: task.description || undefined,
         draft: true,
@@ -643,9 +582,9 @@ export class ReviewPipelineService {
       return;
     }
 
-    // SIBLING GATE: a shared-slug feature lands on one PR; ship only once every contributing ticket is
-    // published (status ∈ self_review/in_review/done). Not all published → this ticket waits in
-    // self_review (PR stays draft); the last sibling to publish trips the ship.
+    // SIBLING GATE: a shared-slug feature shares one workstation/branch → one PR; ship only once every
+    // contributing ticket is published (status ∈ self_review/in_review/done). Not all published → this
+    // ticket waits in self_review (PR stays draft); the last sibling to publish trips the ship.
     const siblings = task.sharedSlug
       ? await this.board.list({
           team,
@@ -665,26 +604,28 @@ export class ReviewPipelineService {
 
     // All contributors published → the final fresh-eyes, different-engine pass over the COMBINED work.
     // Only meaningful for a real feature group (siblings>1); a solo ticket's per-owner review covered it.
+    // The review scope is the feature branch's range over its upstream (the daemon's reviewRange) — the
+    // siblings all share that one branch.
     let reviewText = '';
     const bot = this.employees.byId(anchor.employee);
     if (siblings.length > 1 && bot) {
       const ctx = this.employees.context();
       const keys = await this.creds.resolve(team);
-      const ws = this.reader.get(workspaceId);
-      reviewText = await this.runReview(
-        { team, project: task.project, workspaceId },
-        bot,
-        this.reviewSpec(bot, ctx),
-        '',
-        team,
-        keys,
-        INTEGRATION_REVIEW_PROMPT({
-          goal: task.sharedSlug ?? task.title,
-          ticket: aggregateTicketText(siblings),
-          sharedBranch: anchor.sharedBranch ?? ws?.sharedBranch ?? '',
-          base: rec.defaultBranch,
-        }),
-      ).catch(() => '');
+      const { range, files } = await this.ticketRange(routeCtx);
+      if (files.length > 0)
+        reviewText = await this.runReview(
+          routeCtx,
+          bot,
+          this.reviewSpec(bot, ctx),
+          '',
+          team,
+          keys,
+          INTEGRATION_REVIEW_PROMPT({
+            goal: task.sharedSlug ?? task.title,
+            ticket: aggregateTicketText(siblings),
+            range,
+          }),
+        ).catch(() => '');
     }
     const findings = reviewText.trim();
 
@@ -710,12 +651,14 @@ export class ReviewPipelineService {
   }
 
   /**
-   * The single ship path for the shared PR — advisory `integrate()` calls it automatically;
-   * `mark_pr_ready` calls it for the owner-decided (gated / manual) path. Flips the PR ready, flips
-   * EVERY sibling ticket (same shared_slug) → in_review, fans `pr-ready` to each owner, aggregates the
-   * PR title/body across siblings, and (when `findings` given) posts them as a PR comment + a note on
-   * each sibling. Self-contained (resolves task/anchor/repo/PR from the id). Loud-fail on mark-ready
-   * (returns `{ok:false}`) so the caller never advances a ticket onto a still-draft PR.
+   * The single ship path for the feature PR — advisory `integrate()` calls it automatically;
+   * `mark_pr_ready` calls it for the owner-decided (gated / manual) path. Flips the PR ready (via the
+   * daemon), flips EVERY sibling ticket (same shared_slug) → in_review, fans `pr-ready` to each owner, and
+   * (when `findings` given) posts them as a PR comment + a note on each sibling. WORKSTATION model: the
+   * siblings share ONE feature workstation/branch → ONE PR (no per-ticket aggregation — the daemon owns the
+   * single PR's title/body). Self-contained (resolves task/anchor from the id; the daemon resolves
+   * repo/token/PR). Loud-fail on mark-ready (returns `{ok:false}`) so the caller never advances a ticket
+   * onto a still-draft PR.
    */
   async shipSharedPr(
     team: string,
@@ -725,34 +668,39 @@ export class ReviewPipelineService {
     const task = await this.board.get(team, taskId);
     if (!task) return { ok: false, reason: `board task #${taskId} is gone` };
     const plans = await this.plans.listForTask(team, taskId);
-    const anchor = plans.find((p) => p.executeWorkspaceId && p.sharedBranch);
-    if (!anchor?.executeWorkspaceId || !anchor.sharedBranch)
-      return { ok: false, reason: 'no execute workspace / shared branch for this ticket' };
-    const rec = await this.workspaceGit
-      .resolve({
-        team,
-        project: task.project,
-        workspaceId: anchor.executeWorkspaceId,
-      })
-      .projectRecordFor(anchor.executeWorkspaceId);
-    if (!rec) return { ok: false, reason: 'no registered GitHub repo matches this workspace' };
-    const auth = await this.tokens
-      .resolve(rec.teamId, rec.tokenName)
-      .catch(() => undefined);
-    if (!auth) return { ok: false, reason: 'no GitHub token is stored for this project' };
-    const { owner: ghOwner, repo } = parseGithubRepo(rec.gitUrl);
-    const open = await this.github
-      .listOpenPullRequests(auth.token, { owner: ghOwner, repo })
-      .catch(() => []);
-    const pr = open.find((p) => p.headBranch === anchor.sharedBranch);
-    if (!pr) return { ok: false, reason: `no open PR found for ${anchor.sharedBranch}` };
+    // WORKSTATION model: anchor by the execute workspace alone (shared_branch is neutralized).
+    const anchor = plans.find((p) => p.executeWorkspaceId);
+    if (!anchor?.executeWorkspaceId)
+      return { ok: false, reason: 'no execute workspace for this ticket' };
+    const anchorSession = anchor.sessionId
+      ? await this.sessions.get(anchor.sessionId).catch(() => undefined)
+      : undefined;
+    const daemon = this.workspaceGit.daemonFor({
+      team,
+      project: task.project,
+      workspaceId: anchor.executeWorkspaceId,
+      ...(anchorSession ? { session: anchorSession } : {}),
+    });
+    if (!daemon)
+      return {
+        ok: false,
+        reason: `no live sandbox for ${anchor.executeWorkspaceId} — can't ship the PR`,
+      };
 
+    // Find (open-or-find) the feature branch's PR and flip it out of draft. `openPr` returns the existing
+    // open PR for the branch — integrate() opened the draft, so this is a find; mark it ready. Loud-fail
+    // so the caller never advances onto a still-draft PR.
+    let prNumber: number;
+    let prUrl: string;
     try {
-      await this.github.markReadyForReview(auth.token, {
-        owner: ghOwner,
-        repo,
-        number: pr.number,
+      const pr = await daemon.openPr({
+        title: task.sharedSlug ?? task.title,
+        body: task.description || undefined,
+        draft: true,
       });
+      prNumber = pr.number;
+      prUrl = pr.url;
+      await daemon.markReady(prNumber);
     } catch (err) {
       return {
         ok: false,
@@ -768,29 +716,10 @@ export class ReviewPipelineService {
         })
       : [task];
 
-    // Aggregate the PR title/body across the feature's tickets (the draft was opened with just one).
-    if (siblings.length > 1)
-      await this.github
-        .updatePullRequest(auth.token, {
-          owner: ghOwner,
-          repo,
-          number: pr.number,
-          title: task.sharedSlug ?? task.title,
-          body: aggregateTicketText(siblings),
-        })
-        .catch((err) =>
-          this.logger.warn(`PR metadata update(#${taskId}) failed: ${err}`),
-        );
-
     // Advisory findings → one comment on the PR (covers the whole feature).
     if (opts.findings)
-      await this.github
-        .commentOnPullRequest(auth.token, {
-          owner: ghOwner,
-          repo,
-          number: pr.number,
-          body: SELF_REVIEW_PR_COMMENT(opts.findings),
-        })
+      await daemon
+        .commentPr(prNumber, SELF_REVIEW_PR_COMMENT(opts.findings))
         .catch((err) =>
           this.logger.warn(`self-review PR comment(#${taskId}) failed: ${err}`),
         );
@@ -810,7 +739,7 @@ export class ReviewPipelineService {
         team,
         taskId: s.id,
         employee: sOwner?.employee ?? s.assignee ?? anchor.employee,
-        prUrl: pr.url,
+        prUrl,
         notifyThread: sOwner?.notifyThread,
       });
     }
@@ -818,12 +747,12 @@ export class ReviewPipelineService {
   }
 
   /**
-   * The single-task PR ship for the Atlas pipeline's PR gate — open (or find) the PR for THIS task's
-   * workspace and mark it ready, with NO sibling/sharedSlug fan-out (the peer `integrate`/`shipSharedPr`
-   * path stays untouched). Self-heals a missing shared branch (the ticket's slug or `ticket-N`),
-   * publishes the accumulated pipeline work, pushes to origin, opens a READY PR (base = the project's
-   * default branch), flips the ticket → in_review, stamps the PR url, and narrates pr-ready. Loud-fail
-   * ({ok:false}) on any infra miss so the caller never reports a ship that didn't happen.
+   * The single-task PR ship for the Atlas pipeline's PR gate — publish (push the feature branch to origin)
+   * and open/ready THE PR for THIS task's workstation, with NO sibling/sharedSlug fan-out (the peer
+   * `integrate`/`shipSharedPr` path is separate). WORKSTATION model: the feature is ONE branch the daemon
+   * owns — `publish` pushes it, then the daemon opens (or finds) the PR branch→upstream and flips it ready.
+   * Flips the ticket → in_review, stamps the PR url, and narrates pr-ready. Loud-fail ({ok:false}) on any
+   * infra miss so the caller never reports a ship that didn't happen.
    */
   async shipTask(opts: {
     team: string;
@@ -834,152 +763,70 @@ export class ReviewPipelineService {
      * the PR ships regardless — this is informational for Dennis's review. */
     findings?: string;
     /** The pipeline's execute/aggregate session, when one exists — its id is the daemon's worktree key
-     * for a CONTAINERIZED ship (publish/push/PR ops address that in-sandbox worktree). Absent for the
-     * local path. */
+     * for the ship (publish/PR ops address that in-sandbox checkout). */
     session?: Session;
   }): Promise<{ ok: boolean; reason?: string; prUrl?: string }> {
     const { team, taskId, workspaceId, session } = opts;
     const task = await this.board.get(team, taskId);
     if (!task) return { ok: false, reason: `board task #${taskId} is gone` };
     // The pipeline ship has no live chat session — route on tenancy + the pipeline's workspace (+ the
-    // execute session when threaded, which keys the daemon worktree for a containerized ship).
+    // execute session when threaded, which keys the daemon checkout for the ship).
     const routeCtx: TurnRoutingCtx = {
       team,
       project: task.project,
       workspaceId,
       ...(session ? { session } : {}),
     };
-    const containerized = this.workspaceGit.isContainerized(routeCtx);
-    const git = this.workspaceGit.resolve(routeCtx);
-
-    // Resolve the workspace's current shared-branch name across both paths. LOCAL: read the host row.
-    // CONTAINERIZED: the host has no row, so ask the daemon via sharedRef (truthy ⇒ a shared branch
-    // exists). Either way, a missing shared branch is self-healed below.
-    let sharedBranch: string | undefined;
-    let workspace = this.reader.get(workspaceId);
-    if (containerized) {
-      sharedBranch = (await git.sharedRef(workspaceId).catch(() => undefined))
-        ? 'shared' // sentinel: a shared branch exists (the daemon owns the real name)
-        : undefined;
-    } else {
-      if (!workspace)
-        return { ok: false, reason: `workspace ${workspaceId} no longer exists` };
-      sharedBranch = workspace.sharedBranch;
-    }
-    // The PR opens off the workspace's shared branch; self-heal one at the base divergence point when
-    // the pipeline workspace never joined one (solo task → `ticket-N`, or the ticket's slug).
-    if (!sharedBranch) {
-      const healed = await git.ensureSharedAtBase(
-        workspaceId,
-        task.sharedSlug ?? `ticket-${taskId}`,
-      );
-      if (!healed.ok)
-        return {
-          ok: false,
-          reason: `couldn't prepare a branch for the PR: ${healed.reason}`,
-        };
-      if (!containerized) {
-        workspace = this.reader.get(workspaceId);
-        if (!workspace)
-          return { ok: false, reason: `workspace ${workspaceId} disappeared` };
-      }
-    }
-    const sharedName = workspace?.sharedBranch ?? '(unknown)';
-    // Publish the accumulated pipeline work onto the shared branch; a conflict is left in-progress.
-    const publish = await git.publish(workspaceId).catch((err) => ({
-      integrated: false as const,
-      sharedBranch: sharedName,
-      files: [String(err instanceof Error ? err.message : err)],
-    }));
-    if (!publish.integrated)
+    const daemon = this.workspaceGit.daemonFor(routeCtx);
+    if (!daemon)
       return {
         ok: false,
-        reason: `publishing onto ${publish.sharedBranch} hit a merge conflict (${(publish.files ?? []).join(', ') || 'see git status'}) — resolve it`,
+        reason: `no live sandbox for ${workspaceId} — can't ship the PR`,
       };
 
+    // Publish the accumulated work — push the feature branch to origin (the team syncs via origin). A push
+    // rejection (a teammate advanced the branch) needs a pull first; a real in-tree conflict leaves files.
+    const publish = await daemon.publish(workspaceId).catch((err) => ({
+      integrated: false as const,
+      sharedBranch: '(branch)',
+      files: [String(err instanceof Error ? err.message : err)] as string[],
+      remote: undefined as { pushed: boolean; detail?: string } | undefined,
+    }));
+    if (!publish.integrated) {
+      const pushRejected = !!publish.remote && publish.remote.pushed === false;
+      return {
+        ok: false,
+        reason: pushRejected
+          ? `pushing ${publish.sharedBranch} to origin was rejected (${publish.remote?.detail ?? 'origin advanced'}) — pull, then ship again`
+          : `publishing ${publish.sharedBranch} hit a merge conflict (${(publish.files ?? []).join(', ') || 'see git status'}) — resolve it`,
+      };
+    }
+
+    // The daemon owns the repo + token + push — open (or find) a READY PR (branch → its upstream), then
+    // post the advisory comment via the daemon (the host has no project record / github client for the
+    // sandbox's repo). `openPr` is open-or-find: a draft already open from an earlier open_pr is returned.
     let prUrl: string;
-    if (containerized) {
-      // CONTAINERIZED: the daemon owns the repo + token + push — open a READY PR, then post the advisory
-      // comment via the daemon (host has no project record / github client for the sandbox's repo).
-      const daemon = this.workspaceGit.daemonFor(routeCtx);
-      if (!daemon)
-        return { ok: false, reason: 'no daemon adapter for the containerized ship' };
-      try {
-        const pr = await daemon.openPr({
-          title: task.title,
-          body: task.description || undefined,
-          draft: false,
-        });
-        prUrl = pr.url;
-        await daemon.markReady(pr.number).catch(() => undefined);
-        if (opts.findings)
-          await daemon
-            .commentPr(pr.number, SELF_REVIEW_PR_COMMENT(opts.findings))
-            .catch((err) =>
-              this.logger.warn(
-                `full-impl-review PR comment(#${taskId}) failed: ${err}`,
-              ),
-            );
-      } catch (err) {
-        return {
-          ok: false,
-          reason: `couldn't open the PR (${err instanceof Error ? err.message : String(err)})`,
-        };
-      }
-    } else {
-      // LOCAL — today's exact host github flow, UNCHANGED.
-      const rec = await git.projectRecordFor(workspaceId);
-      if (!rec)
-        return {
-          ok: false,
-          reason: 'no registered GitHub repo matches this workspace',
-        };
-      const auth = await this.tokens
-        .resolve(rec.teamId, rec.tokenName)
-        .catch(() => undefined);
-      if (!auth)
-        return { ok: false, reason: 'no GitHub token is stored for this project' };
-      const { owner: ghOwner, repo } = parseGithubRepo(rec.gitUrl);
-      try {
-        const { sharedBranch: pushed } = await git.pushSharedToOrigin(workspaceId);
-        const pr = await this.github.openPullRequest(auth.token, {
-          owner: ghOwner,
-          repo,
-          head: pushed,
-          base: rec.defaultBranch,
-          title: task.title,
-          body: task.description || undefined,
-          draft: false,
-        });
-        prUrl = pr.url;
-        // openPullRequest opens ready (draft:false); flip an already-open DRAFT to ready too (idempotent).
-        await this.github
-          .markReadyForReview(auth.token, {
-            owner: ghOwner,
-            repo,
-            number: pr.number,
-          })
-          .catch(() => undefined);
-        // Advisory full-impl-review findings → one comment on the PR (informational; the PR ships anyway).
-        if (opts.findings)
-          await this.github
-            .commentOnPullRequest(auth.token, {
-              owner: ghOwner,
-              repo,
-              number: pr.number,
-              body: SELF_REVIEW_PR_COMMENT(opts.findings),
-            })
-            .catch((err) =>
-              this.logger.warn(
-                `full-impl-review PR comment(#${taskId}) failed: ${err}`,
-              ),
-            );
-      } catch (err) {
-        return {
-          ok: false,
-          reason: `couldn't open the PR (${err instanceof Error ? err.message : String(err)})`,
-        };
-      }
+    try {
+      const pr = await daemon.openPr({
+        title: task.title,
+        body: task.description || undefined,
+        draft: false,
+      });
+      prUrl = pr.url;
+      await daemon.markReady(pr.number).catch(() => undefined);
+      if (opts.findings)
+        await daemon
+          .commentPr(pr.number, SELF_REVIEW_PR_COMMENT(opts.findings))
+          .catch((err) =>
+            this.logger.warn(
+              `full-impl-review PR comment(#${taskId}) failed: ${err}`,
+            ),
+          );
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `couldn't open the PR (${err instanceof Error ? err.message : String(err)})`,
+      };
     }
 
     await this.plans.setPrUrl(team, taskId, prUrl).catch(() => undefined);

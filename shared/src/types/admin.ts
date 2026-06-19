@@ -3,6 +3,7 @@
  * endpoints and the admin web UI. Pure TypeScript: no TypeORM, no class-validator.
  * Safe to import in any package including frontend bundles.
  */
+import type { BranchingPolicy } from './branching';
 
 /**
  * The four memory-sharing tiers that a fact's scope belongs to.
@@ -85,6 +86,8 @@ export interface ProjectRecord {
   gitUrl: string;
   /** The PR base branch. */
   defaultBranch: string;
+  /** Per-project git branching policy (how workstation branches are derived); null → the default. */
+  branchingPolicy: BranchingPolicy | null;
   /** Named token override; null -> the default token. */
   tokenName: string | null;
   createdAt: string;
@@ -98,6 +101,7 @@ export interface NewProject {
   description?: string | null;
   gitUrl: string;
   defaultBranch?: string;
+  branchingPolicy?: BranchingPolicy | null;
   tokenName?: string | null;
 }
 

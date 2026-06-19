@@ -96,10 +96,18 @@ export class FetchService {
     const parts: string[] = [];
 
     // ── 1. Standing context core ────────────────────────────────────────────────────────────────
-    // Role + active project is always rendered for grounding (it's nearly free and restates
-    // identity compactly). Team-scope standing prefs are appended when present.
+    // Role + the channel's OWN project, always rendered for grounding (nearly free). When the channel
+    // is linked to a registered repo we name the repo + its blurb (so the bot knows WHAT it is, not
+    // just a slug); when it isn't, we say so plainly instead of passing off the Slack channel-name slug
+    // as a project. The reference catalog below reuses this same projects.list call.
+    const all = await this.projects.list(id.team).catch(() => []);
+    const main = all.find((p) => p.projectId === id.project);
+    const others = all.filter((p) => p.projectId !== id.project);
     const prefs = await this.semantic.standingContext(id, 5).catch(() => '');
-    const coreLines: string[] = [`Role: ${bot.role}, project: ${id.project}.`];
+    const projectLine = main
+      ? `Role: ${bot.role}, project: ${main.displayName} (${main.gitUrl})${main.description ? ` — ${main.description}` : ''}.`
+      : `Role: ${bot.role}. No GitHub repo is linked to this channel yet — onboard_project links this channel's main repo so you can build here.`;
+    const coreLines: string[] = [projectLine];
     if (prefs) coreLines.push(prefs);
     parts.push(`Standing context:\n${coreLines.join('\n')}`);
 
@@ -108,9 +116,6 @@ export class FetchService {
     // reference_project / investigate(references) WITHOUT being told a path. Small + high-value
     // (knowing a sibling repo even exists, e.g. "reference cubix-infra"), so it's always-on but
     // hard-capped; the full list/blurbs are on-demand via list_reference_projects.
-    const others = (await this.projects.list(id.team).catch(() => [])).filter(
-      (p) => p.projectId !== id.project,
-    );
     if (others.length > 0) {
       const shown = others.slice(0, REFERENCE_CAP);
       const more = others.length - shown.length;

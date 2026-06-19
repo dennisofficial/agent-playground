@@ -41,14 +41,15 @@ export const CONFLICT_RESOLVE_PROMPT = (p: {
     p.files.join(', ') || '(run git status to see them)'
   }, keeping both sides' intent where they don't truly clash, then COMMIT the merge. Don't touch the PR — the harness republishes once the merge is committed.`;
 
-/** Final integration review over the whole shared branch before the PR is readied for Dennis. */
+/** Final integration review over the feature branch's whole contribution before the PR is readied for
+ * Dennis. WORKSTATION model: the siblings share ONE feature branch, so the review scope is the branch's
+ * range over its upstream (`merge-base(branch, upstream)...branch`) — the daemon's `reviewRange`. */
 export const INTEGRATION_REVIEW_PROMPT = (p: {
   goal: string;
   ticket: string;
-  sharedBranch: string;
-  base: string;
+  range: string;
 }): string =>
-  `You are a code-review agent doing the FINAL integration pass before this work goes to Dennis. Review the combined changes on \`${p.sharedBranch}\` versus \`${p.base}\` — run \`git diff ${p.base}...${p.sharedBranch}\`. Focus on whether the pieces fit together: consistent contracts between them, nothing half-wired, no contradictions across the combined work. READ-ONLY.
+  `You are a code-review agent doing the FINAL integration pass before this work goes to Dennis. Review the combined changes on this feature branch — run \`git diff ${p.range}\`. Focus on whether the pieces fit together: consistent contracts between them, nothing half-wired, no contradictions across the combined work. READ-ONLY.
 
 The work implements:
 ${p.ticket}

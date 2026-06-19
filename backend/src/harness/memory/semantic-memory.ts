@@ -457,4 +457,19 @@ export class SemanticMemory {
   ): Promise<void> {
     await this.facts.softDelete({ id, scope, team_id: teamId });
   }
+
+  /**
+   * Re-key THIS team's project-tier facts from one project to another — used when a channel's main
+   * repo is linked during onboarding and its project id changes, so pre-link facts recall under the
+   * new project. Only this team's facts move; shared/global facts (`team_id IS NULL`) are left
+   * untouched. Returns the number of facts moved.
+   */
+  async reprojectFacts(team: string, from: string, to: string): Promise<number> {
+    if (from === to) return 0;
+    const res = await this.facts.update(
+      { scope: projectScope(from), team_id: team },
+      { scope: projectScope(to) },
+    );
+    return res.affected ?? 0;
+  }
 }

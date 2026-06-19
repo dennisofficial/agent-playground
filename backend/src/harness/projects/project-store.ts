@@ -1,4 +1,5 @@
 import { Project as ProjectEntity } from '@workspace/shared/schemas';
+import type { BranchingPolicy } from '@workspace/shared';
 import { Repository } from 'typeorm';
 import { rawRows, toIso } from '../memory/sql';
 import type { NewProject, ProjectRecord } from './project.types';
@@ -17,6 +18,7 @@ interface ProjectRow {
   description: string | null;
   git_url: string;
   default_branch: string;
+  branching_policy: BranchingPolicy | null;
   token_name: string | null;
   created_at: unknown;
   updated_at: unknown;
@@ -29,6 +31,7 @@ const toRecord = (r: ProjectRow): ProjectRecord => ({
   description: r.description ?? null,
   gitUrl: r.git_url,
   defaultBranch: r.default_branch,
+  branchingPolicy: r.branching_policy ?? null,
   tokenName: r.token_name,
   createdAt: toIso(r.created_at),
   updatedAt: toIso(r.updated_at),
@@ -74,8 +77,8 @@ export class ProjectStore {
   async create(input: NewProject): Promise<ProjectRecord> {
     try {
       const rows = await this.q(
-        `INSERT INTO projects (team_id, project_id, display_name, description, git_url, default_branch, token_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        `INSERT INTO projects (team_id, project_id, display_name, description, git_url, default_branch, branching_policy, token_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [
           input.teamId,
           input.projectId,
@@ -83,6 +86,7 @@ export class ProjectStore {
           input.description ?? null,
           input.gitUrl,
           input.defaultBranch ?? 'main',
+          input.branchingPolicy ?? null,
           input.tokenName ?? null,
         ],
       );
@@ -111,6 +115,8 @@ export class ProjectStore {
     if (patch.gitUrl !== undefined) add('git_url', patch.gitUrl);
     if (patch.defaultBranch !== undefined)
       add('default_branch', patch.defaultBranch);
+    if (patch.branchingPolicy !== undefined)
+      add('branching_policy', patch.branchingPolicy);
     if (patch.tokenName !== undefined) add('token_name', patch.tokenName);
     if (sets.length === 0) return this.get(teamId, projectId);
     args.push(teamId, projectId);

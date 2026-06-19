@@ -204,3 +204,21 @@ describe('BoardStore.dropOpen() — guarded delete', () => {
     expect(await store.dropOpen('local', 9)).toBe('has-dependents');
   });
 });
+
+describe('BoardStore.reproject', () => {
+  it("re-keys this team's tasks from the old project to the new and returns the count", async () => {
+    // UPDATE ... RETURNING id → pg tuple [rows, count].
+    const { store, query } = buildStore([[[{ id: 1 }, { id: 2 }], 2]]);
+    const moved = await store.reproject('T1', 'ai-crew-local-testing', 'cubix-infra');
+    expect(moved).toBe(2);
+    const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
+    expect(sql).toMatch(/UPDATE team_tasks SET project = \$3/i);
+    expect(params).toEqual(['T1', 'ai-crew-local-testing', 'cubix-infra']);
+  });
+
+  it('is a no-op when from === to (no query, returns 0)', async () => {
+    const { store, query } = buildStore([]);
+    expect(await store.reproject('T1', 'same', 'same')).toBe(0);
+    expect(query).not.toHaveBeenCalled();
+  });
+});

@@ -1,87 +1,44 @@
 import type { Session } from '../sessions/session-registry.port';
 import type { ProjectRecord } from '../projects/project.types';
-import type {
-  BaseRefreshResult,
-  IntegrationResult,
-  NewWorkspace,
-  Workspace,
-} from './workspace.types';
+import type { BaseRefreshResult, IntegrationResult } from './workspace.types';
 
 /**
- * The async GIT operations the harness invokes on a workspace — the routable seam (Phase 8). Every
- * call site that today calls `WorkspaceService.<asyncGitMethod>(...)` goes through a port instance
- * resolved by `WorkspaceGitProvider.resolve(ctx)` instead, so a containerized session (Phase 9) runs
- * the SAME operation inside its sandbox over the daemon RPC rather than on the host.
+ * The async GIT operations the harness invokes on a per-branch WORKSTATION — the routable seam. Every
+ * call site goes through a port instance resolved by `WorkspaceGitProvider.resolve(ctx)`, which always
+ * returns the in-sandbox `DaemonGitAdapter` (every workspace is a sandbox; there is no local path).
  *
- * SCOPE — this is ONLY the async git surface. The SYNC registry lookups (`get`/`list`/`workerRoot`/
- * `reposRoot`/`sharedBranchName`) deliberately stay on `WorkspaceService` directly: they're cheap
- * in-memory reads, and nothing is containerized this phase (Phase 9 gates their use for sandboxed
- * sessions). Method signatures here MATCH `WorkspaceService` EXACTLY so `LocalWorkspaceAdapter` is a
- * pure 1:1 pass-through (byte-identical runtime behavior).
+ * THE WORKSTATION MODEL. A workspace is ONE branch the whole team commits to directly — no personal
+ * branches, no `shared/<slug>` integration branch, no merge-convergence. Convergence is via origin
+ * push (`publish`) / pull (`pull`); the PR is the feature branch → its UPSTREAM. So the port carries only
+ * the per-branch ops the daemon's single checkout serves; the shared-branch ops (ensureShared/sharedRef/
+ * pushSharedToOrigin/sharedStatus) and the local-only create/remove are GONE with the host workspace path.
  *
- * Two adapters implement it:
- *  - `LocalWorkspaceAdapter` — delegates each method verbatim to the host `WorkspaceService` (the only
- *    path that runs this phase; `isContainerized` is hard-false until Phase 9).
- *  - `DaemonGitAdapter` — DORMANT this phase; forwards each call as a typed git RPC to the in-sandbox
- *    daemon over Redis (`DaemonClient.gitCall`). Built + unit-tested, never reached at runtime yet.
+ * The `id`/`workspaceId` args are vestigial — the daemon's clone IS one branch, so its RPCs need no key —
+ * but kept on the signatures so the call sites (which still hold a workspace handle) read unchanged.
  */
 export interface WorkspaceGitPort {
-  /** Create a workspace (cut a branch off the project repo, optionally joining a shared branch). */
-  create(
-    input: NewWorkspace,
-  ): Promise<{ workspace: Workspace; warning?: string }>;
-
-  /** Remove a workspace's checkout (the branch + its commits survive). */
-  remove(id: string): Promise<void>;
-
-  /** Bring a workspace's branch up to date with its project's base branch. */
+  /** Bring the workstation branch up to date with its UPSTREAM (fetch + merge it in). */
   refreshFromBase(id: string): Promise<BaseRefreshResult>;
 
-  /** Whether a merge is in progress in the workspace, and the conflicted paths if so. */
+  /** Whether a merge is in progress in the workstation checkout, and the conflicted paths if so. */
   mergeState(
     workspaceId: string,
   ): Promise<{ inProgress: boolean; files: string[] }>;
 
-  /** Promote a workspace to a shared integration branch (cut at the branch tip) if not already on one. */
-  ensureShared(
-    id: string,
-    name: string,
-    startPoint?: string,
-  ): Promise<string | undefined>;
-
-  /** Promote a workspace with existing owner commits to a shared branch, cut at the base divergence. */
-  ensureSharedAtBase(
-    id: string,
-    name: string,
-  ): Promise<{ ok: true; sharedBranch: string } | { ok: false; reason: string }>;
-
-  /** The current tip sha of a workspace's shared integration branch (for the self-review diff base). */
-  sharedRef(id: string): Promise<string | undefined>;
-
-  /** The git range + changed files isolating an owner's own contribution since `sinceRef`. */
+  /** The git range + changed files isolating the branch's contribution since `sinceRef`. */
   ownerDiff(
     id: string,
     sinceRef: string,
   ): Promise<{ range: string; files: string[] }>;
 
-  /** Publish a workspace's committed work onto its shared integration branch (+ origin sync). */
+  /** Publish the workstation's committed work — push the branch to origin (the team syncs via origin). */
   publish(id: string): Promise<IntegrationResult>;
 
-  /** Merge the shared integration branch into a workspace (take teammates' published work). */
+  /** Pull teammates' work into the workstation checkout — fetch + merge `origin/<branch>`. */
   pull(id: string): Promise<IntegrationResult>;
 
-  /** Push a workspace's shared branch to its project's registered repo (the open_pr push). */
-  pushSharedToOrigin(
-    id: string,
-  ): Promise<{ sharedBranch: string; gitUrl: string }>;
-
-  /** The project record a workspace's remote ops run against (origin-URL recovery included). */
+  /** The project record a workspace's remote ops run against (host-only — no daemon counterpart). */
   projectRecordFor(workspaceId: string): Promise<ProjectRecord | undefined>;
-
-  /** Git-derived shared-branch status for list_workspaces (published? commits not on origin?). */
-  sharedStatus(
-    id: string,
-  ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined>;
 
   /** Materialize / refresh a READ-ONLY reference clone of another repo. Returns the on-disk path. */
   ensureReferenceClone(

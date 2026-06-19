@@ -10,8 +10,8 @@ import { DaemonGitService } from '../git/daemon-git.service';
 
 const execFileAsync = promisify(execFile);
 
-/** How long to give a `docker compose down` per worktree before moving on (the container is going away
- * regardless — this is graceful teardown, not a guarantee). */
+/** How long to give the `docker compose down` before moving on (the container is going away regardless —
+ * this is graceful teardown, not a guarantee). */
 const COMPOSE_DOWN_TIMEOUT_MS = 30_000;
 
 /**
@@ -23,12 +23,13 @@ const COMPOSE_DOWN_TIMEOUT_MS = 30_000;
  * On shutdown it, in order:
  *  1) REAPS lingering engine process groups (the `pnpm dev &` / `next dev` an execute turn backgrounded
  *     — see process-group.ts). A single group-kill per turn's leader takes its whole subtree.
- *  2) TEARS DOWN inner-Docker compose stacks the agent started under each session's worktree
- *     (`docker compose down` per worktree dir, best-effort) — the very `docker compose up` this whole
+ *  2) TEARS DOWN the inner-Docker compose stack the agent started in the workstation CHECKOUT
+ *     (`docker compose down` at the clone root, best-effort) — the very `docker compose up` this whole
  *     feature exists to make private to the sandbox. Skipped entirely when the inner Docker isn't
- *     reachable (nothing could have been started).
+ *     reachable (nothing could have been started). The sandbox is a per-branch workstation: ONE checkout,
+ *     so ONE compose project (no inner worktrees to iterate).
  *  3) Leaves stopping `dockerd` itself to the container ENTRYPOINT's signal trap (it owns dockerd's
- *     lifecycle); we only down the stacks we know about from the worktree set.
+ *     lifecycle); we only down the stack at the checkout root.
  *
  * Every step is wrapped so one failure never blocks the next or the process exit. Ordered BEFORE the
  * container's own teardown so compose stacks come down while dockerd is still up.
@@ -51,32 +52,32 @@ export class DaemonShutdownService implements OnApplicationShutdown {
     await this.teardownInnerStacks();
   }
 
-  /** `docker compose down` in every known session worktree, best-effort. Only attempted when the inner
+  /** `docker compose down` at the workstation checkout root, best-effort. Only attempted when the inner
    * Docker daemon is actually reachable (a sandbox that never ran one has nothing to tear down). */
   private async teardownInnerStacks(): Promise<void> {
     if (!(await this.innerDockerReachable())) {
       this.logger.log('inner Docker not reachable — no compose stacks to tear down');
       return;
     }
-    const worktrees = this.git.listWorktrees();
-    if (worktrees.length === 0) return;
-    this.logger.log(
-      `tearing down inner compose stacks under ${worktrees.length} worktree(s)`,
-    );
-    // Sequential, isolated failures: one worktree without a compose file (the common case) must not
-    // abort the rest. `docker compose down` is a no-op + nonzero-exit when there's no project, which we
-    // swallow.
-    for (const wt of worktrees) {
-      try {
-        await execFileAsync(
-          'docker',
-          ['compose', 'down', '--remove-orphans', '--volumes'],
-          { cwd: wt.path, timeout: COMPOSE_DOWN_TIMEOUT_MS },
-        );
-        this.logger.log(`compose down ok in ${wt.path}`);
-      } catch {
-        // No compose project here (or it's already down) — expected for most worktrees; stay quiet.
-      }
+    // The workstation is ONE checkout (no inner worktrees). If the clone never happened (a non-git/dev
+    // boot), there's nothing to tear down.
+    let root: string;
+    try {
+      root = this.git.root();
+    } catch {
+      return;
+    }
+    this.logger.log(`tearing down the inner compose stack at ${root}`);
+    // `docker compose down` is a no-op + nonzero-exit when there's no project at the root, which we swallow.
+    try {
+      await execFileAsync(
+        'docker',
+        ['compose', 'down', '--remove-orphans', '--volumes'],
+        { cwd: root, timeout: COMPOSE_DOWN_TIMEOUT_MS },
+      );
+      this.logger.log(`compose down ok in ${root}`);
+    } catch {
+      // No compose project at the checkout (or it's already down) — the common case; stay quiet.
     }
   }
 

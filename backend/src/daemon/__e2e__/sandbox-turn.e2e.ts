@@ -155,7 +155,8 @@ async function main(): Promise<number> {
   try {
     // ── 1) ensureWorkspace → spawn a real sandbox; it clones the public repo on boot ──────────────
     log(`ensureWorkspace(${TEAM}, ${PROJECT}) — spawning sandbox from agent-workspace-base…`);
-    const rec = await manager.ensureWorkspace(TEAM, PROJECT);
+    // Workstations: ensureWorkspace is per-branch now — spawn one on the repo's default branch (main).
+    const rec = await manager.ensureWorkspace(TEAM, PROJECT, 'main', 'main', 'main');
     workspaceId = rec.workspaceId;
     log(
       `sandbox spawned: workspaceId=${rec.workspaceId} container=${rec.containerId.slice(0, 12)} ` +

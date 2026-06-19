@@ -95,6 +95,21 @@ export class ChannelRegistryService implements OnModuleInit {
     return this.channels.get(channelId)?.members.includes(id) ?? false;
   }
 
+  /** Repoint a room's project (the memory `project:` tier AND the working repo `create_workspace`
+   * clones). Used when a channel's main GitHub repo is linked during onboarding — the channel-name
+   * slug it registered with is replaced by the registered project id. No-op if the room is unknown or
+   * already on `projectId`. */
+  setProject(channelId: string, projectId: string): void {
+    const info = this.channels.get(channelId);
+    if (!info || info.project === projectId) return;
+    const updated = { ...info, project: projectId };
+    this.channels.set(channelId, updated);
+    this.persist(updated);
+    this.logger.log(
+      `Repointed channel '${channelId}' project '${info.project}' → '${projectId}'`,
+    );
+  }
+
   /** The project a turn in this room belongs to (memory scoping). Unknown room → default project. */
   projectOf(channelId: string): string {
     return this.channels.get(channelId)?.project ?? DEFAULT_PROJECT;

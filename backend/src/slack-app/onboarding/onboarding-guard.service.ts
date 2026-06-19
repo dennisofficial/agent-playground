@@ -32,15 +32,11 @@ import {
   keysModalView,
   setupButtonBlocks,
 } from './onboarding-guard-blocks';
+import { ANTHROPIC_KEY, GITHUB_TOKEN, OPENAI_KEY } from './key-validators';
 
 /** Something key/token-shaped pasted as chat — warn, never store, never echo. */
 const KEY_IN_CHAT =
   /\b(sk-[A-Za-z0-9_-]{10,}|xox[abp]-[A-Za-z0-9-]{10,}|ghp_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,})/;
-
-const ANTHROPIC_KEY = /^sk-ant-[\w-]{8,}$/;
-const OPENAI_KEY = /^sk-[\w-]{8,}$/;
-/** Permissive — classic 40-hex PATs, ghp_…, github_pat_…; just refuse whitespace/shorties. */
-const GITHUB_TOKEN = /^\S{20,}$/;
 
 /** Re-prompt suppression: the keys prompt in a channel is throttled to one per window. */
 const REPOST_WINDOW_MS = 60_000;

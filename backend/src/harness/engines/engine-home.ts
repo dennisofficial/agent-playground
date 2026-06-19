@@ -2,17 +2,32 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** The repo root, resolved once via git toplevel (fallback: cwd). The engines' homes live UNDER the
- * repo so they're co-located with the project and isolated from anything personal in $HOME. Also the
- * anchor for repo-local skill paths (`{kind:'local', path:'skills/x'}` resolves here, NOT cwd, so a
- * top-level `skills/` dir is found regardless of which app's cwd boots the harness). */
+/** The repo root, resolved once. The engines' homes live UNDER the repo so they're co-located with the
+ * project and isolated from anything personal in $HOME. Also the anchor for repo-local skill paths
+ * (`{kind:'local', path:'skills/x'}` resolves here, NOT cwd, so a top-level `skills/` dir is found
+ * regardless of which app's cwd boots the harness).
+ *
+ * Resolution order:
+ *  1) `HARNESS_ROOT` env, when set — the IN-SANDBOX case: the daemon runs from a read-only build volume
+ *     (mounted at `/daemon`) that deliberately EXCLUDES `.git`, so `git rev-parse` can't find the root
+ *     and `process.cwd()` is `/workspace` (no harness `skills/` there). The host injects the mount path
+ *     as the explicit anchor so vendored skills resolve to `/daemon/skills/x`.
+ *  2) `git rev-parse --show-toplevel` — the normal host case (git stderr suppressed so a fallback never
+ *     leaks a `fatal: not a git repository` line into the logs).
+ *  3) `process.cwd()` — last resort. */
 let repoRootCache: string | undefined;
 export function repoRoot(): string {
   if (repoRootCache) return repoRootCache;
+  const injected = process.env.HARNESS_ROOT?.trim();
+  if (injected) {
+    repoRootCache = injected;
+    return repoRootCache;
+  }
   try {
     repoRootCache = execFileSync('git', ['rev-parse', '--show-toplevel'], {
       cwd: process.cwd(),
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
     repoRootCache = process.cwd();

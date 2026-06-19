@@ -1,4 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
+import { ChannelProjectLinker } from '@harness/approvals/channel-project-linker';
 import {
   type ProjectOnboardEvent,
   type ProjectOnboardPresenter,
@@ -8,6 +9,7 @@ import { ConductorService } from '@harness/conductor/conductor.service';
 import { EmployeeRegistry } from '@harness/employees/employee.registry';
 import { Injectable, Logger } from '@nestjs/common';
 import { parseSlackSurface } from '../slack-membership';
+import { isWorkspaceBoss } from './boss-auth';
 import type {
   SlackInbound,
   SlackInboundInterceptor,
@@ -53,6 +55,9 @@ export class ProjectOnboardCardsService
     private readonly clients: TenantSlackClients,
     private readonly tenants: TenantStore,
     private readonly registrar: ProjectRegistrar,
+    // Presenter-FREE linker (NOT ProjectOnboardService, which carries the presenter — that would
+    // re-introduce the service↔card DI cycle this service exists on `ProjectRegistrar` to avoid).
+    private readonly linker: ChannelProjectLinker,
     private readonly conductor: ConductorService,
     private readonly employees: EmployeeRegistry,
     private readonly env: EnvService,
@@ -234,12 +239,28 @@ export class ProjectOnboardCardsService
 
     await item.respond(); // close the modal
     const projectId = outcome.projectId;
-    await this.repaintCard(meta, `✅ Onboarded \`${projectId}\` (read-only).`);
+    // Bind it as the channel's main repo if the channel doesn't have one yet (the same rule as the
+    // tool path); otherwise it's a read-only reference.
+    const { linkedAsMain } = await this.linker
+      .linkChannelProject({
+        team: meta.team,
+        surfaceId: meta.surfaceId,
+        projectId,
+      })
+      .catch(() => ({ linkedAsMain: false }));
+    await this.repaintCard(
+      meta,
+      linkedAsMain
+        ? `✅ Linked \`${projectId}\` as this channel's repo.`
+        : `✅ Onboarded \`${projectId}\` (read-only).`,
+    );
     const atlas = this.employees.teamLead();
     this.conductor.injectSeed(
       atlas.id,
       meta.surfaceId,
-      `[Project onboarding] Dennis just registered ${projectId} (read-only) via the onboarding card. If you were waiting on it, reference_project({ name: "${projectId}" }) now and carry on; otherwise just note it's available.`,
+      linkedAsMain
+        ? `[Project onboarding] Dennis just linked ${projectId} as this channel's main repo via the onboarding card — it's the project you build here now. Confirm you're set up and offer to get started.`
+        : `[Project onboarding] Dennis just registered ${projectId} (read-only) via the onboarding card. If you were waiting on it, reference_project({ name: "${projectId}" }) now and carry on; otherwise just note it's available.`,
     );
     return true;
   }
@@ -296,13 +317,7 @@ export class ProjectOnboardCardsService
     }
   }
 
-  private async isBoss(
-    teamId: string,
-    userId: string | undefined,
-  ): Promise<boolean> {
-    if (!userId) return false;
-    const tenant = await this.tenants.get(teamId).catch(() => undefined);
-    const boss = tenant?.installedBy ?? this.env.get('APPROVAL_BOSS_USER_ID');
-    return !!boss && boss === userId;
+  private isBoss(teamId: string, userId: string | undefined): Promise<boolean> {
+    return isWorkspaceBoss(this.tenants, this.env, teamId, userId);
   }
 }

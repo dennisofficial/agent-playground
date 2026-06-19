@@ -6,6 +6,7 @@ import {
   COMMAND_INTERCEPTOR,
   ONBOARDING_GUARD_INTERCEPTOR,
   PROJECT_ONBOARD_INTERCEPTOR,
+  ROTATE_KEYS_INTERCEPTOR,
   SUGGESTION_INTERCEPTOR,
   type SlackInbound,
   type SlackInboundInterceptor,
@@ -39,6 +40,9 @@ export class SlackInboundRouter {
     @Optional()
     @Inject(PROJECT_ONBOARD_INTERCEPTOR)
     private readonly projectOnboard?: SlackInboundInterceptor,
+    @Optional()
+    @Inject(ROTATE_KEYS_INTERCEPTOR)
+    private readonly rotateKeys?: SlackInboundInterceptor,
   ) {}
 
   async route(item: SlackInbound): Promise<void> {
@@ -57,6 +61,8 @@ export class SlackInboundRouter {
         this.projectOnboard &&
         (await this.projectOnboard.maybeHandle(item))
       )
+        return;
+      if (this.rotateKeys && (await this.rotateKeys.maybeHandle(item)))
         return;
       if (item.kind === 'event' && item.body.event?.type === 'message') {
         // team_id routes the message to its workspace; the Events API always carries it.

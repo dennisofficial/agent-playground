@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import {
   EWorkerEngineName,
   type EngineAuth,
@@ -9,6 +9,7 @@ import {
   type LlmProvider,
   type ProviderCredential,
 } from './llm-key.types';
+import { CredentialRotationBus } from './credential-rotation.bus';
 import { ProviderKeyStore } from './provider-key.store';
 
 /** Resolved API keys for one workspace (a provider is undefined when neither store nor env has it).
@@ -43,7 +44,15 @@ export class TenantCredentialService {
     { creds: TenantCredentials; expires: number }
   >();
 
-  constructor(private readonly store: ProviderKeyStore) {}
+  constructor(
+    private readonly store: ProviderKeyStore,
+    // OPTIONAL so LlmKeysModule stays composable WITHOUT the harness (the api app / store int tests
+    // import it standalone, with no @Global CredentialModule). When present (the harness), a rotation
+    // drops THIS team's decrypted-key cache so the next resolve re-reads the fresh key.
+    @Optional() rotation?: CredentialRotationBus,
+  ) {
+    rotation?.rotated$.subscribe((teamId) => this.invalidate(teamId));
+  }
 
   /** Decrypted per-provider credentials for a workspace (cached). Store wins; the API key falls back
    * to process.env (dev). The subscription secret + mode come from the store only. */

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EWorkerEngineName } from '../engines/worker-engine.port';
 import type { LlmProvider, ProviderCredential } from './llm-key.types';
 import type { ProviderKeyStore } from './provider-key.store';
+import { CredentialRotationBus } from './credential-rotation.bus';
 import { TenantCredentialService } from './tenant-credential.service';
 
 /** A ProviderKeyStore double driven by an in-memory per-provider credential map. */
@@ -37,6 +38,7 @@ describe('TenantCredentialService.engineAuth', () => {
   it('Claude turn → anthropic api_key by default', async () => {
     const svc = new TenantCredentialService(
       fakeStore({ anthropic: { apiKey: 'sk-ant', engineAuthMode: 'api_key' } }),
+      new CredentialRotationBus(),
     );
     expect(await svc.engineAuth(TEAM, EWorkerEngineName.CLAUDE)).toEqual({
       mode: 'api_key',
@@ -53,6 +55,7 @@ describe('TenantCredentialService.engineAuth', () => {
           subscriptionSecret: 'oauth-tok',
         },
       }),
+      new CredentialRotationBus(),
     );
     expect(await svc.engineAuth(TEAM, EWorkerEngineName.CLAUDE)).toEqual({
       mode: 'subscription',
@@ -74,6 +77,7 @@ describe('TenantCredentialService.engineAuth', () => {
           subscriptionSecret: 'oauth-tok',
         },
       }),
+      new CredentialRotationBus(),
     );
     expect(await svc.engineAuth(TEAM, EWorkerEngineName.CODEX)).toEqual({
       mode: 'subscription',
@@ -86,11 +90,33 @@ describe('TenantCredentialService.engineAuth', () => {
       fakeStore({
         anthropic: { apiKey: 'sk-ant', engineAuthMode: 'subscription' },
       }),
+      new CredentialRotationBus(),
     );
     expect(await svc.engineAuth(TEAM, EWorkerEngineName.CLAUDE)).toEqual({
       mode: 'api_key',
       apiKey: 'sk-ant',
     });
+  });
+
+  it('drops the cached creds for a team on a rotation event (fan-out)', async () => {
+    let hits = 0;
+    const store = {
+      resolveCredential: () => {
+        hits++;
+        return Promise.resolve({ apiKey: 'sk', engineAuthMode: 'api_key' });
+      },
+    } as unknown as ProviderKeyStore;
+    const rotation = new CredentialRotationBus();
+    const svc = new TenantCredentialService(store, rotation);
+
+    await svc.resolve(TEAM);
+    await svc.resolve(TEAM); // cached → no extra store hit
+    const before = hits;
+    expect(before).toBeGreaterThan(0);
+
+    rotation.emit(TEAM); // rotation → cache cleared
+    await svc.resolve(TEAM); // re-reads the store
+    expect(hits).toBeGreaterThan(before);
   });
 
   it('resolve() still returns the API-key map unchanged (chat/embeddings path)', async () => {
@@ -103,6 +129,7 @@ describe('TenantCredentialService.engineAuth', () => {
         },
         openai: { apiKey: 'sk-oai', engineAuthMode: 'api_key' },
       }),
+      new CredentialRotationBus(),
     );
     expect(await svc.resolve(TEAM)).toEqual({
       anthropic: 'sk-ant',

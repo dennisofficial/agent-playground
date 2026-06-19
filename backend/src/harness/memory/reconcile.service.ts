@@ -5,12 +5,13 @@ import {
   RunnableLambda,
   RunnableSequence,
 } from '@langchain/core/runnables';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { z } from 'zod';
 import { Identity, recallProjects } from '../domain/identity';
 import { titleCase } from '../domain/text';
 import { EmployeeRegistry } from '../employees/employee.registry';
 import type { EmployeeDefinition } from '../employees/employee.types';
+import { CredentialRotationBus } from '../llm-keys/credential-rotation.bus';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { Decision, MemoryMetricsService } from './memory-metrics.service';
 import { MEMORY_PROMPT, TASK_PROMPT } from './memory.prompts';
@@ -156,7 +157,15 @@ export class ReconcileService {
     private readonly metrics: MemoryMetricsService,
     private readonly employees: EmployeeRegistry,
     private readonly models: ChatModelFactory,
-  ) {}
+    @Optional() rotation?: CredentialRotationBus,
+  ) {
+    // The extract chains bake the Anthropic key at build time and are memoized — drop them on a
+    // rotation so the next pass rebuilds against the fresh key (else reconcile keeps a dead key).
+    rotation?.rotated$.subscribe(() => {
+      this.memoryChain = undefined;
+      this.taskChain = undefined;
+    });
+  }
 
   /** "Dennis=dennis, Alex=alex" — so the model emits ids, not display names. */
   private peopleHint(id: Identity): string {

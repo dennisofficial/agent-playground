@@ -96,6 +96,9 @@ export const SUGGESTION_INTERCEPTOR = Symbol('SUGGESTION_INTERCEPTOR');
 /** Project-onboarding card/modal slot (`onboard:*` action_ids / callback_id — namespaced): the button
  * opens the onboarding modal, the submission registers the repo. Tried after the suggestion slot. */
 export const PROJECT_ONBOARD_INTERCEPTOR = Symbol('PROJECT_ONBOARD_INTERCEPTOR');
+/** Credential-rotation card/modal slot (`rotate:*` action_ids / callback_id — namespaced): the button
+ * opens the update-keys modal, the submission stores the new secret(s). Tried after the onboard slot. */
+export const ROTATE_KEYS_INTERCEPTOR = Symbol('ROTATE_KEYS_INTERCEPTOR');
 export interface SlackInboundInterceptor {
   maybeHandle(item: SlackInbound): Promise<boolean>;
 }

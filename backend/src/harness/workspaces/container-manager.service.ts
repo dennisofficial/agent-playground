@@ -30,6 +30,12 @@ const LABEL_TEAM = 'com.agent.team';
 const LABEL_PROJECT = 'com.agent.project';
 const LABEL_REPO = 'com.agent.repo';
 const LABEL_MANAGED = 'com.agent.managed';
+/** The per-branch sandbox (workstation) identity: a sandbox is keyed `(team, project, branch)`. The branch
+ * (and its baseRef/upstream — what to cut it from / where it PRs into) live on labels so they SURVIVE a
+ * host restart and are re-adopted on boot, and as env so the daemon checks the branch out at boot. */
+const LABEL_BRANCH = 'com.agent.branch';
+const LABEL_BASE_REF = 'com.agent.base-ref';
+const LABEL_UPSTREAM = 'com.agent.upstream';
 /**
  * The short bootstrap token, persisted as a label so a sandbox RE-ADOPTED on boot can still serve the
  * cred-pull channel (the in-process token doesn't survive a host restart). This is the ONLY secret on a
@@ -115,36 +121,42 @@ export class ContainerManagerService implements OnApplicationBootstrap {
   ) {
     // One-directional DI: register the lazy-create entry point so `SandboxRegistry.resolveForSession`
     // can ensure a sandbox without injecting this service back (no DI cycle).
-    this.registry.bindEnsurer((team, project) =>
-      this.ensureWorkspace(team, project),
+    this.registry.bindEnsurer((team, project, branch, baseRef, upstream) =>
+      this.ensureWorkspace(team, project, branch, baseRef, upstream),
     );
   }
 
   /**
-   * Idempotent: return the existing sandbox for `(team, project)` (find-by-label, so it survives a
-   * registry that hasn't reconciled yet), else create + start a fresh privileged DinD sandbox. Returns
-   * the registry record (workspaceId = the uuid).
+   * Idempotent: return the existing workstation for `(team, project, branch)` (find-by-label, so it
+   * survives a registry that hasn't reconciled yet — including the branch label, so a different-branch
+   * sandbox of the same project is NOT reused), else create + start a fresh privileged DinD sandbox on
+   * that branch. Returns the registry record (workspaceId = the uuid).
    */
   async ensureWorkspace(
     team: string,
     project: string,
+    branch: string,
+    baseRef: string,
+    upstream: string,
   ): Promise<SandboxRecord> {
     return this.ops(async () => {
-      const existing = await this.findRunning(team, project);
+      const existing = await this.findRunning(team, project, branch);
       if (existing) {
         this.registry.upsert(existing);
         await this.credentials.watch(existing.workspaceId);
         return existing;
       }
-      return this.create(team, project);
+      return this.create(team, project, branch, baseRef, upstream);
     });
   }
 
-  /** Find a live (or stopped) managed sandbox for `(team, project)` directly from Docker labels —
-   * the source of truth, independent of the in-memory registry's reconcile state. */
+  /** Find a live (or stopped) managed workstation for `(team, project, branch)` directly from Docker
+   * labels — the source of truth, independent of the in-memory registry's reconcile state. The BRANCH is
+   * part of the filter so two sandboxes of the same project on different branches don't collide. */
   private async findRunning(
     team: string,
     project: string,
+    branch: string,
   ): Promise<SandboxRecord | undefined> {
     const containers = await this.engine
       .listContainers({
@@ -153,6 +165,7 @@ export class ContainerManagerService implements OnApplicationBootstrap {
           `${LABEL_MANAGED}=1`,
           `${LABEL_TEAM}=${sanitizeLabelValue(team)}`,
           `${LABEL_PROJECT}=${sanitizeLabelValue(project)}`,
+          `${LABEL_BRANCH}=${sanitizeLabelValue(branch)}`,
         ],
       })
       .catch((err) => {
@@ -173,7 +186,13 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     };
   }
 
-  private async create(team: string, project: string): Promise<SandboxRecord> {
+  private async create(
+    team: string,
+    project: string,
+    branch: string,
+    baseRef: string,
+    upstream: string,
+  ): Promise<SandboxRecord> {
     const image = this.env.get('WORKSPACE_IMAGE');
     if (!image) {
       throw new Error(
@@ -217,6 +236,11 @@ export class ContainerManagerService implements OnApplicationBootstrap {
       [LABEL_TEAM]: sanitizeLabelValue(team),
       [LABEL_PROJECT]: sanitizeLabelValue(project),
       [LABEL_REPO]: sanitizeLabelValue(repo),
+      // Per-branch identity: the branch is the workstation key; baseRef/upstream survive a restart so a
+      // re-adopted workstation can still create/PR its branch from the right refs.
+      [LABEL_BRANCH]: sanitizeLabelValue(branch),
+      [LABEL_BASE_REF]: sanitizeLabelValue(baseRef),
+      [LABEL_UPSTREAM]: sanitizeLabelValue(upstream),
       // Persisted so a re-adopted sandbox can recover it and keep serving the cred-pull (see LABEL_BOOT_TOKEN).
       [LABEL_BOOT_TOKEN]: bootstrapToken,
     };
@@ -240,6 +264,11 @@ export class ContainerManagerService implements OnApplicationBootstrap {
         `DAEMON_BOOTSTRAP_TOKEN=${bootstrapToken}`,
         `WORKSPACE_REPO_URL=${repo}`,
         `WORKSPACE_BASE_BRANCH=${baseBranch}`,
+        // Per-branch checkout: the daemon checks out / creates WORKSPACE_BRANCH at boot, cutting it from
+        // WORKSPACE_BASE_REF when it doesn't exist, and refreshes-from / PRs into WORKSPACE_UPSTREAM.
+        `WORKSPACE_BRANCH=${branch}`,
+        `WORKSPACE_BASE_REF=${baseRef}`,
+        `WORKSPACE_UPSTREAM=${upstream}`,
         `DAEMON_ENTRY=${DAEMON_ENTRY}`,
         // The harness source root inside the sandbox = the daemon mount (the volume has no `.git`, so
         // `git rev-parse` can't find it). This anchors repo-local skill paths so a vendored skill like
@@ -285,6 +314,9 @@ export class ContainerManagerService implements OnApplicationBootstrap {
       workspaceId,
       team,
       project,
+      branch,
+      baseRef,
+      upstream,
       repo,
       containerId: handle.id,
       status: 'running',
@@ -431,6 +463,11 @@ export class ContainerManagerService implements OnApplicationBootstrap {
       workspaceId: c.labels[LABEL_WORKSPACE] ?? '',
       team: c.labels[LABEL_TEAM] ?? '',
       project: c.labels[LABEL_PROJECT] ?? '',
+      // The per-branch identity, recovered from labels so a re-adopted workstation keeps its branch key
+      // (and the refs the daemon needs to create/PR it). '' on a sandbox that predates these labels.
+      branch: c.labels[LABEL_BRANCH] ?? '',
+      baseRef: c.labels[LABEL_BASE_REF] ?? '',
+      upstream: c.labels[LABEL_UPSTREAM] ?? '',
       repo: c.labels[LABEL_REPO] ?? '',
       containerId: c.id,
       status: toStatus(c.state),

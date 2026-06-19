@@ -18,11 +18,14 @@ import type { TurnRoutingCtx } from './turn-executor.service';
  * Phase 9 flips the policy on.
  *
  * It:
- *  1. resolves (and lazily ensures) the sandbox for the session's `(team, project)` via
- *     `SandboxRegistry.resolveForSession` → the `workspaceId` to dispatch to;
- *  1b. GATES on readiness: `SandboxReadinessService.waitForReady(workspaceId)` blocks the FIRST turn to
- *     a freshly-spawned sandbox until its daemon signals ready (inner Docker up + consumer loop running),
- *     so we never dispatch a `docker compose` turn before the engine is reachable. Cached after the first;
+ *  1. resolves the sandbox from the SESSION's own `workspaceId` (== the sandbox uuid — a workstation hosts
+ *     exactly one work area, so `session.workspace_id` IS the sandbox id). It does NOT resolve by
+ *     `(team, project)`: a project can have several per-branch workstations, so resolving by tenancy would
+ *     dispatch to the wrong one. `create_workspace` already minted the right sandbox and stamped its id;
+ *     here we look it up by that id and dispatch to THAT sandbox.
+ *  1b. GATES on readiness: `SandboxReadinessService.waitForReady(sandboxId)` blocks the FIRST turn to that
+ *     sandbox until its daemon signals ready (inner Docker up + consumer loop running), so we never
+ *     dispatch a turn before the engine is reachable. Cached after the first;
  *  2. resolves the agent's host-side tool INPUTS (skill sources + MCP servers) via
  *     `AgentToolSourceResolver.forAgent` — the daemon has no DB, so the host ships these;
  *  3. builds the `RunCommandPayload` from `args` MINUS `onEvent`/`signal`/`cwd` (functions don't cross
@@ -56,16 +59,26 @@ export class RemoteTurnDispatcher {
       );
     }
 
-    // 1. Resolve (lazily ensure) the sandbox for this session's tenancy → the dispatch target.
-    const sandbox = await this.sandboxes.resolveForSession({
-      team: ctx.team,
-      project: ctx.project,
-    });
+    // 1. Resolve the sandbox from the SESSION's own workspaceId (== the sandbox uuid). A workstation hosts
+    // exactly one work area, so `session.workspace_id` IS the sandbox id; `ctx.workspaceId` carries it for
+    // session-less callers. Routing by tenancy would be WRONG — a project can have several per-branch
+    // workstations. Throw clearly if the id doesn't resolve to a known sandbox (a routing bug / gone sandbox).
+    const sandboxId = ctx.session?.workspaceId ?? ctx.workspaceId;
+    if (!sandboxId) {
+      throw new Error(
+        'RemoteTurnDispatcher: no workspaceId on the turn — cannot resolve the target sandbox.',
+      );
+    }
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox || sandbox.status === 'gone') {
+      throw new Error(
+        `RemoteTurnDispatcher: no live sandbox "${sandboxId}" for this turn — its workstation is gone.`,
+      );
+    }
 
-    // 1b. Gate on readiness — block the FIRST turn until the sandbox's daemon has signaled ready (inner
-    // Docker up + consumer loop running), so we never dispatch a `docker compose` (or any engine) turn
-    // before the daemon is reachable. Cheap + cached after the first turn; bounded — throws a clear
-    // error if the daemon never readies.
+    // 1b. Gate on readiness — block the FIRST turn until THIS sandbox's daemon has signaled ready (inner
+    // Docker up + consumer loop running), so we never dispatch a turn before the daemon is reachable.
+    // Cheap + cached after the first turn; bounded — throws a clear error if the daemon never readies.
     await this.readiness.waitForReady(sandbox.workspaceId);
 
     // 2. Host-resolve the agent's tool inputs (the daemon has no DB).
@@ -75,11 +88,10 @@ export class RemoteTurnDispatcher {
 
     // 3. Build the wire payload. `onEvent`/`signal`/`cwd` are intentionally OMITTED: the first two are
     // functions, and the daemon resolves cwd from the WORK AREA's in-sandbox worktree. Two ids cross:
-    //  - workAreaId — the daemon's worktree key (sessions in a work area share its tree). `session.
-    //    workspace_id` IS the workAreaId; `ctx.workspaceId` carries it for session-less callers.
+    //  - workAreaId — the daemon's worktree key (sessions in a work area share its tree). With the 1:1
+    //    workstation↔work-area model `session.workspace_id` == the sandbox id == the workAreaId.
     //  - sessionId  — the harness session, for the deterministic per-session dev-server PORT + tracing.
-    const workAreaId =
-      ctx.session?.workspaceId ?? ctx.workspaceId ?? sandbox.workspaceId;
+    const workAreaId = sandbox.workspaceId;
     const harnessSessionId = ctx.session?.id ?? workAreaId;
     const payload: RunCommandPayload = {
       engine: engineName === EWorkerEngineName.CODEX ? 'codex' : 'claude',

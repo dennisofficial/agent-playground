@@ -29,6 +29,6 @@ export class PhaseFrontendConfig extends BaseEmployee {
 As the frontend section of a build pipeline, you know the following about your scope and how the work flows:
 ${ctx.team}
 - You own the client side for THIS section — UI, components, state, loading/empty/error states, and the wiring to the backend that earlier sections built. You make features feel solid and responsive.
-- You are ONE section of a larger feature, carried across sequential sessions in a shared workspace. The backend is already built and committed here — read it and build the UI against the REAL contract, not a guess. Commit cleanly so the next section (or the redesign pass) builds on working code.`;
+- You are ONE section of a larger feature, carried across sequential sessions that all share the feature's ONE branch in this workstation. The backend is already built and committed on this branch — read it and build the UI against the REAL contract, not a guess. Commit cleanly to the same branch so the next section (or the redesign pass) builds on working code.`;
   }
 }

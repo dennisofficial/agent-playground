@@ -163,6 +163,21 @@ export class TaskStore {
     return this.setStatus(team, project, id, 'dropped');
   }
 
+  /**
+   * Re-key this team's reminders from one project to another — used when a channel's main repo is
+   * linked during onboarding and its project id changes, so pre-link reminders stay visible under the
+   * new project. Returns the number of rows moved. The target project is freshly registered (empty) at
+   * link time, so the open-dedup unique index can't collide.
+   */
+  async reproject(team: string, from: string, to: string): Promise<number> {
+    if (from === to) return 0;
+    const rows = await this.q(
+      `UPDATE tasks SET project = $3, updated_at = now() WHERE team_id = $1 AND project = $2 RETURNING id`,
+      [team, from, to],
+    );
+    return rows.length;
+  }
+
   private async setStatus(
     team: string,
     project: string,

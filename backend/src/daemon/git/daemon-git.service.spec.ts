@@ -17,7 +17,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-/** Write + commit one file in a worktree (worktree identity comes from the credential's author). */
+/** Write + commit one file in a checkout (identity comes from the credential's author). */
 async function commit(
   checkout: string,
   file: string,
@@ -43,10 +43,16 @@ async function makeRepo(): Promise<string> {
   return repo;
 }
 
-/** A BARE repo standing in for GitHub origin (file:// URL — `gitAuthEnv` returns {} for it, so no
- * token is needed for the local mechanics). Returns the bare dir + its file:// url. */
-async function makeBareOrigin(): Promise<{ dir: string; url: string }> {
+/** A BARE repo standing in for GitHub origin (file:// URL — `gitAuthEnv` returns {} for it, so no token
+ * is needed for the local mechanics). Returns the bare dir + its file:// url. Optionally seeds extra
+ * branches off `main` (e.g. a `dev` upstream). */
+async function makeBareOrigin(
+  branches: string[] = [],
+): Promise<{ dir: string; url: string }> {
   const seed = await makeRepo();
+  for (const b of branches) {
+    await git(seed, 'branch', b);
+  }
   const dir = join(
     await realpath(await mkdtemp(join(tmpdir(), 'dg-origin-'))),
     'origin.git',
@@ -54,6 +60,24 @@ async function makeBareOrigin(): Promise<{ dir: string; url: string }> {
   await git(seed, 'clone', '--bare', seed, dir);
   await rm(seed, { recursive: true, force: true });
   return { dir, url: `file://${dir}` };
+}
+
+/** Advance a branch on the bare origin behind the daemon's back (stand-in for a teammate pushing). */
+async function advanceOriginBranch(
+  origin: { dir: string },
+  branch: string,
+  file: string,
+  content: string,
+): Promise<void> {
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-adv-')));
+  await git(scratch, 'clone', origin.dir, 'c');
+  const oc = join(scratch, 'c');
+  await git(oc, 'config', 'user.email', 'o@test');
+  await git(oc, 'config', 'user.name', 'o');
+  await git(oc, 'checkout', branch);
+  await commit(oc, file, content);
+  await git(oc, 'push', 'origin', branch);
+  await rm(scratch, { recursive: true, force: true });
 }
 
 const CRED: ResolvedGitCredential = {
@@ -70,13 +94,13 @@ function makeService(): DaemonGitService {
   return new DaemonGitService(fakeCredentials, new GithubApiService());
 }
 
-describe('DaemonGitService (real git, file:// origin)', () => {
+describe('DaemonGitService — per-branch workstation (real git, file:// origin)', () => {
   let origin: { dir: string; url: string };
   let workspaceRoot: string;
   let service: DaemonGitService;
 
   beforeEach(async () => {
-    origin = await makeBareOrigin();
+    origin = await makeBareOrigin(['dev']);
     workspaceRoot = join(
       await realpath(await mkdtemp(join(tmpdir(), 'dg-ws-'))),
       'repo',
@@ -89,288 +113,313 @@ describe('DaemonGitService (real git, file:// origin)', () => {
     await rm(join(workspaceRoot, '..'), { recursive: true, force: true });
   });
 
-  it('ensureClone clones the repo once, enables worktree config, and is idempotent', async () => {
+  // ── boot checkout ────────────────────────────────────────────────────────────────────────────
+
+  it('ensureClone (no opts) checks out the base branch directly and is idempotent', async () => {
     const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
     expect(root).toBe(await realpath(workspaceRoot));
     expect(await git(root, 'remote', 'get-url', 'origin')).toBe(origin.url);
-    expect(await git(root, 'config', 'extensions.worktreeConfig')).toBe('true');
     expect(await git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main');
-    // .workspaces/ is excluded from status noise.
-    expect(await readFile(join(root, '.git', 'info', 'exclude'), 'utf8')).toContain(
-      '.workspaces/',
-    );
+    expect(service.root()).toBe(root);
+    expect(service.branch()).toBe('main');
     // A second ensureClone is a no-op (does not re-clone) and returns the same root.
     const headBefore = await git(root, 'rev-parse', 'HEAD');
     expect(await service.ensureClone(workspaceRoot, origin.url, 'main')).toBe(root);
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(headBefore);
   });
 
-  it('createWorktree cuts an isolated agent/<session> branch off the base, with author identity', async () => {
-    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    expect(path).toBe(service.worktreePath('sess-1'));
-    expect(await git(path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('agent/sess-1');
-    // Cut from origin/main, not some stale ref.
-    expect(await git(path, 'rev-parse', 'HEAD')).toBe(
-      await git(root, 'rev-parse', 'origin/main'),
-    );
-    // Commits in the worktree are authored as the credential's identity, not the host git config.
-    await commit(path, 'work.txt', 'session work\n');
-    expect(await git(path, 'log', '-1', '--format=%an <%ae>')).toBe(
-      'Agent <agent@agents.noreply>',
-    );
-    expect(service.listWorktrees().map((w) => w.workAreaId)).toEqual(['sess-1']);
-  });
-
-  it('createWorktree honours an explicit branch + shared, and the dir is the workAreaId verbatim (adoptable)', async () => {
-    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('wa-001', {
-      branch: 'feature/login',
-      shared: 'ticket-42',
-      ownerBot: 'alex',
+  it('ensureClone CREATES a fresh branch from the base ref, pushes it -u, and records upstream/base', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/search',
+      baseRef: 'dev',
+      upstream: 'dev',
     });
-    // The checkout dir is the workAreaId verbatim (so it round-trips through `git worktree list`).
-    expect(path.endsWith('/.workspaces/wa-001')).toBe(true);
-    expect(await git(path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('feature/login');
-    // shared was joined + recorded on the branch.
+    // Checked out directly on the new branch.
+    expect(await git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(
+      'feature/search',
+    );
+    // Cut from origin/dev (the base ref), not main.
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(
+      await git(root, 'rev-parse', 'origin/dev'),
+    );
+    // Pushed up so the team converges on it.
+    expect(await git(origin.dir, 'rev-parse', 'feature/search')).toBe(
+      await git(root, 'rev-parse', 'HEAD'),
+    );
+    // Durable association recorded on the branch (recovered on a restart).
     expect(
-      await git(root, 'config', 'branch.feature/login.agent-shared'),
-    ).toBe('shared/ticket-42');
-  });
-
-  it('sessions SHARE a work area: two createWorktree calls with the same workAreaId return one worktree', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const a = await service.createWorktree('wa-shared');
-    const b = await service.createWorktree('wa-shared'); // a second session in the same work area
-    expect(b).toBe(a);
-    expect(service.listWorktrees()).toHaveLength(1);
-  });
-
-  it('describeWorktrees + adoptWorktrees rebuild from durable git state (survives a daemon restart)', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    await service.createWorktree('wa-aaa');
-    await service.createWorktree('wa-bbb', { shared: 'feat' });
-
-    const described = await service.describeWorktrees();
-    expect(described.map((w) => w.workAreaId).sort()).toEqual(['wa-aaa', 'wa-bbb']);
-    expect(described.find((w) => w.workAreaId === 'wa-bbb')?.shared).toBe('shared/feat');
-
-    // A FRESH service over the SAME clone (a daemon restart): the in-memory map is empty until ensureClone
-    // re-adopts the surviving worktrees from git.
-    const restarted = makeService();
-    expect(restarted.listWorktrees()).toHaveLength(0);
-    await restarted.ensureClone(workspaceRoot, origin.url, 'main');
-    expect(restarted.listWorktrees().map((w) => w.workAreaId).sort()).toEqual([
-      'wa-aaa',
-      'wa-bbb',
-    ]);
-    // The adopted work area resolves its path, so a post-restart turn finds its cwd.
-    expect(restarted.worktreePath('wa-aaa')).toBeTruthy();
-  });
-
-  it('isolates sibling sessions: each worktree has its own branch and checkout', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const a = await service.createWorktree('sess-a');
-    const b = await service.createWorktree('sess-b');
-    expect(a).not.toBe(b);
-    await commit(a, 'a.txt', 'from a\n');
-    // B never sees A's uncommitted/committed work — separate checkout + branch.
-    await expect(readFile(join(b, 'a.txt'), 'utf8')).rejects.toThrow();
-    expect(await git(b, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('agent/sess-b');
-  });
-
-  it('createWorktree is idempotent for an already-open session', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const first = await service.createWorktree('sess-1');
-    const second = await service.createWorktree('sess-1');
-    expect(second).toBe(first);
-    expect(service.listWorktrees()).toHaveLength(1);
-  });
-
-  it('removeWorktree drops the checkout but keeps the branch', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    await commit(path, 'x.txt', 'x\n');
-    await service.removeWorktree('sess-1');
-    expect(service.worktreePath('sess-1')).toBeUndefined();
-    expect(await git(workspaceRoot, 'branch', '--list', 'agent/sess-1')).toContain(
-      'agent/sess-1',
-    );
-    await expect(git(path, 'status')).rejects.toThrow();
-  });
-
-  it('ensureShared promotes a session to shared/<slug>, records the association, and pushes via publish', async () => {
-    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    await commit(path, 'a.txt', 'from session\n');
-
-    const shared = await service.ensureShared('sess-1', 'ticket-7');
-    expect(shared).toBe('shared/ticket-7');
+      await git(root, 'config', 'branch.feature/search.agent-upstream'),
+    ).toBe('dev');
     expect(
-      await git(root, 'config', 'branch.agent/sess-1.agent-shared'),
-    ).toBe('shared/ticket-7');
-
-    // sharedRef before publish = the shared branch tip (cut at the session branch tip here).
-    const ref = await service.sharedRef('sess-1');
-    expect(ref).toBeTruthy();
-
-    const res = await service.publish('sess-1');
-    expect(res.integrated).toBe(true);
-    expect(res.sharedBranch).toBe('shared/ticket-7');
-    expect(res.dirty).toBe(false);
-    // Single-repo always has a known origin → publish pushes the shared branch to it.
-    expect(res.remote).toEqual({ pushed: true });
-    // The session branch is now integrated into shared, and origin received it.
-    expect(await git(root, 'rev-parse', 'shared/ticket-7')).toBe(
-      await git(path, 'rev-parse', 'HEAD'),
-    );
-    expect(await git(origin.dir, 'rev-parse', 'shared/ticket-7')).toBe(
-      await git(path, 'rev-parse', 'HEAD'),
-    );
+      await git(root, 'config', 'branch.feature/search.agent-base'),
+    ).toBe('dev');
+    expect(service.branch()).toBe('feature/search');
   });
 
-  it('ensureShared is idempotent and converges sibling sessions on ONE shared branch', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    await service.createWorktree('sess-a');
-    await service.createWorktree('sess-b');
-    expect(await service.ensureShared('sess-a', 'ticket-7')).toBe('shared/ticket-7');
-    // A second session passing a DIFFERENT name still lands on the sandbox's one shared branch.
-    expect(await service.ensureShared('sess-b', 'other-name')).toBe('shared/ticket-7');
-  });
-
-  it('publish merges a sibling-advanced shared branch in, then publishes both (disjoint files)', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const a = await service.createWorktree('sess-a');
-    const b = await service.createWorktree('sess-b');
-    await service.ensureShared('sess-a', 'feat');
-    await service.ensureShared('sess-b', 'feat');
-
-    await commit(b, 'b.txt', 'b work\n');
-    await service.publish('sess-b');
-    await commit(a, 'a.txt', 'a work\n');
-    const res = await service.publish('sess-a');
-    expect(res.integrated).toBe(true);
-    const tree = await git(workspaceRoot, 'ls-tree', '--name-only', 'shared/feat');
-    expect(tree).toContain('a.txt');
-    expect(tree).toContain('b.txt');
-  });
-
-  it('publish reports a conflict, leaves the merge IN PROGRESS, and mergeState surfaces it', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const a = await service.createWorktree('sess-a');
-    const b = await service.createWorktree('sess-b');
-    await service.ensureShared('sess-a', 'feat');
-    await service.ensureShared('sess-b', 'feat');
-
-    await commit(b, 'README.md', 'b version\n');
-    await service.publish('sess-b');
-    await commit(a, 'README.md', 'a version\n');
-    const res = await service.publish('sess-a');
-    expect(res.integrated).toBe(false);
-    expect(res.files).toEqual(['README.md']);
-
-    // mergeState reads the in-progress merge in A's worktree.
-    const st = await service.mergeState('sess-a');
-    expect(st.inProgress).toBe(true);
-    expect(st.files).toContain('README.md');
-
-    // Publishing again before resolving is refused.
-    await expect(service.publish('sess-a')).rejects.toThrow(
-      /merge is already in progress/i,
-    );
-  });
-
-  it('pull takes a sibling-published change into the worktree', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const a = await service.createWorktree('sess-a');
-    const b = await service.createWorktree('sess-b');
-    await service.ensureShared('sess-a', 'feat');
-    await service.ensureShared('sess-b', 'feat');
-
-    await commit(b, 'b.txt', 'b work\n');
-    await service.publish('sess-b');
-    const res = await service.pull('sess-a');
-    expect(res.integrated).toBe(true);
-    expect(await git(a, 'ls-tree', '--name-only', 'HEAD')).toContain('b.txt');
-  });
-
-  it('publish/pull refuse a session that is not on a shared branch', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    await service.createWorktree('sess-1');
-    await expect(service.publish('sess-1')).rejects.toThrow(/not on a shared branch/i);
-    await expect(service.pull('sess-1')).rejects.toThrow(/not on a shared branch/i);
-  });
-
-  it('ensureSharedAtBase cuts at the base divergence point so ownerDiff is non-empty', async () => {
-    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    await commit(path, 'owner.txt', 'owner work\n');
-    const base = await git(root, 'rev-parse', 'origin/main');
-
-    const res = await service.ensureSharedAtBase('sess-1', 'ticket-9');
-    expect(res).toEqual({ ok: true, sharedBranch: 'shared/ticket-9' });
-    // Cut at the merge-base (origin/main), NOT the branch tip (which would make the diff empty).
-    expect(await git(root, 'rev-parse', 'shared/ticket-9')).toBe(base);
-
-    const ref = await service.sharedRef('sess-1');
-    expect(ref).toBe(base);
-    const diff = await service.ownerDiff('sess-1', ref!);
-    expect(diff.range).toBe(`${base}...agent/sess-1`);
-    expect(diff.files).toContain('owner.txt');
-  });
-
-  it('refreshFromBase merges origin base advances into the session worktree', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    await commit(path, 'local.txt', 'local\n');
-
-    // Advance origin/main behind the session's back (stand-in for "Dennis merged a PR").
-    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-adv-')));
-    await git(scratch, 'clone', origin.dir, 'c');
+  it('ensureClone CHECKS OUT an EXISTING origin branch tracking it (no fresh cut)', async () => {
+    // Seed the branch on origin first (a teammate already created it).
+    await advanceOriginBranch(origin, 'main', 'pre.txt', 'pre\n');
+    const seeded = await makeBareOrigin();
+    // Build feature/login on `seeded`'s origin via a scratch clone, then point at it.
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-seed-')));
+    await git(scratch, 'clone', seeded.dir, 'c');
     const oc = join(scratch, 'c');
     await git(oc, 'config', 'user.email', 'o@test');
     await git(oc, 'config', 'user.name', 'o');
-    await commit(oc, 'merged.txt', 'from main\n');
-    await git(oc, 'push', 'origin', 'main');
+    await git(oc, 'checkout', '-b', 'feature/login');
+    await commit(oc, 'login.ts', 'export const login = 1;\n');
+    await git(oc, 'push', '-u', 'origin', 'feature/login');
     await rm(scratch, { recursive: true, force: true });
 
-    const res = await service.refreshFromBase('sess-1');
+    try {
+      const root = await service.ensureClone(
+        workspaceRoot,
+        seeded.url,
+        'main',
+        { branch: 'feature/login', baseRef: 'main', upstream: 'main' },
+      );
+      expect(await git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(
+        'feature/login',
+      );
+      // It tracks origin/feature/login and has the teammate's commit.
+      expect(await readFile(join(root, 'login.ts'), 'utf8')).toBe(
+        'export const login = 1;\n',
+      );
+      expect(await git(root, 'rev-parse', 'HEAD')).toBe(
+        await git(root, 'rev-parse', 'origin/feature/login'),
+      );
+    } finally {
+      await rm(join(seeded.dir, '..'), { recursive: true, force: true });
+    }
+  });
+
+  it('a RESTARTED daemon over the same clone re-adopts the branch + upstream (idempotent ensureClone)', async () => {
+    await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/x',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    // A FRESH service over the SAME clone (a daemon restart): ensureClone is a no-op re-attach.
+    const restarted = makeService();
+    const root = await restarted.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/x',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    expect(restarted.branch()).toBe('feature/x');
+    expect(await git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(
+      'feature/x',
+    );
+  });
+
+  it('commits in the checkout are authored as the credential identity, not the host git config', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/auth',
+      baseRef: 'main',
+      upstream: 'main',
+    });
+    await commit(root, 'work.txt', 'session work\n');
+    expect(await git(root, 'log', '-1', '--format=%an <%ae>')).toBe(
+      'Agent <agent@agents.noreply>',
+    );
+  });
+
+  // ── publish (push the branch to origin) ────────────────────────────────────────────────────────
+
+  it('publish pushes the workstation branch to origin (no shared branch)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/pub',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    await commit(root, 'a.txt', 'from session\n');
+    const res = await service.publish();
+    expect(res.integrated).toBe(true);
+    expect(res.sharedBranch).toBe('feature/pub');
+    expect(res.dirty).toBe(false);
+    expect(res.remote).toEqual({ pushed: true });
+    // Origin received the branch tip.
+    expect(await git(origin.dir, 'rev-parse', 'feature/pub')).toBe(
+      await git(root, 'rev-parse', 'HEAD'),
+    );
+  });
+
+  it('publish reports dirty when there are uncommitted changes (only commits are pushed)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/dirty',
+      baseRef: 'main',
+      upstream: 'main',
+    });
+    await commit(root, 'a.txt', 'committed\n');
+    await writeFile(join(root, 'b.txt'), 'uncommitted\n');
+    const res = await service.publish();
+    expect(res.integrated).toBe(true);
+    expect(res.dirty).toBe(true);
+    // Only the committed file reached origin.
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-chk-')));
+    await git(scratch, 'clone', origin.dir, 'c');
+    const oc = join(scratch, 'c');
+    await git(oc, 'checkout', 'feature/dirty');
+    expect(await readFile(join(oc, 'a.txt'), 'utf8')).toBe('committed\n');
+    await expect(readFile(join(oc, 'b.txt'), 'utf8')).rejects.toThrow();
+    await rm(scratch, { recursive: true, force: true });
+  });
+
+  it('publish reports a REJECTED push (teammate advanced origin) without force-pushing', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/race',
+      baseRef: 'main',
+      upstream: 'main',
+    });
+    await commit(root, 'mine.txt', 'mine\n');
+    await service.publish(); // establish the branch on origin
+    // A teammate pushes another commit onto the SAME branch.
+    await advanceOriginBranch(origin, 'feature/race', 'theirs.txt', 'theirs\n');
+    // Local advances independently → a non-fast-forward push is rejected (NOT forced).
+    await commit(root, 'mine2.txt', 'mine2\n');
+    const res = await service.publish();
+    expect(res.integrated).toBe(false);
+    expect(res.remote?.pushed).toBe(false);
+    // Origin still has the teammate's commit (we did not clobber it).
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-chk2-')));
+    await git(scratch, 'clone', origin.dir, 'c');
+    const oc = join(scratch, 'c');
+    await git(oc, 'checkout', 'feature/race');
+    expect(await readFile(join(oc, 'theirs.txt'), 'utf8')).toBe('theirs\n');
+    await rm(scratch, { recursive: true, force: true });
+  });
+
+  // ── pull (merge teammates' work on the same branch from origin) ────────────────────────────────
+
+  it('pull merges a teammate-advanced branch from origin into the checkout', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/team',
+      baseRef: 'main',
+      upstream: 'main',
+    });
+    await commit(root, 'mine.txt', 'mine\n');
+    await service.publish();
+    await advanceOriginBranch(origin, 'feature/team', 'teammate.txt', 'theirs\n');
+    const res = await service.pull();
+    expect(res.integrated).toBe(true);
+    expect(res.sharedBranch).toBe('feature/team');
+    expect(res.originFetched).toBe(true);
+    expect(await readFile(join(root, 'teammate.txt'), 'utf8')).toBe('theirs\n');
+    // Local work is preserved.
+    expect(await readFile(join(root, 'mine.txt'), 'utf8')).toBe('mine\n');
+  });
+
+  it('pull reports a CONFLICT, leaves the merge IN PROGRESS, and mergeState surfaces it', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/conflict',
+      baseRef: 'main',
+      upstream: 'main',
+    });
+    await commit(root, 'README.md', 'mine version\n');
+    await service.publish();
+    // Teammate edits the SAME file on origin.
+    await advanceOriginBranch(origin, 'feature/conflict', 'README.md', 'their version\n');
+    // Local diverges on the same file too.
+    await commit(root, 'README.md', 'my divergent version\n');
+    const res = await service.pull();
+    expect(res.integrated).toBe(false);
+    expect(res.files).toEqual(['README.md']);
+
+    const st = await service.mergeState();
+    expect(st.inProgress).toBe(true);
+    expect(st.files).toContain('README.md');
+
+    // Pulling again before resolving is refused.
+    await expect(service.pull()).rejects.toThrow(/merge is already in progress/i);
+  });
+
+  // ── refreshFromBase (merge the upstream in) ────────────────────────────────────────────────────
+
+  it('refreshFromBase merges origin/<upstream> advances into the checkout', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/refresh',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    await commit(root, 'local.txt', 'local\n');
+    // Advance the UPSTREAM (dev) behind the daemon's back (a PR merged into dev).
+    await advanceOriginBranch(origin, 'dev', 'merged.txt', 'from dev\n');
+
+    const res = await service.refreshFromBase();
     expect(res.refreshed).toBe(true);
-    expect(res.baseBranch).toBe('main');
-    expect(await readFile(join(path, 'local.txt'), 'utf8')).toBe('local\n');
-    expect(await readFile(join(path, 'merged.txt'), 'utf8')).toBe('from main\n');
+    expect(res.baseBranch).toBe('dev');
+    expect(await readFile(join(root, 'local.txt'), 'utf8')).toBe('local\n');
+    expect(await readFile(join(root, 'merged.txt'), 'utf8')).toBe('from dev\n');
   });
 
   it('refreshFromBase reports a DIRTY tree and skips the merge (no clobber)', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    await writeFile(join(path, 'README.md'), 'uncommitted\n');
-    const res = await service.refreshFromBase('sess-1');
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/dirtyrefresh',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    await writeFile(join(root, 'README.md'), 'uncommitted\n');
+    const res = await service.refreshFromBase();
     expect(res.refreshed).toBe(false);
     expect(res.dirty).toBe(true);
-    expect(res.baseBranch).toBe('main');
-    expect(await readFile(join(path, 'README.md'), 'utf8')).toBe('uncommitted\n');
+    expect(res.baseBranch).toBe('dev');
+    expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('uncommitted\n');
   });
 
-  it('pushSharedToOrigin pushes the shared branch and is idempotent', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    await commit(path, 'a.txt', 'work\n');
-    await service.ensureShared('sess-1', 'feat');
-    await expect(service.pushSharedToOrigin('sess-1')).resolves.toEqual({
-      sharedBranch: 'shared/feat',
-      gitUrl: origin.url,
+  // ── reviewRange / ownerDiff (diff against the upstream merge-base) ──────────────────────────────
+
+  it('reviewRange diffs the branch since its merge-base with the upstream', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/review',
+      baseRef: 'dev',
+      upstream: 'dev',
     });
-    // A second push (already up to date) is fine.
-    await expect(service.pushSharedToOrigin('sess-1')).resolves.toBeDefined();
-    expect(await git(origin.dir, 'rev-parse', 'shared/feat')).toBeTruthy();
+    const cut = await git(root, 'rev-parse', 'origin/dev');
+    await commit(root, 'feature.ts', 'export const x = 1;\n');
+    await commit(root, 'helper.ts', 'export const y = 2;\n');
+
+    const rr = await service.reviewRange();
+    expect(rr.baseBranch).toBe('dev');
+    // The range is <merge-base(branch, dev)>...<branch> — the cut point against the upstream.
+    expect(rr.range).toBe(`${cut}...feature/review`);
+    expect(rr.files.sort()).toEqual(['feature.ts', 'helper.ts']);
   });
 
-  it('errors loudly before a clone exists, and for unknown sessions', async () => {
-    await expect(service.createWorktree('sess-1')).rejects.toThrow(/No clone yet/i);
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    await expect(service.removeWorktree('nope')).rejects.toThrow(/No worktree/i);
-    expect((await service.mergeState('nope')).inProgress).toBe(false);
+  it('reviewRange does NOT widen when the upstream advances after the cut (uses the merge-base)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/stable',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    const cut = await git(root, 'rev-parse', 'origin/dev');
+    await commit(root, 'mine.ts', 'mine\n');
+    // Advance the upstream after the branch was cut (a teammate merged into dev).
+    await advanceOriginBranch(origin, 'dev', 'theirs.ts', 'theirs\n');
+
+    const rr = await service.reviewRange();
+    // The diff base is the merge-base (the divergence point), so the advanced upstream file is NOT in scope.
+    expect(rr.range).toBe(`${cut}...feature/stable`);
+    expect(rr.files).toEqual(['mine.ts']);
+  });
+
+  it('ownerDiff isolates the branch contribution against an arbitrary ref', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/diff',
+      baseRef: 'main',
+      upstream: 'main',
+    });
+    const base = await git(root, 'rev-parse', 'HEAD');
+    await commit(root, 'owner.txt', 'owner work\n');
+    const diff = await service.ownerDiff(base);
+    expect(diff.range).toBe(`${base}...feature/diff`);
+    expect(diff.files).toContain('owner.txt');
+  });
+
+  // ── errors / reference clones / design / orientation ───────────────────────────────────────────
+
+  it('errors loudly before a clone exists', async () => {
+    await expect(service.publish()).rejects.toThrow(/No clone yet/i);
+    expect((await service.mergeState()).inProgress).toBe(false);
   });
 
   it('ensureReferenceClone makes a read-only shallow clone of another repo at an in-sandbox path', async () => {
@@ -379,12 +428,9 @@ describe('DaemonGitService (real git, file:// origin)', () => {
     try {
       const ref = await service.ensureReferenceClone({ gitUrl: other.url });
       expect(ref.gitUrl).toBe(other.url);
-      // The path is INSIDE the sandbox clone (.refs/), and is a real checkout.
       expect(ref.path.startsWith(await realpath(workspaceRoot))).toBe(true);
       expect(await readFile(join(ref.path, 'README.md'), 'utf8')).toBe('hello\n');
-      // Shallow.
       expect(await git(ref.path, 'rev-parse', '--is-shallow-repository')).toBe('true');
-      // A second call refreshes the same path (idempotent).
       const again = await service.ensureReferenceClone({ gitUrl: other.url });
       expect(again.path).toBe(ref.path);
     } finally {
@@ -392,63 +438,8 @@ describe('DaemonGitService (real git, file:// origin)', () => {
     }
   });
 
-  // ── Phase 11: in-sandbox pipeline closure RPCs ──────────────────────────────────────────────────
-
-  it('reviewRange diffs the session branch since its recorded CUT SHA (matches host ticketRange)', async () => {
+  it('attachDesign unzips a base64 artifact into the checkout root design/', async () => {
     const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    const cut = await git(root, 'rev-parse', 'origin/main');
-    await commit(path, 'feature.ts', 'export const x = 1;\n');
-    await commit(path, 'helper.ts', 'export const y = 2;\n');
-
-    const rr = await service.reviewRange('sess-1');
-    expect(rr.baseBranch).toBe('main');
-    // The range is <cutSha>...<branch> — the durable cut point, NOT the live origin head.
-    expect(rr.range).toBe(`${cut}...agent/sess-1`);
-    expect(rr.files.sort()).toEqual(['feature.ts', 'helper.ts']);
-  });
-
-  it('reviewRange does NOT widen when origin/base advances after the cut (uses the recorded baseSha)', async () => {
-    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
-    const path = await service.createWorktree('sess-1');
-    const cut = await git(root, 'rev-parse', 'origin/main');
-    await commit(path, 'mine.ts', 'mine\n');
-
-    // Advance origin/main behind the session's back (a teammate merged a PR).
-    const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-adv-')));
-    await git(scratch, 'clone', origin.dir, 'c');
-    const oc = join(scratch, 'c');
-    await git(oc, 'config', 'user.email', 'o@test');
-    await git(oc, 'config', 'user.name', 'o');
-    await commit(oc, 'theirs.ts', 'theirs\n');
-    await git(oc, 'push', 'origin', 'main');
-    await rm(scratch, { recursive: true, force: true });
-
-    const rr = await service.reviewRange('sess-1');
-    // The diff base is the worktree's recorded cut sha, so the advanced origin file is NOT in scope.
-    expect(rr.range).toBe(`${cut}...agent/sess-1`);
-    expect(rr.files).toEqual(['mine.ts']);
-  });
-
-  it('sharedStatus reports published + aheadOfOrigin for the session branch', async () => {
-    await service.ensureClone(workspaceRoot, origin.url, 'main');
-    // No shared branch yet → undefined.
-    const path = await service.createWorktree('sess-1');
-    expect(await service.sharedStatus('sess-1')).toBeUndefined();
-
-    await commit(path, 'a.txt', 'work\n');
-    await service.ensureShared('sess-1', 'feat');
-    // Published onto shared (publish fast-forwards shared from the branch + pushes origin).
-    await service.publish('sess-1');
-    const st = await service.sharedStatus('sess-1');
-    expect(st?.published).toBe(true);
-    // Publish pushed shared to origin → nothing ahead.
-    expect(st?.aheadOfOrigin).toBe(0);
-  });
-
-  it('attachDesign unzips a base64 artifact into the clone root design/ (no session needed)', async () => {
-    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
-    // Build a tiny zip in a scratch dir, base64 it, and attach.
     const scratch = await realpath(await mkdtemp(join(tmpdir(), 'dg-design-')));
     await writeFile(join(scratch, 'spec.md'), '# design\n');
     await execFileAsync('zip', ['-j', join(scratch, 'd.zip'), join(scratch, 'spec.md')]);
@@ -475,7 +466,7 @@ describe('DaemonGitService (real git, file:// origin)', () => {
       const orient = await service.referenceOrientation(ref.path);
       expect(orient).toContain('Top level:');
       expect(orient).toContain('README.md');
-      expect(orient).toContain('hello'); // the README head (makeRepo seeds 'hello\n')
+      expect(orient).toContain('hello');
     } finally {
       await rm(join(other.dir, '..'), { recursive: true, force: true });
     }

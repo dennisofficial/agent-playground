@@ -1,3 +1,4 @@
+import { isAuthError } from '../llm-keys/auth-error';
 import type { BoardEvent } from '../memory/board-events.bus';
 import type { Session } from '../sessions/session-registry.port';
 
@@ -31,6 +32,29 @@ export function sessionRelayPrompt(session: Session): string {
 }
 
 /**
+ * Appended to a FAILED-session (or run-failed) relay when the failure looks like an AUTH error — turns
+ * a raw "this died" into a "rotate the credential" instruction. Provider comes from the engine; the
+ * `subscription` flag (resolved from the live engine-auth mode) decides whether a fall-back is even on
+ * the table. NOT byte-stable — it's appended to an already-interpolated seed.
+ */
+export function sessionAuthFailureAddendum(
+  provider: 'anthropic' | 'openai',
+  subscription: boolean,
+): string {
+  const label = provider === 'openai' ? 'OpenAI/Codex' : 'Anthropic/Claude';
+  if (subscription) {
+    return `\n\n⚠️ This looks like an AUTH failure on the ${label} SUBSCRIPTION token (expired/revoked) — and that's Dennis's call. ASK him whether to (a) re-issue it: call rotate_keys so he can paste a fresh token, or (b) fall back to the metered API key: ONLY after he says yes, call fall_back_to_api_key("${provider}"). Never fall back on your own.`;
+  }
+  return `\n\n⚠️ This looks like an AUTH failure on the ${label} API key (expired/revoked/unauthorized). Call rotate_keys so Dennis can paste a fresh key, then retry — and never ask him for the key in chat.`;
+}
+
+/** Provider-agnostic variant for the sync pipeline relay (which has only the error text, not the live
+ * engine-auth mode) — same intent as {@link sessionAuthFailureAddendum} but lets Atlas infer which. */
+export function authFailureGenericAddendum(): string {
+  return `\n\n⚠️ This looks like an AUTH/credentials failure — an API key or a subscription token was rejected. Call rotate_keys so Dennis can update the credential, then re-dispatch. If a SUBSCRIPTION token is what expired, ASK him before fall_back_to_api_key. Never ask for the secret in chat.`;
+}
+
+/**
  * The seed a human-facing PIPELINE board event injects into Atlas (gate-bypassed) so the pipeline's
  * milestones — its PR opening, the self-review's verdict, a ship, a stall, a TERMINAL FAILURE — get
  * narrated in chat instead of happening silently. The symmetric completion of {@link sessionRelayPrompt}:
@@ -53,8 +77,13 @@ export function boardEventRelayPrompt(event: BoardEvent): string | null {
       return `[Pipeline · #${event.taskId}] review finished; findings are in ticket note #${event.noteId}, PR ${event.prUrl}. Decide: ship it (mark_pr_ready) or feed the notes into a fix. Bring it to Dennis if it's his call.`;
     case 'self-review-failed':
       return `[Pipeline · #${event.taskId}] self-review couldn't auto-clear: ${event.reason}. The pipeline is paused — decide how to proceed and let Dennis know it needs attention.`;
-    case 'run-failed':
-      return `[Pipeline · #${event.taskId}] the pipeline run FAILED${event.section ? ` while on the '${event.section}' section` : ''} and was torn down — reason: ${event.reason}. The ticket is back on the OPEN backlog. You own the recovery: tell Dennis it died and why in your own voice, then decide — re-dispatch (baking in whatever caused it, e.g. the answers a planning session needed up front), or bring it to him if the failure is his call. Don't leave it silently dead — you're the orchestrator, this is yours to drive.`;
+    case 'run-failed': {
+      const base = `[Pipeline · #${event.taskId}] the pipeline run FAILED${event.section ? ` while on the '${event.section}' section` : ''} and was torn down — reason: ${event.reason}. The ticket is back on the OPEN backlog. You own the recovery: tell Dennis it died and why in your own voice, then decide — re-dispatch (baking in whatever caused it, e.g. the answers a planning session needed up front), or bring it to him if the failure is his call. Don't leave it silently dead — you're the orchestrator, this is yours to drive.`;
+      // The `reason` now carries the real session error — if it's an auth failure, steer to rotation.
+      return isAuthError(event.reason)
+        ? base + authFailureGenericAddendum()
+        : base;
+    }
     case 'design-gate':
       return `[Pipeline · #${event.taskId}] the build reached the DESIGN step for the '${event.section}' section — the functional UI is up. Tell Dennis he can design it (online) and hand you the zip to attach (attach_design), OR skip it for now (skip_design) and ship the functional version. This is his call — surface it, don't decide for him.`;
     case 'section-questions':
@@ -100,9 +129,9 @@ export function channelWelcomeSeed(info: {
   hasProject: boolean;
 }): string {
   const repoState = info.hasProject
-    ? 'It is already linked to a repo, so just offer to get started.'
-    : "It is NOT linked to a repo yet — offer to onboard one (onboard_project) so you can actually build here, and note he can also point you at any of his projects to reference (read-only).";
-  return `[Channel onboarding] You were just added to ${info.displayName} (project slug "${info.project}"). Introduce yourself in ONE short line — Dennis's orchestrator; you plan + dispatch the work and can reference his other projects. ${repoState} Recall any memory about "${info.project}" first. Keep it brief and in your own voice — don't dump a feature list, and don't ask him to do setup you can do yourself.`;
+    ? 'It already has a main GitHub repo linked, so just offer to get started.'
+    : "It has NO main GitHub repo yet — the channel name is just a label, not the project. Offer to onboard one (onboard_project) so it becomes this channel's repo and you can actually build here, and note he can also point you at any of his projects to reference (read-only).";
+  return `[Channel onboarding] You were just added to the channel ${info.displayName}. Introduce yourself in ONE short line — Dennis's orchestrator; you plan + dispatch the work and can reference his other projects. ${repoState} Recall any memory about this channel first. Keep it brief and in your own voice — don't dump a feature list, and don't ask him to do setup you can do yourself.`;
 }
 
 /**

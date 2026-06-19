@@ -20,6 +20,19 @@ import type { WorkspaceProvisionerService } from './workspace-provisioner.servic
 const TEAM = 'team-1';
 const PROJECT = 'proj-1';
 const REPO = 'https://github.com/acme/proj-1';
+const BRANCH = 'feature/export-csv';
+const BASE_REF = 'dev';
+const UPSTREAM = 'dev';
+
+/** ensureWorkspace's new per-branch signature — the tests pin one workstation `(team, project, branch)`. */
+function ensure(
+  manager: ContainerManagerService,
+  team = TEAM,
+  project = PROJECT,
+  branch = BRANCH,
+) {
+  return manager.ensureWorkspace(team, project, branch, BASE_REF, UPSTREAM);
+}
 
 function makeEnv(over: Record<string, string> = {}): EnvService {
   const values: Record<string, string | undefined> = {
@@ -90,7 +103,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
   });
 
   it('(a) ensureWorkspace creates a sandbox with the correct spec', async () => {
-    const rec = await manager.ensureWorkspace(TEAM, PROJECT);
+    const rec = await ensure(manager);
 
     expect(engine.created).toHaveLength(1);
     const spec = engine.created[0];
@@ -104,14 +117,21 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(spec.restartPolicy).toBe('unless-stopped');
     expect(spec.runtime).toBe('runc');
 
-    // managed labels
+    // managed labels — incl. the per-branch identity (branch/baseRef/upstream survive a restart).
     expect(spec.labels).toMatchObject({
       'com.agent.managed': '1',
       'com.agent.workspace': rec.workspaceId,
       'com.agent.team': TEAM,
       'com.agent.project': PROJECT,
       'com.agent.repo': REPO,
+      'com.agent.branch': BRANCH,
+      'com.agent.base-ref': BASE_REF,
+      'com.agent.upstream': UPSTREAM,
     });
+    // the record carries the per-branch identity back
+    expect(rec.branch).toBe(BRANCH);
+    expect(rec.baseRef).toBe(BASE_REF);
+    expect(rec.upstream).toBe(UPSTREAM);
 
     // env: the SANDBOX-reachable Redis URL (WORKSPACE_REDIS_URL default, NOT the host's REDIS_URL) +
     // WORKSPACE_ID + a short random DAEMON_BOOTSTRAP_TOKEN; NO secrets baked in.
@@ -128,6 +148,10 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     // Phase 11: the clone-on-boot repo coordinates (from ProjectStore) + the joined network are injected.
     expect(spec.env).toContain(`WORKSPACE_REPO_URL=${REPO}`);
     expect(spec.env).toContain('WORKSPACE_BASE_BRANCH=main'); // ProjectRecord has no defaultBranch → default
+    // Workstations: the per-branch checkout env the daemon reads at boot to check out / cut the branch.
+    expect(spec.env).toContain(`WORKSPACE_BRANCH=${BRANCH}`);
+    expect(spec.env).toContain(`WORKSPACE_BASE_REF=${BASE_REF}`);
+    expect(spec.env).toContain(`WORKSPACE_UPSTREAM=${UPSTREAM}`);
     expect(spec.network).toBe('agent-playground_default');
     // Storage driver NOT injected when WORKSPACE_DOCKER_STORAGE_DRIVER is unset (entrypoint auto-detects).
     expect(spec.env.some((e) => e.startsWith('DOCKERD_STORAGE_DRIVER='))).toBe(
@@ -171,9 +195,9 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(credentials.watch).toHaveBeenCalledWith(rec.workspaceId);
   });
 
-  it('(a) ensureWorkspace is idempotent — a second call finds, never re-creates', async () => {
-    const first = await manager.ensureWorkspace(TEAM, PROJECT);
-    const second = await manager.ensureWorkspace(TEAM, PROJECT);
+  it('(a) ensureWorkspace is idempotent for the SAME branch — a second call finds, never re-creates', async () => {
+    const first = await ensure(manager);
+    const second = await ensure(manager);
 
     expect(engine.created).toHaveLength(1); // only ONE container ever created
     expect(second.workspaceId).toBe(first.workspaceId);
@@ -182,17 +206,33 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(second.bootstrapToken).toBe(first.bootstrapToken);
   });
 
-  it('(a) resolveForSession lazily ensures via the bound ensurer', async () => {
+  it('(a) a DIFFERENT branch of the same project is a DIFFERENT workstation (per-branch identity)', async () => {
+    const feat = await ensure(manager, TEAM, PROJECT, 'feature/a');
+    const hotfix = await ensure(manager, TEAM, PROJECT, 'hotfix/b');
+
+    // Two distinct sandboxes — the branch label keeps them apart (findRunning filters on it).
+    expect(engine.created).toHaveLength(2);
+    expect(hotfix.workspaceId).not.toBe(feat.workspaceId);
+    expect(feat.branch).toBe('feature/a');
+    expect(hotfix.branch).toBe('hotfix/b');
+  });
+
+  it('(a) resolveForSession lazily ensures via the bound ensurer (per-branch scope)', async () => {
     const rec = await registry.resolveForSession({
       team: TEAM,
       project: PROJECT,
+      branch: BRANCH,
+      baseRef: BASE_REF,
+      upstream: UPSTREAM,
     });
     expect(engine.created).toHaveLength(1);
     expect(rec.team).toBe(TEAM);
-    // A second resolve reuses the same sandbox (no new container).
+    expect(rec.branch).toBe(BRANCH);
+    // A second resolve for the same branch reuses the same sandbox (no new container).
     const again = await registry.resolveForSession({
       team: TEAM,
       project: PROJECT,
+      branch: BRANCH,
     });
     expect(again.workspaceId).toBe(rec.workspaceId);
     expect(engine.created).toHaveLength(1);
@@ -208,7 +248,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       readiness,
       provisioner,
     );
-    await expect(manager.ensureWorkspace(TEAM, PROJECT)).rejects.toThrow(
+    await expect(ensure(manager)).rejects.toThrow(
       /WORKSPACE_IMAGE is not set/,
     );
     expect(engine.created).toHaveLength(0);
@@ -224,7 +264,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       readiness,
       provisioner,
     );
-    await manager.ensureWorkspace(TEAM, PROJECT);
+    await ensure(manager);
     expect(engine.created[0].runtime).toBe('sysbox-runc');
   });
 
@@ -242,7 +282,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       readiness,
       provisioner,
     );
-    await manager.ensureWorkspace(TEAM, PROJECT);
+    await ensure(manager);
     const spec = engine.created[0];
     expect(spec.env).toContain('REDIS_URL=redis://custom-redis:6399');
     expect(spec.network).toBe('my-net');
@@ -265,6 +305,9 @@ describe('ContainerManagerService (in-memory container engine)', () => {
           'com.agent.team': TEAM,
           'com.agent.project': PROJECT,
           'com.agent.repo': REPO,
+          'com.agent.branch': BRANCH,
+          'com.agent.base-ref': BASE_REF,
+          'com.agent.upstream': UPSTREAM,
         },
         privileged: true,
         binds: [],
@@ -283,6 +326,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
           'com.agent.team': 'team-2',
           'com.agent.project': 'proj-2',
           'com.agent.repo': 'https://github.com/acme/proj-2',
+          'com.agent.branch': 'hotfix/x',
         },
         privileged: true,
         binds: [],
@@ -315,6 +359,10 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       project: PROJECT,
       repo: REPO,
       status: 'running',
+      // the per-branch identity is recovered from labels on adoption
+      branch: BRANCH,
+      baseRef: BASE_REF,
+      upstream: UPSTREAM,
     });
     const b = registry.get(wsIdB);
     expect(b).toMatchObject({
@@ -330,13 +378,13 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(credentials.watch).toHaveBeenCalledWith(wsIdA);
     expect(credentials.watch).toHaveBeenCalledWith(wsIdB);
 
-    // find() resolves the existing sandbox without a new container.
-    const found = registry.find({ team: TEAM, project: PROJECT });
+    // find() resolves the existing workstation by (team, project, branch) without a new container.
+    const found = registry.find({ team: TEAM, project: PROJECT, branch: BRANCH });
     expect(found?.workspaceId).toBe(wsIdA);
   });
 
   it('(e) create persists the bootstrap token as the com.agent.boot-token label', async () => {
-    const rec = await manager.ensureWorkspace(TEAM, PROJECT);
+    const rec = await ensure(manager);
     const spec = engine.created[0];
     expect(spec.labels['com.agent.boot-token']).toBe(rec.bootstrapToken);
     expect(rec.bootstrapToken).toBeDefined();
@@ -355,6 +403,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
           'com.agent.team': TEAM,
           'com.agent.project': PROJECT,
           'com.agent.repo': REPO,
+          'com.agent.branch': BRANCH,
           'com.agent.boot-token': 'persisted-token-123',
         },
         privileged: true,
@@ -368,13 +417,13 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     await manager.onApplicationBootstrap();
     expect(registry.get(wsId)?.bootstrapToken).toBe('persisted-token-123');
     // findRunning (the ensureWorkspace fast path) recovers it too.
-    const found = await manager.ensureWorkspace(TEAM, PROJECT);
+    const found = await ensure(manager);
     expect(found.workspaceId).toBe(wsId);
     expect(found.bootstrapToken).toBe('persisted-token-123');
   });
 
   it('destroyWorkspace stops + removes the container AND its inner-docker volume, unwatches creds, clears readiness', async () => {
-    const rec = await manager.ensureWorkspace(TEAM, PROJECT);
+    const rec = await ensure(manager);
     await manager.destroyWorkspace(rec.workspaceId);
 
     expect(engine.removed).toContain(rec.containerId);
@@ -387,14 +436,14 @@ describe('ContainerManagerService (in-memory container engine)', () => {
 
   it('ensureWorkspace fails loudly when the daemon build is missing from the volume', async () => {
     engine.buildPresent = false; // simulate a volume that exists but has no dist/daemon/main.js
-    await expect(manager.ensureWorkspace(TEAM, PROJECT)).rejects.toThrow(
+    await expect(ensure(manager)).rejects.toThrow(
       /pnpm daemon:build/,
     );
     expect(engine.created).toHaveLength(0); // never spawned the container
   });
 
   it('create awaits the boot provisioner before spawning (self-provision wiring)', async () => {
-    await manager.ensureWorkspace(TEAM, PROJECT);
+    await ensure(manager);
     expect(provisioner.ensureProvisioned).toHaveBeenCalledTimes(1);
     expect(engine.created).toHaveLength(1);
   });
@@ -403,7 +452,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     (provisioner.ensureProvisioned as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('docker build failed'),
     );
-    await expect(manager.ensureWorkspace(TEAM, PROJECT)).rejects.toThrow(
+    await expect(ensure(manager)).rejects.toThrow(
       /docker build failed/,
     );
     expect(engine.created).toHaveLength(0);
@@ -415,7 +464,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       'com.agent.managed': '1',
       'com.agent.workspace': 'orphan',
     });
-    const rec = await manager.ensureWorkspace(TEAM, PROJECT); // creates a live sandbox + its volume
+    const rec = await ensure(manager); // creates a live sandbox + its volume
 
     await manager.onApplicationBootstrap();
 

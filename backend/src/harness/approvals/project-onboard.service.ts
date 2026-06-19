@@ -6,6 +6,7 @@ import {
 } from '../projects/github-api.service';
 import { GithubTokenStore } from '../projects/github-token-store';
 import { ProjectConflictError, ProjectStore } from '../projects/project-store';
+import { ChannelProjectLinker } from './channel-project-linker';
 import {
   PROJECT_ONBOARD_PRESENTER,
   type ProjectOnboardPresenter,
@@ -158,8 +159,15 @@ export class ProjectRegistrar {
 /** The outcome `onboard_project` renders — the registrar's result with 'needs-token' resolved into a
  * card disposition ('needs-input': presented or not). */
 export type OnboardOutcome =
-  | { status: 'registered'; projectId: string; displayName: string }
-  | { status: 'already-registered'; projectId: string }
+  | {
+      status: 'registered';
+      projectId: string;
+      displayName: string;
+      /** True when the repo became THIS channel's main working project (an unlinked channel); false
+       * when it's just a read-only reference (DM, or the channel already has a main repo). */
+      linkedAsMain: boolean;
+    }
+  | { status: 'already-registered'; projectId: string; linkedAsMain: boolean }
   | { status: 'needs-input'; presented: boolean; reason: string }
   | { status: 'ambiguous'; matches: string[] }
   | { status: 'not-found'; query: string };
@@ -174,6 +182,7 @@ export type OnboardOutcome =
 export class ProjectOnboardService {
   constructor(
     private readonly registrar: ProjectRegistrar,
+    private readonly linker: ChannelProjectLinker,
     @Optional()
     @Inject(PROJECT_ONBOARD_PRESENTER)
     private readonly presenter?: ProjectOnboardPresenter,
@@ -193,6 +202,18 @@ export class ProjectOnboardService {
     });
     if (r.status === 'needs-token')
       return this.presentCard(input, r.gitUrl, r.reason);
+    // An unlinked channel's FIRST onboarded repo becomes its main working project (the "build here"
+    // repo the welcome promises); an already-linked channel (or a DM) keeps it as a read-only reference.
+    if (r.status === 'registered' || r.status === 'already-registered') {
+      const { linkedAsMain } = await this.linker
+        .linkChannelProject({
+          team: input.team,
+          surfaceId: input.surfaceId,
+          projectId: r.projectId,
+        })
+        .catch(() => ({ linkedAsMain: false }));
+      return { ...r, linkedAsMain };
+    }
     return r;
   }
 

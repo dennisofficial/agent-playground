@@ -17,8 +17,6 @@ export interface WorkspaceView {
   team: string;
   project: string;
   ownerBot: string;
-  /** The shared integration branch this workspace publishes to / pulls from, if any. */
-  sharedBranch?: string;
   /** Always true — every workspace is a containerized sandbox work area. */
   containerized: boolean;
 }
@@ -31,7 +29,6 @@ function viewOf(wa: {
   team: string;
   project: string;
   ownerBot: string;
-  shared?: string;
 }): WorkspaceView {
   return {
     id: wa.workAreaId,
@@ -40,7 +37,6 @@ function viewOf(wa: {
     team: wa.team,
     project: wa.project,
     ownerBot: wa.ownerBot,
-    ...(wa.shared ? { sharedBranch: wa.shared } : {}),
     containerized: true,
   };
 }

@@ -30,6 +30,6 @@ As the analytics section of a build pipeline, you know the following about your 
 ${ctx.team}
 - You own measurement for THIS section — the tracking plan, the events and instrumentation, and how the team will tell what's actually working once it ships. You shape what gets instrumented so the result is measurable, not just shipped.
 - The positioning/go-to-market side is its own section (marketing) — partner with it on what's worth measuring, but own the instrumentation and the measurement plan yourself.
-- You are ONE section of a larger feature, carried across sequential sessions in a shared workspace. The build sections are already committed here — instrument the REAL code, not a guess. Land your slice cleanly so the next section builds on working instrumentation.`;
+- You are ONE section of a larger feature, carried across sequential sessions that all share the feature's ONE branch in this workstation. The build sections are already committed on this branch — instrument the REAL code, not a guess. Land your slice cleanly to the same branch so the next section builds on working instrumentation.`;
   }
 }

@@ -45,6 +45,7 @@ function makeService(opts: {
   boardTasks?: BoardTask[];
   reminders?: Task[];
   openNotes?: SessionNote[];
+  projects?: unknown[];
 }) {
   const semantic = {
     standingContext: vi.fn().mockResolvedValue(opts.prefs ?? ''),
@@ -64,7 +65,7 @@ function makeService(opts: {
   } as unknown as SessionNoteStore;
 
   return {
-    svc: new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections(), stubProjects()),
+    svc: new FetchService(semantic, tasks, board, sessionNotes, stubPipelineRuns(), stubPipelineSections(), stubProjects(opts.projects ?? [])),
     semantic,
     tasks,
     board,
@@ -74,12 +75,34 @@ function makeService(opts: {
 
 describe('FetchService.fetchContext (Phase 3 assembler)', () => {
   describe('standing-context core', () => {
-    it('always includes role and project even when the team store is empty', async () => {
-      const { svc } = makeService({ prefs: '' });
+    it('includes role and a "no repo linked" note when the channel has no registered project', async () => {
+      const { svc } = makeService({ prefs: '', projects: [] });
       const result = await svc.fetchContext(makeBot(), id);
       expect(result).toContain('Standing context:');
       expect(result).toContain('backend engineer');
-      expect(result).toContain(id.project);
+      expect(result).toMatch(/no github repo is linked/i);
+      // The bare project slug must NOT be passed off as "the project".
+      expect(result).not.toContain(`project: ${id.project}.`);
+    });
+
+    it('names the linked repo (display name + git url + blurb) when one is registered', async () => {
+      const { svc } = makeService({
+        prefs: '',
+        projects: [
+          {
+            projectId: id.project,
+            displayName: 'cubix-infra',
+            gitUrl: 'https://github.com/dennis/cubix-infra',
+            description: 'SSE infra',
+          },
+        ],
+      });
+      const result = await svc.fetchContext(makeBot(), id);
+      expect(result).toContain(
+        'project: cubix-infra (https://github.com/dennis/cubix-infra) — SSE infra.',
+      );
+      // The linked (main) repo is NOT listed under the read-only reference catalog.
+      expect(result).not.toContain('Reference projects you can read');
     });
 
     it('appends standing prefs when present (≤5)', async () => {

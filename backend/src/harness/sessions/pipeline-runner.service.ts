@@ -1203,9 +1203,11 @@ export class PipelineRunnerService implements OnApplicationBootstrap {
     if (!run || run.status !== 'running' || run.sessionId !== session.id) return;
 
     if (session.status === 'failed') {
+      // Carry the REAL engine error into the reason so the run-failed relay can spot an auth failure
+      // (and steer Atlas to rotate_keys) instead of a generic "it died".
       await this.failRun(
         run,
-        `session ${session.id} (kind=${run.kind}, mode=${run.mode}) failed`,
+        `session ${session.id} (kind=${run.kind}, mode=${run.mode}) failed: ${session.error ?? '(unknown)'}`,
       );
       return;
     }

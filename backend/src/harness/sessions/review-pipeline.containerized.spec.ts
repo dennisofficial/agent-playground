@@ -48,19 +48,19 @@ function build(opts: { reviewVerdict?: string; findings?: string } = {}) {
   }));
   const markReady = vi.fn(async () => ({ isDraft: false }));
   const commentPr = vi.fn(async () => undefined);
-  const daemon = { reviewRange, openPr, markReady, commentPr };
+  // WORKSTATION model: the daemon adapter serves EVERY git op (per-branch publish/pull/reviewRange +
+  // off-port openPr/markReady/commentPr) — there's no shared-branch port surface anymore.
+  const publish = vi.fn(async () => ({
+    integrated: true,
+    sharedBranch: 'feature/feat',
+  }));
+  const daemon = { reviewRange, publish, openPr, markReady, commentPr };
 
-  // The PORT-surface ops still route through resolve() — for a containerized run they'd be the daemon
-  // adapter; here a single stub stands in for both (publish/sharedRef/ensureSharedAtBase succeed).
-  const publish = vi.fn(async () => ({ integrated: true, sharedBranch: 'shared/feat' }));
   const port = {
-    sharedRef: vi.fn(async () => 'sharedsha'),
-    ensureSharedAtBase: vi.fn(async () => ({ ok: true, sharedBranch: 'shared/feat' })),
-    ownerDiff: vi.fn(async () => ({ range: 'cut...agent/sess-1', files: ['a.ts'] })),
     publish,
-    // projectRecordFor must NEVER be called on the containerized path — make it explode if it is.
+    // projectRecordFor must NEVER be called on the workstation path — make it explode if it is.
     projectRecordFor: vi.fn(async () => {
-      throw new Error('projectRecordFor must not be called on the containerized path');
+      throw new Error('projectRecordFor must not be called on the workstation path');
     }),
   };
   const workspaceGit = {

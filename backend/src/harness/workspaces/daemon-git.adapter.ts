@@ -14,46 +14,43 @@ import type { DaemonClient } from './daemon-client';
  * over Redis (the typed git RPC: `DaemonClient.gitCall(sandboxId, method, args)`), returning the daemon's
  * result.
  *
- * THE HOST↔DAEMON IDENTITY MAPPING (the three-tier model):
+ * THE HOST↔DAEMON IDENTITY MAPPING (the WORKSTATION model):
  *   - The RPC dispatch target is the SANDBOX uuid (`sandboxId`) — the container's command stream.
- *   - The daemon keys per-WORKTREE ops by the WORK AREA id (`workAreaId`) — one sandbox (one repo) hosts
- *     MANY work-area worktrees (`.workspaces/<workAreaId>`); the SESSIONS in a work area share its tree.
- *   So for every per-worktree method we DROP the host workspace-id arg and SUBSTITUTE `workAreaId` as the
- *   daemon method's leading arg. `RemoteTurnDispatcher` keys the engine cwd off the SAME `workAreaId`
- *   (its `RunCommandPayload.workAreaId`), so a turn's cwd and its git ops always address the SAME tree.
- *   No session is needed — so workspace-id-only ops (publish/pull/refresh/remove) route cleanly too.
+ *   - A sandbox IS one fresh clone checked out on ONE branch (the per-branch WORKSTATION). There are no
+ *     inner worktrees and no per-worktree key: every per-branch git op runs in that single checkout, so
+ *     the daemon's per-branch RPCs (`publish`/`pull`/`refreshFromBase`/`mergeState`/`ownerDiff`/
+ *     `reviewRange`) take NO leading id arg — the daemon already knows its one branch. `RemoteTurnDispatcher`
+ *     keys the engine cwd off the SAME `workAreaId` (its `RunCommandPayload.workAreaId`), so a turn's cwd
+ *     and its git ops always address the SAME checkout. The host `workspaceId` arg the port methods carry is
+ *     vestigial here (the daemon needs no key) and simply dropped.
  *
  * Constructed PER-RESOLVE by `WorkspaceGitProvider.resolve(ctx)`, bound to the `(sandboxId, workAreaId)`
  * the provider resolved via `WorkspaceRegistry`. Exercised by unit tests with a fake `DaemonClient`.
  *
- * `sharedStatus` + `referenceOrientation` route to real daemon RPCs. ONE host port method has NO daemon
- * counterpart by design: `projectRecordFor` — a HOST-REGISTRY / multi-project read the single-repo daemon
- * doesn't model (its clone IS the project). It stays a loud `unavailable()` rejection; containerized
- * callers that used to need it (review/ship, open_pr) FORK on `WorkspaceGitProvider.isContainerized` and
- * use the off-port daemon ops below instead.
+ * `referenceOrientation` routes to a real daemon RPC. ONE host port method has NO daemon counterpart by
+ * design: `projectRecordFor` — a HOST-REGISTRY / multi-project read the single-repo daemon doesn't model
+ * (its clone IS the project). It stays a loud `unavailable()` rejection; containerized callers that used to
+ * need it (review/ship, open_pr) FORK on `WorkspaceGitProvider.isContainerized` and use the off-port daemon
+ * ops below instead.
  *
  * OFF-PORT DAEMON OPS (`reviewRange`/`attachDesign`/`openPr`/`markReady`/`commentPr`): NOT on
  * `WorkspaceGitPort`. They're daemon-only — reached via `WorkspaceGitProvider.daemonFor(ctx)`. The daemon
- * is self-sufficient for them (it owns its repo + base + the GitHub credential).
+ * is self-sufficient for them (it owns its repo + branch + the GitHub credential).
  */
 export class DaemonGitAdapter implements WorkspaceGitPort {
   constructor(
     private readonly daemon: DaemonClient,
     /** The sandbox the git RPCs dispatch to (`DaemonClient.gitCall`'s first arg = the container id). */
     private readonly sandboxId: string,
-    /** The work area whose worktree the per-worktree ops address (the daemon's worktree key). */
+    /** The work area the engine cwd keys off (1:1 with the sandbox's single checkout). The daemon's
+     * per-branch RPCs need no id arg — the workstation IS one branch — so this is unused by the git RPCs
+     * here, kept for parity with `RemoteTurnDispatcher` (the turn seam keys cwd off the same id). */
     private readonly workAreaId: string,
   ) {}
 
   /** Dispatch one `DaemonGitService` method as a typed git RPC and return its (typed) result. */
-  private call<T>(method: string, args: unknown[]): Promise<T> {
+  private call<T>(method: string, args: unknown[] = []): Promise<T> {
     return this.daemon.gitCall(this.sandboxId, method, args) as Promise<T>;
-  }
-
-  /** Dispatch a per-worktree method: substitute the host workspace-id arg with the daemon's worktree key
-   * (`workAreaId`) and prepend it to `rest`. No session needed — the work area IS the worktree. */
-  private worktreeCall<T>(method: string, rest: unknown[] = []): Promise<T> {
-    return this.call<T>(method, [this.workAreaId, ...rest]);
   }
 
   /** A rejected promise for a host-only method the single-repo daemon doesn't model (loud, not
@@ -66,71 +63,32 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
     );
   }
 
-  // ── per-worktree methods: host workspace-id arg → daemon session-id key ──────────────────────────
-
-  /** Work-area creation does NOT go through the port in a sandbox: `create_workspace` ensures the sandbox
-   * (ContainerManager) + creates the work-area record + dispatches `createWorktree(workAreaId, {branch,
-   * shared})` to the daemon directly. So this port method is never the create path — loud reject if hit. */
-  create(
-    _input: NewWorkspace,
-  ): Promise<{ workspace: Workspace; warning?: string }> {
-    return this.unavailable('create');
-  }
-
-  remove(_id: string): Promise<void> {
-    return this.worktreeCall('removeWorktree');
-  }
+  // ── per-branch methods: the daemon's single checkout IS the branch → no leading id arg ───────────
+  // The host `workspaceId` the port carries is vestigial here (the daemon needs no key) and dropped.
 
   refreshFromBase(_id: string): Promise<BaseRefreshResult> {
-    return this.worktreeCall('refreshFromBase');
+    return this.call('refreshFromBase');
   }
 
   mergeState(
     _workspaceId: string,
   ): Promise<{ inProgress: boolean; files: string[] }> {
-    return this.worktreeCall('mergeState');
-  }
-
-  ensureShared(
-    _id: string,
-    name: string,
-    startPoint?: string,
-  ): Promise<string | undefined> {
-    return this.worktreeCall('ensureShared', [name, startPoint]);
-  }
-
-  ensureSharedAtBase(
-    _id: string,
-    name: string,
-  ): Promise<
-    { ok: true; sharedBranch: string } | { ok: false; reason: string }
-  > {
-    return this.worktreeCall('ensureSharedAtBase', [name]);
-  }
-
-  sharedRef(_id: string): Promise<string | undefined> {
-    return this.worktreeCall('sharedRef');
+    return this.call('mergeState');
   }
 
   ownerDiff(
     _id: string,
     sinceRef: string,
   ): Promise<{ range: string; files: string[] }> {
-    return this.worktreeCall('ownerDiff', [sinceRef]);
+    return this.call('ownerDiff', [sinceRef]);
   }
 
   publish(_id: string): Promise<IntegrationResult> {
-    return this.worktreeCall('publish');
+    return this.call('publish');
   }
 
   pull(_id: string): Promise<IntegrationResult> {
-    return this.worktreeCall('pull');
-  }
-
-  pushSharedToOrigin(
-    _id: string,
-  ): Promise<{ sharedBranch: string; gitUrl: string }> {
-    return this.worktreeCall('pushSharedToOrigin');
+    return this.call('pull');
   }
 
   // ── reference clones: the daemon resolves credentials itself, so the host `team` arg is dropped ──
@@ -140,13 +98,6 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
     target: { projectId: string } | { gitUrl: string },
   ): Promise<{ path: string; projectId?: string; gitUrl: string }> {
     return this.call('ensureReferenceClone', [target]);
-  }
-
-  /** Git-derived shared-branch status for list_workspaces — per-worktree (daemon keys off the session). */
-  sharedStatus(
-    _id: string,
-  ): Promise<{ published: boolean; aheadOfOrigin?: number } | undefined> {
-    return this.worktreeCall('sharedStatus');
   }
 
   /** Orientation for an IN-SANDBOX reference-clone path — a path op (no session), like ensureReferenceClone. */
@@ -165,10 +116,11 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
 
   // ── off-port daemon ops (NOT on WorkspaceGitPort) — reached via WorkspaceGitProvider.daemonFor ──────
 
-  /** The daemon computes the review diff-scope from ITS tree + the worktree's recorded cut sha (matches
-   * the host `ticketRange` "diff since the cut point" semantics). No host `projectRecordFor`/`baseRef`. */
+  /** The daemon computes the review diff-scope from ITS single checkout: the branch since its merge-base
+   * with the upstream (matches the host `ticketRange` "diff since the cut point" semantics). No host
+   * `projectRecordFor`/`baseRef` and no id arg — the workstation IS one branch. */
   reviewRange(): Promise<{ range: string; files: string[]; baseBranch: string }> {
-    return this.worktreeCall('reviewRange');
+    return this.call('reviewRange');
   }
 
   /** Write the design artifact (a base64 zip) into the sandbox clone's `design/`. No session arg — the
@@ -179,7 +131,7 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
     return this.call('attachDesign', [artifactBase64]);
   }
 
-  /** Open (or find) the workspace's PR — the daemon resolves repo/token/push itself (no host github). */
+  /** Open (or find) the workstation's PR — the daemon resolves repo/token/push itself (no host github). */
   openPr(args: {
     title: string;
     body?: string;
@@ -188,12 +140,12 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
     return this.call('openPr', [args]);
   }
 
-  /** Flip the workspace's draft PR to ready-for-review (daemon-resolved repo/token). */
+  /** Flip the workstation's draft PR to ready-for-review (daemon-resolved repo/token). */
   markReady(prNumber: number): Promise<{ isDraft: boolean }> {
     return this.call('markReady', [prNumber]);
   }
 
-  /** Post an advisory self-review comment on the workspace's PR (daemon-resolved repo/token). */
+  /** Post an advisory self-review comment on the workstation's PR (daemon-resolved repo/token). */
   commentPr(prNumber: number, body: string): Promise<void> {
     return this.call('commentPr', [prNumber, body]);
   }

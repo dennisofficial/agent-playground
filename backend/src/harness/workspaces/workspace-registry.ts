@@ -18,12 +18,15 @@ export interface WorkAreaRecord {
   sandboxId: string;
   team: string;
   project: string;
-  /** The employee-supplied short name (display + slugified into the branch). */
+  /** The employee-supplied short name (display only). */
   name: string;
-  /** The work area's git branch (intent; realized by the daemon). */
+  /** The workstation's git branch — the whole team works it directly (no personal branches). Realized by
+   * the daemon (checked out / cut from `baseRef` at boot). */
   branch?: string;
-  /** The shared integration branch this work area publishes to / pulls from, if joined. */
-  shared?: string;
+  /** What the branch is cut FROM when it doesn't yet exist. */
+  baseRef?: string;
+  /** Where the branch refreshes-from / opens its PR INTO. */
+  upstream?: string;
   /** The employee that created it ('' when reconciled from git, where ownership isn't recorded). */
   ownerBot: string;
 }
@@ -97,7 +100,7 @@ export class WorkspaceRegistry {
     sandboxId: string,
     team: string,
     project: string,
-    worktrees: Array<{ workAreaId: string; branch?: string; shared?: string }>,
+    worktrees: Array<{ workAreaId: string; branch?: string }>,
   ): void {
     this.removeForSandbox(sandboxId);
     for (const w of worktrees) {
@@ -109,7 +112,6 @@ export class WorkspaceRegistry {
         name: w.workAreaId,
         ownerBot: '',
         ...(w.branch ? { branch: w.branch } : {}),
-        ...(w.shared ? { shared: w.shared } : {}),
       });
     }
     this.logger.log(

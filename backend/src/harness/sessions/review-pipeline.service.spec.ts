@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import { localGitProvider } from '../workspaces/workspace-git.test-util';
 import { ReviewPipelineService } from './review-pipeline.service';
 import type { Session } from './session-registry.port';
 
 /**
- * The harness-driven PR self-review pipeline, single-owner + sibling-aware model. Engine runs and
- * GitHub are stubbed; the SUBJECT is the control flow: a solo ticket reviews its own diff then ships;
- * tickets sharing a `shared_slug` land on one PR and ship together ONLY once all are published (the
- * last to finish ships, flipping every sibling → in_review). The harness never judges the integration
- * review pass/fail (the #49 loop); advisory ships + comments findings, gated seeds the owner. Infra
- * dead ends roll back recoverably.
+ * The harness-driven PR self-review pipeline — WORKSTATION model. A feature is ONE branch the daemon owns
+ * (multiple sessions commit to it directly; no shared integration branch, no personal branches). The
+ * SUBJECT is the control flow: a solo ticket reviews its branch diff then ships via the daemon; tickets
+ * sharing a `shared_slug` run in the SAME feature workstation/branch → ONE PR and ship together ONLY once
+ * all are published (the last to finish ships, flipping every sibling → in_review). The harness never
+ * judges the integration review pass/fail (the #49 loop); advisory ships + comments findings, gated seeds
+ * the owner. Infra dead ends roll back recoverably. The git substrate is the daemon adapter (reached via
+ * `daemonFor`) for the PR ops + `resolve()` for publish; engine runs are stubbed.
  */
 
-const SHARED = 'shared/feature';
-const PR = { number: 1, headBranch: SHARED, url: 'https://github.com/o/r/pull/1' };
+const PR = { number: 1, url: 'https://github.com/o/r/pull/1', existing: false };
 
 interface Ticket {
   id: number;
@@ -43,12 +43,12 @@ function makeSession(over: Partial<Session> = {}): Session {
   } as Session;
 }
 
-/** A plan row (anchor) for a ticket. */
+/** A plan row (anchor) for a ticket — in the workstation model the anchor is the execute workspace alone
+ * (shared_branch is neutralized / null). */
 const planRow = (over: Partial<Record<string, unknown>> = {}) => ({
   employee: 'alex',
   ownerStatus: 'complete',
   executeWorkspaceId: 'ws-1',
-  sharedBranch: SHARED,
   sessionId: 'sess-1',
   ...over,
 });
@@ -58,10 +58,8 @@ function build(opts: {
   plansByTask?: Record<number, Array<Record<string, unknown>>>;
   reviewVerdict?: string;
   publishIntegrated?: boolean;
-  workspaceShared?: string | null;
-  selfHeal?: { ok: true; sharedBranch: string } | { ok: false; reason: string };
   noAnchor?: boolean;
-  recNull?: boolean;
+  noDaemon?: boolean;
   openPrThrows?: boolean;
   markReadyThrows?: boolean;
   mode?: 'advisory' | 'gated';
@@ -75,15 +73,14 @@ function build(opts: {
   const plansByTask: Record<number, Array<Record<string, unknown>>> =
     opts.plansByTask ?? {
       7: opts.noAnchor
-        ? [planRow({ executeWorkspaceId: undefined, sharedBranch: undefined })]
+        ? [planRow({ executeWorkspaceId: undefined })]
         : [planRow()],
     };
 
   const engineRun = vi.fn(async () => ({
     result: opts.reviewVerdict ?? 'Looks good.\nVERDICT: PASS',
   }));
-  // TurnExecutor double: Phase 7 routes LOCAL (isContainerized=false) → engineRun(args), the verbatim
-  // local-branch delegation, so the runReview assertions stay byte-identical.
+  // TurnExecutor double — the review engine turn (run via the daemon's checkout in production).
   const turnExecutor = {
     run: (_ctx: unknown, _name: unknown, _args: unknown) => engineRun(),
   } as never;
@@ -133,55 +130,60 @@ function build(opts: {
     transition,
   } as never;
 
+  // ── the DAEMON adapter double — serves EVERY git op (per-branch publish + reviewRange + off-port PR
+  //    ops). No shared-branch surface, no host github / projectRecordFor. ──
   const publish = vi.fn(async () => ({
     integrated: opts.publishIntegrated ?? true,
-    sharedBranch: SHARED,
-    files: opts.publishIntegrated === false ? ['a.ts'] : undefined,
+    sharedBranch: 'feature/feat',
+    ...(opts.publishIntegrated === false
+      ? { remote: { pushed: false, detail: 'origin advanced' } }
+      : {}),
   }));
-  const workspaceShared = opts.workspaceShared === undefined ? SHARED : opts.workspaceShared;
-  const workspace: { sharedBranch: string | null } & Record<string, unknown> = {
-    id: 'ws-1',
-    path: '/tmp/ws',
-    sharedBranch: workspaceShared,
-    branch: 'agent/alex/7',
-  };
-  const ensureSharedAtBase = vi.fn(async () => {
-    const r = opts.selfHeal ?? { ok: true, sharedBranch: SHARED };
-    if (r.ok) workspace.sharedBranch = r.sharedBranch;
-    return r;
-  });
-  const workspaces = {
-    get: () => workspace,
-    ensureSharedAtBase,
-    sharedRef: async () => 'deadbeef',
-    ownerDiff: async () => ({ range: 'deadbeef...agent/alex/7', files: ['a.ts'] }),
-    publish,
-    projectRecordFor: async () =>
-      opts.recNull
-        ? undefined
-        : { teamId: 'T1', tokenName: undefined, gitUrl: 'https://github.com/o/r', defaultBranch: 'main' },
-    pushSharedToOrigin: async () => ({ sharedBranch: SHARED, gitUrl: 'https://github.com/o/r' }),
-  } as never;
-
-  const tokens = { resolve: async () => ({ name: 'default', token: 'tok' }) } as never;
-  const openPullRequest = vi.fn(async () => {
+  const reviewRange = vi.fn(async () => ({
+    range: 'cut...feature/feat',
+    files: ['a.ts'],
+    baseBranch: 'main',
+  }));
+  const openPr = vi.fn(async () => {
     if (opts.openPrThrows) throw new Error('github 500');
     return { url: PR.url, number: PR.number, existing: false };
   });
-  const markReadyForReview = vi.fn(async () => {
+  const markReady = vi.fn(async () => {
     if (opts.markReadyThrows) throw new Error('github 500');
     return { isDraft: false };
   });
-  const updatePullRequest = vi.fn(async () => undefined);
-  const commentOnPullRequest = vi.fn(async () => undefined);
-  const listOpenPullRequests = vi.fn(async () => [PR]);
-  const github = {
-    openPullRequest,
-    listOpenPullRequests,
-    markReadyForReview,
-    updatePullRequest,
-    commentOnPullRequest,
+  const commentPr = vi.fn(async () => undefined);
+  const projectRecordFor = vi.fn(async () => {
+    throw new Error('projectRecordFor must not be called on the workstation path');
+  });
+  const daemon = {
+    publish,
+    reviewRange,
+    openPr,
+    markReady,
+    commentPr,
+    projectRecordFor,
+  };
+  const workspaceGit = {
+    isContainerized: () => !opts.noDaemon,
+    daemonFor: () => (opts.noDaemon ? undefined : daemon),
+    resolve: () => daemon,
   } as never;
+
+  // host github + tokens are injected but NEVER touched on the workstation path.
+  const tokens = { resolve: async () => ({ name: 'default', token: 'tok' }) } as never;
+  const hostOpenPullRequest = vi.fn(async () => {
+    throw new Error('host github must not be called on the workstation path');
+  });
+  const github = {
+    openPullRequest: hostOpenPullRequest,
+    listOpenPullRequests: vi.fn(async () => []),
+    markReadyForReview: vi.fn(),
+    updatePullRequest: vi.fn(),
+    commentOnPullRequest: vi.fn(),
+  } as never;
+
+  const reader = { get: () => ({ id: 'ws-1', path: '/tmp/ws', branch: 'feature/feat' }) } as never;
 
   const noteAdd = vi.fn(async (_t: string, _id: number, author: string, body: string) => ({
     id: 42,
@@ -209,9 +211,8 @@ function build(opts: {
     employees,
     credCtx,
     creds,
-    workspaces,
-    // the async-git surface routes through the provider; resolve to the same mock service.
-    localGitProvider(workspaces),
+    reader,
+    workspaceGit,
     tokens,
     github,
     board,
@@ -226,13 +227,13 @@ function build(opts: {
     svc,
     engineRun,
     setOwnerStatus,
-    ensureSharedAtBase,
     transition,
     publish,
-    openPullRequest,
-    markReadyForReview,
-    updatePullRequest,
-    commentOnPullRequest,
+    reviewRange,
+    openPr,
+    markReady,
+    commentPr,
+    hostOpenPullRequest,
     boardEmit,
     resumeInternal,
     noteAdd,
@@ -246,13 +247,13 @@ const eventsOf = (boardEmit: { mock: { calls: unknown[][] } }, kind: string) =>
     .map((c) => c[0] as { kind: string; taskId: number; employee: string })
     .filter((e) => e.kind === kind);
 
-describe('ReviewPipelineService.reviewOwner (per-owner review, unchanged)', () => {
-  it('a publish conflict blocks the owner and never completes or opens a PR', async () => {
+describe('ReviewPipelineService.reviewOwner (per-owner review)', () => {
+  it('a publish push-rejection blocks the owner and never completes or opens a PR', async () => {
     const f = build({ reviewVerdict: 'ok\nVERDICT: PASS', publishIntegrated: false });
     const out = await f.svc.reviewOwner(makeSession());
     expect(out).toEqual({ kind: 'blocked', reason: 'publish conflict' });
     expect(f.setOwnerStatus).toHaveBeenCalledWith('T1', 7, 'blocked');
-    expect(f.openPullRequest).not.toHaveBeenCalled();
+    expect(f.openPr).not.toHaveBeenCalled();
     expect(eventsOf(f.boardEmit, 'self-review-failed').length).toBeGreaterThan(0);
     expect(f.resumeInternal).toHaveBeenCalled();
   });
@@ -262,21 +263,15 @@ describe('ReviewPipelineService.reviewOwner (per-owner review, unchanged)', () =
     const out = await f.svc.reviewOwner(makeSession());
     expect(out).toEqual({ kind: 'blocked', reason: 'fix loop exhausted' });
     expect(f.resumeInternal).toHaveBeenCalledTimes(2); // MAX_FIX_PASSES
-    expect(f.openPullRequest).not.toHaveBeenCalled();
+    expect(f.openPr).not.toHaveBeenCalled();
   });
 
-  it('no shared branch → self-heals using the ticket slug, reviews, completes', async () => {
-    const f = build({
-      tickets: [
-        { id: 7, status: 'executing', assignee: 'alex', project: 'proj', title: 'Build', description: 'desc', sharedSlug: 'feat' },
-      ],
-      reviewVerdict: 'ok\nVERDICT: PASS',
-      workspaceShared: null,
-      selfHeal: { ok: true, sharedBranch: SHARED },
-    });
+  it('reviews the branch range (reviewRange), publishes, completes', async () => {
+    const f = build({ reviewVerdict: 'ok\nVERDICT: PASS' });
     const out = await f.svc.reviewOwner(makeSession());
     expect(out).toEqual({ kind: 'complete' });
-    expect(f.ensureSharedAtBase).toHaveBeenCalledWith('ws-1', 'feat'); // slug, not ticket-7
+    expect(f.reviewRange).toHaveBeenCalled(); // the review scope comes from the daemon, not a shared ref
+    expect(f.publish).toHaveBeenCalled();
   });
 });
 
@@ -285,13 +280,13 @@ describe('ReviewPipelineService.integrate (advisory, solo ticket)', () => {
     const f = build({ reviewVerdict: 'ok\nVERDICT: PASS' });
     const out = await f.svc.reviewOwner(makeSession());
     expect(out).toEqual({ kind: 'complete' });
-    expect(f.markReadyForReview).toHaveBeenCalled();
+    expect(f.markReady).toHaveBeenCalled();
     expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'in_review' });
     expect(eventsOf(f.boardEmit, 'pr-ready').map((e) => e.taskId)).toEqual([7]);
     expect(eventsOf(f.boardEmit, 'self-review-ready')).toEqual([]);
     expect(f.engineRun).toHaveBeenCalledTimes(1); // per-owner only; solo skips the integration review
-    expect(f.commentOnPullRequest).not.toHaveBeenCalled();
-    expect(f.updatePullRequest).not.toHaveBeenCalled(); // single ticket → no aggregate metadata
+    expect(f.commentPr).not.toHaveBeenCalled();
+    expect(f.hostOpenPullRequest).not.toHaveBeenCalled(); // never the host github
   });
 
   it('no anchor → narrates to the owner; ticket stays executing (no self_review flip)', async () => {
@@ -301,12 +296,20 @@ describe('ReviewPipelineService.integrate (advisory, solo ticket)', () => {
     expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'executing', { status: 'self_review' });
   });
 
-  it('unregistered repo → rolls self_review back to executing AND narrates', async () => {
-    const f = build({ recNull: true });
+  it('no live sandbox → rolls self_review back to executing AND narrates', async () => {
+    const f = build({ noDaemon: true });
     await f.svc.integrate('T1', 7);
     expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'executing' });
     expect(eventsOf(f.boardEmit, 'self-review-failed').length).toBeGreaterThan(0);
-    expect(f.markReadyForReview).not.toHaveBeenCalled();
+    expect(f.markReady).not.toHaveBeenCalled();
+  });
+
+  it('open-PR failure → rolls self_review back to executing AND narrates', async () => {
+    const f = build({ openPrThrows: true });
+    await f.svc.integrate('T1', 7);
+    expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'executing' });
+    expect(eventsOf(f.boardEmit, 'self-review-failed').length).toBeGreaterThan(0);
+    expect(f.markReady).not.toHaveBeenCalled();
   });
 
   it('mark-ready failure does NOT advance the ticket — loud-fail rollback (the #38 bug)', async () => {
@@ -331,7 +334,7 @@ describe('ReviewPipelineService.integrate (sibling-aware shared feature)', () =>
   it('does NOT ship while a sibling is still executing (PR stays draft)', async () => {
     const f = build({ tickets: sharedTickets(), plansByTask: sharedPlans(), reviewVerdict: 'ok\nVERDICT: PASS' });
     await f.svc.integrate('T1', 7); // #8 still executing
-    expect(f.markReadyForReview).not.toHaveBeenCalled();
+    expect(f.markReady).not.toHaveBeenCalled();
     expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'in_review' });
     // The draft PR is still opened so the owner sees it.
     expect(eventsOf(f.boardEmit, 'pr-opened').map((e) => e.taskId)).toEqual([7]);
@@ -342,9 +345,9 @@ describe('ReviewPipelineService.integrate (sibling-aware shared feature)', () =>
     tickets[1].status = 'executing'; // #8 about to publish via integrate(8)
     const f = build({ tickets, plansByTask: sharedPlans(), reviewVerdict: 'ok\nVERDICT: PASS' });
     await f.svc.integrate('T1', 8); // transitions #8 → self_review, then all published → ship
-    expect(f.markReadyForReview).toHaveBeenCalled();
+    expect(f.markReady).toHaveBeenCalled();
     expect(f.engineRun).toHaveBeenCalledTimes(1); // the integration review (siblings>1)
-    expect(f.updatePullRequest).toHaveBeenCalled(); // aggregated PR metadata
+    expect(f.reviewRange).toHaveBeenCalled(); // the integration review reads the branch range
     expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'in_review' });
     expect(f.transition).toHaveBeenCalledWith('T1', 8, 'self_review', { status: 'in_review' });
     expect(eventsOf(f.boardEmit, 'pr-ready').map((e) => e.taskId).sort()).toEqual([7, 8]);
@@ -359,10 +362,10 @@ describe('ReviewPipelineService.integrate (sibling-aware shared feature)', () =>
       reviewVerdict: 'Contract mismatch in X\nVERDICT: CHANGES',
     });
     await f.svc.integrate('T1', 8);
-    expect(f.markReadyForReview).toHaveBeenCalled();
-    expect(f.commentOnPullRequest).toHaveBeenCalledWith(
-      'tok',
-      expect.objectContaining({ body: expect.stringContaining('Contract mismatch in X') }),
+    expect(f.markReady).toHaveBeenCalled();
+    expect(f.commentPr).toHaveBeenCalledWith(
+      PR.number,
+      expect.stringContaining('Contract mismatch in X'),
     );
     // a findings note on each sibling (authored by the shipping ticket's reviewer/anchor — riley for #8)
     expect(f.noteAdd).toHaveBeenCalledWith('T1', 7, 'riley', expect.stringContaining('Contract mismatch'));
@@ -374,7 +377,7 @@ describe('ReviewPipelineService.integrate (gated mode)', () => {
   it('parks findings + seeds ONE owner to decide; never auto-ships', async () => {
     const f = build({ reviewVerdict: 'ok\nVERDICT: PASS', mode: 'gated' });
     await f.svc.integrate('T1', 7);
-    expect(f.markReadyForReview).not.toHaveBeenCalled();
+    expect(f.markReady).not.toHaveBeenCalled();
     expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'in_review' });
     expect(f.noteAdd).toHaveBeenCalled();
     expect(eventsOf(f.boardEmit, 'self-review-ready').map((e) => e.employee)).toEqual(['alex']);
@@ -393,11 +396,11 @@ describe('ReviewPipelineService.integrate (gated mode)', () => {
 });
 
 describe('ReviewPipelineService.shipSharedPr', () => {
-  it('flips the PR ready + ticket → in_review + pr-ready (the path mark_pr_ready calls)', async () => {
+  it('flips the PR ready (via the daemon) + ticket → in_review + pr-ready (the path mark_pr_ready calls)', async () => {
     const f = build({ tickets: [{ id: 7, status: 'self_review', assignee: 'alex', project: 'proj', title: 'B', description: '' }] });
     const res = await f.svc.shipSharedPr('T1', 7);
     expect(res).toEqual({ ok: true });
-    expect(f.markReadyForReview).toHaveBeenCalled();
+    expect(f.markReady).toHaveBeenCalled();
     expect(f.transition).toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'in_review' });
     expect(eventsOf(f.boardEmit, 'pr-ready').map((e) => e.taskId)).toEqual([7]);
   });
@@ -410,5 +413,15 @@ describe('ReviewPipelineService.shipSharedPr', () => {
     const res = await f.svc.shipSharedPr('T1', 7);
     expect(res.ok).toBe(false);
     expect(f.transition).not.toHaveBeenCalledWith('T1', 7, 'self_review', { status: 'in_review' });
+  });
+
+  it('returns {ok:false} when no live sandbox', async () => {
+    const f = build({
+      tickets: [{ id: 7, status: 'self_review', assignee: 'alex', project: 'proj', title: 'B', description: '' }],
+      noDaemon: true,
+    });
+    const res = await f.svc.shipSharedPr('T1', 7);
+    expect(res.ok).toBe(false);
+    expect(f.markReady).not.toHaveBeenCalled();
   });
 });

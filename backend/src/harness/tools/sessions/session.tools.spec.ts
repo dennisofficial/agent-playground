@@ -209,8 +209,9 @@ describe('create_session × the approval gate', () => {
     expect(opening).toContain('go execute #7');
   });
 
-  it('derives the shared branch from the ticket slug when set', async () => {
-    const { tool, ensureShared } = makeTool({
+  it('workstations: does NOT cut a shared branch — the session sits directly on the feature branch', async () => {
+    // The whole team works ONE feature branch directly; there is no shared integration branch to ensure.
+    const { tool, ensureShared, board, plans } = makeTool({
       boardTask: { id: 7, title: 'API', sharedSlug: 'payment-flow' },
       refusal: null,
     });
@@ -218,19 +219,15 @@ describe('create_session × the approval gate', () => {
       { workspaceId: 'ws-001', task: 'go', mode: 'execute', board_task_id: 7 },
       ctx,
     );
-    expect(ensureShared).toHaveBeenCalledWith('ws-001', 'payment-flow');
-  });
-
-  it('defaults the shared branch to ticket-N for standalone work', async () => {
-    const { tool, ensureShared } = makeTool({
-      boardTask: { id: 7, title: 'API' },
-      refusal: null,
+    // ensureShared is GONE — never called.
+    expect(ensureShared).not.toHaveBeenCalled();
+    // But the board still flips approved → executing, and the execute workspace is still stamped.
+    expect(board.transition).toHaveBeenCalledWith('T1', 7, 'approved', {
+      status: 'executing',
     });
-    await tool.execute(
-      { workspaceId: 'ws-001', task: 'go', mode: 'execute', board_task_id: 7 },
-      ctx,
-    );
-    expect(ensureShared).toHaveBeenCalledWith('ws-001', 'ticket-7');
+    expect(plans.setExecuteContext).toHaveBeenCalledWith('T1', 7, {
+      executeWorkspaceId: 'ws-001',
+    });
   });
 
   // (The host-side shared-branch drift guard was removed with the local path: a work area's shared

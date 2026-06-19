@@ -44,6 +44,13 @@ export function parseGithubRepoUrl(
   return m ? { owner: m[1], repo: m[2] } : null;
 }
 
+/** A single branch returned by `listBranches`. */
+export interface BranchSummary {
+  name: string;
+  /** True when GitHub reports branch protection rules on this ref. */
+  protected: boolean;
+}
+
 /** A single open PR returned by `listOpenPullRequests`. */
 export interface PullRequestSummary {
   number: number;
@@ -364,5 +371,70 @@ export class GithubApiService {
     throw new Error(
       `GitHub refused the pull request list (${res.status}): ${detail}`,
     );
+  }
+
+  /**
+   * List EVERY branch on a repo — the input to the branching-policy feature. GitHub's branches
+   * endpoint is paginated and caps at `per_page=100`, so we loop pages until one comes back short
+   * (fewer than a full page = the last one). Read-only.
+   */
+  async listBranches(
+    token: string,
+    { owner, repo }: { owner: string; repo: string },
+  ): Promise<BranchSummary[]> {
+    const PER_PAGE = 100;
+    const out: BranchSummary[] = [];
+    for (let page = 1; ; page++) {
+      const res = await this.fetchImpl(
+        `${API}/repos/${owner}/${repo}/branches?per_page=${PER_PAGE}&page=${page}`,
+        { headers: this.headers(token) },
+      );
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as {
+          message?: string;
+        };
+        throw new Error(
+          `GitHub refused the branch list (${res.status}): ${errBody.message ?? 'no detail'}`,
+        );
+      }
+      const branches = (await res.json()) as Array<{
+        name: string;
+        protected: boolean;
+      }>;
+      for (const b of branches)
+        out.push({ name: b.name, protected: b.protected });
+      // A short page (or empty) means we've reached the end — stop looping.
+      if (branches.length < PER_PAGE) break;
+    }
+    return out;
+  }
+
+  /**
+   * Pick the best base branch to cut feature work from. PROBES the conventional integration branches
+   * `dev` → `develop` → `staging` in order via Get-branch (200 = exists, 404 = absent) and returns the
+   * FIRST that exists; falls back to `projectDefault` when none do. A targeted probe is cheaper than
+   * listing every branch and sidesteps the pagination edge entirely. Read-only.
+   */
+  async pickAutoBase(
+    token: string,
+    { owner, repo }: { owner: string; repo: string },
+    projectDefault: string,
+  ): Promise<string> {
+    const candidates = ['dev', 'develop', 'staging'];
+    for (const branch of candidates) {
+      const res = await this.fetchImpl(
+        `${API}/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`,
+        { headers: this.headers(token) },
+      );
+      if (res.ok) return branch;
+      if (res.status === 404) continue;
+      const errBody = (await res.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      throw new Error(
+        `GitHub couldn't probe branch ${branch} on ${owner}/${repo} (${res.status}): ${errBody.message ?? 'no detail'}`,
+      );
+    }
+    return projectDefault;
   }
 }

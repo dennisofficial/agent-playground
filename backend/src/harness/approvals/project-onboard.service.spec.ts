@@ -12,6 +12,13 @@ import {
   ProjectRegistrar,
 } from './project-onboard.service';
 import type { ProjectOnboardPresenter } from './project-onboard-presenter.port';
+import type { ChannelProjectLinker } from './channel-project-linker';
+
+/** A linker that never links — the default for tests exercising the needs-token / presenter path. */
+const noLinker = (): ChannelProjectLinker =>
+  ({
+    linkChannelProject: vi.fn(async () => ({ linkedAsMain: false })),
+  }) as unknown as ChannelProjectLinker;
 
 const repo = (over: Partial<RepoInfo> = {}): RepoInfo => ({
   fullName: 'dennis/cubix-infra',
@@ -141,7 +148,7 @@ describe('ProjectOnboardService.onboard (presenter wrapper)', () => {
 
   it('presents a card on needs-token when a presenter is bound', async () => {
     const present = vi.fn(() => Promise.resolve());
-    const svc = new ProjectOnboardService(base.registrar, {
+    const svc = new ProjectOnboardService(base.registrar, noLinker(), {
       present,
     } as ProjectOnboardPresenter);
     const r = await svc.onboard({
@@ -155,7 +162,7 @@ describe('ProjectOnboardService.onboard (presenter wrapper)', () => {
   });
 
   it('degrades to presented:false when no presenter is bound', async () => {
-    const svc = new ProjectOnboardService(base.registrar, undefined);
+    const svc = new ProjectOnboardService(base.registrar, noLinker(), undefined);
     const r = await svc.onboard({
       team: 'T1',
       surfaceId: 'slack:T1:C1',
@@ -163,5 +170,27 @@ describe('ProjectOnboardService.onboard (presenter wrapper)', () => {
       name: 'cubix-infra',
     });
     expect(r).toMatchObject({ status: 'needs-input', presented: false });
+  });
+
+  it('links the channel as its main repo on register and reports linkedAsMain', async () => {
+    const { registrar } = makeRegistrar({ token: 'ghp_x', getRepo: repo() });
+    const linkChannelProject = vi.fn(async () => ({ linkedAsMain: true }));
+    const svc = new ProjectOnboardService(
+      registrar,
+      { linkChannelProject } as unknown as ChannelProjectLinker,
+      undefined,
+    );
+    const r = await svc.onboard({
+      team: 'T1',
+      surfaceId: 'slack:T1:C1',
+      proposedBy: 'atlas',
+      url: 'https://github.com/dennis/cubix-infra',
+    });
+    expect(linkChannelProject).toHaveBeenCalledWith({
+      team: 'T1',
+      surfaceId: 'slack:T1:C1',
+      projectId: 'cubix-infra',
+    });
+    expect(r).toMatchObject({ status: 'registered', linkedAsMain: true });
   });
 });

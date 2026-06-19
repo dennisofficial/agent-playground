@@ -4,9 +4,10 @@ import {
   RunnableLambda,
   RunnableSequence,
 } from '@langchain/core/runnables';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { z } from 'zod';
 import { createMutex } from '../domain/async';
+import { CredentialRotationBus } from '../llm-keys/credential-rotation.bus';
 import { ChatModelFactory } from '../llm/chat-model.factory';
 import { MemoryMetricsService } from './memory-metrics.service';
 import { JUDGE_PROMPT } from './memory.prompts';
@@ -48,7 +49,14 @@ export class MemoryWriteService {
     private readonly semantic: SemanticMemory,
     private readonly models: ChatModelFactory,
     private readonly metrics: MemoryMetricsService,
-  ) {}
+    @Optional() rotation?: CredentialRotationBus,
+  ) {
+    // The dedup-judge chain bakes the Anthropic key at build time and is memoized — drop it on a
+    // rotation so the next write rebuilds against the fresh key.
+    rotation?.rotated$.subscribe(() => {
+      this.judgeChain = undefined;
+    });
+  }
 
   private judge() {
     return (this.judgeChain ??= RunnableSequence.from<

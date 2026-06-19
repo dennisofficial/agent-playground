@@ -1,14 +1,18 @@
 import { Inject } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { DEFAULT_BRANCHING_POLICY } from '@workspace/shared';
 import { z } from 'zod';
+import { ChannelRegistryService } from '../../channel/channel-registry.service';
+import { parseGithubRepo } from '../../projects/git-auth';
+import { GithubApiService } from '../../projects/github-api.service';
+import { GithubTokenStore } from '../../projects/github-token-store';
 import { ProjectStore } from '../../projects/project-store';
 import {
   SESSION_REGISTRY,
   type SessionRegistry,
 } from '../../sessions/session-registry.port';
+import { deriveBranch } from '../../workspaces/branch-policy';
 import { ContainerManagerService } from '../../workspaces/container-manager.service';
-import { DaemonClient } from '../../workspaces/daemon-client';
-import { SandboxReadinessService } from '../../workspaces/sandbox-readiness.service';
+import { SandboxRegistry } from '../../workspaces/sandbox-registry';
 import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
 import { WorkspaceReader } from '../../workspaces/workspace-reader';
 import { WorkspaceRegistry } from '../../workspaces/workspace-registry';
@@ -16,44 +20,47 @@ import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
 /**
- * The create-time policy: every workspace is a containerized sandbox work area (the new standard, no
- * flag). A sandbox needs a clone URL, so this requires a REGISTERED project (its GitHub repo). An
- * unregistered project can't be sandboxed → `create_workspace` refuses with a clear message rather than
- * silently falling back (there is no host/local workspace path anymore). The engine ≠ langgraph half of
- * the policy is enforced where the engine is known — at session creation (CreateSessionTool).
+ * A bot's workspace tools — managing the per-branch WORKSTATIONS its sessions run in.
+ *
+ * A WORKSTATION is a long-lived per-branch sandbox, keyed `(team, project, branch)`. `create_workspace`
+ * takes a STRUCTURED INTENT (`{kind, slug?, ticket?}`) and the branch is DERIVED from the project's
+ * branching policy — a feature is ONE branch the whole team works directly (no personal branches, no
+ * shared-branch merge). Re-entry is idempotent: a second create deriving the same branch reuses the
+ * same workstation. All non-terminal on purpose: a bot can chain create_workspace → create_session in
+ * one turn (the ToolNode loops until a terminal tool or a plain reply).
+ *
+ * A sandbox needs a clone URL, so create_workspace requires a REGISTERED project (its GitHub repo); an
+ * unregistered project can't be sandboxed and is refused with a clear next step (there is no local
+ * fallback). The engine ≠ langgraph half of the policy is enforced where the engine is known — at
+ * session creation (CreateSessionTool).
  */
-async function registeredProject(
-  projects: ProjectStore,
-  team: string,
-  project: string,
-): Promise<boolean> {
-  const registered = await projects.get(team, project).catch(() => undefined);
-  return !!registered;
+
+/** Resolve the live channel→project binding (a repo linked earlier THIS turn via onboard_project wouldn't
+ * show in the frozen per-turn identity). Only override for channel surfaces — a DM keeps id.project. */
+function liveProject(
+  channels: ChannelRegistryService,
+  id: HarnessToolContext['identity'],
+): string {
+  return id.isChannel ? channels.projectOf(id.surface) : id.project;
 }
 
-/**
- * A bot's workspace tools — managing the isolated work areas its sessions run in. All non-terminal
- * on purpose: a bot can chain create_workspace → create_session inside one turn (the ToolNode loops
- * until a terminal tool or a plain reply).
- */
-
 const createWorkspaceSchema = z.object({
-  name: z
-    .string()
+  kind: z
+    .enum(['base', 'feature', 'hotfix'])
     .describe(
-      'Short name for this work area (slugified into the directory and branch).',
+      "What kind of workstation: 'feature' = a new feature branch the whole team works directly (give a slug); 'hotfix' = an urgent fix off the default branch (give a ticket); 'base' = work directly on the base/integration branch (no slug needed).",
     ),
-  branch: z
+  slug: z
     .string()
     .optional()
     .describe(
-      'Check out this existing branch instead of cutting a fresh one from the base.',
+      "The feature name, kebab-cased into the branch (e.g. 'export-csv' → feature/export-csv). REQUIRED for kind=feature.",
     ),
-  shared: z
+  ticket: z
     .string()
     .optional()
     .describe(
-      'Join (or start) a shared integration branch for multi-employee feature work — everyone on the feature passes the SAME name; your personal branch is cut from it.',
+      'The ticket id this workstation is for (names a hotfix branch; used by branch templates). REQUIRED for kind=hotfix unless a slug is given.',
     ),
 });
 
@@ -64,59 +71,148 @@ export class CreateWorkspaceTool implements IHarnessTool<
   readonly name = 'create_workspace';
   readonly refreshesContext = ['work'] as const;
   readonly description =
-    'Create an isolated git workspace off the project repo — the work area your sessions run in. Cuts a fresh branch from the base by default. Returns the workspace id to open sessions against. Note: a fresh checkout has no installed dependencies; a session can run installs itself if it needs them.';
+    "Create (or re-enter) a per-branch WORKSTATION off the project repo — the work area your sessions run in. The branch is DERIVED from a structured intent ({kind: base|feature|hotfix, slug?, ticket?}) and the project's branching policy; a feature is ONE branch the whole team works directly. Re-running with the same intent re-enters the same workstation. Returns the workspace id to open sessions against. Use query_branches first if you're unsure what branch/base to target. Note: a fresh checkout has no installed dependencies; a session can run installs itself if it needs them.";
   readonly schema = createWorkspaceSchema;
 
   constructor(
     private readonly containers: ContainerManagerService,
     private readonly projects: ProjectStore,
+    private readonly tokens: GithubTokenStore,
+    private readonly github: GithubApiService,
     private readonly workAreas: WorkspaceRegistry,
-    private readonly daemon: DaemonClient,
-    private readonly readiness: SandboxReadinessService,
+    private readonly channels: ChannelRegistryService,
   ) {}
 
   async execute(
-    { name, branch, shared }: z.infer<typeof createWorkspaceSchema>,
+    { kind, slug, ticket }: z.infer<typeof createWorkspaceSchema>,
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
+    const project = liveProject(this.channels, id);
     try {
-      // Every workspace is a containerized sandbox work area (the standard — no flag). A sandbox needs a
-      // clone URL, so the project must be REGISTERED; an unregistered project can't be sandboxed, and
-      // there is no local fallback, so refuse with a clear next step.
-      if (!(await registeredProject(this.projects, id.team, id.project))) {
-        return `Can't create a workspace for ${id.team}/${id.project}: the project has no registered GitHub repo to clone. Register the project's repo first, then create_workspace.`;
+      // A sandbox needs a clone URL → the project must be REGISTERED (no local fallback). Load it now;
+      // we need its gitUrl/defaultBranch/branchingPolicy to derive the branch.
+      const rec = await this.projects
+        .get(id.team, project)
+        .catch(() => undefined);
+      if (!rec) {
+        return `Can't create a workspace for ${id.team}/${project}: the project has no registered GitHub repo to clone. Register the project's repo first (onboard_project links this channel's main repo), then create_workspace.`;
       }
-      // SANDBOX: ensure the project's sandbox (tier 1), then create a durable WORK AREA inside it
-      // (tier 2) — a branch/worktree the work area's SESSIONS share (tier 3). The work area's id is
-      // what the agent gets back and lands in Session.workspace_id. We realize its worktree NOW
-      // (cutting the branch, from the shared tip when `shared`) so a session's first git op finds a
-      // tree; the WorkspaceRegistry record is the host's metadata + routing handle.
-      const sandbox = await this.containers.ensureWorkspace(id.team, id.project);
-      const workAreaId = `wa-${randomUUID()}`;
-      await this.readiness.waitForReady(sandbox.workspaceId);
-      await this.daemon.gitCall(sandbox.workspaceId, 'createWorktree', [
-        workAreaId,
-        {
-          ...(branch ? { branch } : {}),
-          ...(shared ? { shared } : {}),
-          ownerBot: id.selfAgent,
-        },
-      ]);
+
+      const policy = rec.branchingPolicy ?? DEFAULT_BRANCHING_POLICY;
+      const { owner, repo } = parseGithubRepo(rec.gitUrl);
+
+      // Resolve the auto-base ONLY when a rule for this intent actually uses 'auto' (avoids a GitHub
+      // round-trip otherwise). pickAutoBase probes dev → develop → staging → the default branch.
+      let resolvedAutoBase = rec.defaultBranch;
+      // Mirror deriveBranch's own fallback: a custom policy missing this kind uses the DEFAULT rule.
+      const rule = policy[kind] ?? DEFAULT_BRANCHING_POLICY[kind];
+      if (rulesUseAuto(rule)) {
+        const auth = await this.tokens
+          .resolve(rec.teamId, rec.tokenName)
+          .catch(() => undefined);
+        if (auth) {
+          resolvedAutoBase = await this.github
+            .pickAutoBase(auth.token, { owner, repo }, rec.defaultBranch)
+            .catch(() => rec.defaultBranch);
+        }
+      }
+
+      const { branch, baseRef, upstream } = deriveBranch(
+        { kind, ...(slug ? { slug } : {}), ...(ticket ? { ticket } : {}) },
+        policy,
+        rec.defaultBranch,
+        resolvedAutoBase,
+      );
+
+      // WORKSTATION: ensure (or re-enter) the per-branch sandbox for (team, project, branch). The daemon
+      // checks the branch out at boot from the env we inject (WORKSPACE_BRANCH/BASE_REF/UPSTREAM), so the
+      // work area is realized BY THE SANDBOX — there's no host-side createWorktree RPC anymore. The work
+      // area is 1:1 with the workstation: its id IS the sandbox uuid (session.workspace_id holds it).
+      const sandbox = await this.containers.ensureWorkspace(
+        id.team,
+        project,
+        branch,
+        baseRef,
+        upstream,
+      );
+      const workAreaId = sandbox.workspaceId;
       this.workAreas.upsert({
         workAreaId,
         sandboxId: sandbox.workspaceId,
         team: id.team,
-        project: id.project,
-        name,
+        project,
+        name: branch,
         ownerBot: id.selfAgent,
-        ...(branch ? { branch } : {}),
-        ...(shared ? { shared } : {}),
+        branch,
+        baseRef,
+        upstream,
       });
-      const sharedNote = shared ? ` Publishing to shared branch ${shared}.` : '';
-      return `Created work area ${workAreaId} ("${name}") in the ${id.team}/${id.project} sandbox.${sharedNote} Open sessions against it — they share its branch/worktree inside the sandbox.`;
+      const reentry = `${id.team}/${project}`;
+      return `Workstation ${workAreaId} is on branch ${branch} (cut from ${baseRef}, PRs into ${upstream}) in the ${reentry} sandbox. Open sessions against it — they share its branch/worktree inside the sandbox; the whole team works this branch directly.`;
     } catch (err) {
       return `Couldn't create the workspace: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+}
+
+/** Whether a branch-kind rule resolves any of its refs through the auto-base detector (so we should
+ * call pickAutoBase). `name` can also carry `{from}`, which is the resolved `from` ref. */
+function rulesUseAuto(rule: { from: string; upstream: string }): boolean {
+  return rule.from === 'auto' || rule.upstream === 'auto';
+}
+
+const queryBranchesSchema = z.object({});
+
+@HarnessTool()
+export class QueryBranchesTool implements IHarnessTool<
+  typeof queryBranchesSchema
+> {
+  readonly name = 'query_branches';
+  readonly description =
+    "List the project repo's branches plus the recommended auto-base (dev → develop → staging → the default branch) — read-only. Use it before create_workspace to choose your intent: whether a feature branch already exists to re-enter, or what base a new one would cut from.";
+  readonly schema = queryBranchesSchema;
+
+  constructor(
+    private readonly projects: ProjectStore,
+    private readonly tokens: GithubTokenStore,
+    private readonly github: GithubApiService,
+    private readonly channels: ChannelRegistryService,
+  ) {}
+
+  async execute(
+    _args: z.infer<typeof queryBranchesSchema>,
+    ctx: HarnessToolContext,
+  ): Promise<string> {
+    const id = ctx.identity;
+    const project = liveProject(this.channels, id);
+    const rec = await this.projects.get(id.team, project).catch(() => undefined);
+    if (!rec) {
+      return `No registered GitHub repo for ${id.team}/${project} — onboard_project it first.`;
+    }
+    const auth = await this.tokens
+      .resolve(rec.teamId, rec.tokenName)
+      .catch(() => undefined);
+    if (!auth) {
+      return rec.tokenName
+        ? `The project's GitHub token "${rec.tokenName}" isn't in the token store — Dennis can add it via the admin API.`
+        : 'No default GitHub token is stored — Dennis can add one via the admin API.';
+    }
+    try {
+      const { owner, repo } = parseGithubRepo(rec.gitUrl);
+      const [branches, autoBase] = await Promise.all([
+        this.github.listBranches(auth.token, { owner, repo }),
+        this.github.pickAutoBase(auth.token, { owner, repo }, rec.defaultBranch),
+      ]);
+      if (branches.length === 0) {
+        return `No branches on ${owner}/${repo} (recommended base: ${autoBase}).`;
+      }
+      const lines = branches.map(
+        (b) => `- ${b.name}${b.protected ? ' [protected]' : ''}`,
+      );
+      return `Branches on ${owner}/${repo} (default ${rec.defaultBranch}, recommended auto-base ${autoBase}):\n${lines.join('\n')}`;
+    } catch (err) {
+      return `Couldn't list the branches: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }
@@ -129,18 +225,17 @@ export class ListWorkspacesTool implements IHarnessTool<
 > {
   readonly name = 'list_workspaces';
   readonly description =
-    "The team's workspaces, with each one's branch and open sessions — check here before creating a new work area you might already have.";
+    "The team's workstations, with each one's branch and open sessions — check here before creating a new workstation you might already have on that branch.";
   readonly schema = listWorkspacesSchema;
 
   constructor(
     private readonly reader: WorkspaceReader,
-    private readonly workspaceGit: WorkspaceGitProvider,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
   async execute(): Promise<string> {
     const all = this.reader.list();
-    if (all.length === 0) return 'No workspaces exist yet.';
+    if (all.length === 0) return 'No workstations exist yet.';
     const lines = await Promise.all(
       all.map(async (w) => {
         const open = (await this.sessions.list({ workspaceId: w.id })).filter(
@@ -149,28 +244,7 @@ export class ListWorkspacesTool implements IHarnessTool<
         const sessions = open.length
           ? open.map((s) => `${s.id} (${s.status})`).join(', ')
           : 'none';
-        // Shared-branch publish state, so "who has published" is readable here instead of being
-        // reconstructed from teammates' chat self-reports.
-        let sharedNote = '';
-        if (w.sharedBranch) {
-          const st = await this.workspaceGit
-            .resolve({ team: w.team, project: w.project, workspaceId: w.id })
-            .sharedStatus(w.id)
-            .catch(() => undefined);
-          const pub = st
-            ? st.published
-              ? 'published'
-              : 'NOT published'
-            : 'state unknown';
-          const origin =
-            st?.aheadOfOrigin === undefined
-              ? 'GitHub state unknown'
-              : st.aheadOfOrigin > 0
-                ? `${st.aheadOfOrigin} shared commit(s) not on GitHub`
-                : 'GitHub in sync';
-          sharedNote = `, shared: ${w.sharedBranch} (${pub}; ${origin})`;
-        }
-        return `- ${w.id} "${w.name}" — branch ${w.branch}${sharedNote}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}`;
+        return `- ${w.id} — branch ${w.branch}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}`;
       }),
     );
     return lines.join('\n');
@@ -188,12 +262,13 @@ export class RemoveWorkspaceTool implements IHarnessTool<
   readonly name = 'remove_workspace';
   readonly refreshesContext = ['work'] as const;
   readonly description =
-    'Remove a workspace whose work is fully finished — only after its PR is merged or closed (while the PR is open, keep the workspace so review feedback can be addressed without recreating it). Refused while it still has open sessions — close them first. The branch (and its commits) survive.';
+    'Tear down a workstation whose work is fully finished — only after its PR is merged or closed (while the PR is open, keep it so review feedback can be addressed without recreating it). Refused while it still has open sessions — close them first. The branch (and its commits) survive on GitHub; this just destroys the local sandbox.';
   readonly schema = removeWorkspaceSchema;
 
   constructor(
     private readonly reader: WorkspaceReader,
-    private readonly workspaceGit: WorkspaceGitProvider,
+    private readonly containers: ContainerManagerService,
+    private readonly sandboxes: SandboxRegistry,
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
     private readonly workAreas: WorkspaceRegistry,
   ) {}
@@ -203,7 +278,7 @@ export class RemoveWorkspaceTool implements IHarnessTool<
   }: z.infer<typeof removeWorkspaceSchema>): Promise<string> {
     const ws = this.reader.get(workspaceId);
     if (!ws) return `No workspace "${workspaceId}".`;
-    // Policy lives here, not in the git-only service: a workspace with open sessions stays.
+    // Policy lives here, not in the lifecycle service: a workstation with open sessions stays.
     const open = (await this.sessions.list({ workspaceId })).filter(
       (s) => s.status !== 'closed',
     );
@@ -213,11 +288,18 @@ export class RemoveWorkspaceTool implements IHarnessTool<
         .join(', ')}. Close them first.`;
     }
     try {
-      await this.workspaceGit
-        .resolve({ team: ws.team, project: ws.project, workspaceId })
-        .remove(workspaceId);
-      // Drop the host work-area record too (its daemon worktree is now removed).
-      if (ws.containerized) this.workAreas.remove(workspaceId);
+      // The work area is 1:1 with the workstation: workspaceId IS the sandbox uuid. DESTROY the sandbox
+      // (stops+removes the container AND reclaims its inner-docker volume — the disk-leak fix) ONLY when
+      // it's a branch-scoped workstation (a non-empty branch label means per-branch identity). A sandbox
+      // WITHOUT a branch (predating per-branch identity) keeps today's behavior: just drop the host record.
+      const sandbox = this.sandboxes.get(workspaceId);
+      if (sandbox && sandbox.branch) {
+        await this.containers.destroyWorkspace(workspaceId);
+        this.workAreas.remove(workspaceId);
+        return `Removed workstation ${workspaceId} (branch ${sandbox.branch}); its sandbox is destroyed. The branch and its commits survive on GitHub.`;
+      }
+      // Fallback: no branch-scoped sandbox to destroy — just drop the host work-area record.
+      this.workAreas.remove(workspaceId);
       const branchNote = ws.branch ? ` Branch ${ws.branch} survives with its commits.` : '';
       return `Removed ${workspaceId}.${branchNote}`;
     } catch (err) {
@@ -274,7 +356,7 @@ export class PublishWorkspaceTool implements IHarnessTool<
 > {
   readonly name = 'publish_workspace';
   readonly description =
-    "Publish a workspace's COMMITTED work onto its shared integration branch so teammates and Dennis can take it. Fast-forwards when possible, otherwise merges teammates' work in first; when the project has a registered GitHub repo the shared branch is pushed to GitHub too (the result says whether that happened). Only commits publish — have a session commit first. Refused while a session in the workspace is mid-turn.";
+    "Push a workspace's COMMITTED work to origin (GitHub) on its branch, so teammates and Dennis can take it and the PR stays current. The whole team works the one branch — this just pushes it. Only commits publish — have a session commit first. Refused while a session in the workspace is mid-turn.";
   readonly schema = publishWorkspaceSchema;
 
   constructor(
@@ -303,7 +385,7 @@ export class PublishWorkspaceTool implements IHarnessTool<
       const remoteNote = res.remote?.pushed
         ? ` Pushed to GitHub — the PR (if open) is up to date.`
         : ` NOT on GitHub: ${res.remote?.detail ?? 'origin sync did not run'}.`;
-      return `Published ${ws.branch} → ${res.sharedBranch}.${remoteNote}${dirtyNote}`;
+      return `Published ${ws.branch}.${remoteNote}${dirtyNote}`;
     } catch (err) {
       return `Couldn't publish ${workspaceId}: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -313,7 +395,7 @@ export class PublishWorkspaceTool implements IHarnessTool<
 const pullWorkspaceSchema = z.object({
   workspaceId: z
     .string()
-    .describe('The workspace to merge the shared branch into.'),
+    .describe("The workspace to pull teammates' latest commits into."),
 });
 
 @HarnessTool()
@@ -322,7 +404,7 @@ export class PullWorkspaceTool implements IHarnessTool<
 > {
   readonly name = 'pull_workspace';
   readonly description =
-    "Merge the shared integration branch into a workspace — take teammates' published work. Refused while a session in the workspace is mid-turn.";
+    "Pull teammates' latest commits for this branch from origin into a workspace — the whole team works the one branch, so this takes their published work. Refused while a session in the workspace is mid-turn.";
   readonly schema = pullWorkspaceSchema;
 
   constructor(
@@ -343,7 +425,7 @@ export class PullWorkspaceTool implements IHarnessTool<
         .resolve({ team: ws.team, project: ws.project, workspaceId })
         .pull(workspaceId);
       if (!res.integrated) return conflictReply(workspaceId, 'pull', res);
-      return `Pulled ${res.sharedBranch} into ${ws.branch}.${res.originFetched ? ' (Shared branch synced from GitHub first.)' : ' (Local shared branch only — origin was not synced.)'}`;
+      return `Pulled the latest ${ws.branch} from origin.${res.originFetched ? '' : ' (origin was not reachable — nothing new pulled.)'}`;
     } catch (err) {
       return `Couldn't pull into ${workspaceId}: ${err instanceof Error ? err.message : String(err)}`;
     }
