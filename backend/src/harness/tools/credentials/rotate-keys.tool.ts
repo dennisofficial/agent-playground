@@ -54,7 +54,7 @@ export class RotateKeysTool implements IHarnessTool<typeof rotateKeysSchema> {
       return `Updating credentials is the team lead's call.`;
 
     if (!this.presenter)
-      return `No Slack surface here to post an update-keys card. Ask Dennis to update the workspace's keys (Anthropic/OpenAI API key, or the Claude/Codex subscription token) via the admin API or his Slack workspace — never have him paste a key in chat.`;
+      return `No Slack surface here to post an update-keys card — credential rotation requires a Slack context. Ask Dennis to retry this request from a Slack channel or DM so the secure modal can open; secrets must never go through chat.`;
 
     try {
       await this.presenter.present({
@@ -64,7 +64,7 @@ export class RotateKeysTool implements IHarnessTool<typeof rotateKeysSchema> {
         suspected,
       });
     } catch (err) {
-      return `Couldn't post the update-keys card (${err instanceof Error ? err.message : String(err)}). Tell Dennis to update the keys via the admin API — never in chat.`;
+      return `Couldn't post the update-keys card (${err instanceof Error ? err.message : String(err)}). Ask Dennis to retry from a Slack channel or DM — credential updates require the secure modal, never in chat.`;
     }
 
     return `Posted an update-keys card in the channel for Dennis. He pastes the new credential(s) in a secure modal; once he submits, you'll be woken to retry whatever was blocked. Don't re-run rotate_keys meanwhile, and never ask for the secret in chat.`;

@@ -202,8 +202,8 @@ export class QueryBranchesTool implements IHarnessTool<
       .catch(() => undefined);
     if (!auth) {
       return rec.tokenName
-        ? `The project's GitHub token "${rec.tokenName}" isn't in the token store — Dennis can add it via the admin API.`
-        : 'No default GitHub token is stored — Dennis can add one via the admin API.';
+        ? `The project's GitHub token "${rec.tokenName}" isn't in the token store — use onboard_project to post a card so Dennis can supply it via the Slack modal.`
+        : `No default GitHub token is stored — use onboard_project to post a card so Dennis can supply one via the Slack modal.`;
     }
     try {
       const { owner, repo } = parseGithubRepo(rec.gitUrl);
