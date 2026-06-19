@@ -80,6 +80,9 @@ export interface BotStateDelta {
   toolLoopVerdict?: 'pass' | 'correct' | 'pause';
   /** Debug only: the tool-loop guard's one-line rationale when it fired. */
   toolLoopReasoning?: string;
+  /** Transient relay payload (a session's verbatim report) — rendered into the turn but never
+   * committed to `messages`. Debug-only in the delta; the conductor doesn't react to it. */
+  relaySeed?: string;
 }
 
 export const BotState = Annotation.Root({
@@ -291,6 +294,21 @@ export const BotState = Annotation.Root({
    * `refreshContextNode`; reset by `gate` each run. */
   forcedRefreshScopes: Annotation<RefreshScope[] | undefined>({
     reducer: (_: unknown, b: RefreshScope[] | undefined) => b,
+    default: () => undefined,
+  }),
+  /** RELAY SEED — a transient one-shot wake payload (a background session's full verbatim report)
+   * injected by the conductor on an ephemeral relay turn and rendered into the `llm` invoke as a
+   * HumanMessage. Mirrors `draft` / `toolLoopInstruction`: a last-write-wins channel (NOT
+   * `messagesStateReducer`), so it is NEVER appended into `messages` — the durable history that
+   * accumulates and replays as prompt context. The brain's verbatim reasoning therefore stays in the
+   * SESSION's own context; Atlas's window grows only by the distilled post it actually makes.
+   * Preserved across the whole `llm ⇄ tools` loop (and the read-the-room revision edge) so a
+   * tool-first relay turn still sees the report on its post-tools step; cleared by `llmNode` on the
+   * terminal no-tool response, and reset by `gate` each run (defaults don't re-apply on an existing
+   * thread). The conductor sets it authoritatively on EVERY run (the prompt on an ephemeral relay,
+   * `undefined` otherwise), so a leftover value can never leak across turns. */
+  relaySeed: Annotation<string | undefined>({
+    reducer: (_: unknown, b: string | undefined) => b,
     default: () => undefined,
   }),
 });

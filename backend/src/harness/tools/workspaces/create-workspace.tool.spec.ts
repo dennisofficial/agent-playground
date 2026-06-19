@@ -36,6 +36,8 @@ function build(opts: {
   autoBase?: string;
   /** Override the project's branching policy (default = the DEFAULT policy, feature off auto). */
   branchingPolicy?: unknown;
+  /** The allocated dev-server host port the ensured sandbox reports (Phase 2 — drives the surfaced URL). */
+  devPort?: number;
 }) {
   const projects = {
     get: vi.fn(async () =>
@@ -81,6 +83,8 @@ function build(opts: {
       repo: 'https://github.com/d/proj',
       containerId: 'c1',
       status: 'running',
+      // The allocated localhost dev-server port (Phase 2) — the tool surfaces it as a URL.
+      ...(opts.devPort !== undefined ? { devPort: opts.devPort } : {}),
     }),
   );
   const containers = { ensureWorkspace } as unknown as ContainerManagerService;
@@ -136,6 +140,19 @@ describe('create_workspace structured-intent flow (workstations)', () => {
     });
     expect(out).toContain('feature/export-csv');
     expect(out).toContain('sandbox-uuid-1');
+  });
+
+  it('surfaces the dev-server localhost URL when a port was allocated', async () => {
+    const { tool } = build({ registered: true, devPort: 39000 });
+    const out = await tool.execute({ kind: 'feature', slug: 'x' }, CTX);
+    expect(out).toContain('http://localhost:39000');
+    expect(out).toContain('0.0.0.0:7000'); // the in-sandbox publish convention the agent targets
+  });
+
+  it('omits the dev-server URL when the port pool was exhausted (no devPort)', async () => {
+    const { tool } = build({ registered: true }); // no devPort
+    const out = await tool.execute({ kind: 'feature', slug: 'x' }, CTX);
+    expect(out).not.toContain('http://localhost');
   });
 
   it('idempotent re-entry: a second feature call with the same slug reuses the same workstation', async () => {

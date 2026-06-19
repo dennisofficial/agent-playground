@@ -47,6 +47,7 @@ import { DockerodeAdapter } from '@harness/workspaces/dockerode.adapter';
 import { SandboxReadinessService } from '@harness/workspaces/sandbox-readiness.service';
 import { SandboxRegistry } from '@harness/workspaces/sandbox-registry';
 import { WorkspaceProvisionerService } from '@harness/workspaces/workspace-provisioner.service';
+import { ReferenceLibraryService } from '@harness/workspaces/reference-library.service';
 import type { RunCommandPayload } from '@harness/workspaces/daemon-protocol';
 
 // ── e2e config (env-overridable; defaults = the orchestrator's live setup) ──────────────────────
@@ -140,6 +141,7 @@ async function main(): Promise<number> {
   // The boot self-provisioner: ensureWorkspace awaits it, so the base image + mounted daemon build are
   // ensured on first spawn (a no-op if `pnpm daemon:build` already populated them).
   const provisioner = new WorkspaceProvisionerService(engine, env);
+  const daemonClient = new DaemonClient(redis);
   const manager = new ContainerManagerService(
     engine,
     env,
@@ -148,8 +150,9 @@ async function main(): Promise<number> {
     credentials,
     readiness,
     provisioner,
+    new ReferenceLibraryService(env, makeProjects(), makeTokens()),
+    daemonClient,
   );
-  const daemonClient = new DaemonClient(redis);
 
   let workspaceId: string | undefined;
   try {

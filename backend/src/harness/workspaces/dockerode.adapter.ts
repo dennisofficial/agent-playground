@@ -42,6 +42,24 @@ export class DockerodeAdapter implements ContainerEnginePort {
   }
 
   async createContainer(spec: CreateContainerSpec): Promise<ContainerHandle> {
+    // Explicit port publishes (reserved at CREATE — Docker can't add a mapping to a running container).
+    // `spec.ports` maps each container port → a host `ip:port`; we set BOTH dockerode forms it needs:
+    // `ExposedPorts["<port>/tcp"] = {}` and `HostConfig.PortBindings["<port>/tcp"] = [{ HostIp, HostPort }]`.
+    // The manager only ever passes the single localhost-only dev-server port; `PublishAllPorts` stays false
+    // (we bind EXPLICITLY, never "publish all"). No ports → both maps stay empty (historical behavior).
+    const ports = spec.ports ?? [];
+    const exposedPorts: Record<string, Record<string, never>> = {};
+    const portBindings: Record<
+      string,
+      Array<{ HostIp?: string; HostPort: string }>
+    > = {};
+    for (const p of ports) {
+      const key = `${p.containerPort}/tcp`;
+      exposedPorts[key] = {};
+      portBindings[key] = [
+        { HostIp: p.hostIp ?? '127.0.0.1', HostPort: String(p.hostPort) },
+      ];
+    }
     const container = await this.docker().createContainer({
       name: spec.name,
       Image: spec.image,
@@ -58,7 +76,8 @@ export class DockerodeAdapter implements ContainerEnginePort {
             },
           }
         : {}),
-      // No ExposedPorts / no PortBindings — sandboxes have NO inbound network / NO published ports.
+      // ExposedPorts only when the spec asks for an explicit publish (the single localhost dev-server port).
+      ...(ports.length ? { ExposedPorts: exposedPorts } : {}),
       HostConfig: {
         Privileged: spec.privileged,
         ...(spec.runtime ? { Runtime: spec.runtime } : {}),
@@ -72,7 +91,9 @@ export class DockerodeAdapter implements ContainerEnginePort {
         ...(spec.pidsLimit !== undefined
           ? { PidsLimit: spec.pidsLimit }
           : {}),
-        // Belt-and-braces: never publish all exposed ports to the host.
+        // Explicit per-port bindings (localhost-only) when requested; otherwise none.
+        ...(ports.length ? { PortBindings: portBindings } : {}),
+        // Belt-and-braces: never publish all exposed ports to the host (we bind explicitly above).
         PublishAllPorts: false,
       },
     });
@@ -81,6 +102,13 @@ export class DockerodeAdapter implements ContainerEnginePort {
 
   async startContainer(id: string): Promise<void> {
     await this.docker().getContainer(id).start();
+  }
+
+  async restartContainer(id: string): Promise<void> {
+    // `docker restart` — stop + start the SAME container (writable layer, incl. the in-container git clone,
+    // is preserved). Used by the boot-time daemon-version reconciliation; NEVER a remove+recreate (that
+    // would destroy uncommitted/unpushed work in the clone).
+    await this.docker().getContainer(id).restart();
   }
 
   async stopContainer(id: string): Promise<void> {
@@ -261,6 +289,38 @@ export class DockerodeAdapter implements ContainerEnginePort {
       await container.start();
       const res = (await container.wait()) as { StatusCode?: number };
       return res.StatusCode === 0;
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
+    }
+  }
+
+  async readDaemonBuildVersion(
+    volume: string,
+    image: string,
+    versionPath: string,
+  ): Promise<string | undefined> {
+    // Throwaway `cat <versionPath>` against the build volume (named-volume contents aren't host-readable
+    // on Docker Desktop, so we read it from inside a container). Override the image ENTRYPOINT so the
+    // container is purely the read. A TTY merges stdout into one un-multiplexed stream so the stamp is
+    // clean UTF-8 (no docker frame headers). A non-zero exit (stamp absent — a build predating the
+    // stamp) ⇒ undefined.
+    const container = await this.docker().createContainer({
+      Image: image,
+      Entrypoint: ['cat', versionPath],
+      Cmd: [],
+      Tty: true,
+      HostConfig: { Binds: [`${volume}:/daemon:ro`], AutoRemove: false },
+    });
+    try {
+      await container.start();
+      const res = (await container.wait()) as { StatusCode?: number };
+      if (res.StatusCode !== 0) return undefined;
+      const out = await container
+        .logs({ follow: false, stdout: true, stderr: false })
+        .then((b) => b.toString('utf8'))
+        .catch(() => '');
+      const stamp = out.trim();
+      return stamp.length ? stamp : undefined;
     } finally {
       await container.remove({ force: true }).catch(() => undefined);
     }

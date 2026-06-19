@@ -13,7 +13,7 @@ import type { EmployeeRegistry } from '../employees/employee.registry';
 import type { CredentialContext } from '../llm-keys/credential-context';
 import type { LlmReadinessService } from '../llm-keys/llm-readiness.service';
 import type { TenantCredentialService } from '../llm-keys/tenant-credential.service';
-import type { CredentialHealthService } from '../llm-keys/credential-health.service';
+import type { ModuleRef } from '@nestjs/core';
 import type {
   Session,
   SessionRegistry,
@@ -230,7 +230,9 @@ async function buildConductor(behavior: FakeGraphBehavior) {
     creds,
     credCtx,
     boardEvents,
-    { reportAuthError: async () => {} } as unknown as CredentialHealthService,
+    {
+      get: () => ({ reportAuthError: async () => {} }),
+    } as unknown as ModuleRef,
   );
   await conductor.onApplicationBootstrap();
   return {
@@ -388,6 +390,64 @@ describe('ConductorService section-questions notice', () => {
     // Atlas's cursor advanced past it (so post-turn hasWork() is empty).
     expect(runs).toBe(1);
     expect(cursors.get('alex', 'tui:test')).toBe(1);
+  });
+
+  it('a session-report relay rides as a transient relaySeed, never a durable message', async () => {
+    // The relay mechanism: a session's full verbatim report is carried as `input.relaySeed`
+    // (transient, never committed to `messages`) so a multi-hop relay loop can't bloat Atlas's window.
+    const inputs: Array<Record<string, unknown>> = [];
+    const { conductor, fireSessionUpdate } = await buildConductor({
+      run: (input) => {
+        inputs.push(input as unknown as Record<string, unknown>);
+        return { deltas: [{}], cursorAfter: 0 };
+      },
+    });
+    fireSessionUpdate({
+      id: 'sess-001',
+      task: 'compare admin',
+      workspaceId: 'ws-001',
+      notifyThread: 'tui:test',
+      ownerBot: 'alex', // Atlas-owned → relays
+      team: 'local',
+      project: 'local',
+      engine: EWorkerEngineName.CLAUDE,
+      mode: 'investigate',
+      turns: 1,
+      status: 'idle',
+      lastReport: 'VERBATIM-REPORT-BODY',
+    });
+    await conductor.whenIdle();
+
+    const relay = inputs.find((i) => typeof i.relaySeed === 'string');
+    expect(relay).toBeDefined();
+    expect(relay!.relaySeed as string).toContain('VERBATIM-REPORT-BODY');
+    expect(relay!.forced).toBe(true); // still a gate-bypassed forced turn
+    expect(relay!.messages).toBeUndefined(); // NOT a durable synthetic message
+  });
+
+  it('a board event rides as a durable synthetic message, not a relaySeed', async () => {
+    // Scope guard: only session reports go transient. Board-event seeds (small milestone narrations)
+    // stay on the durable `messages` path.
+    const inputs: Array<Record<string, unknown>> = [];
+    const { conductor, fireBoardEvent } = await buildConductor({
+      run: (input) => {
+        inputs.push(input as unknown as Record<string, unknown>);
+        return { deltas: [{}], cursorAfter: 0 };
+      },
+    });
+    fireBoardEvent({
+      kind: 'pr-ready',
+      team: 'local',
+      taskId: 7,
+      employee: 'alex',
+      prUrl: 'https://github.com/o/r/pull/7',
+    });
+    await conductor.whenIdle();
+
+    const seed = inputs.find((i) => i.forced === true);
+    expect(seed).toBeDefined();
+    expect(Array.isArray(seed!.messages)).toBe(true); // durable synthetic HumanMessage
+    expect(seed!.relaySeed).toBeUndefined();
   });
 });
 

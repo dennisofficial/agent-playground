@@ -44,6 +44,11 @@ describe('DaemonGitAdapter — workstation per-branch RPCs', () => {
         args: [],
       },
       {
+        run: () => adapter.syncStatus('ws-1'),
+        method: 'syncStatus',
+        args: [],
+      },
+      {
         run: () => adapter.ownerDiff('ws-1', 'sha'),
         method: 'ownerDiff',
         args: ['sha'],

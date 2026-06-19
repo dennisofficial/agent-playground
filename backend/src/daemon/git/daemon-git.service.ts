@@ -10,7 +10,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   GithubApiService,
@@ -35,6 +35,15 @@ const execFileAsync = promisify(execFile);
 // the checked-out branch so a re-adopted (restarted) daemon recovers them without the env.
 const UPSTREAM_CONFIG_KEY = 'agent-upstream';
 const BASE_CONFIG_KEY = 'agent-base';
+
+/** The content-version stamp the daemon-build writes next to the entry (`daemon-build-inner.sh` →
+ * `sha256(main.js)`), reported by `version()` so the host's boot reconciliation can detect a sandbox on
+ * a STALE daemon and `docker restart` it onto the freshly-built code. The stamp lives in the SAME dir as
+ * the mounted entry (`DAEMON_ENTRY` = `…/dist/daemon/main.js`), so it ships with the read-only mount. */
+const BUILD_VERSION_FILE = '.build-version';
+/** Where the daemon is mounted + its entry, when `DAEMON_ENTRY` isn't injected (dev/standalone) — mirrors
+ * the host's `DAEMON_ENTRY` default so the version path resolves identically. */
+const DEFAULT_DAEMON_ENTRY = '/daemon/backend/dist/daemon/main.js';
 
 const exists = (p: string): Promise<boolean> =>
   access(p).then(
@@ -362,6 +371,41 @@ export class DaemonGitService {
     if (this.cloneGate) await this.cloneGate;
   }
 
+  // ---- daemon build version (boot-time version reconciliation) -----------------------------------
+
+  /**
+   * Self-report the RUNNING daemon's build version — the content stamp (`sha256(main.js)`) the
+   * daemon-build writes next to the mounted entry (`<dirname(DAEMON_ENTRY)>/.build-version`). The host's
+   * boot reconciliation (`ContainerManagerService.reconcileDaemonVersions`) compares this against the
+   * just-built volume version: a MISMATCH (this sandbox `exec`'d an OLD `main.js` before the volume was
+   * rebuilt) ⇒ the host `docker restart`s the container so the entrypoint re-`exec`s the new code, and
+   * the restarted daemon naturally reports the new version (convergence). A REQUIRED, content-based,
+   * self-reported version is the only thing that works here — a re-stamped Docker label would loop-restart
+   * (labels are immutable after create), and a restart preserves the in-container clone (never recreate).
+   *
+   * Reads the stamp the daemon actually `exec`'d FROM the mount, NOT from a baked constant, so it's the
+   * truth of the running process. Returns `{ buildVersion }`; an unreadable stamp (a daemon built before
+   * this feature, or a malformed mount) reports an empty string — which the host treats as a definite
+   * mismatch against any real version and restarts (the conservative, converging choice). Never throws
+   * (it's an RPC over the dispatcher; a throw would just become an error frame the host already treats as
+   * "definitely stale" — but a clean empty value keeps the host log legible).
+   */
+  async version(): Promise<{ buildVersion: string }> {
+    const entry = process.env.DAEMON_ENTRY?.trim() || DEFAULT_DAEMON_ENTRY;
+    const versionPath = join(dirname(entry), BUILD_VERSION_FILE);
+    try {
+      const stamp = (await readFile(versionPath, 'utf8')).trim();
+      return { buildVersion: stamp };
+    } catch (err) {
+      this.logger.warn(
+        `couldn't read daemon build version at ${versionPath} (reporting empty — host will restart this sandbox): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { buildVersion: '' };
+    }
+  }
+
   /** Set the checkout's author identity from the credential (best-effort — attribution must never fail an
    * op). Repo-local so it covers every engine (SDK, codex subprocess) + this service's own merge commits. */
   private async setIdentity(
@@ -417,6 +461,69 @@ export class DaemonGitService {
       throw new Error(
         'A merge is already in progress in this checkout — resolve and commit it first.',
       );
+    }
+  }
+
+  /**
+   * THE REAP-SAFETY PROBE — read-only. The host's idle reaper destroys a workstation by removing its
+   * container, which DESTROYS the in-container clone (the clone lives in the container's writable layer,
+   * NOT a named volume). So before reaping, the host MUST know the clone holds no work that isn't already
+   * on origin. This reports both unpushed-commit and dirty-tree signals so the host can refuse to reap when
+   * EITHER is non-zero:
+   *   - `aheadOfOrigin` = `git rev-list --count @{upstream}..HEAD` (commits on the branch not yet pushed to
+   *     its tracking remote). Falls back to `origin/<branch>..HEAD` when no upstream is configured (a branch
+   *     that was never pushed); if even that ref is missing (origin has no such branch), the branch is
+   *     entirely local → reported as ahead (a conservative non-zero so the host never reaps unpushed work).
+   *   - `dirty` = `git status --porcelain` is non-empty (any staged/unstaged/untracked change).
+   * A workstation is reap-safe ONLY when `aheadOfOrigin === 0 && !dirty`. Never throws — on any git error it
+   * returns a CONSERVATIVE unsafe result (`dirty:true`) so a probe failure can never green-light a reap.
+   */
+  async syncStatus(): Promise<{ aheadOfOrigin: number; dirty: boolean }> {
+    if (!this.repo) {
+      // No clone yet — nothing committed locally, but be conservative and call it unsafe rather than risk
+      // reaping a container whose clone is mid-bootstrap.
+      return { aheadOfOrigin: 0, dirty: true };
+    }
+    const { root, branch } = this.repo;
+    try {
+      const dirty = !!(
+        await this.git(['status', '--porcelain'], root).catch(() => 'x')
+      ).trim();
+
+      // Prefer the configured upstream tracking ref (`@{upstream}`); fall back to `origin/<branch>` when no
+      // tracking is set (a never-pushed branch). If neither ref resolves, the branch is entirely local.
+      const hasUpstream = await this.git(
+        ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+        root,
+      ).then(
+        (v) => !!v.trim(),
+        () => false,
+      );
+      const upstreamRef = hasUpstream ? '@{upstream}' : `origin/${branch}`;
+      const remoteResolves = await this.git(
+        ['rev-parse', '--verify', '--quiet', upstreamRef],
+        root,
+      ).then(
+        (v) => !!v.trim(),
+        () => false,
+      );
+      if (!remoteResolves) {
+        // No remote ref to compare against — the branch was never pushed. Treat the whole branch as
+        // unpushed (conservative) so the host never reaps a container holding only-local commits.
+        const total = await this.git(
+          ['rev-list', '--count', 'HEAD'],
+          root,
+        ).catch(() => '1');
+        return { aheadOfOrigin: Number.parseInt(total, 10) || 1, dirty };
+      }
+      const ahead = await this.git(
+        ['rev-list', '--count', `${upstreamRef}..HEAD`],
+        root,
+      ).catch(() => '1');
+      return { aheadOfOrigin: Number.parseInt(ahead, 10) || 0, dirty };
+    } catch {
+      // Any unexpected git failure → conservative unsafe (so a probe error can't green-light a reap).
+      return { aheadOfOrigin: 0, dirty: true };
     }
   }
 
@@ -709,6 +816,10 @@ export class DaemonGitService {
       gitUrl.replace(/\.git$/, '').split('/').slice(-2).join('-'),
     );
     const root = join(refsDir, slug);
+    // Keep `.refs/` out of the workstation's `git status` so a reference clone never makes the branch
+    // look dirty — `publish()` treats untracked files as dirty (`git status --porcelain`). A local
+    // `.git/info/exclude` entry needs no committed `.gitignore` change.
+    await this.ensureRefsIgnored(this.requireRepo().root);
     const { token } = await this.credentials.resolve();
     const auth = gitAuthEnv(gitUrl, token);
     if (!(await exists(join(root, '.git')))) {
@@ -730,6 +841,17 @@ export class DaemonGitService {
       );
     }
     return { path: await realpath(root), gitUrl };
+  }
+
+  /** Ensure `.refs/` is git-ignored LOCALLY (`.git/info/exclude`) for the workstation clone, so reference
+   * clones living under it never show up in `git status` and never make `publish()` report the branch
+   * dirty. Per-clone + untracked, so it needs no committed `.gitignore`. Idempotent. */
+  private async ensureRefsIgnored(repoRoot: string): Promise<void> {
+    const excludePath = join(repoRoot, '.git', 'info', 'exclude');
+    const current = await readFile(excludePath, 'utf8').catch(() => '');
+    if (current.split('\n').some((l) => l.trim() === '.refs/')) return;
+    const sep = current && !current.endsWith('\n') ? '\n' : '';
+    await writeFile(excludePath, `${current}${sep}.refs/\n`).catch(() => {});
   }
 
   /**

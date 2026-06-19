@@ -174,4 +174,35 @@ describe('WorkspaceProvisionerService (in-memory container engine)', () => {
     expect(() => svc.onApplicationBootstrap()).not.toThrow();
     await expect(svc.ensureProvisioned()).rejects.toThrow(/ENOENT/);
   });
+
+  describe('currentBuildVersion (drives boot version reconciliation)', () => {
+    it('provisions FIRST, then reads the stamped version from the volume, and caches it', async () => {
+      const { engine, svc } = make();
+      engine.buildVersion = 'sha-built'; // the volume stamp after the build
+
+      const v1 = await svc.currentBuildVersion();
+      expect(v1).toBe('sha-built');
+      // ensure-provisioned ran (the daemon was built before the version read).
+      expect(engine.daemonBuilds).toHaveLength(1);
+
+      // Cached: a second call doesn't re-read or re-build.
+      const readSpy = vi.spyOn(engine, 'readDaemonBuildVersion');
+      const v2 = await svc.currentBuildVersion();
+      expect(v2).toBe('sha-built');
+      expect(readSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns undefined when the build has no stamp (a build predating the stamp)', async () => {
+      const { engine, svc } = make();
+      engine.buildVersion = undefined; // no .build-version on the volume
+      await expect(svc.currentBuildVersion()).resolves.toBeUndefined();
+    });
+
+    it('returns undefined (no read) when WORKSPACE_IMAGE is unset (sandboxes disabled)', async () => {
+      const { engine, svc } = make({ WORKSPACE_IMAGE: undefined });
+      const readSpy = vi.spyOn(engine, 'readDaemonBuildVersion');
+      await expect(svc.currentBuildVersion()).resolves.toBeUndefined();
+      expect(readSpy).not.toHaveBeenCalled();
+    });
+  });
 });

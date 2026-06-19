@@ -333,6 +333,63 @@ describe('DaemonGitService — per-branch workstation (real git, file:// origin)
     await expect(service.pull()).rejects.toThrow(/merge is already in progress/i);
   });
 
+  // ── syncStatus (reap-safety probe: unpushed commits + dirty tree) ──────────────────────────────
+
+  it('syncStatus reports reap-safe (ahead 0, clean) for a freshly pushed branch', async () => {
+    await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/sync-clean',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    // ensureClone pushed the new branch with -u, so HEAD == origin/<branch> and the tree is clean.
+    const st = await service.syncStatus();
+    expect(st).toEqual({ aheadOfOrigin: 0, dirty: false });
+  });
+
+  it('syncStatus reports aheadOfOrigin > 0 when there are unpushed commits', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/sync-ahead',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    await commit(root, 'a.txt', 'one\n');
+    await commit(root, 'b.txt', 'two\n');
+    const st = await service.syncStatus();
+    expect(st.aheadOfOrigin).toBe(2);
+    expect(st.dirty).toBe(false);
+  });
+
+  it('syncStatus reports dirty when the tree has uncommitted changes', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/sync-dirty',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    await writeFile(join(root, 'scratch.txt'), 'uncommitted\n');
+    const st = await service.syncStatus();
+    expect(st.dirty).toBe(true);
+  });
+
+  it('syncStatus treats a never-pushed branch as entirely ahead (conservative)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main', {
+      branch: 'feature/local-only',
+      baseRef: 'dev',
+      upstream: 'dev',
+    });
+    // Delete the remote branch ref so there's nothing to compare against (simulates origin push having
+    // never happened): the probe must fall back to the whole-branch count, not silently report ahead 0.
+    await git(root, 'update-ref', '-d', 'refs/remotes/origin/feature/local-only');
+    await git(root, 'branch', '--unset-upstream').catch(() => undefined);
+    const st = await service.syncStatus();
+    expect(st.aheadOfOrigin).toBeGreaterThan(0);
+  });
+
+  it('syncStatus before any clone is CONSERVATIVELY unsafe (dirty)', async () => {
+    const fresh = makeService();
+    const st = await fresh.syncStatus();
+    expect(st.dirty).toBe(true);
+  });
+
   // ── refreshFromBase (merge the upstream in) ────────────────────────────────────────────────────
 
   it('refreshFromBase merges origin/<upstream> advances into the checkout', async () => {
@@ -433,6 +490,24 @@ describe('DaemonGitService — per-branch workstation (real git, file:// origin)
       expect(await git(ref.path, 'rev-parse', '--is-shallow-repository')).toBe('true');
       const again = await service.ensureReferenceClone({ gitUrl: other.url });
       expect(again.path).toBe(ref.path);
+    } finally {
+      await rm(join(other.dir, '..'), { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the reference clone out of the workstation git status (so publish never sees it as dirt)', async () => {
+    const root = await service.ensureClone(workspaceRoot, origin.url, 'main');
+    const other = await makeBareOrigin();
+    try {
+      await service.ensureReferenceClone({ gitUrl: other.url });
+      // `.refs/` is added to the clone's local exclude, so the reference clone never shows as untracked.
+      const exclude = await readFile(
+        join(root, '.git', 'info', 'exclude'),
+        'utf8',
+      );
+      expect(exclude).toMatch(/^\.refs\/$/m);
+      // Hence `git status --porcelain` (what publish() uses for its dirty check) stays clean.
+      expect(await git(root, 'status', '--porcelain')).toBe('');
     } finally {
       await rm(join(other.dir, '..'), { recursive: true, force: true });
     }

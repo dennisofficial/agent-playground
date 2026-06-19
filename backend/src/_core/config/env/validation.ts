@@ -109,6 +109,12 @@ export interface IEnvConfig {
   // in a stable, durable location. Code default: <repoRoot>/.agent-home (gitignored). Point at a
   // persistent volume in deployment.
   AGENT_HOME_ROOT?: string;
+  // Root for the shared READ-ONLY reference library — one clone per registered project (per team),
+  // bind-mounted read-only into every sandbox at /refs so a worker can read the team's OTHER projects
+  // ambiently (the "all my repos sit in ~/Developer" model). Host path: must be visible to BOTH the
+  // slack-app (the writer) and the Docker daemon (the bind source), exactly like REPO_ROOT in DooD.
+  // Code default: <homedir>/.agent-playground/refs. Point at a persistent volume in deployment.
+  REFS_ROOT?: string;
   // Sandbox lifecycle (Phase 6 — the host spawns per-workspace DinD sandboxes via dockerode).
   // ALL optional: containerized sessions are unavailable until set (dev/local runs locally, unchanged).
   DOCKER_SOCKET_PATH?: string; // host Docker socket the manager spawns sandboxes on (default /var/run/docker.sock)
@@ -133,6 +139,27 @@ export interface IEnvConfig {
   // The persistent pnpm-store volume the daemon build reuses (frozen-lockfile install ≈ no-op when
   // unchanged). Default `agent-pnpm-store`. Read by the boot self-provisioner (WorkspaceProvisionerService).
   WORKSPACE_PNPM_STORE_VOLUME?: string;
+  // Workstation lifecycle hardening (Phase 3 — per-branch workstations accumulate, so a reaper + a cap).
+  //  - WORKSPACE_IDLE_TTL_MINUTES: how long a CLEAN, session-less workstation may sit idle before the idle
+  //    reaper destroys it (default 1440 = 24h). A workstation is only reaped when it ALSO has no open
+  //    sessions and the daemon reports it reap-safe (no unpushed commits, no uncommitted changes).
+  //  - WORKSPACE_MAX_PER_PROJECT: the cap on live branch-scoped workstations per (team, project). A
+  //    create_workspace past the cap is REFUSED with guidance to remove an idle one first — never
+  //    auto-evicted (auto-eviction risks destroying a clone with unpushed work). Default 8.
+  WORKSPACE_IDLE_TTL_MINUTES?: number;
+  WORKSPACE_MAX_PER_PROJECT?: number;
+  // Dev-server exposure (Phase 2 — each workstation publishes ONE localhost-only port so Dennis can VIEW
+  // its inner-compose dev server at http://localhost:<allocated>). All optional, defaults applied in
+  // ContainerManagerService:
+  //  - WORKSPACE_DEV_PORT: the container-side port the sandbox publishes (the convention the agent targets —
+  //    run the dev server in the inner compose published to 0.0.0.0:<this>). Default 7000.
+  //  - WORKSPACE_PORT_RANGE_START / _END: the host-side pool the manager allocates the published port from
+  //    (the lowest free port not already on a `com.agent.devport` label — Docker labels are the durable
+  //    source of truth, so it survives a restart and never double-binds). Defaults 39000..39999. Pool
+  //    exhausted → the workstation is created WITHOUT a published port (exposure is best-effort).
+  WORKSPACE_DEV_PORT?: number;
+  WORKSPACE_PORT_RANGE_START?: number;
+  WORKSPACE_PORT_RANGE_END?: number;
   // Boot self-provisioning (WorkspaceProvisionerService) — the slack-app builds the base image + daemon
   // volume itself at boot, so a deploy needs no manual `pnpm daemon:build`. ALL optional:
   //  - REPO_ROOT: the host repo root the build context + `/src` bind-mount resolve against (default: the
@@ -149,6 +176,11 @@ export interface IEnvConfig {
   SECRETS_ENCRYPTION_KEY?: string;
   // Bearer token gating the admin REST endpoints (projects/tokens). Unset → admin API disabled.
   ADMIN_API_TOKEN?: string;
+  // Dev-only console seam — drive Atlas from a terminal CLI on a dedicated `console:*` thread. The
+  // DevConsole module + HTTP controller mount ONLY when DEV_CONSOLE_ENABLED is truthy, and the
+  // controller requires the DEV_CONSOLE_TOKEN header — never reachable in prod. Both off by default.
+  DEV_CONSOLE_ENABLED?: boolean;
+  DEV_CONSOLE_TOKEN?: string;
 
   // JWT auth for the admin portal (all optional — portal is disabled until secrets are set)
   JWT_ACCESS_SECRET?: string;
@@ -267,6 +299,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
   AGENT_HOME_ROOT: Joi.string().optional(),
+  REFS_ROOT: Joi.string().optional(),
   // Sandbox lifecycle (Phase 6)
   DOCKER_SOCKET_PATH: Joi.string().optional(),
   WORKSPACE_IMAGE: Joi.string().optional(),
@@ -278,11 +311,22 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   WORKSPACE_DAEMON_BUILD_VOLUME: Joi.string().optional(),
   WORKSPACE_PNPM_STORE_VOLUME: Joi.string().optional(),
+  // Phase 3 workstation lifecycle hardening (idle reaper TTL + per-(team,project) create cap). Both
+  // optional with the defaults applied in ContainerManagerService.
+  WORKSPACE_IDLE_TTL_MINUTES: Joi.number().integer().min(1).optional(),
+  WORKSPACE_MAX_PER_PROJECT: Joi.number().integer().min(1).optional(),
+  // Phase 2 dev-server exposure (container-side publish port + the host-side allocation pool). All
+  // optional with the defaults (7000, 39000..39999) applied in ContainerManagerService.
+  WORKSPACE_DEV_PORT: Joi.number().integer().min(1).max(65535).optional(),
+  WORKSPACE_PORT_RANGE_START: Joi.number().integer().min(1).max(65535).optional(),
+  WORKSPACE_PORT_RANGE_END: Joi.number().integer().min(1).max(65535).optional(),
   REPO_ROOT: Joi.string().optional(),
   REBUILD_IMAGE: Joi.boolean().optional(),
   SKIP_DAEMON_BUILD: Joi.boolean().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
+  DEV_CONSOLE_ENABLED: Joi.boolean().optional(),
+  DEV_CONSOLE_TOKEN: Joi.string().optional(),
 
   // JWT auth for the admin portal
   JWT_ACCESS_SECRET: Joi.string().optional(),

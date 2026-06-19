@@ -48,6 +48,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'respond',
@@ -80,6 +81,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 1000, output: 80, cacheRead: 400 },
@@ -118,6 +120,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'respond',
@@ -127,6 +130,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 500, output: 60 },
@@ -146,6 +150,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 300, output: 30 },
@@ -179,6 +184,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'respond',
@@ -189,6 +195,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 1_000_000, output: 100_000 },
@@ -232,6 +239,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'ignore',
@@ -243,6 +251,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'acknowledge',
@@ -254,6 +263,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'respond',
@@ -263,6 +273,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 800, output: 70 },
@@ -301,6 +312,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'respond',
@@ -310,6 +322,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C2',
       botId: 'riley',
       botName: 'Riley',
       action: 'respond',
@@ -372,6 +385,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'gate',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       botName: 'Alex',
       action: 'respond',
@@ -381,6 +395,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 400, output: 40 },
@@ -419,6 +434,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus1h.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 1_000_000, output: 0, cacheWrite1h: 1_000_000 },
@@ -441,6 +457,7 @@ describe('SurfaceBridge usage accumulation', () => {
     bus5m.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 1_000_000, output: 0, cacheWrite5m: 1_000_000 },
@@ -463,6 +480,7 @@ describe('SurfaceBridge usage accumulation', () => {
     busRead.emit({
       id: SEQ(),
       kind: 'usage',
+      channelId: 'slack:T1:C1',
       botId: 'alex',
       role: 'chat',
       usage: { input: 1_000_000, output: 0, cacheRead: 1_000_000 },

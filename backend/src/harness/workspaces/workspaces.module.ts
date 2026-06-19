@@ -8,6 +8,7 @@ import { ContainerManagerService } from './container-manager.service';
 import { CredentialProvisionerService } from './credential-provisioner.service';
 import { DaemonClient } from './daemon-client';
 import { DockerodeAdapter } from './dockerode.adapter';
+import { ReferenceLibraryService } from './reference-library.service';
 import { RemoteTurnDispatcher } from './remote-turn.dispatcher';
 import { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
@@ -50,12 +51,12 @@ import { WorkspaceRegistry } from './workspace-registry';
  *
  * Phase 8 adds the GIT-routing sibling seam (the same fork, for async git ops instead of engine turns):
  *  - `WorkspaceGitProvider` — `resolve(ctx)` returns the `WorkspaceGitPort` a consumer runs its async
- *    git op against. Hard-false `isContainerized` this phase ⇒ ALWAYS the local adapter (behavior
- *    unchanged); the dormant daemon branch is built + unit-tested only. Exported for every consumer that
- *    used to call `WorkspaceService` for an async git method (session-runner, review-pipeline, the
- *    workspace/session/reference/pipeline/open-pr tools).
- *  - `LocalWorkspaceAdapter` — the pure 1:1 pass-through to `WorkspaceService` the provider returns
- *    locally. (`DaemonGitAdapter` is constructed per-sandbox inside the provider, not a DI provider.)
+ *    git op against. Daemon-only now (the host `WorkspaceService`/`LocalWorkspaceAdapter` path was
+ *    deleted): it ALWAYS returns the in-sandbox `DaemonGitAdapter`, constructed per-sandbox inside the
+ *    provider (not a DI provider), and THROWS when the ctx's work area has no live sandbox. Exported for
+ *    every consumer of an async git method (session-runner, review-pipeline, the workspace/session/
+ *    reference/pipeline/open-pr tools). `resolveReferenceTarget(ctx)` is the reference-clone variant —
+ *    it resolves a live workstation to clone into and returns undefined (no throw) when none exists.
  *
  * Phase 10 (host half) adds the READINESS GATE — `SandboxReadinessService`. The in-sandbox daemon XADDs
  * a durable `ws:{id}:ready` marker once inner Docker + its consumer loop are up; this service blocks the
@@ -77,6 +78,7 @@ import { WorkspaceRegistry } from './workspace-registry';
     WorkspaceGitProvider,
     WorkspaceRegistry,
     WorkspaceReader,
+    ReferenceLibraryService,
   ],
   chains: [
     {

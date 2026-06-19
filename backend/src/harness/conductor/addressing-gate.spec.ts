@@ -85,6 +85,26 @@ describe('AddressingGate', () => {
     ).toBe('respond');
   });
 
+  it('instructs the classifier to treat a correction of the assistant’s OWN message as RESPOND', async () => {
+    // A blunt correction of what Atlas just said isn't a DM/broadcast/@-mention, so it hits the
+    // classifier. Pin that the system prompt tells it to weight a correction of the assistant's own
+    // recent message — the transcript case the gate used to misread as a human-to-human aside.
+    const { gate, invoke } = make({ modelOut: 'RESPOND' });
+    await gate.decide({
+      bot: atlas,
+      isDm: false,
+      text: "that's not Cubix infra, that's crew AI",
+      history: 'Atlas: here is the cubix-infra admin portal breakdown…',
+    });
+    expect(invoke).toHaveBeenCalledOnce();
+    const systemMsg = invoke.mock.calls[0][0][0];
+    const content =
+      typeof systemMsg.content === 'string'
+        ? systemMsg.content
+        : JSON.stringify(systemMsg.content);
+    expect(content).toMatch(/corrects, contradicts/i);
+  });
+
   it('fails OPEN to respond when the classifier errors', async () => {
     const { gate } = make({ modelThrows: true });
     expect(

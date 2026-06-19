@@ -48,6 +48,14 @@ export interface CreateContainerSpec {
   nanoCpus?: number;
   /** Max process count (HostConfig.PidsLimit) — a fork-bomb backstop. */
   pidsLimit?: number;
+  /**
+   * Explicit host↔container port publishes, reserved at CREATE (Docker can't add a mapping to a running
+   * container). Each entry maps `containerPort` → `hostIp:hostPort` (the adapter sets `ExposedPorts` +
+   * `HostConfig.PortBindings`). Used for the SINGLE localhost-only dev-server port a workstation publishes
+   * (`WORKSPACE_DEV_PORT` → an allocated `127.0.0.1:<port>`); `hostIp` defaults to `127.0.0.1` (never
+   * 0.0.0.0 — local-dev exposure only). Omitted/empty → no published ports (the historical default).
+   */
+  ports?: Array<{ hostIp?: string; hostPort: number; containerPort: number }>;
 }
 
 /** A created/looked-up container handle — opaque id + the labels Docker reports for it. */
@@ -129,6 +137,15 @@ export interface ContainerEnginePort {
   /** Start a previously-created container by id. */
   startContainer(id: string): Promise<void>;
 
+  /**
+   * Restart a running container by id (`docker restart`) — stop then start the SAME container, preserving
+   * its writable filesystem. Used by the boot-time daemon-version reconciliation to bounce a sandbox onto
+   * the freshly-built daemon: the entrypoint re-runs and `exec`s the new mounted `main.js`. NEVER recreate
+   * here — the workstation's in-container git clone (uncommitted/unpushed work) lives in the writable layer
+   * and a recreate would destroy it; a restart keeps it.
+   */
+  restartContainer(id: string): Promise<void>;
+
   /** Stop a running container by id (best-effort; an already-stopped container is not an error). */
   stopContainer(id: string): Promise<void>;
 
@@ -179,4 +196,20 @@ export interface ContainerEnginePort {
     image: string,
     entryPath: string,
   ): Promise<boolean>;
+
+  /**
+   * Read the daemon-build's CONTENT version from the volume — the `sha256(main.js)` stamp
+   * `daemon-build-inner.sh` writes to `<versionPath>` (next to the entry). Runs a throwaway container that
+   * mounts `volume` read-only at `/daemon` and `cat`s the stamp (the same mechanism as `daemonBuildPresent`,
+   * because a named volume's contents aren't host-readable on Docker Desktop). The host's boot reconciliation
+   * compares this CURRENT (just-built) version against each running sandbox's self-reported `version()` RPC,
+   * and `docker restart`s any that differ. Returns `undefined` when the stamp is absent/unreadable (a build
+   * that predates the stamp) — the host then SKIPS version reconciliation rather than restarting everything
+   * blindly (it can't know the target version, so it leaves running sandboxes alone).
+   */
+  readDaemonBuildVersion(
+    volume: string,
+    image: string,
+    versionPath: string,
+  ): Promise<string | undefined>;
 }

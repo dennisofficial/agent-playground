@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Identity, recallProjects } from '../domain/identity';
 import type { EmployeeDefinition } from '../employees/employee.types';
 import { ProjectStore } from '../projects/project-store';
+import type { ProjectRecord } from '../projects/project.types';
 import { ACTIVE_BOARD_STATUSES, BoardStore } from './board-store';
 import { PipelineRunStore } from './pipeline-run-store';
 import { PipelineRunSectionStore } from './pipeline-run-section-store';
@@ -100,13 +101,23 @@ export class FetchService {
     // is linked to a registered repo we name the repo + its blurb (so the bot knows WHAT it is, not
     // just a slug); when it isn't, we say so plainly instead of passing off the Slack channel-name slug
     // as a project. The reference catalog below reuses this same projects.list call.
-    const all = await this.projects.list(id.team).catch(() => []);
+    let all: ProjectRecord[] = [];
+    let catalogFailed = false;
+    try {
+      all = await this.projects.list(id.team);
+    } catch {
+      catalogFailed = true;
+    }
     const main = all.find((p) => p.projectId === id.project);
     const others = all.filter((p) => p.projectId !== id.project);
     const prefs = await this.semantic.standingContext(id, 5).catch(() => '');
+    // Don't let a transient catalog-load failure read as "no repo linked" / "no references" — that
+    // misleads the bot about what it can actually see. Say the context couldn't load instead.
     const projectLine = main
       ? `Role: ${bot.role}, project: ${main.displayName} (${main.gitUrl})${main.description ? ` — ${main.description}` : ''}.`
-      : `Role: ${bot.role}. No GitHub repo is linked to this channel yet — onboard_project links this channel's main repo so you can build here.`;
+      : catalogFailed
+        ? `Role: ${bot.role}. (Couldn't load project context this turn — retry shortly; don't conclude anything about which repos exist or are linked.)`
+        : `Role: ${bot.role}. No GitHub repo is linked to this channel yet — onboard_project links this channel's main repo so you can build here.`;
     const coreLines: string[] = [projectLine];
     if (prefs) coreLines.push(prefs);
     parts.push(`Standing context:\n${coreLines.join('\n')}`);

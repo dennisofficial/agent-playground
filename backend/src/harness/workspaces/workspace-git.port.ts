@@ -25,6 +25,13 @@ export interface WorkspaceGitPort {
     workspaceId: string,
   ): Promise<{ inProgress: boolean; files: string[] }>;
 
+  /** THE REAP-SAFETY PROBE: unpushed commits (`aheadOfOrigin`) + a dirty tree (`dirty`) in the
+   * workstation's in-container clone. A workstation is safe to auto-destroy ONLY when
+   * `aheadOfOrigin === 0 && !dirty` — the host idle reaper gates on this before reaping. */
+  syncStatus(
+    workspaceId: string,
+  ): Promise<{ aheadOfOrigin: number; dirty: boolean }>;
+
   /** The git range + changed files isolating the branch's contribution since `sinceRef`. */
   ownerDiff(
     id: string,
@@ -40,11 +47,14 @@ export interface WorkspaceGitPort {
   /** The project record a workspace's remote ops run against (host-only — no daemon counterpart). */
   projectRecordFor(workspaceId: string): Promise<ProjectRecord | undefined>;
 
-  /** Materialize / refresh a READ-ONLY reference clone of another repo. Returns the on-disk path. */
+  /** Materialize / refresh a READ-ONLY reference clone of another repo. Returns the on-disk path.
+   * Targets a `gitUrl` ONLY — the single-repo daemon can't resolve a catalog `projectId` against the
+   * host registry, so callers resolve the catalog record → `gitUrl` (`ProjectRecord.gitUrl`) host-side
+   * before invoking. The clone lands at an in-sandbox path readable by THIS work area's worker. */
   ensureReferenceClone(
     team: string,
-    target: { projectId: string } | { gitUrl: string },
-  ): Promise<{ path: string; projectId?: string; gitUrl: string }>;
+    target: { gitUrl: string },
+  ): Promise<{ path: string; gitUrl: string }>;
 
   /** A quick at-a-glance orientation (top level + README head) for a reference clone path. */
   referenceOrientation(path: string): Promise<string>;

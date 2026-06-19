@@ -42,11 +42,21 @@ export class InMemoryContainerEngine implements ContainerEnginePort {
   /** Synthetic-id counter exposed so a test can assert "find didn't create a second container". */
   readonly created: CreateContainerSpec[] = [];
   readonly removed: string[] = [];
+  /** Container ids passed to `restartContainer` — the boot version-reconciliation asserts the stale ones
+   * were restarted (and that recreate/remove was NEVER used). */
+  readonly restarted: string[] = [];
   /** Volume call logs for assertions (the disk-leak fix). */
   readonly createdVolumes: string[] = [];
   readonly removedVolumes: string[] = [];
   /** Drives `daemonBuildPresent` (the pre-spawn guard) — flip to false to exercise the loud failure. */
   buildPresent = true;
+  /** Drives `readDaemonBuildVersion` — the CURRENT (just-built) volume version the host learns at boot.
+   * `undefined` models a build that predates the `.build-version` stamp (host then skips version reconcile);
+   * a string models the stamped volume version the host compares each sandbox's `version()` RPC against. */
+  buildVersion: string | undefined = undefined;
+  /** When set, the NEXT `restartContainer` rejects once (then clears) — exercises the "restart failure is
+   * logged and the sweep continues" path of the boot version-reconciliation. */
+  failNextRestart = false;
   /** Image names the fake "has" locally (drives `imagePresent`). `buildImage` adds to it. */
   private readonly images = new Set<string>();
   /** Build call logs for provisioner assertions. */
@@ -72,6 +82,18 @@ export class InMemoryContainerEngine implements ContainerEnginePort {
 
   startContainer(id: string): Promise<void> {
     const c = this.containers.get(id);
+    if (c && c.state !== 'removed') c.state = 'running';
+    return Promise.resolve();
+  }
+
+  restartContainer(id: string): Promise<void> {
+    if (this.failNextRestart) {
+      this.failNextRestart = false;
+      return Promise.reject(new Error('simulated restart failure'));
+    }
+    this.restarted.push(id);
+    const c = this.containers.get(id);
+    // A restart preserves the container (writable layer + spec) — it ends running. Never recreate.
     if (c && c.state !== 'removed') c.state = 'running';
     return Promise.resolve();
   }
@@ -146,6 +168,10 @@ export class InMemoryContainerEngine implements ContainerEnginePort {
 
   daemonBuildPresent(): Promise<boolean> {
     return Promise.resolve(this.buildPresent);
+  }
+
+  readDaemonBuildVersion(): Promise<string | undefined> {
+    return Promise.resolve(this.buildVersion);
   }
 
   /** TEST HELPER: mark an image as already present (so the provisioner skips its build). */

@@ -101,3 +101,96 @@ describe('WorkspaceGitProvider.resolve (daemon-only)', () => {
     ).toBeUndefined();
   });
 });
+
+describe('WorkspaceGitProvider.resolveReferenceTarget (reference-clone routing)', () => {
+  it('an explicit workspaceId wins, bound to that work area', () => {
+    const provider = new WorkspaceGitProvider(
+      daemon,
+      liveSandboxes,
+      workAreasWithWa1(),
+    );
+    const t = provider.resolveReferenceTarget({
+      team: 't',
+      project: 'p',
+      workspaceId: 'wa-1',
+    });
+    expect(t?.workspaceId).toBe('wa-1');
+    expect(t?.port).toBeInstanceOf(DaemonGitAdapter);
+  });
+
+  it("selects the bot's own live (team,project) work area when no id is given", () => {
+    const provider = new WorkspaceGitProvider(
+      daemon,
+      liveSandboxes,
+      workAreasWithWa1(),
+    );
+    const t = provider.resolveReferenceTarget({
+      team: 't',
+      project: 'p',
+      ownerBot: 'alex',
+    });
+    expect(t?.workspaceId).toBe('wa-1');
+    expect(t?.port).toBeInstanceOf(DaemonGitAdapter);
+  });
+
+  it('falls back to a boot-reconciled (ownerBot:"") live area — owner-only would miss it', () => {
+    const reg = new WorkspaceRegistry();
+    reg.upsert({
+      workAreaId: 'wa-recon',
+      sandboxId: 'sandbox-uuid-1',
+      team: 't',
+      project: 'p',
+      name: 'wa-recon',
+      ownerBot: '', // reconciled from git on boot — ownership unknown
+    });
+    const provider = new WorkspaceGitProvider(daemon, liveSandboxes, reg);
+    const t = provider.resolveReferenceTarget({
+      team: 't',
+      project: 'p',
+      ownerBot: 'alex',
+    });
+    expect(t?.workspaceId).toBe('wa-recon');
+  });
+
+  it("prefers the bot's OWN live area over a teammate's", () => {
+    const reg = new WorkspaceRegistry();
+    reg.upsert({
+      workAreaId: 'wa-other',
+      sandboxId: 'sandbox-uuid-1',
+      team: 't',
+      project: 'p',
+      name: 'wa-other',
+      ownerBot: 'riley',
+    });
+    reg.upsert({
+      workAreaId: 'wa-mine',
+      sandboxId: 'sandbox-uuid-1',
+      team: 't',
+      project: 'p',
+      name: 'wa-mine',
+      ownerBot: 'alex',
+    });
+    const provider = new WorkspaceGitProvider(daemon, liveSandboxes, reg);
+    const t = provider.resolveReferenceTarget({
+      team: 't',
+      project: 'p',
+      ownerBot: 'alex',
+    });
+    expect(t?.workspaceId).toBe('wa-mine');
+  });
+
+  it('returns undefined when no live work area exists (never auto-creates)', () => {
+    const provider = new WorkspaceGitProvider(
+      daemon,
+      noSandboxes,
+      workAreasWithWa1(),
+    );
+    expect(
+      provider.resolveReferenceTarget({ team: 't', project: 'p', ownerBot: 'alex' }),
+    ).toBeUndefined();
+    // explicit-but-dead workspaceId also yields undefined (not a throw)
+    expect(
+      provider.resolveReferenceTarget({ team: 't', project: 'p', workspaceId: 'wa-1' }),
+    ).toBeUndefined();
+  });
+});

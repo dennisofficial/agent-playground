@@ -15,6 +15,7 @@ import { PostgresSessionRegistry } from './postgres-session.registry';
 import { ReviewPipelineService } from './review-pipeline.service';
 import { SESSION_REGISTRY } from './session-registry.port';
 import { SessionRunnerService } from './session-runner.service';
+import { WorkstationActivityBridge } from './workstation-activity.bridge';
 
 /**
  * Background sessions: the registry (the ledger of the employees' open engine conversations,
@@ -41,6 +42,7 @@ import { SessionRunnerService } from './session-runner.service';
     SessionRunnerService,
     ReviewPipelineService,
     PipelineRunnerService,
+    WorkstationActivityBridge,
   ],
 })
 export class SessionsModule {}

@@ -1,14 +1,17 @@
 import { makeEmployee } from '@harness/employees/employee.testing';
 import type { Identity } from '../../domain/identity';
-import { localGitProvider } from '../../workspaces/workspace-git.test-util';
+import type {
+  EnsureReferenceResult,
+  ReferenceLibraryService,
+} from '../../workspaces/reference-library.service';
 import { InvestigateTool } from './investigate.tool';
 
 /**
  * The `investigate` tool: a read-only fact-grounding session on the INVESTIGATE engine recipe (the
  * execute engine, so the create-time engine pin matches), opened in the 'investigate' mode (never
- * 'plan'/'execute'), with low-friction workspace resolution (given → latest → auto-create). The
- * engine's read-only enforcement for the mode is covered at the engine seam; here we lock the tool's
- * wiring with the session-open path mocked.
+ * 'plan'/'execute'), with low-friction workspace resolution (given → latest → create_workspace). Any
+ * `references` are materialized in the shared host reference library (mounted into the session sandbox
+ * at /refs); here we lock the tool's wiring with the session-open path + library mocked.
  */
 
 const ctx: { identity: Identity } = {
@@ -26,6 +29,10 @@ const ctx: { identity: Identity } = {
 function makeTool(opts: {
   workspaces?: { id: string }[];
   getById?: (id: string) => { id: string } | undefined;
+  /** The reference catalog `projects.list` returns (for the references path). */
+  catalog?: Array<{ projectId: string; displayName: string; gitUrl: string }>;
+  /** Make the reference library report a clone failure (transient/auth). */
+  cloneFails?: boolean;
 }) {
   const openSession = vi.fn((_opts: Record<string, unknown>) =>
     Promise.resolve({ sessionId: 'sess-001' }),
@@ -42,24 +49,48 @@ function makeTool(opts: {
       });
     }),
   };
+  const ensureReference = vi.fn(
+    (_team: string, target: { projectId?: string; gitUrl?: string }) =>
+      Promise.resolve<EnsureReferenceResult>(
+        opts.cloneFails
+          ? { ok: false, reason: 'clone-failed', detail: 'boom' }
+          : {
+              ok: true,
+              slug: target.projectId ?? 'ref',
+              mountPath: `/refs/${target.projectId ?? 'ref'}`,
+              gitUrl: 'https://github.com/dennis/cubix-infra',
+            },
+      ),
+  );
+  const refs = {
+    ensureReference,
+    orientation: vi.fn(() => Promise.resolve('Top level: src')),
+  };
   const alex = makeEmployee({ id: 'alex', name: 'Alex' });
   const employees = {
     byId: () => alex,
     fallbackOwner: () => alex,
     context: () => ({ team: 'local', roster: 'Alex' }),
   };
-  const projects = { list: vi.fn(() => Promise.resolve([])) };
+  const projects = { list: vi.fn(() => Promise.resolve(opts.catalog ?? [])) };
   const sessions = { update: vi.fn(() => Promise.resolve(undefined)) };
   const tool = new InvestigateTool(
     createSession as never,
     workspaces as never,
-    // create / ensureReferenceClone route through the provider; resolve to the same mock.
-    localGitProvider(workspaces as never),
+    refs as unknown as ReferenceLibraryService,
     employees as never,
     projects as never,
     sessions as never,
   );
-  return { tool, openSession, workspaces, created, projects, sessions };
+  return {
+    tool,
+    openSession,
+    workspaces,
+    created,
+    projects,
+    sessions,
+    ensureReference,
+  };
 }
 
 describe('investigate', () => {
@@ -83,12 +114,8 @@ describe('investigate', () => {
   });
 
   it('points at create_workspace when the bot has no workstation (no port-side cut anymore)', async () => {
-    const { tool, openSession, workspaces } = makeTool({
-      workspaces: [],
-    });
+    const { tool, openSession } = makeTool({ workspaces: [] });
     const out = await tool.execute({ question: 'where is X?' }, ctx);
-    // WORKSTATION model: a workspace is a per-branch SANDBOX realized by create_workspace — there's no
-    // port-side cut-a-branch fallback. With none to read in, the tool tells the bot to create one.
     expect(openSession).not.toHaveBeenCalled();
     expect(out).toContain('create_workspace');
   });
@@ -139,5 +166,59 @@ describe('investigate', () => {
       // the required trailer rides along regardless of intent
       expect(task).toContain('Confidence: high | medium | low');
     }
+  });
+
+  const catalog = [
+    {
+      projectId: 'cubix-infra',
+      displayName: 'Cubix Infra',
+      gitUrl: 'https://github.com/dennis/cubix-infra',
+    },
+  ];
+
+  it('materializes a resolved reference in the library (by projectId), records + notes it', async () => {
+    const { tool, openSession, ensureReference, sessions } = makeTool({
+      workspaces: [{ id: 'ws-001' }],
+      catalog,
+    });
+    const out = await tool.execute(
+      { question: 'how does cubix-infra do SSE?', references: ['cubix-infra'] },
+      ctx,
+    );
+    expect(ensureReference).toHaveBeenCalledWith('T1', {
+      projectId: 'cubix-infra',
+    });
+    expect(sessions.update).toHaveBeenCalled();
+    expect(openSession).toHaveBeenCalledTimes(1);
+    expect(out).toContain('Reading also');
+    expect(out).toContain('cubix-infra');
+  });
+
+  it('buckets an unknown reference as not-registered (onboard_project), session still opens', async () => {
+    const { tool, openSession } = makeTool({
+      workspaces: [{ id: 'ws-001' }],
+      catalog: [],
+    });
+    const out = await tool.execute({ question: 'q', references: ['nope'] }, ctx);
+    expect(openSession).toHaveBeenCalledTimes(1);
+    expect(out).toContain('onboard_project');
+    expect(out).toMatch(/in the catalog/i);
+  });
+
+  it('buckets a failed reference clone distinctly (retry/token), session still opens', async () => {
+    const { tool, openSession } = makeTool({
+      workspaces: [{ id: 'ws-001' }],
+      catalog,
+      cloneFails: true,
+    });
+    const out = await tool.execute(
+      { question: 'q', references: ['cubix-infra'] },
+      ctx,
+    );
+    expect(openSession).toHaveBeenCalledTimes(1);
+    expect(out).toMatch(/couldn't clone cubix-infra/i);
+    expect(out).toMatch(/retry/i);
+    // A clone failure is NOT a registration miss.
+    expect(out).not.toMatch(/in the catalog/i);
   });
 });

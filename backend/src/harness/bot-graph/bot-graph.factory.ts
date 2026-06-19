@@ -40,8 +40,9 @@ export { MAX_REVISION_PASSES, revisionNote } from './read-the-room';
  *
  * The `gate` node is the entry: the addressing gate runs IN-GRAPH (respond/skip classify) so a SKIP
  * lands in the same Langfuse turn trace as the work it gated. On respond it runs the normal turn; on
- * skip it routes to `consume` (advance the cursor past the gated batch, no model call). A seed / job
- * relay (`state.forced`) bypasses the classify and always responds. (`tool_loop_guard` still sits on
+ * skip it routes to `consume` (persist the gated batch into history + advance the cursor past it, no
+ * model call — this channel is Atlas's own, so skipped chatter is still REMEMBERED, just not replied
+ * to). A seed / job relay (`state.forced`) bypasses the classify and always responds. (`tool_loop_guard` still sits on
  * the continuation out of `tools`: a deterministic prefilter + Haiku judge that catches a single bot
  * re-issuing the SAME tool call — corrects + refreshes once, then pauses if it persists. No tool ends
  * the turn directly.)

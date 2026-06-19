@@ -49,3 +49,13 @@ if [ ! -f /build/backend/dist/daemon/main.js ]; then
   exit 1
 fi
 log "ok — daemon entry present: /build/backend/dist/daemon/main.js"
+
+# Stamp a CONTENT version next to the entry: the sha256 of the built main.js. This changes IFF the built
+# daemon changes, and is what a running sandbox self-reports (via the daemon's `version()` RPC) so the
+# host's boot reconciliation can detect a stale sandbox (on an OLD daemon after a code change + restart)
+# and `docker restart` it onto the freshly-built code. Written into the volume next to main.js so it ships
+# with the mount and a restarted daemon naturally reports the new value (convergence).
+log "stamping daemon build version (.build-version)…"
+sha256sum /build/backend/dist/daemon/main.js | awk '{print $1}' \
+  > /build/backend/dist/daemon/.build-version
+log "ok — build version: $(cat /build/backend/dist/daemon/.build-version)"

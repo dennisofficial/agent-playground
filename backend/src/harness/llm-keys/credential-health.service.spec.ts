@@ -1,18 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CredentialHealthService } from './credential-health.service';
-import type { RotateKeysPresenter } from './rotate-keys-presenter.port';
+import type {
+  RotateKeysEvent,
+  RotateKeysPresenter,
+} from './rotate-keys-presenter.port';
 
 describe('CredentialHealthService', () => {
   it('posts the update-keys card for the failing provider', async () => {
-    const present = vi.fn(async () => undefined);
+    let captured: RotateKeysEvent | undefined;
+    const present = vi.fn(async (e: RotateKeysEvent) => {
+      captured = e;
+    });
     const svc = new CredentialHealthService({
       present,
     } as RotateKeysPresenter);
     await svc.reportAuthError('T1', 'slack:T1:C1', 'anthropic');
     expect(present).toHaveBeenCalledTimes(1);
-    const arg = present.mock.calls[0][0];
-    expect(arg).toMatchObject({ team: 'T1', surfaceId: 'slack:T1:C1' });
-    expect(arg.reason).toMatch(/Anthropic.*unauthorized/i);
+    expect(captured).toMatchObject({ team: 'T1', surfaceId: 'slack:T1:C1' });
+    expect(captured?.reason).toMatch(/Anthropic.*unauthorized/i);
   });
 
   it('throttles repeats per (team, provider) — a dead key 401s every turn', async () => {

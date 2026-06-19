@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import type { WorkAreaFilter } from './workspace-registry';
+import { SandboxRegistry } from './sandbox-registry';
+import type { WorkAreaFilter, WorkAreaRecord } from './workspace-registry';
 import { WorkspaceRegistry } from './workspace-registry';
 
 /**
@@ -19,44 +20,51 @@ export interface WorkspaceView {
   ownerBot: string;
   /** Always true — every workspace is a containerized sandbox work area. */
   containerized: boolean;
-}
-
-/** Project a `WorkAreaRecord` into the agent-facing view. */
-function viewOf(wa: {
-  workAreaId: string;
-  name: string;
-  branch?: string;
-  team: string;
-  project: string;
-  ownerBot: string;
-}): WorkspaceView {
-  return {
-    id: wa.workAreaId,
-    name: wa.name,
-    branch: wa.branch ?? '',
-    team: wa.team,
-    project: wa.project,
-    ownerBot: wa.ownerBot,
-    containerized: true,
-  };
+  /** The localhost URL the workstation's dev server is viewable at (`http://localhost:<devPort>`), when a
+   * host port was allocated for it. Undefined when the port pool was exhausted at create, or for a sandbox
+   * that predates the dev-server exposure feature. The agent runs its dev server in the sandbox's inner
+   * compose published to `0.0.0.0:WORKSPACE_DEV_PORT` (7000) to make it reachable here. */
+  devUrl?: string;
 }
 
 /**
  * Assembles the `WorkspaceView` the workspace tools read, from `WorkspaceRegistry` (the host's work-area
- * records). The metadata read seam — keeps the tools off the (now-deleted) `WorkspaceService`.
+ * records) joined to `SandboxRegistry` for the published dev-server port. The metadata read seam — keeps
+ * the tools off the (now-deleted) `WorkspaceService`.
  */
 @Injectable()
 export class WorkspaceReader {
-  constructor(private readonly workAreas: WorkspaceRegistry) {}
+  constructor(
+    private readonly workAreas: WorkspaceRegistry,
+    private readonly sandboxes: SandboxRegistry,
+  ) {}
+
+  /** Project a `WorkAreaRecord` into the agent-facing view, joining the sandbox's published dev port (the
+   * work area is 1:1 with the sandbox; `sandboxId` keys into `SandboxRegistry`). */
+  private viewOf(wa: WorkAreaRecord): WorkspaceView {
+    const devPort = this.sandboxes.get(wa.sandboxId)?.devPort;
+    return {
+      id: wa.workAreaId,
+      name: wa.name,
+      branch: wa.branch ?? '',
+      team: wa.team,
+      project: wa.project,
+      ownerBot: wa.ownerBot,
+      containerized: true,
+      ...(devPort !== undefined
+        ? { devUrl: `http://localhost:${devPort}` }
+        : {}),
+    };
+  }
 
   /** A workspace (work area) by id, or undefined. */
   get(id: string): WorkspaceView | undefined {
     const wa = this.workAreas.get(id);
-    return wa ? viewOf(wa) : undefined;
+    return wa ? this.viewOf(wa) : undefined;
   }
 
   /** All work areas, optionally filtered. */
   list(filter?: WorkAreaFilter): WorkspaceView[] {
-    return this.workAreas.list(filter).map(viewOf);
+    return this.workAreas.list(filter).map((wa) => this.viewOf(wa));
   }
 }

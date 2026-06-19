@@ -73,6 +73,7 @@ type GitRpcMethod = Extract<
   | 'ensureClone'
   | 'refreshFromBase'
   | 'mergeState'
+  | 'syncStatus'
   | 'ownerDiff'
   | 'reviewRange'
   | 'publish'
@@ -83,12 +84,16 @@ type GitRpcMethod = Extract<
   | 'attachDesign'
   | 'ensureReferenceClone'
   | 'referenceOrientation'
+  // The daemon's self-reported build version — drives the host's boot-time version reconciliation
+  // (a stale running sandbox is `docker restart`ed onto the freshly-built daemon code).
+  | 'version'
 >;
 
 const GIT_RPC_METHODS: ReadonlySet<string> = new Set<GitRpcMethod>([
   'ensureClone',
   'refreshFromBase',
   'mergeState',
+  'syncStatus',
   'ownerDiff',
   'reviewRange',
   'publish',
@@ -99,4 +104,5 @@ const GIT_RPC_METHODS: ReadonlySet<string> = new Set<GitRpcMethod>([
   'attachDesign',
   'ensureReferenceClone',
   'referenceOrientation',
+  'version',
 ]);

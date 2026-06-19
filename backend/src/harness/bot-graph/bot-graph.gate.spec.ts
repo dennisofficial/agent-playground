@@ -1,6 +1,8 @@
 import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { RunnableConfig } from '@langchain/core/runnables';
+import { tool } from '@langchain/core/tools';
 import { MemorySaver } from '@langchain/langgraph';
+import { z } from 'zod';
 import type { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import type { EnvService } from '@core/config/env/env.service';
 import type { ChannelRegistryService } from '../channel/channel-registry.service';
@@ -86,8 +88,12 @@ interface FakeGate {
   ) => Promise<GateDecision>;
 }
 
-const makeFactory = (channel: FakeChannel, gate?: FakeGate): BotGraphFactory => {
-  const fakeModel = {
+const makeFactory = (
+  channel: FakeChannel,
+  gate?: FakeGate,
+  opts: { model?: unknown; tools?: unknown[] } = {},
+): BotGraphFactory => {
+  const fakeModel = opts.model ?? {
     bindTools() {
       return this;
     },
@@ -99,7 +105,7 @@ const makeFactory = (channel: FakeChannel, gate?: FakeGate): BotGraphFactory => 
     channel as unknown as ChannelService,
     { get: () => undefined, isChannelKind: () => true } as unknown as ChannelRegistryService,
     {
-      toStructuredTools: () => [],
+      toStructuredTools: () => opts.tools ?? [],
       refreshScopesByName: () => new Map(),
     } as unknown as ToolRegistry,
     {
@@ -174,6 +180,67 @@ describe('bot graph — in-graph addressing gate', () => {
     expect(final.values.decision).toBe('ignore');
     expect(final.values.cursor).toBe(1); // seq 0 + 1 — consumed PAST the batch
     expect(channel.since(final.values.cursor)).toHaveLength(0); // nothing left in-window
+  });
+
+  it('skip → consume PERSISTS the gated batch into durable history (Atlas remembers what it stayed quiet on)', async () => {
+    // The fix: a skip must not ERASE the message. This channel is Atlas's own, so a message it chose
+    // not to reply to is still its context — written into `messages` so a later respond turn can see
+    // it, instead of vanishing below the cursor forever (the old double-loss: not persisted + cursor
+    // leaps past it).
+    const channel = new FakeChannel();
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: "That's not Cubix infra, that's crew AI",
+    });
+    const gate: FakeGate = { decide: async () => 'skip' };
+    const factory = makeFactory(channel, gate);
+    await runTurn(factory, 'alex:gate-skip-persist:root', {
+      cursor: 0,
+      forced: false,
+    });
+
+    const final = await finalState(factory, 'alex:gate-skip-persist:root');
+    const humanTexts = (final.values.messages as BaseMessage[])
+      .filter((m) => m.getType() === 'human')
+      .map((m) => flat(m.content));
+    expect(humanTexts).toContain("Dennis: That's not Cubix infra, that's crew AI");
+  });
+
+  it('a skipped message is still in history on a LATER respond turn (the @-mention bug)', async () => {
+    // End-to-end repro of the transcript: Atlas skips a correction, THEN is @-mentioned. The bare
+    // mention turn must still carry the earlier correction in its durable history — before the fix it
+    // was gone (not persisted on skip + cursor past it), so Atlas answered the mention with no memory.
+    const channel = new FakeChannel();
+    const thread = 'alex:gate-skip-then-respond:root';
+    channel.append({
+      id: 'u-0',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: "That's not Cubix infra, that's crew AI",
+    });
+    let verdict: GateDecision = 'skip';
+    const gate: FakeGate = { decide: async () => verdict };
+    const factory = makeFactory(channel, gate);
+    // Turn 1: the correction → skip (persisted, cursor → 1).
+    await runTurn(factory, thread, { cursor: 0, forced: false });
+    // Turn 2: a bare @-mention → respond.
+    channel.append({
+      id: 'u-1',
+      author: 'Dennis',
+      authorId: 'dennis',
+      text: '@Alex',
+    });
+    verdict = 'respond';
+    await runTurn(factory, thread, { cursor: 1, forced: false });
+
+    const final = await finalState(factory, thread);
+    const humanTexts = (final.values.messages as BaseMessage[])
+      .filter((m) => m.getType() === 'human')
+      .map((m) => flat(m.content));
+    expect(humanTexts).toContain("Dennis: That's not Cubix infra, that's crew AI");
+    expect(humanTexts).toContain('Dennis: @Alex');
   });
 
   it("hands the gate Atlas's own recent messages so a reply to its own question is recognizable", async () => {
@@ -275,5 +342,85 @@ describe('bot graph — in-graph addressing gate', () => {
     expect(decideCalls).toBe(1); // classified — forced did NOT leak from turn 1
     const final = await finalState(factory, thread);
     expect(final.values.decision).toBe('ignore');
+  });
+
+  it('relaySeed (an ephemeral relay) responds but is NEVER persisted into messages', async () => {
+    // The relay mechanism: a session's verbatim report rides in as a transient `relaySeed`, rendered
+    // for the relaying turn but kept OUT of durable history — so a multi-hop relay loop never bloats
+    // Atlas's window. Only its distilled post persists.
+    const channel = new FakeChannel();
+    const factory = makeFactory(channel); // no gate; forced bypasses the classify
+    const report =
+      '[Session s-1 — "compare admin"] reported back:\nVERBATIM-REPORT-BODY: three-layer auth, topbar nav.';
+    const deltas = await runTurn(factory, 'alex:relay-seed:root', {
+      cursor: 0,
+      forced: true,
+      relaySeed: report,
+    });
+
+    expect(aiTexts(deltas)).toEqual(['On it.']); // the relay turn responded
+    const final = await finalState(factory, 'alex:relay-seed:root');
+    const allTexts = (final.values.messages as BaseMessage[]).map((m) =>
+      flat(m.content),
+    );
+    // The verbatim report never entered durable history…
+    expect(allTexts.some((t) => t.includes('VERBATIM-REPORT-BODY'))).toBe(false);
+    // …and the transient field is cleared at turn end (no cross-turn leak).
+    expect(final.values.relaySeed).toBeUndefined();
+  });
+
+  it('relaySeed survives a tool-FIRST relay turn: still seen on the post-tools step, never persisted', async () => {
+    // The Codex BLOCK: a relay turn whose FIRST model step calls a tool (close_session) with no text,
+    // then posts the relayed answer on the SECOND step. The report must still be in the second step's
+    // prompt (preserved through the llm ⇄ tools loop) — clearing on every step would drop it first.
+    const channel = new FakeChannel();
+    const report =
+      '[Session s-1 — "compare admin"] reported back:\nVERBATIM-REPORT-BODY: cubix uses a guard-layer split.';
+    const convos: BaseMessage[][] = [];
+    let calls = 0;
+    const scriptedModel = {
+      bindTools() {
+        return this;
+      },
+      async invoke(convo: BaseMessage[]) {
+        convos.push(convo);
+        calls += 1;
+        return calls === 1
+          ? new AIMessage({
+              content: '',
+              tool_calls: [
+                { name: 'close_session', args: { sessionId: 's-1' }, id: 'tc-1' },
+              ],
+            })
+          : new AIMessage({ content: 'Here is the comparison, in my voice.' });
+      },
+    };
+    const closeSession = tool(async () => 'Closed s-1.', {
+      name: 'close_session',
+      description: 'close a session',
+      schema: z.object({ sessionId: z.string() }),
+    });
+    const factory = makeFactory(channel, undefined, {
+      model: scriptedModel,
+      tools: [closeSession],
+    });
+    const deltas = await runTurn(factory, 'alex:relay-tool-first:root', {
+      cursor: 0,
+      forced: true,
+      relaySeed: report,
+    });
+
+    expect(calls).toBe(2); // tool step, then the relayed-answer step
+    const renderedIn = (convo: BaseMessage[]) =>
+      convo.some((m) => flat(m.content).includes('VERBATIM-REPORT-BODY'));
+    expect(renderedIn(convos[0])).toBe(true); // first (tool) step sees the report
+    expect(renderedIn(convos[1])).toBe(true); // and so does the post-tools step — the BLOCK fix
+    expect(aiTexts(deltas)).toContain('Here is the comparison, in my voice.');
+    const final = await finalState(factory, 'alex:relay-tool-first:root');
+    const allTexts = (final.values.messages as BaseMessage[]).map((m) =>
+      flat(m.content),
+    );
+    expect(allTexts.some((t) => t.includes('VERBATIM-REPORT-BODY'))).toBe(false);
+    expect(final.values.relaySeed).toBeUndefined();
   });
 });

@@ -129,14 +129,19 @@ export class DispatchPipelineTool implements IHarnessTool<typeof dispatchSchema>
     // bypassable one — the only way past is to investigate (cheap + async) or run trivial work as a
     // bugfix; there is deliberately no override flag (a flag just teaches the model to flip it, turning
     // the guard into theater). A still-running investigate counts — the reflexive fire is in flight,
-    // and its relay-back carries the grounded breakdown.
+    // and its relay-back carries the grounded breakdown. A CLOSED investigate that already reported
+    // counts too: the natural flow is investigate -> read the report -> close_session -> dispatch, and
+    // the close must not erase the grounding it produced (requiring it stay open dead-ended dispatch).
+    // A close/abort with no report (no lastReport) is NOT grounding and stays excluded.
     if (runKind === 'feature') {
       const sessions = await this.sessions.list({ ownerBot: id.selfAgent });
       const grounded = sessions.some(
         (s) =>
           s.boardTaskId === board_task_id &&
           s.mode === 'investigate' &&
-          (s.status === 'idle' || s.status === 'running'),
+          (s.status === 'idle' ||
+            s.status === 'running' ||
+            (s.status === 'closed' && !!s.lastReport)),
       );
       if (!grounded)
         return `Before I dispatch #${board_task_id} as a feature, the section breakdown should trace to a real read of the code, not memory — I don't see an investigate() tied to this task. Ground it first: investigate(question, board_task_id: ${board_task_id}) and I'll dispatch the moment it reports back (read-only and non-blocking). If it's too small to need a breakdown, run it as a bugfix instead.`;

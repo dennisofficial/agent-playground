@@ -28,7 +28,7 @@ export function sessionRelayPrompt(session: Session): string {
         : '';
     return `[Session ${sid} — "${task}"] finished its PLAN (self-reviewed; planning Q&A included):\n${report}\n\nThe session is still open with full context.${linked} reply_session("${sid}", <notes>) to revise, or close_session("${sid}") when it's served its purpose. Relay to the team in the first person if it's worth sharing.`;
   }
-  return `[Session ${sid} — "${task}"] reported back:\n${report}\n\nThe session is still open with full context. reply_session("${sid}", <message>) to continue it, or close_session("${sid}") when this thread of work is done. Relay the outcome to the team in the first person if it's worth sharing.`;
+  return `[Session ${sid} — "${task}"] reported back:\n${report}\n\nThis session is your thinking partner on this — it holds the full code context that you don't. You're the RELAY: relay its substance to Dennis in the FIRST PERSON (your own voice, not "the session found…"), and route his follow-ups back into THIS session with reply_session("${sid}", <message>) so the reasoning stays where the context is — don't re-derive the answer from your own thin context, and don't open a fresh investigate for the next turn of the same decision. close_session("${sid}") once the decision is settled. Speak up only if it's worth sharing.`;
 }
 
 /**

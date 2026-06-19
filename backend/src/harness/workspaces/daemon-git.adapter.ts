@@ -76,6 +76,14 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
     return this.call('mergeState');
   }
 
+  /** The reap-safety probe — unpushed commits + dirty tree in the in-sandbox clone. No leading id arg
+   * (the daemon's single checkout IS the branch). The host idle reaper gates on this before destroying. */
+  syncStatus(
+    _workspaceId: string,
+  ): Promise<{ aheadOfOrigin: number; dirty: boolean }> {
+    return this.call('syncStatus');
+  }
+
   ownerDiff(
     _id: string,
     sinceRef: string,
@@ -95,8 +103,8 @@ export class DaemonGitAdapter implements WorkspaceGitPort {
 
   ensureReferenceClone(
     _team: string,
-    target: { projectId: string } | { gitUrl: string },
-  ): Promise<{ path: string; projectId?: string; gitUrl: string }> {
+    target: { gitUrl: string },
+  ): Promise<{ path: string; gitUrl: string }> {
     return this.call('ensureReferenceClone', [target]);
   }
 

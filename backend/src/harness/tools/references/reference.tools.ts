@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ProjectStore } from '../../projects/project-store';
 import type { ProjectRecord } from '../../projects/project.types';
-import { WorkspaceGitProvider } from '../../workspaces/workspace-git.provider';
+import { ReferenceLibraryService } from '../../workspaces/reference-library.service';
 import { HarnessTool } from '../harness-tool.decorator';
 import type { HarnessToolContext, IHarnessTool } from '../tool.types';
 
@@ -29,9 +29,9 @@ const referenceProjectSchema = z.object({
 /**
  * READ another of Dennis's GitHub-registered projects, read-only, to ground a decision — the "go look
  * at how project X does it" affordance. Resolves the name against the workspace catalog, materializes
- * a read-only clone, and hands back a quick orientation (top level + README). For a deeper read, pass
- * the same name to `investigate({ references: [...] })`. If the project isn't registered yet, the
- * result carries a Remedy pointing at `onboard_project` — take it, don't dead-end.
+ * the read-only clone in the shared host reference library, and hands back a quick orientation (top
+ * level + README). For a deeper read, pass the same name to `investigate({ references: [...] })`. If
+ * the project isn't registered yet, the result carries a Remedy pointing at `onboard_project`.
  */
 @HarnessTool()
 export class ReferenceProjectTool
@@ -44,7 +44,7 @@ export class ReferenceProjectTool
 
   constructor(
     private readonly projects: ProjectStore,
-    private readonly workspaceGit: WorkspaceGitProvider,
+    private readonly refs: ReferenceLibraryService,
   ) {}
 
   async execute(
@@ -52,25 +52,35 @@ export class ReferenceProjectTool
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
-    const catalog = await this.projects.list(id.team).catch(() => []);
+    // Distinguish a catalog LOAD failure from a genuine miss — a DB hiccup must not read as "not registered".
+    let catalog: ProjectRecord[];
+    try {
+      catalog = await this.projects.list(id.team);
+    } catch {
+      return "Couldn't read the project catalog just now — retry reference_project in a moment.";
+    }
     const rec = findInCatalog(catalog, name);
     if (!rec) {
       if (GITHUB_URL.test(name.trim()))
         return `"${name}" looks like a GitHub URL — use reference_repo({ url: "${name.trim()}" }) for a one-off, or onboard_project to add it to the catalog.`;
       return `✗ "${name}" isn't a registered project in this workspace.\nRemedy: call onboard_project({ name: "${name}" }) to register it read-only, then retry reference_project. (If you don't think it exists on GitHub, just tell Dennis.)`;
     }
-    try {
-      // Reference clones are team-scoped (no single workspace) — route on tenancy. In Phase 9 a
-      // containerized session's reference path is in-sandbox, so the same port both clones AND orients.
-      const git = this.workspaceGit.resolve({ team: id.team, project: id.project });
-      const { path } = await git.ensureReferenceClone(id.team, {
-        projectId: rec.projectId,
-      });
-      const orientation = await git.referenceOrientation(path);
-      return `Referenced ${rec.projectId}${rec.description ? ` — ${rec.description}` : ''} (read-only) at ${path}\n\n${orientation}\n\nTo read deeper, investigate({ question, references: ["${rec.projectId}"] }).`;
-    } catch (err) {
-      return `Couldn't materialize a read-only clone of ${rec.projectId}: ${err instanceof Error ? err.message : String(err)}`;
+    // Materialize/fetch the clone in the shared host reference library (mounted read-only into sandboxes
+    // at /refs). No workstation needed — the library is host-maintained.
+    const r = await this.refs.ensureReference(id.team, {
+      projectId: rec.projectId,
+    });
+    if (!r.ok) {
+      if (r.reason === 'catalog-unavailable')
+        return "Couldn't read the project catalog just now — retry reference_project in a moment.";
+      if (r.reason === 'not-registered')
+        return `✗ "${rec.projectId}" is no longer registered.\nRemedy: onboard_project it again, then retry reference_project.`;
+      return `Couldn't materialize a read-only clone of ${rec.projectId} (registered, but the clone failed — retry; if it persists the token may lack access): ${r.detail ?? ''}`;
     }
+    const orientation =
+      (await this.refs.orientation(id.team, r.slug)) ??
+      '(no orientation available)';
+    return `Referenced ${rec.projectId}${rec.description ? ` — ${rec.description}` : ''} (read-only) at ${r.mountPath}\n\n${orientation}\n\nTo read deeper, investigate({ question, references: ["${rec.projectId}"] }).`;
   }
 }
 
@@ -94,7 +104,7 @@ export class ReferenceRepoTool
     "Read a GitHub repo that ISN'T in the catalog, by its URL, read-only (a one-off; authed with the workspace's default token). Returns a quick orientation. For a repo you'll reference repeatedly, onboard_project it instead so it's available by name.";
   readonly schema = referenceRepoSchema;
 
-  constructor(private readonly workspaceGit: WorkspaceGitProvider) {}
+  constructor(private readonly refs: ReferenceLibraryService) {}
 
   async execute(
     { url }: z.infer<typeof referenceRepoSchema>,
@@ -103,19 +113,13 @@ export class ReferenceRepoTool
     const u = url.trim();
     if (!GITHUB_URL.test(u))
       return `✗ "${url}" isn't an https://github.com/<owner>/<repo> URL — reference_repo only reads GitHub repos.`;
-    try {
-      const git = this.workspaceGit.resolve({
-        team: ctx.identity.team,
-        project: ctx.identity.project,
-      });
-      const { path } = await git.ensureReferenceClone(ctx.identity.team, {
-        gitUrl: u,
-      });
-      const orientation = await git.referenceOrientation(path);
-      return `Referenced ${u} (read-only) at ${path}\n\n${orientation}\n\nTo read deeper, investigate the path. If it can't be cloned, the token may lack access — onboard_project can collect one.`;
-    } catch (err) {
-      return `Couldn't clone ${u} read-only (the default token may not have access): ${err instanceof Error ? err.message : String(err)}\nRemedy: onboard_project({ url: "${u}" }) to collect a token with access.`;
-    }
+    const r = await this.refs.ensureReference(ctx.identity.team, { gitUrl: u });
+    if (!r.ok)
+      return `Couldn't clone ${u} read-only (the default token may not have access): ${r.detail ?? ''}\nRemedy: onboard_project({ url: "${u}" }) to collect a token with access.`;
+    const orientation =
+      (await this.refs.orientation(ctx.identity.team, r.slug)) ??
+      '(no orientation available)';
+    return `Referenced ${u} (read-only) at ${r.mountPath}\n\n${orientation}\n\nTo read deeper, investigate({ question, references: ["${u}"] }). If it can't be cloned, the token may lack access — onboard_project can collect one.`;
   }
 }
 
@@ -138,9 +142,15 @@ export class ListReferenceProjectsTool
     ctx: HarnessToolContext,
   ): Promise<string> {
     const id = ctx.identity;
-    const catalog = (await this.projects.list(id.team).catch(() => [])).filter(
-      (p) => p.projectId !== id.project,
-    );
+    // Distinguish a catalog LOAD failure from a genuinely empty catalog — a DB hiccup must not read as
+    // "nothing registered" (the model would then wrongly conclude it has no references).
+    let all: ProjectRecord[];
+    try {
+      all = await this.projects.list(id.team);
+    } catch {
+      return "Couldn't read the project catalog just now — retry list_reference_projects in a moment.";
+    }
+    const catalog = all.filter((p) => p.projectId !== id.project);
     if (catalog.length === 0)
       return `No other projects are registered in this workspace yet. Onboard one with onboard_project when Dennis points you at a repo.`;
     return [

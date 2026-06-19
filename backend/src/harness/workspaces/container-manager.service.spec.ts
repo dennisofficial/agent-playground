@@ -7,15 +7,17 @@
  * `ProjectStore`/`EnvService`/`CredentialProvisionerService` are mocked.
  */
 import { Logger } from '@nestjs/common';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { ProjectStore } from '../projects/project-store';
 import { ContainerManagerService } from './container-manager.service';
 import type { CredentialProvisionerService } from './credential-provisioner.service';
+import type { DaemonClient } from './daemon-client';
 import { InMemoryContainerEngine } from './in-memory-container-engine';
 import type { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
 import type { WorkspaceProvisionerService } from './workspace-provisioner.service';
+import type { ReferenceLibraryService } from './reference-library.service';
 
 const TEAM = 'team-1';
 const PROJECT = 'proj-1';
@@ -68,11 +70,40 @@ function makeReadiness(): SandboxReadinessService {
 }
 
 /** A no-op provisioner — the manager-level tests isolate from boot provisioning (its real behavior is
- * covered in workspace-provisioner.service.spec.ts). `ensureProvisioned` just resolves. */
-function makeProvisioner(): WorkspaceProvisionerService {
+ * covered in workspace-provisioner.service.spec.ts). `ensureProvisioned` just resolves. `currentBuildVersion`
+ * defaults to undefined (no build version known → boot version-reconciliation SKIPS, the safe default that
+ * leaves running sandboxes untouched); the version-reconciliation tests override it with a real version. */
+function makeProvisioner(
+  currentBuildVersion: string | undefined = undefined,
+): WorkspaceProvisionerService {
   return {
     ensureProvisioned: vi.fn(async () => undefined),
+    currentBuildVersion: vi.fn(async () => currentBuildVersion),
   } as unknown as WorkspaceProvisionerService;
+}
+
+/** A reference library that just hands back a deterministic host mount source per team. */
+function makeRefs(): ReferenceLibraryService {
+  return {
+    ensureTeamMountSource: vi.fn(async (team: string) => `/host/refs/${team}`),
+  } as unknown as ReferenceLibraryService;
+}
+
+/** A fake DaemonClient whose `gitCall` is the reap-safety probe seam (`syncStatus`). Default: reap-safe
+ * (no unpushed commits, clean tree). Tests override `gitCall` to simulate unsafe / unreachable daemons. */
+function makeDaemon(
+  syncStatus: { aheadOfOrigin: number; dirty: boolean } = {
+    aheadOfOrigin: 0,
+    dirty: false,
+  },
+): DaemonClient & { gitCall: ReturnType<typeof vi.fn> } {
+  const gitCall = vi.fn(async (_id: string, method: string) => {
+    if (method === 'syncStatus') return syncStatus;
+    return undefined;
+  });
+  return { gitCall } as unknown as DaemonClient & {
+    gitCall: ReturnType<typeof vi.fn>;
+  };
 }
 
 describe('ContainerManagerService (in-memory container engine)', () => {
@@ -81,16 +112,19 @@ describe('ContainerManagerService (in-memory container engine)', () => {
   let credentials: CredentialProvisionerService;
   let readiness: SandboxReadinessService;
   let provisioner: WorkspaceProvisionerService;
+  let daemon: DaemonClient & { gitCall: ReturnType<typeof vi.fn> };
   let manager: ContainerManagerService;
 
   beforeEach(() => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
     engine = new InMemoryContainerEngine();
     registry = new SandboxRegistry();
     credentials = makeCredentials();
     readiness = makeReadiness();
     provisioner = makeProvisioner();
+    daemon = makeDaemon();
     manager = new ContainerManagerService(
       engine,
       makeEnv(),
@@ -99,7 +133,14 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       credentials,
       readiness,
       provisioner,
+      makeRefs(),
+      daemon,
     );
+  });
+
+  afterEach(() => {
+    // Clear the (unref'd) idle-reaper interval any onApplicationBootstrap call started.
+    manager.onModuleDestroy();
   });
 
   it('(a) ensureWorkspace creates a sandbox with the correct spec', async () => {
@@ -164,6 +205,8 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     );
     // the Linux daemon build is MOUNTED read-only at /daemon (not baked into the image)
     expect(spec.binds).toContain('agent-daemon-build:/daemon:ro');
+    // the team's shared reference library is mounted READ-ONLY at /refs (team-scoped host source)
+    expect(spec.binds).toContain(`/host/refs/${TEAM}:/refs:ro`);
     // that docker-storage volume is explicitly created + labelled (so the boot sweep can find leaks)
     expect(engine.createdVolumes).toContain(`agent-ws-docker-${rec.workspaceId}`);
 
@@ -185,9 +228,16 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(spec.nanoCpus).toBeGreaterThan(0);
     expect(spec.pidsLimit).toBeGreaterThan(0);
 
-    // NO host port bindings / NO published ports — the spec has no port fields at all.
-    expect(spec).not.toHaveProperty('ports');
-    expect(spec).not.toHaveProperty('portBindings');
+    // Phase 2: the SINGLE localhost-only published dev-server port — the container's WORKSPACE_DEV_PORT
+    // (7000 default) → an allocated host port bound to 127.0.0.1 (never 0.0.0.0). First create takes the
+    // bottom of the pool (39000).
+    expect(spec.ports).toEqual([
+      { hostIp: '127.0.0.1', hostPort: 39000, containerPort: 7000 },
+    ]);
+    // The allocated host port is stamped as the durable `com.agent.devport` label (the allocator's
+    // source of truth) AND carried on the record (so the URL surfaces + reconciles on boot).
+    expect(spec.labels['com.agent.devport']).toBe('39000');
+    expect(rec.devPort).toBe(39000);
 
     // started + registered + cred channel watched
     expect(rec.status).toBe('running');
@@ -247,6 +297,8 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       credentials,
       readiness,
       provisioner,
+      makeRefs(),
+      daemon,
     );
     await expect(ensure(manager)).rejects.toThrow(
       /WORKSPACE_IMAGE is not set/,
@@ -263,6 +315,8 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       credentials,
       readiness,
       provisioner,
+      makeRefs(),
+      daemon,
     );
     await ensure(manager);
     expect(engine.created[0].runtime).toBe('sysbox-runc');
@@ -281,6 +335,8 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       credentials,
       readiness,
       provisioner,
+      makeRefs(),
+      daemon,
     );
     await ensure(manager);
     const spec = engine.created[0];
@@ -489,8 +545,453 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       credentials,
       readiness,
       provisioner,
+      makeRefs(),
+      daemon,
     );
     await expect(manager.onApplicationBootstrap()).resolves.toBeUndefined();
     expect(registry.list()).toHaveLength(0);
+  });
+
+  // ── Phase 3: per-(team,project) create CAP ──────────────────────────────────────────────────────
+
+  describe('per-(team,project) create cap', () => {
+    function withCap(cap: number) {
+      const m = new ContainerManagerService(
+        engine,
+        makeEnv({ WORKSPACE_MAX_PER_PROJECT: String(cap) }),
+        makeProjects(),
+        registry,
+        credentials,
+        readiness,
+        provisioner,
+        makeRefs(),
+        daemon,
+      );
+      return m;
+    }
+
+    it('allows creates UNDER the cap, then REFUSES the one that would exceed it', async () => {
+      const m = withCap(2);
+      const a = await m.ensureWorkspace(TEAM, PROJECT, 'feature/a', BASE_REF, UPSTREAM);
+      const b = await m.ensureWorkspace(TEAM, PROJECT, 'feature/b', BASE_REF, UPSTREAM);
+      expect(a.workspaceId).toBeDefined();
+      expect(b.workspaceId).toBeDefined();
+      expect(engine.created).toHaveLength(2);
+
+      // The third DISTINCT branch trips the cap — a clear, actionable refusal; no container created.
+      await expect(
+        m.ensureWorkspace(TEAM, PROJECT, 'feature/c', BASE_REF, UPSTREAM),
+      ).rejects.toThrow(/2 workstations for this project \(cap 2\).*remove_workspace/is);
+      expect(engine.created).toHaveLength(2);
+    });
+
+    it('re-entering an EXISTING branch never trips the cap (idempotent, no new container)', async () => {
+      const m = withCap(1);
+      await m.ensureWorkspace(TEAM, PROJECT, 'feature/a', BASE_REF, UPSTREAM);
+      // Re-entry of the SAME branch finds the existing one — even at cap 1.
+      const again = await m.ensureWorkspace(TEAM, PROJECT, 'feature/a', BASE_REF, UPSTREAM);
+      expect(again.branch).toBe('feature/a');
+      expect(engine.created).toHaveLength(1);
+    });
+
+    it('the cap is per (team, project) — a different project is independent', async () => {
+      const m = withCap(1);
+      await m.ensureWorkspace(TEAM, PROJECT, 'feature/a', BASE_REF, UPSTREAM);
+      // A different project still has headroom.
+      const other = await m.ensureWorkspace(TEAM, 'proj-2', 'feature/a', BASE_REF, UPSTREAM);
+      expect(other.project).toBe('proj-2');
+      expect(engine.created).toHaveLength(2);
+    });
+  });
+
+  // ── Phase 3: idle REAPER ────────────────────────────────────────────────────────────────────────
+
+  describe('idle reaper', () => {
+    const TTL_MIN = 60; // 1h TTL for the tests
+    const PAST_TTL_MS = (TTL_MIN + 1) * 60 * 1000;
+
+    /** A manager whose open-sessions probe + daemon syncStatus are controllable per test. */
+    function reaperManager(opts: {
+      openSessions?: (id: string) => Promise<number>;
+      syncStatus?: { aheadOfOrigin: number; dirty: boolean };
+      syncThrows?: boolean;
+    }) {
+      const d = makeDaemon(opts.syncStatus);
+      if (opts.syncThrows) {
+        d.gitCall.mockImplementation(async () => {
+          throw new Error('daemon unreachable');
+        });
+      }
+      const m = new ContainerManagerService(
+        engine,
+        makeEnv({ WORKSPACE_IDLE_TTL_MINUTES: String(TTL_MIN) }),
+        makeProjects(),
+        registry,
+        credentials,
+        readiness,
+        provisioner,
+        makeRefs(),
+        d,
+      );
+      // Bind the probe (default: no open sessions = reapable).
+      m.bindOpenSessionsProbe(opts.openSessions ?? (async () => 0));
+      return { m, d };
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-19T00:00:00Z'));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('reaps a clean + idle + session-less branch workstation', async () => {
+      const { m } = reaperManager({});
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      // Advance past the TTL so it's idle.
+      vi.setSystemTime(new Date(Date.now() + PAST_TTL_MS));
+
+      await m.reapIdleWorkstations();
+
+      expect(engine.removed).toContain(rec.containerId);
+      expect(engine.removedVolumes).toContain(`agent-ws-docker-${rec.workspaceId}`);
+      expect(registry.get(rec.workspaceId)).toBeUndefined();
+    });
+
+    it('SKIPS a workstation with unpushed commits (aheadOfOrigin > 0)', async () => {
+      const { m } = reaperManager({ syncStatus: { aheadOfOrigin: 3, dirty: false } });
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      vi.setSystemTime(new Date(Date.now() + PAST_TTL_MS));
+
+      await m.reapIdleWorkstations();
+
+      expect(engine.removed).not.toContain(rec.containerId);
+      expect(registry.get(rec.workspaceId)).toBeDefined();
+    });
+
+    it('SKIPS a DIRTY workstation (uncommitted changes)', async () => {
+      const { m } = reaperManager({ syncStatus: { aheadOfOrigin: 0, dirty: true } });
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      vi.setSystemTime(new Date(Date.now() + PAST_TTL_MS));
+
+      await m.reapIdleWorkstations();
+
+      expect(engine.removed).not.toContain(rec.containerId);
+      expect(registry.get(rec.workspaceId)).toBeDefined();
+    });
+
+    it('SKIPS a workstation with an OPEN session (even when clean + idle)', async () => {
+      const { m } = reaperManager({ openSessions: async () => 1 });
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      vi.setSystemTime(new Date(Date.now() + PAST_TTL_MS));
+
+      await m.reapIdleWorkstations();
+
+      expect(engine.removed).not.toContain(rec.containerId);
+      expect(registry.get(rec.workspaceId)).toBeDefined();
+    });
+
+    it('SKIPS a workstation still WITHIN the TTL (recently active)', async () => {
+      const { m } = reaperManager({});
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      // Only half the TTL elapses — not idle yet.
+      vi.setSystemTime(new Date(Date.now() + (TTL_MIN / 2) * 60 * 1000));
+
+      await m.reapIdleWorkstations();
+
+      expect(engine.removed).not.toContain(rec.containerId);
+      expect(registry.get(rec.workspaceId)).toBeDefined();
+    });
+
+    it('SKIPS when the daemon is UNREACHABLE for the reap-safety check (never reap on doubt)', async () => {
+      const { m } = reaperManager({ syncThrows: true });
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      vi.setSystemTime(new Date(Date.now() + PAST_TTL_MS));
+
+      await m.reapIdleWorkstations();
+
+      expect(engine.removed).not.toContain(rec.containerId);
+      expect(registry.get(rec.workspaceId)).toBeDefined();
+    });
+
+    it('touch() resets the idle clock so a re-active workstation is not reaped', async () => {
+      const { m } = reaperManager({});
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      // Advance to just-past TTL, but a session event lands (touch) right before the sweep.
+      vi.setSystemTime(new Date(Date.now() + PAST_TTL_MS));
+      m.touch(rec.workspaceId);
+
+      await m.reapIdleWorkstations();
+
+      expect(engine.removed).not.toContain(rec.containerId);
+    });
+
+    it('leaves a legacy NO-BRANCH sandbox alone (workstation model is per-branch)', async () => {
+      const { m } = reaperManager({});
+      // Seed a managed container WITHOUT a branch label (predates per-branch identity), then reconcile.
+      engine.seed(
+        {
+          name: 'agent-ws-legacy',
+          image: 'img',
+          env: [],
+          labels: {
+            'com.agent.managed': '1',
+            'com.agent.workspace': 'legacy-1',
+            'com.agent.team': TEAM,
+            'com.agent.project': PROJECT,
+          },
+          privileged: true,
+          binds: [],
+          restartPolicy: 'unless-stopped',
+        },
+        'running',
+      );
+      await m.reconcile();
+      vi.setSystemTime(new Date(Date.now() + PAST_TTL_MS));
+
+      await m.reapIdleWorkstations();
+
+      expect(registry.get('legacy-1')).toBeDefined();
+    });
+  });
+
+  // ── Phase 2: dev-server port ALLOCATOR (one localhost-only published port per workstation) ─────────
+
+  describe('dev-port allocator', () => {
+    it('allocates the lowest free host port, AVOIDING ports already taken by a managed container', async () => {
+      // Seed a managed sandbox that already holds the bottom of the pool (39000) on its devport label.
+      engine.seed(
+        {
+          name: 'agent-ws-taken',
+          image: 'img',
+          env: [],
+          labels: {
+            'com.agent.managed': '1',
+            'com.agent.workspace': 'taken-1',
+            'com.agent.team': 'team-other',
+            'com.agent.project': 'proj-other',
+            'com.agent.branch': 'feature/z',
+            'com.agent.devport': '39000',
+          },
+          privileged: true,
+          binds: [],
+          restartPolicy: 'unless-stopped',
+        },
+        'running',
+      );
+
+      const rec = await ensure(manager);
+      // 39000 is taken → the allocator picks the next free port (39001), localhost-bound.
+      expect(rec.devPort).toBe(39001);
+      expect(engine.created[0].ports).toEqual([
+        { hostIp: '127.0.0.1', hostPort: 39001, containerPort: 7000 },
+      ]);
+      expect(engine.created[0].labels['com.agent.devport']).toBe('39001');
+    });
+
+    it('TWO workstations never double-bind — the second avoids the first', async () => {
+      const a = await ensure(manager, TEAM, PROJECT, 'feature/a');
+      const b = await ensure(manager, TEAM, PROJECT, 'feature/b');
+      expect(a.devPort).toBe(39000);
+      expect(b.devPort).toBe(39001);
+      expect(a.devPort).not.toBe(b.devPort);
+    });
+
+    it('WORKSPACE_DEV_PORT + WORKSPACE_PORT_RANGE_START override the container port + pool start', async () => {
+      const m = new ContainerManagerService(
+        engine,
+        makeEnv({
+          WORKSPACE_DEV_PORT: '5173',
+          WORKSPACE_PORT_RANGE_START: '40000',
+          WORKSPACE_PORT_RANGE_END: '40010',
+        }),
+        makeProjects(),
+        registry,
+        credentials,
+        readiness,
+        provisioner,
+        makeRefs(),
+        daemon,
+      );
+      const rec = await m.ensureWorkspace(TEAM, PROJECT, BRANCH, BASE_REF, UPSTREAM);
+      expect(rec.devPort).toBe(40000);
+      expect(engine.created[0].ports).toEqual([
+        { hostIp: '127.0.0.1', hostPort: 40000, containerPort: 5173 },
+      ]);
+    });
+
+    it('GRACEFULLY falls back to NO published port when the pool is exhausted (create still succeeds)', async () => {
+      // A 1-wide pool [40000..40000]: the first create takes it, the second finds the pool exhausted.
+      const m = new ContainerManagerService(
+        engine,
+        makeEnv({
+          WORKSPACE_PORT_RANGE_START: '40000',
+          WORKSPACE_PORT_RANGE_END: '40000',
+        }),
+        makeProjects(),
+        registry,
+        credentials,
+        readiness,
+        provisioner,
+        makeRefs(),
+        daemon,
+      );
+      const first = await m.ensureWorkspace(TEAM, PROJECT, 'feature/a', BASE_REF, UPSTREAM);
+      expect(first.devPort).toBe(40000);
+
+      const second = await m.ensureWorkspace(TEAM, PROJECT, 'feature/b', BASE_REF, UPSTREAM);
+      // Pool exhausted → the workstation is created WITHOUT a published port, but creation SUCCEEDS.
+      expect(second.workspaceId).toBeDefined();
+      expect(second.status).toBe('running');
+      expect(second.devPort).toBeUndefined();
+      const secondSpec = engine.created[1];
+      expect(secondSpec.ports).toBeUndefined();
+      expect(secondSpec.labels['com.agent.devport']).toBeUndefined();
+    });
+
+    it('RECONCILES the dev port from the label on boot adoption (survives a restart)', async () => {
+      engine.seed(
+        {
+          name: 'agent-ws-reconcile',
+          image: 'img',
+          env: [],
+          labels: {
+            'com.agent.managed': '1',
+            'com.agent.workspace': 'rec-1',
+            'com.agent.team': TEAM,
+            'com.agent.project': PROJECT,
+            'com.agent.branch': BRANCH,
+            'com.agent.devport': '39007',
+          },
+          privileged: true,
+          binds: [],
+          restartPolicy: 'unless-stopped',
+        },
+        'running',
+      );
+      await manager.onApplicationBootstrap();
+      expect(registry.get('rec-1')?.devPort).toBe(39007);
+    });
+  });
+
+  describe('boot-time daemon-version reconciliation', () => {
+    const CURRENT = 'sha-current';
+
+    /** Seed a running managed sandbox on (team, project, branch) so reconcile adopts it into the registry. */
+    function seedRunning(wsId: string, branch = BRANCH): void {
+      engine.seed(
+        {
+          name: `agent-ws-${wsId}`,
+          image: 'img',
+          env: [],
+          labels: {
+            'com.agent.managed': '1',
+            'com.agent.workspace': wsId,
+            'com.agent.team': TEAM,
+            'com.agent.project': PROJECT,
+            'com.agent.branch': branch,
+          },
+          privileged: true,
+          binds: [],
+          restartPolicy: 'unless-stopped',
+        },
+        'running',
+      );
+    }
+
+    /** Build a manager whose provisioner reports `current` as the just-built version and whose daemon's
+     * `version()` RPC is driven by `versionByWs` (a throw if the id maps to an Error, else `{buildVersion}`). */
+    function buildManager(
+      current: string | undefined,
+      versionByWs: Record<string, string | Error>,
+    ): ContainerManagerService {
+      const gitCall = vi.fn(async (id: string, method: string) => {
+        if (method !== 'version') return undefined;
+        const v = versionByWs[id];
+        if (v instanceof Error) throw v;
+        return { buildVersion: v };
+      });
+      const daemonFake = { gitCall } as unknown as DaemonClient & {
+        gitCall: ReturnType<typeof vi.fn>;
+      };
+      return new ContainerManagerService(
+        engine,
+        makeEnv(),
+        makeProjects(),
+        registry,
+        credentials,
+        makeReadiness(),
+        makeProvisioner(current),
+        makeRefs(),
+        daemonFake,
+      );
+    }
+
+    it('restarts a sandbox whose reported version ≠ current, and never recreates it', async () => {
+      seedRunning('stale-1');
+      const m = buildManager(CURRENT, { 'stale-1': 'sha-OLD' });
+
+      await m.onApplicationBootstrap();
+
+      // Restarted onto the new daemon — via restart, NOT remove/recreate (the clone must survive).
+      expect(engine.restarted).toContain(
+        registry.get('stale-1')?.containerId ?? 'MISSING',
+      );
+      expect(engine.removed).toHaveLength(0);
+      m.onModuleDestroy();
+    });
+
+    it('restarts a sandbox whose version() RPC THROWS (an old daemon with no such RPC)', async () => {
+      seedRunning('old-1');
+      const m = buildManager(CURRENT, {
+        'old-1': new Error('unknown git RPC method version'),
+      });
+
+      await m.onApplicationBootstrap();
+
+      expect(engine.restarted).toContain(registry.get('old-1')?.containerId);
+      expect(engine.removed).toHaveLength(0);
+      m.onModuleDestroy();
+    });
+
+    it('SKIPS a sandbox already on the current version (idempotent no-op)', async () => {
+      seedRunning('current-1');
+      const m = buildManager(CURRENT, { 'current-1': CURRENT });
+
+      await m.onApplicationBootstrap();
+
+      expect(engine.restarted).toHaveLength(0);
+      m.onModuleDestroy();
+    });
+
+    it('a restart FAILURE is logged and the sweep continues to the next sandbox', async () => {
+      seedRunning('stale-a', 'feature/a');
+      seedRunning('stale-b', 'feature/b');
+      const m = buildManager(CURRENT, {
+        'stale-a': 'sha-OLD',
+        'stale-b': 'sha-OLD',
+      });
+      // The FIRST restart rejects — the sweep must still attempt (and succeed) the second.
+      engine.failNextRestart = true;
+
+      await m.onApplicationBootstrap();
+
+      // Exactly one container restarted successfully; the failed one was swallowed (no throw, no recreate).
+      expect(engine.restarted).toHaveLength(1);
+      expect(engine.removed).toHaveLength(0);
+      m.onModuleDestroy();
+    });
+
+    it('SKIPS the whole sweep when no current build version is known (build predates the stamp)', async () => {
+      seedRunning('whatever-1');
+      const m = buildManager(undefined, { 'whatever-1': 'sha-OLD' });
+
+      await m.onApplicationBootstrap();
+
+      // No target version → never bounce a running sandbox blindly.
+      expect(engine.restarted).toHaveLength(0);
+      m.onModuleDestroy();
+    });
   });
 });

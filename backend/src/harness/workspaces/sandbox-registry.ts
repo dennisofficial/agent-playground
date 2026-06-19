@@ -32,6 +32,12 @@ export interface SandboxRecord {
    * Undefined only for a sandbox created before the label existed (or with the label stripped) — its
    * cred-req then gets a clean rejection until recreate. */
   bootstrapToken?: string;
+  /** The host port this workstation's dev server is published on — `127.0.0.1:<devPort>` maps to the
+   * sandbox's `WORKSPACE_DEV_PORT` (default 7000). Persisted as the `com.agent.devport` label (the durable
+   * source of truth the allocator reads to avoid double-binding, and what survives a host restart so the
+   * URL reconciles on boot). Undefined when the port pool was exhausted at create (exposure is best-effort —
+   * the workstation still works), or for a sandbox that predates this feature. */
+  devPort?: number;
 }
 
 /** What `resolveForSession`/`find` need to key a workstation — the session's tenancy AND its branch (a

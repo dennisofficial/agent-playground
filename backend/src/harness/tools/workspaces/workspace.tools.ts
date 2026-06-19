@@ -149,7 +149,14 @@ export class CreateWorkspaceTool implements IHarnessTool<
         upstream,
       });
       const reentry = `${id.team}/${project}`;
-      return `Workstation ${workAreaId} is on branch ${branch} (cut from ${baseRef}, PRs into ${upstream}) in the ${reentry} sandbox. Open sessions against it — they share its branch/worktree inside the sandbox; the whole team works this branch directly.`;
+      // Surface where the dev server will be viewable (best-effort: undefined when the port pool was
+      // exhausted at create). The agent makes it reachable by running its dev server in the sandbox's inner
+      // compose published to 0.0.0.0:7000 (the WORKSPACE_DEV_PORT).
+      const devNote =
+        sandbox.devPort !== undefined
+          ? ` Its dev server is viewable at http://localhost:${sandbox.devPort} once a session runs one inside the sandbox's inner compose published to 0.0.0.0:7000.`
+          : '';
+      return `Workstation ${workAreaId} is on branch ${branch} (cut from ${baseRef}, PRs into ${upstream}) in the ${reentry} sandbox. Open sessions against it — they share its branch/worktree inside the sandbox; the whole team works this branch directly.${devNote}`;
     } catch (err) {
       return `Couldn't create the workspace: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -244,7 +251,8 @@ export class ListWorkspacesTool implements IHarnessTool<
         const sessions = open.length
           ? open.map((s) => `${s.id} (${s.status})`).join(', ')
           : 'none';
-        return `- ${w.id} — branch ${w.branch}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}`;
+        const devNote = w.devUrl ? `; dev server: ${w.devUrl}` : '';
+        return `- ${w.id} — branch ${w.branch}${w.ownerBot ? `, created by ${w.ownerBot}` : ''}; open sessions: ${sessions}${devNote}`;
       }),
     );
     return lines.join('\n');

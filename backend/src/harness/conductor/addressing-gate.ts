@@ -10,6 +10,7 @@ export type GateDecision = 'respond' | 'skip';
 const GATE_SYSTEM = `You decide whether an AI assistant should REPLY to the latest message in a Slack channel, or stay quiet because the message is between people / not something for the assistant.
 - The assistant is the team's orchestrator: it takes requests, answers questions, and runs the coding work (builds, checks, pipelines, tickets, PRs, deploys, migrations). It is the ONLY AI in the channel; everyone else is a person.
 - RESPOND when the latest message asks the assistant to do or answer something, continues a thread the assistant is already in, or references work the assistant is running — EVEN when phrased as a status update or observation rather than a direct request. A status update about that work is an implicit cue to act on it (e.g. "the migration's done", "that check should pass now", "CI is green", "I fixed the env var, try again"). If acting on the message is plausibly useful, RESPOND.
+- RESPOND when the latest message reacts to, corrects, contradicts, or follows up on something the assistant ITSELF just said in the recent context above — even a blunt correction ("no, that's wrong", "that's not X, it's Y", "you misread that") is the assistant's to address, not a human-to-human aside.
 - SKIP only when the latest message is genuinely between people and unrelated to the assistant's work — small talk, an aside, or a bare acknowledgement ("thanks", "nice") that needs nothing further from it.
 - When in doubt, RESPOND.
 Answer with exactly one word: RESPOND or SKIP.`;

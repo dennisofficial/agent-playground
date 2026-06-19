@@ -17,15 +17,14 @@ export function fakeSandboxRegistry(
 }
 
 /**
- * TEST HELPER (Phase 8): a `WorkspaceGitProvider` stand-in whose `resolve()` always returns the given
- * git surface — the LOCAL path every existing consumer spec asserts. Pass the spec's existing mock
- * `WorkspaceService` (or any object implementing the async-git methods under test) and the consumer's
- * `this.workspaceGit.resolve(ctx).<method>(...)` calls land straight on it, so the spec's assertions
- * (which expect the underlying git method to be called) keep passing unchanged.
+ * TEST HELPER: a `WorkspaceGitProvider` stand-in whose `resolve()` / `resolveReferenceTarget()` always
+ * return the given git surface, so a consumer spec can assert the underlying git method was called
+ * without standing up the real daemon-routing machinery. Pass any object implementing the async-git
+ * methods under test as `git`; the consumer's `this.workspaceGit.resolve(ctx).<method>(...)` (or
+ * `resolveReferenceTarget(...).port.<method>(...)`) calls land straight on it.
  *
- * This mirrors production behavior: `WorkspaceGitProvider.resolve` returns the local pass-through
- * adapter (which delegates 1:1 to `WorkspaceService`) whenever `isContainerized` is false — i.e. always,
- * this phase. The helper collapses the adapter hop the mock service already stands in for.
+ * It collapses the daemon-adapter hop the mock already stands in for. Use `containerizedIds` to model the
+ * containerized fork (review/ship/open_pr) and `referenceTarget: false` to model "no live workstation".
  */
 export function localGitProvider(
   git: Partial<WorkspaceGitPort> = {},
@@ -34,6 +33,9 @@ export function localGitProvider(
     containerizedIds?: ReadonlySet<string>;
     /** The object `daemonFor` returns for a containerized ctx (defaults to `git`). */
     daemon?: unknown;
+    /** Set false to model "no live workstation to clone into" (`resolveReferenceTarget` → undefined),
+     * exercising the reference tools' create_workspace-guidance path. Defaults to a resolved target. */
+    referenceTarget?: boolean;
   } = {},
 ): WorkspaceGitProvider {
   const containerized = opts.containerizedIds ?? new Set<string>();
@@ -55,5 +57,11 @@ export function localGitProvider(
     isContainerized: isC,
     daemonFor: (ctx?: { workspaceId?: string; session?: { workspaceId?: string } }) =>
       isC(ctx) ? ((opts.daemon ?? git) as never) : undefined,
+    // The reference-clone routing seam: returns the given git surface as the resolved workstation port
+    // (mirrors `resolve`), or `undefined` when `referenceTarget === false` (no live workstation).
+    resolveReferenceTarget: (sel?: { workspaceId?: string }) =>
+      opts.referenceTarget === false
+        ? undefined
+        : { workspaceId: sel?.workspaceId ?? 'wa-ref', port: git as WorkspaceGitPort },
   } as unknown as WorkspaceGitProvider;
 }

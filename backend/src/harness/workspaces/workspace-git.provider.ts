@@ -70,4 +70,38 @@ export class WorkspaceGitProvider {
   public isContainerized(ctx: WorkspaceGitCtx): boolean {
     return this.daemonFor(ctx) !== undefined;
   }
+
+  /**
+   * Resolve a LIVE work area to materialize a team/project-scoped read into (a reference clone). The
+   * reference tools (`reference_project`/`reference_repo`/`investigate({references})`) have no workspace
+   * handle of their own, so they route the read-only clone through an EXISTING live workstation:
+   *   - an explicit `workspaceId` wins (the investigate session's own work area);
+   *   - else the bot's OWN live area for `(team, project)`, newest first;
+   *   - else ANY live area for `(team, project)` — boot-reconciled areas carry `ownerBot: ''`, so an
+   *     owner-only match would miss a perfectly good workstation.
+   * Returns the bound port + the work area it resolved to, or `undefined` when none is live. We NEVER
+   * auto-create here — the caller turns `undefined` into create_workspace guidance.
+   */
+  resolveReferenceTarget(sel: {
+    team: string;
+    project?: string;
+    ownerBot?: string;
+    workspaceId?: string;
+  }): { workspaceId: string; port: WorkspaceGitPort } | undefined {
+    if (sel.workspaceId) {
+      const port = this.daemonFor({ workspaceId: sel.workspaceId });
+      return port ? { workspaceId: sel.workspaceId, port } : undefined;
+    }
+    const areas = this.workAreas.list({ team: sel.team, project: sel.project });
+    const own = sel.ownerBot
+      ? areas.filter((a) => a.ownerBot === sel.ownerBot)
+      : [];
+    const rest = areas.filter((a) => !own.includes(a));
+    // Newest first within each tier (registry is insertion-ordered), bot's own preferred.
+    for (const a of [...own.reverse(), ...rest.reverse()]) {
+      const port = this.daemonFor({ workspaceId: a.workAreaId });
+      if (port) return { workspaceId: a.workAreaId, port };
+    }
+    return undefined;
+  }
 }

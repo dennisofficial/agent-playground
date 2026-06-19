@@ -13,6 +13,7 @@ import {
   OnApplicationBootstrap,
   OnApplicationShutdown,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import {
   ChannelRegistryService,
   type ChannelInfo,
@@ -122,7 +123,14 @@ export class ConductorService
   /** Pending SILENT wake-ups injected from outside the conductor (e.g. a Slack approval-card verdict
    * waking Atlas). Same delivery semantics: a gate-bypassed seed turn, run when Atlas is free; the
    * seed is visible only to Atlas — what (if anything) to say in the channel is its own call. */
-  private seedQueue: Array<{ channelId: string; prompt: string }> = [];
+  private seedQueue: Array<{
+    channelId: string;
+    prompt: string;
+    /** Carry the prompt as a TRANSIENT `relaySeed` (rendered, never committed to `messages`) rather
+     * than a durable synthetic HumanMessage. Set for session-report relays (full verbatim worker
+     * reports — the window-bloat source); board events / injectSeed stay durable (small milestones). */
+    ephemeral?: boolean;
+  }> = [];
   /** Consecutive no-progress failures at a stuck cursor, keyed by channelId — the error retry-cap
    * loop breaker, scoped so one room's poison message can't skip another room's batch. */
   private failures = new Map<string, { cursor: number; count: number }>();
@@ -148,7 +156,11 @@ export class ConductorService
     private readonly creds: TenantCredentialService,
     private readonly credCtx: CredentialContext,
     private readonly boardEvents: BoardEventsBus,
-    private readonly credentialHealth: CredentialHealthService,
+    // Resolved LAZILY (see the auth-error path below): a constructor injection here closes a DI
+    // cycle — ConductorService → CredentialHealthService → ROTATE_KEYS_PRESENTER (useExisting
+    // RotateKeysCardsService) → ConductorService — which silently deadlocks NestFactory.create()
+    // at boot. ModuleRef defers the edge so the container can construct ConductorService first.
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /** Atlas — the single orchestrator (the one `teamLead`). */
@@ -319,7 +331,10 @@ export class ConductorService
         auth?.mode === 'subscription',
       );
     }
-    this.seedQueue.push({ channelId, prompt });
+    // Ephemeral: the relay carries the session's FULL verbatim report — render it for this turn but
+    // keep it out of Atlas's durable history so a multi-hop relay loop never bloats its window. The
+    // brain's raw reasoning stays in the session; Atlas's window grows only by its distilled post.
+    this.seedQueue.push({ channelId, prompt, ephemeral: true });
     this.schedule();
   }
 
@@ -492,7 +507,11 @@ export class ConductorService
         ? seed.channelId
         : this.channel.surfaceId;
       this.claim(() =>
-        this.runBotGraph(atlas, { seed: seed.prompt, channelId }),
+        this.runBotGraph(atlas, {
+          seed: seed.prompt,
+          channelId,
+          ephemeral: seed.ephemeral,
+        }),
       );
     }
     // Room deliveries: Atlas's undelivered work per room it's a member of.
@@ -548,7 +567,7 @@ export class ConductorService
    */
   private async runBotGraph(
     bot: EmployeeDefinition,
-    opts: { seed?: string; channelId?: string } = {},
+    opts: { seed?: string; channelId?: string; ephemeral?: boolean } = {},
   ): Promise<void> {
     // Scope the LangGraph thread by ROOM so one room's durable conversation history never replays
     // into another — the {botId}:{channelId}:root convention.
@@ -566,7 +585,7 @@ export class ConductorService
     bot: EmployeeDefinition,
     info: ChannelInfo,
     channelId: string,
-    opts: { seed?: string; channelId?: string },
+    opts: { seed?: string; channelId?: string; ephemeral?: boolean },
   ): Promise<void> {
     const thread = `${bot.id}:${channelId}:root`;
     const identity = this.identityFor(bot.id, info);
@@ -628,6 +647,7 @@ export class ConductorService
         this.emit({
           id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
           kind: 'usage',
+          channelId,
           botId: bot.id,
           role: 'chat',
           usage,
@@ -685,6 +705,7 @@ export class ConductorService
         this.emit({
           id: `${bot.id}:${this.emitSeq++}`,
           kind: 'tool',
+          channelId,
           botId: bot.id,
           botName: bot.name,
           toolName: c.name,
@@ -701,8 +722,13 @@ export class ConductorService
     const input: Record<string, unknown> = {
       cursor: cursorBefore,
       forced: !!opts.seed,
+      // Set on EVERY run (like `forced`), so a prior turn's relaySeed can never leak in via the
+      // no-op reducer path. An ephemeral relay carries its payload here (transient); a durable seed
+      // (board event / injectSeed) rides in `messages` below instead.
+      relaySeed: opts.ephemeral ? opts.seed : undefined,
     };
-    if (opts.seed) input.messages = [new HumanMessage(opts.seed)];
+    if (opts.seed && !opts.ephemeral)
+      input.messages = [new HumanMessage(opts.seed)];
 
     let failed = false;
     try {
@@ -736,6 +762,17 @@ export class ConductorService
           if (delta.decision) {
             gateDecision = delta.decision;
             gateTargetId = delta.reactionTargetId;
+            // Observability: surface the gate verdict, per-thread, so an out-of-band observer (the dev
+            // console) can see respond-vs-skip without inferring. The in-graph gate exposes only the
+            // verdict, not its reasoning, so this carries action only.
+            this.emit({
+              id: `gate-${this.emitSeq++}`,
+              kind: 'gate',
+              channelId,
+              botId: bot.id,
+              botName: bot.name,
+              action: delta.decision,
+            });
             if (gateTargetId && delta.decision === 'respond') {
               this.emitReaction(bot, channelId, gateTargetId, COMPOSING_EMOJI);
               composing = true;
@@ -746,6 +783,7 @@ export class ConductorService
             this.emit({
               id: `m-${this.emitSeq++}`,
               kind: 'recall',
+              channelId,
               botId: bot.id,
               botName: bot.name,
               text: delta.recalled,
@@ -763,6 +801,7 @@ export class ConductorService
             this.emit({
               id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
               kind: 'usage',
+              channelId,
               botId: bot.id,
               role: 'chat',
               usage: delta.draftUsage,
@@ -772,6 +811,7 @@ export class ConductorService
             this.emit({
               id: `d-${this.emitSeq++}`,
               kind: 'draft',
+              channelId,
               botId: bot.id,
               botName: bot.name,
               text: delta.draft,
@@ -815,12 +855,18 @@ export class ConductorService
       // The harness's OWN Anthropic key just 401'd in Atlas's chat graph — he can't rescue himself
       // (his model IS the dead key), so the SYSTEM posts the update-keys card directly (throttled).
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthError(msg))
-        void this.credentialHealth.reportAuthError(
-          info.teamId,
-          channelId,
-          'anthropic',
-        );
+      if (isAuthError(msg)) {
+        // Resolve CredentialHealthService lazily — eager constructor injection closes a DI cycle
+        // (see the ctor note). `ModuleRef.get` is sync and THROWS if the provider can't be found,
+        // so guard it: a lookup miss must not turn the auth-error path into a fresh crash.
+        try {
+          void this.moduleRef
+            .get(CredentialHealthService, { strict: false })
+            .reportAuthError(info.teamId, channelId, 'anthropic');
+        } catch (e) {
+          this.logger.warn(`credential-health lookup failed: ${String(e)}`);
+        }
+      }
     } finally {
       // Safety-flush a deferred message (e.g. the graph ended/errored before the tool result
       // arrived). Posts without file_ids rather than silently dropping the message.

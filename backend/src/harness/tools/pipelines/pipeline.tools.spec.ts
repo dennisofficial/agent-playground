@@ -2,10 +2,11 @@ import { DispatchPipelineTool } from './pipeline.tools';
 import type { HarnessToolContext } from '../tool.types';
 
 /**
- * The dispatch_pipeline SOFT grounding guard (Phase 1): a feature dispatch should trace to a real
- * code read — an `investigate` session tied to the board task — not a memory/assumption decomposition.
- * The guard is a helpful refusal (a returned string, never a throw), overridable with
- * `acknowledge_ungrounded`, and never applied to a bugfix.
+ * The dispatch_pipeline grounding guard: a feature dispatch should trace to a real code read — an
+ * `investigate` session tied to the board task — not a memory/assumption decomposition. The guard is
+ * a helpful refusal (a returned string, never a throw); it is satisfiable only by a real investigate
+ * (no override flag), and never applied to a bugfix. A tied investigate counts whether it is still
+ * open (idle/running) or already closed after reporting back.
  */
 
 const ctx = {
@@ -64,6 +65,25 @@ describe('dispatch_pipeline grounding guard', () => {
     ]);
     await tool.execute(featureArgs, ctx);
     expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a closed investigate that already reported back as grounding', async () => {
+    // The natural flow closes the session once its answer is in hand, BEFORE dispatching — a closed
+    // investigation that produced a report is still a real code read, so it must satisfy the guard.
+    const { tool, start } = makeTool([
+      { boardTaskId: 5, mode: 'investigate', status: 'closed', lastReport: 'deps: clean' },
+    ]);
+    await tool.execute(featureArgs, ctx);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT count a closed investigate that never reported (no lastReport)', async () => {
+    const { tool, start } = makeTool([
+      { boardTaskId: 5, mode: 'investigate', status: 'closed' },
+    ]);
+    const out = await tool.execute(featureArgs, ctx);
+    expect(out).toContain('investigate');
+    expect(start).not.toHaveBeenCalled();
   });
 
   it('ignores an investigate for a different task or a non-investigate session', async () => {

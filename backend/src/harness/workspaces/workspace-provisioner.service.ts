@@ -15,6 +15,11 @@ import {
 /** Defaults mirror `build-daemon.sh` so the slack-app and the manual script agree on names. */
 const DEFAULT_DAEMON_BUILD_VOLUME = 'agent-daemon-build';
 const DEFAULT_PNPM_STORE_VOLUME = 'agent-pnpm-store';
+/** The daemon-build's content-version stamp, as read INSIDE the throwaway version-reader container (the
+ * build volume is mounted read-only at `/daemon` there). `daemon-build-inner.sh` writes `sha256(main.js)`
+ * here; the boot reconciliation compares this CURRENT version against each running sandbox's self-reported
+ * `version()`. Mirrors the in-sandbox path (`dirname(DAEMON_ENTRY)/.build-version`). */
+const DAEMON_BUILD_VERSION_PATH = '/daemon/backend/dist/daemon/.build-version';
 /** Paths relative to the repo root (the build context + the bind-mounted `/src`). */
 const DOCKERFILE = 'backend/src/daemon/Dockerfile';
 const ENTRYPOINT = 'backend/src/daemon/entrypoint.sh';
@@ -47,6 +52,11 @@ export class WorkspaceProvisionerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(WorkspaceProvisionerService.name);
   /** The memoized provision promise (the warm-up and every `create()` share this one run). */
   private inFlight?: Promise<void>;
+  /** Memoized just-built daemon version (`sha256(main.js)` from the volume stamp). Read ONCE after the
+   * volume is current — the build doesn't change under us within a process — and reused by the boot
+   * version-reconciliation. `undefined` means not-yet-read OR a build that predates the stamp; the reader
+   * distinguishes via the resolved promise (a `''`/absent stamp). */
+  private buildVersion?: Promise<string | undefined>;
 
   constructor(
     @Inject(CONTAINER_ENGINE) private readonly engine: ContainerEnginePort,
@@ -73,6 +83,50 @@ export class WorkspaceProvisionerService implements OnApplicationBootstrap {
       });
     }
     return this.inFlight;
+  }
+
+  /**
+   * The CURRENT (just-built) daemon build version — the `sha256(main.js)` stamp `daemon-build-inner.sh`
+   * wrote into the volume. Ensures the volume is provisioned FIRST (so the read reflects the freshly-built
+   * daemon, not a stale stamp), then reads it once and caches the result. Drives the boot-time version
+   * reconciliation: the host restarts any running sandbox whose `version()` ≠ this.
+   *
+   * Returns `undefined` when sandboxes are disabled (no `WORKSPACE_IMAGE`) or the stamp is absent (a build
+   * that predates the stamp) — the reconciliation then SKIPS (it can't know the target, so it won't bounce
+   * running sandboxes blindly). Read-once, but NOT cleaked into the provision memo, so it never blocks a
+   * spawn; a transient read error rejects this call's promise without poisoning future ones.
+   */
+  currentBuildVersion(): Promise<string | undefined> {
+    if (!this.buildVersion) {
+      this.buildVersion = this.readBuildVersion().catch((err) => {
+        this.buildVersion = undefined; // clear so a later caller can retry
+        throw err;
+      });
+    }
+    return this.buildVersion;
+  }
+
+  private async readBuildVersion(): Promise<string | undefined> {
+    const image = this.env.get('WORKSPACE_IMAGE');
+    if (!image) return undefined; // sandboxes disabled — nothing to reconcile against
+    await this.ensureProvisioned(); // ensure the volume holds the freshly-built daemon before reading
+    const buildVolume =
+      this.env.get('WORKSPACE_DAEMON_BUILD_VOLUME') ??
+      DEFAULT_DAEMON_BUILD_VOLUME;
+    const version = await this.engine.readDaemonBuildVersion(
+      buildVolume,
+      image,
+      DAEMON_BUILD_VERSION_PATH,
+    );
+    if (!version) {
+      this.logger.warn(
+        `daemon build has no .build-version stamp in ${buildVolume} — boot version reconciliation will ` +
+          'be skipped (rebuild the daemon to stamp it). Running sandboxes are left as-is.',
+      );
+      return undefined;
+    }
+    this.logger.log(`current daemon build version: ${version}`);
+    return version;
   }
 
   private async provision(): Promise<void> {

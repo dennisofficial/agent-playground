@@ -226,6 +226,9 @@ export class BotGraphNodes {
       toolLoopCorrections: 0,
       toolLoopInstruction: undefined,
       forcedRefreshScopes: undefined,
+      // A relaySeed orphaned by a crash before `llm` consumed it is dropped, never replayed. The
+      // gateNode return below re-asserts it from `state` for an actual relay turn (see there).
+      relaySeed: undefined,
     });
 
     /**
@@ -247,7 +250,15 @@ export class BotGraphNodes {
     ): Promise<Partial<BotStateType>> => {
       const resets = resetsFor(state);
       if (state.forced || !this.gate)
-        return { decision: 'respond', pending: [], ...resets };
+        // Re-assert the incoming relaySeed AFTER `...resets` (which zeroes it): the conductor reduced
+        // `input.relaySeed` into `state` before this entry node ran, so a forced relay turn must carry
+        // it through to `llm`. Gated on `forced` so a no-gate non-relay turn still resets to undefined.
+        return {
+          decision: 'respond',
+          pending: [],
+          ...resets,
+          relaySeed: state.forced ? state.relaySeed : undefined,
+        };
       const channelId = this.channelIdOf(config);
       const batch = channel
         .since(state.cursor, channelId)
@@ -278,11 +289,15 @@ export class BotGraphNodes {
     };
 
     /**
-     * CONSUME NODE — the skip path. Advances the cursor PAST the gated batch without a model call.
-     * `seq + 1` (NOT lengthOf) so a message that arrived during the gate's classify still gets its
-     * own future gate pass. Skipped chatter is NOT written into `messages` (Atlas doesn't carry
-     * ignored human-to-human messages into its LLM context — matches prior behavior); routes straight
-     * to END, no reconcile.
+     * CONSUME NODE — the skip path. Persists the gated batch into durable history AND advances the
+     * cursor PAST it, without a model call. `seq + 1` (NOT lengthOf) so a message that arrived during
+     * the gate's classify still gets its own future gate pass.
+     *
+     * This channel is Atlas's OWN, so every message is its context even when it stays quiet: two devs
+     * talking back-and-forth is still remembered — Atlas just doesn't reply. So the skipped batch is
+     * written into `messages` (via the SAME `asInput` the respond path uses) so a later respond turn
+     * sees it in history. The gate decides whether Atlas SPEAKS, never whether it REMEMBERS. No reply,
+     * no reconcile; routes straight to END.
      */
     const consumeNode = (
       state: BotStateType,
@@ -292,7 +307,9 @@ export class BotGraphNodes {
       const newCursor = pending.length
         ? pending[pending.length - 1].seq + 1
         : channel.lengthOf(this.channelIdOf(config));
-      return { cursor: newCursor };
+      // Persist the skipped batch, aligned with the cursor advance: the cursor moves exactly past
+      // `pending`, so these messages are never re-read on a later turn — appended once, no dup.
+      return { cursor: newCursor, messages: pending.map(asInput) };
     };
 
     /** Out of `gate`: the normal turn (respond) or the cursor-advance skip path. */
@@ -475,6 +492,14 @@ export class BotGraphNodes {
         // history cache breakpoint so it never invalidates the cached prefix.
         new HumanMessage(`(${timeContext})`),
         ...freshForModel,
+        // RELAY SEED: a background session's verbatim report for THIS relay turn — rendered
+        // transiently (never enters `messages`) so the brain's raw reasoning stays in the session's
+        // own context and Atlas's durable window grows only by the distilled post it makes. Re-rendered
+        // on every `llm` step while set (the model is stateless per invoke, so a post-tools step must
+        // see it again to keep relaying coherently). Sits after `freshForModel` — if a human message
+        // coincides with the relay, the human's words read first and the report lands as latest context
+        // — but before the draft note, which must remain LAST.
+        ...(state.relaySeed ? [new HumanMessage(state.relaySeed)] : []),
         // READ-THE-ROOM revision pass: the unposted draft + instruction, as the LAST message —
         // the teammate messages that staled it arrived through `freshForModel` above (they sat
         // past the cursor, so the normal top-of-step read picked them up).
@@ -516,6 +541,9 @@ export class BotGraphNodes {
           draftUsage: usageOf(ai),
           revisionPasses: state.revisionPasses + 1,
           toolLoopInstruction: undefined, // one-shot: consumed by this invoke's prompt
+          // Preserve across the llm→llm revision edge (like `draft`): the revision pass must still
+          // see the report it's relaying, or it would revise a relay whose source material vanished.
+          relaySeed: state.relaySeed,
         };
       }
       // Fresh (or at the revision cap → post anyway; or a tool-call step; or a silent empty reply).
@@ -529,6 +557,11 @@ export class BotGraphNodes {
         draft: undefined,
         draftUsage: undefined,
         toolLoopInstruction: undefined, // one-shot: consumed by this invoke's prompt
+        // Preserve the report through the ENTIRE llm ⇄ tools loop; clear ONLY on the terminal text
+        // response (no tool calls). A relay turn often calls reply_session/close_session FIRST and
+        // posts the relayed answer on a later step — clearing on every step would drop the report
+        // before that step runs.
+        relaySeed: hasToolCalls ? state.relaySeed : undefined,
       };
     };
 
