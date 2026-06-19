@@ -13,6 +13,7 @@ import { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
 import { TurnExecutor } from './turn-executor.service';
 import { WorkspaceGitProvider } from './workspace-git.provider';
+import { WorkspaceProvisionerService } from './workspace-provisioner.service';
 import { WorkspaceReader } from './workspace-reader';
 import { WorkspaceRegistry } from './workspace-registry';
 
@@ -33,6 +34,9 @@ import { WorkspaceRegistry } from './workspace-registry';
  *    consumer; `OnApplicationBootstrap` reconciles the registry from Docker labels);
  *  - `SandboxRegistry` — the in-memory `workspaceId ↔ record` map (`resolveForSession` lazily ensures);
  *  - `CredentialProvisionerService` — the host side of the just-in-time GitHub cred-pull channel.
+ *  - `WorkspaceProvisionerService` — self-provisions the base image + mounted daemon build AT BOOT
+ *    (via the same `CONTAINER_ENGINE` seam), so a deploy no longer needs a manual `pnpm daemon:build`.
+ *    `ContainerManagerService.create` awaits its memoized `ensureProvisioned()` before spawning.
  * Nothing CALLS `ensureWorkspace` yet (Phase 9 wires session lifecycle); the registered ensurer is
  * consumed by Phase 7's `RemoteTurnDispatcher`.
  *
@@ -65,6 +69,7 @@ import { WorkspaceRegistry } from './workspace-registry';
     DaemonClient,
     SandboxRegistry,
     SandboxReadinessService,
+    WorkspaceProvisionerService,
     ContainerManagerService,
     CredentialProvisionerService,
     RemoteTurnDispatcher,

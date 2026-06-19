@@ -53,6 +53,45 @@ After this the 6 puppet bots and the workspace tenant row are seeded from the sh
 manual Slack OAuth needed for local testing. `.env.personal` overrides `.env.local.enc`, so set a
 key there only to deviate from the shared dev workspace.
 
+## Workspace sandboxes (let the bots read/build code)
+
+Workspaces are now **mandatory and containerized** — daemon-only, no local-worktree fallback. The
+first time a bot tries to read or build code it spawns a per-task DinD sandbox via
+`ContainerManagerService`. The **slack-app self-provisions the base image + mounted daemon build at
+boot** (`WorkspaceProvisionerService`, through the same dockerode seam), so a deploy is just running
+the slack-app — **no manual `pnpm daemon:build`, no SSH**. One-time local setup on **Docker Desktop**:
+
+```bash
+# 1. Postgres + Redis (Redis = the host↔sandbox bus: host localhost:6380, service DNS
+#    agent-playground-redis:6379 on the agent-playground_default network).
+docker compose up -d                 # from the repo root
+
+# 2. Set the host env (backend/.env.personal — already in .env.example):
+#    WORKSPACE_IMAGE=agent-workspace-base
+#    WORKSPACE_DOCKER_STORAGE_DRIVER=vfs   # Docker Desktop only (overlay-on-overlay can't mount); EMPTY on Linux
+#    REDIS_URL=redis://localhost:6380      # the compose Redis; the default :6379 is the wrong instance
+
+# 3. Start the harness (pnpm slack:dev / dev server). At boot it builds the base image (if missing) and
+#    (re)builds the daemon into the mounted volume — the first time takes a few minutes; later boots are
+#    incremental (frozen lockfile + persistent pnpm-store ⇒ pnpm install ≈ no-op, only nest build runs).
+```
+
+A redeploy/restart rebuilds the mounted daemon volume, so a sandbox picks up new daemon code on its
+next (re)start. `pnpm daemon:build` still works as a **manual escape hatch** (pre-build, or rebuild
+outside the app); set `SKIP_DAEMON_BUILD=true` to skip the boot rebuild for fast restarts, or
+`REBUILD_IMAGE=true` to force a base-image rebuild.
+
+**Resetting / inspecting sandboxes** — workspaces are **not** in Postgres: Docker (`com.agent.managed`
+labels) and the daemon's git worktrees are the source of truth, and the host registries are in-memory
+caches reconciled at boot (only `sessions` are durable). So there's no in-app reset to maintain — to
+clear sandboxes just `docker rm -f` the `com.agent.managed=1` containers; the boot reconcile re-adopts
+what's left and the orphan-volume sweep reclaims leaked `/var/lib/docker` volumes. `pnpm daemon:reset`
+remains a dev convenience for that (plus the optional build-volume wipe / dev-DB drop).
+
+`WORKSPACE_REDIS_URL` and `WORKSPACE_NETWORK` use correct compose defaults — only override them for a
+non-default compose project name/network. The canonical, runnable recipe (and the exact reason
+Docker Desktop needs `vfs`) lives in `backend/src/daemon/__e2e__/sandbox-turn.e2e.ts`.
+
 ## Project setup
 
 **Submodules must be initialized before `pnpm install`** — `@workspace/langfuse` and

@@ -1,4 +1,5 @@
 import type {
+  BuildImageSpec,
   ContainerEnginePort,
   ContainerHandle,
   ContainerLabels,
@@ -6,6 +7,7 @@ import type {
   CreateContainerSpec,
   ListContainersFilter,
   ListVolumesFilter,
+  RunBuildContainerSpec,
   VolumeSummary,
 } from './container-engine.port';
 
@@ -45,6 +47,14 @@ export class InMemoryContainerEngine implements ContainerEnginePort {
   readonly removedVolumes: string[] = [];
   /** Drives `daemonBuildPresent` (the pre-spawn guard) — flip to false to exercise the loud failure. */
   buildPresent = true;
+  /** Image names the fake "has" locally (drives `imagePresent`). `buildImage` adds to it. */
+  private readonly images = new Set<string>();
+  /** Build call logs for provisioner assertions. */
+  readonly builtImages: string[] = [];
+  readonly imageBuilds: BuildImageSpec[] = [];
+  readonly daemonBuilds: RunBuildContainerSpec[] = [];
+  /** When true the NEXT `runBuildContainer` rejects once (then clears) — exercises the memo-retry path. */
+  failNextDaemonBuild = false;
 
   /** TEST HELPER: inject a container as if it already existed on the host before this process booted. */
   seed(spec: CreateContainerSpec, state: FakeContainer['state'] = 'running'): string {
@@ -136,6 +146,33 @@ export class InMemoryContainerEngine implements ContainerEnginePort {
 
   daemonBuildPresent(): Promise<boolean> {
     return Promise.resolve(this.buildPresent);
+  }
+
+  /** TEST HELPER: mark an image as already present (so the provisioner skips its build). */
+  seedImage(image: string): void {
+    this.images.add(image);
+  }
+
+  imagePresent(image: string): Promise<boolean> {
+    return Promise.resolve(this.images.has(image));
+  }
+
+  buildImage(spec: BuildImageSpec): Promise<void> {
+    this.images.add(spec.tag);
+    this.builtImages.push(spec.tag);
+    this.imageBuilds.push(spec);
+    return Promise.resolve();
+  }
+
+  runBuildContainer(spec: RunBuildContainerSpec): Promise<void> {
+    if (this.failNextDaemonBuild) {
+      this.failNextDaemonBuild = false;
+      return Promise.reject(new Error('simulated daemon build failure'));
+    }
+    this.daemonBuilds.push(spec);
+    // Model the real effect: a successful build populates the volume, so the pre-spawn guard passes.
+    this.buildPresent = true;
+    return Promise.resolve();
   }
 
   private summary(c: FakeContainer): ContainerSummary {

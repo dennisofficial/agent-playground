@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import Docker from 'dockerode';
 import { EnvService } from '@core/config/env/env.service';
 import type {
+  BuildImageSpec,
   ContainerEnginePort,
   ContainerHandle,
   ContainerLabels,
@@ -9,6 +10,7 @@ import type {
   CreateContainerSpec,
   ListContainersFilter,
   ListVolumesFilter,
+  RunBuildContainerSpec,
   VolumeSummary,
 } from './container-engine.port';
 
@@ -160,6 +162,88 @@ export class DockerodeAdapter implements ContainerEnginePort {
     }
   }
 
+  async imagePresent(image: string): Promise<boolean> {
+    try {
+      await this.docker().getImage(image).inspect();
+      return true;
+    } catch (err) {
+      if (isNotFound(err)) return false;
+      throw err;
+    }
+  }
+
+  async buildImage(spec: BuildImageSpec): Promise<void> {
+    const docker = this.docker();
+    // dockerode's documented `{ context, src }` form tars ONLY the listed files (the Dockerfile + what
+    // it COPYs) — so we never tar the monorepo and need no direct `tar-fs` dependency.
+    const stream = await docker.buildImage(
+      { context: spec.contextDir, src: spec.src },
+      {
+        dockerfile: spec.dockerfile,
+        t: spec.tag,
+        ...(spec.pull ? { pull: true } : {}),
+        ...(spec.noCache ? { nocache: true } : {}),
+      },
+    );
+    await new Promise<void>((resolve, reject) => {
+      docker.modem.followProgress(
+        stream,
+        (err: Error | null, output: BuildProgress[]) => {
+          if (err) return reject(err);
+          // A failed Dockerfile step does NOT reject the stream — it arrives as an `error`/`errorDetail`
+          // entry in the progress output, so scan for it explicitly.
+          const failed = (output ?? []).find((o) => o.error || o.errorDetail);
+          if (failed) {
+            return reject(
+              new Error(
+                failed.error ??
+                  failed.errorDetail?.message ??
+                  'docker build failed',
+              ),
+            );
+          }
+          resolve();
+        },
+      );
+    });
+  }
+
+  async runBuildContainer(spec: RunBuildContainerSpec): Promise<void> {
+    const docker = this.docker();
+    const container = await docker.createContainer({
+      Image: spec.image,
+      // Override the image ENTRYPOINT (the inner dockerd → daemon) so this run is purely the build.
+      Entrypoint: ['bash', spec.innerScript],
+      Cmd: [],
+      // A TTY merges stdout+stderr into one clean (un-multiplexed) stream, so a failure's tail logs are
+      // readable UTF-8 rather than docker's framed stream.
+      Tty: true,
+      HostConfig: {
+        Binds: [
+          `${spec.repoRoot}:/src:ro`,
+          `${spec.buildVolume}:/build`,
+          `${spec.storeVolume}:/pnpm-store`,
+        ],
+        AutoRemove: false,
+      },
+    });
+    try {
+      await container.start();
+      const res = (await container.wait()) as { StatusCode?: number };
+      if (res.StatusCode !== 0) {
+        const logs = await container
+          .logs({ follow: false, stdout: true, stderr: true, tail: 80 })
+          .then((b) => b.toString('utf8'))
+          .catch(() => '');
+        throw new Error(
+          `daemon build container exited ${res.StatusCode}\n${logs}`.trim(),
+        );
+      }
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
+    }
+  }
+
   async daemonBuildPresent(
     volume: string,
     image: string,
@@ -181,6 +265,13 @@ export class DockerodeAdapter implements ContainerEnginePort {
       await container.remove({ force: true }).catch(() => undefined);
     }
   }
+}
+
+/** One entry in dockerode's build progress stream (`followProgress` output). Only the failure fields
+ * matter to us — a failed Dockerfile step shows up here, not as a thrown error. */
+interface BuildProgress {
+  error?: string;
+  errorDetail?: { message?: string };
 }
 
 /** dockerode surfaces HTTP statuses on the error — 404 = container gone. */

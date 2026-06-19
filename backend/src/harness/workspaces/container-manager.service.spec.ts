@@ -15,6 +15,7 @@ import type { CredentialProvisionerService } from './credential-provisioner.serv
 import { InMemoryContainerEngine } from './in-memory-container-engine';
 import type { SandboxReadinessService } from './sandbox-readiness.service';
 import { SandboxRegistry } from './sandbox-registry';
+import type { WorkspaceProvisionerService } from './workspace-provisioner.service';
 
 const TEAM = 'team-1';
 const PROJECT = 'proj-1';
@@ -53,11 +54,20 @@ function makeReadiness(): SandboxReadinessService {
   } as unknown as SandboxReadinessService;
 }
 
+/** A no-op provisioner — the manager-level tests isolate from boot provisioning (its real behavior is
+ * covered in workspace-provisioner.service.spec.ts). `ensureProvisioned` just resolves. */
+function makeProvisioner(): WorkspaceProvisionerService {
+  return {
+    ensureProvisioned: vi.fn(async () => undefined),
+  } as unknown as WorkspaceProvisionerService;
+}
+
 describe('ContainerManagerService (in-memory container engine)', () => {
   let engine: InMemoryContainerEngine;
   let registry: SandboxRegistry;
   let credentials: CredentialProvisionerService;
   let readiness: SandboxReadinessService;
+  let provisioner: WorkspaceProvisionerService;
   let manager: ContainerManagerService;
 
   beforeEach(() => {
@@ -67,6 +77,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     registry = new SandboxRegistry();
     credentials = makeCredentials();
     readiness = makeReadiness();
+    provisioner = makeProvisioner();
     manager = new ContainerManagerService(
       engine,
       makeEnv(),
@@ -74,6 +85,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       registry,
       credentials,
       readiness,
+      provisioner,
     );
   });
 
@@ -136,6 +148,9 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(spec.env).toContain(
       'DAEMON_ENTRY=/daemon/backend/dist/daemon/main.js',
     );
+    // The harness source root inside the sandbox = the daemon mount (anchors repo-local skill paths;
+    // the volume has no `.git` so `git rev-parse` can't find it).
+    expect(spec.env).toContain('HARNESS_ROOT=/daemon');
     expect(spec.env).toContain('AGENT_HOME_ROOT=/workspace/.agent-home');
     expect(spec.env).toContain('WORKSPACE_ROOT=/workspace/repo');
     expect(spec.env).toContain('SANDBOX_GUARD_RELAXED=true');
@@ -191,6 +206,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       registry,
       credentials,
       readiness,
+      provisioner,
     );
     await expect(manager.ensureWorkspace(TEAM, PROJECT)).rejects.toThrow(
       /WORKSPACE_IMAGE is not set/,
@@ -206,6 +222,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       registry,
       credentials,
       readiness,
+      provisioner,
     );
     await manager.ensureWorkspace(TEAM, PROJECT);
     expect(engine.created[0].runtime).toBe('sysbox-runc');
@@ -223,6 +240,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       registry,
       credentials,
       readiness,
+      provisioner,
     );
     await manager.ensureWorkspace(TEAM, PROJECT);
     const spec = engine.created[0];
@@ -375,6 +393,22 @@ describe('ContainerManagerService (in-memory container engine)', () => {
     expect(engine.created).toHaveLength(0); // never spawned the container
   });
 
+  it('create awaits the boot provisioner before spawning (self-provision wiring)', async () => {
+    await manager.ensureWorkspace(TEAM, PROJECT);
+    expect(provisioner.ensureProvisioned).toHaveBeenCalledTimes(1);
+    expect(engine.created).toHaveLength(1);
+  });
+
+  it('a provisioner failure aborts the spawn (no half-built sandbox)', async () => {
+    (provisioner.ensureProvisioned as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('docker build failed'),
+    );
+    await expect(manager.ensureWorkspace(TEAM, PROJECT)).rejects.toThrow(
+      /docker build failed/,
+    );
+    expect(engine.created).toHaveLength(0);
+  });
+
   it('boot sweep reclaims a managed inner-docker volume with no live sandbox, but keeps live ones', async () => {
     // A leaked volume (no container) + a volume owned by a live sandbox.
     engine.seedVolume('agent-ws-docker-orphan', {
@@ -405,6 +439,7 @@ describe('ContainerManagerService (in-memory container engine)', () => {
       registry,
       credentials,
       readiness,
+      provisioner,
     );
     await expect(manager.onApplicationBootstrap()).resolves.toBeUndefined();
     expect(registry.list()).toHaveLength(0);

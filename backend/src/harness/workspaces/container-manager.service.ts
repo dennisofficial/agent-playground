@@ -22,6 +22,7 @@ import {
   type SandboxRecord,
   type SandboxStatus,
 } from './sandbox-registry';
+import { WorkspaceProvisionerService } from './workspace-provisioner.service';
 
 // ── Managed labels — the reconcile contract. The host rebuilds its registry from these on boot. ──
 const LABEL_WORKSPACE = 'com.agent.workspace';
@@ -110,6 +111,7 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     private readonly registry: SandboxRegistry,
     private readonly credentials: CredentialProvisionerService,
     private readonly readiness: SandboxReadinessService,
+    private readonly provisioner: WorkspaceProvisionerService,
   ) {
     // One-directional DI: register the lazy-create entry point so `SandboxRegistry.resolveForSession`
     // can ensure a sandbox without injecting this service back (no DI cycle).
@@ -181,6 +183,10 @@ export class ContainerManagerService implements OnApplicationBootstrap {
     const buildVolume =
       this.env.get('WORKSPACE_DAEMON_BUILD_VOLUME') ??
       DEFAULT_DAEMON_BUILD_VOLUME;
+    // Self-provision the base image + mounted daemon build (memoized — usually already warmed at boot),
+    // so a deploy never needs a manual `pnpm daemon:build`. THEN the loud, early presence check below
+    // still guards the spawn (it covers SKIP_DAEMON_BUILD with an empty volume).
+    await this.provisioner.ensureProvisioned();
     // Fail loudly + early if the mounted daemon build is missing (rather than spawning a sandbox whose
     // daemon can't start). Checked once per process — the build volume doesn't change under us.
     await this.ensureBuildPresent(image, buildVolume);
@@ -235,6 +241,10 @@ export class ContainerManagerService implements OnApplicationBootstrap {
         `WORKSPACE_REPO_URL=${repo}`,
         `WORKSPACE_BASE_BRANCH=${baseBranch}`,
         `DAEMON_ENTRY=${DAEMON_ENTRY}`,
+        // The harness source root inside the sandbox = the daemon mount (the volume has no `.git`, so
+        // `git rev-parse` can't find it). This anchors repo-local skill paths so a vendored skill like
+        // `skills/code-review` resolves to `/daemon/skills/code-review` (NOT the cloned target repo).
+        `HARNESS_ROOT=${DAEMON_MOUNT}`,
         `AGENT_HOME_ROOT=${SANDBOX_AGENT_HOME_ROOT}`,
         `WORKSPACE_ROOT=${SANDBOX_WORKSPACE_ROOT}`,
         `SANDBOX_GUARD_RELAXED=true`,

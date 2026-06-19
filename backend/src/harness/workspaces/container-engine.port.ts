@@ -83,6 +83,41 @@ export interface ListVolumesFilter {
   label?: string[];
 }
 
+/** Build a generic base image from a SMALL, EXPLICIT file set (so we never tar the whole monorepo as
+ * the build context). Mirrors `build-daemon.sh`'s `docker build -f <dockerfile> -t <tag> <context>`. */
+export interface BuildImageSpec {
+  /** The build-context root the `src` paths are relative to (the repo root). */
+  contextDir: string;
+  /** The files dockerode tars into the context — the Dockerfile + every path it `COPY`s (currently
+   * just `backend/src/daemon/entrypoint.sh`). Keeping this explicit is what keeps the context tiny. */
+  src: string[];
+  /** The Dockerfile path, RELATIVE to `contextDir` (e.g. `backend/src/daemon/Dockerfile`). */
+  dockerfile: string;
+  /** The image tag to produce (e.g. `agent-workspace-base`). */
+  tag: string;
+  /** `--pull` — refresh the FROM base image. */
+  pull?: boolean;
+  /** `--no-cache`. */
+  noCache?: boolean;
+}
+
+/** Run the one-shot daemon-BUILD container that (re)populates the daemon-build volume — the in-process
+ * equivalent of `build-daemon.sh` step 3 (`docker run --entrypoint bash … daemon-build-inner.sh`). */
+export interface RunBuildContainerSpec {
+  /** The base image the build runs inside (same image the sandboxes use). */
+  image: string;
+  /** The host repo root, bind-mounted READ-ONLY at `/src` (the inner script rsyncs `/src` → `/build`).
+   * NOTE: a Docker-out-of-Docker host interprets this as a HOST path — set `REPO_ROOT` if the slack-app
+   * itself runs in a container whose repo path differs from the host's. */
+  repoRoot: string;
+  /** The daemon-build output volume, mounted at `/build`. */
+  buildVolume: string;
+  /** The persistent pnpm-store volume, mounted at `/pnpm-store` (frozen-lockfile install ≈ no-op). */
+  storeVolume: string;
+  /** The in-container path of the build script to run (`/src/backend/scripts/daemon-build-inner.sh`). */
+  innerScript: string;
+}
+
 /**
  * The minimal Docker surface Phase 6 needs. Every method is async (the dockerode client is async) and
  * id-based after create, so the manager never holds a live dockerode object — only opaque ids.
@@ -120,6 +155,19 @@ export interface ContainerEnginePort {
 
   /** Inspect one volume's labels, or undefined if it doesn't exist. */
   inspectVolume(name: string): Promise<VolumeSummary | undefined>;
+
+  /** Whether an image with this name/tag exists locally (`docker image inspect`). Drives the
+   * provisioner's "build the base image only if missing" check. */
+  imagePresent(image: string): Promise<boolean>;
+
+  /** Build the generic workspace base image from a small explicit file set. Drains the build stream and
+   * rejects on a build error (a Dockerfile-step failure surfaces in the stream, not as a throw). */
+  buildImage(spec: BuildImageSpec): Promise<void>;
+
+  /** Run the one-shot daemon-build container to (re)populate the daemon-build volume. Rejects on a
+   * non-zero container exit (with captured tail logs). The host's slack-app calls this AT BOOT so a
+   * deploy no longer needs a manual `pnpm daemon:build`. */
+  runBuildContainer(spec: RunBuildContainerSpec): Promise<void>;
 
   /** Pre-spawn guard: whether the mounted daemon build actually contains its entry file. Runs a
    * throwaway container that mounts `volume` read-only at `/daemon` and `test -f`s `entryPath` — volume

@@ -130,6 +130,20 @@ export interface IEnvConfig {
   // produced by `pnpm daemon:build` and mounted read-only at /daemon in every sandbox — so the daemon
   // is MOUNTED, never baked into the (generic) image. Default `agent-daemon-build`.
   WORKSPACE_DAEMON_BUILD_VOLUME?: string;
+  // The persistent pnpm-store volume the daemon build reuses (frozen-lockfile install ≈ no-op when
+  // unchanged). Default `agent-pnpm-store`. Read by the boot self-provisioner (WorkspaceProvisionerService).
+  WORKSPACE_PNPM_STORE_VOLUME?: string;
+  // Boot self-provisioning (WorkspaceProvisionerService) — the slack-app builds the base image + daemon
+  // volume itself at boot, so a deploy needs no manual `pnpm daemon:build`. ALL optional:
+  //  - REPO_ROOT: the host repo root the build context + `/src` bind-mount resolve against (default: the
+  //    monorepo root found by walking up from the compiled module). Set it only when the slack-app runs
+  //    in a container whose repo path differs from the HOST path the Docker daemon sees.
+  //  - REBUILD_IMAGE: force a base-image rebuild even when it already exists (default: build only if missing).
+  //  - SKIP_DAEMON_BUILD: skip the boot daemon rebuild and reuse the existing volume (fast restarts for
+  //    devs not touching daemon code; the entry-file presence check still gates spawning).
+  REPO_ROOT?: string;
+  REBUILD_IMAGE?: boolean;
+  SKIP_DAEMON_BUILD?: boolean;
   // 32-byte key (base64 or hex) encrypting stored GitHub tokens at rest. Unset → token writes
   // refuse loudly; local-only flows are unaffected.
   SECRETS_ENCRYPTION_KEY?: string;
@@ -263,6 +277,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_NETWORK: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   WORKSPACE_DAEMON_BUILD_VOLUME: Joi.string().optional(),
+  WORKSPACE_PNPM_STORE_VOLUME: Joi.string().optional(),
+  REPO_ROOT: Joi.string().optional(),
+  REBUILD_IMAGE: Joi.boolean().optional(),
+  SKIP_DAEMON_BUILD: Joi.boolean().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
 

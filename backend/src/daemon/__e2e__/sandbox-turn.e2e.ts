@@ -22,8 +22,9 @@
  *   pnpm dev:env -- npx tsx src/daemon/__e2e__/sandbox-turn.e2e.ts
  *
  * Prereqs:
- *   - `pnpm daemon:build` has run (builds the generic `agent-workspace-base` image + populates the
- *     `agent-daemon-build` volume the sandbox mounts the daemon from)
+ *   - the base image + `agent-daemon-build` volume exist. The wired `WorkspaceProvisionerService` builds
+ *     them on first `ensureWorkspace` if missing (a few minutes), so `pnpm daemon:build` is OPTIONAL —
+ *     run it first only to pre-build outside this script.
  *   - compose Redis up: host `localhost:6380`, service DNS `agent-playground-redis:6379` on network
  *     `agent-playground_default`
  *   - Docker Desktop host → inner dockerd needs `vfs` storage driver (test-only)
@@ -45,6 +46,7 @@ import { DaemonClient } from '@harness/workspaces/daemon-client';
 import { DockerodeAdapter } from '@harness/workspaces/dockerode.adapter';
 import { SandboxReadinessService } from '@harness/workspaces/sandbox-readiness.service';
 import { SandboxRegistry } from '@harness/workspaces/sandbox-registry';
+import { WorkspaceProvisionerService } from '@harness/workspaces/workspace-provisioner.service';
 import type { RunCommandPayload } from '@harness/workspaces/daemon-protocol';
 
 // ── e2e config (env-overridable; defaults = the orchestrator's live setup) ──────────────────────
@@ -135,6 +137,9 @@ async function main(): Promise<number> {
     makeTokens(),
   );
   const engine = new DockerodeAdapter(env);
+  // The boot self-provisioner: ensureWorkspace awaits it, so the base image + mounted daemon build are
+  // ensured on first spawn (a no-op if `pnpm daemon:build` already populated them).
+  const provisioner = new WorkspaceProvisionerService(engine, env);
   const manager = new ContainerManagerService(
     engine,
     env,
@@ -142,6 +147,7 @@ async function main(): Promise<number> {
     registry,
     credentials,
     readiness,
+    provisioner,
   );
   const daemonClient = new DaemonClient(redis);
 
@@ -186,7 +192,7 @@ async function main(): Promise<number> {
         'run commands, and curl localhost. Keep going until the task is done.',
       agentId: 'e2e-agent',
       mode: 'execute',
-      apiKey,
+      engineAuth: { mode: 'api_key', apiKey },
       skillSources: [],
       mcpServers: [],
     };
