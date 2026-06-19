@@ -27,6 +27,12 @@ export default function AdminHeader() {
       </div>
       <div className="flex items-center gap-3">
         <a
+          href="/board"
+          className="text-sm text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+        >
+          Plan board
+        </a>
+        <a
           href="/admin/memory"
           className="text-sm text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
         >

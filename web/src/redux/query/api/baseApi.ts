@@ -9,6 +9,8 @@ export enum EBaseApiCacheTags {
   TOKEN = 'TOKEN',
   TENANT = 'TENANT',
   FACT = 'FACT',
+  PLAN = 'PLAN',
+  BOARD = 'BOARD',
 }
 
 export const baseApi = createApi({

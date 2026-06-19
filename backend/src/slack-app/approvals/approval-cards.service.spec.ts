@@ -6,6 +6,7 @@ import {
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   REVISION_MODAL_CALLBACK_ID,
+  VIEW_PLAN_ACTION_ID,
   chunkPlan,
   descriptionChangeCardBlocks,
 } from './approval-blocks';
@@ -91,7 +92,11 @@ function makeService(opts: {
   };
   const env = {
     get: (k: string) =>
-      k === 'APPROVAL_BOSS_USER_ID' ? opts.envBoss : undefined,
+      k === 'APPROVAL_BOSS_USER_ID'
+        ? opts.envBoss
+        : k === 'FRONTEND_HOST'
+          ? 'https://admin.example.com'
+          : undefined,
   };
   const service = new ApprovalCardsService(
     clients as never,
@@ -162,6 +167,17 @@ describe('ApprovalCardsService — outbound (present)', () => {
     expect(uploads[1]).toMatchObject({ filename: 'ticket-7-riley-plan.md' });
   });
 
+  it('includes a "View full plan" deep-link button to the web Plan Viewer (FRONTEND_HOST)', async () => {
+    const { service, web } = makeService({ installedBy: 'U-BOSS' });
+    await service.present(EVENT);
+    const posts = argsOf(web.chat.postMessage).map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+    const blocksJson = JSON.stringify(posts[0].blocks);
+    expect(blocksJson).toContain(VIEW_PLAN_ACTION_ID);
+    expect(blocksJson).toContain('https://admin.example.com/plans/T1/7');
+  });
+
   it('falls back to chunked thread messages when snippet uploads fail (e.g. missing files:write)', async () => {
     const { service, web } = makeService({
       installedBy: 'U-BOSS',
@@ -196,6 +212,15 @@ describe('ApprovalCardsService — boss check', () => {
       expect.objectContaining({ user: 'U-RANDO' }),
     );
     expect(board.transition).not.toHaveBeenCalled();
+  });
+
+  it('the "View full plan" click is consumed as a no-op — no boss gate, no board write (anyone may read)', async () => {
+    const { service, web, board } = makeService({ installedBy: 'U-BOSS' });
+    const view = click(VIEW_PLAN_ACTION_ID, 'U-RANDO');
+    expect(await service.maybeHandle(view)).toBe(true);
+    expect(view.respond).toHaveBeenCalled();
+    expect(board.transition).not.toHaveBeenCalled();
+    expect(web.chat.postEphemeral).not.toHaveBeenCalled();
   });
 
   it('fails CLOSED when installedBy is null and no env fallback', async () => {

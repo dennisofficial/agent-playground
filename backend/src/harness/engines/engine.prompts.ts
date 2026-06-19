@@ -63,6 +63,7 @@ ${'context'}
 const PLAN_TAIL = `
 When you understand the work, write a concrete plan that a SEPARATE execute session could carry out from this text ALONE (it will NOT have your investigation context), then STOP and end your turn — the plan goes to review and approval before any code is written; do not implement it now. Structure the plan with these exact sections:
 - **Summary** — what's being changed and why, in a few lines.
+- **Diagrams** — 1–3 Mermaid diagrams (each in its own \`\`\`mermaid fenced block) that make the plan graspable at a glance, because a human reviewer should get the shape of the change from the pictures, not a wall of prose. Good choices: an architecture/component sketch of what touches what, a flow or sequence diagram of how it works at runtime, and — when the change spans several files/modules — a file-impact sketch. Keep each small and high-signal; skip any diagram that wouldn't add real understanding. Use valid Mermaid syntax (e.g. \`graph TD\`, \`sequenceDiagram\`, \`flowchart LR\`).
 - **Files to touch** — the specific files/areas, each with what changes there.
 - **Constraints & gotchas** — anything you discovered that the executor must respect (invariants, patterns to match, traps).
 - **Steps** — the ordered implementation steps.

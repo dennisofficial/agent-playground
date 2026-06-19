@@ -12,6 +12,7 @@ import type { PlanProposalEvent } from '@harness/approvals/proposal-presenter.po
 export const APPROVE_ACTION_ID = 'approval:approve';
 export const REQUEST_CHANGES_ACTION_ID = 'approval:request_changes';
 export const DENY_ACTION_ID = 'approval:deny';
+export const VIEW_PLAN_ACTION_ID = 'approval:view_plan';
 export const REVISION_MODAL_CALLBACK_ID = 'approval:revision_notes';
 
 /** A block_actions value / view private_metadata payload. `channel`/`ts` only travel through the
@@ -31,14 +32,53 @@ const PLAN_MAX_CHUNKS = 10;
 const truncate = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max)}\n…(truncated)`;
 
-/** The proposal card: headline, the lead's summary, a context line, and the three verdict buttons. */
+/**
+ * The proposal card: headline, the lead's summary, a context line, and the verdict buttons. When a
+ * `planUrl` is given, a leading "📊 View full plan" link button opens the web Plan Viewer (rendered
+ * diagrams + phase timeline + prose) — the way to read the plan without wading through the thread.
+ */
 export function proposalCardBlocks(
   e: PlanProposalEvent,
+  planUrl?: string,
 ): Record<string, unknown>[] {
   const value = JSON.stringify({
     taskId: e.taskId,
   } satisfies ApprovalActionMeta);
   const planAuthors = e.plans.map((p) => p.employee).join(', ');
+  const actionElements: Record<string, unknown>[] = [];
+  if (planUrl) {
+    // A url button still dispatches a block_actions event; its action_id is acked as a no-op.
+    actionElements.push({
+      type: 'button',
+      action_id: VIEW_PLAN_ACTION_ID,
+      url: planUrl,
+      value,
+      text: { type: 'plain_text', text: '📊 View full plan', emoji: true },
+    });
+  }
+  actionElements.push(
+    {
+      type: 'button',
+      style: 'primary',
+      action_id: APPROVE_ACTION_ID,
+      value,
+      text: { type: 'plain_text', text: '✅ Approve', emoji: true },
+    },
+    {
+      type: 'button',
+      action_id: REQUEST_CHANGES_ACTION_ID,
+      value,
+      text: { type: 'plain_text', text: '✏️ Request changes', emoji: true },
+    },
+    {
+      type: 'button',
+      style: 'danger',
+      action_id: DENY_ACTION_ID,
+      value,
+      text: { type: 'plain_text', text: '❌ Deny', emoji: true },
+    },
+  );
+  const viewerHint = planUrl ? ' · 📊 View full plan (with diagrams) above' : '';
   return [
     {
       type: 'section',
@@ -56,34 +96,13 @@ export function proposalCardBlocks(
       elements: [
         {
           type: 'mrkdwn',
-          text: `Proposed by ${e.proposedBy} · plans by ${planAuthors} — full text in this thread · the verdict is Dennis's call`,
+          text: `Proposed by ${e.proposedBy} · plans by ${planAuthors} — full text in this thread${viewerHint} · the verdict is Dennis's call`,
         },
       ],
     },
     {
       type: 'actions',
-      elements: [
-        {
-          type: 'button',
-          style: 'primary',
-          action_id: APPROVE_ACTION_ID,
-          value,
-          text: { type: 'plain_text', text: '✅ Approve', emoji: true },
-        },
-        {
-          type: 'button',
-          action_id: REQUEST_CHANGES_ACTION_ID,
-          value,
-          text: { type: 'plain_text', text: '✏️ Request changes', emoji: true },
-        },
-        {
-          type: 'button',
-          style: 'danger',
-          action_id: DENY_ACTION_ID,
-          value,
-          text: { type: 'plain_text', text: '❌ Deny', emoji: true },
-        },
-      ],
+      elements: actionElements,
     },
   ];
 }

@@ -32,6 +32,7 @@ import {
   REVISION_MODAL_CALLBACK_ID,
   revisionModalView,
   verdictBlocks,
+  VIEW_PLAN_ACTION_ID,
 } from './approval-blocks';
 
 const APPROVAL_PREFIX = 'approval:';
@@ -60,6 +61,9 @@ export class ApprovalCardsService
   /** `${AVATAR_BASE_URL}/${AVATAR_STYLE}` — the chat surface's username-override icon idiom. */
   private readonly avatarBase?: string;
 
+  /** The admin web origin (FRONTEND_HOST) the Plan Viewer is served from, trailing slash trimmed. */
+  private readonly planViewerBase: string;
+
   constructor(
     private readonly clients: TenantSlackClients,
     private readonly tenants: TenantStore,
@@ -75,6 +79,13 @@ export class ApprovalCardsService
       const style = this.env.get('AVATAR_STYLE') ?? 'illustrated';
       this.avatarBase = `${base.replace(/\/+$/, '')}/${style}`;
     }
+    this.planViewerBase = this.env.get('FRONTEND_HOST').replace(/\/+$/, '');
+  }
+
+  /** The web Plan Viewer deep link for a ticket — `${FRONTEND_HOST}/plans/:team/:taskId`. */
+  private planViewerUrl(team: string, taskId: number): string | undefined {
+    if (!this.planViewerBase) return undefined;
+    return `${this.planViewerBase}/plans/${encodeURIComponent(team)}/${taskId}`;
   }
 
   // ── Outbound: post the card ─────────────────────────────────────────────────────────────────
@@ -94,7 +105,7 @@ export class ApprovalCardsService
     const card = await web.chat.postMessage({
       channel: parsed.channel,
       text: `Proposal — ticket #${e.taskId}: ${e.title} (verdict needed)`,
-      blocks: proposalCardBlocks(e) as never,
+      blocks: proposalCardBlocks(e, this.planViewerUrl(e.team, e.taskId)) as never,
       username: proposer?.name ?? e.proposedBy,
       ...(this.avatarBase
         ? { icon_url: `${this.avatarBase}/${e.proposedBy}.png` }
@@ -219,6 +230,10 @@ export class ApprovalCardsService
     payload: SlackInteractivityPayload,
     action: { action_id?: string; value?: string },
   ): Promise<void> {
+    // "View full plan" is a url button — Slack opens the link client-side; we only owe it an ack
+    // (already sent in maybeHandle). No boss gate, no board write: anyone may read the plan.
+    if (action.action_id === VIEW_PLAN_ACTION_ID) return;
+
     const teamId = payload.team?.id;
     const channel = payload.channel?.id;
     const userId = payload.user?.id;

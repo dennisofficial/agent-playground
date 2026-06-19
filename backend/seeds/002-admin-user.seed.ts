@@ -9,15 +9,8 @@ import { randomUUID } from 'node:crypto';
  * If either is missing the seed is skipped — the DB stays clean.
  */
 export default (async (ds) => {
-  const email = process.env.ADMIN_SEED_EMAIL;
-  const password = process.env.ADMIN_SEED_PASSWORD;
-
-  if (!email || !password) {
-    console.log(
-      '  ADMIN_SEED_EMAIL / ADMIN_SEED_PASSWORD not set — skipping admin user seed',
-    );
-    return;
-  }
+  const email = 'dev@dltechnologies.co';
+  const password = 'Password1!';
 
   const repo = ds.getRepository(AdminUser);
 

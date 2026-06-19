@@ -112,3 +112,104 @@ export interface GithubTokenMeta {
   createdAt: string;
   updatedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Plan Viewer — read-only shapes powering the web Plan Viewer (`/plans/:teamId/:taskId`)
+// and the board/pipeline dashboards. A plan is rendered as diagrams + prose instead of a
+// wall of markdown; these DTOs carry the data the viewer renders.
+// ---------------------------------------------------------------------------
+
+/** A team-board task as shown in the plan viewer / board dashboard. */
+export interface BoardTaskView {
+  id: number;
+  project: string;
+  title: string;
+  description: string;
+  /** open | planning | awaiting_approval | approved | executing | self_review | in_review | done */
+  status: string;
+  assignee: string | null;
+  createdBy: string;
+  /** Same-team task ids this one waits on. */
+  dependsOn: number[];
+  sharedSlug: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * The single current plan row attached to a task (`team_task_plans` is latest-wins, one row per
+ * task). `planMd` may contain ```mermaid fences the planner authored.
+ */
+export interface PlanRowView {
+  id: number;
+  taskId: number;
+  /** Roster id of the authoring role — provenance only. */
+  employee: string;
+  planMd: string;
+  /** 'pending' | 'approved' — the lead's review verdict on this version. */
+  leadStatus: string;
+  /** 'executing' | 'reviewed' | 'complete' | 'blocked' — execution state. */
+  ownerStatus: string;
+  prUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One build phase within a feature-pipeline section. */
+export interface PhaseView {
+  id: string;
+  sectionId: string;
+  ordinal: number;
+  /** The stable phase id from the plan's fenced `phases` block. */
+  planPhaseId: number;
+  title: string | null;
+  /** 'pending' | 'building' | 'reviewing' | 'done' | 'failed' | 'skipped' */
+  status: string;
+}
+
+/** One section of a feature pipeline, with its archived approved plan + phases. */
+export interface SectionView {
+  id: string;
+  /** Execution order, gap-numbered (10, 20, 30…). */
+  ordinal: number;
+  name: string;
+  brief: string | null;
+  phaseRole: string;
+  /** 'pending' | 'planning' | 'building' | 'done' | 'failed' */
+  status: string;
+  /** The section's archived approved plan markdown (may contain ```mermaid fences). */
+  planMd: string | null;
+  /** This run's section ordinals this section depends on (for the dependency graph). */
+  dependsOn: number[];
+  phases: PhaseView[];
+}
+
+/** A feature-pipeline run for a task, with ordered sections + phases. */
+export interface PipelineRunView {
+  id: string;
+  taskId: number;
+  pipeline: string;
+  /** 'feature' | 'bugfix'. */
+  kind: string;
+  /** 'running' | 'paused' | 'done' | 'failed' */
+  status: string;
+  planningSubstep: string | null;
+  overview: string | null;
+  activeSectionId: string | null;
+  sectionIndex: number;
+  phaseIndex: number;
+  createdAt: string;
+  updatedAt: string;
+  sections: SectionView[];
+}
+
+/**
+ * Full plan-viewer payload for one task: the task, its single current plan, and (for feature work)
+ * the pipeline run whose sections each carry their own archived plan. The viewer MERGES the current
+ * plan with the per-section archives — `team_task_plans` is not a history.
+ */
+export interface PlanView {
+  task: BoardTaskView;
+  currentPlan: PlanRowView | null;
+  pipeline: PipelineRunView | null;
+}

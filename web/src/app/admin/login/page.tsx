@@ -7,6 +7,20 @@ import { auth } from '@/lib/auth';
 const inputCls =
   'rounded-md border bg-transparent px-3 py-2 text-sm text-black outline-none focus:border-zinc-500 dark:text-zinc-50';
 
+/**
+ * The post-login destination. Reads `?next=` from the live URL (client-only — avoids useSearchParams
+ * and its Suspense requirement) and only honors a SAME-ORIGIN relative path, so a deep-linked plan
+ * URL survives the login round-trip without opening an open-redirect.
+ */
+function safeNextTarget(): string {
+  if (typeof window === 'undefined') return '/admin';
+  const next = new URLSearchParams(window.location.search).get('next');
+  if (next && next.startsWith('/') && !next.startsWith('//') && !next.includes('://')) {
+    return next;
+  }
+  return '/admin';
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -38,7 +52,7 @@ export default function LoginPage() {
     setPending(true);
     try {
       await auth.signIn(email.trim(), password);
-      router.replace('/admin');
+      router.replace(safeNextTarget());
     } catch (err) {
       setError(
         err instanceof Error

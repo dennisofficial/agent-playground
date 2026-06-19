@@ -54,9 +54,6 @@ export type ConductorEvent =
   | {
       id: string;
       kind: 'tool';
-      /** Channel/thread coordinate the turn ran on — lets a per-thread observer (the dev console)
-       * attribute the tool call. Not used by the Slack surface. */
-      channelId: string;
       botId: string;
       botName: string;
       toolName: string;
@@ -80,36 +77,18 @@ export type ConductorEvent =
   | {
       id: string;
       kind: 'gate';
-      /** Channel/thread coordinate the gate ran on (per-thread attribution for the dev console). */
-      channelId: string;
       botId: string;
       botName: string;
       action: GateAction;
-      /** Soft-gate rationale when available; omitted for the in-graph gate, which surfaces only the
-       * verdict (respond/ignore), not its reasoning. */
-      reasoning?: string;
+      reasoning: string;
       usage?: { input: number; output: number };
     }
   // Observability: the pre-LLM fetch — what memory/tasks the bot walked in knowing this turn.
-  | {
-      id: string;
-      kind: 'recall';
-      channelId: string;
-      botId: string;
-      botName: string;
-      text: string;
-    }
+  | { id: string; kind: 'recall'; botId: string; botName: string; text: string }
   // Observability: a composed reply suppressed at the post seam (read-the-room) — teammates or the
   // user posted while the model was composing, so the bot is revising instead of posting. The only
   // trace of a suppressed draft; its token usage rides a separate `usage` event (still a billed step).
-  | {
-      id: string;
-      kind: 'draft';
-      channelId: string;
-      botId: string;
-      botName: string;
-      text: string;
-    }
+  | { id: string; kind: 'draft'; botId: string; botName: string; text: string }
   // A human approved or rejected a plan (dormant until the approval flow ports).
   | {
       id: string;
@@ -119,13 +98,12 @@ export type ConductorEvent =
       by: string;
       note?: string;
     }
-  | { id: string; kind: 'error'; channelId?: string; message: string }
+  | { id: string; kind: 'error'; message: string }
   // Observability: per-step token usage for the chat LLM path (one event per billed AI step).
   // Consumed by the SurfaceBridge to build the per-post aggregate footer; not rendered by the TUI.
   | {
       id: string;
       kind: 'usage';
-      channelId: string;
       botId: string;
       role: 'chat';
       usage: MessageUsage;

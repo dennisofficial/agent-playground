@@ -7,6 +7,7 @@ import { EmployeeToolsModule } from '../harness/employee-skills/employee-tools.m
 import { LlmKeysModule } from '../harness/llm-keys/llm-keys.module';
 import { MetricsModule } from '../harness/metrics/metrics.module';
 import { MemoryAdminModule } from '../harness/memory-admin/memory-admin.module';
+import { PlanViewModule } from '../harness/plan-view/plan-view.module';
 import { ProjectsModule } from '../harness/projects/projects.module';
 import { TenantsModule } from '../harness/tenants/tenants.module';
 import { AdminTokenGuard } from './admin/admin-token.guard';
@@ -14,6 +15,7 @@ import { EmployeeToolsController } from './admin/employee-tools.controller';
 import { InternalMetricsController } from './admin/internal-metrics.controller';
 import { LlmKeysController } from './admin/llm-keys.controller';
 import { MemoryFactsController } from './admin/memory.controller';
+import { PlanViewController } from './admin/plan-view.controller';
 import { ProjectsController } from './admin/projects.controller';
 import { TenantsController } from './admin/tenants.controller';
 import { TokensController } from './admin/tokens.controller';
@@ -49,6 +51,7 @@ import { AuthModule } from './auth/auth.module';
     LlmKeysModule,
     MetricsModule,
     MemoryAdminModule,
+    PlanViewModule,
     TenantsModule,
     AuthModule,
   ],
@@ -60,6 +63,7 @@ import { AuthModule } from './auth/auth.module';
     LlmKeysController,
     InternalMetricsController,
     MemoryFactsController,
+    PlanViewController,
     TenantsController,
   ],
   providers: [ApiService, AdminTokenGuard],

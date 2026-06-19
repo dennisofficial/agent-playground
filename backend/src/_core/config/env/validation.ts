@@ -176,11 +176,6 @@ export interface IEnvConfig {
   SECRETS_ENCRYPTION_KEY?: string;
   // Bearer token gating the admin REST endpoints (projects/tokens). Unset → admin API disabled.
   ADMIN_API_TOKEN?: string;
-  // Dev-only console seam — drive Atlas from a terminal CLI on a dedicated `console:*` thread. The
-  // DevConsole module + HTTP controller mount ONLY when DEV_CONSOLE_ENABLED is truthy, and the
-  // controller requires the DEV_CONSOLE_TOKEN header — never reachable in prod. Both off by default.
-  DEV_CONSOLE_ENABLED?: boolean;
-  DEV_CONSOLE_TOKEN?: string;
 
   // JWT auth for the admin portal (all optional — portal is disabled until secrets are set)
   JWT_ACCESS_SECRET?: string;
@@ -325,8 +320,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SKIP_DAEMON_BUILD: Joi.boolean().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
-  DEV_CONSOLE_ENABLED: Joi.boolean().optional(),
-  DEV_CONSOLE_TOKEN: Joi.string().optional(),
 
   // JWT auth for the admin portal
   JWT_ACCESS_SECRET: Joi.string().optional(),

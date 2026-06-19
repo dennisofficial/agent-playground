@@ -647,7 +647,6 @@ export class ConductorService
         this.emit({
           id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
           kind: 'usage',
-          channelId,
           botId: bot.id,
           role: 'chat',
           usage,
@@ -705,7 +704,6 @@ export class ConductorService
         this.emit({
           id: `${bot.id}:${this.emitSeq++}`,
           kind: 'tool',
-          channelId,
           botId: bot.id,
           botName: bot.name,
           toolName: c.name,
@@ -762,17 +760,6 @@ export class ConductorService
           if (delta.decision) {
             gateDecision = delta.decision;
             gateTargetId = delta.reactionTargetId;
-            // Observability: surface the gate verdict, per-thread, so an out-of-band observer (the dev
-            // console) can see respond-vs-skip without inferring. The in-graph gate exposes only the
-            // verdict, not its reasoning, so this carries action only.
-            this.emit({
-              id: `gate-${this.emitSeq++}`,
-              kind: 'gate',
-              channelId,
-              botId: bot.id,
-              botName: bot.name,
-              action: delta.decision,
-            });
             if (gateTargetId && delta.decision === 'respond') {
               this.emitReaction(bot, channelId, gateTargetId, COMPOSING_EMOJI);
               composing = true;
@@ -783,7 +770,6 @@ export class ConductorService
             this.emit({
               id: `m-${this.emitSeq++}`,
               kind: 'recall',
-              channelId,
               botId: bot.id,
               botName: bot.name,
               text: delta.recalled,
@@ -801,7 +787,6 @@ export class ConductorService
             this.emit({
               id: `usage-${bot.id}:${this.mintTag}:${this.emitSeq++}`,
               kind: 'usage',
-              channelId,
               botId: bot.id,
               role: 'chat',
               usage: delta.draftUsage,
@@ -811,7 +796,6 @@ export class ConductorService
             this.emit({
               id: `d-${this.emitSeq++}`,
               kind: 'draft',
-              channelId,
               botId: bot.id,
               botName: bot.name,
               text: delta.draft,
