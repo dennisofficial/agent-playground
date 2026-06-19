@@ -1,15 +1,13 @@
 {
   "name": "backend",
   "version": "0.0.1",
-  "description": "AI-employee harness backend (NestJS monorepo: slack-app + api apps).",
+  "description": "AI-employee harness backend (NestJS monorepo: slack-app + daemon).",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
     "env:inject": "dotenvx run -f .env.local.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict",
     "dev:env": "cross-env NODE_ENV=development NODE_OPTIONS=--enable-source-maps pnpm env:inject",
-    "build": "nest build api && nest build slack-app && nest build daemon",
-    "api:dev": "pnpm dev:env -- nest start api --watch",
-    "api:prod": "node dist/api/main",
+    "build": "nest build slack-app && nest build daemon",
     "slack:dev": "pnpm dev:env -- nest start slack-app",
     "slack:prod": "node dist/slack-app/main",
     "daemon:dev": "pnpm dev:env -- nest start daemon --watch",

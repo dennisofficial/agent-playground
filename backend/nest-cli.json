@@ -8,17 +8,7 @@
     "tsConfigPath": "tsconfig.build.json"
   },
   "monorepo": true,
-  "root": "src/api",
   "projects": {
-    "api": {
-      "type": "application",
-      "root": "src/api",
-      "entryFile": "api/main",
-      "sourceRoot": "src/api",
-      "compilerOptions": {
-        "tsConfigPath": "src/api/tsconfig.json"
-      }
-    },
     "slack-app": {
       "type": "application",
       "root": "src/slack-app",

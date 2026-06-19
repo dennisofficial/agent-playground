@@ -32,7 +32,6 @@ export interface IEnvConfig {
 
   // URLs
   BACKEND_HOST: string;
-  FRONTEND_HOST: string; // admin web origin — credentialed CORS in api/main.ts
 
   // Postgres (TypeORM + pgvector)
   POSTGRES_HOST: string;
@@ -174,22 +173,13 @@ export interface IEnvConfig {
   // 32-byte key (base64 or hex) encrypting stored GitHub tokens at rest. Unset → token writes
   // refuse loudly; local-only flows are unaffected.
   SECRETS_ENCRYPTION_KEY?: string;
-  // Bearer token gating the admin REST endpoints (projects/tokens). Unset → admin API disabled.
-  ADMIN_API_TOKEN?: string;
   // Dev-only console seam — drive Atlas from a terminal CLI on a dedicated `console:*` thread. The
   // DevConsole module + HTTP controller mount ONLY when DEV_CONSOLE_ENABLED is truthy, and the
   // controller requires the DEV_CONSOLE_TOKEN header — never reachable in prod. Both off by default.
   DEV_CONSOLE_ENABLED?: boolean;
   DEV_CONSOLE_TOKEN?: string;
 
-  // JWT auth for the admin portal (all optional — portal is disabled until secrets are set)
-  JWT_ACCESS_SECRET?: string;
-  JWT_REFRESH_SECRET?: string;
-  COOKIE_DOMAIN?: string;
-  ADMIN_SEED_EMAIL?: string;
-  ADMIN_SEED_PASSWORD?: string;
-
-  // Slack surface (slack-app only; optional so api/tui boot without them — slack-app/main.ts
+  // Slack surface (slack-app only; optional so other apps boot without them — slack-app/main.ts
   // asserts both at boot)
   SLACK_BOT_TOKEN?: string; // xoxb- — Web API (chat.postMessage, reactions.add, users.info)
   SLACK_APP_TOKEN?: string; // xapp- — Socket Mode connection (connections:write)
@@ -243,7 +233,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
 
   // URLs
   BACKEND_HOST: Joi.string().uri().optional().default('http://localhost:4000'),
-  FRONTEND_HOST: Joi.string().uri().optional().default('http://localhost:3000'),
 
   // Postgres (TypeORM + pgvector)
   POSTGRES_HOST: Joi.string().required(),
@@ -324,16 +313,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   REBUILD_IMAGE: Joi.boolean().optional(),
   SKIP_DAEMON_BUILD: Joi.boolean().optional(),
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
-  ADMIN_API_TOKEN: Joi.string().optional(),
   DEV_CONSOLE_ENABLED: Joi.boolean().optional(),
   DEV_CONSOLE_TOKEN: Joi.string().optional(),
-
-  // JWT auth for the admin portal
-  JWT_ACCESS_SECRET: Joi.string().optional(),
-  JWT_REFRESH_SECRET: Joi.string().optional(),
-  COOKIE_DOMAIN: Joi.string().optional(),
-  ADMIN_SEED_EMAIL: Joi.string().email().optional(),
-  ADMIN_SEED_PASSWORD: Joi.string().optional(),
 
   // Slack surface
   SLACK_BOT_TOKEN: Joi.string().optional(),

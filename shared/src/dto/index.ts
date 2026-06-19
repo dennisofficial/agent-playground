@@ -1,2 +1,1 @@
-// Shared DTOs / wire models (request+response shapes for the admin API).
-export * from './auth.dto';
+// No shared DTOs — admin portal web/ removed.
