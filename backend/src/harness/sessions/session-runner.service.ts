@@ -790,6 +790,14 @@ export class SessionRunnerService {
     return this.controllers.has(sessionId);
   }
 
+  /** How many turns are executing in THIS process right now (live AbortControllers). Boot-safe
+   * liveness count for graceful-shutdown introspection and deterministic test drive-to-quiescence —
+   * the controller is registered synchronously by `runSessionTurn` before its first await, so this
+   * reflects every just-opened turn the instant `openStageSession`/`resumeInternal` returns. */
+  inFlightCount(): number {
+    return this.controllers.size;
+  }
+
   /** Abort every in-flight turn (graceful shutdown). */
   abortAll(): void {
     for (const [sessionId, controller] of this.controllers) {
