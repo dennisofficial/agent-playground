@@ -2,7 +2,6 @@ packages:
   - packages/**
   - backend
   - shared
-  - web
   - playground
 # Submodule packages (e.g. @workspace/nestjs-core) live under packages/ and resolve via the glob above.
 # pnpm 11 also uses this file as the workspace settings store:

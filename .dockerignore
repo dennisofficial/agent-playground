@@ -11,7 +11,6 @@
 backend/dist
 shared/dist
 packages/**/dist
-web/.next
 
 # Git internals (submodules are checked out as working trees and DO get copied)
 .git

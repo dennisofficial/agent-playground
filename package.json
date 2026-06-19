@@ -2,7 +2,7 @@
   "name": "agent-playground-workspace",
   "version": "1.0.0",
   "private": true,
-  "description": "AI Slack-employee workforce — pnpm monorepo (NestJS backend + Next.js admin web + shared + terminal playground).",
+  "description": "AI Slack-employee workforce — pnpm monorepo (NestJS backend + shared + terminal playground).",
   "packageManager": "pnpm@11.1.2",
   "scripts": {
     "setup": "git submodule update --init --recursive && pnpm install && pnpm build:packages",
