@@ -22,7 +22,6 @@ rsync -a --delete \
   --exclude '.worktrees' \
   --exclude '.turbo' \
   --exclude 'coverage' \
-  --exclude 'web/.next' \
   /src/ /build/
 
 cd /build

@@ -9,7 +9,7 @@ Two implementations of the same autonomous-AI-employee system coexist:
 - **`backend/` — the NestJS harness (CURRENT, actively developed).** The playground's logic recreated as per-domain Nest modules under `backend/src/harness/`, with Postgres durability. Two apps compose it: **`slack-app`** (`pnpm slack:dev`) is THE server — the harness headless with the Slack surface + ingress bound, single-process multi-tenant (the Slack adapter has SHIPPED — `slack-app/slack-chat-surface.ts`, incl. message + reaction support); **`api`** is the standalone admin REST (projects/tokens/skill grants), composable WITHOUT the harness.
 - **`playground/` — the original terminal POC (WORKING, kept intact).** Single-process Ink TUI, in-memory channel, SQLite memory. **Do not modify or delete** — it's the reference implementation until the backend reaches feel-parity. Run with `pnpm dev` in `playground/`.
 
-Also: `shared/` (`@workspace/shared` — TypeORM entities under `./schemas` subpath), `web/` (Next.js admin skeleton), `packages/nestjs-core-essentials` (house Nest conventions: `@CreateModule`, `BaseEnvService`).
+Also: `shared/` (`@workspace/shared` — TypeORM entities under `./schemas` subpath), `packages/nestjs-core-essentials` (house Nest conventions: `@CreateModule`, `BaseEnvService`).
 
 **Submodule prerequisite:** `packages/nestjs-ai-essentials` (`@workspace/langfuse`) and `packages/jwt-auth` (`@workspace/auth`) are git submodules — run `pnpm run setup` from repo root (submodule init + install + package builds), otherwise TS2307 "Cannot find module '@workspace/langfuse'" / '@workspace/auth' at test/typecheck time.
 
