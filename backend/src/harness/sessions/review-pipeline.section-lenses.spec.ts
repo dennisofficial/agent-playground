@@ -76,7 +76,10 @@ function build(opts: {
   } as never;
 
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
-  const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
+  const creds = {
+    resolve: async () => ({ anthropic: 'k', openai: 'k' }),
+    engineAuth: async () => ({ mode: 'api_key', apiKey: 'k' }),
+  } as never;
 
   const workspace = { id: 'ws-1', name: 'ws-1', branch: 'feat', team: 't', project: 'p', ownerBot: 'alex' };
   // The review diff scope now comes from the daemon (`reviewRange`), keyed off the work area.

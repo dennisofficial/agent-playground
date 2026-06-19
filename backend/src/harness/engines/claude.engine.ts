@@ -21,11 +21,33 @@ import { spawnInOwnGroup } from './process-group';
 import { CLAUDE_DENIALS } from './engine.prompts';
 import {
   EWorkerEngineName,
+  type EngineAuth,
   IWorkerUsage,
   RunWorkerArgs,
   WorkerEngine,
   WorkerQuestion,
 } from './worker-engine.port';
+
+/**
+ * Apply this turn's auth to the spawned `claude` CLI's env (mutates in place).
+ * - 'api_key' (default): keep the ambient env as a dev/TUI fallback and override ANTHROPIC_API_KEY
+ *   with the workspace's key when present.
+ * - 'subscription': drive the run off the workspace's own Claude plan via CLAUDE_CODE_OAUTH_TOKEN,
+ *   and STRIP any ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN — both rank ABOVE the OAuth token in the
+ *   CLI's auth precedence, so a stray ambient key would silently win and bill the API instead.
+ */
+export function applyClaudeAuth(
+  env: Record<string, string | undefined>,
+  engineAuth: EngineAuth | undefined,
+): void {
+  if (engineAuth?.mode === 'subscription') {
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    env.CLAUDE_CODE_OAUTH_TOKEN = engineAuth.secret;
+  } else if (engineAuth?.apiKey) {
+    env.ANTHROPIC_API_KEY = engineAuth.apiKey;
+  }
+}
 
 // The base set of built-in tools the worker may use. `tools` RESTRICTS the available set — unlike
 // `allowedTools`, which only auto-approves. No WebSearch/Agent/MCP: a focused file+shell worker.
@@ -192,7 +214,7 @@ export class ClaudeEngine implements WorkerEngine {
     model,
     effort,
     mode,
-    apiKey,
+    engineAuth,
     onEvent,
     signal,
   }: RunWorkerArgs) {
@@ -228,6 +250,13 @@ export class ClaudeEngine implements WorkerEngine {
     // Accumulated across the turn, deduped by question text — a model that re-asks despite the
     // deny instruction must not produce duplicate entries in the report.
     const capturedQuestions: WorkerQuestion[] = [];
+    // Build the subprocess env once: isolate config to this employee's home, then apply auth
+    // (API key or the workspace's Claude-plan OAuth token — see applyClaudeAuth).
+    const subprocessEnv: Record<string, string | undefined> = {
+      ...process.env,
+      CLAUDE_CONFIG_DIR: claudeConfigDir,
+    };
+    applyClaudeAuth(subprocessEnv, engineAuth);
     const options: Options = {
       cwd,
       systemPrompt,
@@ -269,13 +298,11 @@ export class ClaudeEngine implements WorkerEngine {
       settings: { attribution: { commit: '', pr: '' } },
       abortController,
       // Subprocess env: CLAUDE_CONFIG_DIR isolates config/state/transcripts from ~/.claude (always
-      // set). The per-tenant key (when resolved) funds this workspace's runs; unset → the key falls
-      // back to the ambient env (dev/TUI). settingSources stays [] so NO config files are read.
-      env: {
-        ...process.env,
-        CLAUDE_CONFIG_DIR: claudeConfigDir,
-        ...(apiKey ? { ANTHROPIC_API_KEY: apiKey } : {}),
-      },
+      // set). `applyClaudeAuth` then funds this workspace's run — the per-tenant API key, OR the
+      // workspace's Claude-plan OAuth token (stripping any ambient ANTHROPIC_API_KEY that would
+      // override it). Unset auth → the key falls back to the ambient env (dev/TUI). settingSources
+      // stays [] so NO config files are read.
+      env: subprocessEnv,
       // In-sandbox self-validation hardening (Phase 10): spawn the CLI subprocess as its own process-
       // group leader so backgrounded dev servers (`pnpm dev &`, `next dev`) it starts are reaped with
       // it on abort/shutdown. ONLY in the relaxed-sandbox (daemon) posture — on the HOST the flag is

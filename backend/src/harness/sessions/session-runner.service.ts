@@ -270,13 +270,11 @@ export class SessionRunnerService {
       this.logger.log(
         `${sessionId} turn ${session.turns + 1} — ${session.mode} on ${model ?? `${session.engine} default`}${effort ? ` (effort:${effort})` : ''} (${bot.name}, ${workspaceRef.id}${containerized ? ', sandbox' : ''})`,
       );
-      // Resolve THIS workspace's keys: passed into the claude/codex subprocess env (apiKey) AND
-      // stashed in the credential context for the in-process langgraph engine's model builder.
+      // Resolve THIS workspace's keys: the API-key map is stashed in the credential context for the
+      // in-process langgraph engine + chat/embeddings; `engineAuth` is how THIS engine turn
+      // authenticates (api-key into the subprocess env, or the workspace's own subscription).
       const keys = await this.creds.resolve(session.team);
-      const engineKey =
-        session.engine === EWorkerEngineName.CODEX
-          ? keys.openai
-          : keys.anthropic;
+      const engineAuth = await this.creds.engineAuth(session.team, session.engine);
       // Jail the in-process langgraph tools to the workspace for the turn (claude/codex also get
       // `cwd` for their own subprocess sandbox).
       // The single engine run for this turn, parametrized by message / model / resume-id.
@@ -310,7 +308,8 @@ export class SessionRunnerService {
               model: turnModel,
               effort,
               mode: session.mode,
-              apiKey: engineKey,
+              engineAuth,
+              team: session.team,
               onEvent: (e) =>
                 void this.sessions
                   .appendProgress(sessionId, e)

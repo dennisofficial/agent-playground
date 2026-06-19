@@ -189,7 +189,7 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
         model: 'claude-x',
         effort: 'high',
         mode: 'investigate',
-        apiKey: 'sk-tenant',
+        engineAuth: { mode: 'api_key', apiKey: 'sk-tenant' },
       }),
       () => undefined,
     );
@@ -203,7 +203,7 @@ describe('Phase 5 host↔daemon round-trips (in-memory Redis)', () => {
     expect(captured!.model).toBe('claude-x');
     expect(captured!.effort).toBe('high');
     expect(captured!.mode).toBe('investigate');
-    expect(captured!.apiKey).toBe('sk-tenant');
+    expect(captured!.engineAuth).toEqual({ mode: 'api_key', apiKey: 'sk-tenant' });
     expect(typeof captured!.onEvent).toBe('function');
     expect(captured!.signal).toBeInstanceOf(AbortSignal);
   });

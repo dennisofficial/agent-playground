@@ -4,13 +4,11 @@ import type { EngineSpec } from '../../engines/engine-spec';
 import { withActiveRoot } from '../../engines/guard';
 import { DEFAULT_REVIEW_PROMPT } from '../../engines/engine.prompts';
 import { REVISION_PROMPT } from '../lifecycle.prompts';
-import {
-  EWorkerEngineName,
-  type WorkerEvent,
-} from '../../engines/worker-engine.port';
+import { type WorkerEvent } from '../../engines/worker-engine.port';
 import { EmployeeRegistry } from '../../employees/employee.registry';
 import { SELF_REVIEW } from '../../employees/capabilities/self-review.capability';
 import { CredentialContext } from '../../llm-keys/credential-context';
+import { TenantCredentialService } from '../../llm-keys/tenant-credential.service';
 import { BoardStore } from '../../memory/board-store';
 import { toGenerationUsage } from '../../llm/usage-format';
 import {
@@ -43,6 +41,7 @@ export class SelfReviewHandler implements LifecycleHandler {
     private readonly turnExecutor: TurnExecutor,
     private readonly employees: EmployeeRegistry,
     private readonly credCtx: CredentialContext,
+    private readonly creds: TenantCredentialService,
     private readonly board: BoardStore,
   ) {}
 
@@ -63,8 +62,6 @@ export class SelfReviewHandler implements LifecycleHandler {
       onProgress,
     } = payload;
 
-    const keyFor = (engine: EWorkerEngineName) =>
-      engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
     const onEvent = (e: WorkerEvent) => onProgress?.(e);
 
     // Routing context for the Phase-7 turn-execution seam — the plan self-review runs in the session's
@@ -96,6 +93,10 @@ export class SelfReviewHandler implements LifecycleHandler {
       ticket: ticketText,
       plan: planBody,
     });
+    const reviewAuth = await this.creds.engineAuth(
+      session.team,
+      reviewSpec.engine,
+    );
     const review = await traceSessionTurn(
       () =>
         withActiveRoot(workspacePath, () =>
@@ -109,7 +110,8 @@ export class SelfReviewHandler implements LifecycleHandler {
               model: reviewSpec.model,
               effort: reviewSpec.effort,
               mode: 'investigate',
-              apiKey: keyFor(reviewSpec.engine),
+              engineAuth: reviewAuth,
+              team: session.team,
               onEvent,
               signal,
             }),
@@ -137,6 +139,10 @@ export class SelfReviewHandler implements LifecycleHandler {
     // 2. Revise ONCE on the PLANNING engine, resuming its session (keeps investigation context).
     const planSpec = employee.planEngine(this.employees.context());
     const revisionPrompt = REVISION_PROMPT({ critique });
+    const revisionAuth = await this.creds.engineAuth(
+      session.team,
+      session.engine,
+    );
     const revision = await traceSessionTurn(
       () =>
         withActiveRoot(workspacePath, () =>
@@ -150,7 +156,8 @@ export class SelfReviewHandler implements LifecycleHandler {
               model: planSpec.model,
               effort: planSpec.effort,
               mode: 'plan',
-              apiKey: keyFor(session.engine),
+              engineAuth: revisionAuth,
+              team: session.team,
               onEvent,
               signal,
             }),

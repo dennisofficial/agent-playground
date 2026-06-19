@@ -154,7 +154,10 @@ function buildReviewSvc(verdictText: string, files: string[] = ['a.ts']) {
   };
   const employees = { byId: () => bot, teamLead: () => bot, context: () => ({}) } as never;
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
-  const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
+  const creds = {
+    resolve: async () => ({ anthropic: 'k', openai: 'k' }),
+    engineAuth: async () => ({ mode: 'api_key', apiKey: 'k' }),
+  } as never;
   const reviewRange = vi.fn(async () => ({ range: 'base...feat', files, baseBranch: 'main' }));
   const workspaces = {
     get: () => ({ id: 'ws-1', name: 'ws-1', branch: 'feat', team: 't', project: 'p', ownerBot: 'alex' }),

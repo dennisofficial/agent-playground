@@ -97,7 +97,10 @@ function build(opts: {
   const employees = { byId: () => bot, context: () => ({}) } as never;
 
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
-  const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
+  const creds = {
+    resolve: async () => ({ anthropic: 'k', openai: 'k' }),
+    engineAuth: async () => ({ mode: 'api_key', apiKey: 'k' }),
+  } as never;
 
   const setOwnerStatus = vi.fn(async (_t: string, id: number, s: string) => {
     const p = (plansByTask[id] ?? [])[0];

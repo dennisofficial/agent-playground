@@ -92,7 +92,8 @@ export class RemoteTurnDispatcher {
       model: args.model,
       effort: args.effort,
       mode: args.mode,
-      apiKey: args.apiKey,
+      engineAuth: args.engineAuth,
+      team: args.team,
       skillSources,
       mcpServers,
     };

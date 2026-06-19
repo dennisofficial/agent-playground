@@ -5,10 +5,12 @@ import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { OPENAI_CODEX_SDK } from '../../_lib/esm/esm.module';
 import { AGENT_TOOLS_PROVIDER } from './agent-tools-provider.port';
 import type { IAgentToolsProvider } from './agent-tools-provider.port';
+import { ensureCodexSubscriptionHome } from './codex-subscription-home';
 import { engineHomeDir } from './engine-home';
 import { relaxedSandboxGuard } from './guard';
 import {
   EWorkerEngineName,
+  type EngineAuth,
   IWorkerUsage,
   RunWorkerArgs,
   WorkerEngine,
@@ -52,25 +54,42 @@ export class CodexEngine implements WorkerEngine {
     private readonly provisioner: IAgentToolsProvider,
   ) {}
 
-  private getCodex(agentId: string, apiKey?: string): Codex {
-    // CODEX_HOME is per-employee, so the client cache must key on the employee too (two employees
-    // sharing one API key still need separate homes — separate skills/MCP/rollouts).
-    const cacheKey = `${apiKey ?? 'default'}:${agentId}`;
+  private getCodex(
+    agentId: string,
+    engineAuth: EngineAuth | undefined,
+    team: string | undefined,
+  ): Codex {
+    const root = this.env.get('AGENT_HOME_ROOT');
+    const subscription =
+      engineAuth?.mode === 'subscription' ? engineAuth : undefined;
+    const apiKey = engineAuth?.mode === 'api_key' ? engineAuth.apiKey : undefined;
+    // SUBSCRIPTION: drive the workspace's own ChatGPT plan from a per-(team,agent) overlay home that
+    // owns its `auth.json` (ensured/refreshed every turn — idempotent). API-KEY: the per-employee
+    // home, with the key passed to the SDK. The client cache keys accordingly so two workspaces (or
+    // two keys) never share a codex client / home — separate skills/MCP/rollouts/credentials.
+    const codexHome = subscription
+      ? ensureCodexSubscriptionHome(
+          root,
+          team ?? 'default',
+          agentId,
+          subscription.secret,
+        )
+      : engineHomeDir(root, 'codex', agentId);
+    const cacheKey = subscription
+      ? `subscription:${team ?? 'default'}:${agentId}`
+      : `${apiKey ?? 'default'}:${agentId}`;
     let client = this.clients.get(cacheKey);
     if (!client) {
-      // Isolate the codex CLI from the developer's personal ~/.codex (its config.toml, MCP servers,
-      // and rollouts) AND from other employees, so behavior is deterministic across dev and deploy
-      // and each employee owns its skills/MCP. The SDK's `env` REPLACES inheritance, so pass
-      // process.env through and just override CODEX_HOME.
-      const env = {
-        ...process.env,
-        CODEX_HOME: engineHomeDir(
-          this.env.get('AGENT_HOME_ROOT'),
-          'codex',
-          agentId,
-        ),
-      } as Record<string, string>;
-      client = new this.sdk.Codex(apiKey ? { apiKey, env } : { env });
+      // Isolate the codex CLI from the developer's personal ~/.codex AND from other employees. The
+      // SDK's `env` REPLACES inheritance, so pass process.env through and just override CODEX_HOME.
+      // Subscription mode passes NO apiKey → the CLI reads auth.json from CODEX_HOME instead.
+      const env = { ...process.env, CODEX_HOME: codexHome } as Record<
+        string,
+        string
+      >;
+      client = subscription
+        ? new this.sdk.Codex({ env })
+        : new this.sdk.Codex(apiKey ? { apiKey, env } : { env });
       this.clients.set(cacheKey, client);
     }
     return client;
@@ -120,13 +139,14 @@ export class CodexEngine implements WorkerEngine {
     sessionId,
     model,
     mode,
-    apiKey,
+    engineAuth,
+    team,
     onEvent,
     signal,
   }: RunWorkerArgs) {
     // Resolve model once so it can be threaded into both threadOptions and the returned usage.
     const resolvedModel = model ?? this.env.get('CODEX_MODEL');
-    const client = this.getCodex(agentId, apiKey);
+    const client = this.getCodex(agentId, engineAuth, team);
     const opts = this.threadOptions(cwd, {
       model: resolvedModel,
       readOnly: mode !== 'execute',

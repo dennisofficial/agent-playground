@@ -33,6 +33,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   EffortLevel,
+  EngineAuth,
   IWorkerUsage,
   WorkerEvent,
   WorkerMode,
@@ -83,8 +84,12 @@ export interface RunCommandPayload {
   effort?: EffortLevel;
   /** This turn's mode — REQUIRED, never defaulted (RunWorkerArgs.mode). */
   mode: WorkerMode;
-  /** The owning workspace's LLM API key for this run (RunWorkerArgs.apiKey). */
-  apiKey?: string;
+  /** How this run authenticates (RunWorkerArgs.engineAuth) — the API key OR the workspace's
+   * subscription secret. Crosses the bus only for this round-trip (never persisted/logged), same as
+   * the API key did before: the daemon has no DB/cipher, so the host-decrypted secret must travel. */
+  engineAuth?: EngineAuth;
+  /** The owning workspace (Slack team) id (RunWorkerArgs.team) — keys the codex subscription home. */
+  team?: string;
   /** Host-resolved skill sources for this agent — the daemon `prime`s its home from these (no DB). */
   skillSources: SkillSource[];
   /** Host-resolved MCP servers for this agent. */

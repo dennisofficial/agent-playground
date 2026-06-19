@@ -92,6 +92,31 @@ remains a dev convenience for that (plus the optional build-volume wipe / dev-DB
 non-default compose project name/network. The canonical, runnable recipe (and the exact reason
 Docker Desktop needs `vfs`) lives in `backend/src/daemon/__e2e__/sandbox-turn.e2e.ts`.
 
+## Subscription (OAuth) engine auth — run coding turns off a Claude Max / ChatGPT plan
+
+By default every engine turn bills the workspace's metered **API key**. A workspace can instead drive
+its expensive coding-**engine** turns (the sessions — claude/codex) off its own **subscription**, a
+~20× saving when it already pays for a plan. This is *additive*: chat, the gate, and embeddings still
+use the API key, so a subscription workspace still stores one.
+
+Per-workspace, per-provider, via the admin REST (gated by `ADMIN_API_TOKEN`):
+
+```bash
+# Codex (ChatGPT plan): run `codex login` locally, then submit ~/.codex/auth.json's contents.
+PUT /tenants/:teamId/llm-keys/openai/subscription    { "mode": "subscription", "secret": "<auth.json contents>" }
+
+# Claude (Max plan): run `claude setup-token` locally, then submit the printed CLAUDE_CODE_OAUTH_TOKEN.
+PUT /tenants/:teamId/llm-keys/anthropic/subscription { "mode": "subscription", "secret": "<oauth token>" }
+
+# Revert to metered billing (keeps the stored secret):
+PUT /tenants/:teamId/llm-keys/anthropic/subscription { "mode": "api_key" }
+```
+
+Caveats: subscription **rate limits** (pooled 5h/weekly) apply — fine for a personal workspace, will
+throttle a heavy one. The Claude path uses the Agent SDK's `CLAUDE_CODE_OAUTH_TOKEN`; verify it works
+for your account before relying on it (Anthropic steers third-party SDK use toward API keys). Each
+person uses their **own** subscription for their **own** workspace — credentials are never shared.
+
 ## Project setup
 
 **Submodules must be initialized before `pnpm install`** — `@workspace/langfuse` and

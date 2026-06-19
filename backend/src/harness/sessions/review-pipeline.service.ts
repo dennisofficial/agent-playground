@@ -5,10 +5,7 @@ import { EmployeeRegistry } from '../employees/employee.registry';
 import { SELF_REVIEW } from '../employees/capabilities/self-review.capability';
 import type { EngineSpec } from '../engines/engine-spec';
 import { withActiveRoot } from '../engines/guard';
-import {
-  EWorkerEngineName,
-  type WorkerEvent,
-} from '../engines/worker-engine.port';
+import { type WorkerEvent } from '../engines/worker-engine.port';
 import { CredentialContext } from '../llm-keys/credential-context';
 import {
   TenantCredentialService,
@@ -119,13 +116,6 @@ export class ReviewPipelineService {
     @Inject(SESSION_REGISTRY) private readonly sessions: SessionRegistry,
   ) {}
 
-  private keyFor(
-    keys: TenantKeys,
-    engine: EWorkerEngineName,
-  ): string | undefined {
-    return engine === EWorkerEngineName.CODEX ? keys.openai : keys.anthropic;
-  }
-
   /** The owner's REVIEW engine — reuse the cross-engine recipe they already declared for plan
    * self-review (SELF_REVIEW capability); fall back to their execute engine when they declare none. */
   private reviewSpec(
@@ -153,6 +143,7 @@ export class ReviewPipelineService {
     prompt: string,
   ): Promise<string> {
     const onEvent = (_e: WorkerEvent) => undefined;
+    const engineAuth = await this.creds.engineAuth(team, spec.engine);
     const out = await withActiveRoot(workspacePath, () =>
       this.credCtx.run({ teamId: team, keys }, () =>
         this.turnExecutor.run(ctx, spec.engine, {
@@ -164,7 +155,8 @@ export class ReviewPipelineService {
           model: spec.model,
           effort: spec.effort,
           mode: 'investigate',
-          apiKey: this.keyFor(keys, spec.engine),
+          engineAuth,
+          team,
           onEvent,
         }),
       ),

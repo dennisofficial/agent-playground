@@ -55,7 +55,7 @@ function makeArgs(over: Partial<RunWorkerArgs> = {}): RunWorkerArgs {
     model: 'claude-sonnet',
     effort: 'high',
     mode: 'execute',
-    apiKey: 'sk-test',
+    engineAuth: { mode: 'api_key', apiKey: 'sk-test' },
     onEvent: vi.fn(),
     signal: new AbortController().signal,
     ...over,
@@ -141,7 +141,7 @@ describe('RemoteTurnDispatcher.dispatch', () => {
       model: 'claude-sonnet',
       effort: 'high',
       mode: 'execute',
-      apiKey: 'sk-test',
+      engineAuth: { mode: 'api_key', apiKey: 'sk-test' },
       skillSources: SKILLS,
       mcpServers: MCP,
     });

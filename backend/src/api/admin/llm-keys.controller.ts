@@ -13,7 +13,7 @@ import {
 } from '../../harness/llm-keys/llm-key.types';
 import { ProviderKeyStore } from '../../harness/llm-keys/provider-key.store';
 import { SecretCipher } from '../../harness/projects/secret-cipher';
-import { PutLlmKeyDto } from './dto/llm-key.dto';
+import { PutLlmKeyDto, PutSubscriptionDto } from './dto/llm-key.dto';
 
 /**
  * Admin CRUD for tenant LLM provider keys ('anthropic' | 'openai'). WRITE-ONLY for values: every
@@ -49,6 +49,28 @@ export class LlmKeysController {
       );
     }
     return this.keys.put(teamId, this.parseProvider(provider), dto.key);
+  }
+
+  /** Set the engine auth MODE and (optionally) the subscription credential for a provider. Lets a
+   * workspace drive its coding-engine turns off its own Claude Max / ChatGPT plan instead of the
+   * metered API key (which still funds chat/gate/embeddings). WRITE-ONLY for the secret. */
+  @Put(':provider/subscription')
+  async putSubscription(
+    @Param('teamId') teamId: string,
+    @Param('provider') provider: string,
+    @Body() dto: PutSubscriptionDto,
+  ) {
+    if (dto.secret !== undefined && !this.cipher.isConfigured()) {
+      throw new BadRequestException(
+        'SECRETS_ENCRYPTION_KEY is not set — generate one with `openssl rand -base64 32` before storing credentials.',
+      );
+    }
+    return this.keys.putSubscription(
+      teamId,
+      this.parseProvider(provider),
+      dto.mode,
+      dto.secret,
+    );
   }
 
   @Get()

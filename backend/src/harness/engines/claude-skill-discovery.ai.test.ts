@@ -83,7 +83,7 @@ describe('ClaudeEngine skill discovery under settingSources:[] (real LLM)', () =
         systemPrompt: 'You are a worker. Use your available skills when asked.',
         agentId: 'probe',
         mode: 'investigate',
-        apiKey,
+        engineAuth: { mode: 'api_key', apiKey },
         onEvent: (e: WorkerEvent) => {
           if (e.kind === 'tool') tools.push(e.name);
         },

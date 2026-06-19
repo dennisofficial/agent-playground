@@ -64,6 +64,17 @@ export type WorkerEvent =
   | { kind: 'tool'; name: string; detail?: string }
   | { kind: 'result'; text: string };
 
+/**
+ * How an engine turn authenticates. 'api_key' bills the workspace's metered key per token (the
+ * default, and how chat/gate/embeddings always run); 'subscription' drives the turn off the
+ * workspace's own Claude Max / ChatGPT plan instead — `secret` is a Claude `CLAUDE_CODE_OAUTH_TOKEN`
+ * (claude engine) or a Codex `auth.json` blob (codex engine), each engine interpreting it for its
+ * own CLI. Built once per turn by `TenantCredentialService.engineAuth()` and threaded to the engine.
+ */
+export type EngineAuth =
+  | { mode: 'api_key'; apiKey?: string }
+  | { mode: 'subscription'; secret: string };
+
 export interface RunWorkerArgs {
   task: string;
   /** Directory the worker is scoped to (the project root). */
@@ -86,10 +97,14 @@ export interface RunWorkerArgs {
    * don't touch" is structurally enforced, not just requested ('plan' adds the native plan ceremony;
    * 'investigate' skips it for a fast direct answer). Only 'execute' may write. */
   mode: WorkerMode;
-  /** The owning workspace's LLM API key for this run (single-process multi-tenant: each tenant
-   * funds its own engine runs). Passed into the engine's subprocess env, NOT the shared process.env.
-   * Unset → the engine falls back to its own env (dev/TUI). */
-  apiKey?: string;
+  /** How this run authenticates (single-process multi-tenant: each tenant funds its own engine
+   * runs). 'api_key' → the key is passed into the engine subprocess env, NOT shared process.env;
+   * 'subscription' → the engine drives the workspace's own Claude/ChatGPT plan instead. Unset → the
+   * engine falls back to its own ambient env (dev/TUI). */
+  engineAuth?: EngineAuth;
+  /** The owning workspace (Slack team) id — used by the codex engine to key a per-(team,agent)
+   * subscription home so each workspace's logged-in `auth.json` stays isolated. */
+  team?: string;
   /** Called for each progress event as the worker runs. */
   onEvent: (e: WorkerEvent) => void;
   /** Aborts the run when signalled — the engine wires it to its native cancellation. Kept

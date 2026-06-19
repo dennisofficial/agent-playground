@@ -116,6 +116,7 @@ function buildRunner(
   } as unknown as WorkspaceGitPort;
   const creds = {
     resolve: async () => ({}),
+    engineAuth: async () => ({ mode: 'api_key' as const, apiKey: undefined }),
   } as unknown as TenantCredentialService;
   const credCtx = {
     run: (_c: unknown, fn: () => unknown) => fn(),

@@ -87,7 +87,10 @@ function build(opts: { reviewVerdict?: string; findings?: string } = {}) {
   } as never;
 
   const credCtx = { run: (_c: unknown, fn: () => unknown) => fn() } as never;
-  const creds = { resolve: async () => ({ anthropic: 'k', openai: 'k' }) } as never;
+  const creds = {
+    resolve: async () => ({ anthropic: 'k', openai: 'k' }),
+    engineAuth: async () => ({ mode: 'api_key', apiKey: 'k' }),
+  } as never;
   // The host WorkspaceService — `get` returns undefined for a sandbox (no host row). The containerized
   // branch must NOT early-return on that.
   const workspaces = { get: () => undefined } as never;

@@ -130,7 +130,8 @@ export class DaemonTurnService {
         model: payload.model,
         effort: payload.effort,
         mode: payload.mode,
-        apiKey: payload.apiKey,
+        engineAuth: payload.engineAuth,
+        team: payload.team,
         onEvent: (event) => {
           const frame: RunEventFrame = { kind: 'event', event };
           void this.redis
