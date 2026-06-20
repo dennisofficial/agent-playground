@@ -6,6 +6,7 @@ import { ATLAS_BRAIN_LLM, type BrainLlm } from './brain-llm';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
+import { ScopingInvestigatorService } from './scoping-investigator.service';
 
 /**
  * W3 — the CONVERSATIONAL BRAIN (the grill). Handles ONE chat turn in a scoping thread: it reads the
@@ -28,6 +29,7 @@ export class ConversationalBrainService {
     private readonly store: BrainStoreService,
     private readonly memory: AtlasMemoryStore,
     private readonly approvals: DecisionApprovalService,
+    private readonly investigator: ScopingInvestigatorService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
   ) {}
@@ -39,9 +41,19 @@ export class ConversationalBrainService {
    */
   async handleChatTurn(stimulus: ChatStimulus): Promise<void> {
     const transcript = await this.store.transcript(stimulus.threadId);
-    const recalled = await this.recall(stimulus);
+    const [recalled, repoDigest] = await Promise.all([
+      this.recall(stimulus),
+      // Ground the grill in the ACTUAL repo so it stops interrogating the operator for self-answerable
+      // facts (issue #1). Cached per thread; fails soft to '' (then the grill proceeds ungrounded).
+      this.investigator.digest({
+        teamId: stimulus.teamId,
+        projectId: stimulus.projectId,
+        threadId: stimulus.threadId,
+        focus: stimulus.body,
+      }),
+    ]);
 
-    const action = await this.llm.grill({ transcript, recalled });
+    const action = await this.llm.grill({ transcript, recalled, repoDigest });
 
     // No usable model verdict (no key / malformed) → ask a generic clarifier rather than guess a plan.
     if (!action) {
@@ -114,6 +126,7 @@ export class ConversationalBrainService {
 
     if (resolution.verdict === 'approve') {
       const running = await this.store.approve(job.id, decisionRecordId, resolution.ruledBy);
+      this.investigator.forget(stimulus.threadId);
       await this.dispatcher.dispatch(running);
       await this.store.appendAtlasMessage(stimulus.threadId, 'Plan approved — dispatching the build.');
       return;
@@ -127,6 +140,7 @@ export class ConversationalBrainService {
     }
 
     // deny
+    this.investigator.forget(stimulus.threadId);
     await this.store.cancel(job.id);
     await this.say(stimulus, 'Understood — I\'ll drop this one.');
   }

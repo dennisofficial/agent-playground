@@ -10,10 +10,12 @@
 export type SessionEngine = 'claude' | 'codex';
 
 /**
- * How a turn runs — read-only vs. writes. 'plan'/'review' are read-only (no commits); 'execute'
- * writes. Mirrors the proven per-turn mode model without carrying v1's session machinery.
+ * How a turn runs — read-only vs. writes. 'plan'/'review'/'investigate' are read-only (no commits);
+ * 'execute' writes. 'investigate' is the STRICTEST read-only posture — Read/Glob/Grep only, NO Bash —
+ * used for scoping/grilling over a shared clone where even a read-only Bash could mutate. Mirrors the
+ * proven per-turn mode model without carrying v1's session machinery.
  */
-export type SessionMode = 'plan' | 'execute' | 'review';
+export type SessionMode = 'plan' | 'execute' | 'review' | 'investigate';
 
 /** A reference to one engine session running inside a per-feature sandbox (MVP: a local worktree). */
 export interface SessionRef {

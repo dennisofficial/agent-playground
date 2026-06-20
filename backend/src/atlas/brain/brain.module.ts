@@ -2,6 +2,8 @@ import { EnvService } from '@core/config/env/env.service';
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DecisionGateModule } from '../decision-gate';
+import { EngineModule } from '../engine';
+import { GitModule } from '../git';
 import { MemoryModule } from '../memory';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
@@ -9,6 +11,7 @@ import {
   AtlasDecisionRecord,
   AtlasJob,
   AtlasMessage,
+  AtlasProject,
   AtlasSection,
   AtlasStimulus,
   AtlasThread,
@@ -18,6 +21,7 @@ import { ATLAS_BRAIN_LLM, AnthropicBrainLlm } from './brain-llm';
 import { BrainStoreService } from './brain-store.service';
 import { ConversationalBrainService } from './conversational-brain.service';
 import { DecisionApprovalService } from './decision-approval.service';
+import { ScopingInvestigatorService } from './scoping-investigator.service';
 import { TriageService } from './triage.service';
 
 /**
@@ -53,6 +57,8 @@ import { TriageService } from './triage.service';
   imports: [
     DecisionGateModule,
     MemoryModule,
+    EngineModule,
+    GitModule,
     TypeOrmModule.forFeature(
       [
         AtlasThread,
@@ -62,6 +68,7 @@ import { TriageService } from './triage.service';
         AtlasDecisionRecord,
         AtlasSection,
         AtlasStimulus,
+        AtlasProject,
       ],
       ATLAS_CONNECTION,
     ),
@@ -77,6 +84,7 @@ import { TriageService } from './triage.service';
         ),
     },
     BrainStoreService,
+    ScopingInvestigatorService,
     ConversationalBrainService,
     DecisionApprovalService,
     TriageService,
@@ -89,6 +97,7 @@ import { TriageService } from './triage.service';
     ConversationalBrainService,
     DecisionApprovalService,
     BrainStoreService,
+    ScopingInvestigatorService,
     STIMULUS_CONSUMER,
     ATLAS_BRAIN_LLM,
   ],

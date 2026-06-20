@@ -179,6 +179,12 @@ export class FakeEngineRunner {
     if (args.mode === 'review') {
       return { result: '(e2e fake) review turn — no findings.', sessionId };
     }
+    if (args.mode === 'investigate') {
+      return {
+        result: '(e2e fake) repo digest: TypeScript/NestJS service; tooling: pnpm test + typecheck.',
+        sessionId,
+      };
+    }
     // execute — a deterministic no-op "did the work" report (git is faked, no real file needed offline).
     return { result: '(e2e fake) execute turn complete — change applied.', sessionId };
   }

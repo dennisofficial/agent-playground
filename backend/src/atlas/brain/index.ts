@@ -9,6 +9,7 @@ export * from './triage.service';
 export * from './conversational-brain.service';
 export * from './decision-approval.service';
 export * from './brain-store.service';
+export * from './scoping-investigator.service';
 export {
   JOB_DISPATCHER,
   LoggingJobDispatcher,

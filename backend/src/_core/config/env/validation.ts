@@ -289,6 +289,15 @@ export interface IEnvConfig {
   //    truncated to this). Default 8 — keeps a section's build bounded.
   ATLAS_MAX_SECTIONS?: number;
   ATLAS_MAX_PHASES_PER_SECTION?: number;
+  // ── Atlas v2 scoping / grill (W3 — issue #1 tuning) ──────────────────────────────────────────
+  // ATLAS_SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
+  // (default) runs a strict read-only engine pass (Read/Glob/Grep, no Bash) over the clone; 'native_plan'
+  // uses Claude's native plan mode. Either way scoping never writes; it just stops the brain interrogating
+  // the operator for facts it can read.
+  ATLAS_SCOPING_MODE?: 'read_only_tools' | 'native_plan';
+  // ATLAS_SCOPING_TIMEOUT_MS: wall-clock budget for one scoping investigation pass before it aborts and
+  // the brain grills without a digest. Default 120000 (2 min).
+  ATLAS_SCOPING_TIMEOUT_MS?: number;
 
   // ── Atlas v2 dev/test tooling ─────────────────────────────────────────────────────────────────
   // Both optional, dev/test ONLY — never set in prod:
@@ -456,6 +465,9 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Atlas v2 section/phase driver (W4) runaway guards
   ATLAS_MAX_SECTIONS: Joi.number().integer().min(1).optional(),
   ATLAS_MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
+  // Atlas v2 scoping / grill (W3 — issue #1)
+  ATLAS_SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
+  ATLAS_SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 dev/test tooling (never prod)
   ATLAS_TEST_BRIDGE: Joi.string().valid('on').optional(),
   ATLAS_DISABLE_RESUME: Joi.string().optional(),

@@ -31,6 +31,12 @@ export interface GrillInput {
   transcript: TranscriptLine[];
   /** Recalled memory facts to ground the turn (may be empty). */
   recalled: string[];
+  /**
+   * A REPO DIGEST — facts gathered by a read-only investigation of the ACTUAL cloned repo (stack,
+   * structure, relevant code, conventions, tooling). Empty when no repo / investigation unavailable.
+   * The grill uses it to ground questions and NEVER ask the operator anything answerable from the repo.
+   */
+  repoDigest?: string;
 }
 
 export interface BrainLlm {
@@ -75,6 +81,14 @@ const GRILL_SYSTEM = [
   'thread to shape ONE feature or bug fix. Your job in each turn: either ask the SINGLE most useful',
   'clarifying question, or — once the architecture/system calls are settled — propose the plan.',
   '',
+  'GROUND YOURSELF IN THE REPO, DO NOT INTERROGATE. A REPO DIGEST (facts gathered from the ACTUAL',
+  'repository) may be provided below. NEVER ask the operator anything you can answer from the repo or',
+  'the digest — the tech stack / frameworks, whether a file or module exists, how big the repo is, what',
+  'lint/test/build tooling is available, or how the codebase already does something. Consult the digest',
+  'or assume it can be read at build time. Ask ONLY genuine product/intent and always-ask DECISION',
+  'questions a human must rule on. If the digest is empty, still avoid self-answerable questions —',
+  'prefer stating an assumption the operator can correct over asking them to describe their own code.',
+  '',
   'Grill until you can LOCK the always-ask decisions that apply: data model / schema, public or',
   'cross-service API contracts, new dependencies / libraries / services, infrastructure / topology,',
   'cross-cutting patterns (auth, caching, state, concurrency, error-handling), and one-way doors.',
@@ -85,8 +99,9 @@ const GRILL_SYSTEM = [
   'When the applicable decisions are settled, return "propose_plan" with: a short title; the kind',
   '("feature" for multi-part work, "bugfix" for a single fix); a concise overview (intent, stack,',
   'constraints); the locked decisions (each a class + title + ruling); and a high-level section list',
-  '(ordered one-line briefs, e.g. backend → frontend → devops). Keep sections coarse — the detailed',
-  'per-section plan is produced later, not now. Reply with ONLY the tool call.',
+  '(ordered one-line briefs, e.g. backend → frontend → devops). The repo is already investigated, so do',
+  'NOT add an "investigate the codebase" section — sections are real build work. Keep sections coarse —',
+  'the detailed per-section plan is produced later, not now. Reply with ONLY the tool call.',
 ].join('\n');
 
 const DECISION_CLASS_ENUM = [
@@ -231,10 +246,13 @@ export class AnthropicBrainLlm implements BrainLlm {
     const recalled = input.recalled.length
       ? `Relevant remembered facts:\n${input.recalled.map((f) => `- ${f}`).join('\n')}\n\n`
       : '';
+    const digest = input.repoDigest?.trim()
+      ? `Repo digest (facts read from the actual repository — do NOT re-ask these):\n${input.repoDigest.trim()}\n\n`
+      : '';
 
     const res = await bound.invoke([
       { role: 'system', content: GRILL_SYSTEM },
-      { role: 'user', content: `${recalled}Conversation so far:\n${transcript}` },
+      { role: 'user', content: `${digest}${recalled}Conversation so far:\n${transcript}` },
     ]);
     return parseGrillArgs(res.tool_calls?.[0]?.args);
   }

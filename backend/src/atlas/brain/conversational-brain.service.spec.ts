@@ -13,6 +13,10 @@ import type { BrainStoreService, PersistedPlan, ThreadRoute } from './brain-stor
 import { ConversationalBrainService } from './conversational-brain.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type { JobDispatcher } from './job-dispatcher';
+import type {
+  ScopingInvestigateInput,
+  ScopingInvestigatorService,
+} from './scoping-investigator.service';
 
 /** A fake duplex surface: records posts. */
 class FakeSurface implements ChatSurface {
@@ -42,6 +46,27 @@ function fakeLlm(action: GrillAction | undefined): BrainLlm & { lastGrill?: Gril
 
 function fakeMemory(): AtlasMemoryStore {
   return { async recall() { return []; } } as unknown as AtlasMemoryStore;
+}
+
+function fakeInvestigator(
+  digestText = '',
+): ScopingInvestigatorService & { calls: ScopingInvestigateInput[]; forgotten: string[] } {
+  const calls: ScopingInvestigateInput[] = [];
+  const forgotten: string[] = [];
+  return {
+    calls,
+    forgotten,
+    async digest(input: ScopingInvestigateInput) {
+      calls.push(input);
+      return digestText;
+    },
+    forget(threadId: string) {
+      forgotten.push(threadId);
+    },
+  } as unknown as ScopingInvestigatorService & {
+    calls: ScopingInvestigateInput[];
+    forgotten: string[];
+  };
 }
 
 function fakeStore(): BrainStoreService & {
@@ -140,17 +165,25 @@ describe('ConversationalBrainService (grill)', () => {
     dispatcher = fakeDispatcher();
   });
 
-  function make(action: GrillAction | undefined, store = fakeStore()) {
+  function make(
+    action: GrillAction | undefined,
+    store = fakeStore(),
+    investigator = fakeInvestigator(),
+  ) {
+    const llm = fakeLlm(action);
     return {
       svc: new ConversationalBrainService(
-        fakeLlm(action),
+        llm,
         store as unknown as BrainStoreService,
         fakeMemory(),
         approvals,
+        investigator,
         dispatcher,
         surface,
       ),
       store,
+      llm,
+      investigator,
     };
   }
 
@@ -162,6 +195,23 @@ describe('ConversationalBrainService (grill)', () => {
     expect(posted?.opts?.threadTs).toBe('root-1');
     expect(store.appended).toContain('Which export format?');
     expect(dispatcher.jobs).toHaveLength(0);
+  });
+
+  it('grounds the grill in the repo digest (issue #1: investigate, do not interrogate)', async () => {
+    const { svc, llm, investigator } = make(
+      { verb: 'ask_question', question: 'Which export format?' },
+      fakeStore(),
+      fakeInvestigator('Repo digest: NestJS + pnpm; the dashboard module owns export.'),
+    );
+    await svc.handleChatTurn(chat());
+    // The investigator was consulted for THIS thread/project, and its digest reached the grill turn.
+    expect(investigator.calls).toHaveLength(1);
+    expect(investigator.calls[0]).toMatchObject({
+      teamId: 'T1',
+      projectId: 'proj',
+      threadId: 'thr-1',
+    });
+    expect(llm.lastGrill?.repoDigest).toContain('NestJS');
   });
 
   it('proposes a plan → persists it → posts the approval card', async () => {
@@ -177,8 +227,8 @@ describe('ConversationalBrainService (grill)', () => {
     await turn;
   });
 
-  it('on APPROVE → marks approved + dispatches the job', async () => {
-    const { svc, store } = make(PROPOSAL);
+  it('on APPROVE → marks approved + dispatches the job + forgets the scoping digest', async () => {
+    const { svc, store, investigator } = make(PROPOSAL);
     const turn = svc.handleChatTurn(chat());
     // Let the card post + the verdict promise register, then approve.
     await waitFor(() => approvals.pendingCount === 1);
@@ -187,6 +237,7 @@ describe('ConversationalBrainService (grill)', () => {
     expect(store.approvedWith).toEqual({ jobId: 'job-7', recordId: 'dr-7', by: 'U-dennis' });
     expect(dispatcher.jobs).toHaveLength(1);
     expect(dispatcher.jobs[0]?.status).toBe('running');
+    expect(investigator.forgotten).toContain('thr-1');
   });
 
   it('on REQUEST_CHANGES → no dispatch, job returns to scoping', async () => {

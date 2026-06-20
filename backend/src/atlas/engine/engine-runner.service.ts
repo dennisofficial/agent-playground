@@ -43,6 +43,10 @@ const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'];
 const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
 // A read-only review turn gets the read tools only.
 const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash'];
+// The STRICTEST read-only posture (scoping/grilling over a shared clone): NO Bash at all, so there is
+// no write vector — Write/Edit are denied by canUseTool, and with Bash absent nothing can mutate the
+// tree. Read/Glob/Grep is plenty to investigate stack/structure/conventions/tooling.
+const INVESTIGATE_TOOLS = ['Read', 'Glob', 'Grep'];
 // Auto-approve safe reads; writes/bash fall through to canUseTool where the boundary is re-applied.
 const AUTO_APPROVE = ['Read', 'Glob', 'Grep'];
 
@@ -153,7 +157,13 @@ export class EngineRunner {
       systemPrompt,
       // No skills: settingSources [] means NO on-disk config files are read (full isolation).
       settingSources: [],
-      tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
+      tools: planMode
+        ? PLAN_TOOLS
+        : mode === 'investigate'
+          ? INVESTIGATE_TOOLS
+          : readOnly
+            ? REVIEW_TOOLS
+            : WORKER_TOOLS,
       allowedTools: AUTO_APPROVE,
       canUseTool: makeCanUseTool(readOnly, cwd, (plan) => {
         capturedPlan = plan;
