@@ -158,7 +158,7 @@ const ALWAYS_ASK_RULES: Array<{ cls: DecisionClass; re: RegExp }> = [
   },
   {
     cls: 'cross_cutting',
-    re: /\b(auth(entication|orization)?|caching|cache strategy|state management|concurrency|locking|transaction(al)? (boundary|strategy)|error[- ]handling (strategy|pattern)|retry (policy|strategy)|rate[- ]limit(ing)?|session (management|store)|global (middleware|interceptor)|cross-cutting)\b/,
+    re: /\b(auth(entication|orization)?|password ?(hashing|hash|storage)?|hashing|bcrypt|scrypt|argon2|pbkdf2|jwt|json web token|access token|refresh token|token (strategy|signing|expiry|rotation|storage)|bearer token|oauth2?|openid|sso|saml|csrf|session (management|store|strategy)|cookie (auth|session)|crypto(graphy)?|cipher|encryption|encrypt|decrypt|signing key|salt(ing)?|secret(s)? (management|store)|caching|cache strategy|state management|concurrency|locking|transaction(al)? (boundary|strategy)|error[- ]handling (strategy|pattern)|retry (policy|strategy)|rate[- ]limit(ing)?|session (management|store)|global (middleware|interceptor)|cross-cutting)\b/,
   },
   {
     cls: 'one_way_door',

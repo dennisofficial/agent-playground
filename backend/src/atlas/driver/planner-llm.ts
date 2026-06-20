@@ -99,6 +99,12 @@ const EXTRACT_SYSTEM = [
   'want to weigh in on — schema/data-model changes, public/cross-service API contracts, new dependencies or',
   'services, infrastructure/topology, cross-cutting patterns (auth/caching/state/concurrency/error-handling),',
   'and one-way doors. Skip pure internal mechanics (naming, file placement, refactors). Each item is one line.',
+  '',
+  'Be EXHAUSTIVE about SECURITY & AUTH-MECHANISM decisions — surface each as its OWN item, never bundled:',
+  'the password-hashing algorithm, the JWT/token library choice, the token strategy (signing algo, expiry,',
+  'refresh/rotation, storage location), OAuth/SSO/SAML, session/cookie strategy, encryption/crypto, secret',
+  'storage. A plan that "adds JWT auth" makes SEVERAL such decisions — list them all.',
+  '',
   'If the plan makes none, return an empty list. Reply with ONLY the tool call.',
 ].join('\n');
 

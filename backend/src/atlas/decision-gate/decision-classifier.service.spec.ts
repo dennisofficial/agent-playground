@@ -63,6 +63,22 @@ describe('DecisionClassifier', () => {
     expect(res.decisionClass).toBe('cross_cutting');
   });
 
+  // ── security / auth-mechanism (issue #5) — each is an always-ask cross_cutting call ──────────────
+  it.each([
+    'Use bcrypt to hash user passwords',
+    'Choose a JWT library and signing algorithm for access tokens',
+    'Decide the token strategy: refresh token rotation and storage',
+    'Encrypt secrets at rest with AES-256',
+    'Add OAuth2 login via Google',
+  ])('security/auth-mechanism decision → ask (cross_cutting): %s', async (description) => {
+    const c = new DecisionClassifier(llm);
+    const res = await c.classify({ description }, emptyRecord);
+    expect(res.verdict).toBe('ask');
+    expect(res.decisionClass).toBe('cross_cutting');
+    expect(res.via).toBe('rule');
+    expect(llm.calls).toBe(0);
+  });
+
   it('one-way door → ask (one_way_door)', async () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
