@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+import { EngineAuthError } from '../engine';
 import { SectionDriver } from './section-driver.service';
 import type { DriverStoreService, DriverSection, JobRoute } from './driver-store.service';
 import type { PlannerLlm, PlannedPhase } from './planner-llm';
@@ -690,6 +691,56 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.posts.some((p) => p.includes('Build failed') && /waiting for your input/i.test(p))).toBe(true);
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(false); // never got past the gate
     expect(h.opened).toHaveLength(0);
+  });
+
+  it('PAUSES the job (not failed) on an EngineAuthError and relays a pause notice (resume feature)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state);
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string }) => {
+      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
+      throw new EngineAuthError('401 invalid api key', 'sess-401');
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'paused');
+
+    expect(state.job.status).toBe('paused'); // paused, NOT failed
+    expect(h.posts.some((p) => /paused/i.test(p) && /credential|auth/i.test(p))).toBe(true);
+    expect(h.opened).toHaveLength(0);
+  });
+
+  it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {
+    // no-op path: a non-paused job is left alone.
+    const running: StoreState = {
+      job: makeJob({ status: 'done' }),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend', 'done')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const noop = assemble(running);
+    await noop.driver.resumePaused(running.job.id);
+    expect(noop.opened).toHaveLength(0); // never re-driven
+
+    // resume path: a paused job is flipped to running and driven to a PR.
+    const state: StoreState = {
+      job: makeJob({ status: 'paused' }),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state);
+    await h.driver.resumePaused(state.job.id);
+    await flushUntil(() => state.job.status === 'done');
+    expect(state.job.status).toBe('done');
+    expect(h.opened).toHaveLength(1);
   });
 
   it('bounds a runaway section PLAN turn — aborts + falls back to the planner, no hang (issue #3)', async () => {

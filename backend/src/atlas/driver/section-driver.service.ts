@@ -10,6 +10,7 @@ import {
 } from '../decision-gate';
 import { AutoFixStage } from '../autofix';
 import type { DecisionRecord, Job, Phase } from '../domain';
+import { EngineAuthError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { CHAT_SURFACE, type ChatSurface } from '../surface';
 import type { JobDispatcher } from '../brain';
@@ -120,6 +121,26 @@ export class SectionDriver implements JobDispatcher {
     }
   }
 
+  /**
+   * Resume a job PAUSED on a credential/401 halt (the `/test/resume` ping / a re-engage once creds are
+   * fixed). Flips it back to `running` and re-drives: `runJob` fast-forwards completed work and the
+   * unfinished phase resumes its SAME engine session (its `session_id` was persisted at the halt) rather
+   * than restarting. A no-op if the job isn't paused. NOT auto-called on boot — a paused job would just
+   * 401 again, so it waits for an explicit ping.
+   */
+  async resumePaused(jobId: string): Promise<void> {
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    if (!job || job.status !== 'paused') {
+      this.logger.warn(`resumePaused job=${jobId}: not paused (${job?.status ?? 'gone'}) — ignoring`);
+      return;
+    }
+    this.logger.log(`resumePaused job=${jobId} — re-driving the paused session`);
+    await this.store.setJobStatus(jobId, 'running');
+    void this.drive(jobId).catch((err) => {
+      this.logger.error(`resumePaused job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`);
+    });
+  }
+
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
 
   /** Guard the job against a concurrent drive, then run it to a PR (or `failed`). */
@@ -132,12 +153,35 @@ export class SectionDriver implements JobDispatcher {
     try {
       await this.runJob(jobId);
     } catch (err) {
-      this.logger.error(`job=${jobId} failed: ${err instanceof Error ? err.stack : err}`);
-      await this.store.setJobStatus(jobId, 'failed').catch(() => undefined);
-      // RELAY the failure into the thread — a failed job must never dead-end silently (issue #2).
-      await this.relayFailure(jobId, err);
+      if (err instanceof EngineAuthError) {
+        // A credential/401 halt — PAUSE (don't fail): the unfinished phase's session_id is persisted, so
+        // a ping (`resumePaused`) continues the SAME session once creds are fixed. Re-driving now would
+        // just 401 again, so we wait for the human.
+        this.logger.warn(`job=${jobId} paused on credential error: ${err.message}`);
+        await this.store.setJobStatus(jobId, 'paused').catch(() => undefined);
+        await this.relayPaused(jobId, err);
+      } else {
+        this.logger.error(`job=${jobId} failed: ${err instanceof Error ? err.stack : err}`);
+        await this.store.setJobStatus(jobId, 'failed').catch(() => undefined);
+        // RELAY the failure into the thread — a failed job must never dead-end silently (issue #2).
+        await this.relayFailure(jobId, err);
+      }
     } finally {
       this.active.delete(jobId);
+    }
+  }
+
+  /** Post a "paused on a credential error" notice so the human fixes creds + pings resume (best-effort). */
+  private async relayPaused(jobId: string, err: unknown): Promise<void> {
+    try {
+      const job = await this.store.loadJob(jobId);
+      const route = await this.store.route(job);
+      await this.post(
+        route,
+        `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`,
+      );
+    } catch (e) {
+      this.logger.warn(`could not relay pause for job=${jobId}: ${e}`);
     }
   }
 
