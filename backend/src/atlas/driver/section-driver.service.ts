@@ -1,5 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   DecisionClassifier,
   ParkAndAskService,
@@ -63,6 +65,25 @@ export class SectionDriver implements JobDispatcher {
     return this.env.get('ATLAS_MAX_PHASES_PER_SECTION') ?? 8;
   }
 
+  /** Per-phase wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m. */
+  private get phaseTimeoutMs(): number {
+    const raw = Number(this.env.get('ATLAS_PHASE_TIMEOUT_MS'));
+    return Number.isFinite(raw) && raw > 0 ? raw : 20 * 60_000;
+  }
+
+  /** Per-job wall-clock budget (checked at section boundaries) — backstop against an unbounded build. Default 60m. */
+  private get jobTimeoutMs(): number {
+    const raw = Number(this.env.get('ATLAS_JOB_TIMEOUT_MS'));
+    return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
+  }
+
+  /** A repo-specific verify command (e.g. `pnpm typecheck`); when set, a phase must pass it before it
+   *  commits + is marked done. Unset → rely on the engine's own in-turn verification (prompt-enforced). */
+  private get verifyCmd(): string | undefined {
+    const raw = this.env.get('ATLAS_VERIFY_CMD');
+    return raw && raw.trim() ? raw.trim() : undefined;
+  }
+
   /**
    * The DISPATCH SEAM (the brain's "hands" edge). Take ownership of an approved, persisted job and kick
    * off the deterministic drive ASYNC — return promptly so the brain doesn't block on the whole build.
@@ -106,8 +127,24 @@ export class SectionDriver implements JobDispatcher {
     } catch (err) {
       this.logger.error(`job=${jobId} failed: ${err instanceof Error ? err.stack : err}`);
       await this.store.setJobStatus(jobId, 'failed').catch(() => undefined);
+      // RELAY the failure into the thread — a failed job must never dead-end silently (issue #2).
+      await this.relayFailure(jobId, err);
     } finally {
       this.active.delete(jobId);
+    }
+  }
+
+  /** Post a clear "build failed — why" into the job's thread (best-effort). Root cause, not a stack trace. */
+  private async relayFailure(jobId: string, err: unknown): Promise<void> {
+    try {
+      const job = await this.store.loadJob(jobId);
+      const route = await this.store.route(job);
+      await this.post(
+        route,
+        `:x: Build failed — ${shortReason(err)}\n_The job is marked failed; reply in this thread to retry or adjust the plan._`,
+      );
+    } catch (e) {
+      this.logger.warn(`could not relay failure for job=${jobId}: ${e}`);
     }
   }
 
@@ -137,12 +174,25 @@ export class SectionDriver implements JobDispatcher {
         `job=${jobId} has ${allSections.length} sections > ATLAS_MAX_SECTIONS (${this.maxSections}) — capping`,
       );
     }
+    const pending = sections.filter((s) => s.status !== 'done').length;
+    if (pending > 0) {
+      await this.post(route, `:rocket: Starting the build — ${pending} section(s) on \`${sandbox.branch}\`.`);
+    }
+
+    // Per-job wall-clock backstop (issue #3) — checked at each section boundary; the per-phase timeout
+    // guards within a section. A breach aborts + relays (caught in drive()).
+    const deadline = Date.now() + this.jobTimeoutMs;
     let handoff: string | null = null;
     for (const section of sections) {
       if (section.status === 'done') {
         // Already built (a resume) — carry its persisted handoff to the next section, don't re-run.
         handoff = section.handoffOut ?? handoff;
         continue;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          `job exceeded ATLAS_JOB_TIMEOUT_MS (${this.jobTimeoutMs}ms) before section "${section.brief}"`,
+        );
       }
       handoff = await this.runSection(job, record, route, repo, sandbox, section, handoff);
     }
@@ -170,6 +220,7 @@ export class SectionDriver implements JobDispatcher {
     handoffIn: string | null,
   ): Promise<string | null> {
     this.logger.log(`section ${section.ordinal} "${section.brief}" — planning`);
+    await this.post(route, `:hammer_and_wrench: Planning section — *${section.brief}*`);
 
     // a. PLAN (just-in-time) — or reuse the locked plan on a resume (phases already exist).
     const { phases, planned } = await this.planSection(job, record, sandbox, section, handoffIn);
@@ -196,7 +247,7 @@ export class SectionDriver implements JobDispatcher {
     // e. EXECUTE — run each phase as a fresh session on the shared feature branch.
     const sectionStartSha = await this.git.headSha(sandbox.worktreePath).catch(() => undefined);
     await this.store.setSectionStatus(section.id, 'executing');
-    const reports = await this.executePhases(job, sandbox, section, record);
+    const reports = await this.executePhases(job, route, sandbox, section, record);
 
     // f. AUTO-FIX — fan-out review → fix over this section's diff.
     await this.store.setSectionStatus(section.id, 'auto_fixing');
@@ -349,6 +400,7 @@ export class SectionDriver implements JobDispatcher {
    */
   private async executePhases(
     job: Job,
+    route: JobRoute,
     sandbox: FeatureSandbox,
     section: DriverSection,
     record: DecisionRecord | null,
@@ -360,34 +412,59 @@ export class SectionDriver implements JobDispatcher {
         this.logger.log(`phase ${phase.ordinal} already done — fast-forward`);
         continue;
       }
-      reports.push(await this.runPhase(job, sandbox, section, record, phase));
+      reports.push(await this.runPhase(job, route, sandbox, section, record, phase));
     }
     return reports;
   }
 
-  /** Run ONE phase: a fresh execute turn → commit → mark done. The explicit cursor moves with the work. */
+  /** Run ONE phase: a fresh execute turn → verify → commit → mark done. The explicit cursor moves with
+   *  the work. A per-phase wall-clock timeout aborts a runaway turn; an optional verify command gates
+   *  the commit so broken output never advances the cursor (issues #3, #4). */
   private async runPhase(
     job: Job,
+    route: JobRoute,
     sandbox: FeatureSandbox,
     section: DriverSection,
     record: DecisionRecord | null,
     phase: Phase,
   ): Promise<string> {
-    this.logger.log(`phase ${phase.ordinal} "${phase.title ?? phase.brief}" — building`);
+    const label = phase.title ?? phase.brief ?? `phase ${phase.ordinal}`;
+    this.logger.log(`phase ${phase.ordinal} "${label}" — building`);
     await this.store.setPhaseState(phase.id, 'build', 'building');
+    await this.post(route, `:gear: ${section.brief} — building: ${label}`);
 
-    const result = await this.turn.runTurn({
-      jobId: job.id,
-      phaseId: phase.id,
-      sandbox,
-      engine: 'claude',
-      mode: 'execute',
-      systemPrompt: PHASE_EXECUTE_SYSTEM,
-      task: renderPhaseTask(record, section, phase),
-      onEvent: (e) => {
-        if (e.kind === 'tool') this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
-      },
-    });
+    // Circuit breaker (#3): abort an engine turn that runs past the per-phase budget.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.phaseTimeoutMs);
+    let result;
+    try {
+      result = await this.turn.runTurn({
+        jobId: job.id,
+        phaseId: phase.id,
+        sandbox,
+        engine: 'claude',
+        mode: 'execute',
+        systemPrompt: PHASE_EXECUTE_SYSTEM,
+        task: renderPhaseTask(record, section, phase),
+        signal: controller.signal,
+        onEvent: (e) => {
+          if (e.kind === 'tool') this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
+        },
+      });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          `phase "${label}" exceeded ATLAS_PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms) and was aborted`,
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    // Verify BEFORE committing (#4): an optional repo verify command must pass, else fail the phase so
+    // broken output never commits or advances the cursor. Unset → rely on the engine's in-turn verify.
+    await this.verifyPhase(route, sandbox, label);
 
     // Commit whatever the phase produced onto the shared feature branch.
     const sha = await this.git.commitAll(
@@ -398,6 +475,20 @@ export class SectionDriver implements JobDispatcher {
 
     await this.store.setPhaseState(phase.id, 'done', 'done');
     return result.report;
+  }
+
+  /** Run ATLAS_VERIFY_CMD in the worktree (when set); a non-zero exit fails the phase (caught → relayed).
+   *  Repo-agnostic by being opt-in: the operator points it at their own typecheck/test/build. */
+  private async verifyPhase(route: JobRoute, sandbox: FeatureSandbox, label: string): Promise<void> {
+    const cmd = this.verifyCmd;
+    if (!cmd) return;
+    this.logger.log(`phase "${label}" — verifying: ${cmd}`);
+    try {
+      await execShell(cmd, sandbox.worktreePath, this.phaseTimeoutMs);
+    } catch (err) {
+      await this.post(route, `:warning: Verification failed after *${label}* (\`${cmd}\`) — failing the phase.`);
+      throw new Error(`verify command "${cmd}" failed after phase "${label}": ${shortReason(err)}`);
+    }
   }
 
   /**
@@ -488,11 +579,21 @@ export class SectionDriver implements JobDispatcher {
 
 const SECTION_PLAN_SYSTEM =
   'You are Atlas planning ONE section of an approved feature. Explore the codebase read-only and produce ' +
-  'a concrete phased plan for this section, respecting the locked decision record. Do not write any files.';
+  'a concrete phased plan for this section, respecting the locked decision record. Do not write any files. ' +
+  'The plan MUST end with VERIFICATION: a final phase (or explicit step) that runs the repo\'s OWN ' +
+  'typecheck/build/tests and confirms the change works. For a DELETION, an early phase must PROVE the code ' +
+  'is truly unused — search for every intra-file and cross-file reference (and dynamic/string usages) — ' +
+  'before anything is removed. Never plan to claim done without verifying.';
 
 const PHASE_EXECUTE_SYSTEM =
   'You are Atlas executing ONE phase of an approved plan in a feature worktree. Implement exactly this ' +
-  "phase's brief, respecting the locked decisions. Make focused, working changes; do not exceed the phase scope.";
+  "phase's brief, respecting the locked decisions. Make focused, working changes; do not exceed the phase scope. " +
+  'VERIFY before you finish: discover and run the repository\'s OWN typecheck/build/test tooling and make ' +
+  'sure your change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
+  'guess. If this phase REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
+  'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
+  'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
+  'you cannot fix it within scope, say so explicitly rather than reporting success.';
 
 /** A locked phase row → the `PlannedPhase` view the gate/visibility/render read (title null → brief). */
 function asPlannedPhase(phase: Phase): PlannedPhase {
@@ -562,4 +663,25 @@ function prBody(job: Job, record: DecisionRecord | null): string {
 
 function sandboxKey(sandbox: FeatureSandbox): string {
   return `${sandbox.projectId}--${sandbox.branch}`;
+}
+
+/** A concise human root-cause for a failure relay — the error's first line, never a stack trace. */
+function shortReason(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const firstLine = msg.split('\n')[0]?.trim() || 'unknown error';
+  return firstLine.length > 300 ? `${firstLine.slice(0, 297)}...` : firstLine;
+}
+
+const execAsync = promisify(exec);
+
+/** Run a shell command string in `cwd` with a wall-clock timeout; throws (with captured stderr) on a
+ *  non-zero exit or timeout. Used by the optional ATLAS_VERIFY_CMD phase gate. */
+async function execShell(cmd: string, cwd: string, timeoutMs: number): Promise<void> {
+  try {
+    await execAsync(cmd, { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
+  } catch (err) {
+    const e = err as { stderr?: string; stdout?: string; message?: string };
+    const detail = (e.stderr || e.stdout || e.message || '').toString().trim().split('\n').slice(-3).join(' ');
+    throw new Error(detail || 'command failed');
+  }
 }

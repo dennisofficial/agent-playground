@@ -33,7 +33,11 @@ export const DEFAULT_LENSES: ReviewLens[] = [
     focus:
       'Logic correctness: off-by-one, null/undefined handling, missed edge cases, incorrect async/' +
       'await or error propagation, resource leaks, and behavior that diverges from the stated intent. ' +
-      'Flag bugs the change introduced, not pre-existing ones outside the diff.',
+      'Flag bugs the change introduced, not pre-existing ones outside the diff. Pay special attention to ' +
+      'REMOVED code that is still referenced: if the change deletes a symbol/file/export, verify nothing ' +
+      'in the repo still imports or calls it (including intra-file and dynamic/string references) — a ' +
+      'still-referenced deletion is a high-severity bug. Also flag changes that claim to be complete but ' +
+      'leave the build/types broken.',
   },
   {
     id: 'consistency',

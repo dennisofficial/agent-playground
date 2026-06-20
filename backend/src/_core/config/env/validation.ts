@@ -289,6 +289,15 @@ export interface IEnvConfig {
   //    truncated to this). Default 8 — keeps a section's build bounded.
   ATLAS_MAX_SECTIONS?: number;
   ATLAS_MAX_PHASES_PER_SECTION?: number;
+  // Circuit breakers on the driver (issue #3) — abort + relay a runaway build. Both optional, code
+  // defaults: ATLAS_PHASE_TIMEOUT_MS (per engine turn, default 20m) + ATLAS_JOB_TIMEOUT_MS (whole job,
+  // checked at section boundaries, default 60m).
+  ATLAS_PHASE_TIMEOUT_MS?: number;
+  ATLAS_JOB_TIMEOUT_MS?: number;
+  // ATLAS_VERIFY_CMD (issue #4): an optional repo verify command (e.g. "pnpm typecheck") the driver runs
+  // in the worktree after each phase, BEFORE the commit — a non-zero exit fails the phase so broken
+  // output never advances. Unset → rely on the engine's prompt-enforced in-turn verification.
+  ATLAS_VERIFY_CMD?: string;
   // ── Atlas v2 scoping / grill (W3 — issue #1 tuning) ──────────────────────────────────────────
   // ATLAS_SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
   // (default) runs a strict read-only engine pass (Read/Glob/Grep, no Bash) over the clone; 'native_plan'
@@ -465,6 +474,9 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Atlas v2 section/phase driver (W4) runaway guards
   ATLAS_MAX_SECTIONS: Joi.number().integer().min(1).optional(),
   ATLAS_MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
+  ATLAS_PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  ATLAS_JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  ATLAS_VERIFY_CMD: Joi.string().optional(),
   // Atlas v2 scoping / grill (W3 — issue #1)
   ATLAS_SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
   ATLAS_SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),

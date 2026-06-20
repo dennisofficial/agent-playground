@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import { SectionDriver } from './section-driver.service';
 import type { DriverStoreService, DriverSection, JobRoute } from './driver-store.service';
@@ -320,7 +321,7 @@ function section(id: string, ordinal: number, brief: string, status: SectionStat
 }
 
 /** Assemble a driver over a given store-state + collaborators; returns everything the tests assert on. */
-function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'proceed' | 'ask'; parkAnswer?: Promise<ParkResolution> } = {}) {
+function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'proceed' | 'ask'; parkAnswer?: Promise<ParkResolution>; env?: Record<string, string> } = {}) {
   const { store } = makeStore(state);
   const repos = makeRepoResolver();
   const { git, pushed, commits } = makeGit();
@@ -332,8 +333,8 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
   const visibility = makeVisibility();
   const autofix = makeAutofix();
   const { surface, posts } = makeSurface();
-  // A no-op env: every guard reads its code default (no caps trip in tests).
-  const env = { get: vi.fn(() => undefined) } as unknown as EnvService;
+  // A no-op env by default: every guard reads its code default. opts.env supplies overrides per test.
+  const env = { get: vi.fn((k: string) => opts.env?.[k]) } as unknown as EnvService;
   const driver = new SectionDriver(
     store,
     repos,
@@ -543,6 +544,101 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.ask).not.toHaveBeenCalled();
     expect(state.job.status).toBe('done');
     expect(h.opened).toHaveLength(1);
+  });
+
+  it('posts in-thread progress as the build advances (issue #2)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: makeSections(),
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state);
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(h.posts.some((p) => p.includes('Starting the build'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('Planning section') && p.includes('Backend'))).toBe(true);
+    expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
+  });
+
+  it('relays a clear "build failed — why" when a phase errors, never dead-ends silently (issue #2)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state);
+    // Plan turn succeeds; the execute turn explodes → must propagate to a failure relay.
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string }) => {
+      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
+      throw new Error('engine exploded mid-phase');
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'failed');
+
+    expect(state.job.status).toBe('failed');
+    expect(h.posts.some((p) => p.includes('Build failed') && p.includes('engine exploded mid-phase'))).toBe(true);
+    expect(h.opened).toHaveLength(0); // no PR opened on a failed build
+  });
+
+  it('aborts + relays a phase that exceeds ATLAS_PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state, { env: { ATLAS_PHASE_TIMEOUT_MS: '20' } });
+    // Plan resolves; the execute turn hangs until its abort signal fires (mimics a runaway engine turn).
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: { mode: string; signal?: AbortSignal }) => {
+        if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
+        return new Promise((_resolve, reject) => {
+          input.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'failed');
+
+    expect(state.job.status).toBe('failed');
+    expect(h.posts.some((p) => p.includes('Build failed') && p.includes('ATLAS_PHASE_TIMEOUT_MS'))).toBe(true);
+  });
+
+  it('fails the phase when ATLAS_VERIFY_CMD exits non-zero, before any commit (issue #4)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state, { env: { ATLAS_VERIFY_CMD: 'exit 1' } });
+    // The verify command runs in the worktree cwd — point it at a real existing dir so exec can spawn.
+    (h.git.createFeatureSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
+      projectId: 'proj',
+      branch: 'atlas/feature-job-abcd',
+      worktreePath: tmpdir(),
+      gitUrl: REPO.gitUrl,
+      token: 'ghtok',
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'failed');
+
+    expect(state.job.status).toBe('failed');
+    expect(h.posts.some((p) => p.includes('Verification failed'))).toBe(true);
+    // The phase failed at verification → nothing was committed for it.
+    expect(h.commits).toHaveLength(0);
+    expect(h.opened).toHaveLength(0);
   });
 });
 

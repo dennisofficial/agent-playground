@@ -79,7 +79,12 @@ const PLAN_SYSTEM = [
   'You are bound by the LOCKED decision record: respect its architecture/system calls, do NOT re-litigate',
   'them. Plan only HOW to implement this section within those calls. Prefer 1–4 phases; a small section',
   'is ONE phase. Each phase needs a short title and a concrete brief (what to build, which files/areas).',
-  'Reply with ONLY the tool call.',
+  '',
+  'ALWAYS make the LAST phase a VERIFICATION phase: run the repo\'s own typecheck/build/tests and confirm',
+  'the section\'s change actually works (not a guess). If the section DELETES or removes code, an early',
+  'phase must first PROVE the target is unused — find every importer, intra-file caller, and dynamic/string',
+  'reference — before a later phase removes it. Do not plan a standalone "investigate the codebase" phase',
+  '(the repo is already investigated upstream). Reply with ONLY the tool call.',
 ].join('\n');
 
 const REVIEW_SYSTEM = [
