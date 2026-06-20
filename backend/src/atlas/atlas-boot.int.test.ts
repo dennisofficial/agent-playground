@@ -14,6 +14,7 @@ import { SectionDriver } from './driver';
 import { GithubIngressController, WebhookIngressController } from './ingress';
 import { STIMULUS_CONSUMER, StimulusIntake, type StimulusConsumer } from './stimulus';
 import { AtlasSlackSurface, CHAT_SURFACE, type ChatSurface } from './surface';
+import { TestBridgeController } from './test-bridge';
 
 /**
  * BOOT SMOKE for the W2 HTTP composition root. Boots the SAME `AtlasModule` via the SAME path
@@ -110,6 +111,51 @@ describe('AtlasModule boot with ATLAS_SURFACE=agent (the programmatic surface)',
     // The brain + dispatcher still resolve — the surface swap doesn't disturb the rest of the graph.
     expect(app.get(TriageService)).toBeDefined();
     expect(app.get(SectionDriver)).toBeDefined();
+
+    await app.close();
+  }, 60_000);
+});
+
+/**
+ * The dev/test HTTP test-bridge (`POST /test/*`): booting with ATLAS_SURFACE=agent + ATLAS_TEST_BRIDGE=on
+ * resolves the controller (its `AgentChatSurface` + `DecisionApprovalService` + repo deps are DI-complete)
+ * and registers every `/test/*` route on the Express server. This is the same DI-wiring guard W1 missed
+ * — typecheck alone wouldn't catch a bad injection here.
+ */
+describe('AtlasModule boot with the test-bridge (ATLAS_TEST_BRIDGE=on)', () => {
+  const prevSurface = process.env.ATLAS_SURFACE;
+  const prevBridge = process.env.ATLAS_TEST_BRIDGE;
+  afterEach(() => {
+    if (prevSurface === undefined) delete process.env.ATLAS_SURFACE;
+    else process.env.ATLAS_SURFACE = prevSurface;
+    if (prevBridge === undefined) delete process.env.ATLAS_TEST_BRIDGE;
+    else process.env.ATLAS_TEST_BRIDGE = prevBridge;
+  });
+
+  it('resolves TestBridgeController and registers the /test/* routes', async () => {
+    process.env.ATLAS_SURFACE = 'agent';
+    process.env.ATLAS_TEST_BRIDGE = 'on';
+    const app = await NestFactory.create<NestExpressApplication>(AtlasModule, {
+      logger: false,
+      rawBody: true,
+      abortOnError: false,
+    });
+    app.enableShutdownHooks();
+    await app.init();
+
+    // The controller resolves — its AgentChatSurface + DecisionApprovalService + repo deps are wired.
+    expect(app.get(TestBridgeController)).toBeDefined();
+
+    const server = app.getHttpServer();
+    await new Promise<void>((resolve, reject) => {
+      server.listen(0, (err?: Error) => (err ? reject(err) : resolve()));
+    });
+    const routes = collectRoutePaths(app);
+    expect(routes).toContain('/test/seed');
+    expect(routes).toContain('/test/say');
+    expect(routes).toContain('/test/approve');
+    expect(routes).toContain('/test/job');
+    expect(routes).toContain('/test/thread');
 
     await app.close();
   }, 60_000);

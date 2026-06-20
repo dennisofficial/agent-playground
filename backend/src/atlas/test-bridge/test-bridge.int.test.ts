@@ -1,0 +1,160 @@
+import { getDataSourceToken } from '@nestjs/typeorm';
+import { Test } from '@nestjs/testing';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DataSource } from 'typeorm';
+import { ATLAS_BRAIN_LLM } from '../brain';
+import { ATLAS_CLASSIFIER_LLM } from '../decision-gate';
+import { ATLAS_PLANNER_LLM } from '../driver';
+import { EngineRunner } from '../engine';
+import { GithubPrService, LocalGitService } from '../git';
+import { AtlasModule } from '../atlas.module';
+import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
+import {
+  FakeBrainLlm,
+  FakeClassifierLlm,
+  FakeEngineRunner,
+  FakeGithubPrService,
+  FakeLocalGitService,
+  FakePlannerLlm,
+} from '../e2e/e2e-stubs';
+import { TestBridgeController } from './test-bridge.controller';
+
+/**
+ * ROUND-TRIP int test for the HTTP test-bridge. Boots the REAL `AtlasModule` (ATLAS_SURFACE=agent +
+ * ATLAS_TEST_BRIDGE=on) against live Postgres, mocking ONLY the three external boundaries (brain LLM,
+ * planner, classifier + engine/git/PR — reusing the e2e stubs) so NO network is touched. Then drives the
+ * bridge end-to-end through the controller:
+ *   seed → say → (FakeBrainLlm asks a clarifying question) → the question is captured as an outbound reply
+ *   and persisted in the thread transcript; the job + thread read endpoints reflect the conversation.
+ *
+ * This proves the bridge's wiring + the seed/say/thread/job seams for real (channel routing,
+ * sendFromHuman → brain → post capture, repo reads) without billing an LLM or opening a PR.
+ */
+const TEAM_ID = 'T-TESTBRIDGE-IT';
+const PROJECT_ID = 'testbridge-it';
+const CHANNEL_REF = 'C-TESTBRIDGE-IT';
+
+describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
+  let app: NestExpressApplication;
+  let controller: TestBridgeController;
+  let dataSource: DataSource;
+
+  const prevSurface = process.env.ATLAS_SURFACE;
+  const prevBridge = process.env.ATLAS_TEST_BRIDGE;
+
+  beforeAll(async () => {
+    process.env.ATLAS_SURFACE = 'agent';
+    process.env.ATLAS_TEST_BRIDGE = 'on';
+
+    const moduleRef = await Test.createTestingModule({ imports: [AtlasModule] })
+      .overrideProvider(ATLAS_BRAIN_LLM)
+      .useValue(new FakeBrainLlm())
+      .overrideProvider(ATLAS_PLANNER_LLM)
+      .useValue(new FakePlannerLlm())
+      .overrideProvider(ATLAS_CLASSIFIER_LLM)
+      .useValue(new FakeClassifierLlm())
+      .overrideProvider(EngineRunner)
+      .useValue(new FakeEngineRunner())
+      .overrideProvider(LocalGitService)
+      .useValue(new FakeLocalGitService())
+      .overrideProvider(GithubPrService)
+      .useValue(new FakeGithubPrService())
+      .compile();
+
+    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app.enableShutdownHooks();
+    await app.init();
+
+    controller = app.get(TestBridgeController);
+    dataSource = app.get<DataSource>(getDataSourceToken(ATLAS_CONNECTION));
+    await purge(dataSource);
+  }, 60_000);
+
+  afterAll(async () => {
+    if (dataSource) await purge(dataSource);
+    await app?.close();
+    if (prevSurface === undefined) delete process.env.ATLAS_SURFACE;
+    else process.env.ATLAS_SURFACE = prevSurface;
+    if (prevBridge === undefined) delete process.env.ATLAS_TEST_BRIDGE;
+    else process.env.ATLAS_TEST_BRIDGE = prevBridge;
+  });
+
+  it('seed is idempotent and returns a channel id', async () => {
+    const first = await controller.seed({
+      teamId: TEAM_ID,
+      projectId: PROJECT_ID,
+      repoUrl: 'https://github.com/acme/testbridge.git',
+      channel: CHANNEL_REF,
+    });
+    expect(first.channelId).toBeTruthy();
+    expect(first.teamId).toBe(TEAM_ID);
+
+    // Re-seed (different repo) → same channel row, updated in place (idempotent).
+    const second = await controller.seed({
+      teamId: TEAM_ID,
+      projectId: PROJECT_ID,
+      repoUrl: 'https://github.com/acme/testbridge-renamed.git',
+      baseBranch: 'develop',
+      channel: CHANNEL_REF,
+    });
+    expect(second.channelId).toBe(first.channelId);
+  });
+
+  it('say routes a human message to the brain and captures its reply on the thread', async () => {
+    const said = await controller.say({
+      channel: CHANNEL_REF,
+      text: 'Add a short note to the README explaining the build step.',
+    });
+
+    // The brain (FakeBrainLlm) asks one clarifying question → captured as a reply on the new thread.
+    expect(said.threadTs).toBeTruthy();
+    expect(said.replies.length).toBeGreaterThan(0);
+    expect(said.replies[0].text.toLowerCase()).toContain('readme');
+    // No approval card yet (the grill hasn't proposed a plan on turn 1).
+    expect(said.approvalCard).toBeUndefined();
+
+    // The transcript endpoint reflects the human message + Atlas's reply, in order.
+    const transcript = await controller.thread(said.threadTs);
+    expect(transcript.length).toBeGreaterThanOrEqual(2);
+    expect(transcript.some((l) => !l.isAtlas && l.text.includes('README'))).toBe(true);
+    expect(transcript.some((l) => l.isAtlas)).toBe(true);
+
+    // A `scoping` job was anchored on the thread (triage anchors it) — readable via the job endpoint.
+    const jobId = await jobOnThread(dataSource, said.threadTs);
+    expect(jobId).toBeTruthy();
+    const job = await controller.job(jobId!);
+    expect(job.id).toBe(jobId);
+    expect(job.status).toBe('scoping');
+    expect(job.kind).toBe('feature');
+  }, 30_000);
+});
+
+/** Resolve the job anchored on the thread whose surface_thread_ref == threadTs. */
+async function jobOnThread(ds: DataSource, threadTs: string): Promise<string | null> {
+  const rows: Array<{ id: string }> = await ds.query(
+    `SELECT j.id FROM atlas_jobs j
+       JOIN atlas_threads t ON t.id = j.thread_id
+      WHERE t.surface_thread_ref = $1
+      ORDER BY j.created_at DESC LIMIT 1`,
+    [threadTs],
+  );
+  return rows[0]?.id ?? null;
+}
+
+/** Delete every row this test's synthetic tenant owns (fixed ids → a re-run would PK-collide). */
+async function purge(ds: DataSource): Promise<void> {
+  const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
+  await q(`DELETE FROM atlas_phases WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_sections WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_decision_records WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_jobs WHERE team_id = $1`);
+  await q(
+    `DELETE FROM atlas_messages WHERE thread_id IN (SELECT id FROM atlas_threads WHERE team_id = $1)`,
+  );
+  await q(`DELETE FROM atlas_stimuli WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_threads WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_channels WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_projects WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_teams WHERE team_id = $1`);
+}

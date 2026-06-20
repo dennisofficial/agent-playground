@@ -8,6 +8,7 @@ import { RunnerModule } from '../runner';
 import { StimulusModule } from '../stimulus';
 import { SurfaceModule } from '../surface';
 import { MemoryModule } from '../memory';
+import { TestBridgeModule } from '../test-bridge';
 
 /**
  * Atlas v2 APP layer — the composition seam for the edge and the local execution substrate:
@@ -29,6 +30,9 @@ import { MemoryModule } from '../memory';
  *
  * The agent-facing programmatic surface lands in W6. It is deliberately SEPARATE from v1's `slack-app`
  * — Atlas owns its own ingress and binds NOTHING from `@harness/**`.
+ *
+ * `TestBridgeModule` is a DEV/TEST-only HTTP edge (`POST /test/*`) — always imported, but inert (every
+ * endpoint 404s) unless `ATLAS_TEST_BRIDGE=on`, so it never affects prod.
  */
 @Module({
   imports: [
@@ -41,6 +45,7 @@ import { MemoryModule } from '../memory';
     AutoFixModule,
     BrainModule,
     DriverModule,
+    TestBridgeModule,
   ],
 })
 export class AppModule {}

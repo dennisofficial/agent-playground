@@ -78,10 +78,16 @@ import { SectionDriver } from './section-driver.service';
   exports: [SectionDriver, JOB_DISPATCHER],
 })
 export class DriverModule implements OnApplicationBootstrap {
-  constructor(private readonly driver: SectionDriver) {}
+  constructor(
+    private readonly driver: SectionDriver,
+    private readonly env: EnvService,
+  ) {}
 
   /** On boot, reconcile any in-flight jobs — re-enter the same straight drive at the persisted cursor. */
   async onApplicationBootstrap(): Promise<void> {
+    // ATLAS_DISABLE_RESUME (dev/test): a fresh test instance skips the sweep so it doesn't re-attempt
+    // prior runs' stale jobs.
+    if (this.env.get('ATLAS_DISABLE_RESUME')) return;
     await this.driver.resume();
   }
 }

@@ -289,6 +289,16 @@ export interface IEnvConfig {
   //    truncated to this). Default 8 — keeps a section's build bounded.
   ATLAS_MAX_SECTIONS?: number;
   ATLAS_MAX_PHASES_PER_SECTION?: number;
+
+  // ── Atlas v2 dev/test tooling ─────────────────────────────────────────────────────────────────
+  // Both optional, dev/test ONLY — never set in prod:
+  //  - ATLAS_TEST_BRIDGE: when 'on', mounts the in-process HTTP test-bridge (`POST /test/*`) so an
+  //    external driver can have a real conversation with a running Atlas (seed → say → approve →
+  //    inspect job/thread). Any other value (or unset) → the bridge endpoints 404.
+  //  - ATLAS_DISABLE_RESUME: when set (any truthy value), the section driver SKIPS its boot
+  //    reconciliation sweep, so a fresh test instance doesn't re-attempt prior runs' stale jobs.
+  ATLAS_TEST_BRIDGE?: 'on';
+  ATLAS_DISABLE_RESUME?: string;
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -446,4 +456,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Atlas v2 section/phase driver (W4) runaway guards
   ATLAS_MAX_SECTIONS: Joi.number().integer().min(1).optional(),
   ATLAS_MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
+  // Atlas v2 dev/test tooling (never prod)
+  ATLAS_TEST_BRIDGE: Joi.string().valid('on').optional(),
+  ATLAS_DISABLE_RESUME: Joi.string().optional(),
 });
