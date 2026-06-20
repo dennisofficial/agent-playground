@@ -10,7 +10,8 @@ A pnpm workspace with two implementations of the same autonomous-AI-employee
 system plus supporting packages:
 
 - **`backend/`** — the NestJS harness (current, actively developed). Composed of
-  the `slack-app` server (the harness + Slack surface, run via `pnpm slack:dev`),
+  the `slack-app` server (the harness + Slack surface, run via
+  `pnpm --filter backend slack:dev`),
   the standalone `api` admin REST, and a `daemon`. Postgres-durable.
 - **`playground/`** — the original terminal POC (Ink TUI, in-memory channel,
   SQLite memory). Kept intact as the reference implementation.
@@ -48,8 +49,9 @@ pnpm run setup
 docker compose up -d
 
 # 3. Run the Slack-app server (the harness + Slack surface)
-pnpm slack:dev
+pnpm --filter backend slack:dev
 ```
 
-> `pnpm slack:dev` runs the backend's `slack-app`. See `CLAUDE.md` for the full
+> `pnpm --filter backend slack:dev` runs the backend's `slack-app`. See
+> `CLAUDE.md` for the full
 > architecture and per-module details.
