@@ -17,6 +17,13 @@ export interface ApprovalActionMeta {
   decisionRecordId?: string;
 }
 
+/** One locked architecture/system call shown on the card. */
+export interface ApprovalDecision {
+  decisionClass: string;
+  title: string;
+  ruling: string;
+}
+
 /** The upfront approval proposal: the decision record + the high-level section list, approved once. */
 export interface DecisionApprovalCard {
   jobId: string;
@@ -24,6 +31,8 @@ export interface DecisionApprovalCard {
   title: string;
   /** The decision record summary (the architecture/system calls). */
   summary: string;
+  /** The locked decisions (class + title + ruling) — the real calls being approved, not just a title. */
+  decisions?: ApprovalDecision[];
   /** The high-level section list (one brief per section), in order. */
   sections: string[];
   /** Optional deep link to a full plan view. */
@@ -50,6 +59,10 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
   const sectionList = card.sections.length
     ? card.sections.map((s, i) => `${i + 1}. ${s}`).join('\n')
     : '_(no sections)_';
+
+  const decisionList = (card.decisions ?? [])
+    .map((d) => `• *${d.title}* _(${d.decisionClass})_ — ${d.ruling}`)
+    .join('\n');
 
   const actionElements: Array<Record<string, unknown>> = [];
   if (card.planUrl) {
@@ -93,6 +106,14 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
       type: 'section',
       text: { type: 'mrkdwn', text: truncate(card.summary, SUMMARY_MAX) },
     },
+    ...(decisionList
+      ? [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: `*Decisions*\n${truncate(decisionList, SUMMARY_MAX)}` },
+          },
+        ]
+      : []),
     {
       type: 'section',
       text: { type: 'mrkdwn', text: `*Sections*\n${truncate(sectionList, SUMMARY_MAX)}` },

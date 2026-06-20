@@ -32,6 +32,23 @@ describe('decisionApprovalBlocks', () => {
     expect(JSON.parse(actions.elements[0].value)).toEqual({ jobId: 'job-1', decisionRecordId: 'dr-1' });
   });
 
+  it('renders the locked decisions when present, and omits the block when absent (issue #7)', () => {
+    const withDecisions = decisionApprovalBlocks({
+      ...card,
+      decisions: [
+        { decisionClass: 'dependency', title: 'JWT library', ruling: 'use jose' },
+        { decisionClass: 'cross_cutting', title: 'Password hashing', ruling: 'argon2id' },
+      ],
+    });
+    const json = JSON.stringify(withDecisions);
+    expect(json).toContain('*Decisions*');
+    expect(json).toContain('JWT library');
+    expect(json).toContain('use jose');
+    expect(json).toContain('argon2id');
+    // No decisions → no Decisions block at all.
+    expect(JSON.stringify(decisionApprovalBlocks(card))).not.toContain('*Decisions*');
+  });
+
   it('adds a View-plan link button only when planUrl is given', () => {
     const without = decisionApprovalBlocks(card);
     const withUrl = decisionApprovalBlocks({ ...card, planUrl: 'https://x/plan' });

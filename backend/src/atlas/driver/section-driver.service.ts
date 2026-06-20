@@ -462,6 +462,12 @@ export class SectionDriver implements JobDispatcher {
       clearTimeout(timer);
     }
 
+    // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
+    const deviations = extractDeviations(result.report);
+    if (deviations.length) {
+      await this.post(route, `:warning: Off-spec changes in *${label}*:\n${deviations.map((d) => `• ${d}`).join('\n')}`);
+    }
+
     // Verify BEFORE committing (#4): an optional repo verify command must pass, else fail the phase so
     // broken output never commits or advances the cursor. Unset → rely on the engine's in-turn verify.
     await this.verifyPhase(route, sandbox, label);
@@ -588,6 +594,9 @@ const SECTION_PLAN_SYSTEM =
 const PHASE_EXECUTE_SYSTEM =
   'You are Atlas executing ONE phase of an approved plan in a feature worktree. Implement exactly this ' +
   "phase's brief, respecting the locked decisions. Make focused, working changes; do not exceed the phase scope. " +
+  'If you make ANY change not explicitly called for by this brief, or you depart from a locked decision ' +
+  '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
+  "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
   'VERIFY before you finish: discover and run the repository\'s OWN typecheck/build/test tooling and make ' +
   'sure your change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
   'guess. If this phase REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
@@ -663,6 +672,16 @@ function prBody(job: Job, record: DecisionRecord | null): string {
 
 function sandboxKey(sandbox: FeatureSandbox): string {
   return `${sandbox.projectId}--${sandbox.branch}`;
+}
+
+/** Pull the engine's flagged off-spec deviations out of a phase report ('DEVIATION:' lines, #7). */
+function extractDeviations(report: string): string[] {
+  return report
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => /^DEVIATION:/i.test(l))
+    .map((l) => l.replace(/^DEVIATION:\s*/i, '').trim())
+    .filter(Boolean);
 }
 
 /** A concise human root-cause for a failure relay — the error's first line, never a stack trace. */

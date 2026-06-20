@@ -87,6 +87,8 @@ export class ConversationalBrainService {
       decisionRecordId,
       title: action.title,
       summary: action.overview,
+      // Show the REAL plan on the card — the locked decisions, not just the title (issue #7).
+      decisions: action.decisions,
       sections: action.sectionBriefs,
     });
   }

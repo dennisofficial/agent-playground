@@ -640,6 +640,30 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.commits).toHaveLength(0);
     expect(h.opened).toHaveLength(0);
   });
+
+  it('relays off-spec DEVIATION lines a phase flags in its report (issue #7)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state);
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string; phaseId?: string | null }) => {
+      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
+      return {
+        report: 'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
+        session: { id: 's', jobId: 'j', phaseId: input.phaseId ?? null, engine: 'claude', mode: 'execute', branch: 'b', worktreePath: '/wt/b' },
+      };
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(h.posts.some((p) => p.includes('Off-spec') && p.includes('README nobody asked for'))).toBe(true);
+    expect(state.job.status).toBe('done'); // a deviation is surfaced, not a failure
+  });
 });
 
 // ── async helpers ────────────────────────────────────────────────────────────────────────────────
