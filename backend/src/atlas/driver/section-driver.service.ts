@@ -13,6 +13,7 @@ import type { DecisionRecord, Job, Phase } from '../domain';
 import { EngineAuthError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { CHAT_SURFACE, type ChatSurface } from '../surface';
+import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
@@ -20,8 +21,16 @@ import {
   type DriverSection,
   type JobRoute,
 } from './driver-store.service';
-import { ATLAS_PLANNER_LLM, type PlannedPhase, type PlannerLlm } from './planner-llm';
-import { ATLAS_DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo } from './repo-resolver';
+import {
+  ATLAS_PLANNER_LLM,
+  type PlannedPhase,
+  type PlannerLlm,
+} from './planner-llm';
+import {
+  ATLAS_DRIVER_REPO,
+  type DriverRepoResolver,
+  type ResolvedRepo,
+} from './repo-resolver';
 
 /**
  * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -54,6 +63,7 @@ export class SectionDriver implements JobDispatcher {
     private readonly autofix: AutoFixStage,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly env: EnvService,
+    @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
   ) {}
 
   /** Sanity ceiling on a job's sections — a malformed plan can't drive an unbounded build. */
@@ -98,9 +108,13 @@ export class SectionDriver implements JobDispatcher {
    * Errors inside the drive are caught + recorded (the job flips to `failed`), never surfaced here.
    */
   async dispatch(job: Job): Promise<void> {
-    this.logger.log(`dispatch job=${job.id} kind=${job.kind} title="${job.title}"`);
+    this.logger.log(
+      `dispatch job=${job.id} kind=${job.kind} title="${job.title}"`,
+    );
     void this.drive(job.id).catch((err) => {
-      this.logger.error(`drive job=${job.id} crashed: ${err instanceof Error ? err.stack : err}`);
+      this.logger.error(
+        `drive job=${job.id} crashed: ${err instanceof Error ? err.stack : err}`,
+      );
     });
   }
 
@@ -116,7 +130,9 @@ export class SectionDriver implements JobDispatcher {
     this.logger.log(`resume: reconciling ${jobs.length} running job(s)`);
     for (const job of jobs) {
       void this.drive(job.id).catch((err) => {
-        this.logger.error(`resume job=${job.id} crashed: ${err instanceof Error ? err.stack : err}`);
+        this.logger.error(
+          `resume job=${job.id} crashed: ${err instanceof Error ? err.stack : err}`,
+        );
       });
     }
   }
@@ -131,13 +147,19 @@ export class SectionDriver implements JobDispatcher {
   async resumePaused(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     if (!job || job.status !== 'paused') {
-      this.logger.warn(`resumePaused job=${jobId}: not paused (${job?.status ?? 'gone'}) — ignoring`);
+      this.logger.warn(
+        `resumePaused job=${jobId}: not paused (${job?.status ?? 'gone'}) — ignoring`,
+      );
       return;
     }
-    this.logger.log(`resumePaused job=${jobId} — re-driving the paused session`);
+    this.logger.log(
+      `resumePaused job=${jobId} — re-driving the paused session`,
+    );
     await this.store.setJobStatus(jobId, 'running');
     void this.drive(jobId).catch((err) => {
-      this.logger.error(`resumePaused job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`);
+      this.logger.error(
+        `resumePaused job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
+      );
     });
   }
 
@@ -146,7 +168,9 @@ export class SectionDriver implements JobDispatcher {
   /** Guard the job against a concurrent drive, then run it to a PR (or `failed`). */
   private async drive(jobId: string): Promise<void> {
     if (this.active.has(jobId)) {
-      this.logger.warn(`drive job=${jobId} already active — skipping duplicate`);
+      this.logger.warn(
+        `drive job=${jobId} already active — skipping duplicate`,
+      );
       return;
     }
     this.active.add(jobId);
@@ -157,11 +181,15 @@ export class SectionDriver implements JobDispatcher {
         // A credential/401 halt — PAUSE (don't fail): the unfinished phase's session_id is persisted, so
         // a ping (`resumePaused`) continues the SAME session once creds are fixed. Re-driving now would
         // just 401 again, so we wait for the human.
-        this.logger.warn(`job=${jobId} paused on credential error: ${err.message}`);
+        this.logger.warn(
+          `job=${jobId} paused on credential error: ${err.message}`,
+        );
         await this.store.setJobStatus(jobId, 'paused').catch(() => undefined);
         await this.relayPaused(jobId, err);
       } else {
-        this.logger.error(`job=${jobId} failed: ${err instanceof Error ? err.stack : err}`);
+        this.logger.error(
+          `job=${jobId} failed: ${err instanceof Error ? err.stack : err}`,
+        );
         await this.store.setJobStatus(jobId, 'failed').catch(() => undefined);
         // RELAY the failure into the thread — a failed job must never dead-end silently (issue #2).
         await this.relayFailure(jobId, err);
@@ -208,7 +236,9 @@ export class SectionDriver implements JobDispatcher {
   private async runJob(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId);
     if (job.status !== 'running') {
-      this.logger.warn(`job=${jobId} not running (status=${job.status}) — not driving`);
+      this.logger.warn(
+        `job=${jobId} not running (status=${job.status}) — not driving`,
+      );
       return;
     }
     const record = await this.store.decisionRecord(job.decisionRecordId);
@@ -216,7 +246,9 @@ export class SectionDriver implements JobDispatcher {
     const repo = await this.repos.resolve(job);
     const sandbox = await this.ensureSandbox(job, repo);
 
-    this.logger.log(`job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`);
+    this.logger.log(
+      `job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`,
+    );
 
     const allSections = await this.store.sectionsForJob(jobId);
     const sections = allSections.slice(0, this.maxSections);
@@ -227,7 +259,10 @@ export class SectionDriver implements JobDispatcher {
     }
     const pending = sections.filter((s) => s.status !== 'done').length;
     if (pending > 0) {
-      await this.post(route, `:rocket: Starting the build — ${pending} section(s) on \`${sandbox.branch}\`.`);
+      await this.post(
+        route,
+        `:rocket: Starting the build — ${pending} section(s) on \`${sandbox.branch}\`.`,
+      );
     }
 
     // Per-job wall-clock backstop (issue #3) — checked at each section boundary; the per-phase timeout
@@ -245,7 +280,15 @@ export class SectionDriver implements JobDispatcher {
           `job exceeded ATLAS_JOB_TIMEOUT_MS (${this.jobTimeoutMs}ms) before section "${section.brief}"`,
         );
       }
-      handoff = await this.runSection(job, record, route, repo, sandbox, section, handoff);
+      handoff = await this.runSection(
+        job,
+        record,
+        route,
+        repo,
+        sandbox,
+        section,
+        handoff,
+      );
     }
 
     await this.finishWithPr(job, record, route, repo, sandbox);
@@ -271,10 +314,19 @@ export class SectionDriver implements JobDispatcher {
     handoffIn: string | null,
   ): Promise<string | null> {
     this.logger.log(`section ${section.ordinal} "${section.brief}" — planning`);
-    await this.post(route, `:hammer_and_wrench: Planning section — *${section.brief}*`);
+    await this.post(
+      route,
+      `:hammer_and_wrench: Planning section — *${section.brief}*`,
+    );
 
     // a. PLAN (just-in-time) — or reuse the locked plan on a resume (phases already exist).
-    const { phases, planned } = await this.planSection(job, record, sandbox, section, handoffIn);
+    const { phases, planned } = await this.planSection(
+      job,
+      record,
+      sandbox,
+      section,
+      handoffIn,
+    );
 
     // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
     //    (The locked phase ROWS are the source of truth; review only reshapes a fresh plan's prose.)
@@ -284,7 +336,13 @@ export class SectionDriver implements JobDispatcher {
     const planView = phases.map(asPlannedPhase);
 
     // c. GATE — classify the plan's notable decisions; an uncovered always-ask parks & awaits a human.
-    const classifications = await this.gateSection(job, route, record, section, planView);
+    const classifications = await this.gateSection(
+      job,
+      route,
+      record,
+      section,
+      planView,
+    );
 
     // d. VISIBILITY — post the detailed plan into the thread (non-blocking; never gates).
     await this.visibility.postSectionPlan({
@@ -296,9 +354,17 @@ export class SectionDriver implements JobDispatcher {
     });
 
     // e. EXECUTE — run each phase as a fresh session on the shared feature branch.
-    const sectionStartSha = await this.git.headSha(sandbox.worktreePath).catch(() => undefined);
+    const sectionStartSha = await this.git
+      .headSha(sandbox.worktreePath)
+      .catch(() => undefined);
     await this.store.setSectionStatus(section.id, 'executing');
-    const reports = await this.executePhases(job, route, sandbox, section, record);
+    const reports = await this.executePhases(
+      job,
+      route,
+      sandbox,
+      section,
+      record,
+    );
 
     // f. AUTO-FIX — fan-out review → fix over this section's diff.
     await this.store.setSectionStatus(section.id, 'auto_fixing');
@@ -309,15 +375,26 @@ export class SectionDriver implements JobDispatcher {
         ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
         intent: `${record?.overview ?? ''}\n\nSection: ${section.brief}`.trim(),
         label: section.brief,
+        ...(sandbox.containerId
+          ? {
+              containerId: sandbox.containerId,
+              ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
+            }
+          : {}),
       })
-      .catch((err) => this.logger.warn(`section auto-fix failed (continuing): ${err}`));
+      .catch((err) =>
+        this.logger.warn(`section auto-fix failed (continuing): ${err}`),
+      );
 
     // g. HANDOFF — summarize what this section produced for the next.
     const handoffOut = await this.summarizeHandoff(section, phases, reports);
     await this.store.setSectionHandoffOut(section.id, handoffOut);
     await this.store.setSectionStatus(section.id, 'done');
     this.logger.log(`section ${section.ordinal} done`);
-    await this.post(route, `:white_check_mark: Section done — *${section.brief}*`);
+    await this.post(
+      route,
+      `:white_check_mark: Section done — *${section.brief}*`,
+    );
     return handoffOut;
   }
 
@@ -336,7 +413,9 @@ export class SectionDriver implements JobDispatcher {
   ): Promise<{ phases: Phase[]; planned: PlannedPhase[] | null }> {
     const existing = await this.store.phasesForSection(section.id);
     if (existing.length > 0) {
-      this.logger.log(`section ${section.ordinal}: ${existing.length} phase(s) already locked — resuming`);
+      this.logger.log(
+        `section ${section.ordinal}: ${existing.length} phase(s) already locked — resuming`,
+      );
       return { phases: existing, planned: null };
     }
 
@@ -363,7 +442,9 @@ export class SectionDriver implements JobDispatcher {
       },
       `section ${section.ordinal} plan turn`,
     ).catch((err) => {
-      this.logger.warn(`section ${section.ordinal} plan turn failed (continuing): ${err}`);
+      this.logger.warn(
+        `section ${section.ordinal} plan turn failed (continuing): ${err}`,
+      );
       return undefined;
     });
 
@@ -399,7 +480,12 @@ export class SectionDriver implements JobDispatcher {
         draft,
       })
       .catch(() => undefined);
-    if (revised) await this.store.setSectionPlan(section.id, renderPlan(revised), handoffIn);
+    if (revised)
+      await this.store.setSectionPlan(
+        section.id,
+        renderPlan(revised),
+        handoffIn,
+      );
   }
 
   /**
@@ -428,19 +514,31 @@ export class SectionDriver implements JobDispatcher {
 
     const classifications: DecisionClassification[] = [];
     for (const proposed of decisions) {
-      const c = await this.classifier.classify(proposed, { decisions: record?.decisions ?? [] });
+      const c = await this.classifier.classify(proposed, {
+        decisions: record?.decisions ?? [],
+      });
       if (c.verdict === 'ask') {
         await this.store.setSectionStatus(section.id, 'awaiting_approval');
-        this.logger.log(`section ${section.ordinal} parks on: ${proposed.description}`);
+        this.logger.log(
+          `section ${section.ordinal} parks on: ${proposed.description}`,
+        );
         const handle = await this.park.ask(
-          { channel: route.channel ?? '', ...(route.threadTs ? { threadTs: route.threadTs } : {}) },
+          {
+            channel: route.channel ?? '',
+            ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+          },
           parkQuestion(section.brief, proposed.description, c.reason),
         );
         // AWAIT the human — the section is suspended here, the process is not. Bounded by a wall-clock
         // budget so an unanswered park can't hang the build forever (the job/phase timeouts don't cover a
         // park, which is between phases): on expiry it throws → the job fails + relays (issue #2/#3).
-        const answer = await this.awaitAnswer(handle.answer, proposed.description);
-        this.logger.log(`section ${section.ordinal} unparked: ${answer.text.slice(0, 80)}`);
+        const answer = await this.awaitAnswer(
+          handle.answer,
+          proposed.description,
+        );
+        this.logger.log(
+          `section ${section.ordinal} unparked: ${answer.text.slice(0, 80)}`,
+        );
         // The human answered → treat the always-ask as now-settled and continue (it was visible + ruled).
       } else {
         classifications.push(c);
@@ -461,7 +559,11 @@ export class SectionDriver implements JobDispatcher {
     const hardTimeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
         controller.abort();
-        reject(new Error(`${label} exceeded ATLAS_PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms)`));
+        reject(
+          new Error(
+            `${label} exceeded ATLAS_PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms)`,
+          ),
+        );
       }, this.phaseTimeoutMs);
     });
     try {
@@ -476,7 +578,10 @@ export class SectionDriver implements JobDispatcher {
 
   /** Await a parked human answer, bounded by ATLAS_PARK_TIMEOUT_MS. On expiry it rejects so the build
    *  fails + relays (instead of suspending forever); the human can re-engage in-thread to restart. */
-  private async awaitAnswer<T>(answer: Promise<T>, decisionDesc: string): Promise<T> {
+  private async awaitAnswer<T>(
+    answer: Promise<T>,
+    decisionDesc: string,
+  ): Promise<T> {
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(
@@ -516,7 +621,9 @@ export class SectionDriver implements JobDispatcher {
         this.logger.log(`phase ${phase.ordinal} already done — fast-forward`);
         continue;
       }
-      reports.push(await this.runPhase(job, route, sandbox, section, record, phase));
+      reports.push(
+        await this.runPhase(job, route, sandbox, section, record, phase),
+      );
     }
     return reports;
   }
@@ -550,7 +657,8 @@ export class SectionDriver implements JobDispatcher {
         systemPrompt: PHASE_EXECUTE_SYSTEM,
         task: renderPhaseTask(record, section, phase),
         onEvent: (e) => {
-          if (e.kind === 'tool') this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
+          if (e.kind === 'tool')
+            this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
         },
       },
       `phase "${label}"`,
@@ -559,7 +667,10 @@ export class SectionDriver implements JobDispatcher {
     // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
     const deviations = extractDeviations(result.report);
     if (deviations.length) {
-      await this.post(route, `:warning: Off-spec changes in *${label}*:\n${deviations.map((d) => `• ${d}`).join('\n')}`);
+      await this.post(
+        route,
+        `:warning: Off-spec changes in *${label}*:\n${deviations.map((d) => `• ${d}`).join('\n')}`,
+      );
     }
 
     // Verify BEFORE committing (#4): an optional repo verify command must pass, else fail the phase so
@@ -571,7 +682,9 @@ export class SectionDriver implements JobDispatcher {
       sandbox.worktreePath,
       `${section.brief} — ${phase.title ?? `phase ${phase.ordinal}`}`,
     );
-    this.logger.log(`phase ${phase.ordinal} committed ${sha ? sha.slice(0, 8) : '(nothing)'}`);
+    this.logger.log(
+      `phase ${phase.ordinal} committed ${sha ? sha.slice(0, 8) : '(nothing)'}`,
+    );
 
     await this.store.setPhaseState(phase.id, 'done', 'done');
     return result.report;
@@ -579,15 +692,24 @@ export class SectionDriver implements JobDispatcher {
 
   /** Run ATLAS_VERIFY_CMD in the worktree (when set); a non-zero exit fails the phase (caught → relayed).
    *  Repo-agnostic by being opt-in: the operator points it at their own typecheck/test/build. */
-  private async verifyPhase(route: JobRoute, sandbox: FeatureSandbox, label: string): Promise<void> {
+  private async verifyPhase(
+    route: JobRoute,
+    sandbox: FeatureSandbox,
+    label: string,
+  ): Promise<void> {
     const cmd = this.verifyCmd;
     if (!cmd) return;
     this.logger.log(`phase "${label}" — verifying: ${cmd}`);
     try {
       await execShell(cmd, sandbox.worktreePath, this.phaseTimeoutMs);
     } catch (err) {
-      await this.post(route, `:warning: Verification failed after *${label}* (\`${cmd}\`) — failing the phase.`);
-      throw new Error(`verify command "${cmd}" failed after phase "${label}": ${shortReason(err)}`);
+      await this.post(
+        route,
+        `:warning: Verification failed after *${label}* (\`${cmd}\`) — failing the phase.`,
+      );
+      throw new Error(
+        `verify command "${cmd}" failed after phase "${label}": ${shortReason(err)}`,
+      );
     }
   }
 
@@ -611,12 +733,25 @@ export class SectionDriver implements JobDispatcher {
         gitRange: `origin/${repo.defaultBranch}...HEAD`,
         intent: record?.overview ?? job.title,
         label: 'PR-tail',
+        ...(sandbox.containerId
+          ? {
+              containerId: sandbox.containerId,
+              ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
+            }
+          : {}),
       })
-      .catch((err) => this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`));
+      .catch((err) =>
+        this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`),
+      );
 
     if (!repo.token) {
-      this.logger.warn(`job=${job.id}: no GitHub token — cannot push / open PR. Leaving as running.`);
-      await this.post(route, ':warning: Build complete but no GitHub token is configured — PR not opened.');
+      this.logger.warn(
+        `job=${job.id}: no GitHub token — cannot push / open PR. Leaving as running.`,
+      );
+      await this.post(
+        route,
+        ':warning: Build complete but no GitHub token is configured — PR not opened.',
+      );
       return;
     }
 
@@ -632,7 +767,9 @@ export class SectionDriver implements JobDispatcher {
     });
 
     await this.store.setPrReady(job.id, opened.url);
-    this.logger.log(`job=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`);
+    this.logger.log(
+      `job=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`,
+    );
     await this.post(route, `:tada: PR ready for review: ${opened.url}`);
   }
 
@@ -642,11 +779,20 @@ export class SectionDriver implements JobDispatcher {
    * Ensure the job's per-feature sandbox (worktree) exists and the feature branch is recorded. Idempotent
    * — a resume reuses the existing worktree/branch. The branch is derived once from the job id and stored.
    */
-  private async ensureSandbox(job: Job, repo: ResolvedRepo): Promise<FeatureSandbox> {
-    const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
-    const sandbox = await this.git.createFeatureSandbox(repo.projectRepo, branch);
+  private async ensureSandbox(
+    job: Job,
+    repo: ResolvedRepo,
+  ): Promise<FeatureSandbox> {
+    const branch =
+      job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
+    const sandbox = await this.git.createFeatureSandbox(
+      repo.projectRepo,
+      branch,
+    );
     if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
-    return sandbox;
+    // Attach the execution environment: a no-op in local mode; a per-feature container in docker mode
+    // (returns the sandbox augmented with `containerId`/`execUser` the turns + auto-fix exec into).
+    return this.sandboxes.attach({ sandbox, teamId: job.teamId });
   }
 
   /** Summarize a section's handoff (LLM, with a terse rule-based fallback). */
@@ -656,7 +802,9 @@ export class SectionDriver implements JobDispatcher {
     reports: string[],
   ): Promise<string> {
     const planned = phases.map(asPlannedPhase);
-    const llm = await this.planner.handoff({ brief: section.brief, phases: planned, reports }).catch(() => undefined);
+    const llm = await this.planner
+      .handoff({ brief: section.brief, phases: planned, reports })
+      .catch(() => undefined);
     if (llm) return llm;
     const built = phases.map((p) => p.title ?? p.brief).join('; ');
     return `Section "${section.brief}" complete. Built: ${built || '(see commits)'}.`;
@@ -680,7 +828,7 @@ export class SectionDriver implements JobDispatcher {
 const SECTION_PLAN_SYSTEM =
   'You are Atlas planning ONE section of an approved feature. Explore the codebase read-only and produce ' +
   'a concrete phased plan for this section, respecting the locked decision record. Do not write any files. ' +
-  'The plan MUST end with VERIFICATION: a final phase (or explicit step) that runs the repo\'s OWN ' +
+  "The plan MUST end with VERIFICATION: a final phase (or explicit step) that runs the repo's OWN " +
   'typecheck/build/tests and confirms the change works. For a DELETION, an early phase must PROVE the code ' +
   'is truly unused — search for every intra-file and cross-file reference (and dynamic/string usages) — ' +
   'before anything is removed. Never plan to claim done without verifying.';
@@ -691,7 +839,7 @@ const PHASE_EXECUTE_SYSTEM =
   'If you make ANY change not explicitly called for by this brief, or you depart from a locked decision ' +
   '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
   "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
-  'VERIFY before you finish: discover and run the repository\'s OWN typecheck/build/test tooling and make ' +
+  "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling and make " +
   'sure your change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
   'guess. If this phase REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
@@ -704,7 +852,9 @@ function asPlannedPhase(phase: Phase): PlannedPhase {
 }
 
 function renderPlan(phases: PlannedPhase[]): string {
-  return phases.map((p, i) => `${i + 1}. **${p.title}** — ${p.brief}`).join('\n');
+  return phases
+    .map((p, i) => `${i + 1}. **${p.title}** — ${p.brief}`)
+    .join('\n');
 }
 
 function renderPlanTask(input: {
@@ -714,9 +864,13 @@ function renderPlanTask(input: {
   handoffIn: string | null;
 }): string {
   const decisions = input.decisions.length
-    ? input.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
+    ? input.decisions
+        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
+        .join('\n')
     : '(none)';
-  const handoff = input.handoffIn ? `\n\nPrior section handoff:\n${input.handoffIn}` : '';
+  const handoff = input.handoffIn
+    ? `\n\nPrior section handoff:\n${input.handoffIn}`
+    : '';
   return [
     `Feature overview:\n${input.overview}`,
     `\nLocked decisions (respect these):\n${decisions}`,
@@ -731,7 +885,9 @@ function renderPhaseTask(
   phase: Phase,
 ): string {
   const decisions = record?.decisions.length
-    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
+    ? record.decisions
+        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
+        .join('\n')
     : '(none)';
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
@@ -741,16 +897,25 @@ function renderPhaseTask(
   ].join('\n');
 }
 
-function fallbackPhases(brief: string, planText: string | undefined): PlannedPhase[] {
-  return [{ title: brief, brief: planText ? `${brief}\n\n${planText}` : brief }];
+function fallbackPhases(
+  brief: string,
+  planText: string | undefined,
+): PlannedPhase[] {
+  return [
+    { title: brief, brief: planText ? `${brief}\n\n${planText}` : brief },
+  ];
 }
 
-function parkQuestion(sectionBrief: string, decision: string, reason: string): string {
+function parkQuestion(
+  sectionBrief: string,
+  decision: string,
+  reason: string,
+): string {
   return [
     `:raising_hand: While planning *${sectionBrief}* I hit a decision I should check with you first:`,
     `> ${decision}`,
     `_${reason}_`,
-    'How would you like me to proceed? (Reply in this thread and I\'ll continue.)',
+    "How would you like me to proceed? (Reply in this thread and I'll continue.)",
   ].join('\n');
 }
 
@@ -759,7 +924,8 @@ function prBody(job: Job, record: DecisionRecord | null): string {
   if (record?.overview) lines.push(record.overview, '');
   if (record?.decisions.length) {
     lines.push('### Decisions');
-    for (const d of record.decisions) lines.push(`- **${d.title}** (${d.decisionClass}): ${d.ruling}`);
+    for (const d of record.decisions)
+      lines.push(`- **${d.title}** (${d.decisionClass}): ${d.ruling}`);
   }
   return lines.join('\n');
 }
@@ -789,12 +955,25 @@ const execAsync = promisify(exec);
 
 /** Run a shell command string in `cwd` with a wall-clock timeout; throws (with captured stderr) on a
  *  non-zero exit or timeout. Used by the optional ATLAS_VERIFY_CMD phase gate. */
-async function execShell(cmd: string, cwd: string, timeoutMs: number): Promise<void> {
+async function execShell(
+  cmd: string,
+  cwd: string,
+  timeoutMs: number,
+): Promise<void> {
   try {
-    await execAsync(cmd, { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
+    await execAsync(cmd, {
+      cwd,
+      timeout: timeoutMs,
+      maxBuffer: 16 * 1024 * 1024,
+    });
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string; message?: string };
-    const detail = (e.stderr || e.stdout || e.message || '').toString().trim().split('\n').slice(-3).join(' ');
+    const detail = (e.stderr || e.stdout || e.message || '')
+      .toString()
+      .trim()
+      .split('\n')
+      .slice(-3)
+      .join(' ');
     throw new Error(detail || 'command failed');
   }
 }

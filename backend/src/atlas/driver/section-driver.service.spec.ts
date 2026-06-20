@@ -322,12 +322,14 @@ function section(id: string, ordinal: number, brief: string, status: SectionStat
 }
 
 /** Assemble a driver over a given store-state + collaborators; returns everything the tests assert on. */
-function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'proceed' | 'ask'; parkAnswer?: Promise<ParkResolution>; env?: Record<string, string> } = {}) {
+function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'proceed' | 'ask'; parkAnswer?: Promise<ParkResolution>; env?: Record<string, string>; turn?: TurnRunnerService } = {}) {
   const { store } = makeStore(state);
   const repos = makeRepoResolver();
   const { git, pushed, commits } = makeGit();
   const { pr, opened } = makePr();
-  const { turn, calls } = makeTurn();
+  const made = makeTurn();
+  const turn = opts.turn ?? made.turn;
+  const calls = made.calls;
   const planner = makePlanner();
   const classifier = makeClassifier(opts.classifierVerdict);
   const { park, ask } = makePark(opts.parkAnswer);
@@ -349,6 +351,8 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     autofix.autofix,
     surface,
     env,
+    // local SANDBOX_PROVIDER: a no-op attach (host-local execution; no containerId).
+    { attach: async ({ sandbox }) => sandbox, teardown: async () => undefined },
   );
   return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts };
 }
@@ -790,3 +794,75 @@ async function flushUntil(pred: () => boolean, cap = 300): Promise<void> {
     await new Promise((r) => setTimeout(r, 0));
   }
 }
+
+// ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
+
+describe('SectionDriver — 401 auth recovery', () => {
+  /** A turn that throws EngineAuthError on the FIRST execute (a mid-build 401), then succeeds. */
+  function flakyAuthTurn(): TurnRunnerService {
+    let executes = 0;
+    return {
+      runTurn: vi.fn(async (input: { mode: string; phaseId?: string | null; jobId: string }) => {
+        if (input.mode === 'execute' && ++executes === 1) {
+          throw new EngineAuthError('401 Invalid API key', 'sess-401');
+        }
+        return {
+          report: input.mode === 'plan' ? 'plan' : `did ${input.phaseId}`,
+          ...(input.mode === 'plan' ? { planText: 'P' } : {}),
+          session: {
+            id: 'sess-401',
+            jobId: input.jobId,
+            phaseId: input.phaseId ?? null,
+            engine: 'claude' as const,
+            mode: input.mode as 'plan' | 'execute' | 'review',
+            branch: 'b',
+            worktreePath: '/wt/b',
+          },
+        };
+      }),
+    } as unknown as TurnRunnerService;
+  }
+
+  function freshState(): StoreState {
+    return {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+  }
+
+  it('a mid-build 401 PAUSES the job (not fails); a ping resumes it to ONE PR', async () => {
+    const state = freshState();
+    const h = assemble(state, { turn: flakyAuthTurn() });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'paused');
+
+    expect(state.job.status).toBe('paused'); // paused, NOT 'failed'
+    expect(state.job.prUrl).toBeNull();
+    expect(h.posts.some((p) => p.toLowerCase().includes('paused'))).toBe(true);
+
+    // Boot reconciliation must NOT auto-retry a paused job (it would just 401 again).
+    await h.driver.resume();
+    await flushUntil(() => false, 5);
+    expect(state.job.status).toBe('paused');
+
+    // PING → resume the SAME session → drive to completion (one PR).
+    await h.driver.resumePaused(state.job.id);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.status).toBe('done');
+    expect(h.opened).toHaveLength(1);
+    expect(state.job.prUrl).toBe('https://github.com/acme/widget/pull/1');
+  });
+
+  it('resumePaused is a no-op when the job is not paused', async () => {
+    const state = freshState();
+    state.job.status = 'running';
+    const h = assemble(state);
+    await h.driver.resumePaused(state.job.id);
+    expect(state.job.status).toBe('running'); // the ping itself does not flip a non-paused job
+  });
+});
