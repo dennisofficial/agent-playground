@@ -1,0 +1,565 @@
+import { EnvService } from '@core/config/env/env.service';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  DecisionClassifier,
+  ParkAndAskService,
+  PlanVisibilityService,
+  type DecisionClassification,
+} from '../decision-gate';
+import { AutoFixStage } from '../autofix';
+import type { DecisionRecord, Job, Phase } from '../domain';
+import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
+import { CHAT_SURFACE, type ChatSurface } from '../surface';
+import type { JobDispatcher } from '../brain';
+import { TurnRunnerService } from '../runner';
+import {
+  DriverStoreService,
+  type DriverSection,
+  type JobRoute,
+} from './driver-store.service';
+import { ATLAS_PLANNER_LLM, type PlannedPhase, type PlannerLlm } from './planner-llm';
+import { ATLAS_DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo } from './repo-resolver';
+
+/**
+ * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
+ * status-FSM. Read it top-to-bottom: `dispatch` kicks the build off async, `runJob` walks the sections
+ * in order, `runSection` does plan → review → gate → execute phases → auto-fix → handoff, `executePhases`
+ * runs each phase as a fresh engine session on the shared feature branch, and `finishWithPr` runs the
+ * PR-tail auto-fix and opens ONE PR. `resume` re-enters the SAME straight functions on boot, fast-
+ * forwarding completed work — no signal racing, no status-enum re-derivation.
+ *
+ * The "dynamism" (how many sections/phases) is DATA the planner emits; the control flow is a plain
+ * `await`-each-step loop. Explicit `status`/`step` rows exist ONLY for resumability — the live path is a
+ * straight function. Bound as the real `JOB_DISPATCHER` (overriding W3's logging no-op). Zero v1 imports.
+ */
+@Injectable()
+export class SectionDriver implements JobDispatcher {
+  private readonly logger = new Logger(SectionDriver.name);
+  /** Jobs being driven right now — guards against a double dispatch / a resume racing a live drive. */
+  private readonly active = new Set<string>();
+
+  constructor(
+    private readonly store: DriverStoreService,
+    @Inject(ATLAS_DRIVER_REPO) private readonly repos: DriverRepoResolver,
+    private readonly git: LocalGitService,
+    private readonly pr: GithubPrService,
+    private readonly turn: TurnRunnerService,
+    @Inject(ATLAS_PLANNER_LLM) private readonly planner: PlannerLlm,
+    private readonly classifier: DecisionClassifier,
+    private readonly park: ParkAndAskService,
+    private readonly visibility: PlanVisibilityService,
+    private readonly autofix: AutoFixStage,
+    @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
+    private readonly env: EnvService,
+  ) {}
+
+  /** Sanity ceiling on a job's sections — a malformed plan can't drive an unbounded build. */
+  private get maxSections(): number {
+    return this.env.get('ATLAS_MAX_SECTIONS') ?? 12;
+  }
+
+  /** Sanity ceiling on a section's phases — a longer planner output is truncated to this. */
+  private get maxPhasesPerSection(): number {
+    return this.env.get('ATLAS_MAX_PHASES_PER_SECTION') ?? 8;
+  }
+
+  /**
+   * The DISPATCH SEAM (the brain's "hands" edge). Take ownership of an approved, persisted job and kick
+   * off the deterministic drive ASYNC — return promptly so the brain doesn't block on the whole build.
+   * Errors inside the drive are caught + recorded (the job flips to `failed`), never surfaced here.
+   */
+  async dispatch(job: Job): Promise<void> {
+    this.logger.log(`dispatch job=${job.id} kind=${job.kind} title="${job.title}"`);
+    void this.drive(job.id).catch((err) => {
+      this.logger.error(`drive job=${job.id} crashed: ${err instanceof Error ? err.stack : err}`);
+    });
+  }
+
+  /**
+   * BOOT RECONCILIATION (legible, not signal-racing). For every job still `running`, re-enter the SAME
+   * straight drive: `runJob` fast-forwards sections/phases already `done` and continues at the first
+   * unfinished one. An interrupted `executing` phase is reopened (re-run) by `executePhases`. No web of
+   * signals — just "read the persisted cursor, continue the function".
+   */
+  async resume(): Promise<void> {
+    const jobs = await this.store.runningJobs();
+    if (jobs.length === 0) return;
+    this.logger.log(`resume: reconciling ${jobs.length} running job(s)`);
+    for (const job of jobs) {
+      void this.drive(job.id).catch((err) => {
+        this.logger.error(`resume job=${job.id} crashed: ${err instanceof Error ? err.stack : err}`);
+      });
+    }
+  }
+
+  // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
+
+  /** Guard the job against a concurrent drive, then run it to a PR (or `failed`). */
+  private async drive(jobId: string): Promise<void> {
+    if (this.active.has(jobId)) {
+      this.logger.warn(`drive job=${jobId} already active — skipping duplicate`);
+      return;
+    }
+    this.active.add(jobId);
+    try {
+      await this.runJob(jobId);
+    } catch (err) {
+      this.logger.error(`job=${jobId} failed: ${err instanceof Error ? err.stack : err}`);
+      await this.store.setJobStatus(jobId, 'failed').catch(() => undefined);
+    } finally {
+      this.active.delete(jobId);
+    }
+  }
+
+  /**
+   * Walk a job's sections in order. The whole build flow lives here, readable top-to-bottom:
+   *   load the job + record + route → ensure the feature sandbox → for each section: runSection (which
+   *   carries the prior handoff forward) → after all sections: finishWithPr (PR-tail auto-fix + open PR).
+   * Fast-forwards `done` sections (resume): a finished section just yields its persisted handoff_out.
+   */
+  private async runJob(jobId: string): Promise<void> {
+    const job = await this.store.loadJob(jobId);
+    if (job.status !== 'running') {
+      this.logger.warn(`job=${jobId} not running (status=${job.status}) — not driving`);
+      return;
+    }
+    const record = await this.store.decisionRecord(job.decisionRecordId);
+    const route = await this.store.route(job);
+    const repo = await this.repos.resolve(job);
+    const sandbox = await this.ensureSandbox(job, repo);
+
+    this.logger.log(`job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`);
+
+    const allSections = await this.store.sectionsForJob(jobId);
+    const sections = allSections.slice(0, this.maxSections);
+    if (allSections.length > sections.length) {
+      this.logger.warn(
+        `job=${jobId} has ${allSections.length} sections > ATLAS_MAX_SECTIONS (${this.maxSections}) — capping`,
+      );
+    }
+    let handoff: string | null = null;
+    for (const section of sections) {
+      if (section.status === 'done') {
+        // Already built (a resume) — carry its persisted handoff to the next section, don't re-run.
+        handoff = section.handoffOut ?? handoff;
+        continue;
+      }
+      handoff = await this.runSection(job, record, route, repo, sandbox, section, handoff);
+    }
+
+    await this.finishWithPr(job, record, route, repo, sandbox);
+  }
+
+  /**
+   * Run ONE section, returning its handoff for the next. The per-section flow, in order:
+   *   a. plan just-in-time (an engine plan turn → phases), or resume the locked plan;
+   *   b. one Codex-style review → revise pass (clean single loop);
+   *   c. the decision gate — classify notable decisions; an uncovered always-ask PARKS & awaits a human;
+   *   d. post the plan for visibility (non-blocking);
+   *   e. execute the phases (fresh session each) on the shared branch;
+   *   f. per-section auto-fix over the section's diff;
+   *   g. summarize the handoff for the next section.
+   */
+  private async runSection(
+    job: Job,
+    record: DecisionRecord | null,
+    route: JobRoute,
+    repo: ResolvedRepo,
+    sandbox: FeatureSandbox,
+    section: DriverSection,
+    handoffIn: string | null,
+  ): Promise<string | null> {
+    this.logger.log(`section ${section.ordinal} "${section.brief}" — planning`);
+
+    // a. PLAN (just-in-time) — or reuse the locked plan on a resume (phases already exist).
+    const { phases, planned } = await this.planSection(job, record, sandbox, section, handoffIn);
+
+    // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
+    //    (The locked phase ROWS are the source of truth; review only reshapes a fresh plan's prose.)
+    if (planned) await this.reviewPlan(record, section, handoffIn, planned);
+
+    // The plan view the gate + visibility read — derived from the locked phase rows (resume-safe).
+    const planView = phases.map(asPlannedPhase);
+
+    // c. GATE — classify the plan's notable decisions; an uncovered always-ask parks & awaits a human.
+    const classifications = await this.gateSection(job, route, record, section, planView);
+
+    // d. VISIBILITY — post the detailed plan into the thread (non-blocking; never gates).
+    await this.visibility.postSectionPlan({
+      channel: route.channel ?? '',
+      ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+      title: section.brief,
+      plan: renderPlan(planView),
+      decisions: classifications,
+    });
+
+    // e. EXECUTE — run each phase as a fresh session on the shared feature branch.
+    const sectionStartSha = await this.git.headSha(sandbox.worktreePath).catch(() => undefined);
+    await this.store.setSectionStatus(section.id, 'executing');
+    const reports = await this.executePhases(job, sandbox, section, record);
+
+    // f. AUTO-FIX — fan-out review → fix over this section's diff.
+    await this.store.setSectionStatus(section.id, 'auto_fixing');
+    await this.autofix
+      .autofixSection({
+        worktreePath: sandbox.worktreePath,
+        sandboxKey: sandboxKey(sandbox),
+        ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
+        intent: `${record?.overview ?? ''}\n\nSection: ${section.brief}`.trim(),
+        label: section.brief,
+      })
+      .catch((err) => this.logger.warn(`section auto-fix failed (continuing): ${err}`));
+
+    // g. HANDOFF — summarize what this section produced for the next.
+    const handoffOut = await this.summarizeHandoff(section, phases, reports);
+    await this.store.setSectionHandoffOut(section.id, handoffOut);
+    await this.store.setSectionStatus(section.id, 'done');
+    this.logger.log(`section ${section.ordinal} done`);
+    await this.post(route, `:white_check_mark: Section done — *${section.brief}*`);
+    return handoffOut;
+  }
+
+  /**
+   * Produce (or resume) the section's locked phases. On a fresh run: an engine PLAN turn in the sandbox
+   * grounded in the record + handoff → the planner LLM shapes the phase list (fallback: a single phase
+   * whose brief is the section brief) → persisted. On a resume: the phases already exist, so reuse them
+   * (returns `planned: undefined` to signal "no re-review needed").
+   */
+  private async planSection(
+    job: Job,
+    record: DecisionRecord | null,
+    sandbox: FeatureSandbox,
+    section: DriverSection,
+    handoffIn: string | null,
+  ): Promise<{ phases: Phase[]; planned: PlannedPhase[] | null }> {
+    const existing = await this.store.phasesForSection(section.id);
+    if (existing.length > 0) {
+      this.logger.log(`section ${section.ordinal}: ${existing.length} phase(s) already locked — resuming`);
+      return { phases: existing, planned: null };
+    }
+
+    await this.store.setSectionStatus(section.id, 'planning');
+
+    // An engine PLAN turn explores the worktree read-only; its plan text grounds the structured planner.
+    const planInput = {
+      overview: record?.overview ?? '',
+      decisions: record?.decisions ?? [],
+      brief: section.brief,
+      handoffIn,
+    };
+    const planTurn = await this.turn
+      .runTurn({
+        jobId: job.id,
+        sandbox,
+        engine: 'claude',
+        mode: 'plan',
+        systemPrompt: SECTION_PLAN_SYSTEM,
+        task: renderPlanTask(planInput),
+      })
+      .catch((err) => {
+        this.logger.warn(`section ${section.ordinal} plan turn failed (continuing): ${err}`);
+        return undefined;
+      });
+
+    const planned = (
+      (await this.planner.planSection(planInput).catch(() => undefined)) ??
+      fallbackPhases(section.brief, planTurn?.planText ?? planTurn?.report)
+    ).slice(0, this.maxPhasesPerSection);
+
+    await this.store.setSectionPlan(section.id, renderPlan(planned), handoffIn);
+    const phases = await this.store.lockPhases(section, planned);
+    return { phases, planned };
+  }
+
+  /**
+   * ONE Codex-style review → revise pass over the freshly-drafted plan (a clean single loop). When the
+   * reviewer returns a revision it RE-PERSISTS the section's plan prose; the locked phase rows stay the
+   * execution source of truth (they're already gap-numbered + resumable). Best-effort — a failed review
+   * leaves the original plan.
+   */
+  private async reviewPlan(
+    record: DecisionRecord | null,
+    section: DriverSection,
+    handoffIn: string | null,
+    draft: PlannedPhase[],
+  ): Promise<void> {
+    await this.store.setSectionStatus(section.id, 'reviewing');
+    const revised = await this.planner
+      .reviewPlan({
+        overview: record?.overview ?? '',
+        decisions: record?.decisions ?? [],
+        brief: section.brief,
+        handoffIn,
+        draft,
+      })
+      .catch(() => undefined);
+    if (revised) await this.store.setSectionPlan(section.id, renderPlan(revised), handoffIn);
+  }
+
+  /**
+   * The DECISION GATE (W5). Mine the plan for notable decisions, classify each against the record. An
+   * uncovered always-ask (`verdict === 'ask'`) PARKS the section: post the question in-thread and AWAIT
+   * the human (the section suspends; resumable across restart). Covered/proceed continue. Returns the
+   * non-ask classifications for the visibility post.
+   */
+  private async gateSection(
+    job: Job,
+    route: JobRoute,
+    record: DecisionRecord | null,
+    section: DriverSection,
+    planned: PlannedPhase[],
+  ): Promise<DecisionClassification[]> {
+    const decisions =
+      (await this.planner
+        .extractDecisions({
+          overview: record?.overview ?? '',
+          decisions: record?.decisions ?? [],
+          brief: section.brief,
+          handoffIn: section.handoffIn,
+          phases: planned,
+        })
+        .catch(() => undefined)) ?? [];
+
+    const classifications: DecisionClassification[] = [];
+    for (const proposed of decisions) {
+      const c = await this.classifier.classify(proposed, { decisions: record?.decisions ?? [] });
+      if (c.verdict === 'ask') {
+        await this.store.setSectionStatus(section.id, 'awaiting_approval');
+        this.logger.log(`section ${section.ordinal} parks on: ${proposed.description}`);
+        const handle = await this.park.ask(
+          { channel: route.channel ?? '', ...(route.threadTs ? { threadTs: route.threadTs } : {}) },
+          parkQuestion(section.brief, proposed.description, c.reason),
+        );
+        // AWAIT the human — the section is suspended here, the process is not.
+        const answer = await handle.answer;
+        this.logger.log(`section ${section.ordinal} unparked: ${answer.text.slice(0, 80)}`);
+        // The human answered → treat the always-ask as now-settled and continue (it was visible + ruled).
+      } else {
+        classifications.push(c);
+      }
+    }
+    return classifications;
+  }
+
+  /**
+   * Execute a section's phases — each a FRESH engine session (context reset) in the SAME worktree so
+   * later phases build on earlier code. Walks the explicit `step`/`status` cursor: a `done` phase is
+   * fast-forwarded (resume); an unfinished one is (re)run from `building`, committed, marked `done`.
+   * Returns each phase's report (the handoff inputs).
+   */
+  private async executePhases(
+    job: Job,
+    sandbox: FeatureSandbox,
+    section: DriverSection,
+    record: DecisionRecord | null,
+  ): Promise<string[]> {
+    const phases = await this.store.phasesForSection(section.id);
+    const reports: string[] = [];
+    for (const phase of phases) {
+      if (phase.status === 'done') {
+        this.logger.log(`phase ${phase.ordinal} already done — fast-forward`);
+        continue;
+      }
+      reports.push(await this.runPhase(job, sandbox, section, record, phase));
+    }
+    return reports;
+  }
+
+  /** Run ONE phase: a fresh execute turn → commit → mark done. The explicit cursor moves with the work. */
+  private async runPhase(
+    job: Job,
+    sandbox: FeatureSandbox,
+    section: DriverSection,
+    record: DecisionRecord | null,
+    phase: Phase,
+  ): Promise<string> {
+    this.logger.log(`phase ${phase.ordinal} "${phase.title ?? phase.brief}" — building`);
+    await this.store.setPhaseState(phase.id, 'build', 'building');
+
+    const result = await this.turn.runTurn({
+      jobId: job.id,
+      phaseId: phase.id,
+      sandbox,
+      engine: 'claude',
+      mode: 'execute',
+      systemPrompt: PHASE_EXECUTE_SYSTEM,
+      task: renderPhaseTask(record, section, phase),
+      onEvent: (e) => {
+        if (e.kind === 'tool') this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
+      },
+    });
+
+    // Commit whatever the phase produced onto the shared feature branch.
+    const sha = await this.git.commitAll(
+      sandbox.worktreePath,
+      `${section.brief} — ${phase.title ?? `phase ${phase.ordinal}`}`,
+    );
+    this.logger.log(`phase ${phase.ordinal} committed ${sha ? sha.slice(0, 8) : '(nothing)'}`);
+
+    await this.store.setPhaseState(phase.id, 'done', 'done');
+    return result.report;
+  }
+
+  /**
+   * PR-TAIL. After all sections: one auto-fix pass over the WHOLE accumulated diff, push the branch,
+   * open ONE PR per feature (idempotent — a re-run finds the existing PR), record the url, mark the job
+   * done, and post "PR ready" in-thread. Sections stacked on one branch ⇒ one PR.
+   */
+  private async finishWithPr(
+    job: Job,
+    record: DecisionRecord | null,
+    route: JobRoute,
+    repo: ResolvedRepo,
+    sandbox: FeatureSandbox,
+  ): Promise<void> {
+    this.logger.log(`job=${job.id} all sections done — PR-tail auto-fix`);
+    await this.autofix
+      .autofixPullRequest({
+        worktreePath: sandbox.worktreePath,
+        sandboxKey: sandboxKey(sandbox),
+        gitRange: `origin/${repo.defaultBranch}...HEAD`,
+        intent: record?.overview ?? job.title,
+        label: 'PR-tail',
+      })
+      .catch((err) => this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`));
+
+    if (!repo.token) {
+      this.logger.warn(`job=${job.id}: no GitHub token — cannot push / open PR. Leaving as running.`);
+      await this.post(route, ':warning: Build complete but no GitHub token is configured — PR not opened.');
+      return;
+    }
+
+    await this.git.push(sandbox);
+    const opened = await this.pr.openPullRequest(repo.token, {
+      owner: repo.owner,
+      repo: repo.repo,
+      head: sandbox.branch,
+      base: repo.defaultBranch,
+      title: job.title,
+      body: prBody(job, record),
+      draft: false,
+    });
+
+    await this.store.setPrReady(job.id, opened.url);
+    this.logger.log(`job=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`);
+    await this.post(route, `:tada: PR ready for review: ${opened.url}`);
+  }
+
+  // ── helpers ──────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Ensure the job's per-feature sandbox (worktree) exists and the feature branch is recorded. Idempotent
+   * — a resume reuses the existing worktree/branch. The branch is derived once from the job id and stored.
+   */
+  private async ensureSandbox(job: Job, repo: ResolvedRepo): Promise<FeatureSandbox> {
+    const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
+    const sandbox = await this.git.createFeatureSandbox(repo.projectRepo, branch);
+    if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
+    return sandbox;
+  }
+
+  /** Summarize a section's handoff (LLM, with a terse rule-based fallback). */
+  private async summarizeHandoff(
+    section: DriverSection,
+    phases: Phase[],
+    reports: string[],
+  ): Promise<string> {
+    const planned = phases.map(asPlannedPhase);
+    const llm = await this.planner.handoff({ brief: section.brief, phases: planned, reports }).catch(() => undefined);
+    if (llm) return llm;
+    const built = phases.map((p) => p.title ?? p.brief).join('; ');
+    return `Section "${section.brief}" complete. Built: ${built || '(see commits)'}.`;
+  }
+
+  /** Post into the job's thread (best-effort — visibility never breaks the pipeline). */
+  private async post(route: JobRoute, text: string): Promise<void> {
+    if (!route.channel) return;
+    try {
+      await this.surface.post(route.channel, text, {
+        ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+      });
+    } catch (err) {
+      this.logger.warn(`post failed (continuing): ${err}`);
+    }
+  }
+}
+
+// ── pure render helpers ──────────────────────────────────────────────────────────────────────────
+
+const SECTION_PLAN_SYSTEM =
+  'You are Atlas planning ONE section of an approved feature. Explore the codebase read-only and produce ' +
+  'a concrete phased plan for this section, respecting the locked decision record. Do not write any files.';
+
+const PHASE_EXECUTE_SYSTEM =
+  'You are Atlas executing ONE phase of an approved plan in a feature worktree. Implement exactly this ' +
+  "phase's brief, respecting the locked decisions. Make focused, working changes; do not exceed the phase scope.";
+
+/** A locked phase row → the `PlannedPhase` view the gate/visibility/render read (title null → brief). */
+function asPlannedPhase(phase: Phase): PlannedPhase {
+  return { title: phase.title ?? phase.brief, brief: phase.brief };
+}
+
+function renderPlan(phases: PlannedPhase[]): string {
+  return phases.map((p, i) => `${i + 1}. **${p.title}** — ${p.brief}`).join('\n');
+}
+
+function renderPlanTask(input: {
+  overview: string;
+  decisions: { decisionClass: string; title: string; ruling: string }[];
+  brief: string;
+  handoffIn: string | null;
+}): string {
+  const decisions = input.decisions.length
+    ? input.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
+    : '(none)';
+  const handoff = input.handoffIn ? `\n\nPrior section handoff:\n${input.handoffIn}` : '';
+  return [
+    `Feature overview:\n${input.overview}`,
+    `\nLocked decisions (respect these):\n${decisions}`,
+    `\nPlan THIS section:\n${input.brief}${handoff}`,
+    '\nProduce an ordered list of phases. Do not write files.',
+  ].join('\n');
+}
+
+function renderPhaseTask(
+  record: DecisionRecord | null,
+  section: DriverSection,
+  phase: Phase,
+): string {
+  const decisions = record?.decisions.length
+    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
+    : '(none)';
+  return [
+    `Feature overview:\n${record?.overview ?? ''}`,
+    `\nLocked decisions (respect these):\n${decisions}`,
+    `\nSection: ${section.brief}`,
+    `\nImplement this phase:\n**${phase.title ?? `Phase ${phase.ordinal}`}** — ${phase.brief}`,
+  ].join('\n');
+}
+
+function fallbackPhases(brief: string, planText: string | undefined): PlannedPhase[] {
+  return [{ title: brief, brief: planText ? `${brief}\n\n${planText}` : brief }];
+}
+
+function parkQuestion(sectionBrief: string, decision: string, reason: string): string {
+  return [
+    `:raising_hand: While planning *${sectionBrief}* I hit a decision I should check with you first:`,
+    `> ${decision}`,
+    `_${reason}_`,
+    'How would you like me to proceed? (Reply in this thread and I\'ll continue.)',
+  ].join('\n');
+}
+
+function prBody(job: Job, record: DecisionRecord | null): string {
+  const lines = [`Automated by Atlas v2 for **${job.title}**.`, ''];
+  if (record?.overview) lines.push(record.overview, '');
+  if (record?.decisions.length) {
+    lines.push('### Decisions');
+    for (const d of record.decisions) lines.push(`- **${d.title}** (${d.decisionClass}): ${d.ruling}`);
+  }
+  return lines.join('\n');
+}
+
+function sandboxKey(sandbox: FeatureSandbox): string {
+  return `${sandbox.projectId}--${sandbox.branch}`;
+}

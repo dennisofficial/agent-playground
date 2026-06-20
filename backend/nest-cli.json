@@ -36,6 +36,15 @@
       "compilerOptions": {
         "tsConfigPath": "src/daemon/tsconfig.json"
       }
+    },
+    "atlas": {
+      "type": "application",
+      "root": "src/atlas",
+      "entryFile": "atlas-main",
+      "sourceRoot": "src",
+      "compilerOptions": {
+        "tsConfigPath": "src/atlas/tsconfig.json"
+      }
     }
   }
 }

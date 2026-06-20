@@ -14,6 +14,10 @@
     "slack:prod": "node dist/slack-app/main",
     "daemon:dev": "pnpm dev:env -- nest start daemon --watch",
     "daemon:prod": "node dist/daemon/main",
+    "atlas:dev": "pnpm dev:env -- nest start atlas",
+    "atlas:prod": "node dist/atlas-main",
+    "atlas:gate": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.atlas-gate.json node -r tsconfig-paths/register -r ts-node/register src/atlas/gate/gate-main.ts",
+    "atlas:e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.atlas-e2e.json node -r tsconfig-paths/register -r ts-node/register src/atlas/e2e/e2e-main.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" --fix",
@@ -29,7 +33,11 @@
     "db:migration:create": "ts-node --project tsconfig.cli.json cli/migration-create.ts",
     "db:schema:drop": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs schema:drop -d cli/data-source.ts",
     "db:seed": "cross-env NODE_ENV=development pnpm env:inject -- ts-node --project tsconfig.cli.json cli/seed-runner.ts",
-    "db:recreate": "pnpm run db:schema:drop && pnpm run db:migrate && pnpm run db:seed"
+    "db:recreate": "pnpm run db:schema:drop && pnpm run db:migrate && pnpm run db:seed",
+    "db:atlas:migrate": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:run -d cli/atlas-data-source.ts",
+    "db:atlas:migrate:revert": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:revert -d cli/atlas-data-source.ts",
+    "db:atlas:migration:generate": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/atlas-migration-generate.ts",
+    "db:atlas:schema:drop": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs schema:drop -d cli/atlas-data-source.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.168",

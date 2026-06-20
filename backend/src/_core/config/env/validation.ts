@@ -221,6 +221,74 @@ export interface IEnvConfig {
   LANGFUSE_SECRET_KEY?: string;
   LANGFUSE_BASE_URL?: string;
   LANGFUSE_TRACING_ENVIRONMENT?: string; // tags traces by deployment env (e.g. 'development')
+
+  // ── Atlas v2 (the clean-room rebuild under src/atlas/) ────────────────────────────────────────
+  // Atlas's local execution substrate is host-only (no daemon, no Docker): it clones repos and cuts
+  // per-feature git worktrees on the host, runs the Claude/Codex SDKs as subprocesses, and opens PRs
+  // over fetch. Where a value already exists for v1 it is REUSED (REPOS_ROOT, AGENT_HOME_ROOT,
+  // ANTHROPIC_API_KEY/OPENAI_API_KEY, SLACK_BOT_TOKEN/SLACK_APP_TOKEN) — these are the few net-new vars.
+  //
+  // ATLAS_REPOS_ROOT: root the per-feature worktree sandboxes clone into. Falls back to REPOS_ROOT,
+  // then ~/.agent-playground/atlas-repos. Kept separate from v1's so the two substrates never collide.
+  ATLAS_REPOS_ROOT?: string;
+  // ATLAS_AGENT_HOME_ROOT: root for Atlas engines' OWN isolated CLAUDE_CONFIG_DIR/CODEX_HOME — never
+  // the developer's personal ~/.claude / ~/.codex. Falls back to AGENT_HOME_ROOT, then
+  // ~/.agent-playground/atlas-agent-home. Point at a persistent volume in deployment.
+  ATLAS_AGENT_HOME_ROOT?: string;
+  // ATLAS_ENGINE_AUTH_MODE: how Atlas engine turns authenticate — 'api_key' (default, the metered
+  // ANTHROPIC_API_KEY / OPENAI auth) or 'subscription' (drive the run off a Claude Max / ChatGPT plan).
+  ATLAS_ENGINE_AUTH_MODE?: 'api_key' | 'subscription';
+  // ATLAS_CLAUDE_OAUTH_TOKEN: a `CLAUDE_CODE_OAUTH_TOKEN` for subscription-mode Claude turns (used
+  // only when ATLAS_ENGINE_AUTH_MODE='subscription'). Strips ambient ANTHROPIC_API_KEY at the seam.
+  ATLAS_CLAUDE_OAUTH_TOKEN?: string;
+  // ATLAS_WORKER_MODEL / ATLAS_CODEX_MODEL: model overrides for Atlas engine turns. Fall back to the
+  // v1 WORKER_MODEL / CODEX_MODEL, then the SDK defaults.
+  ATLAS_WORKER_MODEL?: string;
+  ATLAS_CODEX_MODEL?: string;
+  // ATLAS_GITHUB_TOKEN: the GitHub token Atlas's PR client + authenticated git ops use. Rides in
+  // GIT_CONFIG_* / an Authorization header per invocation — never in argv / .git/config. Falls back
+  // to GITHUB_TOKEN. Unset → public-repo / no-PR flows only.
+  ATLAS_GITHUB_TOKEN?: string;
+  GITHUB_TOKEN?: string;
+  // ATLAS_SLACK_BOT_TOKEN / ATLAS_SLACK_APP_TOKEN: Atlas's OWN thread-aware Slack adapter creds. Fall
+  // back to the v1 SLACK_BOT_TOKEN / SLACK_APP_TOKEN (xoxb-/xapp-). Unset → the Slack surface is inert.
+  ATLAS_SLACK_BOT_TOKEN?: string;
+  ATLAS_SLACK_APP_TOKEN?: string;
+  // ATLAS_SURFACE: which `ChatSurface` is bound as the CHAT_SURFACE (W6). 'slack' (default) → the real
+  // thread-aware Slack adapter; 'agent' → the in-process programmatic surface a test/script drives Atlas
+  // through (send → read replies → approve) with no Slack. Both providers are always constructed; only
+  // the binding switches.
+  ATLAS_SURFACE?: 'slack' | 'agent';
+  // ── Atlas v2 ingress (W2 — the notification HTTP edge) ───────────────────────────────────────
+  // ATLAS_HTTP_PORT: the port the Atlas HTTP app listens on (hosts POST /ingress/github + /webhook).
+  // Default 4002 in code (kept off v1's slack-app :4001). Cloud Run injects PORT for v1, but Atlas v2
+  // is its own process with its own port.
+  ATLAS_HTTP_PORT?: number;
+  // ATLAS_GITHUB_WEBHOOK_SECRET: the GitHub webhook secret — the GitHub `NotificationSource` adapter
+  // HMAC-verifies `X-Hub-Signature-256` against it. Unset → the /ingress/github endpoint refuses every
+  // request (401 unverifiable); never trusts an unsigned GitHub payload.
+  ATLAS_GITHUB_WEBHOOK_SECRET?: string;
+  // ATLAS_WEBHOOK_SECRET: the shared secret for the generic first-party webhook — the generic adapter
+  // constant-time-compares the `X-Atlas-Webhook-Secret` header against it. Unset → /ingress/webhook
+  // refuses every request (401 unverifiable).
+  ATLAS_WEBHOOK_SECRET?: string;
+  // Mechanical event filter (no-LLM dedup + rate-limit on EventStimulus). All optional; code defaults:
+  //  - ATLAS_EVENT_DEDUP_WINDOW_S: drop a repeat of the same (team,project,source,dedupeKey) within
+  //    this window (default 300s). Collapses redeliveries / storms grouped to one issue.
+  //  - ATLAS_EVENT_RATE_LIMIT / _WINDOW_S: at most N admissions per key per window (default 5 / 60s) —
+  //    guards a key that keeps mutating its dedupeKey from spawning unbounded jobs.
+  ATLAS_EVENT_DEDUP_WINDOW_S?: number;
+  ATLAS_EVENT_RATE_LIMIT?: number;
+  ATLAS_EVENT_RATE_WINDOW_S?: number;
+  // ── Atlas v2 section/phase driver (W4) ────────────────────────────────────────────────────────
+  // Runaway guards on the deterministic driver — a sanity ceiling so a malformed plan can't drive an
+  // unbounded build. Both optional with code defaults:
+  //  - ATLAS_MAX_SECTIONS: the most sections one job may have (excess sections are skipped + flagged).
+  //    Default 12. The approved section list is human-gated, so this is belt-and-braces.
+  //  - ATLAS_MAX_PHASES_PER_SECTION: the most phases one section may lock (a longer planner output is
+  //    truncated to this). Default 8 — keeps a section's build bounded.
+  ATLAS_MAX_SECTIONS?: number;
+  ATLAS_MAX_PHASES_PER_SECTION?: number;
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -353,4 +421,29 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   LANGFUSE_SECRET_KEY: Joi.string().optional(),
   LANGFUSE_BASE_URL: Joi.string().uri().optional(),
   LANGFUSE_TRACING_ENVIRONMENT: Joi.string().optional(),
+
+  // Atlas v2 (host-only local substrate; reuses v1 values where they exist)
+  ATLAS_REPOS_ROOT: Joi.string().optional(),
+  ATLAS_AGENT_HOME_ROOT: Joi.string().optional(),
+  ATLAS_ENGINE_AUTH_MODE: Joi.string()
+    .valid('api_key', 'subscription')
+    .optional(),
+  ATLAS_CLAUDE_OAUTH_TOKEN: Joi.string().optional(),
+  ATLAS_WORKER_MODEL: Joi.string().optional(),
+  ATLAS_CODEX_MODEL: Joi.string().optional(),
+  ATLAS_GITHUB_TOKEN: Joi.string().optional(),
+  GITHUB_TOKEN: Joi.string().optional(),
+  ATLAS_SLACK_BOT_TOKEN: Joi.string().optional(),
+  ATLAS_SLACK_APP_TOKEN: Joi.string().optional(),
+  ATLAS_SURFACE: Joi.string().valid('slack', 'agent').optional(),
+  // Atlas v2 ingress (W2)
+  ATLAS_HTTP_PORT: Joi.number().port().optional(),
+  ATLAS_GITHUB_WEBHOOK_SECRET: Joi.string().optional(),
+  ATLAS_WEBHOOK_SECRET: Joi.string().optional(),
+  ATLAS_EVENT_DEDUP_WINDOW_S: Joi.number().integer().min(0).optional(),
+  ATLAS_EVENT_RATE_LIMIT: Joi.number().integer().min(1).optional(),
+  ATLAS_EVENT_RATE_WINDOW_S: Joi.number().integer().min(1).optional(),
+  // Atlas v2 section/phase driver (W4) runaway guards
+  ATLAS_MAX_SECTIONS: Joi.number().integer().min(1).optional(),
+  ATLAS_MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
 });

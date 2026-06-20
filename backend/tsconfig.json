@@ -28,5 +28,5 @@
     },
     "types": ["node", "vitest/globals"]
   },
-  "exclude": ["node_modules", "dist", "vitest.config.ts", "vitest.setup.ts", "vitest.global-setup.ts", "cli", "migrations", "migrations-control", "seeds"]
+  "exclude": ["node_modules", "dist", "vitest.config.ts", "vitest.setup.ts", "vitest.global-setup.ts", "cli", "migrations", "migrations-atlas", "migrations-control", "seeds"]
 }
