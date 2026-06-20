@@ -305,6 +305,11 @@ export class SectionDriver implements JobDispatcher {
       brief: section.brief,
       handoffIn,
     };
+    // Bound the plan turn too (issue #3): exploring a large repo read-only can run away just like an
+    // execute turn. On timeout it aborts + falls back to the structured planner below (graceful — the
+    // engine plan text is only grounding, not the source of truth).
+    const planController = new AbortController();
+    const planTimer = setTimeout(() => planController.abort(), this.phaseTimeoutMs);
     const planTurn = await this.turn
       .runTurn({
         jobId: job.id,
@@ -313,11 +318,16 @@ export class SectionDriver implements JobDispatcher {
         mode: 'plan',
         systemPrompt: SECTION_PLAN_SYSTEM,
         task: renderPlanTask(planInput),
+        signal: planController.signal,
       })
       .catch((err) => {
-        this.logger.warn(`section ${section.ordinal} plan turn failed (continuing): ${err}`);
+        const why = planController.signal.aborted
+          ? `exceeded ATLAS_PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms)`
+          : err;
+        this.logger.warn(`section ${section.ordinal} plan turn failed (continuing): ${why}`);
         return undefined;
       });
+    clearTimeout(planTimer);
 
     const planned = (
       (await this.planner.planSection(planInput).catch(() => undefined)) ??

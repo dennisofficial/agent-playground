@@ -692,6 +692,37 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(false); // never got past the gate
     expect(h.opened).toHaveLength(0);
   });
+
+  it('bounds a runaway section PLAN turn — aborts + falls back to the planner, no hang (issue #3)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state, { env: { ATLAS_PHASE_TIMEOUT_MS: '20' } });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: { mode: string; phaseId?: string | null; signal?: AbortSignal }) => {
+        if (input.mode === 'plan') {
+          // The plan turn hangs until its abort signal fires (a runaway read-only exploration).
+          return new Promise((_resolve, reject) => {
+            input.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          });
+        }
+        return { report: `did ${input.phaseId}`, session: {} };
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // The plan turn timed out but the build did NOT hang: the structured planner supplied phases and
+    // execution proceeded to completion (phases committed, one PR opened).
+    expect(state.job.status).toBe('done');
+    expect(h.commits.length).toBeGreaterThan(0);
+    expect(h.opened).toHaveLength(1);
+  });
 });
 
 // ── async helpers ────────────────────────────────────────────────────────────────────────────────
