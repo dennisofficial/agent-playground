@@ -27,11 +27,13 @@ function dockerInfo(result: 'ok' | 'fail') {
 }
 
 async function makeService(
-  xadd = vi.fn(async () => '1-0'),
+  xadd = vi.fn(async (_stream: string, _frame: unknown) => '1-0'),
   whenCloned = vi.fn(async () => undefined),
 ) {
   vi.resetModules();
-  const { DaemonReadinessService } = await import('./daemon-readiness.service');
+  const { DaemonReadinessService } = await import(
+    './daemon-readiness.service.js'
+  );
   const redis = { xadd } as never;
   // The readiness gate awaits the boot clone via DaemonGitService.whenCloned (Phase 11) — a stub that
   // resolves immediately models "no clone expected" (or a completed clone).
