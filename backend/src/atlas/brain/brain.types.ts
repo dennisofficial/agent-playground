@@ -20,8 +20,10 @@ import type { Decision, JobKind } from '../domain';
  *                 always-ask case, or an ambiguous chat that should open a scoping conversation).
  *  - `dispatch` — clean + actionable: a bugfix the brain can drive straight to a PR (autonomous
  *                 notification path), no always-ask decision touched.
+ *  - `answer`   — a non-work QUESTION about the repo/system (e.g. "what does this repo do?"); answer it
+ *                 conversationally (repo-grounded), no job. Chat-only.
  */
-export type TriageVerb = 'ignore' | 'ask' | 'dispatch';
+export type TriageVerb = 'ignore' | 'ask' | 'dispatch' | 'answer';
 
 /** The triage turn's typed result. */
 export interface TriageAction {

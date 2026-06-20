@@ -92,6 +92,24 @@ export class ConversationalBrainService {
   }
 
   /**
+   * Answer a non-work QUESTION about the repo (issue #6) — a repo-grounded conversational reply, NO job.
+   * Triage routes "what does this repo do?"-style messages here. Falls back to a gentle clarifier when the
+   * investigation comes back empty (no repo / no key).
+   */
+  async answerQuestion(stimulus: ChatStimulus): Promise<void> {
+    const answer = await this.investigator.answer({
+      teamId: stimulus.teamId,
+      projectId: stimulus.projectId,
+      question: stimulus.body,
+    });
+    await this.say(
+      stimulus,
+      answer ||
+        "I couldn't pull enough from the repo to answer that confidently — can you add a little more detail?",
+    );
+  }
+
+  /**
    * Post the approval card into the thread and act on the verdict: approve → mark approved + dispatch;
    * request_changes / deny → return to scoping (re-grill on the next message) / cancel. The brain
    * awaits the verdict (the section build does NOT block on it — dispatch returns promptly).

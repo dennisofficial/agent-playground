@@ -50,15 +50,26 @@ function fakeMemory(): AtlasMemoryStore {
 
 function fakeInvestigator(
   digestText = '',
-): ScopingInvestigatorService & { calls: ScopingInvestigateInput[]; forgotten: string[] } {
+  answerText = 'This repo is a NestJS service.',
+): ScopingInvestigatorService & {
+  calls: ScopingInvestigateInput[];
+  forgotten: string[];
+  answers: Array<{ question: string }>;
+} {
   const calls: ScopingInvestigateInput[] = [];
   const forgotten: string[] = [];
+  const answers: Array<{ question: string }> = [];
   return {
     calls,
     forgotten,
+    answers,
     async digest(input: ScopingInvestigateInput) {
       calls.push(input);
       return digestText;
+    },
+    async answer(input: { question: string }) {
+      answers.push({ question: input.question });
+      return answerText;
     },
     forget(threadId: string) {
       forgotten.push(threadId);
@@ -66,6 +77,7 @@ function fakeInvestigator(
   } as unknown as ScopingInvestigatorService & {
     calls: ScopingInvestigateInput[];
     forgotten: string[];
+    answers: Array<{ question: string }>;
   };
 }
 
@@ -258,6 +270,17 @@ describe('ConversationalBrainService (grill)', () => {
     await turn;
     expect(dispatcher.jobs).toHaveLength(0);
     expect(store.cancelled).toContain('job-7');
+  });
+
+  it('answerQuestion posts a repo-grounded answer in-thread without opening a job (issue #6)', async () => {
+    const { svc, store, investigator } = make(undefined, fakeStore(), fakeInvestigator('', 'It is a NestJS orchestrator.'));
+    await svc.answerQuestion(chat());
+    expect(investigator.answers).toHaveLength(1);
+    const posted = surface.posts.find((p) => p.text === 'It is a NestJS orchestrator.');
+    expect(posted).toBeDefined();
+    expect(posted?.opts?.threadTs).toBe('root-1');
+    expect(store.appended).toContain('It is a NestJS orchestrator.');
+    expect(dispatcher.jobs).toHaveLength(0);
   });
 
   it('no LLM verdict → asks a generic clarifier (never guesses a plan)', async () => {

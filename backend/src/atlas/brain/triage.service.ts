@@ -61,6 +61,14 @@ export class TriageService implements StimulusConsumer {
     }
 
     const action = await this.llm.triage({ kind: 'chat', body: stimulus.body });
+
+    // A non-work QUESTION (issue #6) → answer it conversationally, repo-grounded, with NO job opened.
+    if (action?.verb === 'answer') {
+      this.logger.log(`chat answered (question): ${action.reason}`);
+      await this.brain.answerQuestion(stimulus);
+      return;
+    }
+
     // No key / malformed → treat an opening chat as actionable (open a conversation), never silently drop.
     if (!action || action.verb !== 'ignore') {
       this.logger.log(

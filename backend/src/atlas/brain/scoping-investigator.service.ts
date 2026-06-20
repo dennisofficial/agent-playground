@@ -79,23 +79,59 @@ export class ScopingInvestigatorService {
     this.cache.delete(threadId);
   }
 
+  /**
+   * Answer a non-work QUESTION about the repo (issue #6), grounded in a read-only pass over the actual
+   * clone. Returns the answer prose, or '' when there's no repo / it fails (caller falls back). Not cached
+   * — questions are one-off.
+   */
+  async answer(input: { teamId: string; projectId: string; question: string }): Promise<string> {
+    return this.runReadonly(
+      input.teamId,
+      input.projectId,
+      ANSWER_SYSTEM,
+      renderAnswerTask(input.question),
+      `answer-${input.projectId}`,
+    ).catch((err) => {
+      this.logger.warn(`answer investigation failed: ${err}`);
+      return '';
+    });
+  }
+
   private async investigate(input: ScopingInvestigateInput): Promise<string> {
-    const repo = await this.resolveRepo(input.teamId, input.projectId);
+    return this.runReadonly(
+      input.teamId,
+      input.projectId,
+      SCOPING_INVESTIGATE_SYSTEM,
+      renderInvestigateTask(input.focus),
+      `scope-${input.projectId}`,
+    );
+  }
+
+  /** Resolve the repo, then run ONE read-only engine pass (strict `investigate` mode, or native `plan`
+   *  per ATLAS_SCOPING_MODE) over its clone with a wall-clock budget; returns the turn's text ('' if no
+   *  repo). The single seam both the digest and the answer lane go through. */
+  private async runReadonly(
+    teamId: string,
+    projectId: string,
+    systemPrompt: string,
+    task: string,
+    sandboxKey: string,
+  ): Promise<string> {
+    const repo = await this.resolveRepo(teamId, projectId);
     if (!repo) {
-      this.logger.debug(`no atlas_projects repo for ${input.teamId}/${input.projectId} — no digest`);
+      this.logger.debug(`no atlas_projects repo for ${teamId}/${projectId} — read-only pass skipped`);
       return '';
     }
-
     const mode = this.scopingMode();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs());
     try {
       const result = await this.engine.run({
         engine: 'claude',
-        task: renderInvestigateTask(input.focus),
+        task,
         cwd: repo.repoPath,
-        systemPrompt: SCOPING_INVESTIGATE_SYSTEM,
-        sandboxKey: `scope-${input.projectId}`,
+        systemPrompt,
+        sandboxKey,
         mode,
         signal: controller.signal,
       });
@@ -140,5 +176,25 @@ function renderInvestigateTask(focus: string): string {
     `REQUEST: ${focus}`,
     '',
     'Produce the concise grounded digest described in your instructions. Read-only — change nothing.',
+  ].join('\n');
+}
+
+/** System prompt for the answer lane (issue #6): answer the operator's question from the real repo. */
+const ANSWER_SYSTEM = [
+  'You are Atlas answering an operator\'s QUESTION about this repository — a READ-ONLY pass. Read the',
+  'actual code/config needed and answer accurately and concisely, grounded in what the repo really',
+  'contains (cite the concrete modules/files that matter). This is a conversational answer, NOT a plan',
+  'and NOT a code change — do not modify anything and do not propose work unless asked. If the repo does',
+  "not answer the question, say so plainly rather than guessing. Reply with the answer prose only.",
+].join('\n');
+
+/** The per-turn answer instructions. */
+function renderAnswerTask(question: string): string {
+  return [
+    'Answer this question about the repository, grounded in the actual code:',
+    '',
+    `QUESTION: ${question}`,
+    '',
+    'Read what you need (read-only) and give a clear, concise, accurate answer.',
   ].join('\n');
 }

@@ -76,14 +76,25 @@ function fakePark(): ParkAndAskService & { asks: Array<{ channel: string; questi
   } as unknown as ParkAndAskService & { asks: Array<{ channel: string; question: string }> };
 }
 
-function fakeBrain(): ConversationalBrainService & { turns: ChatStimulus[] } {
+function fakeBrain(): ConversationalBrainService & {
+  turns: ChatStimulus[];
+  answered: ChatStimulus[];
+} {
   const turns: ChatStimulus[] = [];
+  const answered: ChatStimulus[] = [];
   return {
     turns,
+    answered,
     async handleChatTurn(s: ChatStimulus) {
       turns.push(s);
     },
-  } as unknown as ConversationalBrainService & { turns: ChatStimulus[] };
+    async answerQuestion(s: ChatStimulus) {
+      answered.push(s);
+    },
+  } as unknown as ConversationalBrainService & {
+    turns: ChatStimulus[];
+    answered: ChatStimulus[];
+  };
 }
 
 function fakeDispatcher(): JobDispatcher & { jobs: Job[] } {
@@ -197,6 +208,18 @@ describe('TriageService', () => {
     await svc.consume(chat('thanks!'));
     expect(brain.turns).toHaveLength(0);
     expect(dispatcher.jobs).toHaveLength(0);
+  });
+
+  it('a question chat is ANSWERED conversationally — no job, no grill, no dispatch (issue #6)', async () => {
+    const { svc, store } = make(
+      fakeLlm({ verb: 'answer', reason: 'a question about the repo' }),
+      fakeClassifier(PROCEED),
+    );
+    await svc.consume(chat('what does this repo do?'));
+    expect(brain.answered).toHaveLength(1);
+    expect(brain.turns).toHaveLength(0); // not grilled
+    expect(dispatcher.jobs).toHaveLength(0); // no work dispatched
+    expect(store.opened).toBe(0); // no scoping job opened
   });
 
   // ── event: ignore / dispatch / ask ───────────────────────────────────────────────────────────────
