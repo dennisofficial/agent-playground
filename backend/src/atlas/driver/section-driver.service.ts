@@ -306,28 +306,22 @@ export class SectionDriver implements JobDispatcher {
       handoffIn,
     };
     // Bound the plan turn too (issue #3): exploring a large repo read-only can run away just like an
-    // execute turn. On timeout it aborts + falls back to the structured planner below (graceful — the
-    // engine plan text is only grounding, not the source of truth).
-    const planController = new AbortController();
-    const planTimer = setTimeout(() => planController.abort(), this.phaseTimeoutMs);
-    const planTurn = await this.turn
-      .runTurn({
+    // execute turn. Hard-bounded so the driver gives up even if the SDK won't yield; on breach it falls
+    // back to the structured planner below (graceful — the engine plan text is only grounding).
+    const planTurn = await this.runTurnBounded(
+      {
         jobId: job.id,
         sandbox,
         engine: 'claude',
         mode: 'plan',
         systemPrompt: SECTION_PLAN_SYSTEM,
         task: renderPlanTask(planInput),
-        signal: planController.signal,
-      })
-      .catch((err) => {
-        const why = planController.signal.aborted
-          ? `exceeded ATLAS_PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms)`
-          : err;
-        this.logger.warn(`section ${section.ordinal} plan turn failed (continuing): ${why}`);
-        return undefined;
-      });
-    clearTimeout(planTimer);
+      },
+      `section ${section.ordinal} plan turn`,
+    ).catch((err) => {
+      this.logger.warn(`section ${section.ordinal} plan turn failed (continuing): ${err}`);
+      return undefined;
+    });
 
     const planned = (
       (await this.planner.planSection(planInput).catch(() => undefined)) ??
@@ -411,6 +405,31 @@ export class SectionDriver implements JobDispatcher {
     return classifications;
   }
 
+  /** Run an engine turn under a HARD wall-clock bound (ATLAS_PHASE_TIMEOUT_MS). On breach it signals the
+   *  SDK to abort (best-effort — may not interrupt a stuck subprocess) AND rejects the await so the driver
+   *  gives up regardless. A still-running orphaned turn is harmless (nothing awaits it). */
+  private async runTurnBounded(
+    input: Parameters<TurnRunnerService['runTurn']>[0],
+    label: string,
+  ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const hardTimeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`${label} exceeded ATLAS_PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms)`));
+      }, this.phaseTimeoutMs);
+    });
+    try {
+      return await Promise.race([
+        this.turn.runTurn({ ...input, signal: controller.signal }),
+        hardTimeout,
+      ]);
+    } finally {
+      clearTimeout(timer!);
+    }
+  }
+
   /** Await a parked human answer, bounded by ATLAS_PARK_TIMEOUT_MS. On expiry it rejects so the build
    *  fails + relays (instead of suspending forever); the human can re-engage in-thread to restart. */
   private async awaitAnswer<T>(answer: Promise<T>, decisionDesc: string): Promise<T> {
@@ -474,12 +493,11 @@ export class SectionDriver implements JobDispatcher {
     await this.store.setPhaseState(phase.id, 'build', 'building');
     await this.post(route, `:gear: ${section.brief} — building: ${label}`);
 
-    // Circuit breaker (#3): abort an engine turn that runs past the per-phase budget.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.phaseTimeoutMs);
-    let result;
-    try {
-      result = await this.turn.runTurn({
+    // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
+    // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess (a non-yielding
+    // Bash/exploration). The rejection propagates → the job fails + relays.
+    const result = await this.runTurnBounded(
+      {
         jobId: job.id,
         phaseId: phase.id,
         sandbox,
@@ -487,21 +505,12 @@ export class SectionDriver implements JobDispatcher {
         mode: 'execute',
         systemPrompt: PHASE_EXECUTE_SYSTEM,
         task: renderPhaseTask(record, section, phase),
-        signal: controller.signal,
         onEvent: (e) => {
           if (e.kind === 'tool') this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
         },
-      });
-    } catch (err) {
-      if (controller.signal.aborted) {
-        throw new Error(
-          `phase "${label}" exceeded ATLAS_PHASE_TIMEOUT_MS (${this.phaseTimeoutMs}ms) and was aborted`,
-        );
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
+      },
+      `phase "${label}"`,
+    );
 
     // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
     const deviations = extractDeviations(result.report);

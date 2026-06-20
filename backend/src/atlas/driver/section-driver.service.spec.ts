@@ -596,13 +596,12 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state, { env: { ATLAS_PHASE_TIMEOUT_MS: '20' } });
-    // Plan resolves; the execute turn hangs until its abort signal fires (mimics a runaway engine turn).
+    // Plan resolves; the execute turn NEVER settles AND ignores the abort signal (mimics the real SDK
+    // stuck in a non-yielding subprocess). The HARD race-timeout must still bound the driver.
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string; signal?: AbortSignal }) => {
+      async (input: { mode: string }) => {
         if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
-        return new Promise((_resolve, reject) => {
-          input.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-        });
+        return new Promise(() => {}); // never settles, never honors abort
       },
     );
 
@@ -703,13 +702,10 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     };
     const h = assemble(state, { env: { ATLAS_PHASE_TIMEOUT_MS: '20' } });
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string; phaseId?: string | null; signal?: AbortSignal }) => {
-        if (input.mode === 'plan') {
-          // The plan turn hangs until its abort signal fires (a runaway read-only exploration).
-          return new Promise((_resolve, reject) => {
-            input.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-          });
-        }
+      async (input: { mode: string; phaseId?: string | null }) => {
+        // The plan turn NEVER settles and ignores abort (a runaway read-only exploration the SDK won't
+        // interrupt). The hard race-timeout must bound it and fall back to the planner.
+        if (input.mode === 'plan') return new Promise(() => {});
         return { report: `did ${input.phaseId}`, session: {} };
       },
     );
