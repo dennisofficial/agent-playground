@@ -5,12 +5,15 @@
 ## 0. Orient first
 - Read `backend/src/atlas/ATLAS_V2.md` (canonical: architecture, file/seam map, run+verify, env). Design history: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-greedy-parnas.md`. Memory: `atlas-v2-clean-room-rebuild`.
 - Branch `feat/atlas-v2`; built + committed (`0e4dbd2`); 190+ atlas tests green; v1 (`backend/src/harness/`) is **intact beside v2 — do NOT delete it** (that's "W8", held for Dennis).
-- **Run in the MAIN repo checkout, NOT a fresh worktree** — the secrets (`ANTHROPIC_API_KEY`, `GITHUB_PAT`, decrypt keys) live in gitignored `backend/.env.personal` + `.env.keys`, which a worktree won't have.
+- **You run in your OWN git worktree** (parallel to another agent on `main`). Bootstrap it first, since a worktree shares `.git` but NOT gitignored files / `node_modules` / submodules:
+  1. Copy secrets in: `cp /Users/dennis/Developer/agent-playground/backend/.env.personal /Users/dennis/Developer/agent-playground/backend/.env.keys "$(git rev-parse --show-toplevel)/backend/"`
+  2. From the worktree root: `pnpm run setup` (submodule init + install + package builds — needed or you'll hit TS2307 on `@workspace/*`).
+  3. **Isolate from the main agent on the shared dev Postgres:** use a distinct port `ATLAS_HTTP_PORT=4012`, distinct test tenant/channel `T-TUNE`/`C-TUNE`, and keep `ATLAS_DISABLE_RESUME=1`. (Both Atlas instances share the same `atlas_*` tables; distinct tenant ids keep your rows separate.) If the main agent starts changing the atlas schema, switch to a separate `POSTGRES_DB`.
 - **HARD RULES:** zero imports from `harness/**` or v1 `slack-app/**` (grep to confirm). No `Co-Authored-By` in commits. Don't delete v1. Don't edit `.env.personal` beyond what's there. Conversational *wording/tone* is Dennis's to tune — you fix **structural behavior** (does it investigate? relay? does the gate fire?) and flag subjective-feel items for him.
 
 ## 1. The test loop (harness already exists)
-1. Boot (from `backend/`, background it): `ATLAS_SURFACE=agent ATLAS_TEST_BRIDGE=on ATLAS_DISABLE_RESUME=1 pnpm atlas:dev` → HTTP on `:4002`.
-2. Seed a channel → real repo: `curl -sS -X POST localhost:4002/test/seed -H 'content-type: application/json' -d '{"teamId":"T-TEST","projectId":"ai-crew","repoUrl":"https://github.com/dennisofficial/ai-crew","baseBranch":"main","channel":"C-TEST"}'`
+1. Boot (from `backend/`, background it): `ATLAS_SURFACE=agent ATLAS_TEST_BRIDGE=on ATLAS_DISABLE_RESUME=1 ATLAS_HTTP_PORT=4012 pnpm atlas:dev` → HTTP on `:4012`.
+2. Seed a channel → real repo: `curl -sS -X POST localhost:4012/test/seed -H 'content-type: application/json' -d '{"teamId":"T-TUNE","projectId":"ai-crew","repoUrl":"https://github.com/dennisofficial/ai-crew","baseBranch":"main","channel":"C-TUNE"}'` (then use port 4012 + channel `C-TUNE` for `/test/say` etc.)
 3. Converse: `POST /test/say {channel,text,threadTs?}` → `{threadTs, replies:[{text}], approvalCard?:{jobId,title}}`. Approve: `POST /test/approve {jobId,verdict}`. Poll: `GET /test/job?jobId=`. Transcript: `GET /test/thread?threadTs=`.
 4. For breadth, spawn subagents as "users" (one Atlas instance handles many threads concurrently). The target repo `dennisofficial/ai-crew` **is this monorepo itself**; test PRs are drafts (won't merge) — periodically `gh pr close` + delete `atlas/*` branches. Existing test artifacts to clean: PRs #44/#45/#46 + dead `atlas/*` branches.
 5. Verify every change: `pnpm -C backend vitest run src/atlas` + `pnpm -C backend typecheck` (the ONLY pre-existing failure to ignore: `src/daemon/rpc/daemon-readiness.service.spec.ts`).

@@ -22,9 +22,7 @@
     "strictBindCallApply": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@core/*": ["./src/_core/*"],
-      "@api/*": ["./src/api/*"],
-      "@harness/*": ["./src/harness/*"]
+      "@core/*": ["./src/_core/*"]
     },
     "types": ["node", "vitest/globals"]
   },

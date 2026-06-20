@@ -6,9 +6,6 @@ import { configDefaults, defineConfig } from 'vitest/config';
 // metadata (reads .swcrc) so NestJS DI works inside tests.
 const alias = {
   '@core': resolve(__dirname, 'src/_core'),
-  '@api': resolve(__dirname, 'src/api'),
-  '@tui': resolve(__dirname, 'src/tui'),
-  '@harness': resolve(__dirname, 'src/harness'),
 };
 
 // Loads the local secret overlay + the encrypted test env (authoritative) before tests,

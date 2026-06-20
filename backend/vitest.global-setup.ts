@@ -44,24 +44,14 @@ export default async function globalSetup(): Promise<void> {
     await admin.end();
   }
 
-  // Migrations via the same CLI path as `pnpm db:migrate`, minus env:inject (which would
-  // load the DEV env — this child inherits our already-loaded test env instead). The CLI's
-  // ts-node hook is what loads the .ts migration files; TypeORM can't require them from
-  // this vite-node context. Idempotent: only pending migrations run.
-  execFileSync(
-    'pnpm',
-    ['exec', 'typeorm-ts-node-commonjs', 'migration:run', '-d', 'cli/data-source.ts'],
-    {
-      cwd: __dirname,
-      stdio: 'inherit',
-      env: { ...process.env, TS_NODE_PROJECT: 'tsconfig.cli.json' },
-    },
-  );
-
-  // Atlas v2 owns a SEPARATE datasource ('atlas') with its own `atlas_*` tables + migration history
-  // (`migrations-atlas/`, bookkept in `atlas_migrations`). Stand it up too so the Atlas boot int test
+  // Atlas v2 owns its datasource ('atlas') with its own `atlas_*` tables + migration history
+  // (`migrations-atlas/`, bookkept in `atlas_migrations`). Stand it up so the Atlas boot int test
   // — which boots the full Atlas DI graph and reconciles in-flight jobs on bootstrap — runs against the
-  // real schema, not a missing-table error. Idempotent: only pending atlas migrations run.
+  // real schema, not a missing-table error. The migrations run via the same CLI path as
+  // `pnpm db:atlas:migrate`, minus env:inject (which would load the DEV env — this child inherits
+  // our already-loaded test env instead). The CLI's ts-node hook is what loads the .ts migration
+  // files; TypeORM can't require them from this vite-node context. Idempotent: only pending
+  // atlas migrations run.
   execFileSync(
     'pnpm',
     ['exec', 'typeorm-ts-node-commonjs', 'migration:run', '-d', 'cli/atlas-data-source.ts'],

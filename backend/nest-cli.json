@@ -8,35 +8,8 @@
     "tsConfigPath": "tsconfig.build.json"
   },
   "monorepo": true,
-  "root": "src/api",
+  "root": "src/atlas",
   "projects": {
-    "api": {
-      "type": "application",
-      "root": "src/api",
-      "entryFile": "api/main",
-      "sourceRoot": "src/api",
-      "compilerOptions": {
-        "tsConfigPath": "src/api/tsconfig.json"
-      }
-    },
-    "slack-app": {
-      "type": "application",
-      "root": "src/slack-app",
-      "entryFile": "slack-app/main",
-      "sourceRoot": "src/slack-app",
-      "compilerOptions": {
-        "tsConfigPath": "src/slack-app/tsconfig.json"
-      }
-    },
-    "daemon": {
-      "type": "application",
-      "root": "src/daemon",
-      "entryFile": "daemon/main",
-      "sourceRoot": "src/daemon",
-      "compilerOptions": {
-        "tsConfigPath": "src/daemon/tsconfig.json"
-      }
-    },
     "atlas": {
       "type": "application",
       "root": "src/atlas",
