@@ -159,6 +159,17 @@ export class BrainStoreService {
     decisions: Decision[];
     sectionBriefs: string[];
   }): Promise<PersistedPlan> {
+    // A re-propose (request_changes → reopenScoping → the grill proposes again) reuses the SAME scoping
+    // job, so any prior DRAFT sections/record from the earlier proposal are still here. Clear them first:
+    // sections MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal) collision),
+    // and the prior draft record is marked `superseded` (audit trail, never an approved one). Idempotent
+    // on the first proposal (nothing to clear).
+    await this.sections.delete({ job_id: input.jobId });
+    await this.records.update(
+      { job_id: input.jobId, status: 'draft' },
+      { status: 'superseded' },
+    );
+
     const record = await this.records.save(
       this.records.create({
         team_id: input.teamId,
