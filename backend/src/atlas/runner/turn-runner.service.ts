@@ -1,9 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
-import { EngineRunner } from '../engine';
-import type { EngineAuth, EngineEvent, EngineUsage } from '../engine';
+import { ENGINE_RUNNER, EngineAuthError, type EngineRunnerPort } from '../engine';
+import type { EngineAuth, EngineEvent, EngineRunResult, EngineUsage } from '../engine';
 import type { FeatureSandbox } from '../git';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasPhase } from '../persistence/entities';
@@ -58,7 +58,7 @@ export class TurnRunnerService {
   private readonly logger = new Logger(TurnRunnerService.name);
 
   constructor(
-    private readonly engine: EngineRunner,
+    @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     @InjectRepository(AtlasPhase, ATLAS_CONNECTION)
     private readonly phases: Repository<AtlasPhase>,
   ) {}
@@ -80,19 +80,48 @@ export class TurnRunnerService {
         `cwd=${sandbox.worktreePath}${priorSessionId ? ` resume=${priorSessionId}` : ''}`,
     );
 
-    const result = await this.engine.run({
-      engine,
-      task: input.task,
-      cwd: sandbox.worktreePath,
-      systemPrompt: input.systemPrompt,
-      sandboxKey,
-      ...(priorSessionId ? { sessionId: priorSessionId } : {}),
-      mode,
-      ...(input.auth ? { auth: input.auth } : {}),
-      ...(input.model ? { model: input.model } : {}),
-      ...(input.onEvent ? { onEvent: input.onEvent } : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
+    // Persist the session id the instant the engine surfaces it (turn START) — so a mid-turn halt
+    // (process crash, container/host restart, kill) recovers by RESUMING this same session rather than
+    // spawning a fresh one. Best-effort write; the turn-end + auth-error persists below are belt-and-braces.
+    const onEvent = (e: EngineEvent): void => {
+      if (e.kind === 'session' && phaseId && e.sessionId) {
+        void this.phases.update({ id: phaseId }, { session_id: e.sessionId }).catch(() => undefined);
+      }
+      input.onEvent?.(e);
+    };
+
+    let result: EngineRunResult;
+    try {
+      result = await this.engine.run({
+        engine,
+        task: input.task,
+        cwd: sandbox.worktreePath,
+        systemPrompt: input.systemPrompt,
+        sandboxKey,
+        ...(priorSessionId ? { sessionId: priorSessionId } : {}),
+        mode,
+        // Docker mode: the sandbox carries the container to exec the turn into (set by SANDBOX_PROVIDER).
+        ...(sandbox.containerId
+          ? {
+              target: {
+                containerId: sandbox.containerId,
+                ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
+              },
+            }
+          : {}),
+        ...(input.auth ? { auth: input.auth } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        onEvent,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+    } catch (err) {
+      // On a 401/auth failure, PERSIST the session id so a re-ping resumes this same session (the
+      // agent's partial work is on disk in the worktree) instead of starting the phase from scratch.
+      if (err instanceof EngineAuthError && phaseId && err.sessionId) {
+        await this.phases.update({ id: phaseId }, { session_id: err.sessionId });
+      }
+      throw err;
+    }
 
     // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread.
     if (phaseId && result.sessionId) {

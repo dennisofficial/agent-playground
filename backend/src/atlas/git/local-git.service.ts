@@ -29,10 +29,17 @@ export interface FeatureSandbox {
   projectId: string;
   /** The feature branch all the job's phases stack on. */
   branch: string;
-  /** Absolute path to the worktree checkout (the engine's cwd). */
+  /** Absolute path to the worktree checkout (the engine's cwd, bind-mounted at /work in docker mode). */
   worktreePath: string;
   gitUrl: string;
   token?: string;
+  /**
+   * The sandbox CONTAINER the engine turns exec into (docker mode only; set by the `SANDBOX_PROVIDER`'s
+   * `attach`). Absent → host-local execution. The worktree is always bind-mounted at /work inside it.
+   */
+  containerId?: string;
+  /** The user (uid:gid) to exec turns as inside the container — host-uid so /work stays host-owned. */
+  execUser?: string;
 }
 
 /**

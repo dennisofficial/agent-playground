@@ -5,6 +5,7 @@ import { DecisionGateModule } from '../decision-gate';
 import { DriverModule } from '../driver';
 import { IngressModule } from '../ingress';
 import { RunnerModule } from '../runner';
+import { SandboxModule } from '../sandbox';
 import { StimulusModule } from '../stimulus';
 import { SurfaceModule } from '../surface';
 import { MemoryModule } from '../memory';
@@ -36,6 +37,7 @@ import { TestBridgeModule } from '../test-bridge';
  */
 @Module({
   imports: [
+    SandboxModule,
     SurfaceModule,
     RunnerModule,
     MemoryModule,

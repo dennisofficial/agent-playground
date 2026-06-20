@@ -131,4 +131,10 @@ export interface AutoFixContext {
   intent: string;
   /** Optional label for logs/commit messages (e.g. the section brief or "PR-tail"). */
   label?: string;
+  /**
+   * Docker mode: the sandbox CONTAINER the review/fix turns exec into (threaded from the driver's
+   * sandbox). Absent → host-local execution. `execUser` is the uid:gid to exec as (host-uid).
+   */
+  containerId?: string;
+  execUser?: string;
 }

@@ -21,7 +21,13 @@ export type EngineAuth =
 export type EngineEvent =
   | { kind: 'text'; text: string }
   | { kind: 'tool'; name: string; detail?: string }
-  | { kind: 'result'; text: string };
+  | { kind: 'result'; text: string }
+  /**
+   * Emitted ONCE as soon as the engine session/thread id is known (turn start) — BEFORE any work. Lets
+   * the caller persist the resume handle immediately, so a mid-turn halt (process crash, container/host
+   * restart, kill) recovers by CONTINUING this same session instead of spawning a fresh one.
+   */
+  | { kind: 'session'; sessionId: string };
 
 /** Vendor-neutral token-usage counts (all optional — engines populate what their SDK reports). */
 export interface EngineUsage {
@@ -36,6 +42,18 @@ export interface EngineUsage {
   costUsd?: number;
   /** The real model id the run used. */
   model?: string;
+}
+
+/**
+ * WHERE a turn executes. Absent (the default) → run in-process on the host (the `local` runner). When
+ * present, the `docker` runner `docker exec`s the engine entrypoint inside `containerId` as `user`.
+ * Passed explicitly through the port so the runner never has to derive a container from a string.
+ */
+export interface ExecutionTarget {
+  /** The sandbox container to exec the turn inside. */
+  containerId: string;
+  /** Run the exec as this user (uid or uid:gid) — host-uid so worktree files stay host-owned. */
+  user?: string;
 }
 
 export interface RunEngineArgs {
@@ -68,6 +86,12 @@ export interface RunEngineArgs {
   onEvent?: (e: EngineEvent) => void;
   /** Aborts the run when signalled — wired to the SDK's native cancellation. */
   signal?: AbortSignal;
+  /**
+   * WHERE to execute. Omit → host-local (in-process). When set, the `docker` engine-runner execs the
+   * turn inside that sandbox container. The `local` runner ignores it. (Not serialized to the
+   * in-container entrypoint — it's a host-side routing hint.)
+   */
+  target?: ExecutionTarget;
 }
 
 /** The result of one engine run — the report, the resume handle, and optional plan/usage. */
@@ -77,4 +101,43 @@ export interface EngineRunResult {
   /** The captured plan text on a Claude 'plan' turn (the substance is the plan, not the summary). */
   planText?: string;
   usage?: EngineUsage;
+}
+
+/**
+ * The ENGINE_RUNNER port — the seam the driver / auto-fix / acceptance-gate consume to run a turn. Two
+ * bindings: `EngineRunner` (in-process host-local) and `DockerEngineRunner` (exec inside a sandbox).
+ * Selected by `ATLAS_SANDBOX_MODE`. Both honor the same `RunEngineArgs`/`EngineRunResult` contract.
+ */
+export interface EngineRunnerPort {
+  run(args: RunEngineArgs): Promise<EngineRunResult>;
+}
+
+/** DI token for {@link EngineRunnerPort}. */
+export const ENGINE_RUNNER = Symbol('ENGINE_RUNNER');
+
+/**
+ * A CREDENTIAL/auth failure during a turn (a 401 / expired token / "not logged in"), distinguished
+ * from a normal turn error so the driver can PAUSE (and later resume the SAME engine session on a ping)
+ * instead of failing the job from scratch. Carries the engine `sessionId` when one was established
+ * before the failure — the resume handle that lets a re-ping continue where the agent left off (its
+ * partial work is already on disk in the worktree + remembered in the session transcript).
+ */
+export class EngineAuthError extends Error {
+  /** Discriminator that survives a structuredClone / cross-process reconstruction. */
+  readonly isAuthError = true;
+  constructor(
+    message: string,
+    /** The engine session to resume on a re-ping (undefined if the 401 hit before a session started). */
+    readonly sessionId?: string,
+  ) {
+    super(message);
+    this.name = 'EngineAuthError';
+  }
+}
+
+/** Heuristic: does this engine error message look like a credential/401 failure (vs a normal error)? */
+export function isAuthErrorMessage(message: string): boolean {
+  return /\b401\b|not logged in|please run \/login|invalid[ _-]?api[ _-]?key|invalid x-api-key|authentication[ _]?error|\bunauthorized\b|oauth[^.]*\b(expired|invalid|revoked)\b|token[^.]*\b(expired|revoked)\b|permission_error/i.test(
+    message,
+  );
 }

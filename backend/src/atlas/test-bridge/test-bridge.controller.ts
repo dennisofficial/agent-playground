@@ -16,6 +16,7 @@ import {
   parseApprovalMeta,
 } from '../agent-surface';
 import { DecisionApprovalService } from '../brain';
+import { SectionDriver } from '../driver';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
@@ -63,6 +64,7 @@ export class TestBridgeController {
     private readonly env: EnvService,
     private readonly surface: AgentChatSurface,
     private readonly approvals: DecisionApprovalService,
+    private readonly driver: SectionDriver,
     @InjectRepository(AtlasTeam, ATLAS_CONNECTION)
     private readonly teams: Repository<AtlasTeam>,
     @InjectRepository(AtlasProject, ATLAS_CONNECTION)
@@ -189,6 +191,19 @@ export class TestBridgeController {
     const ok = this.approvals.resolve(body.jobId, body.verdict ?? 'approve', TESTER_ID);
     this.logger.log(`approve job=${body.jobId} verdict=${body.verdict ?? 'approve'} ok=${ok}`);
     return { ok };
+  }
+
+  /**
+   * `POST /test/resume` — the PING that continues a job paused on a credential/401 error. Re-drives it
+   * (`SectionDriver.resumePaused`), which resumes the SAME engine session of the unfinished phase
+   * instead of restarting from scratch. A no-op if the job isn't paused.
+   */
+  @Post('resume')
+  async resume(@Body() body: { jobId: string }): Promise<{ ok: boolean }> {
+    this.assertEnabled();
+    await this.driver.resumePaused(body.jobId);
+    this.logger.log(`resume (ping) job=${body.jobId}`);
+    return { ok: true };
   }
 
   /** `GET /test/job?jobId=...` — the `atlas_jobs` row (status/title/prUrl/kind) for the driver to poll. */

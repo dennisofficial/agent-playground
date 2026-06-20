@@ -15,6 +15,9 @@ export type JobStatus =
   | 'scoping' // upfront grill in progress (no locked plan yet)
   | 'awaiting_approval' // decision record + section list posted; waiting on Dennis
   | 'running' // sections executing
+  | 'paused' // a turn hit a credential/401 error; the live session is saved, waiting on a re-ping to
+  // resume (NOT auto-resumed on boot — it would just 401 again). Durable: the unfinished phase keeps
+  // its `session_id`, so a ping continues the SAME session instead of starting from scratch.
   | 'done' // one PR opened, all sections handed off
   | 'failed'
   | 'cancelled';

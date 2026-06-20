@@ -1,13 +1,14 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { EngineRunner } from '../engine';
+import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import {
   GithubPrService,
   LocalGitService,
   parseGithubRepoUrl,
   type FeatureSandbox,
 } from '../git';
+import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import { AtlasSlackSurface } from '../surface';
 
 /** Everything the live gate needs, resolved from env (with explicit overrides for a scripted run). */
@@ -53,8 +54,9 @@ export class AcceptanceGateService {
     private readonly env: EnvService,
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
-    private readonly engine: EngineRunner,
+    @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     private readonly slack: AtlasSlackSurface,
+    @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
   ) {}
 
   private githubToken(): string | undefined {
@@ -90,7 +92,9 @@ export class AcceptanceGateService {
       repoPath = repo.repoPath;
       record('clone', true, `repo at ${repo.repoPath} (base ${repo.defaultBranch})`);
       sandbox = await this.git.createFeatureSandbox(repo, branch);
-      record('worktree', true, `${sandbox.worktreePath} on ${branch}`);
+      // Attach the execution environment (no-op in local mode; a container in docker mode).
+      sandbox = await this.sandboxes.attach({ sandbox, teamId: 'gate' });
+      record('worktree', true, `${sandbox.worktreePath} on ${branch}${sandbox.containerId ? ' (sandboxed)' : ''}`);
 
       // ── 2. Run one ENGINE turn in the worktree (execute mode → it makes the trivial change) ────
       const engine = config.engine ?? 'claude';
@@ -99,6 +103,14 @@ export class AcceptanceGateService {
         mode: 'execute',
         cwd: sandbox.worktreePath,
         sandboxKey: `${repo.projectId}--${branch}`,
+        ...(sandbox.containerId
+          ? {
+              target: {
+                containerId: sandbox.containerId,
+                ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
+              },
+            }
+          : {}),
         systemPrompt:
           'You are an automation worker validating a pipeline. Do exactly what the task asks, nothing more.',
         task:

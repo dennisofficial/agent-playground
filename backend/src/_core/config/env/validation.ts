@@ -115,6 +115,12 @@ export interface IEnvConfig {
   // slack-app (the writer) and the Docker daemon (the bind source), exactly like REPO_ROOT in DooD.
   // Code default: <homedir>/.agent-playground/refs. Point at a persistent volume in deployment.
   REFS_ROOT?: string;
+  // ⚠️ DEPRECATED (v1 harness sandbox stack, removed in commit f82a748). The Atlas v2 Docker layer
+  // (src/atlas/sandbox/) REUSES only `DOCKER_SOCKET_PATH` (via ATLAS_DOCKER_SOCKET_PATH ?? this),
+  // `REFS_ROOT` (via ATLAS_REFS_ROOT ?? this), and `WORKSPACE_IMAGE` (the sandbox base-image tag). The
+  // rest below (WORKSPACE_RUNTIME/REDIS_URL/NETWORK/DOCKER_STORAGE_DRIVER/DAEMON_BUILD_VOLUME/
+  // PNPM_STORE_VOLUME/IDLE_TTL_MINUTES/MAX_PER_PROJECT/DEV_PORT/PORT_RANGE_*) are ORPHANED — no code
+  // reads them. Safe to delete wholesale in a follow-up cleanup (interface + Joi schema together).
   // Sandbox lifecycle (Phase 6 — the host spawns per-workspace DinD sandboxes via dockerode).
   // ALL optional: containerized sessions are unavailable until set (dev/local runs locally, unchanged).
   DOCKER_SOCKET_PATH?: string; // host Docker socket the manager spawns sandboxes on (default /var/run/docker.sock)
@@ -320,6 +326,25 @@ export interface IEnvConfig {
   //    reconciliation sweep, so a fresh test instance doesn't re-attempt prior runs' stale jobs.
   ATLAS_TEST_BRIDGE?: 'on';
   ATLAS_DISABLE_RESUME?: string;
+
+  // ── Atlas v2 Docker sandbox layer ──────────────────────────────────────────────────────────────
+  //  - ATLAS_SANDBOX_MODE: where engine turns execute — 'local' (default, in-process host worktree)
+  //    or 'docker' (a per-feature privileged container; turns run via `docker exec`).
+  //  - ATLAS_DOCKER_SOCKET_PATH: host Docker socket the manager drives (falls back to
+  //    DOCKER_SOCKET_PATH, else dockerode's default /var/run/docker.sock).
+  //  - ATLAS_SANDBOX_IMAGE: the sandbox base-image tag (default 'atlas-sandbox:latest'). Deliberately
+  //    NOT v1's WORKSPACE_IMAGE — that often still points at the deleted v1 workspace base image.
+  //  - ATLAS_SANDBOX_REBUILD: when set (any value), force a rebuild of the sandbox base image at boot.
+  //  - ATLAS_REFS_ROOT: root for host-maintained read-only reference clones bind-mounted at /refs
+  //    (falls back to REFS_ROOT).
+  //  - ATLAS_MAX_CONCURRENT_SANDBOXES: cap on simultaneously-active sandboxes/turns (semaphore).
+  // Reuses the generic DOCKER_SOCKET_PATH / REFS_ROOT via the ATLAS_* ?? fallback above.
+  ATLAS_SANDBOX_MODE?: 'local' | 'docker';
+  ATLAS_DOCKER_SOCKET_PATH?: string;
+  ATLAS_SANDBOX_IMAGE?: string;
+  ATLAS_SANDBOX_REBUILD?: string;
+  ATLAS_REFS_ROOT?: string;
+  ATLAS_MAX_CONCURRENT_SANDBOXES?: number;
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -487,4 +512,11 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Atlas v2 dev/test tooling (never prod)
   ATLAS_TEST_BRIDGE: Joi.string().valid('on').optional(),
   ATLAS_DISABLE_RESUME: Joi.string().optional(),
+  // Atlas v2 Docker sandbox layer
+  ATLAS_SANDBOX_MODE: Joi.string().valid('local', 'docker').optional(),
+  ATLAS_DOCKER_SOCKET_PATH: Joi.string().optional(),
+  ATLAS_SANDBOX_IMAGE: Joi.string().optional(),
+  ATLAS_SANDBOX_REBUILD: Joi.string().optional(),
+  ATLAS_REFS_ROOT: Joi.string().optional(),
+  ATLAS_MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
 });

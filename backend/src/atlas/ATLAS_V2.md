@@ -14,7 +14,7 @@ Atlas v2 re-implements the proven semantics **legibly and daemon-free**, in a **
 
 **Brain vs hands.** `Atlas = brain`: a small conversational/reactive decider (triage → ignore/ask/dispatch; grill → decision record + section list). The `pipeline = hands`: a plain deterministic `async` driver that walks a planner-emitted list — **legible top-to-bottom, NOT an implicit FSM**. Dynamism (count of sections/phases) is data the planner emits; control flow stays a readable loop. Explicit step-state rows exist only so `resume()` knows where to re-enter.
 
-**Tenancy.** `Tenant` (Slack workspace = `team_id`) ⊃ `Projects` (GitHub repos) ⊃ `Channel` (**1:1 per project**) + per-feature **sandbox** (MVP: a local git worktree; Docker later — same abstraction). Channel-per-project: notifications route to the project's channel; collapses to one channel for single-repo tenants.
+**Tenancy.** `Tenant` (Slack workspace = `team_id`) ⊃ `Projects` (GitHub repos) ⊃ `Channel` (**1:1 per project**) + per-feature **sandbox** (`local` = a git worktree; `docker` = a per-feature container — same abstraction, see §8). Channel-per-project: notifications route to the project's channel; collapses to one channel for single-repo tenants.
 
 **Work model.** A `job` = an ordered list of `sections` (e.g. backend → frontend → devops). Two-level planning: (1) upfront grill → a **locked decision record** + high-level section list, approved once; (2) per-section just-in-time detailed phase plan. **Sections stack on ONE feature branch**; phases run as **sequential fresh engine sessions** on that shared checkout (fresh context per phase to dodge 300k rot; shared tree so later sections build on earlier code). **Isolation is per-feature/sandbox** (parallel features = separate sandboxes), NOT per-phase. **One PR per feature.**
 
@@ -72,7 +72,7 @@ Dev env (`backend/.env.personal`): first 3 keys (Anthropic/OpenAI/`GITHUB_PAT`) 
 
 ## 6. Build status (2026-06-20)
 
-All build workstreams **W0–W7 DONE + integrated**; **W9 verification DONE**; **W8 (delete v1) HELD**. 187 atlas tests green, full graph boots against Postgres, zero v1 imports.
+All build workstreams **W0–W9 DONE**; **W8 (delete v1) DONE** — v1 `harness/**` removed in commit `f82a748` on `main`, atlas is the sole orchestrator. **The Docker sandbox layer is also BUILT + verified** (see §8). 198 atlas tests green (unit + Docker/Postgres integration), full graph boots, zero v1 imports.
 
 **Proven LIVE end-to-end:** the W1 gate (real engine turn → Slack thread → PR #44) AND a full chat-driven feature drive that opened **`dennisofficial/ai-crew#45`** (grill → approve → section "investigate" → section "write README" committed → 3-lens auto-fix found+fixed 2 issues → PR-tail → PR). `resume()` reconciles interrupted jobs (it correctly 422'd a stale empty-commit job on reboot). Offline e2e (fake LLM): all 3 scenarios pass deterministically.
 
@@ -87,14 +87,64 @@ All build workstreams **W0–W7 DONE + integrated**; **W9 verification DONE**; *
 
 Convention: Dennis tunes conversational/UX behavior himself; ship + flag, don't burn billed runs on subjective feel (`no-self-billed-behavior-validation` memory).
 
-## 8. Docker sandbox rework — planning context (NEXT)
+## 8. Docker sandbox layer (BUILT — `backend/src/atlas/sandbox/`)
 
-This is the deferred, separately-planned effort. Today execution is **host-only**: a per-feature "sandbox" is a **local git worktree** (`LocalGitService.createFeatureSandbox` at `<ATLAS_REPOS_ROOT>/<project>/.worktrees/atlas-<branch>`), and engine turns run on the host via `EngineRunner` with an isolated agent home. The Docker rework replaces *where* a turn + its git ops execute (inside a per-feature container) without changing the brain/driver.
+Built 2026-06-20 (plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-greedy-parnas.md`). Engine turns now run inside a **long-lived, privileged, network-isolated per-feature container** (DinD-capable), driven one turn at a time by one-shot `docker exec` — **no in-container daemon, no Redis** (v1's fragility, gone). The brain / driver / decision-gate / PR logic is **unchanged**: only *where a turn executes* moves, behind two @Global DI ports selected by **`ATLAS_SANDBOX_MODE=local|docker`** (default `local` = byte-identical to host execution).
 
-- **The seam to containerize:** `driver/section-driver.service.ts` resolves a sandbox (worktree path) once per job, then `TurnRunnerService`/`EngineRunner` run turns with that `cwd`, and `LocalGitService`/`GithubPrService` do git/PR. A Docker version routes turn-execution + git into a container (cf. v1's `TurnExecutor.isContainerized()` local-vs-remote split — but rebuild simply).
-- **Isolation unit = per feature** (one container per in-flight feature/branch; sections stack inside it; phases are fresh sessions sharing the checkout). Parallel features = separate containers.
-- **v1's Docker stack to learn from but NOT import** (it's the fragile thing being replaced): `harness/workspaces/` (~7,200 LOC: `ContainerManagerService`, `WorkspaceProvisionerService`, `DaemonClient` over Redis, idle reaper, daemon version reconcile) + `harness/daemon/` (in-container NestJS, `DaemonGitService`, `DaemonTurnService`). Keep the redo **simple**.
-- **Dennis's noted requirement (fold into this plan):** "a channel should have access to any other repo it wants, as references." See the `reference-shared-library` memory — a host-maintained READ-ONLY library, one clone per project (each with its own token), bind-mounted at `/refs` in every sandbox.
-- **Engine creds + isolated home** already abstracted (`ATLAS_ENGINE_AUTH_MODE`, `ATLAS_AGENT_HOME_ROOT`) — carry into the container.
+**The two seams** (mirror each other): `ENGINE_RUNNER` (`engine/engine.types.ts`) — `EngineRunner` (in-process) or `DockerEngineRunner` (exec in a sandbox); `SANDBOX_PROVIDER` (`sandbox/sandbox-provider.port.ts`) — `LocalSandboxProvider` (no-op) or `SandboxManager` (per-feature container). Bound in `sandbox/sandbox.module.ts` (@Global). The three live exec paths all route through `ENGINE_RUNNER` + carry an `ExecutionTarget`: the driver's phase/plan turns (`runner/turn-runner.service.ts`), the auto-fix review/fix turns (`autofix/`), and the acceptance gate (`gate/`).
 
-When planning Docker: use plan mode (Codex plan-review hook fires), reuse the `nestjs-di-over-facades` / `reuse-dont-reinvent` conventions, and keep the clean-room rule (Docker code lives in atlas, no v1 imports).
+| Piece | File | What |
+|---|---|---|
+| Container seam | `sandbox/container-engine.port.ts` (`CONTAINER_ENGINE`) + `sandbox/dockerode-container-engine.ts` | thin dockerode wrapper: network/image/create/start/**streamed exec**/stop/remove/list/inspect |
+| Base image | `sandbox/image/Dockerfile` + `sandbox-init.sh` + `sandbox/sandbox-image.builder.ts` | node+pnpm+git+docker+dockerd + the bundled engine entrypoint + the 2 SDKs; PID1 starts inner dockerd. Boot-memoized build (tag `ATLAS_SANDBOX_IMAGE`, default `atlas-sandbox:latest`) |
+| Engine entrypoint | `sandbox/image/engine-entrypoint.ts` → esbuild → `.mjs` (`pnpm atlas:sandbox:bundle`) | runs the SAME `engine/engine-core.ts` (extracted, Nest-free) in-container: stdin JSON spec → NDJSON events → final result |
+| Host transport | `sandbox/docker-engine-runner.ts` | `docker exec atlas-engine-turn`, creds via exec ENV, NDJSON→`onEvent`→`EngineRunResult` |
+| Lifecycle | `sandbox/sandbox-manager.service.ts` | acquire (reuse-by-name, inner-dockerd readiness poll, soft concurrency cap), teardown, reapStopped; per-sandbox network + DinD volume + privileged |
+| Refs | `sandbox/sandbox-refs.service.ts` | host-maintained read-only `/refs` library (mount + clone/fetch; mechanism only) |
+
+**Key decisions (as built):**
+- **Checkout = bind-mounted host worktree; git + PR stay host-side, unchanged.** The worktree (and, for a linked worktree, its git common dir) are mounted at their **same absolute host paths** so in-container git resolves and `cwd` needs no translation. The host `LocalGitService` commits after each phase; the GitHub token **never enters the sandbox** (a security plus). Turns exec as the **host uid** so worktree files stay host-owned; the inner-docker socket is opened (privileged, family-trust) so that uid can drive DinD.
+- **DinD = `--privileged` + inner dockerd + per-sandbox `/var/lib/docker` volume.** Multi-tenant isolation is by **per-sandbox Docker network** (not privileged-hardening — escape is accepted: family-only host). Proven: an agent runs `docker compose up -d postgres` inside and it's ready in ~2s.
+- **Engine home = host-owned dir mounted at `/atlas-home`** (persists sessions across turns/restarts → resume works in-container).
+
+**Verified:** 198 unit/int tests green (incl. Docker integration: `sandbox/*.int.test.ts` build image + run privileged DinD + exec; `sandbox-manager.int.test.ts` proves linked-worktree git + host-uid write). LIVE: a real Claude turn + session-resume in a container (D1); the headline DinD-postgres (D3); and the **assembled path** end-to-end — `ATLAS_SANDBOX_MODE=docker pnpm atlas:gate -- --repo <url>` clones → attaches a container → runs a real in-container turn → host-commits (no PR/Slack in dry-run).
+
+```
+pnpm atlas:sandbox:bundle                                   # (re)build the in-container entrypoint bundle (run before image build)
+ATLAS_SANDBOX_MODE=docker pnpm atlas:gate -- --repo <url>   # assembled docker proof (dry-run; add --live + --channel for a real PR)
+ATLAS_SANDBOX_MODE=docker pnpm atlas:e2e -- --live --repo <url>   # full feature drive, every turn in-container (NOT yet run — billed + opens a PR)
+```
+**Env (in `_core/config/env/validation.ts`):** `ATLAS_SANDBOX_MODE`, `ATLAS_SANDBOX_IMAGE`, `ATLAS_SANDBOX_REBUILD`, `ATLAS_DOCKER_SOCKET_PATH`(?? `DOCKER_SOCKET_PATH`), `ATLAS_REFS_ROOT`(?? `REFS_ROOT`), `ATLAS_MAX_CONCURRENT_SANDBOXES`. The old v1 `WORKSPACE_*` daemon/redis vars are orphaned (marked deprecated; full prune is a follow-up).
+
+**Open follow-ups (designed, not built):** human-facing dev-server **exposure** (reverse-proxy by hostname / TLS — the next plan; per-sandbox networks + labels are in place); the `/refs` per-repo-token registry + refresh/GC + an agent tool; TTL reaping of idle *running* sandboxes (needs job-state awareness — only stopped ones are reaped now); pinning the in-image SDK versions to the host via build args; rebuild the image for the deploy arch (built linux/arm64 on the Mac; OVH is x64); prune the dead `WORKSPACE_*` env vars; the full `atlas:e2e --live` docker run.
+
+## 9. Durability & session recovery (BUILT 2026-06-20)
+
+**The contract: when a coding agent HALTS for any reason, recovery CONTINUES the same engine session — it does not spawn a fresh one** (unless the halt happened before the session even started, in which case nothing was lost). The whole thing rests on one primitive: the engine `session_id` is persisted on `atlas_phases.session_id`, and any re-run of a phase threads it back as `resume: <session_id>`, so the agent picks up its conversation + its on-disk work.
+
+**The key durability fix — persist the handle at turn START, not just turn end.** `EngineCore` emits a `{kind:'session', sessionId}` event the instant the session exists (Claude `system/init` / Codex `thread.started`) — verified live as the **first** NDJSON frame in docker mode, before any tool runs. `TurnRunnerService` persists it immediately (best-effort, fire-and-forget), so a halt MID-turn still leaves a resume handle. (Previously it was saved only on success → a mid-turn crash would have lost it and respawned fresh.)
+
+**Halt → recovery matrix (all CONTINUE the same session):**
+| Halt | Recovery path | Continues? |
+|---|---|---|
+| Atlas host crash/restart/redeploy mid-turn | boot `DriverModule.onApplicationBootstrap → SectionDriver.resume()` reconciles `running` jobs → re-drives → re-runs the in-flight phase with its persisted `session_id` | ✅ (the sandbox container + `/atlas-home` survive the host restart) |
+| Sandbox container dies/restarts | `SandboxManager.attach` reuse-by-name restarts it (or recreates with the SAME `/atlas-home` mount → the session transcript persists) → resume | ✅ |
+| 401 / expired credentials mid-turn | pause → ping `resumePaused` (see below) | ✅ |
+| Non-auth turn error (SDK/network/tool) | job → `failed`; the `session_id` is saved, so a ping/re-drive resumes rather than restarts | ✅ on re-drive |
+| Hung turn | a turn timeout (from the tuning branch, see note) aborts it → re-run resumes the session | ✅ |
+
+### 401 sub-case (pause + ping)
+
+A coding agent hitting a **401 / expired credentials** mid-turn must NOT lose work or restart from scratch — it PAUSES and a ping resumes the SAME engine session. Mechanism:
+
+- **Detect:** the engine classifies auth failures (`engine/engine-core.ts` wraps both engine loops; `isAuthErrorMessage` matches 401 / "not logged in" / invalid key / expired token) and throws a typed **`EngineAuthError`** carrying the live `sessionId`. In docker mode the in-container entrypoint emits `{t:'error', auth:true, sessionId}` and `DockerEngineRunner` reconstructs the typed error.
+- **Preserve:** `TurnRunnerService` persists `session_id` onto the phase row *on the auth error* (previously only on success) — the resume handle. The agent's partial edits are already on disk in the (bind-mounted) worktree.
+- **Pause, not fail:** `SectionDriver.drive` catches `EngineAuthError` → job status **`paused`** (a new durable `JobStatus`, text column, no migration), posts a "paused — fix creds + ping to resume" note. Non-auth errors still → `failed`.
+- **Ping to resume:** `SectionDriver.resumePaused(jobId)` flips `paused→running` and re-drives — `runJob` fast-forwards done sections/phases and re-runs the unfinished phase, which resumes its persisted `session_id` (continues the same conversation; remembers prior work). Exposed for ops/testing as `POST /test/resume {jobId}`.
+- **Durable across restart:** paused state + `session_id` live in Postgres. Boot `resume()` deliberately reconciles only `running` jobs — a `paused` job is NOT auto-retried (it'd just 401 again); it waits for a ping. So the operational recovery path is: **401 → paused (durable) → fix credentials → [restart if needed] → ping `resume` → continues the same session.**
+
+**Verified:** early `session_id` persistence LIVE (docker: the `session` event is the first NDJSON frame, before any work) + unit (`turn-runner.service.spec.ts`: the id is persisted even when the turn throws mid-flight, and a prior id is threaded back as `resume`); 401 recovery engine-level LIVE (good→bad→good in-container: bad-key turn returned `auth:true` + the same session id; good-key turn resumed and recalled the turn-1 work) + driver pause/resume unit (`section-driver.service.spec.ts` "401 auth recovery"); **204 atlas tests green**.
+
+**Caveats / follow-ups:**
+- **Git divergence (reconcile at merge):** this work is uncommitted atop `f82a748`; `origin/main` is +6 (`c837182`, the "atlas tuning loop" — which added phase/job **timeouts** + failure/progress relay, touching `turn-runner`/`driver`). The early-persist here composes with their timeout (timeout aborts a hung turn → re-run resumes the saved session), but the merge needs a hand-reconcile.
+- **No in-process credential hot-swap** (v1's `rotate-keys` is gone): "fix creds" means updating the env (typically a restart), then pinging; the paused job survives. Follow-ups: a `rotate-keys`-style tool that refreshes creds + auto-resumes paused jobs, and a Slack "continue" → `resumePaused` trigger.

@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { EngineRunner } from '../engine';
-import type { EngineEvent } from '../engine';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
+import type { EngineEvent, ExecutionTarget } from '../engine';
 import { LocalGitService } from '../git';
 import {
   buildFixPrompt,
@@ -54,9 +54,15 @@ export class AutoFixStage {
   private readonly logger = new Logger(AutoFixStage.name);
 
   constructor(
-    private readonly engine: EngineRunner,
+    @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     private readonly git: LocalGitService,
   ) {}
+
+  /** The execution target for a turn — the sandbox container when the driver ran in docker mode. */
+  private targetFor(ctx: AutoFixContext): ExecutionTarget | undefined {
+    if (!ctx.containerId) return undefined;
+    return { containerId: ctx.containerId, ...(ctx.execUser ? { user: ctx.execUser } : {}) };
+  }
 
   /**
    * Per-section auto-fix — run after a section's phases complete, over that section's change set.
@@ -176,6 +182,7 @@ export class AutoFixStage {
     options: AutoFixOptions,
   ): Promise<ReviewFinding[]> {
     try {
+      const target = this.targetFor(ctx);
       const res = await this.engine.run({
         engine: engine ?? 'claude',
         task: buildReviewPrompt(lens, ctx),
@@ -183,6 +190,7 @@ export class AutoFixStage {
         systemPrompt: REVIEW_SYSTEM_PROMPT,
         sandboxKey: `${ctx.sandboxKey}--review-${lens.id}`,
         mode: 'review',
+        ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
       });
@@ -206,6 +214,7 @@ export class AutoFixStage {
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'tool') this.logger.debug(`fix-turn tool: ${e.name}`);
     };
+    const target = this.targetFor(ctx);
     const res = await this.engine.run({
       engine: engine ?? 'claude',
       task: buildFixPrompt(findings, ctx),
@@ -214,6 +223,7 @@ export class AutoFixStage {
       sandboxKey: `${ctx.sandboxKey}--fix`,
       mode: 'execute',
       onEvent,
+      ...(target ? { target } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.auth ? { auth: options.auth } : {}),
     });
