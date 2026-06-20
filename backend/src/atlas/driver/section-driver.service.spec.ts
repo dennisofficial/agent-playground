@@ -664,6 +664,34 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.posts.some((p) => p.includes('Off-spec') && p.includes('README nobody asked for'))).toBe(true);
     expect(state.job.status).toBe('done'); // a deviation is surfaced, not a failure
   });
+
+  it('fails + relays a park that is never answered (ATLAS_PARK_TIMEOUT_MS) instead of hanging forever', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const never = new Promise<ParkResolution>(() => {}); // the human never answers
+    const h = assemble(state, {
+      classifierVerdict: 'ask',
+      parkAnswer: never,
+      env: { ATLAS_PARK_TIMEOUT_MS: '20' },
+    });
+    (h.planner.extractDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { description: 'add a new users table' },
+    ]);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'failed');
+
+    expect(h.ask).toHaveBeenCalledTimes(1); // it did park
+    expect(state.job.status).toBe('failed'); // but did NOT hang — timed out
+    expect(h.posts.some((p) => p.includes('Build failed') && /waiting for your input/i.test(p))).toBe(true);
+    expect(h.calls.some((c) => c.mode === 'execute')).toBe(false); // never got past the gate
+    expect(h.opened).toHaveLength(0);
+  });
 });
 
 // ── async helpers ────────────────────────────────────────────────────────────────────────────────

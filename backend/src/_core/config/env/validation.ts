@@ -294,6 +294,9 @@ export interface IEnvConfig {
   // checked at section boundaries, default 60m).
   ATLAS_PHASE_TIMEOUT_MS?: number;
   ATLAS_JOB_TIMEOUT_MS?: number;
+  // ATLAS_PARK_TIMEOUT_MS: how long a mid-build park waits for the human before it fails + relays
+  // (a park is between phases, so the phase/job timeouts don't cover it). Default 3600000 (60 min).
+  ATLAS_PARK_TIMEOUT_MS?: number;
   // ATLAS_VERIFY_CMD (issue #4): an optional repo verify command (e.g. "pnpm typecheck") the driver runs
   // in the worktree after each phase, BEFORE the commit — a non-zero exit fails the phase so broken
   // output never advances. Unset → rely on the engine's prompt-enforced in-turn verification.
@@ -476,6 +479,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   ATLAS_MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
   ATLAS_PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   ATLAS_JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  ATLAS_PARK_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   ATLAS_VERIFY_CMD: Joi.string().optional(),
   // Atlas v2 scoping / grill (W3 — issue #1)
   ATLAS_SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),

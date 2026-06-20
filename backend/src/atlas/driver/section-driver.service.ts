@@ -77,6 +77,13 @@ export class SectionDriver implements JobDispatcher {
     return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
   }
 
+  /** How long a mid-build PARK waits for the human before it gives up (fail + relay). Default 60m. The
+   *  job/phase timeouts don't cover a park (it's between phases), so this is its dedicated guard. */
+  private get parkTimeoutMs(): number {
+    const raw = Number(this.env.get('ATLAS_PARK_TIMEOUT_MS'));
+    return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
+  }
+
   /** A repo-specific verify command (e.g. `pnpm typecheck`); when set, a phase must pass it before it
    *  commits + is marked done. Unset → rely on the engine's own in-turn verification (prompt-enforced). */
   private get verifyCmd(): string | undefined {
@@ -381,8 +388,10 @@ export class SectionDriver implements JobDispatcher {
           { channel: route.channel ?? '', ...(route.threadTs ? { threadTs: route.threadTs } : {}) },
           parkQuestion(section.brief, proposed.description, c.reason),
         );
-        // AWAIT the human — the section is suspended here, the process is not.
-        const answer = await handle.answer;
+        // AWAIT the human — the section is suspended here, the process is not. Bounded by a wall-clock
+        // budget so an unanswered park can't hang the build forever (the job/phase timeouts don't cover a
+        // park, which is between phases): on expiry it throws → the job fails + relays (issue #2/#3).
+        const answer = await this.awaitAnswer(handle.answer, proposed.description);
         this.logger.log(`section ${section.ordinal} unparked: ${answer.text.slice(0, 80)}`);
         // The human answered → treat the always-ask as now-settled and continue (it was visible + ruled).
       } else {
@@ -390,6 +399,28 @@ export class SectionDriver implements JobDispatcher {
       }
     }
     return classifications;
+  }
+
+  /** Await a parked human answer, bounded by ATLAS_PARK_TIMEOUT_MS. On expiry it rejects so the build
+   *  fails + relays (instead of suspending forever); the human can re-engage in-thread to restart. */
+  private async awaitAnswer<T>(answer: Promise<T>, decisionDesc: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `timed out after ${this.parkTimeoutMs}ms waiting for your input on: ${decisionDesc}`,
+            ),
+          ),
+        this.parkTimeoutMs,
+      );
+    });
+    try {
+      return await Promise.race([answer, timeout]);
+    } finally {
+      clearTimeout(timer!);
+    }
   }
 
   /**
