@@ -1,4 +1,5 @@
 import { env } from '@/lib/env';
+import { fetchWithRefresh } from './refresh';
 import type {
   ApproveRequest,
   PipelineState,
@@ -8,8 +9,9 @@ import type {
 
 /**
  * Thin typed client over the Atlas web surface. The browser hits the Atlas HTTP app DIRECTLY at
- * `NEXT_PUBLIC_ATLAS_HTTP_URL` (no proxy hop); `credentials: 'include'` sends the httpOnly session
- * cookie so the now-gated `/web/*` routes authorize the operator. CORS is enabled backend-side.
+ * `NEXT_PUBLIC_ATLAS_HTTP_URL` (no proxy hop); `fetchWithRefresh` sends the httpOnly session cookie
+ * (`credentials: 'include'`) so the gated `/web/*` routes authorize the operator, and transparently
+ * refreshes + retries once on a 401 from an expired access cookie. CORS is enabled backend-side.
  */
 
 const WEB_BASE = `${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/web`;
@@ -25,9 +27,8 @@ class WebSurfaceError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${WEB_BASE}${path}`, {
+  const res = await fetchWithRefresh(`${WEB_BASE}${path}`, {
     ...init,
-    credentials: 'include',
     headers: { 'content-type': 'application/json', accept: 'application/json', ...init?.headers },
   });
   if (!res.ok) {
@@ -72,6 +73,10 @@ export const webClient = {
     const qs = new URLSearchParams({ threadId, teamId });
     return request<PipelineState>(`/pipeline?${qs.toString()}`);
   },
+
+  /** Continue a job paused on a credential/401 error (re-drives the same engine session). */
+  resume: (jobId: string) =>
+    request<{ ok: boolean }>('/resume', { method: 'POST', body: JSON.stringify({ jobId }) }),
 };
 
 export { WebSurfaceError };

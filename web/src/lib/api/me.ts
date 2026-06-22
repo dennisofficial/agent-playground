@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { env } from '@/lib/env';
+import { fetchWithRefresh } from './refresh';
 import { qk } from './query-keys';
 
 /** The authenticated operator, from `GET /auth/session` (bare session — `{ id, email }`). */
@@ -13,8 +14,8 @@ export interface CurrentUser {
 async function fetchCurrentUser(): Promise<CurrentUser> {
   // Direct, credentialed call to the Atlas app (the session cookie authorizes it). This is separate
   // from the `@workspace/auth` client's internal init call, which only keeps `AuthState` (no email).
-  const res = await fetch(`${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/auth/session`, {
-    credentials: 'include',
+  // `fetchWithRefresh` re-ups the access cookie + retries once if it expired mid-session.
+  const res = await fetchWithRefresh(`${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/auth/session`, {
     headers: { accept: 'application/json' },
   });
   if (!res.ok) throw new Error(`session ${res.status}`);
