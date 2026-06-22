@@ -53,7 +53,12 @@ export class ConversationalBrainService {
       }),
     ]);
 
-    const action = await this.llm.grill({ transcript, recalled, repoDigest });
+    const action = await this.llm.grill({
+      transcript,
+      recalled,
+      repoDigest,
+      teamId: stimulus.teamId,
+    });
 
     // No usable model verdict (no key / malformed) → ask a generic clarifier rather than guess a plan.
     if (!action) {
@@ -131,7 +136,7 @@ export class ConversationalBrainService {
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
 
     const handle = await this.approvals.request(
-      { channel, threadTs },
+      { channel, threadTs, teamId: stimulus.teamId },
       card,
     );
 
@@ -192,7 +197,7 @@ export class ConversationalBrainService {
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
     try {
-      await this.surface.post(channel, text, { threadTs });
+      await this.surface.post(channel, text, { threadTs, teamId: stimulus.teamId });
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }

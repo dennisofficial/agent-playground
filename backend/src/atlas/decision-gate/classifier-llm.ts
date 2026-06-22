@@ -31,6 +31,8 @@ export interface ClassifierLlm {
     context?: string;
     /** A compact listing of the already-locked decisions, so the LLM doesn't re-ask a settled call. */
     recordSummary: string;
+    /** The tenant whose Anthropic key backs this call (omit → env fallback). */
+    teamId?: string;
   }): Promise<ClassifierLlmVerdict | undefined>;
 }
 
@@ -69,16 +71,16 @@ export class AnthropicClassifierLlm implements ClassifierLlm {
   private readonly clients = new Map<string, ChatAnthropic>();
 
   /**
-   * @param apiKey resolves the active Anthropic key (e.g. () => env.get('ANTHROPIC_API_KEY')).
+   * @param apiKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey).
    * @param model  the small model id (e.g. () => env.get('GATE_MODEL')); falls back to Haiku.
    */
   constructor(
-    private readonly apiKey: () => string | undefined,
+    private readonly apiKey: (teamId?: string) => Promise<string | undefined>,
     private readonly model: () => string | undefined,
   ) {}
 
-  private client(): ChatAnthropic | undefined {
-    const key = this.apiKey();
+  private async client(teamId?: string): Promise<ChatAnthropic | undefined> {
+    const key = await this.apiKey(teamId);
     if (!key) return undefined;
     let c = this.clients.get(key);
     if (!c) {
@@ -97,8 +99,9 @@ export class AnthropicClassifierLlm implements ClassifierLlm {
     description: string;
     context?: string;
     recordSummary: string;
+    teamId?: string;
   }): Promise<ClassifierLlmVerdict | undefined> {
-    const model = this.client();
+    const model = await this.client(input.teamId);
     if (!model) return undefined;
 
     const bound = model.bindTools(

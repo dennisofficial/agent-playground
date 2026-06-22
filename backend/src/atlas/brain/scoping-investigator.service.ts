@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import type { SessionMode } from '../domain';
 import { EngineRunner } from '../engine';
 import { LocalGitService, type ProjectRepo } from '../git';
+import { CredentialResolver } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasProject } from '../persistence/entities';
 
@@ -58,6 +59,7 @@ export class ScopingInvestigatorService {
     private readonly env: EnvService,
     private readonly engine: EngineRunner,
     private readonly git: LocalGitService,
+    private readonly creds: CredentialResolver,
     @InjectRepository(AtlasProject, ATLAS_CONNECTION)
     private readonly projects: Repository<AtlasProject>,
   ) {}
@@ -123,6 +125,7 @@ export class ScopingInvestigatorService {
       return '';
     }
     const mode = this.scopingMode();
+    const auth = await this.creds.engineAuth(teamId, 'claude');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs());
     try {
@@ -133,6 +136,7 @@ export class ScopingInvestigatorService {
         systemPrompt,
         sandboxKey,
         mode,
+        auth,
         signal: controller.signal,
       });
       // native_plan captures its substance as planText; investigate returns it as the result.
@@ -158,7 +162,7 @@ export class ScopingInvestigatorService {
       where: { team_id: teamId, project_id: projectId },
     });
     if (!project) return null;
-    const token = this.env.get('ATLAS_GITHUB_TOKEN') ?? this.env.get('GITHUB_TOKEN');
+    const token = await this.creds.githubToken(teamId);
     return this.git.ensureRepo({
       projectId,
       gitUrl: project.git_url,

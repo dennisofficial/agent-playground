@@ -60,7 +60,11 @@ export class TriageService implements StimulusConsumer {
       return;
     }
 
-    const action = await this.llm.triage({ kind: 'chat', body: stimulus.body });
+    const action = await this.llm.triage({
+      kind: 'chat',
+      body: stimulus.body,
+      teamId: stimulus.teamId,
+    });
 
     // A non-work QUESTION (issue #6) → answer it conversationally, repo-grounded, with NO job opened.
     if (action?.verb === 'answer') {
@@ -110,6 +114,7 @@ export class TriageService implements StimulusConsumer {
       body: stimulus.body,
       source: stimulus.source,
       severity: stimulus.severity,
+      teamId: stimulus.teamId,
     });
 
     // No usable verdict → conservative: PARK and ask a human (never auto-dispatch unverified events).
@@ -132,6 +137,7 @@ export class TriageService implements StimulusConsumer {
     const verdict = await this.classifier.classify(
       { description: summary, context: `Notification from ${stimulus.source} (${stimulus.severity}).` },
       emptyRecord,
+      stimulus.teamId,
     );
 
     if (action.verb === 'ask' || verdict.verdict === 'ask') {

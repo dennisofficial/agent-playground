@@ -5,7 +5,20 @@ import type { EngineRunner } from '../engine';
 import type { RunEngineArgs } from '../engine';
 import type { LocalGitService, ProjectRepo } from '../git';
 import type { AtlasProject } from '../persistence/entities';
+import type { CredentialResolver } from '../onboarding';
 import { ScopingInvestigatorService } from './scoping-investigator.service';
+
+/** A fake CredentialResolver — env fallback shape (no tenant rows): no token, api_key auth. */
+function fakeCreds(): CredentialResolver {
+  return {
+    async githubToken() {
+      return undefined;
+    },
+    async engineAuth() {
+      return { mode: 'api_key', apiKey: undefined };
+    },
+  } as unknown as CredentialResolver;
+}
 
 /** A fake EngineRunner that records calls and returns canned read-only output. */
 function fakeEngine(): EngineRunner & { runs: RunEngineArgs[] } {
@@ -69,6 +82,7 @@ describe('ScopingInvestigatorService', () => {
       fakeEnv(),
       engine,
       fakeGit(),
+      fakeCreds(),
       fakeProjects(PROJECT),
     );
     const digest = await svc.digest(INPUT);
@@ -83,6 +97,7 @@ describe('ScopingInvestigatorService', () => {
       fakeEnv({ ATLAS_SCOPING_MODE: 'native_plan' }),
       engine,
       fakeGit(),
+      fakeCreds(),
       fakeProjects(PROJECT),
     );
     const digest = await svc.digest(INPUT);
@@ -95,6 +110,7 @@ describe('ScopingInvestigatorService', () => {
       fakeEnv(),
       engine,
       fakeGit(),
+      fakeCreds(),
       fakeProjects(PROJECT),
     );
     await svc.digest(INPUT);
@@ -111,6 +127,7 @@ describe('ScopingInvestigatorService', () => {
       fakeEnv(),
       engine,
       fakeGit(),
+      fakeCreds(),
       fakeProjects(null),
     );
     expect(await svc.digest(INPUT)).toBe('');
@@ -122,6 +139,7 @@ describe('ScopingInvestigatorService', () => {
       fakeEnv(),
       throwingEngine(),
       fakeGit(),
+      fakeCreds(),
       fakeProjects(PROJECT),
     );
     expect(await svc.digest(INPUT)).toBe('');

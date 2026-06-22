@@ -16,6 +16,7 @@ import type { AutoFixStage } from '../autofix';
 import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
 import type { TurnRunnerService } from '../runner';
 import type { ChatSurface } from '../surface';
+import type { CredentialResolver } from '../onboarding';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
   DecisionRecord,
@@ -353,6 +354,13 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     env,
     // local SANDBOX_PROVIDER: a no-op attach (host-local execution; no containerId).
     { attach: async ({ sandbox }) => sandbox, teardown: async () => undefined },
+    // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
+    {
+      anthropicKey: async () => undefined,
+      openaiKey: async () => undefined,
+      githubToken: async () => undefined,
+      engineAuth: async () => ({ mode: 'api_key', apiKey: undefined }),
+    } as unknown as CredentialResolver,
   );
   return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts };
 }

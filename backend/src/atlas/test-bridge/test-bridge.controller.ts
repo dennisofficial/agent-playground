@@ -17,14 +17,9 @@ import {
 } from '../agent-surface';
 import { DecisionApprovalService } from '../brain';
 import { SectionDriver } from '../driver';
+import { OnboardingService } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import {
-  AtlasChannel,
-  AtlasJob,
-  AtlasMessage,
-  AtlasProject,
-  AtlasTeam,
-} from '../persistence/entities';
+import { AtlasChannel, AtlasJob, AtlasMessage } from '../persistence/entities';
 import type {
   ApproveRequest,
   JobView,
@@ -65,10 +60,7 @@ export class TestBridgeController {
     private readonly surface: AgentChatSurface,
     private readonly approvals: DecisionApprovalService,
     private readonly driver: SectionDriver,
-    @InjectRepository(AtlasTeam, ATLAS_CONNECTION)
-    private readonly teams: Repository<AtlasTeam>,
-    @InjectRepository(AtlasProject, ATLAS_CONNECTION)
-    private readonly projects: Repository<AtlasProject>,
+    private readonly onboarding: OnboardingService,
     @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
     private readonly channels: Repository<AtlasChannel>,
     @InjectRepository(AtlasJob, ATLAS_CONNECTION)
@@ -94,53 +86,20 @@ export class TestBridgeController {
   async seed(@Body() body: SeedRequest): Promise<SeedResponse> {
     this.assertEnabled();
     const { teamId, projectId, repoUrl, channel } = body;
-    const baseBranch = body.baseBranch ?? 'main';
-
-    // Team (PK team_id) — upsert.
-    await this.teams.upsert(
-      { team_id: teamId, team_name: teamId, status: 'active' },
-      ['team_id'],
-    );
-
-    // Project (PK team_id+project_id) — upsert the repo + base.
-    await this.projects.upsert(
-      {
-        team_id: teamId,
-        project_id: projectId,
-        display_name: projectId,
-        description: null,
-        git_url: repoUrl,
-        default_branch: baseBranch,
-        token_name: null,
-      },
-      ['team_id', 'project_id'],
-    );
-
-    // Channel (1:1 with the project via the unique (team_id, project_id)) — find-or-create, then point
-    // its surface ref at the requested channel. Generated-uuid PK, so we can't `upsert` by the unique
-    // pair; do an explicit find → update/insert.
-    let channelRow = await this.channels.findOne({
-      where: { team_id: teamId, project_id: projectId },
+    // Delegate to the ONE channel-binding implementation (shared with production onboarding). `activate`
+    // keeps the test-bridge's old behavior of a ready-to-use (`active`) tenant after a seed.
+    const { channelId } = await this.onboarding.bindChannel({
+      teamId,
+      projectId,
+      channelRef: channel,
+      repoUrl,
+      ...(body.baseBranch ? { baseBranch: body.baseBranch } : {}),
+      activate: true,
     });
-    if (channelRow) {
-      channelRow.surface_channel_ref = channel;
-      channelRow.display_name = channel;
-      channelRow = await this.channels.save(channelRow);
-    } else {
-      channelRow = await this.channels.save(
-        this.channels.create({
-          team_id: teamId,
-          project_id: projectId,
-          surface_channel_ref: channel,
-          display_name: channel,
-        }),
-      );
-    }
-
     this.logger.log(
-      `seed team=${teamId} project=${projectId} repo=${repoUrl} channel=${channel} → channel ${channelRow.id}`,
+      `seed team=${teamId} project=${projectId} repo=${repoUrl} channel=${channel} → channel ${channelId}`,
     );
-    return { channelId: channelRow.id, teamId, projectId };
+    return { channelId, teamId, projectId };
   }
 
   /**

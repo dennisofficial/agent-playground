@@ -23,6 +23,8 @@ export interface TriageInput {
   /** Event-only context the model weighs (source/severity); omitted for chat. */
   source?: string;
   severity?: string;
+  /** The tenant whose Anthropic key backs this call (omit → env fallback). */
+  teamId?: string;
 }
 
 /** The inputs to ONE grill turn. */
@@ -37,6 +39,8 @@ export interface GrillInput {
    * The grill uses it to ground questions and NEVER ask the operator anything answerable from the repo.
    */
   repoDigest?: string;
+  /** The tenant whose Anthropic key backs this call (omit → env fallback). */
+  teamId?: string;
 }
 
 export interface BrainLlm {
@@ -129,16 +133,16 @@ export class AnthropicBrainLlm implements BrainLlm {
   private readonly clients = new Map<string, ChatAnthropic>();
 
   /**
-   * @param apiKey resolves the active Anthropic key (e.g. () => env.get('ANTHROPIC_API_KEY')).
+   * @param apiKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey).
    * @param model  the chat model id (e.g. () => env.get('CHAT_MODEL')); falls back to Sonnet.
    */
   constructor(
-    private readonly apiKey: () => string | undefined,
+    private readonly apiKey: (teamId?: string) => Promise<string | undefined>,
     private readonly model: () => string | undefined,
   ) {}
 
-  private client(): ChatAnthropic | undefined {
-    const key = this.apiKey();
+  private async client(teamId?: string): Promise<ChatAnthropic | undefined> {
+    const key = await this.apiKey(teamId);
     if (!key) return undefined;
     let c = this.clients.get(key);
     if (!c) {
@@ -154,7 +158,7 @@ export class AnthropicBrainLlm implements BrainLlm {
   }
 
   async triage(input: TriageInput): Promise<TriageAction | undefined> {
-    const model = this.client();
+    const model = await this.client(input.teamId);
     if (!model) return undefined;
 
     const bound = model.bindTools(
@@ -210,7 +214,7 @@ export class AnthropicBrainLlm implements BrainLlm {
   }
 
   async grill(input: GrillInput): Promise<GrillAction | undefined> {
-    const model = this.client();
+    const model = await this.client(input.teamId);
     if (!model) return undefined;
 
     const bound = model.bindTools(

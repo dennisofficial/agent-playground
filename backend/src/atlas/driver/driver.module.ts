@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AutoFixModule } from '../autofix';
 import { JOB_DISPATCHER } from '../brain';
 import { DecisionGateModule } from '../decision-gate';
+import { CredentialResolver } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
@@ -64,10 +65,10 @@ import { SectionDriver } from './section-driver.service';
     { provide: ATLAS_DRIVER_REPO, useClass: GitDriverRepoResolver },
     {
       provide: ATLAS_PLANNER_LLM,
-      inject: [EnvService],
-      useFactory: (env: EnvService) =>
+      inject: [EnvService, CredentialResolver],
+      useFactory: (env: EnvService, creds: CredentialResolver) =>
         new AnthropicPlannerLlm(
-          () => env.get('ANTHROPIC_API_KEY'),
+          (teamId) => creds.anthropicKey(teamId),
           () => env.get('CHAT_MODEL'),
         ),
     },

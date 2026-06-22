@@ -70,9 +70,9 @@ export class AtlasMemoryStore {
     private readonly embedder: EmbeddingProvider,
   ) {}
 
-  /** Embed text to the pgvector SQL literal the queries use. */
-  async embed(text: string): Promise<string> {
-    return vecSql(await this.embedder.embed(text));
+  /** Embed text to the pgvector SQL literal the queries use (`teamId` selects the tenant's OpenAI key). */
+  async embed(text: string, teamId?: string): Promise<string> {
+    return vecSql(await this.embedder.embed(text, teamId));
   }
 
   /**
@@ -80,7 +80,7 @@ export class AtlasMemoryStore {
    * same scope/team. Strict team equality — a tenant fact never merges into the global tier.
    */
   async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: number }> {
-    const qv = vecSql(await this.embedder.embed(input.fact));
+    const qv = vecSql(await this.embedder.embed(input.fact, input.teamId ?? undefined));
 
     const qb = this.facts
       .createQueryBuilder('f')
@@ -135,7 +135,7 @@ export class AtlasMemoryStore {
     if (opts.scopes.length === 0) return [];
     const limit = opts.limit ?? 5;
     const floor = opts.floor ?? MIN_RECALL_SIM;
-    const qv = await this.embed(query);
+    const qv = await this.embed(query, opts.teamId ?? undefined);
 
     const { entities, raw } = await this.facts
       .createQueryBuilder('f')

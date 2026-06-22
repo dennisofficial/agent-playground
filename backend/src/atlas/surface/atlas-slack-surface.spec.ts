@@ -13,6 +13,7 @@ function fakeWeb(): { client: SlackWebClientLike; posts: Array<Record<string, un
         posts.push(args as Record<string, unknown>);
         return { ts: `ts-${posts.length}`, ok: true };
       }),
+      update: vi.fn(async () => ({ ok: true })),
     },
     reactions: {
       add: vi.fn(async (args) => {
@@ -22,6 +23,7 @@ function fakeWeb(): { client: SlackWebClientLike; posts: Array<Record<string, un
         reacts.push({ kind: 'remove', ...args });
       }),
     },
+    views: { open: vi.fn(async () => ({ ok: true })) },
     auth: { test: vi.fn(async () => ({ user_id: 'UBOT', team_id: 'T1' })) },
   };
   return { client, posts, reacts };
@@ -30,7 +32,7 @@ function fakeWeb(): { client: SlackWebClientLike; posts: Array<Record<string, un
 describe('AtlasSlackSurface — thread-aware (vs v1 top-level-only)', () => {
   it('post() threads via thread_ts and returns the posted ts', async () => {
     const { client, posts } = fakeWeb();
-    const surface = new AtlasSlackSurface(client, undefined);
+    const surface = new AtlasSlackSurface(client, undefined, undefined, undefined);
 
     const rootTs = await surface.post('C1', 'announce');
     expect(rootTs).toBe('ts-1');
@@ -42,13 +44,13 @@ describe('AtlasSlackSurface — thread-aware (vs v1 top-level-only)', () => {
   });
 
   it('post() returns undefined when no Web client is bound', async () => {
-    const surface = new AtlasSlackSurface(undefined, undefined);
+    const surface = new AtlasSlackSurface(undefined, undefined, undefined, undefined);
     expect(await surface.post('C1', 'x')).toBeUndefined();
     expect(surface.available).toBe(false);
   });
 
   it('inbound KEEPS thread replies and carries threadTs (the v1 fix)', async () => {
-    const surface = new AtlasSlackSurface(undefined, undefined);
+    const surface = new AtlasSlackSurface(undefined, undefined, undefined, undefined);
     const collected = firstValueFrom(surface.inbound$.pipe(take(2), toArray()));
 
     // A top-level message: thread_ts absent → threadTs undefined.
@@ -72,7 +74,7 @@ describe('AtlasSlackSurface — thread-aware (vs v1 top-level-only)', () => {
 
   it('inbound drops own/bot/subtype/empty messages (echo-loop guard)', async () => {
     const { client } = fakeWeb();
-    const surface = new AtlasSlackSurface(client, undefined);
+    const surface = new AtlasSlackSurface(client, undefined, undefined, undefined);
     await surface.connect(); // resolves selfUserId = UBOT (no socket → inert inbound)
 
     const emitted: string[] = [];
@@ -89,7 +91,7 @@ describe('AtlasSlackSurface — thread-aware (vs v1 top-level-only)', () => {
 
   it('react() maps unicode → shortcode and swallows already_reacted', async () => {
     const { client, reacts } = fakeWeb();
-    const surface = new AtlasSlackSurface(client, undefined);
+    const surface = new AtlasSlackSurface(client, undefined, undefined, undefined);
     await surface.react('C1', 'ts-1', '🚀');
     expect(reacts[0]).toEqual({ kind: 'add', channel: 'C1', timestamp: 'ts-1', name: 'rocket' });
 

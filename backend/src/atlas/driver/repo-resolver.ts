@@ -1,9 +1,9 @@
-import { EnvService } from '@core/config/env/env.service';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Job } from '../domain';
 import { LocalGitService, parseGithubRepoUrl, type ProjectRepo } from '../git';
+import { CredentialResolver } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasProject } from '../persistence/entities';
 
@@ -38,7 +38,7 @@ export interface DriverRepoResolver {
 @Injectable()
 export class GitDriverRepoResolver implements DriverRepoResolver {
   constructor(
-    private readonly env: EnvService,
+    private readonly creds: CredentialResolver,
     private readonly git: LocalGitService,
     @InjectRepository(AtlasProject, ATLAS_CONNECTION)
     private readonly projects: Repository<AtlasProject>,
@@ -55,7 +55,7 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
     if (!parsed) {
       throw new Error(`Project ${job.projectId} git_url is not an HTTPS GitHub URL: ${project.git_url}`);
     }
-    const token = this.token();
+    const token = await this.creds.githubToken(job.teamId);
     const projectRepo = await this.git.ensureRepo({
       projectId: job.projectId,
       gitUrl: project.git_url,
@@ -69,10 +69,5 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
       defaultBranch: projectRepo.defaultBranch,
       ...(token ? { token } : {}),
     };
-  }
-
-  /** The GitHub token Atlas uses for push + PR — ATLAS_GITHUB_TOKEN, else GITHUB_TOKEN, else none. */
-  private token(): string | undefined {
-    return this.env.get('ATLAS_GITHUB_TOKEN') ?? this.env.get('GITHUB_TOKEN');
   }
 }

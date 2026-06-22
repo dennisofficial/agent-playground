@@ -8,7 +8,8 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 export interface EmbeddingProvider {
   /** Model id (stored on the fact as `embed_model` for re-embed detection). */
   readonly model: string;
-  embed(text: string): Promise<number[]>;
+  /** Embed `text`; `teamId` selects the tenant's OpenAI key (omit → env fallback). */
+  embed(text: string, teamId?: string): Promise<number[]>;
 }
 
 export const ATLAS_EMBEDDING_PROVIDER = Symbol('ATLAS_EMBEDDING_PROVIDER');
@@ -24,11 +25,11 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly model = EMBED_MODEL;
   private readonly clients = new Map<string, OpenAIEmbeddings>();
 
-  /** @param apiKey resolves the active OpenAI key (e.g. () => env.get('OPENAI_API_KEY')). */
-  constructor(private readonly apiKey: () => string | undefined) {}
+  /** @param apiKey resolves the active OpenAI key for a tenant (e.g. CredentialResolver.openaiKey). */
+  constructor(private readonly apiKey: (teamId?: string) => Promise<string | undefined>) {}
 
-  private client(): OpenAIEmbeddings {
-    const key = this.apiKey();
+  private async client(teamId?: string): Promise<OpenAIEmbeddings> {
+    const key = await this.apiKey(teamId);
     if (!key) {
       throw new Error('No OpenAI key (OPENAI_API_KEY) — Atlas memory embeddings unavailable.');
     }
@@ -40,7 +41,8 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     return c;
   }
 
-  embed(text: string): Promise<number[]> {
-    return this.client().embedQuery(text);
+  async embed(text: string, teamId?: string): Promise<number[]> {
+    const client = await this.client(teamId);
+    return client.embedQuery(text);
   }
 }

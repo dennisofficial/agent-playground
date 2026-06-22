@@ -8,6 +8,7 @@ import type {
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
 import { resolve as resolvePath } from 'node:path';
+import { engineAuthFromEnv } from '../onboarding/env-engine-auth';
 import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
 import { ensureCodexAuthHome } from './codex-auth-home';
@@ -92,25 +93,17 @@ export class EngineRunner {
     return this.env.get('ATLAS_AGENT_HOME_ROOT') ?? this.env.get('AGENT_HOME_ROOT');
   }
 
-  /** Resolve the run's auth: an explicit `args.auth` wins; otherwise derive from env. */
+  /**
+   * Resolve the run's auth: an explicit `args.auth` (the per-tenant value the driver now passes from
+   * `CredentialResolver.engineAuth(job.teamId)`) wins; otherwise derive from env via the SHARED helper
+   * the resolver also uses — so the runner's env path and the resolver's env fallback can never drift.
+   */
   private resolveAuth(
     engine: 'claude' | 'codex',
     explicit: EngineAuth | undefined,
   ): EngineAuth {
     if (explicit) return explicit;
-    const mode = this.env.get('ATLAS_ENGINE_AUTH_MODE') ?? 'api_key';
-    if (mode === 'subscription') {
-      if (engine === 'claude') {
-        const secret = this.env.get('ATLAS_CLAUDE_OAUTH_TOKEN');
-        if (secret) return { mode: 'subscription', secret };
-        // No OAuth token configured — fall back to api_key rather than crash.
-        this.logger.warn(
-          'ATLAS_ENGINE_AUTH_MODE=subscription but ATLAS_CLAUDE_OAUTH_TOKEN unset — falling back to api_key',
-        );
-      }
-      // Codex subscription needs an auth.json overlay that isn't env-configured in W1 → api_key.
-    }
-    return { mode: 'api_key', apiKey: this.env.get('ANTHROPIC_API_KEY') };
+    return engineAuthFromEnv(this.env, engine, (m) => this.logger.warn(m));
   }
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {

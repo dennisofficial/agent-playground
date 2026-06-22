@@ -9,6 +9,10 @@ import { SandboxModule } from '../sandbox';
 import { StimulusModule } from '../stimulus';
 import { SurfaceModule } from '../surface';
 import { MemoryModule } from '../memory';
+import { OnboardingModule } from '../onboarding';
+// Specific path (not the barrel): this module depends on ../brain + ../surface, so re-exporting it from
+// the onboarding barrel that ../brain imports would form an import cycle.
+import { OnboardingSurfaceModule } from '../onboarding/onboarding-surface.module';
 import { TestBridgeModule } from '../test-bridge';
 
 /**
@@ -37,6 +41,7 @@ import { TestBridgeModule } from '../test-bridge';
  */
 @Module({
   imports: [
+    OnboardingModule,
     SandboxModule,
     SurfaceModule,
     RunnerModule,
@@ -47,6 +52,9 @@ import { TestBridgeModule } from '../test-bridge';
     AutoFixModule,
     BrainModule,
     DriverModule,
+    // The Slack-facing onboarding edge — imported AFTER surface/brain/onboarding so their @Global
+    // providers exist when its interactivity bridge + OAuth controller instantiate.
+    OnboardingSurfaceModule,
     TestBridgeModule,
   ],
 })

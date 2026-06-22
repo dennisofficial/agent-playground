@@ -5,6 +5,7 @@ import { DecisionGateModule } from '../decision-gate';
 import { EngineModule } from '../engine';
 import { GitModule } from '../git';
 import { MemoryModule } from '../memory';
+import { CredentialResolver } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
@@ -76,10 +77,10 @@ import { TriageService } from './triage.service';
   providers: [
     {
       provide: ATLAS_BRAIN_LLM,
-      inject: [EnvService],
-      useFactory: (env: EnvService) =>
+      inject: [EnvService, CredentialResolver],
+      useFactory: (env: EnvService, creds: CredentialResolver) =>
         new AnthropicBrainLlm(
-          () => env.get('ANTHROPIC_API_KEY'),
+          (teamId) => creds.anthropicKey(teamId),
           () => env.get('CHAT_MODEL'),
         ),
     },

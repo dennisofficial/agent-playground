@@ -36,6 +36,9 @@ export type DriverSection = Section & { teamId: string };
 export interface JobRoute {
   channel: string | null;
   threadTs: string | null;
+  /** The tenant to post as (selects the workspace bot token in the multi-workspace surface). Always set
+   *  by `route()`; optional only so in-memory test fixtures (fake surface ignores it) can omit it. */
+  teamId?: string;
 }
 
 /**
@@ -180,6 +183,7 @@ export class DriverStoreService {
     return {
       channel: channel?.surface_channel_ref ?? null,
       threadTs: thread?.surface_thread_ref ?? null,
+      teamId: job.teamId,
     };
   }
 }

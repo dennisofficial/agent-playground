@@ -1,6 +1,6 @@
-import { EnvService } from '@core/config/env/env.service';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { CredentialResolver } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasMemory } from '../persistence/entities';
 import { AtlasMemoryStore } from './atlas-memory.store';
@@ -21,9 +21,9 @@ import {
   providers: [
     {
       provide: ATLAS_EMBEDDING_PROVIDER,
-      inject: [EnvService],
-      useFactory: (env: EnvService) =>
-        new OpenAIEmbeddingProvider(() => env.get('OPENAI_API_KEY')),
+      inject: [CredentialResolver],
+      useFactory: (creds: CredentialResolver) =>
+        new OpenAIEmbeddingProvider((teamId) => creds.openaiKey(teamId)),
     },
     AtlasMemoryStore,
   ],

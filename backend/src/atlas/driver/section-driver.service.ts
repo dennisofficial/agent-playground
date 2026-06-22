@@ -13,6 +13,7 @@ import type { DecisionRecord, Job, Phase } from '../domain';
 import { EngineAuthError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { CHAT_SURFACE, type ChatSurface } from '../surface';
+import { CredentialResolver } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
@@ -64,6 +65,7 @@ export class SectionDriver implements JobDispatcher {
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly env: EnvService,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
+    private readonly creds: CredentialResolver,
   ) {}
 
   /** Sanity ceiling on a job's sections — a malformed plan can't drive an unbounded build. */
@@ -330,7 +332,7 @@ export class SectionDriver implements JobDispatcher {
 
     // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
     //    (The locked phase ROWS are the source of truth; review only reshapes a fresh plan's prose.)
-    if (planned) await this.reviewPlan(record, section, handoffIn, planned);
+    if (planned) await this.reviewPlan(record, section, handoffIn, planned, job.teamId);
 
     // The plan view the gate + visibility read — derived from the locked phase rows (resume-safe).
     const planView = phases.map(asPlannedPhase);
@@ -348,6 +350,7 @@ export class SectionDriver implements JobDispatcher {
     await this.visibility.postSectionPlan({
       channel: route.channel ?? '',
       ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+      ...(route.teamId ? { teamId: route.teamId } : {}),
       title: section.brief,
       plan: renderPlan(planView),
       decisions: classifications,
@@ -387,7 +390,7 @@ export class SectionDriver implements JobDispatcher {
       );
 
     // g. HANDOFF — summarize what this section produced for the next.
-    const handoffOut = await this.summarizeHandoff(section, phases, reports);
+    const handoffOut = await this.summarizeHandoff(section, phases, reports, job.teamId);
     await this.store.setSectionHandoffOut(section.id, handoffOut);
     await this.store.setSectionStatus(section.id, 'done');
     this.logger.log(`section ${section.ordinal} done`);
@@ -427,6 +430,7 @@ export class SectionDriver implements JobDispatcher {
       decisions: record?.decisions ?? [],
       brief: section.brief,
       handoffIn,
+      teamId: job.teamId,
     };
     // Bound the plan turn too (issue #3): exploring a large repo read-only can run away just like an
     // execute turn. Hard-bounded so the driver gives up even if the SDK won't yield; on breach it falls
@@ -439,6 +443,7 @@ export class SectionDriver implements JobDispatcher {
         mode: 'plan',
         systemPrompt: SECTION_PLAN_SYSTEM,
         task: renderPlanTask(planInput),
+        auth: await this.creds.engineAuth(job.teamId, 'claude'),
       },
       `section ${section.ordinal} plan turn`,
     ).catch((err) => {
@@ -469,6 +474,7 @@ export class SectionDriver implements JobDispatcher {
     section: DriverSection,
     handoffIn: string | null,
     draft: PlannedPhase[],
+    teamId?: string,
   ): Promise<void> {
     await this.store.setSectionStatus(section.id, 'reviewing');
     const revised = await this.planner
@@ -478,6 +484,7 @@ export class SectionDriver implements JobDispatcher {
         brief: section.brief,
         handoffIn,
         draft,
+        ...(teamId ? { teamId } : {}),
       })
       .catch(() => undefined);
     if (revised)
@@ -509,14 +516,17 @@ export class SectionDriver implements JobDispatcher {
           brief: section.brief,
           handoffIn: section.handoffIn,
           phases: planned,
+          teamId: job.teamId,
         })
         .catch(() => undefined)) ?? [];
 
     const classifications: DecisionClassification[] = [];
     for (const proposed of decisions) {
-      const c = await this.classifier.classify(proposed, {
-        decisions: record?.decisions ?? [],
-      });
+      const c = await this.classifier.classify(
+        proposed,
+        { decisions: record?.decisions ?? [] },
+        job.teamId,
+      );
       if (c.verdict === 'ask') {
         await this.store.setSectionStatus(section.id, 'awaiting_approval');
         this.logger.log(
@@ -526,6 +536,7 @@ export class SectionDriver implements JobDispatcher {
           {
             channel: route.channel ?? '',
             ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+            ...(route.teamId ? { teamId: route.teamId } : {}),
           },
           parkQuestion(section.brief, proposed.description, c.reason),
         );
@@ -656,6 +667,7 @@ export class SectionDriver implements JobDispatcher {
         mode: 'execute',
         systemPrompt: PHASE_EXECUTE_SYSTEM,
         task: renderPhaseTask(record, section, phase),
+        auth: await this.creds.engineAuth(job.teamId, 'claude'),
         onEvent: (e) => {
           if (e.kind === 'tool')
             this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
@@ -800,10 +812,11 @@ export class SectionDriver implements JobDispatcher {
     section: DriverSection,
     phases: Phase[],
     reports: string[],
+    teamId?: string,
   ): Promise<string> {
     const planned = phases.map(asPlannedPhase);
     const llm = await this.planner
-      .handoff({ brief: section.brief, phases: planned, reports })
+      .handoff({ brief: section.brief, phases: planned, reports, ...(teamId ? { teamId } : {}) })
       .catch(() => undefined);
     if (llm) return llm;
     const built = phases.map((p) => p.title ?? p.brief).join('; ');
@@ -816,6 +829,7 @@ export class SectionDriver implements JobDispatcher {
     try {
       await this.surface.post(route.channel, text, {
         ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+        ...(route.teamId ? { teamId: route.teamId } : {}),
       });
     } catch (err) {
       this.logger.warn(`post failed (continuing): ${err}`);

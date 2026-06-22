@@ -8,17 +8,25 @@ import {
 import { Observable, Subject } from 'rxjs';
 import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
 import { emojiToSlackName } from './slack-emoji';
+import type {
+  SlackBlockAction,
+  SlackLifecycleEvent,
+  SlackViewSubmission,
+} from './slack-events';
+import type { SlackInstallationStore } from './slack-installation.store';
 import {
   ATLAS_SLACK_SOCKET_CLIENT,
   ATLAS_SLACK_WEB_CLIENT,
+  ATLAS_SLACK_WEB_CLIENT_FACTORY,
   type SlackSocketClientLike,
+  type SlackWebClientFactory,
   type SlackWebClientLike,
 } from './slack.tokens';
 
 const POST_RETRIES = 3;
 
-/** A raw Slack message event the adapter cares about (the subset of fields it reads). */
-interface SlackMessageEvent {
+/** A raw Slack event the adapter cares about (the subset of fields it reads). */
+interface SlackEvent {
   type?: string;
   subtype?: string;
   bot_id?: string;
@@ -30,25 +38,29 @@ interface SlackMessageEvent {
 }
 
 /**
- * Atlas v2's minimal THREAD-AWARE Slack adapter — the `ChatSurface` for a real Slack channel. The
- * whole point vs. v1's `SlackChatSurface`:
+ * Atlas v2's MULTI-WORKSPACE thread-aware Slack adapter. Inbound for EVERY installed workspace arrives
+ * over the ONE app-level Socket Mode connection (each envelope carries `team_id`); OUTBOUND posts AS the
+ * right workspace by resolving that team's bot token from the `SlackInstallationStore` and building a
+ * per-token Web client. A single env bot token (if set) is the FALLBACK client for single-tenant dev /
+ * headless — so behavior is byte-identical when no installs exist.
  *
- *  - v1 `post()` always posts top-level (no `thread_ts`) and returns void.
- *    Here `post()` passes `thread_ts` when given and RETURNS the message ts → the caller seeds a
- *    thread (first post) and replies into it (pass that ts back).
- *  - v1 `handleMessageEvent()` explicitly DROPS thread replies (`event.thread_ts && … return`).
- *    Here a thread reply is KEPT and emitted with its `threadTs` populated → Atlas continues the
- *    job's conversation in-thread, duplex.
- *
- * Single-tenant in W1 (one bot token / team). Inbound is fed by a Socket Mode connection; the
- * echo-loop guard drops our own + other bots' messages. The SDK clients arrive via DI tokens so the
- * adapter is testable without real Slack.
+ * Beyond the chat duplex (post/inbound$), it fans out:
+ *  - `interactive$`     — block-action clicks (approval + onboarding buttons);
+ *  - `viewSubmission$`  — modal submissions (secret collection);
+ *  - `lifecycle$`       — bot added/removed from a channel + @mentions (the onboarding triggers).
+ * These ride the same socket and never enter the stimulus intake.
  */
 @Injectable()
 export class AtlasSlackSurface implements ChatSurface, OnApplicationShutdown {
   readonly name = 'slack';
   private readonly logger = new Logger(AtlasSlackSurface.name);
   private readonly subject = new Subject<InboundChatMessage>();
+  private readonly interactiveSubject = new Subject<SlackBlockAction>();
+  private readonly viewSubmissionSubject = new Subject<SlackViewSubmission>();
+  private readonly lifecycleSubject = new Subject<SlackLifecycleEvent>();
+  /** Per-bot-token Web clients (keyed by token so a re-install with a new token rebuilds the client). */
+  private readonly clients = new Map<string, SlackWebClientLike>();
+  /** The env fallback bot's own identity (single-tenant dev echo guard / boot banner). */
   private selfUserId: string | undefined;
   private teamId = '';
   private connected = false;
@@ -58,21 +70,65 @@ export class AtlasSlackSurface implements ChatSurface, OnApplicationShutdown {
     private readonly web: SlackWebClientLike | undefined,
     @Optional() @Inject(ATLAS_SLACK_SOCKET_CLIENT)
     private readonly socket: SlackSocketClientLike | undefined,
+    @Optional() @Inject(ATLAS_SLACK_WEB_CLIENT_FACTORY)
+    private readonly webFactory: SlackWebClientFactory | undefined,
+    @Optional()
+    private readonly installs: SlackInstallationStore | undefined,
   ) {}
 
   get inbound$(): Observable<InboundChatMessage> {
     return this.subject.asObservable();
   }
 
-  /** True when a Web client is bound (the surface can post). */
+  /** Block-action clicks (approval/onboarding buttons). */
+  get interactive$(): Observable<SlackBlockAction> {
+    return this.interactiveSubject.asObservable();
+  }
+
+  /** Modal submissions (secret collection). */
+  get viewSubmission$(): Observable<SlackViewSubmission> {
+    return this.viewSubmissionSubject.asObservable();
+  }
+
+  /** Workspace lifecycle (bot added/removed, @mentions) — the onboarding triggers. */
+  get lifecycle$(): Observable<SlackLifecycleEvent> {
+    return this.lifecycleSubject.asObservable();
+  }
+
+  /** True when SOME client can post (the env fallback, or per-team installs). */
   get available(): boolean {
-    return !!this.web;
+    return !!this.web || !!(this.installs && this.webFactory);
   }
 
   /**
-   * Open the Socket Mode connection and start emitting inbound. Call AFTER subscribers are wired
-   * (the bridge subscribes to `inbound$` first), exactly like v1's transport.connect(). No-op when
-   * no socket is bound (headless). Resolves the bot's own identity for the echo guard + boot banner.
+   * Resolve the Web client to post AS for a team: that workspace's installed bot token (built once per
+   * token), else the env fallback client. Undefined → nothing can post for this team (drop, never
+   * mis-route to another workspace).
+   */
+  private async webFor(teamId?: string): Promise<SlackWebClientLike | undefined> {
+    if (teamId && this.installs && this.webFactory) {
+      const token = await this.installs.botToken(teamId);
+      if (token) {
+        let client = this.clients.get(token);
+        if (!client) {
+          client = this.webFactory(token);
+          this.clients.set(token, client);
+        }
+        return client;
+      }
+    }
+    return this.web;
+  }
+
+  /** This team's bot user id (per-workspace install), else the env fallback identity. */
+  private async selfFor(teamId: string): Promise<string | undefined> {
+    return (await this.installs?.botUserId(teamId)) ?? this.selfUserId;
+  }
+
+  /**
+   * Open the Socket Mode connection and start emitting. Call AFTER subscribers are wired. No-op when no
+   * socket is bound (headless). Resolves the ENV fallback bot's identity (per-workspace identity comes
+   * from the installation store at event time).
    */
   async connect(): Promise<{ botUserId?: string; teamId?: string }> {
     if (this.web) {
@@ -93,7 +149,7 @@ export class AtlasSlackSurface implements ChatSurface, OnApplicationShutdown {
     });
     await this.socket.start();
     this.connected = true;
-    this.logger.log(`Atlas Slack surface connected (bot ${this.selfUserId ?? '?'}).`);
+    this.logger.log(`Atlas Slack surface connected (env bot ${this.selfUserId ?? '?'}).`);
     return { botUserId: this.selfUserId, teamId: this.teamId };
   }
 
@@ -107,41 +163,99 @@ export class AtlasSlackSurface implements ChatSurface, OnApplicationShutdown {
     }
   }
 
-  /** Normalize a Socket Mode envelope → a message event, ack it, and emit if it's a real message. */
+  /** Normalize a Socket Mode envelope, ack it, and route by type (events / interactive). */
   private async handleEnvelope(raw: unknown): Promise<void> {
     const envelope = raw as {
       type?: string;
-      body?: { team_id?: string; event?: SlackMessageEvent };
+      body?: {
+        team_id?: string;
+        event?: SlackEvent;
+        type?: string;
+        user?: { id?: string };
+        team?: { id?: string };
+      };
       ack?: () => Promise<void>;
     };
-    // Ack FIRST — Slack redelivers unacked envelopes.
+    // Ack FIRST — Slack redelivers unacked envelopes. For view_submission an empty ack closes the modal.
     try {
       await envelope.ack?.();
     } catch {
       // ignore ack failures
     }
+
+    if (envelope.type === 'interactive') {
+      this.routeInteractive(envelope.body as unknown);
+      return;
+    }
     if (envelope.type !== 'events_api') return;
+
     const event = envelope.body?.event;
     const teamId = envelope.body?.team_id ?? this.teamId;
-    if (event) this.emitInbound(event, teamId);
+    if (!event) return;
+
+    // App removed / token revoked → soft-delete the install so we stop posting as a dead token.
+    if (event.type === 'app_uninstalled' || event.type === 'tokens_revoked') {
+      await this.installs?.markUninstalled(teamId);
+      this.logger.log(`workspace ${teamId} uninstalled/revoked — install soft-deleted`);
+      return;
+    }
+
+    // Lifecycle (onboarding triggers) — NEVER enter the chat intake.
+    if (event.type === 'member_joined_channel' || event.type === 'member_left_channel') {
+      const botUserId = await this.selfFor(teamId);
+      if (event.user && event.channel && event.user === botUserId) {
+        this.lifecycleSubject.next({
+          kind: event.type === 'member_joined_channel' ? 'bot_joined' : 'bot_left',
+          teamId,
+          channel: event.channel,
+          actorId: event.user,
+        });
+      }
+      return;
+    }
+    if (event.type === 'app_mention') {
+      if (event.channel) {
+        this.lifecycleSubject.next({
+          kind: 'mention',
+          teamId,
+          channel: event.channel,
+          ...(event.user ? { actorId: event.user } : {}),
+          ...(event.text ? { text: event.text } : {}),
+        });
+      }
+      return;
+    }
+
+    // A plain chat message → emit (with this workspace's echo guard).
+    const selfUserId = await this.selfFor(teamId);
+    this.emitInbound(event, teamId, selfUserId);
+  }
+
+  /** Fan an interactive payload to the right Subject (block_actions vs view_submission). */
+  private routeInteractive(payload: unknown): void {
+    const p = payload as { type?: string };
+    if (p?.type === 'block_actions') {
+      this.interactiveSubject.next(payload as SlackBlockAction);
+    } else if (p?.type === 'view_submission') {
+      this.viewSubmissionSubject.next(payload as SlackViewSubmission);
+    }
   }
 
   /**
-   * Emit a Slack message event as an inbound chat message — KEEPING thread replies (the v1 fix). The
-   * echo-loop guard drops our own + bot messages and non-plain subtypes.
+   * Emit a Slack message event as an inbound chat message — KEEPING thread replies. The echo-loop guard
+   * drops our own + bot messages and non-plain subtypes. `selfUserId` is the posting workspace's bot id
+   * (defaults to the env fallback identity, which is what the offline specs use).
    */
-  emitInbound(event: SlackMessageEvent, teamId: string): void {
+  emitInbound(event: SlackEvent, teamId: string, selfUserId = this.selfUserId): void {
     if (!event || event.type !== 'message') return;
     if (event.bot_id || event.subtype === 'bot_message') return;
     if (event.subtype) return; // message_changed, channel_join, …
     if (!event.user || !event.channel || !event.ts) return;
-    if (this.selfUserId && event.user === this.selfUserId) return;
+    if (selfUserId && event.user === selfUserId) return;
 
     const text = (event.text ?? '').trim();
     if (!text) return;
 
-    // A thread reply has thread_ts !== ts; a thread ROOT message has thread_ts === ts (or none). We
-    // carry threadTs whenever the message lives in a thread, so the brain routes it to the job.
     const threadTs =
       event.thread_ts && event.thread_ts !== event.ts ? event.thread_ts : undefined;
 
@@ -158,18 +272,22 @@ export class AtlasSlackSurface implements ChatSurface, OnApplicationShutdown {
   }
 
   /**
-   * Post a message to a channel — into a thread when `opts.threadTs` is set, top-level otherwise.
-   * Returns the posted message's ts (the thread handle), or undefined when no client is bound.
+   * Post a message to a channel as `opts.teamId`'s workspace — into a thread when `opts.threadTs` is set.
+   * Returns the posted message's ts, or undefined when no client could be resolved (dropped + logged —
+   * never posted to the wrong workspace).
    */
   async post(channel: string, text: string, opts: PostOptions = {}): Promise<string | undefined> {
-    if (!this.web) {
-      this.logger.warn(`No Slack Web client — dropping post to ${channel}`);
+    const web = await this.webFor(opts.teamId);
+    if (!web) {
+      this.logger.warn(
+        `No Slack Web client for team ${opts.teamId ?? '(env)'} — dropping post to ${channel}`,
+      );
       return undefined;
     }
     let lastErr: unknown;
     for (let attempt = 1; attempt <= POST_RETRIES; attempt++) {
       try {
-        const res = await this.web.chat.postMessage({
+        const res = await web.chat.postMessage({
           channel,
           text,
           ...(opts.threadTs ? { thread_ts: opts.threadTs } : {}),
@@ -184,22 +302,51 @@ export class AtlasSlackSurface implements ChatSurface, OnApplicationShutdown {
     throw lastErr;
   }
 
-  /** Add an emoji reaction to a message by ts. */
-  async react(channel: string, ts: string, emoji: string): Promise<void> {
-    if (!this.web) return;
+  /** Repaint a posted message (e.g. the approval card after a verdict) as `teamId`'s workspace. */
+  async update(
+    channel: string,
+    ts: string,
+    args: { text?: string; blocks?: Array<Record<string, unknown>> },
+    teamId?: string,
+  ): Promise<void> {
+    const web = await this.webFor(teamId);
+    if (!web) return;
+    await web.chat.update({
+      channel,
+      ts,
+      ...(args.text ? { text: args.text } : {}),
+      ...(args.blocks ? { blocks: args.blocks } : {}),
+    });
+  }
+
+  /** Open a modal from a `trigger_id` as `teamId`'s workspace (secret-collection / onboarding modals). */
+  async openModal(triggerId: string, view: unknown, teamId?: string): Promise<void> {
+    const web = await this.webFor(teamId);
+    if (!web) {
+      this.logger.warn(`No Slack Web client for team ${teamId ?? '(env)'} — cannot open modal`);
+      return;
+    }
+    await web.views.open({ trigger_id: triggerId, view });
+  }
+
+  /** Add an emoji reaction to a message by ts (as `teamId`'s workspace). */
+  async react(channel: string, ts: string, emoji: string, teamId?: string): Promise<void> {
+    const web = await this.webFor(teamId);
+    if (!web) return;
     try {
-      await this.web.reactions.add({ channel, timestamp: ts, name: emojiToSlackName(emoji) });
+      await web.reactions.add({ channel, timestamp: ts, name: emojiToSlackName(emoji) });
     } catch (err) {
       if (isSlackErr(err, 'already_reacted')) return;
       throw err;
     }
   }
 
-  /** Remove an emoji reaction by ts. */
-  async unreact(channel: string, ts: string, emoji: string): Promise<void> {
-    if (!this.web) return;
+  /** Remove an emoji reaction by ts (as `teamId`'s workspace). */
+  async unreact(channel: string, ts: string, emoji: string, teamId?: string): Promise<void> {
+    const web = await this.webFor(teamId);
+    if (!web) return;
     try {
-      await this.web.reactions.remove({ channel, timestamp: ts, name: emojiToSlackName(emoji) });
+      await web.reactions.remove({ channel, timestamp: ts, name: emojiToSlackName(emoji) });
     } catch (err) {
       if (isSlackErr(err, 'no_reaction')) return;
       throw err;

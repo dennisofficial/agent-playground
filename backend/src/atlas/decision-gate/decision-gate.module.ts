@@ -1,5 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Module } from '@nestjs/common';
+import { CredentialResolver } from '../onboarding';
 import {
   ATLAS_CLASSIFIER_LLM,
   AnthropicClassifierLlm,
@@ -27,10 +28,10 @@ import { PlanVisibilityService } from './plan-visibility.service';
   providers: [
     {
       provide: ATLAS_CLASSIFIER_LLM,
-      inject: [EnvService],
-      useFactory: (env: EnvService) =>
+      inject: [EnvService, CredentialResolver],
+      useFactory: (env: EnvService, creds: CredentialResolver) =>
         new AnthropicClassifierLlm(
-          () => env.get('ANTHROPIC_API_KEY'),
+          (teamId) => creds.anthropicKey(teamId),
           () => env.get('GATE_MODEL'),
         ),
     },

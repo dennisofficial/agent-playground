@@ -50,6 +50,12 @@ export interface PostOptions {
   threadTs?: string;
   /** Optional Block Kit blocks (e.g. the approval card). `text` is still the notification fallback. */
   blocks?: Array<Record<string, unknown>>;
+  /**
+   * The tenant (Slack team id) to post AS — selects that workspace's bot token in the multi-workspace
+   * surface. Omit → the single env-token fallback client (single-tenant dev / headless). A post with a
+   * teamId that has no installed token (and no fallback) is dropped, never mis-routed to another team.
+   */
+  teamId?: string;
 }
 
 /**
@@ -67,8 +73,8 @@ export interface ChatSurface {
    * post (e.g. no client bound).
    */
   post(channel: string, text: string, opts?: PostOptions): Promise<string | undefined>;
-  /** Add an emoji reaction to a message (by its ts) in a channel. */
-  react(channel: string, ts: string, emoji: string): Promise<void>;
+  /** Add an emoji reaction to a message (by its ts) in a channel; `teamId` selects the workspace token. */
+  react(channel: string, ts: string, emoji: string, teamId?: string): Promise<void>;
   /** Remove an emoji reaction this surface added (clears a transient marker). */
-  unreact(channel: string, ts: string, emoji: string): Promise<void>;
+  unreact(channel: string, ts: string, emoji: string, teamId?: string): Promise<void>;
 }
