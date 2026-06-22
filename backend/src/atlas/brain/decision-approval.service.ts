@@ -18,6 +18,8 @@ export interface ApprovalTarget {
   threadTs?: string;
   /** The tenant to post as (selects the workspace bot token). */
   teamId?: string;
+  /** Which surface the thread lives on (the composite dispatches on it). */
+  surfaceId?: string;
 }
 
 /** The resolved approval — the verdict + who ruled + any free-text the human added. */
@@ -98,6 +100,7 @@ export class DecisionApprovalService implements OnModuleDestroy {
     const cardTs = await this.surface.post(target.channel, `Plan proposal — ${card.title}`, {
       ...(target.threadTs ? { threadTs: target.threadTs } : {}),
       ...(target.teamId ? { teamId: target.teamId } : {}),
+      ...(target.surfaceId ? { surfaceId: target.surfaceId } : {}),
       blocks,
     });
 

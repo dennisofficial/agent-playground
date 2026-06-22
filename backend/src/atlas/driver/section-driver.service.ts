@@ -353,6 +353,7 @@ export class SectionDriver implements JobDispatcher {
       channel: route.channel ?? '',
       ...(route.threadTs ? { threadTs: route.threadTs } : {}),
       ...(route.teamId ? { teamId: route.teamId } : {}),
+      ...(route.surfaceId ? { surfaceId: route.surfaceId } : {}),
       title: section.brief,
       plan: renderPlan(planView),
       decisions: classifications,
@@ -539,6 +540,7 @@ export class SectionDriver implements JobDispatcher {
             channel: route.channel ?? '',
             ...(route.threadTs ? { threadTs: route.threadTs } : {}),
             ...(route.teamId ? { teamId: route.teamId } : {}),
+            ...(route.surfaceId ? { surfaceId: route.surfaceId } : {}),
           },
           parkQuestion(section.brief, proposed.description, c.reason),
         );
@@ -857,6 +859,7 @@ export class SectionDriver implements JobDispatcher {
       await this.surface.post(route.channel, text, {
         ...(route.threadTs ? { threadTs: route.threadTs } : {}),
         ...(route.teamId ? { teamId: route.teamId } : {}),
+        ...(route.surfaceId ? { surfaceId: route.surfaceId } : {}),
       });
     } catch (err) {
       this.logger.warn(`post failed (continuing): ${err}`);
@@ -891,6 +894,7 @@ export class SectionDriver implements JobDispatcher {
       await this.surface.post(route.channel, text, {
         ...(route.threadTs ? { threadTs: route.threadTs } : {}),
         ...(route.teamId ? { teamId: route.teamId } : {}),
+        ...(route.surfaceId ? { surfaceId: route.surfaceId } : {}),
         meta: {
           kind: 'build_event',
           phaseId,

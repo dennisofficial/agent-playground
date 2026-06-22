@@ -267,6 +267,7 @@ export class AtlasSlackSurface implements ChatSurface, OnApplicationShutdown {
       teamId,
       channel: event.channel,
       ...(threadTs ? { threadTs } : {}),
+      surface: this.name,
       ts: new Date(Number(event.ts) * 1000),
     });
   }

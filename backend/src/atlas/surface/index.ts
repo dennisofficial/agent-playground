@@ -1,4 +1,6 @@
 export * from './chat-surface.port';
+export * from './composite-chat-surface';
+export * from './enabled-surfaces';
 export * from './atlas-slack-surface';
 export * from './atlas-web-surface';
 export * from './approval-blocks';

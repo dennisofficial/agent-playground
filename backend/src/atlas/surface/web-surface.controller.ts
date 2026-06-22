@@ -18,6 +18,7 @@ import {
   REQUEST_CHANGES_ACTION_ID,
 } from './approval-blocks';
 import { AtlasWebSurface } from './atlas-web-surface';
+import { isSurfaceEnabled } from './enabled-surfaces';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebOutboundMessage } from './atlas-web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
@@ -77,13 +78,21 @@ export class WebSurfaceController {
   ) {}
 
   /**
-   * Kill-switch for the control endpoints — 404 unless `ATLAS_SURFACE=web`.
-   * The controller is always registered (keeps the module graph simple); only the flag gates.
+   * Kill-switch for the control endpoints — 404 unless the `web` surface is enabled (in `ATLAS_SURFACES`
+   * or the legacy `ATLAS_SURFACE` alias). The controller is always registered (keeps the module graph
+   * simple); only the enabled-set gate decides. With multiple surfaces live, web can be enabled
+   * alongside Slack.
    * TODO: authn — add operator authentication before exposing to a network boundary.
    */
   private assertWebEnabled(): void {
-    if (this.env.get('ATLAS_SURFACE') !== 'web') {
-      throw new NotFoundException('Web surface control endpoints are disabled (set ATLAS_SURFACE=web).');
+    const enabled = isSurfaceEnabled('web', {
+      surfaces: this.env.get('ATLAS_SURFACES'),
+      surface: this.env.get('ATLAS_SURFACE'),
+    });
+    if (!enabled) {
+      throw new NotFoundException(
+        'Web surface control endpoints are disabled (enable "web" in ATLAS_SURFACES).',
+      );
     }
   }
 

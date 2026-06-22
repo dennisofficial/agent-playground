@@ -10,6 +10,8 @@ import { AtlasSlackInstallation } from '../persistence/entities';
 import { AtlasSlackSurface } from './atlas-slack-surface';
 import { AtlasWebSurface } from './atlas-web-surface';
 import { CHAT_SURFACE, type ChatSurface } from './chat-surface.port';
+import { CompositeChatSurface } from './composite-chat-surface';
+import { parseEnabledSurfaces, type SurfaceId } from './enabled-surfaces';
 import { SlackInstallationStore } from './slack-installation.store';
 import { WebSurfaceModule } from './web-surface.module';
 import {
@@ -21,22 +23,23 @@ import {
 } from './slack.tokens';
 
 /**
- * The Atlas v2 SURFACE module — binds the active `ChatSurface` (gated by `ATLAS_SURFACE`: `slack`
- * default | `agent` | `web`) and, for the multi-workspace Slack adapter, the pieces that let it post
- * AS each tenant:
+ * The Atlas v2 SURFACE module — binds a `CompositeChatSurface` over the ENABLED adapter set (gated by
+ * `ATLAS_SURFACES` comma-list, or the legacy single `ATLAS_SURFACE` alias: `slack` default | `agent` |
+ * `web`), so SEVERAL surfaces can be live at once. For the multi-workspace Slack adapter it also binds
+ * the pieces that let it post AS each tenant:
  *  - `ATLAS_SLACK_WEB_CLIENT` — the optional ENV fallback bot (single-tenant dev / headless);
  *  - `ATLAS_SLACK_SOCKET_CLIENT` — the ONE app-level socket that fans in ALL workspaces' events;
  *  - `ATLAS_SLACK_WEB_CLIENT_FACTORY` — builds a per-workspace Web client from a bot token;
  *  - `SlackInstallationStore` — the encrypted per-workspace bot-token store the factory reads.
  *
- * When `ATLAS_SURFACE=web`, `WebSurfaceModule` is imported: it provides `AtlasWebSurface` + mounts the
- * SSE/REST controller (`GET /web/events`, `POST /web/say`, `POST /web/approve`, `GET /web/thread`).
- * The approval-click bridge (`approval$` → `DecisionApprovalService.resolve`) lives there too — no
- * circular dep.
+ * `WebSurfaceModule` is always imported: it provides `AtlasWebSurface` + mounts the SSE/REST controller
+ * (`GET /web/events`, `POST /web/say`, `POST /web/approve`, `GET /web/thread`); the control endpoints
+ * self-gate on whether `web` is in the enabled set. The approval-click bridge (`approval$` →
+ * `DecisionApprovalService.resolve`) lives there too — no circular dep.
  *
  * @Global so the brain/driver/bridge inject `CHAT_SURFACE` anywhere. All candidate surfaces are always
- * constructed (cheap); only the BINDING is switched. Slack creds reuse v1's values when the Atlas-
- * specific ones are unset. Zero v1 imports.
+ * constructed (cheap); only the enabled SET (and thus the composite's membership) varies. Slack creds
+ * reuse v1's values when the Atlas-specific ones are unset. Zero v1 imports.
  */
 @Global()
 @Module({
@@ -71,8 +74,11 @@ import {
     SlackInstallationStore,
     AtlasSlackSurface,
     {
-      // The active surface: 'web' binds the web SSE/REST adapter; 'agent' binds the programmatic
-      // in-process one (tests/scripts); anything else (default) binds the multi-workspace Slack adapter.
+      // The active surface: a `CompositeChatSurface` over the ENABLED adapter set (`ATLAS_SURFACES`
+      // comma-list, or the legacy single `ATLAS_SURFACE` alias, default 'slack'). Several surfaces can
+      // be live at once (e.g. 'web,slack'); the composite dispatches outbound by `PostOptions.surfaceId`
+      // and merges every adapter's inbound. All candidate adapters are always constructed (cheap); the
+      // enabled SET is what varies.
       provide: CHAT_SURFACE,
       inject: [EnvService, AtlasSlackSurface, AgentChatSurface, AtlasWebSurface],
       useFactory: (
@@ -81,10 +87,12 @@ import {
         agent: AgentChatSurface,
         web: AtlasWebSurface,
       ): ChatSurface => {
-        const mode = env.get('ATLAS_SURFACE');
-        if (mode === 'web') return web;
-        if (mode === 'agent') return agent;
-        return slack;
+        const enabled = parseEnabledSurfaces({
+          surfaces: env.get('ATLAS_SURFACES'),
+          surface: env.get('ATLAS_SURFACE'),
+        });
+        const byId: Record<SurfaceId, ChatSurface> = { slack, web, agent };
+        return new CompositeChatSurface(enabled.map((id) => byId[id]));
       },
     },
   ],

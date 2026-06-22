@@ -32,7 +32,7 @@ Atlas v2 re-implements the proven semantics **legibly and daemon-free**, in a **
 | Domain | `domain/` | `Stimulus`(`ChatStimulus`/`EventStimulus`), `Job`, `Section`, `Phase`, `DecisionRecord`, `Decision`, `DecisionClass`, `SessionRef`, `JobKind='feature'|'bugfix'`, `NotificationSource` port |
 | Engines | `engine/engine-runner.service.ts` (`EngineRunner`), `engine/claude-auth.ts`, `engine/codex-auth-home.ts`, `engine/engine-home.ts`, `engine/esm.module.ts` | Run one Claude/Codex turn (plan/review/execute), isolated home, creds. ESM SDKs via dynamic import |
 | Git/PR | `git/local-git.service.ts` (`LocalGitService`: ensureRepo, createFeatureSandbox=worktree, commitAll→sha, push, headSha, removeSandbox), `git/github-pr.service.ts` (`GithubPrService`: openPullRequest idempotent, markReadyForReview, commentOnPullRequest), `git/git-auth.ts` (`gitAuthEnv` — token via `GIT_CONFIG_*`, never in argv/.git/config) | Host git worktrees + fetch-based PR client, daemon-free |
-| Surface | `surface/chat-surface.port.ts` (`CHAT_SURFACE`), `surface/atlas-slack-surface.ts` (thread-aware: `post(thread_ts)`, inbound carries `threadTs`), `surface/approval-blocks.ts` (copied pure renderer), `surface/surface.module.ts` (`ATLAS_SURFACE` switch) | The chat edge |
+| Surface | `surface/chat-surface.port.ts` (`CHAT_SURFACE`), `surface/atlas-slack-surface.ts` (thread-aware: `post(thread_ts)`, inbound carries `threadTs`), `surface/approval-blocks.ts` (copied pure renderer), `surface/surface.module.ts` (binds a `CompositeChatSurface` over the `ATLAS_SURFACES` enabled set — see §10.6) | The chat edge |
 | Agent surface | `agent-surface/agent-chat-surface.ts` (`AgentChatSurface`) | In-process `CHAT_SURFACE` to DRIVE Atlas without Slack: `sendFromHuman`, `outbound$`, `waitForReply`, `waitForApprovalCard`, `reset()` |
 | Intake | `stimulus/stimulus-intake.service.ts` (`StimulusIntake`), `stimulus/stimulus-consumer.ts` (`STIMULUS_CONSUMER` token), `stimulus/event-filter.service.ts` (dedup+rate-limit, no LLM), `stimulus/stimulus-store.service.ts` (seeds thread), `stimulus/project-routing.service.ts`, `stimulus/chat-stimulus.bridge.ts`, `stimulus/untrusted-content.ts`, `stimulus/surface-orchestration.service.ts` (announce headline + backfill thread root); `ingress/github-notification.source.ts` (HMAC `X-Hub-Signature-256`), `ingress/generic-webhook-notification.source.ts`, ingress controllers `POST /ingress/github` + `POST /ingress/webhook` | The notification edge + the one-Stimulus convergence |
 | Brain | `brain/triage.service.ts` (`TriageService` = bound `STIMULUS_CONSUMER`), `brain/conversational-brain.service.ts` (grill), `brain/decision-approval.service.ts`, `brain/job-dispatcher.ts` (`JOB_DISPATCHER` token), `brain/brain-store.service.ts`, `brain/brain-llm.ts` (`ATLAS_BRAIN_LLM`) | Decide whether/what; produce + approve the plan; dispatch |
@@ -192,9 +192,10 @@ Verified by `r6-invariants.spec.ts` (20 tests, no I/O):
 
 | Var | Default | Effect |
 |---|---|---|
-| `ATLAS_SURFACE` | `slack` | `web` = SSE+REST web surface; `agent` = in-process test surface; `slack` = Slack adapter (dormant) |
+| `ATLAS_SURFACES` | (unset → falls back to `ATLAS_SURFACE`, then `slack`) | The SET of chat surfaces bound concurrently — a comma list of `slack`/`web`/`agent` (e.g. `web,slack`). See §10.6. |
+| `ATLAS_SURFACE` | `slack` | LEGACY single-surface switch, now a back-compat alias for `ATLAS_SURFACES`. `web` = SSE+REST web surface; `agent` = in-process test surface; `slack` = Slack adapter |
 
-No new env vars beyond `ATLAS_SURFACE` (already existed; `web` value is new). All others (surface/sandbox/git) were already in `validation.ts`.
+No new env vars beyond `ATLAS_SURFACES` (and `ATLAS_SURFACE`, which already existed). All others (surface/sandbox/git) were already in `validation.ts`.
 
 ### 10.4 Commands
 
@@ -217,3 +218,13 @@ pnpm -C backend vitest run src/atlas    # 332+ tests green
 Mid-build steering ops: user-initiated pause/interject-into-phase/revert-phase/revise-plan + park-durability across restart. The read+submit+dispatch core (the 6 tools + the approval flow + the build) is proven first; these layer on after.
 
 Also deferred: operator authn on the web control endpoints (`// TODO: authn` in `WebSurfaceController`) — currently any caller who can reach the HTTP port can post messages or rule on approvals.
+
+### 10.6 Multiple concurrent chat surfaces (BUILT)
+
+Atlas no longer binds ONE surface — it binds a **`CompositeChatSurface`** (`surface/composite-chat-surface.ts`) over the **enabled set** (`ATLAS_SURFACES` comma-list, e.g. `web,slack`; the legacy `ATLAS_SURFACE` is a back-compat alias; default `slack`). So Slack and web can be live at once while Atlas's brain/driver/gates stay surface-agnostic.
+
+The mechanism mirrors how `teamId` is already threaded — **one opaque `surfaceId` flows through the route the core already passes**, and nothing branches on it:
+
+- A thread belongs to exactly ONE surface. Each adapter stamps `InboundChatMessage.surface = its .name`; the `ChatStimulusBridge` persists it on a new `atlas_threads.surface` column (migration `AddThreadSurface`, backfilled to `slack`) and sets `replyRoute.surfaceId` from it. Event-seeded threads (no inbound surface) take the column default `slack`.
+- `route()` (both `driver-store` `JobRoute` + `brain-store` `ThreadRoute`) reads `atlas_threads.surface` onto `surfaceId`. Every outbound target struct (`ParkTarget`, `ApprovalTarget`, `SectionPlanPost`, the section-driver post helpers, the approval card, the announce path) carries `surfaceId` into `PostOptions` alongside `teamId`.
+- `CompositeChatSurface` is the ONLY place that knows the set: `inbound$` = rxjs `merge` of the enabled adapters; `post`/`react`/`unreact`/`update` dispatch to the adapter whose `.name === opts.surfaceId` (fallback to the sole/first adapter when unset or unmatched — legacy rows, single-surface boots); `connect()` fans out (the Slack socket opens only when Slack is enabled). The enabled-set resolver `surface/enabled-surfaces.ts` (`parseEnabledSurfaces`/`isSurfaceEnabled`) is the single source of truth, used by the surface module AND the web-endpoint gate (`assertWebEnabled` now checks "web is enabled", decoupled from `ATLAS_SURFACE==='web'`).

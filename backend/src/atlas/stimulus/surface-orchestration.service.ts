@@ -77,7 +77,10 @@ export class SurfaceOrchestration {
     const headline = `${SEVERITY_EMOJI[input.severity]} *[${input.source}]* ${input.title}`;
     let ts: string | undefined;
     try {
-      ts = await this.surface.post(channel.surface_channel_ref, headline, { teamId: channel.team_id });
+      ts = await this.surface.post(channel.surface_channel_ref, headline, {
+        teamId: channel.team_id,
+        ...(thread?.surface ? { surfaceId: thread.surface } : {}),
+      });
     } catch (err) {
       this.logger.warn(`announcement post failed (continuing top-level): ${err}`);
       return undefined;

@@ -19,7 +19,12 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { NotFoundException } from '@nestjs/common';
+import type { EnvService } from '@core/config/env/env.service';
 import { describe, expect, it } from 'vitest';
+import type { DriverStoreService } from './driver/driver-store.service';
+import { AtlasWebSurface } from './surface';
+import { WebSurfaceController } from './surface/web-surface.controller';
 
 const ATLAS_SRC = join(__dirname);
 const LOCAL_GIT_SRC = join(ATLAS_SRC, 'git', 'local-git.service.ts');
@@ -214,13 +219,37 @@ describe('R6 invariant (d): web surface control endpoints flag-gated behind ATLA
     expect(CONTROLLER_SRC).toContain('TODO: authn');
   });
 
-  it('assertWebEnabled() throws when ATLAS_SURFACE is not web (source-level assertion)', () => {
-    // The source-level assertions (above) already prove the guard is present on all 5 endpoints.
-    // We additionally verify that `assertWebEnabled` calls `env.get('ATLAS_SURFACE')` and branches
-    // on whether the result equals 'web' by inspecting the source.
-    expect(CONTROLLER_SRC).toContain("env.get('ATLAS_SURFACE') !== 'web'");
+  it('assertWebEnabled() gates on whether the "web" surface is enabled (source-level assertion)', () => {
+    // The source-level assertions (above) already prove the guard is present on all 5 endpoints. The
+    // gate is now decoupled from the single ATLAS_SURFACE switch: it asks the enabled-surface resolver
+    // whether `web` is in the enabled set (so web can be live ALONGSIDE Slack), reading ATLAS_SURFACES
+    // (with the legacy ATLAS_SURFACE as a back-compat alias).
+    expect(CONTROLLER_SRC).toContain("isSurfaceEnabled('web'");
+    expect(CONTROLLER_SRC).toContain("env.get('ATLAS_SURFACES')");
     // The guard throws NotFoundException (not a generic Error) — confirmed by import in source.
     expect(CONTROLLER_SRC).toContain('NotFoundException');
+  });
+
+  it('the guard throws NotFoundException when web is NOT enabled and passes when it is (runtime)', () => {
+    // Behavioral proof: instantiate the controller with a stub env and call a guarded endpoint
+    // (`thread`). Web disabled → NotFoundException; web enabled (via ATLAS_SURFACES) → no throw.
+    const stubEnv = (vals: Record<string, string | undefined>) =>
+      ({ get: (k: string) => vals[k] }) as unknown as EnvService;
+    const surface = new AtlasWebSurface();
+    const driverStore = {} as unknown as DriverStoreService;
+
+    const disabled = new WebSurfaceController(stubEnv({}), surface, driverStore);
+    expect(() => disabled.thread('C-web')).toThrow(NotFoundException);
+
+    const slackOnly = new WebSurfaceController(stubEnv({ ATLAS_SURFACE: 'slack' }), surface, driverStore);
+    expect(() => slackOnly.thread('C-web')).toThrow(NotFoundException);
+
+    const webEnabled = new WebSurfaceController(
+      stubEnv({ ATLAS_SURFACES: 'web,slack' }),
+      surface,
+      driverStore,
+    );
+    expect(() => webEnabled.thread('C-web')).not.toThrow();
   });
 });
 

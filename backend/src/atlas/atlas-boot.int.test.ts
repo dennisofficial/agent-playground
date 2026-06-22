@@ -14,7 +14,12 @@ import {
 import { SectionDriver } from './driver';
 import { GithubIngressController, WebhookIngressController } from './ingress';
 import { STIMULUS_CONSUMER, StimulusIntake, type StimulusConsumer } from './stimulus';
-import { AtlasSlackSurface, CHAT_SURFACE, type ChatSurface } from './surface';
+import {
+  AtlasSlackSurface,
+  CHAT_SURFACE,
+  CompositeChatSurface,
+  type ChatSurface,
+} from './surface';
 import { TestBridgeController } from './test-bridge';
 
 /**
@@ -65,8 +70,12 @@ describe('AtlasModule HTTP boot (full DI assembly, live Postgres)', () => {
     expect(driver).toBeDefined();
     expect(app.get<JobDispatcher>(JOB_DISPATCHER)).toBe(driver);
 
-    // W6: default (no ATLAS_SURFACE) binds the real Slack adapter as CHAT_SURFACE.
-    expect(app.get<ChatSurface>(CHAT_SURFACE)).toBe(app.get(AtlasSlackSurface));
+    // Multi-surface: default (no ATLAS_SURFACES/ATLAS_SURFACE) binds a CompositeChatSurface over the
+    // enabled set, which defaults to just the Slack adapter.
+    const boundDefault = app.get<ChatSurface>(CHAT_SURFACE);
+    expect(boundDefault).toBeInstanceOf(CompositeChatSurface);
+    expect((boundDefault as CompositeChatSurface).surfaceNames).toEqual(['slack']);
+    expect(app.get(AtlasSlackSurface)).toBeDefined();
 
     // The HTTP routes are registered (the notification HTTP edge the headless context lacked).
     const server = app.getHttpServer();
@@ -105,10 +114,11 @@ describe('AtlasModule boot with ATLAS_SURFACE=agent (the programmatic surface)',
 
     const agent = app.get(AgentChatSurface);
     expect(agent).toBeDefined();
-    // The active CHAT_SURFACE the brain/driver/bridge inject is the agent one (NOT Slack).
+    // The active CHAT_SURFACE the brain/driver/bridge inject is a composite over just the agent surface
+    // (NOT Slack) — ATLAS_SURFACE=agent resolves the enabled set to ['agent'].
     const bound = app.get<ChatSurface>(CHAT_SURFACE);
-    expect(bound).toBe(agent);
-    expect(bound.name).toBe('agent');
+    expect(bound).toBeInstanceOf(CompositeChatSurface);
+    expect((bound as CompositeChatSurface).surfaceNames).toEqual(['agent']);
 
     // The brain + dispatcher still resolve — the surface swap doesn't disturb the rest of the graph.
     expect(app.get(StimulusRouter)).toBeDefined();

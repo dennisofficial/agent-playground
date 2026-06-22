@@ -125,6 +125,7 @@ export class AtlasWebSurface implements ChatSurface {
       teamId: opts.teamId ?? this.defaultTeamId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
+      surface: this.name,
       ts: new Date(),
     };
     this.logger.debug(

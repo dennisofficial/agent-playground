@@ -38,6 +38,13 @@ export interface InboundChatMessage {
    * conversation a reply continues.
    */
   threadTs?: string;
+  /**
+   * Which chat surface this message arrived on — the originating adapter's `.name` ('slack' | 'web' |
+   * 'agent'). Set by each adapter so the thread can be tagged with its surface and the
+   * `CompositeChatSurface` can route the reply back to the SAME surface. Optional only so legacy /
+   * test fixtures that omit it still construct; every real adapter stamps it.
+   */
+  surface?: string;
   ts: Date;
 }
 
@@ -62,6 +69,13 @@ export interface PostOptions {
    * distinguish build-phase engine events from conversational chat messages). Other surfaces ignore it.
    */
   meta?: Record<string, unknown>;
+  /**
+   * Which surface to deliver on — the `CompositeChatSurface` dispatches to the adapter whose `.name`
+   * matches this. A thread belongs to exactly ONE surface, so callers carry it through the route they
+   * already resolve (mirrors `teamId`). Omit → the composite falls back to its sole/default adapter
+   * (legacy rows, single-surface boots). Individual adapters ignore it (they ARE the surface).
+   */
+  surfaceId?: string;
 }
 
 /**

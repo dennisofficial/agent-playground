@@ -18,6 +18,8 @@ export interface ParkTarget {
   threadTs?: string;
   /** The tenant to post as (selects the workspace bot token). */
   teamId?: string;
+  /** Which surface the thread lives on (the composite dispatches on it). */
+  surfaceId?: string;
 }
 
 /** A live park — the question is posted, the section is suspended awaiting a human reply. */
@@ -112,6 +114,7 @@ export class ParkAndAskService implements OnModuleDestroy {
     const questionTs = await this.surface.post(target.channel, question, {
       ...(target.threadTs ? { threadTs: target.threadTs } : {}),
       ...(target.teamId ? { teamId: target.teamId } : {}),
+      ...(target.surfaceId ? { surfaceId: target.surfaceId } : {}),
     });
     // Bind the park to the thread root: the provided root, else the seeded post's own ts.
     const threadTs = target.threadTs ?? questionTs;

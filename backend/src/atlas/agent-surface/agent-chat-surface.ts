@@ -119,6 +119,7 @@ export class AgentChatSurface implements ChatSurface {
       teamId: opts.teamId ?? this.teamId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
+      surface: this.name,
       ts: new Date(),
     };
     this.logger.debug(`sendFromHuman → ${channel}${opts.threadTs ? ` (thread ${opts.threadTs})` : ''}: ${text.slice(0, 80)}`);

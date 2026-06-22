@@ -39,6 +39,9 @@ export interface JobRoute {
   /** The tenant to post as (selects the workspace bot token in the multi-workspace surface). Always set
    *  by `route()`; optional only so in-memory test fixtures (fake surface ignores it) can omit it. */
   teamId?: string;
+  /** Which surface the thread lives on — the `CompositeChatSurface` dispatches outbound on it (read from
+   *  `atlas_threads.surface`). Set by `route()`; optional only so test fixtures can omit it. */
+  surfaceId?: string;
 }
 
 /**
@@ -236,6 +239,7 @@ export class DriverStoreService {
       channel: channel?.surface_channel_ref ?? null,
       threadTs: thread?.surface_thread_ref ?? null,
       teamId: job.teamId,
+      ...(thread?.surface ? { surfaceId: thread.surface } : {}),
     };
   }
 }
