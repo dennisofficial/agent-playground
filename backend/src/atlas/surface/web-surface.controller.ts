@@ -123,7 +123,7 @@ export class WebSurfaceController {
    */
   @Post('approve')
   approve(@Body() body: WebApproveRequest): { ok: boolean; jobId?: string } {
-    const { actionId, value, ruledBy, note: _note } = body;
+    const { actionId, value, ruledBy, note } = body;
     if (!actionId || !value || !ruledBy) {
       throw new BadRequestException('actionId, value, and ruledBy are required');
     }
@@ -134,7 +134,9 @@ export class WebSurfaceController {
     if (!meta) {
       throw new BadRequestException('value is not a valid ApprovalActionMeta JSON');
     }
-    this.surface.receiveApprovalClick(actionId, value, ruledBy);
+    // `note` carries the operator's reason on request_changes/deny → DecisionApprovalService.resolve →
+    // the brain reads resolution.note. Optional; undefined for a plain approve.
+    this.surface.receiveApprovalClick(actionId, value, ruledBy, note);
     this.logger.log(`web approval click: action=${actionId} jobId=${meta.jobId} ruledBy=${ruledBy}`);
     return { ok: true, jobId: meta.jobId };
   }

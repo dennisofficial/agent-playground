@@ -42,14 +42,14 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
   ) {}
 
   onApplicationBootstrap(): void {
-    this.approvalSub = this.surface.approval$.subscribe(({ actionId, value, ruledBy }) => {
+    this.approvalSub = this.surface.approval$.subscribe(({ actionId, value, ruledBy, note }) => {
       const meta = parseWebApprovalMeta(value);
       if (!meta) return;
 
       const verdict = actionIdToVerdict(actionId);
       if (!verdict) return;
 
-      const resolved = this.approvals.resolve(meta.jobId, verdict, ruledBy);
+      const resolved = this.approvals.resolve(meta.jobId, verdict, ruledBy, note);
       if (!resolved) {
         // Stale click (double-click, already resolved, or no pending gate) — silently drop.
       }

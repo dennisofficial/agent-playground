@@ -59,7 +59,7 @@ export function useSay() {
 }
 
 /** Submit a plan verdict. No optimistic state needed — the card re-emits as a verdict over SSE with
- *  the same ts. `note` is collected but NOT plumbed by the backend (BACKEND_GAPS.md #5). */
+ *  the same ts. `note` (request_changes/deny reason) is plumbed end-to-end → the brain reads it. */
 export function useApprove() {
   return useMutation({
     mutationFn: (body: ApproveRequest) => webClient.approve(body),

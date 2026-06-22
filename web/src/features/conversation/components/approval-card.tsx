@@ -9,8 +9,8 @@ import { VerdictButtons } from '@/components/approval/verdict-buttons';
 /**
  * Plan/approval card. Approve / Request changes / Deny POST `/web/approve` with the action's verbatim
  * `value`. After a verdict the backend re-emits the card as a verdict_card with the SAME ts, so the
- * SSE merge repaints this in place. `note` is intentionally absent — the backend drops it
- * (BACKEND_GAPS.md #5); reasoning goes in the composer.
+ * SSE merge repaints this in place. Request-changes / Deny collect an optional `note` (the operator's
+ * reason), now plumbed through to the brain.
  */
 export function ApprovalCardView({
   card,

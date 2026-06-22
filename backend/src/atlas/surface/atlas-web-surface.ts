@@ -70,7 +70,12 @@ export class AtlasWebSurface implements ChatSurface {
   private readonly inboundSubject = new Subject<InboundChatMessage>();
   private readonly outboundSubject = new Subject<WebOutboundMessage>();
   /** Control channel: approval-card button clicks arrive here (decoupled from the brain). */
-  private readonly approvalSubject = new Subject<{ actionId: string; value: string; ruledBy: string }>();
+  private readonly approvalSubject = new Subject<{
+    actionId: string;
+    value: string;
+    ruledBy: string;
+    note?: string;
+  }>();
 
   /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
   readonly outbox: WebOutboundMessage[] = [];
@@ -92,7 +97,7 @@ export class AtlasWebSurface implements ChatSurface {
    * Approval-card button clicks — the web surface module subscribes and resolves the gate via
    * `DecisionApprovalService.resolve`. Decoupled: the surface never imports the brain.
    */
-  get approval$(): Observable<{ actionId: string; value: string; ruledBy: string }> {
+  get approval$(): Observable<{ actionId: string; value: string; ruledBy: string; note?: string }> {
     return this.approvalSubject.asObservable();
   }
 
@@ -130,9 +135,9 @@ export class AtlasWebSurface implements ChatSurface {
    * `POST /web/approve`). Emits on `approval$` so the module bridge can resolve the gate without
    * the surface importing `DecisionApprovalService` (no circular dep).
    */
-  receiveApprovalClick(actionId: string, value: string, ruledBy: string): void {
+  receiveApprovalClick(actionId: string, value: string, ruledBy: string, note?: string): void {
     this.logger.debug(`receiveApprovalClick action=${actionId} ruledBy=${ruledBy}`);
-    this.approvalSubject.next({ actionId, value, ruledBy });
+    this.approvalSubject.next({ actionId, value, ruledBy, ...(note ? { note } : {}) });
   }
 
   // ── OUTBOUND (ChatSurface contract) ─────────────────────────────────────────────────────────────

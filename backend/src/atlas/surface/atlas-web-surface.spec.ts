@@ -197,6 +197,27 @@ describe('AtlasWebSurface — approval click via approval$', () => {
     const event = await click;
     expect(event.actionId).toBe(DENY_ACTION_ID);
   });
+
+  it('forwards the operator note on approval$ (BACKEND_GAPS #5)', async () => {
+    const surface = new AtlasWebSurface();
+    const click = firstValueFrom(surface.approval$.pipe(take(1)));
+
+    const value = JSON.stringify({ jobId: 'job-abc' });
+    surface.receiveApprovalClick(REQUEST_CHANGES_ACTION_ID, value, 'U-dennis', 'use Stripe, not Braintree');
+
+    const event = await click;
+    expect(event.note).toBe('use Stripe, not Braintree');
+  });
+
+  it('omits note when none is supplied', async () => {
+    const surface = new AtlasWebSurface();
+    const click = firstValueFrom(surface.approval$.pipe(take(1)));
+
+    surface.receiveApprovalClick(APPROVE_ACTION_ID, JSON.stringify({ jobId: 'job-abc' }), 'U-dennis');
+
+    const event = await click;
+    expect(event.note).toBeUndefined();
+  });
 });
 
 // ── 5: update() ───────────────────────────────────────────────────────────────────────────────
