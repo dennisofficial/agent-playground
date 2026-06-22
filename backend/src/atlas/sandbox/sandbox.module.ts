@@ -47,6 +47,6 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
         env.get('ATLAS_SANDBOX_MODE') === 'docker' ? docker : local,
     },
   ],
-  exports: [ENGINE_RUNNER, SANDBOX_PROVIDER, CONTAINER_ENGINE, SandboxRefsService],
+  exports: [ENGINE_RUNNER, SANDBOX_PROVIDER, CONTAINER_ENGINE, SandboxRefsService, DockerEngineRunner],
 })
 export class SandboxModule {}

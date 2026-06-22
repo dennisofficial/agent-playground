@@ -172,6 +172,58 @@ export class DriverStoreService {
     await this.phases.update({ id: phaseId }, { step, status });
   }
 
+  // ── brain read helpers ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * R3 — `get_pipeline_state` tool impl. Returns the current job + section state for a thread, or
+   * null if no job is on this thread. Used by the in-sandbox AgentSessionManager brain session.
+   */
+  async getPipelineState(threadId: string, teamId: string): Promise<unknown> {
+    const job = await this.jobs.findOne({
+      where: { thread_id: threadId, team_id: teamId },
+      order: { created_at: 'DESC' },
+    });
+    if (!job) return { status: 'no_job' };
+    const sections = await this.sections.find({
+      where: { job_id: job.id },
+      order: { ordinal: 'ASC' },
+    });
+    return {
+      jobId: job.id,
+      title: job.title,
+      kind: job.kind,
+      status: job.status,
+      decisionRecordId: job.decision_record_id,
+      sections: sections.map((s) => ({
+        id: s.id,
+        ordinal: s.ordinal,
+        brief: s.brief,
+        status: s.status,
+      })),
+    };
+  }
+
+  /**
+   * R3 — `get_decision_record` tool impl. Returns the current decision record for a thread (via the
+   * most recent job's decision_record_id), or null. Used by the in-sandbox brain session.
+   */
+  async getDecisionRecord(threadId: string): Promise<unknown> {
+    const job = await this.jobs.findOne({
+      where: { thread_id: threadId },
+      order: { created_at: 'DESC' },
+    });
+    if (!job?.decision_record_id) return null;
+    const record = await this.records.findOne({ where: { id: job.decision_record_id } });
+    if (!record) return null;
+    return {
+      id: record.id,
+      status: record.status,
+      overview: record.overview,
+      decisions: record.decisions,
+      sectionBriefs: record.section_briefs,
+    };
+  }
+
   // ── routing ──────────────────────────────────────────────────────────────────────────────────
 
   /** Resolve where to post a job's chatter: the project's channel + the thread root ts. */

@@ -1,17 +1,13 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from '../stimulus';
-import type {
-  GrillAction,
-  TranscriptLine,
-  TriageAction,
-} from './brain.types';
+import type { TriageAction } from './brain.types';
 
 /**
- * The BRAIN's chat-model port. Isolated behind an interface + DI token so the brain is unit-testable
- * WITHOUT a real LLM call (tests bind a fake) — the same shape the decision-gate uses for its classifier
- * LLM. The brain runs at most ONE structured call per turn: a triage call OR a grill call, each
- * returning a typed action (no sprawling tool loop). Clean-room: a tiny direct `ChatAnthropic` use
- * (LangChain is dual-published / statically importable), NOT v1's `ChatModelFactory`. Zero v1 imports.
+ * The BRAIN's chat-model port — triage only (R3: grill half deleted). Isolated behind an interface +
+ * DI token so the brain is unit-testable WITHOUT a real LLM call (tests bind a fake). The grill half
+ * has been deleted: the conversational session now runs in-sandbox via the Agent SDK tool bridge, so
+ * the host-side grill LLM is no longer needed. Only `triage()` remains — events still need it.
+ * Zero v1 imports.
  */
 
 /** The inputs to ONE triage turn. */
@@ -27,22 +23,6 @@ export interface TriageInput {
   teamId?: string;
 }
 
-/** The inputs to ONE grill turn. */
-export interface GrillInput {
-  /** The thread transcript, oldest-first. */
-  transcript: TranscriptLine[];
-  /** Recalled memory facts to ground the turn (may be empty). */
-  recalled: string[];
-  /**
-   * A REPO DIGEST — facts gathered by a read-only investigation of the ACTUAL cloned repo (stack,
-   * structure, relevant code, conventions, tooling). Empty when no repo / investigation unavailable.
-   * The grill uses it to ground questions and NEVER ask the operator anything answerable from the repo.
-   */
-  repoDigest?: string;
-  /** The tenant whose Anthropic key backs this call (omit → env fallback). */
-  teamId?: string;
-}
-
 export interface BrainLlm {
   /**
    * Decide ignore / ask / dispatch for one stimulus. Conservative by contract: when unsure between
@@ -50,12 +30,6 @@ export interface BrainLlm {
    * is available (no key) — the caller then defaults to a safe `ask` for actionable-looking input.
    */
   triage(input: TriageInput): Promise<TriageAction | undefined>;
-  /**
-   * Run one grill turn: ask the next clarifying question, or propose the locked plan. Returns
-   * `undefined` if no LLM is available (no key) — the caller then asks a generic clarifying question
-   * rather than guessing a plan.
-   */
-  grill(input: GrillInput): Promise<GrillAction | undefined>;
 }
 
 export const ATLAS_BRAIN_LLM = Symbol('ATLAS_BRAIN_LLM');
@@ -83,46 +57,6 @@ const TRIAGE_SYSTEM = [
   '',
   'When genuinely unsure, prefer "ask". Reply with ONLY the tool call.',
 ].join('\n');
-
-const GRILL_SYSTEM = [
-  'You are Atlas, an autonomous software-engineering orchestrator talking with the operator in a',
-  'thread to shape ONE feature or bug fix. Your job in each turn: either ask the SINGLE most useful',
-  'clarifying question, or — once the architecture/system calls are settled — propose the plan.',
-  '',
-  'GROUND YOURSELF IN THE REPO, DO NOT INTERROGATE. A REPO DIGEST (facts gathered from the ACTUAL',
-  'repository) may be provided below. NEVER ask the operator anything you can answer from the repo or',
-  'the digest — the tech stack / frameworks, whether a file or module exists, how big the repo is, what',
-  'lint/test/build tooling is available, or how the codebase already does something. Consult the digest',
-  'or assume it can be read at build time. Ask ONLY genuine product/intent and always-ask DECISION',
-  'questions a human must rule on. If the digest is empty, still avoid self-answerable questions —',
-  'prefer stating an assumption the operator can correct over asking them to describe their own code.',
-  '',
-  'Grill until you can LOCK the always-ask decisions that apply: data model / schema, public or',
-  'cross-service API contracts, new dependencies / libraries / services, infrastructure / topology,',
-  'cross-cutting patterns (auth, caching, state, concurrency, error-handling), and one-way doors.',
-  'For anything touching SECURITY or AUTH, surface each mechanism choice as its OWN locked decision —',
-  'password-hashing algorithm, JWT/token library, token strategy (signing/expiry/refresh/storage),',
-  'OAuth/SSO, session strategy, encryption/secret storage — never bundle them into one vague "add auth".',
-  'Do NOT ask about never-ask details (naming, file placement, test layout, refactor mechanics) — those',
-  'are the implementation\'s to decide later.',
-  '',
-  'Ask "ask_question" with ONE focused question while a relevant always-ask decision is unsettled.',
-  'When the applicable decisions are settled, return "propose_plan" with: a short title; the kind',
-  '("feature" for multi-part work, "bugfix" for a single fix); a concise overview (intent, stack,',
-  'constraints); the locked decisions (each a class + title + ruling); and a high-level section list',
-  '(ordered one-line briefs, e.g. backend → frontend → devops). The repo is already investigated, so do',
-  'NOT add an "investigate the codebase" section — sections are real build work. Keep sections coarse —',
-  'the detailed per-section plan is produced later, not now. Reply with ONLY the tool call.',
-].join('\n');
-
-const DECISION_CLASS_ENUM = [
-  'data_model',
-  'api_contract',
-  'dependency',
-  'infrastructure',
-  'cross_cutting',
-  'one_way_door',
-];
 
 /**
  * The real adapter. Lazy by construction — no client until the first call, a missing key returns
@@ -212,101 +146,4 @@ export class AnthropicBrainLlm implements BrainLlm {
       ...(args.summary ? { summary: args.summary } : {}),
     };
   }
-
-  async grill(input: GrillInput): Promise<GrillAction | undefined> {
-    const model = await this.client(input.teamId);
-    if (!model) return undefined;
-
-    const bound = model.bindTools(
-      [
-        {
-          name: 'respond',
-          description: 'Ask the next clarifying question, or propose the locked plan.',
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              verb: { type: 'string', enum: ['ask_question', 'propose_plan'] },
-              question: {
-                type: 'string',
-                description: 'The single clarifying question (required when verb is ask_question).',
-              },
-              title: { type: 'string' },
-              kind: { type: 'string', enum: ['feature', 'bugfix'] },
-              overview: { type: 'string' },
-              decisions: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    decisionClass: { type: 'string', enum: DECISION_CLASS_ENUM },
-                    title: { type: 'string' },
-                    ruling: { type: 'string' },
-                  },
-                  required: ['decisionClass', 'title', 'ruling'],
-                },
-              },
-              sectionBriefs: { type: 'array', items: { type: 'string' } },
-            },
-            required: ['verb'],
-          },
-        },
-      ],
-      { tool_choice: 'respond' },
-    );
-
-    const transcript = input.transcript
-      .map((l) => `${l.isAtlas ? 'Atlas' : l.author}: ${l.text}`)
-      .join('\n');
-    const recalled = input.recalled.length
-      ? `Relevant remembered facts:\n${input.recalled.map((f) => `- ${f}`).join('\n')}\n\n`
-      : '';
-    const digest = input.repoDigest?.trim()
-      ? `Repo digest (facts read from the actual repository — do NOT re-ask these):\n${input.repoDigest.trim()}\n\n`
-      : '';
-
-    const res = await bound.invoke([
-      { role: 'system', content: GRILL_SYSTEM },
-      { role: 'user', content: `${digest}${recalled}Conversation so far:\n${transcript}` },
-    ]);
-    return parseGrillArgs(res.tool_calls?.[0]?.args);
-  }
 }
-
-/** Coerce the raw tool args into a typed `GrillAction`, or undefined if malformed. Exported for tests. */
-export function parseGrillArgs(raw: unknown): GrillAction | undefined {
-  const args = (raw ?? {}) as {
-    verb?: string;
-    question?: string;
-    title?: string;
-    kind?: string;
-    overview?: string;
-    decisions?: Array<{ decisionClass?: string; title?: string; ruling?: string }>;
-    sectionBriefs?: string[];
-  };
-  if (args.verb === 'ask_question') {
-    if (!args.question) return undefined;
-    return { verb: 'ask_question', question: args.question };
-  }
-  if (args.verb === 'propose_plan') {
-    const decisions = (args.decisions ?? [])
-      .filter((d) => d.decisionClass && d.title && d.ruling)
-      .map((d) => ({
-        decisionClass: d.decisionClass as GrillProposedDecisionClass,
-        title: d.title as string,
-        ruling: d.ruling as string,
-      }));
-    return {
-      verb: 'propose_plan',
-      title: args.title ?? 'Untitled',
-      kind: args.kind === 'bugfix' ? 'bugfix' : 'feature',
-      overview: args.overview ?? '',
-      decisions,
-      sectionBriefs: (args.sectionBriefs ?? []).filter((b): b is string => Boolean(b)),
-    };
-  }
-  return undefined;
-}
-
-type GrillProposedDecisionClass = import('../domain').DecisionClass;

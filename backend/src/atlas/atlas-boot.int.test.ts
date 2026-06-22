@@ -4,10 +4,11 @@ import { afterEach } from 'vitest';
 import { AgentChatSurface } from './agent-surface';
 import { AtlasModule } from './atlas.module';
 import {
-  ConversationalBrainService,
+  AgentSessionManager,
   DecisionApprovalService,
+  EventTriageService,
   JOB_DISPATCHER,
-  TriageService,
+  StimulusRouter,
   type JobDispatcher,
 } from './brain';
 import { SectionDriver } from './driver';
@@ -45,16 +46,17 @@ describe('AtlasModule HTTP boot (full DI assembly, live Postgres)', () => {
     expect(app.get(GithubIngressController)).toBeDefined();
     expect(app.get(WebhookIngressController)).toBeDefined();
 
-    // W3 brain services resolved — proves the brain graph (LLM port, store, classifier + memory deps)
+    // R3 brain services resolved — proves the brain graph (LLM port, store, classifier + memory deps)
     // is DI-complete, the guard against shipping a typecheck-only DI bug.
-    const triage = app.get(TriageService);
-    expect(triage).toBeDefined();
-    expect(app.get(ConversationalBrainService)).toBeDefined();
+    const router = app.get(StimulusRouter);
+    expect(router).toBeDefined();
+    expect(app.get(AgentSessionManager)).toBeDefined();
+    expect(app.get(EventTriageService)).toBeDefined();
     expect(app.get(DecisionApprovalService)).toBeDefined();
 
-    // The INPUT seam: STIMULUS_CONSUMER is the brain's triage (NOT W2's logging no-op).
+    // The INPUT seam: STIMULUS_CONSUMER is the brain's StimulusRouter (NOT W2's logging no-op).
     const consumer = app.get<StimulusConsumer>(STIMULUS_CONSUMER);
-    expect(consumer).toBe(triage);
+    expect(consumer).toBe(router);
 
     // The OUTPUT seam: JOB_DISPATCHER resolves to W4's real SectionDriver (the no-op is OVERRIDDEN —
     // BrainModule no longer binds it; DriverModule's @Global useExisting: SectionDriver wins). This is
@@ -109,7 +111,7 @@ describe('AtlasModule boot with ATLAS_SURFACE=agent (the programmatic surface)',
     expect(bound.name).toBe('agent');
 
     // The brain + dispatcher still resolve — the surface swap doesn't disturb the rest of the graph.
-    expect(app.get(TriageService)).toBeDefined();
+    expect(app.get(StimulusRouter)).toBeDefined();
     expect(app.get(SectionDriver)).toBeDefined();
 
     await app.close();

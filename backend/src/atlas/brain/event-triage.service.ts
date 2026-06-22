@@ -4,104 +4,37 @@ import {
   ParkAndAskService,
   type ClassifierRecord,
 } from '../decision-gate';
-import type { ChatStimulus, EventStimulus, Job, Stimulus } from '../domain';
-import { type StimulusConsumer } from '../stimulus';
+import type { EventStimulus, Job } from '../domain';
 import { ATLAS_BRAIN_LLM, type BrainLlm } from './brain-llm';
 import { BrainStoreService } from './brain-store.service';
-import { ConversationalBrainService } from './conversational-brain.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
 
 /**
- * W3 — TRIAGE. The brain's intake doorstep, bound as the `STIMULUS_CONSUMER` (replacing W2's logging
- * no-op). For each surviving stimulus it runs ONE cheap triage turn → ignore / ask / dispatch:
+ * R3 — EVENT TRIAGE (extracted verbatim from the TriageService event lane).
  *
- *  - CHAT (trusted, from the operator) drives the conversational flow: an actionable chat opens / continues
- *    a scoping conversation in the `ConversationalBrainService` (the grill). Pure noise is ignored.
- *  - EVENT (untrusted notification) is triaged as DATA, never instructions (the body is already fenced).
- *    The always-ask decision-class gate is the SECURITY CONTROL: a clean bugfix (no always-ask touched)
- *    may dispatch straight to the driver; anything touching an always-ask class — including an injected
- *    "go delete prod" — PARKS & asks rather than executing.
- *
- * Legible by construction: a small structured turn decides whether/what; HOW is the driver's (W4).
- * Zero v1 imports.
+ * Handles untrusted notification events: triage LLM verdict → always-ask classifier → park-and-ask OR
+ * autonomous bugfix dispatch. The SECURITY CONTROL (always-ask gate) is unchanged. This extraction
+ * is purely structural — the event behavior is identical to the old TriageService.triageEvent path;
+ * no logic changed.
  */
 @Injectable()
-export class TriageService implements StimulusConsumer {
-  private readonly logger = new Logger(TriageService.name);
+export class EventTriageService {
+  private readonly logger = new Logger(EventTriageService.name);
 
   constructor(
     @Inject(ATLAS_BRAIN_LLM) private readonly llm: BrainLlm,
-    private readonly brain: ConversationalBrainService,
     private readonly classifier: DecisionClassifier,
     private readonly parkAndAsk: ParkAndAskService,
     private readonly store: BrainStoreService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
-  /** Called once per surviving stimulus (after normalization + persistence). */
-  async consume(stimulus: Stimulus): Promise<void> {
-    if (stimulus.kind === 'chat') {
-      await this.triageChat(stimulus);
-    } else {
-      await this.triageEvent(stimulus);
-    }
-  }
-
-  /**
-   * Triage a trusted chat message. An actionable message opens / continues a scoping conversation; pure
-   * noise is ignored. (A chat in an already-open scoping thread always continues the grill — the human
-   * is mid-conversation.)
-   */
-  private async triageChat(stimulus: ChatStimulus): Promise<void> {
-    // Already scoping this thread → keep grilling; don't re-triage mid-conversation.
-    const openJob = await this.store.openJobOnThread(stimulus.threadId);
-    if (openJob) {
-      await this.brain.handleChatTurn(stimulus);
-      return;
-    }
-
-    const action = await this.llm.triage({
-      kind: 'chat',
-      body: stimulus.body,
-      teamId: stimulus.teamId,
-    });
-
-    // A non-work QUESTION (issue #6) → answer it conversationally, repo-grounded, with NO job opened.
-    if (action?.verb === 'answer') {
-      this.logger.log(`chat answered (question): ${action.reason}`);
-      await this.brain.answerQuestion(stimulus);
-      return;
-    }
-
-    // No key / malformed → treat an opening chat as actionable (open a conversation), never silently drop.
-    if (!action || action.verb !== 'ignore') {
-      this.logger.log(
-        `chat triaged → ${action?.verb ?? 'ask (no-llm default)'}: ${action?.reason ?? stimulus.body.slice(0, 60)}`,
-      );
-      // Anchor the grill with a `scoping` job NOW, so every follow-up in this thread continues the
-      // conversation (it matches `openJobOnThread` above) instead of being re-triaged turn-by-turn — a
-      // re-triaged answer like "use your best judgment" otherwise reads as a non-actionable meta-instruction
-      // and gets dropped, killing the grill. `propose_plan`'s `ensureJob` reuses this same job and
-      // `persistPlan` sets the real kind/title; a provisional `feature` kind is fine.
-      await this.store.openJob({
-        teamId: stimulus.teamId,
-        projectId: stimulus.projectId,
-        threadId: stimulus.threadId,
-        title: title(stimulus.body),
-        kind: 'feature',
-      });
-      await this.brain.handleChatTurn(stimulus);
-      return;
-    }
-    this.logger.log(`chat ignored: ${action.reason}`);
-  }
-
   /**
    * Triage an untrusted notification event. The body is DATA, already fenced. `ignore` drops it;
    * `ask` / `dispatch` route through the always-ask gate before any work happens — a clean bugfix
    * dispatches, an always-ask (or injected destructive ask) PARKS.
    */
-  private async triageEvent(stimulus: EventStimulus): Promise<void> {
+  async triageEvent(stimulus: EventStimulus): Promise<void> {
     // The intake seam seeded a thread for this event; resolve its id (the in-memory shape doesn't carry it).
     const threadId = await this.store.eventThreadId(stimulus.id);
     if (!threadId) {
@@ -188,7 +121,7 @@ export class TriageService implements StimulusConsumer {
       teamId: stimulus.teamId,
       projectId: stimulus.projectId,
       threadId,
-      title: title(summary),
+      title: jobTitle(summary),
       kind: 'bugfix',
     });
     // A bugfix has one section and no upfront decision record (the gate already cleared it).
@@ -196,7 +129,7 @@ export class TriageService implements StimulusConsumer {
       teamId: stimulus.teamId,
       projectId: stimulus.projectId,
       jobId,
-      title: title(summary),
+      title: jobTitle(summary),
       kind: 'bugfix',
       overview: summary,
       decisions: [],
@@ -215,7 +148,7 @@ function requireRecordId(job: Job): string {
 }
 
 /** A short job title from a summary line. */
-function title(summary: string): string {
+function jobTitle(summary: string): string {
   const firstLine = summary.split('\n').map((l) => l.trim()).find(Boolean) ?? summary;
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }

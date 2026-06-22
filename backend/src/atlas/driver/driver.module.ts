@@ -80,7 +80,7 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
     { provide: JOB_DISPATCHER, useExisting: SectionDriver },
   ],
-  exports: [SectionDriver, JOB_DISPATCHER, ThreadLifecycleService],
+  exports: [SectionDriver, JOB_DISPATCHER, ThreadLifecycleService, DriverStoreService],
 })
 export class DriverModule implements OnApplicationBootstrap {
   constructor(

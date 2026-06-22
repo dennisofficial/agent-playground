@@ -55,4 +55,12 @@ export class AtlasThreadSandbox extends TimestampedEntity {
   /** 'provisioning' | 'ready' | 'branched' | 'teardown' */
   @Column({ type: 'text', default: 'provisioning' })
   lifecycle!: string;
+
+  /**
+   * The Claude Agent SDK session id for the per-thread conversational session (the AgentSessionManager
+   * chat brain). Persisted so the session can be resumed across host restarts. Null before the first
+   * conversational turn.
+   */
+  @Column({ type: 'text', nullable: true })
+  session_id!: string | null;
 }
