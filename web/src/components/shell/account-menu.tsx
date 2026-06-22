@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { LogOut, Settings, Users } from 'lucide-react';
 import { auth } from '@/lib/auth';
@@ -20,7 +19,6 @@ function initials(name: string): string {
 
 /** Avatar + account menu (Signed in as / Workspace settings / Switch account / Sign out). */
 export function AccountMenu() {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -34,7 +32,9 @@ export function AccountMenu() {
 
   function signOut() {
     auth.signOut();
-    router.replace(ROUTES.auth.signedOut());
+    // Hard nav so the signed-out screen wins the race against the PrivateGuard's
+    // unauthenticated → /auth/login redirect on the current protected route.
+    window.location.assign(ROUTES.auth.signedOut());
   }
 
   return (
