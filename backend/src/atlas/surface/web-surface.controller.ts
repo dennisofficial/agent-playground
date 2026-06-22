@@ -4,12 +4,14 @@ import {
   Controller,
   Get,
   Logger,
+  NotFoundException,
   Post,
   Query,
   Sse,
 } from '@nestjs/common';
 import { Observable, filter, map } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
+import { EnvService } from '@core/config/env/env.service';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
@@ -69,9 +71,21 @@ export class WebSurfaceController {
   private readonly logger = new Logger(WebSurfaceController.name);
 
   constructor(
+    private readonly env: EnvService,
     private readonly surface: AtlasWebSurface,
     private readonly driverStore: DriverStoreService,
   ) {}
+
+  /**
+   * Kill-switch for the control endpoints — 404 unless `ATLAS_SURFACE=web`.
+   * The controller is always registered (keeps the module graph simple); only the flag gates.
+   * TODO: authn — add operator authentication before exposing to a network boundary.
+   */
+  private assertWebEnabled(): void {
+    if (this.env.get('ATLAS_SURFACE') !== 'web') {
+      throw new NotFoundException('Web surface control endpoints are disabled (set ATLAS_SURFACE=web).');
+    }
+  }
 
   /**
    * SSE stream — `GET /web/events?channel=<channel>`. Clients subscribe once and receive every
@@ -83,6 +97,7 @@ export class WebSurfaceController {
    */
   @Sse('events')
   events(@Query('channel') channel: string): Observable<MessageEvent> {
+    this.assertWebEnabled(); // TODO: authn
     if (!channel) {
       throw new BadRequestException('channel query param is required');
     }
@@ -99,6 +114,7 @@ export class WebSurfaceController {
    */
   @Post('say')
   say(@Body() body: WebSayRequest): { ts: string } {
+    this.assertWebEnabled(); // TODO: authn
     const { channel, text, threadTs, authorId, authorName, teamId } = body;
     if (!channel || !text) {
       throw new BadRequestException('channel and text are required');
@@ -119,6 +135,7 @@ export class WebSurfaceController {
    */
   @Post('approve')
   approve(@Body() body: WebApproveRequest): { ok: boolean; jobId?: string } {
+    this.assertWebEnabled(); // TODO: authn
     const { actionId, value, ruledBy, note: _note } = body;
     if (!actionId || !value || !ruledBy) {
       throw new BadRequestException('actionId, value, and ruledBy are required');
@@ -145,6 +162,7 @@ export class WebSurfaceController {
     @Query('channel') channel: string,
     @Query('threadTs') threadTs?: string,
   ): WebOutboundMessage[] {
+    this.assertWebEnabled(); // TODO: authn
     if (!channel) {
       throw new BadRequestException('channel query param is required');
     }
@@ -164,6 +182,7 @@ export class WebSurfaceController {
     @Query('threadId') threadId: string,
     @Query('teamId') teamId: string,
   ): Promise<unknown> {
+    this.assertWebEnabled(); // TODO: authn
     if (!threadId || !teamId) {
       throw new BadRequestException('threadId and teamId query params are required');
     }

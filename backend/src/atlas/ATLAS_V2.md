@@ -148,3 +148,72 @@ A coding agent hitting a **401 / expired credentials** mid-turn must NOT lose wo
 **Caveats / follow-ups:**
 - **Git divergence (reconcile at merge):** this work is uncommitted atop `f82a748`; `origin/main` is +6 (`c837182`, the "atlas tuning loop" — which added phase/job **timeouts** + failure/progress relay, touching `turn-runner`/`driver`). The early-persist here composes with their timeout (timeout aborts a hung turn → re-run resumes the saved session), but the merge needs a hand-reconcile.
 - **No in-process credential hot-swap** (v1's `rotate-keys` is gone): "fix creds" means updating the env (typically a restart), then pinging; the paused job survives. Follow-ups: a `rotate-keys`-style tool that refreshes creds + auto-resumes paused jobs, and a Slack "continue" → `resumePaused` trigger.
+
+---
+
+## 10. Atlas v2.1 redesign — web app + SDK-as-brain, multi-tenant-isolated (BUILT, R0–R6)
+
+> Plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-greedy-parnas.md`. Completed in one session (R0–R6, all green).
+
+### 10.1 What changed
+
+**Surface** — `ATLAS_SURFACE=web` binds `AtlasWebSurface` (SSE + REST). The Slack adapter is kept dormant (`ATLAS_SURFACE=slack` still works, all providers always constructed). The web surface controller (`surface/web-surface.controller.ts`) registers at `GET /web/events` (SSE), `POST /web/say`, `POST /web/approve`, `GET /web/thread`, `GET /web/pipeline`. All five control endpoints are **flag-gated** (`ATLAS_SURFACE=web` required — 404 otherwise; `// TODO: authn` marks the authentication follow-up). `GET /web/ping` and `GET /web/channels` are always-on liveness/dev probes. Approval clicks arrive at `POST /web/approve` → `AtlasWebSurface.approval$` → `DecisionApprovalService.resolve` (no circular dep).
+
+**SDK-as-brain** (`brain/agent-session-manager.service.ts`) — replaces `ConversationalBrainService` + `ScopingInvestigatorService` (both deleted). Each chat stimulus runs an in-sandbox Claude Agent SDK session (`AgentSessionManager.handleChatTurn`) with 6 host-side tools:
+- `get_pipeline_state` → `DriverStoreService.getPipelineState`
+- `get_decision_record` → `DriverStoreService.getDecisionRecord`
+- `recall` / `remember` → `AtlasMemoryStore`
+- `submit_plan` → `BrainStoreService.persistPlan` + Codex pre-review (R4) + approval card
+- `dispatch_build` → `JOB_DISPATCHER` (gated: only after operator approval)
+
+The session uses **custom plan mode** — the system prompt instructs the model to call `submit_plan` instead of the SDK's native `ExitPlanMode`. Two-level planning is preserved: `submit_plan` persists a detailed decision record + section specs; per-section JIT `planSection` in the driver is unchanged.
+
+**Intake split** (`brain/stimulus-router.service.ts`) — `StimulusRouter` is bound as `STIMULUS_CONSUMER`. Chat → `AgentSessionManager`; events → `EventTriageService` (verbatim extract of the old event triage path; behavior unchanged). The security gate (always-ask classifier on untrusted events) is untouched.
+
+**Tool bridge** (`engine/tool-bridge-host.ts`, R1) — bidirectional NDJSON frame protocol over docker exec or local subprocess stdio. In-container entrypoint emits `{t:'tool_request', id, name, args}`; host answers with `{t:'tool_response', id, result}` or `{t:'tool_error', id, message}`. All tool requests are **scoped to the owning thread** (a `threadId` field in args must match — cross-thread requests denied). `LocalToolBridgeRunner` provides offline/CI operation without Docker.
+
+**Per-thread sandbox lifecycle** (`driver/thread-lifecycle.service.ts`, R2) — explicit `createThread` control path: operator picks base branch → provision sandbox on base branch → `atlas_thread_sandboxes` row (lifecycle: `provisioning → ready`). On approval: `branchSwitch` cuts the feature branch in-place → lifecycle `branched`. Build phases reuse the same sandbox. The inbound-derived chat path still works (falls back to the old per-feature worktree path when no sandbox row exists — backward-compatible).
+
+**Codex plan pre-review** (`brain/plan-review.service.ts`, R4) — on first `submit_plan` for a job: runs ONE Codex turn in the thread's sandbox (read-only; `mode: 'review'`), parses `FINDING:` lines, relays back into the Claude session for one revision. Second call for the same job: one-pass guard fires → returns `null` → straight to approval card. Uses `ENGINE_RUNNER` (the sandboxed runner when in docker mode). Best-effort: Codex failure is logged + treated as no findings (never blocks the build).
+
+**Host-git policy** (`git/local-git.service.ts`) — all git invocations run with `core.hooksPath=/dev/null`, `core.fsmonitor=false`, LFS filters disabled (`filter.lfs.clean=`, `.smudge=`, `.process=`, `.required=false`), and `GIT_CONFIG_NOSYSTEM=1`. Flags are prepended unconditionally in the private `git()` method — no caller can accidentally omit them.
+
+### 10.2 Multi-tenancy invariant
+
+The invariant: **the host runs no tenant agent turns and no tenant-controlled code**. Brain and build turns execute in-sandbox. The GitHub token never enters the sandbox (git/PR stay host-side). Host git runs with hooks/filters disabled. Two concurrent threads get two isolated sandboxes on separate networks; neither can invoke the other's tools (enforced by `ToolBridgeHost` thread-scope check).
+
+Verified by `r6-invariants.spec.ts` (20 tests, no I/O):
+- `(a)` host-git safety flags present in `LocalGitService` source
+- `(b)` `ScopingInvestigatorService` deleted; `EngineRunner` (host) not imported directly in `brain/` or `driver/` or `runner/`
+- `(c)` cross-thread scope denial covered in `sandbox/tool-bridge.spec.ts` (R1 gate: subprocess-based live transport test)
+- `(d)` web control endpoints flag-gated and guard `NotFoundException` on `ATLAS_SURFACE != 'web'`
+
+### 10.3 New env vars
+
+| Var | Default | Effect |
+|---|---|---|
+| `ATLAS_SURFACE` | `slack` | `web` = SSE+REST web surface; `agent` = in-process test surface; `slack` = Slack adapter (dormant) |
+
+No new env vars beyond `ATLAS_SURFACE` (already existed; `web` value is new). All others (surface/sandbox/git) were already in `validation.ts`.
+
+### 10.4 Commands
+
+```
+# Web surface dev run:
+ATLAS_SURFACE=web pnpm -C backend atlas:dev
+
+# Offline e2e (agent surface — unchanged, no Docker needed):
+pnpm -C backend vitest run src/atlas/e2e
+
+# R6 invariant tests:
+pnpm -C backend vitest run src/atlas/r6-invariants.spec.ts
+
+# Full atlas suite:
+pnpm -C backend vitest run src/atlas    # 332+ tests green
+```
+
+### 10.5 Deferred (core spine first)
+
+Mid-build steering ops: user-initiated pause/interject-into-phase/revert-phase/revise-plan + park-durability across restart. The read+submit+dispatch core (the 6 tools + the approval flow + the build) is proven first; these layer on after.
+
+Also deferred: operator authn on the web control endpoints (`// TODO: authn` in `WebSurfaceController`) — currently any caller who can reach the HTTP port can post messages or rule on approvals.

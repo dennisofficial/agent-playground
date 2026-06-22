@@ -1,16 +1,16 @@
 /**
- * W3 — the BRAIN's local types: the small structured turn shapes the chat model returns. The brain is
- * deliberately LEGIBLE — a tiny structured action per turn (a typed verb + its payload), NOT a sprawling
- * tool loop. Two turn shapes, two cheap calls:
+ * W3 — the BRAIN's local types: the small structured turn shapes the triage model returns.
  *
- *  - the TRIAGE turn (`TriageAction`) — one call per surviving stimulus: ignore / ask / dispatch.
- *  - the GRILL turn (`GrillAction`) — one call per chat turn in a scoping thread: ask a clarifying
- *    question, or propose the locked plan (decision record + high-level section list).
+ *  - the TRIAGE turn (`TriageAction`) — one call per surviving EventStimulus: ignore / ask / dispatch.
+ *
+ * Note: `GrillAction` / `GrillVerb` (the structured grill turn) were deleted in R3 along with the
+ * host-side conversational brain (`ConversationalBrainService`). The chat brain is now the in-sandbox
+ * `AgentSessionManager` (Claude Agent SDK session via tool bridge). Only `TriageAction` remains —
+ * the `EventTriageService` still needs it for untrusted notification triage.
  *
  * These are the brain's in-memory currency, separate from both the domain types and the persistence
  * rows. Zero v1 imports.
  */
-import type { Decision, JobKind } from '../domain';
 
 /**
  * What ONE triage turn decides for a stimulus. The model classifies on SUBSTANCE — an `EventStimulus`
@@ -37,35 +37,6 @@ export interface TriageAction {
   summary?: string;
 }
 
-/**
- * What ONE grill turn decides. The brain reads the thread transcript + recalled memory and either asks
- * the next clarifying question (walking the always-ask decision classes) or — once it can lock the
- * architecture/system calls + a high-level section list — proposes the plan for approval.
- *  - `ask_question` — not enough is settled; ask the human ONE focused question.
- *  - `propose_plan` — enough is settled; emit the decision record + section briefs for the approval gate.
- */
-export type GrillVerb = 'ask_question' | 'propose_plan';
-
-/** The grill turn's typed result — a discriminated union on `verb`. */
-export type GrillAction =
-  | {
-      verb: 'ask_question';
-      /** The single clarifying question to post into the thread. */
-      question: string;
-    }
-  | {
-      verb: 'propose_plan';
-      /** Short feature/bugfix title. */
-      title: string;
-      kind: JobKind;
-      /** The agreed overview seeded into every section's plan prompt (intent, stack, constraints). */
-      overview: string;
-      /** The locked architecture/system calls (the always-ask decisions settled in the grill). */
-      decisions: Decision[];
-      /** The high-level section list (one brief per section), in execution order. */
-      sectionBriefs: string[];
-    };
-
 /** A single transcript line the brain reads — author + text, oldest-first. */
 export interface TranscriptLine {
   /** Display name ("Dennis", "Atlas"). */
@@ -75,9 +46,3 @@ export interface TranscriptLine {
   text: string;
 }
 
-/** A recalled memory fact the brain grounds its turn in. */
-export interface RecalledContext {
-  fact: string;
-  /** Cosine similarity to the query (diagnostics). */
-  sim: number;
-}
