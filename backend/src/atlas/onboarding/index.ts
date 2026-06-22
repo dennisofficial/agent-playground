@@ -21,7 +21,5 @@ export {
 export { encryptSecret, decryptSecret, loadSecretsKey } from './secret-cipher';
 export { engineAuthFromEnv } from './env-engine-auth';
 
-// NOTE: the Slack-facing pieces (OnboardingSlackService, SlackInteractivityBridge, SlackOAuthController,
-// OnboardingSurfaceModule) are deliberately NOT re-exported here — they depend on ../brain and ../surface,
-// and re-exporting them from this barrel (which ../brain imports for CredentialResolver) creates a cycle.
-// Import them from their own files (app.module does so for OnboardingSurfaceModule).
+// NOTE: this layer is now credentials-only. The Slack-facing onboarding edge (OAuth install,
+// interactivity bridge, in-Slack card/modal) was removed when Atlas collapsed to the single web surface.

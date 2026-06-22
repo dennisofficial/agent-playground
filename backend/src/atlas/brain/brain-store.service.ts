@@ -20,9 +20,6 @@ export interface ThreadRoute {
   channel: string | null;
   /** The surface-native thread root ts; null until the thread's root is posted. */
   threadTs: string | null;
-  /** Which surface the thread lives on (read from `atlas_threads.surface`) — the `CompositeChatSurface`
-   *  dispatches outbound on it. Undefined for a thread row with no surface (pre-migration / not found). */
-  surfaceId?: string;
 }
 
 /** The persisted output of a locked plan: the job + its decision record + its section rows. */
@@ -109,7 +106,6 @@ export class BrainStoreService {
     return {
       channel: channel?.surface_channel_ref ?? null,
       threadTs: row?.surface_thread_ref ?? null,
-      ...(row?.surface ? { surfaceId: row.surface } : {}),
     };
   }
 

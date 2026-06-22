@@ -4,19 +4,18 @@ import { AcceptanceGateService, type GateConfig } from './acceptance-gate.servic
 import { GateRootModule } from './gate-root.module';
 
 /**
- * The W1 acceptance-gate runner. DEFAULTS TO DRY-RUN (no outward-facing Slack post / PR) — it proves
- * the local engine→git path and reports exactly what the LIVE gate needs. Pass `--live` to actually
- * post to Slack + open a PR (the orchestrator runs this against a Dennis-chosen channel/repo).
+ * The W1 acceptance-gate runner. DEFAULTS TO DRY-RUN (no PR) — it proves the local engine→git path and
+ * reports exactly what the LIVE gate needs. Pass `--live` to actually open a PR (the orchestrator runs
+ * this against a Dennis-chosen repo).
  *
  * Flags (env vars also accepted):
  *   --repo <https-url>      the GitHub repo (env: ATLAS_GATE_REPO)
  *   --base <branch>         PR base branch (default: the repo's default)
- *   --channel <C0…>         Slack channel id for the thread (env: ATLAS_GATE_CHANNEL)
  *   --engine <claude|codex> which engine to drive the local turn (default claude)
- *   --live                  fire the outward-facing steps (default: dry-run)
+ *   --live                  fire the outward-facing step (default: dry-run)
  *
  * Run (dry-run):  pnpm atlas:gate -- --repo https://github.com/<owner>/<repo>
- * Run (live):     pnpm atlas:gate -- --live --repo https://github.com/<owner>/<repo> --channel C0XXXXXXX
+ * Run (live):     pnpm atlas:gate -- --live --repo https://github.com/<owner>/<repo>
  */
 function parseArgs(argv: string[]): { config: GateConfig | null; error?: string } {
   const get = (flag: string): string | undefined => {
@@ -40,9 +39,6 @@ function parseArgs(argv: string[]): { config: GateConfig | null; error?: string 
     gitUrl,
     dryRun: !has('--live'),
     ...(get('--base') ? { baseBranch: get('--base') } : {}),
-    ...(get('--channel') ?? process.env.ATLAS_GATE_CHANNEL
-      ? { slackChannel: get('--channel') ?? process.env.ATLAS_GATE_CHANNEL }
-      : {}),
     ...(engine ? { engine } : {}),
   };
   return { config };
@@ -57,8 +53,7 @@ async function main(): Promise<void> {
   }
 
   log.log(
-    `Running W1 acceptance gate (${config.dryRun ? 'DRY-RUN' : 'LIVE'}) against ${config.gitUrl}` +
-      `${config.slackChannel ? ` channel=${config.slackChannel}` : ''}`,
+    `Running W1 acceptance gate (${config.dryRun ? 'DRY-RUN' : 'LIVE'}) against ${config.gitUrl}`,
   );
 
   const app = await NestFactory.createApplicationContext(GateRootModule, {
@@ -71,7 +66,6 @@ async function main(): Promise<void> {
     log.log('── Gate result ──');
     for (const s of result.steps) log.log(`  ${s.ok ? '✓' : '✗'} ${s.name}: ${s.detail}`);
     if (result.prUrl) log.log(`  PR: ${result.prUrl}`);
-    if (result.threadTs) log.log(`  Slack thread: ${result.threadTs}`);
     log.log(`Gate ${result.ok ? 'PASSED' : 'FAILED'}.`);
     await app.close();
     process.exit(result.ok ? 0 : 1);

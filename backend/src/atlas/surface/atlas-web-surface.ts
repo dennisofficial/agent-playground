@@ -24,14 +24,6 @@ export interface WebOutboundMessage {
   postedAt: Date;
 }
 
-/** A reaction Atlas added/removed — surfaced to SSE subscribers. */
-export interface WebReaction {
-  kind: 'add' | 'remove';
-  channel: string;
-  ts: string;
-  emoji: string;
-}
-
 /** Options for injecting a human message (programmatic / REST ingress). */
 export interface WebInboundOptions {
   threadTs?: string;
@@ -82,7 +74,6 @@ export class AtlasWebSurface implements ChatSurface {
 
   /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
   readonly outbox: WebOutboundMessage[] = [];
-  readonly reactions: WebReaction[] = [];
 
   private seq = 0;
   private readonly defaultTeamId = DEFAULT_TEAM_ID;
@@ -125,7 +116,6 @@ export class AtlasWebSurface implements ChatSurface {
       teamId: opts.teamId ?? this.defaultTeamId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
-      surface: this.name,
       ts: new Date(),
     };
     this.logger.debug(
@@ -176,14 +166,6 @@ export class AtlasWebSurface implements ChatSurface {
     return ts;
   }
 
-  async react(channel: string, ts: string, emoji: string): Promise<void> {
-    this.reactions.push({ kind: 'add', channel, ts, emoji });
-  }
-
-  async unreact(channel: string, ts: string, emoji: string): Promise<void> {
-    this.reactions.push({ kind: 'remove', channel, ts, emoji });
-  }
-
   /**
    * Update a posted message in-place (edit the web card after a verdict). Mutates the outbox entry so
    * a history fetch reflects the verdict, and emits an outbound event with the same ts so live SSE
@@ -215,7 +197,6 @@ export class AtlasWebSurface implements ChatSurface {
   /** Clear (between test scenarios). */
   reset(): void {
     this.outbox.length = 0;
-    this.reactions.length = 0;
   }
 
   private mintTs(): string {

@@ -10,14 +10,11 @@ import { StimulusModule } from '../stimulus';
 import { SurfaceModule } from '../surface';
 import { MemoryModule } from '../memory';
 import { OnboardingModule } from '../onboarding';
-// Specific path (not the barrel): this module depends on ../brain + ../surface, so re-exporting it from
-// the onboarding barrel that ../brain imports would form an import cycle.
-import { OnboardingSurfaceModule } from '../onboarding/onboarding-surface.module';
 import { TestBridgeModule } from '../test-bridge';
 
 /**
  * Atlas v2 APP layer — the composition seam for the edge and the local execution substrate:
- *  - `SurfaceModule` — the thread-aware `ChatSurface` + minimal Atlas Slack adapter (the CHAT_SURFACE);
+ *  - `SurfaceModule` — the thread-aware `ChatSurface` (web SSE/REST in prod, agent in tests) = CHAT_SURFACE;
  *  - `RunnerModule` — the local turn-runner + engine + git substrates (host-only, daemon-free);
  *  - `MemoryModule` — the pgvector semantic-memory primitives;
  *  - `StimulusModule` (W2) — the intake seam: both edges (chat + notification) converge into one
@@ -52,9 +49,6 @@ import { TestBridgeModule } from '../test-bridge';
     AutoFixModule,
     BrainModule,
     DriverModule,
-    // The Slack-facing onboarding edge — imported AFTER surface/brain/onboarding so their @Global
-    // providers exist when its interactivity bridge + OAuth controller instantiate.
-    OnboardingSurfaceModule,
     TestBridgeModule,
   ],
 })

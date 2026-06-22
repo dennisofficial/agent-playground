@@ -4,21 +4,18 @@ import {
   Controller,
   Get,
   Logger,
-  NotFoundException,
   Post,
   Query,
   Sse,
 } from '@nestjs/common';
 import { Observable, filter, map } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
-import { EnvService } from '@core/config/env/env.service';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
 } from './approval-blocks';
 import { AtlasWebSurface } from './atlas-web-surface';
-import { isSurfaceEnabled } from './enabled-surfaces';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebOutboundMessage } from './atlas-web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
@@ -72,29 +69,12 @@ export class WebSurfaceController {
   private readonly logger = new Logger(WebSurfaceController.name);
 
   constructor(
-    private readonly env: EnvService,
     private readonly surface: AtlasWebSurface,
     private readonly driverStore: DriverStoreService,
   ) {}
 
-  /**
-   * Kill-switch for the control endpoints — 404 unless the `web` surface is enabled (in `ATLAS_SURFACES`
-   * or the legacy `ATLAS_SURFACE` alias). The controller is always registered (keeps the module graph
-   * simple); only the enabled-set gate decides. With multiple surfaces live, web can be enabled
-   * alongside Slack.
-   * TODO: authn — add operator authentication before exposing to a network boundary.
-   */
-  private assertWebEnabled(): void {
-    const enabled = isSurfaceEnabled('web', {
-      surfaces: this.env.get('ATLAS_SURFACES'),
-      surface: this.env.get('ATLAS_SURFACE'),
-    });
-    if (!enabled) {
-      throw new NotFoundException(
-        'Web surface control endpoints are disabled (enable "web" in ATLAS_SURFACES).',
-      );
-    }
-  }
+  // TODO: authn — add operator authentication before exposing these control endpoints to a network
+  // boundary. Web is the production surface, so the endpoints are always mounted/active.
 
   /**
    * SSE stream — `GET /web/events?channel=<channel>`. Clients subscribe once and receive every
@@ -106,7 +86,6 @@ export class WebSurfaceController {
    */
   @Sse('events')
   events(@Query('channel') channel: string): Observable<MessageEvent> {
-    this.assertWebEnabled(); // TODO: authn
     if (!channel) {
       throw new BadRequestException('channel query param is required');
     }
@@ -123,7 +102,6 @@ export class WebSurfaceController {
    */
   @Post('say')
   say(@Body() body: WebSayRequest): { ts: string } {
-    this.assertWebEnabled(); // TODO: authn
     const { channel, text, threadTs, authorId, authorName, teamId } = body;
     if (!channel || !text) {
       throw new BadRequestException('channel and text are required');
@@ -144,7 +122,6 @@ export class WebSurfaceController {
    */
   @Post('approve')
   approve(@Body() body: WebApproveRequest): { ok: boolean; jobId?: string } {
-    this.assertWebEnabled(); // TODO: authn
     const { actionId, value, ruledBy, note: _note } = body;
     if (!actionId || !value || !ruledBy) {
       throw new BadRequestException('actionId, value, and ruledBy are required');
@@ -171,7 +148,6 @@ export class WebSurfaceController {
     @Query('channel') channel: string,
     @Query('threadTs') threadTs?: string,
   ): WebOutboundMessage[] {
-    this.assertWebEnabled(); // TODO: authn
     if (!channel) {
       throw new BadRequestException('channel query param is required');
     }
@@ -191,7 +167,6 @@ export class WebSurfaceController {
     @Query('threadId') threadId: string,
     @Query('teamId') teamId: string,
   ): Promise<unknown> {
-    this.assertWebEnabled(); // TODO: authn
     if (!threadId || !teamId) {
       throw new BadRequestException('threadId and teamId query params are required');
     }

@@ -21,14 +21,6 @@ export interface OutboundChatMessage {
   postedAt: Date;
 }
 
-/** A reaction Atlas added/removed, captured for inspection. */
-export interface RecordedReaction {
-  kind: 'add' | 'remove';
-  channel: string;
-  ts: string;
-  emoji: string;
-}
-
 /** Options for `sendFromHuman` — the simulated operator + thread the message lands in. */
 export interface SendOptions {
   /** Reply into this thread (the thread root ts). Omit to open a new top-level conversation. */
@@ -59,7 +51,7 @@ const DEFAULT_AUTHOR_NAME = 'Dennis';
  * lets a PROGRAM (me / a build sub-agent / a test) DRIVE Atlas end-to-end with no Slack — the seam W9
  * boots to script a brain → driver → PR feature drive.
  *
- * It is symmetrical to `AtlasSlackSurface`:
+ * It is symmetrical to the web surface (`AtlasWebSurface`):
  *  - INBOUND (toward Atlas): `sendFromHuman(channel, text, { threadTs })` injects a human message onto
  *    `inbound$` exactly as if Dennis typed it — the chat bridge maps it to a `ChatStimulus`. Threading
  *    is honored: pass the root ts (the first post's ts) as `threadTs` to continue a job's thread.
@@ -85,8 +77,6 @@ export class AgentChatSurface implements ChatSurface {
 
   /** Every message Atlas posted, in order — the inspectable outbox. */
   readonly outbox: OutboundChatMessage[] = [];
-  /** Every reaction Atlas added/removed, in order. */
-  readonly reactions: RecordedReaction[] = [];
 
   private seq = 0;
   /** The default tenant id stamped on injected human messages (overridable per `sendFromHuman`). */
@@ -119,7 +109,6 @@ export class AgentChatSurface implements ChatSurface {
       teamId: opts.teamId ?? this.teamId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
-      surface: this.name,
       ts: new Date(),
     };
     this.logger.debug(`sendFromHuman → ${channel}${opts.threadTs ? ` (thread ${opts.threadTs})` : ''}: ${text.slice(0, 80)}`);
@@ -143,14 +132,6 @@ export class AgentChatSurface implements ChatSurface {
     this.outbox.push(message);
     this.outboundSubject.next(message);
     return ts;
-  }
-
-  async react(channel: string, ts: string, emoji: string): Promise<void> {
-    this.reactions.push({ kind: 'add', channel, ts, emoji });
-  }
-
-  async unreact(channel: string, ts: string, emoji: string): Promise<void> {
-    this.reactions.push({ kind: 'remove', channel, ts, emoji });
   }
 
   // ── DRIVER READ API: read Atlas's replies, continue the conversation ────────────────────────────
@@ -212,7 +193,6 @@ export class AgentChatSurface implements ChatSurface {
   /** Clear the captured logs (between scripted scenarios in one boot). */
   reset(): void {
     this.outbox.length = 0;
-    this.reactions.length = 0;
   }
 
   private mintTs(): string {

@@ -9,7 +9,6 @@ import {
   type FeatureSandbox,
 } from '../git';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
-import { AtlasSlackSurface } from '../surface';
 
 /** Everything the live gate needs, resolved from env (with explicit overrides for a scripted run). */
 export interface GateConfig {
@@ -17,9 +16,7 @@ export interface GateConfig {
   gitUrl: string;
   /** PR base branch (default: the repo's detected default). */
   baseBranch?: string;
-  /** Slack channel id to post the progress thread into. */
-  slackChannel?: string;
-  /** When true, BUILD + run the local steps but DO NOT post to Slack or open a PR (offline proof). */
+  /** When true, BUILD + run the local steps but DO NOT open a PR (offline proof). */
   dryRun: boolean;
   /** Which engine to drive the one local turn with. */
   engine?: 'claude' | 'codex';
@@ -30,21 +27,18 @@ export interface GateResult {
   steps: Array<{ name: string; ok: boolean; detail: string }>;
   /** The opened PR url, when not dry-run. */
   prUrl?: string;
-  /** The Slack thread root ts, when not dry-run. */
-  threadTs?: string;
 }
 
 /**
  * THE W1 ACCEPTANCE GATE — the single proof that the host-only substrate works end-to-end without a
- * daemon, without v1's SessionRunner / ReviewPipeline / SlackSurfaceModule:
+ * daemon, without v1's SessionRunner / ReviewPipeline:
  *   1. run one ENGINE turn in a fresh local worktree;
  *   2. make a trivial change + COMMIT it;
- *   3. post progress into a Slack THREAD;
- *   4. open a real PR.
+ *   3. open a real PR.
  *
- * Outward-facing steps (3 + 4) are GATED behind `dryRun`: in dry-run they are built + exercised up to
- * the network boundary but not fired (the orchestrator runs the live gate against a Dennis-chosen
- * channel/repo). The engine turn + commit are always local + safe.
+ * The outward-facing step (3) is GATED behind `dryRun`: in dry-run it is built + exercised up to the
+ * network boundary but not fired (the live gate runs against a Dennis-chosen repo). The engine turn +
+ * commit are always local + safe. Surface-free (no chat posting).
  */
 @Injectable()
 export class AcceptanceGateService {
@@ -55,7 +49,6 @@ export class AcceptanceGateService {
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
-    private readonly slack: AtlasSlackSurface,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
   ) {}
 
@@ -135,35 +128,7 @@ export class AcceptanceGateService {
         return { ok: false, steps };
       }
 
-      // ── 4. Post progress into a Slack THREAD ──────────────────────────────────────────────────
-      let threadTs: string | undefined;
-      if (config.dryRun) {
-        record(
-          'slack-thread',
-          this.slack.available,
-          this.slack.available
-            ? 'DRY-RUN: surface bound; would post timeline announce + threaded reply (skipped)'
-            : 'DRY-RUN: no Slack client bound — set ATLAS_SLACK_BOT_TOKEN for the live gate',
-        );
-      } else if (config.slackChannel) {
-        const root = await this.slack.post(
-          config.slackChannel,
-          `:rocket: Atlas v2 gate ${runId}: built a change on \`${branch}\`.`,
-        );
-        threadTs = root;
-        if (root) {
-          await this.slack.post(
-            config.slackChannel,
-            `Committed \`${sha.slice(0, 8)}\` — opening a PR now.`,
-            { threadTs: root },
-          );
-        }
-        record('slack-thread', !!root, root ? `thread root ts=${root}` : 'post returned no ts');
-      } else {
-        record('slack-thread', false, 'no slackChannel configured for the live gate');
-      }
-
-      // ── 5. Push + open a real PR ───────────────────────────────────────────────────────────────
+      // ── 4. Push + open a real PR ───────────────────────────────────────────────────────────────
       let prUrl: string | undefined;
       if (config.dryRun) {
         record(
@@ -176,7 +141,7 @@ export class AcceptanceGateService {
       } else {
         if (!token) {
           record('pull-request', false, 'no GitHub token (ATLAS_GITHUB_TOKEN/GITHUB_TOKEN)');
-          return { ok: false, steps, ...(threadTs ? { threadTs } : {}) };
+          return { ok: false, steps };
         }
         await this.git.push(sandbox);
         const opened = await this.pr.openPullRequest(token, {
@@ -190,11 +155,6 @@ export class AcceptanceGateService {
         });
         prUrl = opened.url;
         record('pull-request', true, `${opened.existing ? 'existing' : 'opened'} ${opened.url}`);
-        if (threadTs && config.slackChannel) {
-          await this.slack.post(config.slackChannel, `:white_check_mark: PR ready: ${opened.url}`, {
-            threadTs,
-          });
-        }
       }
 
       const ok = steps.every((s) => s.ok);
@@ -202,7 +162,6 @@ export class AcceptanceGateService {
         ok,
         steps,
         ...(prUrl ? { prUrl } : {}),
-        ...(threadTs ? { threadTs } : {}),
       };
     } catch (err) {
       record('error', false, err instanceof Error ? (err.stack ?? err.message) : String(err));

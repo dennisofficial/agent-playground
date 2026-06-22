@@ -19,12 +19,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { NotFoundException } from '@nestjs/common';
-import type { EnvService } from '@core/config/env/env.service';
 import { describe, expect, it } from 'vitest';
-import type { DriverStoreService } from './driver/driver-store.service';
-import { AtlasWebSurface } from './surface';
-import { WebSurfaceController } from './surface/web-surface.controller';
 
 const ATLAS_SRC = join(__dirname);
 const LOCAL_GIT_SRC = join(ATLAS_SRC, 'git', 'local-git.service.ts');
@@ -185,73 +180,10 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
   });
 });
 
-// ── (d) Web surface flag-gating ───────────────────────────────────────────────────────────────────
-
-describe('R6 invariant (d): web surface control endpoints flag-gated behind ATLAS_SURFACE=web', () => {
-  /**
-   * The five control endpoints (events, say, approve, pipeline, thread) must 404 unless
-   * `ATLAS_SURFACE=web`.  We assert this by:
-   *   1. Checking the controller source calls `assertWebEnabled()` on each of those handlers.
-   *   2. Directly instantiating the controller with a mock EnvService to prove the guard throws
-   *      `NotFoundException` when the flag is unset, and passes when it is set.
-   */
-  const CONTROLLER_SRC = readFileSync(
-    join(ATLAS_SRC, 'surface', 'web-surface.controller.ts'),
-    'utf8',
-  );
-
-  it('controller source calls assertWebEnabled() on the events endpoint', () => {
-    // The guard call must appear inside the events() handler.
-    const eventsHandlerSnippet = CONTROLLER_SRC.match(/@Sse\('events'\)[\s\S]*?@Sse\('|@Post\('|@Get\('|^}/m)?.[0] ?? CONTROLLER_SRC;
-    // Simpler: just check the source has the guard call AND the @Sse decorator.
-    expect(CONTROLLER_SRC).toContain("@Sse('events')");
-    expect(CONTROLLER_SRC).toContain('this.assertWebEnabled()');
-  });
-
-  it('controller source guards all 5 control endpoints with assertWebEnabled()', () => {
-    // Each of the 5 control handler method bodies must call assertWebEnabled().
-    // We count occurrences — there should be at least 5 (one per control endpoint).
-    const guardCalls = (CONTROLLER_SRC.match(/this\.assertWebEnabled\(\)/g) ?? []).length;
-    expect(guardCalls).toBeGreaterThanOrEqual(5);
-  });
-
-  it('controller source has a TODO: authn comment on the guard calls', () => {
-    expect(CONTROLLER_SRC).toContain('TODO: authn');
-  });
-
-  it('assertWebEnabled() gates on whether the "web" surface is enabled (source-level assertion)', () => {
-    // The source-level assertions (above) already prove the guard is present on all 5 endpoints. The
-    // gate is now decoupled from the single ATLAS_SURFACE switch: it asks the enabled-surface resolver
-    // whether `web` is in the enabled set (so web can be live ALONGSIDE Slack), reading ATLAS_SURFACES
-    // (with the legacy ATLAS_SURFACE as a back-compat alias).
-    expect(CONTROLLER_SRC).toContain("isSurfaceEnabled('web'");
-    expect(CONTROLLER_SRC).toContain("env.get('ATLAS_SURFACES')");
-    // The guard throws NotFoundException (not a generic Error) — confirmed by import in source.
-    expect(CONTROLLER_SRC).toContain('NotFoundException');
-  });
-
-  it('the guard throws NotFoundException when web is NOT enabled and passes when it is (runtime)', () => {
-    // Behavioral proof: instantiate the controller with a stub env and call a guarded endpoint
-    // (`thread`). Web disabled → NotFoundException; web enabled (via ATLAS_SURFACES) → no throw.
-    const stubEnv = (vals: Record<string, string | undefined>) =>
-      ({ get: (k: string) => vals[k] }) as unknown as EnvService;
-    const surface = new AtlasWebSurface();
-    const driverStore = {} as unknown as DriverStoreService;
-
-    const disabled = new WebSurfaceController(stubEnv({}), surface, driverStore);
-    expect(() => disabled.thread('C-web')).toThrow(NotFoundException);
-
-    const slackOnly = new WebSurfaceController(stubEnv({ ATLAS_SURFACE: 'slack' }), surface, driverStore);
-    expect(() => slackOnly.thread('C-web')).toThrow(NotFoundException);
-
-    const webEnabled = new WebSurfaceController(
-      stubEnv({ ATLAS_SURFACES: 'web,slack' }),
-      surface,
-      driverStore,
-    );
-    expect(() => webEnabled.thread('C-web')).not.toThrow();
-  });
-});
+// Note: the former (d) "web surface flag-gated" invariant was removed when Atlas collapsed to a single
+// web surface — web is the sole product surface, so its control endpoints are always mounted (no
+// surface-gating to assert). The host-git-safety / no-host-EngineRunner / cross-thread-scope invariants
+// (a)/(b)/(c) above are unaffected.
 
 // ── Helpers ────────────────────────────────────────────────────────────────────────────────────────
 

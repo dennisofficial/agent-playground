@@ -25,19 +25,9 @@ export class AtlasThread extends TimestampedEntity {
   @Column({ type: 'text' })
   origin!: string;
 
-  /** The surface-native thread coordinate (e.g. the Slack root message ts); null until posted. */
+  /** The surface-native thread coordinate (e.g. the root message ts); null until posted. */
   @Column({ type: 'text', nullable: true })
   surface_thread_ref!: string | null;
-
-  /**
-   * Which chat surface this thread lives on ('slack' | 'web' | 'agent'). A thread belongs to exactly ONE
-   * surface, so this is how async outbound (build progress, park-and-ask, the approval card) reaches the
-   * originating surface when several are live — the `CompositeChatSurface` dispatches on it. Defaults to
-   * 'slack' (the only surface that existed before multi-surface; backfills pre-existing rows). Chat-origin
-   * threads set it from the inbound message's surface; event-seeded threads take the default.
-   */
-  @Column({ type: 'text', default: 'slack' })
-  surface!: string;
 
   /** Short human-readable label (the feature/notification title). */
   @Column({ type: 'text', nullable: true })

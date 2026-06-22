@@ -2,49 +2,38 @@ import type { Observable } from 'rxjs';
 
 /**
  * DI token a hosting app binds its surface adapter to
- * (`{ provide: CHAT_SURFACE, useExisting: AtlasSlackSurface }`).
+ * (`{ provide: CHAT_SURFACE, useExisting: AtlasWebSurface }`).
  */
 export const CHAT_SURFACE = Symbol('ATLAS_CHAT_SURFACE');
 
 /**
- * The Atlas v2 thread-aware `ChatSurface` port — a clean-room rewrite of v1's `chat-surface.port.ts`
- * with FIRST-CLASS THREADING, the thing v1's adapter structurally can't do.
+ * The Atlas v2 thread-aware `ChatSurface` port. Atlas talks to people over ONE surface — the web
+ * SSE/REST adapter (`AtlasWebSurface`) in production, the in-process `AgentChatSurface` in tests. The
+ * brain/driver/gates are agnostic to which: they post into a thread and read `inbound$`.
  *
- * Key differences from v1:
- *  - `post` carries an optional `threadTs` and RETURNS the posted message's `ts` (v1 returns void) —
- *    so the caller can seed a thread (the first post's ts) and reply into it (pass that ts back).
- *  - `inbound$` INCLUDES thread replies and carries their `threadTs` (v1 drops thread replies).
- *
- * This realizes the v2 threading model: notifications announce in the main timeline, each job's
- * chatter lives in a thread off the announcement, and the duplex exchange happens IN that thread.
+ * Threading model: each job's chatter lives in a thread (`threadTs`); `post` returns the posted
+ * message's `ts` so a caller can seed a thread and reply into it, and `inbound$` carries each reply's
+ * `threadTs`.
  */
 
 /** A human (or external-system) message arriving FROM the surface. */
 export interface InboundChatMessage {
-  /** Surface-native id (Slack message ts). */
+  /** Surface-native id (the message ts). */
   id: string;
-  /** Stable author id (e.g. a Slack user id). */
+  /** Stable author id. */
   authorId: string;
   /** Display name. */
   authorName: string;
   text: string;
-  /** The tenant (Slack team id). */
+  /** The tenant (team id). */
   teamId: string;
-  /** Surface-native channel coordinate (e.g. a Slack channel id 'C042'). */
+  /** Surface-native channel coordinate. */
   channel: string;
   /**
    * The root ts of the thread this message belongs to, when it's a thread reply. Undefined for a
-   * top-level (timeline) message. THIS is what v1 throws away — it's how Atlas knows which job's
-   * conversation a reply continues.
+   * top-level (timeline) message — it's how Atlas knows which job's conversation a reply continues.
    */
   threadTs?: string;
-  /**
-   * Which chat surface this message arrived on — the originating adapter's `.name` ('slack' | 'web' |
-   * 'agent'). Set by each adapter so the thread can be tagged with its surface and the
-   * `CompositeChatSurface` can route the reply back to the SAME surface. Optional only so legacy /
-   * test fixtures that omit it still construct; every real adapter stamps it.
-   */
-  surface?: string;
   ts: Date;
 }
 
@@ -58,33 +47,24 @@ export interface PostOptions {
   /** Optional Block Kit blocks (e.g. the approval card). `text` is still the notification fallback. */
   blocks?: Array<Record<string, unknown>>;
   /**
-   * The tenant (Slack team id) to post AS — selects that workspace's bot token in the multi-workspace
-   * surface. Omit → the single env-token fallback client (single-tenant dev / headless). A post with a
-   * teamId that has no installed token (and no fallback) is dropped, never mis-routed to another team.
+   * The tenant (team id) to post AS — selects that tenant's credentials. Omit → the default tenant.
    */
   teamId?: string;
   /**
-   * Optional opaque metadata carried by this post — surface-specific consumers may use it to type
-   * events (e.g. the web surface attaches it to `WebOutboundMessage.meta` so SSE subscribers can
-   * distinguish build-phase engine events from conversational chat messages). Other surfaces ignore it.
+   * Optional opaque metadata carried by this post — the web surface attaches it to
+   * `WebOutboundMessage.meta` so SSE subscribers can distinguish build-phase engine events from
+   * conversational chat messages.
    */
   meta?: Record<string, unknown>;
-  /**
-   * Which surface to deliver on — the `CompositeChatSurface` dispatches to the adapter whose `.name`
-   * matches this. A thread belongs to exactly ONE surface, so callers carry it through the route they
-   * already resolve (mirrors `teamId`). Omit → the composite falls back to its sole/default adapter
-   * (legacy rows, single-surface boots). Individual adapters ignore it (they ARE the surface).
-   */
-  surfaceId?: string;
 }
 
 /**
  * The thread-aware chat-surface port — duplex group-chat semantics. The brain/driver is agnostic to
- * WHERE the chat lives: the Slack adapter speaks to a real channel; an agent-facing adapter (W6) lets
- * a test driver send to Atlas and read replies. Both honor threading.
+ * WHERE the chat lives: the web adapter speaks to a web client over SSE/REST; an agent-facing adapter
+ * lets a test driver send to Atlas and read replies. Both honor threading.
  */
 export interface ChatSurface {
-  readonly name: string; // 'slack' | 'agent' | 'web'
+  readonly name: string; // 'web' | 'agent'
   /** Inbound human messages — INCLUDING thread replies (each carrying its `threadTs`). */
   readonly inbound$: Observable<InboundChatMessage>;
   /**
@@ -93,15 +73,10 @@ export interface ChatSurface {
    * post (e.g. no client bound).
    */
   post(channel: string, text: string, opts?: PostOptions): Promise<string | undefined>;
-  /** Add an emoji reaction to a message (by its ts) in a channel; `teamId` selects the workspace token. */
-  react(channel: string, ts: string, emoji: string, teamId?: string): Promise<void>;
-  /** Remove an emoji reaction this surface added (clears a transient marker). */
-  unreact(channel: string, ts: string, emoji: string, teamId?: string): Promise<void>;
   /**
    * OPTIONAL — repaint a previously posted message (e.g. replace the approval card with a verdict
-   * card after the operator rules). The Slack adapter implements this via `chat.update`; the web
-   * adapter mutates the outbox entry and re-emits on `outbound$`; the agent adapter is a no-op.
-   * Surfaces that do NOT support live edits may omit this method — callers check with `canUpdate`.
+   * card after the operator rules). The web adapter mutates the outbox entry and re-emits on
+   * `outbound$`; the agent adapter is a no-op. Surfaces that do NOT support live edits may omit this.
    */
   update?(
     channel: string,

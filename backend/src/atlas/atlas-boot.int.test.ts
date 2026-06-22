@@ -14,12 +14,7 @@ import {
 import { SectionDriver } from './driver';
 import { GithubIngressController, WebhookIngressController } from './ingress';
 import { STIMULUS_CONSUMER, StimulusIntake, type StimulusConsumer } from './stimulus';
-import {
-  AtlasSlackSurface,
-  CHAT_SURFACE,
-  CompositeChatSurface,
-  type ChatSurface,
-} from './surface';
+import { AtlasWebSurface, CHAT_SURFACE, type ChatSurface } from './surface';
 import { TestBridgeController } from './test-bridge';
 
 /**
@@ -31,8 +26,8 @@ import { TestBridgeController } from './test-bridge';
  *
  * It verifies the graph resolves end-to-end: the intake seam, both ingress controllers (with their
  * per-gateway adapters + the routing/store deps injected), and that the Express HTTP server stands up.
- * Then it closes cleanly. The Slack surface is inert without a token (no socket), so no real Slack is
- * needed; the chat bridge's `onApplicationBootstrap` connect is a safe no-op.
+ * Then it closes cleanly. The default web surface has no transport to open, so the chat bridge's
+ * `onApplicationBootstrap` connect is a safe no-op.
  */
 describe('AtlasModule HTTP boot (full DI assembly, live Postgres)', () => {
   it('boots the real composition root via NestFactory.create({ rawBody: true }), resolves the W2 graph, and closes', async () => {
@@ -70,12 +65,10 @@ describe('AtlasModule HTTP boot (full DI assembly, live Postgres)', () => {
     expect(driver).toBeDefined();
     expect(app.get<JobDispatcher>(JOB_DISPATCHER)).toBe(driver);
 
-    // Multi-surface: default (no ATLAS_SURFACES/ATLAS_SURFACE) binds a CompositeChatSurface over the
-    // enabled set, which defaults to just the Slack adapter.
+    // Default (no ATLAS_SURFACE) binds the web SSE/REST adapter — the production surface.
     const boundDefault = app.get<ChatSurface>(CHAT_SURFACE);
-    expect(boundDefault).toBeInstanceOf(CompositeChatSurface);
-    expect((boundDefault as CompositeChatSurface).surfaceNames).toEqual(['slack']);
-    expect(app.get(AtlasSlackSurface)).toBeDefined();
+    expect(boundDefault).toBe(app.get(AtlasWebSurface));
+    expect(boundDefault.name).toBe('web');
 
     // The HTTP routes are registered (the notification HTTP edge the headless context lacked).
     const server = app.getHttpServer();
@@ -114,11 +107,10 @@ describe('AtlasModule boot with ATLAS_SURFACE=agent (the programmatic surface)',
 
     const agent = app.get(AgentChatSurface);
     expect(agent).toBeDefined();
-    // The active CHAT_SURFACE the brain/driver/bridge inject is a composite over just the agent surface
-    // (NOT Slack) — ATLAS_SURFACE=agent resolves the enabled set to ['agent'].
+    // The active CHAT_SURFACE the brain/driver/bridge inject is the agent one (NOT web).
     const bound = app.get<ChatSurface>(CHAT_SURFACE);
-    expect(bound).toBeInstanceOf(CompositeChatSurface);
-    expect((bound as CompositeChatSurface).surfaceNames).toEqual(['agent']);
+    expect(bound).toBe(agent);
+    expect(bound.name).toBe('agent');
 
     // The brain + dispatcher still resolve — the surface swap doesn't disturb the rest of the graph.
     expect(app.get(StimulusRouter)).toBeDefined();

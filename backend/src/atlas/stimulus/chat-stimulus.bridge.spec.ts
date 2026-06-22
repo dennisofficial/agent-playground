@@ -113,20 +113,6 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
     expect(intaken[0].replyRoute).toEqual({ surfaceId: 'slack', threadRef: '100.1' });
   });
 
-  it('tags a NEW thread with the inbound message surface + routes replies to it', async () => {
-    const { bridge, intaken, threadRows } = makeBridge({ channels: [channel()], threads: [] });
-    await bridge.onInbound(msg({ id: '100.1', surface: 'web' }));
-    expect(threadRows[0]).toMatchObject({ surface: 'web', surface_thread_ref: '100.1' });
-    expect(intaken[0].replyRoute).toEqual({ surfaceId: 'web', threadRef: '100.1' });
-  });
-
-  it('replyRoute.surfaceId comes from the inbound message surface, not the (composite) bound name', async () => {
-    // The bound surface is the composite; the message arrived on web — the reply must go back to web.
-    const { bridge, intaken } = makeBridge({ channels: [channel()], threads: [] });
-    await bridge.onInbound(msg({ id: '101.1', surface: 'web' }));
-    expect(intaken[0].replyRoute.surfaceId).toBe('web');
-  });
-
   it('a reply CONTINUES the existing thread (matched by surface_thread_ref) — no new thread', async () => {
     const existing = {
       id: 'thread-7',

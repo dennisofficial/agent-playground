@@ -97,9 +97,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       threadId: thread.id,
       author: { id: msg.authorId, displayName: msg.authorName },
       replyRoute: {
-        // The surface this message ACTUALLY arrived on (the composite's `.name` would be 'composite' —
-        // wrong). Falls back to the thread's persisted surface, then the bound surface name.
-        surfaceId: msg.surface ?? thread.surface ?? this.surface.name,
+        surfaceId: this.surface.name,
         threadRef: thread.surface_thread_ref ?? msg.id,
       },
       receivedAt: msg.ts,
@@ -132,9 +130,6 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
         project_id: channel.project_id,
         origin: 'chat',
         surface_thread_ref: surfaceThreadRef,
-        // Tag the thread with the surface it was started on (so async outbound routes back here). Omit
-        // when the adapter didn't stamp one → the column default ('slack') applies.
-        ...(msg.surface ? { surface: msg.surface } : {}),
         title: null,
       }),
     );

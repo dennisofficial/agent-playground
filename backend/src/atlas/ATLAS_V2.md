@@ -32,7 +32,7 @@ Atlas v2 re-implements the proven semantics **legibly and daemon-free**, in a **
 | Domain | `domain/` | `Stimulus`(`ChatStimulus`/`EventStimulus`), `Job`, `Section`, `Phase`, `DecisionRecord`, `Decision`, `DecisionClass`, `SessionRef`, `JobKind='feature'|'bugfix'`, `NotificationSource` port |
 | Engines | `engine/engine-runner.service.ts` (`EngineRunner`), `engine/claude-auth.ts`, `engine/codex-auth-home.ts`, `engine/engine-home.ts`, `engine/esm.module.ts` | Run one Claude/Codex turn (plan/review/execute), isolated home, creds. ESM SDKs via dynamic import |
 | Git/PR | `git/local-git.service.ts` (`LocalGitService`: ensureRepo, createFeatureSandbox=worktree, commitAll→sha, push, headSha, removeSandbox), `git/github-pr.service.ts` (`GithubPrService`: openPullRequest idempotent, markReadyForReview, commentOnPullRequest), `git/git-auth.ts` (`gitAuthEnv` — token via `GIT_CONFIG_*`, never in argv/.git/config) | Host git worktrees + fetch-based PR client, daemon-free |
-| Surface | `surface/chat-surface.port.ts` (`CHAT_SURFACE`), `surface/atlas-slack-surface.ts` (thread-aware: `post(thread_ts)`, inbound carries `threadTs`), `surface/approval-blocks.ts` (copied pure renderer), `surface/surface.module.ts` (binds a `CompositeChatSurface` over the `ATLAS_SURFACES` enabled set — see §10.6) | The chat edge |
+| Surface | `surface/chat-surface.port.ts` (`CHAT_SURFACE`), `surface/atlas-web-surface.ts` (the SSE/REST web adapter — thread-aware, inbound carries `threadTs`), `surface/approval-blocks.ts` (copied pure renderer), `surface/surface.module.ts` (binds web by default, `agent` in tests — see §10.6) | The chat edge |
 | Agent surface | `agent-surface/agent-chat-surface.ts` (`AgentChatSurface`) | In-process `CHAT_SURFACE` to DRIVE Atlas without Slack: `sendFromHuman`, `outbound$`, `waitForReply`, `waitForApprovalCard`, `reset()` |
 | Intake | `stimulus/stimulus-intake.service.ts` (`StimulusIntake`), `stimulus/stimulus-consumer.ts` (`STIMULUS_CONSUMER` token), `stimulus/event-filter.service.ts` (dedup+rate-limit, no LLM), `stimulus/stimulus-store.service.ts` (seeds thread), `stimulus/project-routing.service.ts`, `stimulus/chat-stimulus.bridge.ts`, `stimulus/untrusted-content.ts`, `stimulus/surface-orchestration.service.ts` (announce headline + backfill thread root); `ingress/github-notification.source.ts` (HMAC `X-Hub-Signature-256`), `ingress/generic-webhook-notification.source.ts`, ingress controllers `POST /ingress/github` + `POST /ingress/webhook` | The notification edge + the one-Stimulus convergence |
 | Brain | `brain/triage.service.ts` (`TriageService` = bound `STIMULUS_CONSUMER`), `brain/conversational-brain.service.ts` (grill), `brain/decision-approval.service.ts`, `brain/job-dispatcher.ts` (`JOB_DISPATCHER` token), `brain/brain-store.service.ts`, `brain/brain-llm.ts` (`ATLAS_BRAIN_LLM`) | Decide whether/what; produce + approve the plan; dispatch |
@@ -66,7 +66,7 @@ pnpm -C backend atlas:gate -- --live --repo <url> --channel <id>   # dry-run wit
 # Full end-to-end (feature + autonomous + injection scenarios), agent surface:
 ATLAS_GITHUB_WEBHOOK_SECRET=<secret> pnpm -C backend atlas:e2e -- --live --repo <url>
 ```
-Env loads via `pnpm dev:env` = `dotenvx run -f .env.local.enc -f .env.personal`. **Key env vars** (all optional, in `_core/config/env/validation.ts`): `ATLAS_SURFACE`(slack|agent, default slack), `ATLAS_HTTP_PORT`(4002), `ATLAS_GITHUB_TOKEN`/`GITHUB_TOKEN`, `ATLAS_GITHUB_WEBHOOK_SECRET`, `ATLAS_WEBHOOK_SECRET`, `ATLAS_REPOS_ROOT`, `ATLAS_AGENT_HOME_ROOT`, `ATLAS_ENGINE_AUTH_MODE`(api_key|subscription), `ATLAS_CLAUDE_OAUTH_TOKEN`, `ATLAS_EVENT_DEDUP_WINDOW_S`, `ATLAS_EVENT_RATE_LIMIT`/`_WINDOW_S`, `ATLAS_MAX_SECTIONS`(12), `ATLAS_MAX_PHASES_PER_SECTION`(8), `ATLAS_WORKER_MODEL`/`ATLAS_CODEX_MODEL`. Reuses `ANTHROPIC_API_KEY`, `CHAT_MODEL`/`GATE_MODEL`, `POSTGRES_*`, `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`.
+Env loads via `pnpm dev:env` = `dotenvx run -f .env.local.enc -f .env.personal`. **Key env vars** (all optional, in `_core/config/env/validation.ts`): `ATLAS_SURFACE`(web|agent, default web), `ATLAS_HTTP_PORT`(4002), `ATLAS_GITHUB_TOKEN`/`GITHUB_TOKEN`, `ATLAS_GITHUB_WEBHOOK_SECRET`, `ATLAS_WEBHOOK_SECRET`, `ATLAS_REPOS_ROOT`, `ATLAS_AGENT_HOME_ROOT`, `ATLAS_ENGINE_AUTH_MODE`(api_key|subscription), `ATLAS_CLAUDE_OAUTH_TOKEN`, `ATLAS_EVENT_DEDUP_WINDOW_S`, `ATLAS_EVENT_RATE_LIMIT`/`_WINDOW_S`, `ATLAS_MAX_SECTIONS`(12), `ATLAS_MAX_PHASES_PER_SECTION`(8), `ATLAS_WORKER_MODEL`/`ATLAS_CODEX_MODEL`. Reuses `ANTHROPIC_API_KEY`, `CHAT_MODEL`/`GATE_MODEL`, `POSTGRES_*`, `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`.
 
 Dev env (`backend/.env.personal`): first 3 keys (Anthropic/OpenAI/`GITHUB_PAT`) are UNCOMMENTED; appended `ATLAS_GITHUB_TOKEN=${GITHUB_PAT}` so atlas finds the token under its own name. The Slack test workspace: team "DL Technologies LLC", bot `ai_crew_dev`, channel `C0B9L9BB891` = `#ai-crew-local-testing`. GitHub origin = `dennisofficial/ai-crew` (the local dir is "agent-playground"; the repo is "ai-crew").
 
@@ -157,7 +157,7 @@ A coding agent hitting a **401 / expired credentials** mid-turn must NOT lose wo
 
 ### 10.1 What changed
 
-**Surface** — `ATLAS_SURFACE=web` binds `AtlasWebSurface` (SSE + REST). The Slack adapter is kept dormant (`ATLAS_SURFACE=slack` still works, all providers always constructed). The web surface controller (`surface/web-surface.controller.ts`) registers at `GET /web/events` (SSE), `POST /web/say`, `POST /web/approve`, `GET /web/thread`, `GET /web/pipeline`. All five control endpoints are **flag-gated** (`ATLAS_SURFACE=web` required — 404 otherwise; `// TODO: authn` marks the authentication follow-up). `GET /web/ping` and `GET /web/channels` are always-on liveness/dev probes. Approval clicks arrive at `POST /web/approve` → `AtlasWebSurface.approval$` → `DecisionApprovalService.resolve` (no circular dep).
+**Surface** — `AtlasWebSurface` (SSE + REST) is the production surface (see §10.6 — Slack was later removed and the surface collapsed to web-only). The web surface controller (`surface/web-surface.controller.ts`) registers at `GET /web/events` (SSE), `POST /web/say`, `POST /web/approve`, `GET /web/thread`, `GET /web/pipeline`, plus `GET /web/ping` and `GET /web/channels` liveness/dev probes (`// TODO: authn` marks the authentication follow-up). Approval clicks arrive at `POST /web/approve` → `AtlasWebSurface.approval$` → `DecisionApprovalService.resolve` (no circular dep).
 
 **SDK-as-brain** (`brain/agent-session-manager.service.ts`) — replaces `ConversationalBrainService` + `ScopingInvestigatorService` (both deleted). Each chat stimulus runs an in-sandbox Claude Agent SDK session (`AgentSessionManager.handleChatTurn`) with 6 host-side tools:
 - `get_pipeline_state` → `DriverStoreService.getPipelineState`
@@ -186,16 +186,15 @@ Verified by `r6-invariants.spec.ts` (20 tests, no I/O):
 - `(a)` host-git safety flags present in `LocalGitService` source
 - `(b)` `ScopingInvestigatorService` deleted; `EngineRunner` (host) not imported directly in `brain/` or `driver/` or `runner/`
 - `(c)` cross-thread scope denial covered in `sandbox/tool-bridge.spec.ts` (R1 gate: subprocess-based live transport test)
-- `(d)` web control endpoints flag-gated and guard `NotFoundException` on `ATLAS_SURFACE != 'web'`
+- `(d)` removed when Atlas collapsed to the single web surface (§10.6) — web is the sole product surface, so its control endpoints are always mounted (no surface-gating to assert)
 
 ### 10.3 New env vars
 
 | Var | Default | Effect |
 |---|---|---|
-| `ATLAS_SURFACES` | (unset → falls back to `ATLAS_SURFACE`, then `slack`) | The SET of chat surfaces bound concurrently — a comma list of `slack`/`web`/`agent` (e.g. `web,slack`). See §10.6. |
-| `ATLAS_SURFACE` | `slack` | LEGACY single-surface switch, now a back-compat alias for `ATLAS_SURFACES`. `web` = SSE+REST web surface; `agent` = in-process test surface; `slack` = Slack adapter |
+| `ATLAS_SURFACE` | `web` | Which `ChatSurface` is bound: `web` (default) = the SSE+REST web adapter, the production surface; `agent` = the in-process test/e2e surface. (Originally also `slack`; see §10.6 — Slack was removed.) |
 
-No new env vars beyond `ATLAS_SURFACES` (and `ATLAS_SURFACE`, which already existed). All others (surface/sandbox/git) were already in `validation.ts`.
+No new env vars beyond `ATLAS_SURFACE` (which already existed). All others (surface/sandbox/git) were already in `validation.ts`.
 
 ### 10.4 Commands
 
@@ -219,12 +218,10 @@ Mid-build steering ops: user-initiated pause/interject-into-phase/revert-phase/r
 
 Also deferred: operator authn on the web control endpoints (`// TODO: authn` in `WebSurfaceController`) — currently any caller who can reach the HTTP port can post messages or rule on approvals.
 
-### 10.6 Multiple concurrent chat surfaces (BUILT)
+### 10.6 Single web surface — Slack removed (BUILT)
 
-Atlas no longer binds ONE surface — it binds a **`CompositeChatSurface`** (`surface/composite-chat-surface.ts`) over the **enabled set** (`ATLAS_SURFACES` comma-list, e.g. `web,slack`; the legacy `ATLAS_SURFACE` is a back-compat alias; default `slack`). So Slack and web can be live at once while Atlas's brain/driver/gates stay surface-agnostic.
+Atlas talks to people over ONE surface. `surface/surface.module.ts` binds `AtlasWebSurface` (SSE/REST) by default, or `AgentChatSurface` when `ATLAS_SURFACE=agent` (the test/e2e driver) — a plain `ATLAS_SURFACE === 'agent' ? agent : web` switch, no per-thread dispatch. The brain/driver/gates stay surface-agnostic (they post into a thread + read `inbound$`); nothing branches on a surface id.
 
-The mechanism mirrors how `teamId` is already threaded — **one opaque `surfaceId` flows through the route the core already passes**, and nothing branches on it:
+History: a short-lived multi-surface layer (a `CompositeChatSurface` + per-thread `surfaceId` dispatch + an `atlas_threads.surface` column) was built and then **reverted** once the decision landed that everything goes through the web app. In the same pass the entire **Slack stack was deleted** — the adapter, multi-workspace OAuth/install store, the in-Slack onboarding edge (`OnboardingSurfaceModule`), and `atlas_slack_installations` (dropped by migration `CollapseToWebSurface`, which also drops the unused `surface` column) — and **reactions** (`react`/`unreact`) were dropped from the port. The credential layer (`OnboardingModule`: `CredentialResolver`/`TenantCredentialStore`/`OnboardingService`) is unaffected — it's per-tenant credentials, not Slack.
 
-- A thread belongs to exactly ONE surface. Each adapter stamps `InboundChatMessage.surface = its .name`; the `ChatStimulusBridge` persists it on a new `atlas_threads.surface` column (migration `AddThreadSurface`, backfilled to `slack`) and sets `replyRoute.surfaceId` from it. Event-seeded threads (no inbound surface) take the column default `slack`.
-- `route()` (both `driver-store` `JobRoute` + `brain-store` `ThreadRoute`) reads `atlas_threads.surface` onto `surfaceId`. Every outbound target struct (`ParkTarget`, `ApprovalTarget`, `SectionPlanPost`, the section-driver post helpers, the approval card, the announce path) carries `surfaceId` into `PostOptions` alongside `teamId`.
-- `CompositeChatSurface` is the ONLY place that knows the set: `inbound$` = rxjs `merge` of the enabled adapters; `post`/`react`/`unreact`/`update` dispatch to the adapter whose `.name === opts.surfaceId` (fallback to the sole/first adapter when unset or unmatched — legacy rows, single-surface boots); `connect()` fans out (the Slack socket opens only when Slack is enabled). The enabled-set resolver `surface/enabled-surfaces.ts` (`parseEnabledSurfaces`/`isSurfaceEnabled`) is the single source of truth, used by the surface module AND the web-endpoint gate (`assertWebEnabled` now checks "web is enabled", decoupled from `ATLAS_SURFACE==='web'`).
+The web-surface control endpoints (`/web/*`) are always mounted/active (web is the product surface); `// TODO: authn` in `WebSurfaceController` is the open follow-up. The acceptance gate (`gate/`) is now surface-free (clone → engine turn → commit → PR, no chat posting) and imports `SandboxModule` directly for the `ENGINE_RUNNER`/`SANDBOX_PROVIDER` ports; `gate/gate-boot.int.test.ts` guards its DI graph.

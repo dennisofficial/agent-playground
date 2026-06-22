@@ -1,16 +1,20 @@
 import { Module } from '@nestjs/common';
 import { RunnerModule } from '../runner';
-import { SurfaceModule } from '../surface';
+import { SandboxModule } from '../sandbox';
 import { AcceptanceGateService } from './acceptance-gate.service';
 
 /**
- * The W1 acceptance-GATE module — composes the substrate the gate exercises (RunnerModule = engine +
- * git; SurfaceModule = the Slack surface) and provides `AcceptanceGateService`. Lightweight: the gate
- * needs only the local substrate + surface, NOT the persistence/datasource (it never touches
- * atlas_phases), so it can boot fast for a scripted run. Zero v1 imports.
+ * The W1 acceptance-GATE module — composes the substrate the gate exercises and provides
+ * `AcceptanceGateService`:
+ *  - `RunnerModule` → re-exports `GitModule` (`LocalGitService` + `GithubPrService`);
+ *  - `SandboxModule` (@Global) → binds the `ENGINE_RUNNER` + `SANDBOX_PROVIDER` ports the gate injects.
+ *
+ * Surface-free: the gate proves clone → engine turn → commit → PR with no chat posting, so it does NOT
+ * import `SurfaceModule` (which would pull in the web surface + its brain/driver deps that
+ * `GateRootModule` doesn't provide). Zero v1 imports.
  */
 @Module({
-  imports: [RunnerModule, SurfaceModule],
+  imports: [RunnerModule, SandboxModule],
   providers: [AcceptanceGateService],
   exports: [AcceptanceGateService],
 })

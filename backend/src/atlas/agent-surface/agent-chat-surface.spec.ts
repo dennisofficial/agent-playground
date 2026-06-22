@@ -89,16 +89,6 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     expect(surface.threadMessages(rootTs)[0].text).toContain('questions');
   });
 
-  it('react / unreact are recorded for inspection', async () => {
-    const surface = new AgentChatSurface();
-    await surface.react('C1', 'ts.1', '👀');
-    await surface.unreact('C1', 'ts.1', '👀');
-    expect(surface.reactions).toEqual([
-      { kind: 'add', channel: 'C1', ts: 'ts.1', emoji: '👀' },
-      { kind: 'remove', channel: 'C1', ts: 'ts.1', emoji: '👀' },
-    ]);
-  });
-
   describe('approval simulation', () => {
     it('captures a posted approval card with its parsed jobId (the resolve seam)', async () => {
       const surface = new AgentChatSurface();

@@ -354,7 +354,7 @@ export class AgentSessionManager {
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
 
     const handle = await this.approvals.request(
-      { channel, threadTs, teamId: stimulus.teamId, surfaceId: stimulus.replyRoute.surfaceId },
+      { channel, threadTs, teamId: stimulus.teamId },
       card,
     );
 
@@ -412,11 +412,8 @@ export class AgentSessionManager {
       }).catch(() => ({ channel: null, threadTs: null }));
       const channel = route.channel ?? stimulus.replyRoute.threadRef;
       const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
-      await this.surface.post(channel, e.text, {
-        threadTs,
-        teamId: stimulus.teamId,
-        surfaceId: stimulus.replyRoute.surfaceId,
-      }).catch((err) => this.logger.debug(`stream event post failed: ${err}`));
+      await this.surface.post(channel, e.text, { threadTs, teamId: stimulus.teamId })
+        .catch((err) => this.logger.debug(`stream event post failed: ${err}`));
     }
   }
 
@@ -430,11 +427,7 @@ export class AgentSessionManager {
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
     try {
-      await this.surface.post(channel, text, {
-        threadTs,
-        teamId: stimulus.teamId,
-        surfaceId: stimulus.replyRoute.surfaceId,
-      });
+      await this.surface.post(channel, text, { threadTs, teamId: stimulus.teamId });
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
