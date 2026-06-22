@@ -24,6 +24,7 @@ import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { EventTriageService } from './event-triage.service';
 import { StimulusRouter } from './stimulus-router.service';
+import { PlanReviewService } from './plan-review.service';
 
 /**
  * R3 — the ATLAS BRAIN module (rebuilt). Wires the brain that decides WHETHER/WHAT (never HOW):
@@ -86,6 +87,7 @@ import { StimulusRouter } from './stimulus-router.service';
     BrainStoreService,
     DecisionApprovalService,
     EventTriageService,
+    PlanReviewService,
     AgentSessionManager,
     StimulusRouter,
     // INPUT SEAM — the router IS the stimulus consumer (replaces the old TriageService binding).

@@ -15,6 +15,7 @@ import { AgentSessionManager } from './agent-session-manager.service';
 import type { EventTriageService } from './event-triage.service';
 import type { EventStimulus } from '../domain';
 import { StimulusRouter } from './stimulus-router.service';
+import type { PlanReviewService } from './plan-review.service';
 
 /**
  * R3 GATE TESTS — two assertions:
@@ -57,6 +58,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   } as unknown as ThreadLifecycleService;
 
   const mockDockerRunner = {} as unknown as DockerEngineRunner;
+
+  /**
+   * R4: mock PlanReviewService that immediately returns null (guard already fired) — so the R3 spec's
+   * assertions on persistPlan + approval card still hold.  The R4 spec separately exercises the review
+   * flow in full.
+   */
+  const mockPlanReview = {
+    review: vi.fn().mockResolvedValue(null),
+  } as unknown as PlanReviewService;
 
   const mockDispatcher = {
     dispatch: vi.fn(),
@@ -143,6 +153,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockApprovals,
       mockLifecycle,
       mockDockerRunner,
+      mockPlanReview,
       mockDispatcher,
       mockSurface,
       mockSandboxRows,

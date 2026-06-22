@@ -15,6 +15,7 @@ import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
+import { PlanReviewService, buildRevisionInstruction } from './plan-review.service';
 
 /**
  * R3 — the AGENT SESSION MANAGER (the chat brain).
@@ -43,6 +44,7 @@ export class AgentSessionManager {
     private readonly approvals: DecisionApprovalService,
     private readonly lifecycle: ThreadLifecycleService,
     private readonly dockerRunner: DockerEngineRunner,
+    private readonly planReview: PlanReviewService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     @InjectRepository(AtlasThreadSandbox, ATLAS_CONNECTION)
@@ -252,6 +254,43 @@ export class AgentSessionManager {
           decisions,
           sectionBriefs,
         });
+
+        // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
+        // First call: run a Codex review turn in the thread's sandbox → return findings to the
+        // session for ONE revision.  Second call (same job): skip review → straight to approval.
+        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.teamId);
+        if (sandbox) {
+          const reviewResult = await this.planReview.review({
+            jobId: job.id,
+            teamId: stimulus.teamId,
+            worktreePath: sandbox.worktreePath,
+            ...(sandbox.containerId ? { containerId: sandbox.containerId } : {}),
+            overview,
+            decisions,
+            sectionBriefs,
+          });
+
+          if (reviewResult !== null) {
+            // FIRST call: review ran.
+            if (reviewResult.findings) {
+              // Findings found — relay them back into the session for one revision.
+              // The session will call submit_plan again with an updated plan.
+              return {
+                ok: true,
+                jobId: job.id,
+                decisionRecordId,
+                pendingReview: true,
+                message:
+                  'Plan persisted and reviewed by Codex before sending to the operator. ' +
+                  buildRevisionInstruction(reviewResult.findings),
+              };
+            }
+            // No findings — fall through to the approval card immediately (clean plan).
+            this.logger.log(`plan-review: job=${job.id} clean — proceeding to approval card`);
+          }
+          // reviewResult === null → second call (one-pass guard fired) → fall through to approval.
+        }
+        // ── End R4 ─────────────────────────────────────────────────────────────────────────────
 
         // Request approval — fire the approval card and await the verdict in the background.
         // The tool response returns immediately; the approval flow is async.

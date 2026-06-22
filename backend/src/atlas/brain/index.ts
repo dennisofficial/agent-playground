@@ -10,6 +10,7 @@ export * from './event-triage.service';
 export * from './agent-session-manager.service';
 export * from './decision-approval.service';
 export * from './brain-store.service';
+export * from './plan-review.service';
 export {
   JOB_DISPATCHER,
   LoggingJobDispatcher,
