@@ -1,6 +1,6 @@
 'use client';
 
-import { CreateThread } from '@/components/create/create-thread';
+import { CreateThread } from '@/features/create/components/create-thread';
 import { Card } from '@/components/ui/card';
 
 /**

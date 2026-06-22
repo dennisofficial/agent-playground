@@ -2,7 +2,7 @@
 
 import { use, type ReactNode } from 'react';
 import { useSelectedLayoutSegment } from 'next/navigation';
-import { PhaseHeader } from '@/components/phase/phase-header';
+import { PhaseHeader } from '@/features/phase/components/phase-header';
 import type { PhaseTab } from '@/lib/routes';
 
 /** Phase shell (DRY): header + Transcript/Diff/Logs tab bar persist across the tab routes. */

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { PublicGuard } from '@/components/auth/guards';
+import { PublicGuard } from '@/features/auth/components/guards';
 import { BrandLockup } from '@/components/ui/brand';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
 

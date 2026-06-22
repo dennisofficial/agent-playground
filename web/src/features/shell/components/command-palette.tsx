@@ -8,7 +8,7 @@ import { ROUTES } from '@/lib/routes';
 import { StatusDot } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { useChannel } from '@/components/providers/channel-provider';
-import { useThreadList } from '@/lib/api/queries';
+import { useThreadList } from '@/lib/api/threads';
 
 /** ⌘K command palette: search input + filtered thread results. `esc` closes (handled by the host). */
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {

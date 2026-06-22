@@ -2,25 +2,30 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { LogOut, Settings, Users } from 'lucide-react';
+import { useCurrentUser } from '@/lib/api/me';
 import { auth } from '@/lib/auth';
 import { ROUTES } from '@/lib/routes';
 
-const NAME = 'Dennis Lysenko';
-const EMAIL = 'dennis@atlas.dev';
-
-function initials(name: string): string {
-  return name
-    .split(' ')
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+/**
+ * Derive a display handle + avatar initials from the operator's email. The backend doesn't store a
+ * display name this phase, so the email local-part stands in (split on `. _ -` when present).
+ */
+function identityFromEmail(email: string | undefined): { name: string; email: string; initials: string } {
+  if (!email) return { name: 'Account', email: '', initials: '··' };
+  const local = email.split('@')[0] || email;
+  const parts = local.split(/[._-]+/).filter(Boolean);
+  const initials = (parts.length >= 2 ? parts[0][0] + parts[1][0] : local.slice(0, 2)).toUpperCase();
+  const name =
+    parts.length >= 2 ? parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ') : local;
+  return { name, email, initials };
 }
 
 /** Avatar + account menu (Signed in as / Workspace settings / Switch account / Sign out). */
 export function AccountMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const { data: me } = useCurrentUser();
+  const identity = identityFromEmail(me?.email);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -46,7 +51,7 @@ export function AccountMenu() {
         style={{ background: 'linear-gradient(145deg, var(--accent), var(--accent-2))' }}
         aria-label="Account"
       >
-        {initials(NAME)}
+        {identity.initials}
       </button>
 
       {open ? (
@@ -56,8 +61,10 @@ export function AccountMenu() {
         >
           <div className="px-3 pb-2 pt-1">
             <p className="text-[10px] uppercase tracking-wider text-faint">Signed in as</p>
-            <p className="mt-0.5 text-[13px] font-medium text-text">{NAME}</p>
-            <p className="font-mono text-[10.5px] text-dim">{EMAIL}</p>
+            <p className="mt-0.5 text-[13px] font-medium text-text">{identity.name}</p>
+            {identity.email ? (
+              <p className="font-mono text-[10.5px] text-dim">{identity.email}</p>
+            ) : null}
           </div>
           <div className="my-1 h-px" style={{ background: 'var(--hair)' }} />
           <MenuItem icon={<Settings size={14} />} label="Workspace settings" />

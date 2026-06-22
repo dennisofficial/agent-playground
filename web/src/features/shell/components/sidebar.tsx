@@ -6,7 +6,7 @@ import { LayoutGrid, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ROUTES } from '@/lib/routes';
 import { useChannel } from '@/components/providers/channel-provider';
-import { useThreadList } from '@/lib/api/queries';
+import { useThreadList } from '@/lib/api/threads';
 import { ThreadRow } from './thread-row';
 
 function activeThreadKey(pathname: string): string | null {

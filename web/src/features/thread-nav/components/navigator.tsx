@@ -7,7 +7,8 @@ import { cn } from '@/lib/cn';
 import { ROUTES } from '@/lib/routes';
 import { Dot, KindBadge, StatusPill } from '@/components/ui/badges';
 import { sectionColor } from '@/lib/api/status';
-import { usePipelineOutline, useThreadMessages } from '@/lib/api/queries';
+import { usePipelineOutline } from '@/lib/api/pipeline';
+import { useThreadMessages } from '@/lib/api/messages';
 import type { ThreadKind } from '@/lib/api/types';
 
 function deriveTitle(text: string | undefined): string {

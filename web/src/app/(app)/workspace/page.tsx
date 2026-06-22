@@ -3,10 +3,10 @@
 import Link from 'next/link';
 import { Plus } from 'lucide-react';
 import { useChannel } from '@/components/providers/channel-provider';
-import { ThreadCard } from '@/components/coordinator/thread-card';
+import { ThreadCard } from '@/features/thread-list/components/thread-card';
 import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
-import { useThreadList } from '@/lib/api/queries';
+import { useThreadList } from '@/lib/api/threads';
 
 /**
  * Coordinator overview — the board of threads that replaces a global main chat. Derived from the

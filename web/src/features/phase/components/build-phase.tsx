@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { Info } from 'lucide-react';
 import type { PhaseTab } from '@/lib/routes';
-import { useThreadMessages, useSay } from '@/lib/api/queries';
+import { useThreadMessages } from '@/lib/api/messages';
+import { useSay } from '@/lib/api/mutations';
 
 /**
  * Build-phase body. Per-phase transcript/diff/logs are NOT exposed by `/web/*` (BACKEND_GAPS.md #9),

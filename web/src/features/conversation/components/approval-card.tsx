@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { CheckCircle2, FileText } from 'lucide-react';
 import { ROUTES } from '@/lib/routes';
 import { APPROVE_ACTION_ID, type WebApprovalCard, type WebVerdictCard } from '@/lib/api/types';
-import { VerdictButtons } from './verdict-buttons';
+import { VerdictButtons } from '@/components/approval/verdict-buttons';
 
 /**
  * Plan/approval card. Approve / Request changes / Deny POST `/web/approve` with the action's verbatim

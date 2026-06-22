@@ -1,3 +1,4 @@
+import { env } from '@/lib/env';
 import type {
   ApproveRequest,
   PipelineState,
@@ -6,10 +7,12 @@ import type {
 } from './types';
 
 /**
- * Thin typed client over the SAME-ORIGIN Atlas web surface. `next.config.ts` rewrites `/web/*` REST
- * to the Atlas HTTP app and `app/web/events/route.ts` streams the SSE — so the browser never needs
- * the backend URL and there is no CORS. No auth header today (the `/web/*` surface has none).
+ * Thin typed client over the Atlas web surface. The browser hits the Atlas HTTP app DIRECTLY at
+ * `NEXT_PUBLIC_ATLAS_HTTP_URL` (no proxy hop); `credentials: 'include'` sends the httpOnly session
+ * cookie so the now-gated `/web/*` routes authorize the operator. CORS is enabled backend-side.
  */
+
+const WEB_BASE = `${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/web`;
 
 class WebSurfaceError extends Error {
   constructor(
@@ -22,8 +25,9 @@ class WebSurfaceError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/web${path}`, {
+  const res = await fetch(`${WEB_BASE}${path}`, {
     ...init,
+    credentials: 'include',
     headers: { 'content-type': 'application/json', accept: 'application/json', ...init?.headers },
   });
   if (!res.ok) {

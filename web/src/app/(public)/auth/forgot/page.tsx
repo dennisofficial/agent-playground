@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { AuthCard, AuthHeader, ErrorBanner } from '@/components/auth/auth-ui';
+import { AuthCard, AuthHeader, ErrorBanner } from '@/features/auth/components/auth-ui';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { auth } from '@/lib/auth';

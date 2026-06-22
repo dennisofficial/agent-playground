@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import { decodeThreadKey } from '@/lib/routes';
-import { DocView } from '@/components/phase/doc-view';
+import { DocView } from '@/features/phase/components/doc-view';
 
 export default function DocPage({
   params,

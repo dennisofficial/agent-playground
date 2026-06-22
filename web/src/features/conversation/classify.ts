@@ -1,4 +1,4 @@
-import type { WebApprovalCard, WebOutboundMessage, WebVerdictCard } from './types';
+import type { WebApprovalCard, WebOutboundMessage, WebVerdictCard } from '@/lib/api/types';
 
 /**
  * The conversation bubble kinds the work column renders. `approval`/`verdict` are STRUCTURED (the card

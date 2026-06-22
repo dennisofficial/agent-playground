@@ -1,7 +1,7 @@
 'use client';
 
 import { Lock } from 'lucide-react';
-import { useThreadMessages } from '@/lib/api/queries';
+import { useThreadMessages } from '@/lib/api/messages';
 import type { WebApprovalCard } from '@/lib/api/types';
 import { DocFrame, EmptyDoc } from './doc-frame';
 import { FullPlan } from './full-plan';

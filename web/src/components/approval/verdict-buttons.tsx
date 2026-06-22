@@ -1,7 +1,7 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { useApprove } from '@/lib/api/queries';
+import { useApprove } from '@/lib/api/mutations';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,

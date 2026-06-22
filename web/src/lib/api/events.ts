@@ -2,8 +2,9 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { upsertByTs } from './messages';
-import { qk } from './queries';
+import { env } from '@/lib/env';
+import { upsertByTs } from './message-cache';
+import { qk } from './query-keys';
 import type { WebOutboundMessage } from './types';
 
 export type StreamStatus = 'connecting' | 'open' | 'error';
@@ -20,7 +21,12 @@ export function useChannelEvents(channel: string | undefined): StreamStatus {
   useEffect(() => {
     if (!channel) return;
     setStatus('connecting');
-    const es = new EventSource(`/web/events?channel=${encodeURIComponent(channel)}`);
+    // Direct cross-origin SSE to the Atlas app; `withCredentials` sends the session cookie so the
+    // gated `/web/events` stream authorizes. The backend enables credentialed CORS for our origin.
+    const es = new EventSource(
+      `${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/web/events?channel=${encodeURIComponent(channel)}`,
+      { withCredentials: true },
+    );
 
     es.onopen = () => setStatus('open');
     es.onmessage = (e: MessageEvent<string>) => {

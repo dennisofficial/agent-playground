@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/components/auth/auth-ui';
-import { GoogleButton } from '@/components/auth/google-button';
+import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/features/auth/components/auth-ui';
+import { GoogleButton } from '@/features/auth/components/google-button';
 import { Button } from '@/components/ui/button';
 import { Field, PasswordField, StrengthMeter } from '@/components/ui/field';
 import { auth } from '@/lib/auth';

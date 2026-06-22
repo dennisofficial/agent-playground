@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import { decodeThreadKey, type PhaseTab } from '@/lib/routes';
-import { BuildPhase } from '@/components/phase/build-phase';
+import { BuildPhase } from '@/features/phase/components/build-phase';
 
 const TABS: readonly PhaseTab[] = ['transcript', 'diff', 'logs'];
 

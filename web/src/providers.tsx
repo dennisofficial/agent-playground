@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
-import { AuthInitializer } from '@/components/auth/auth-initializer';
+import { AuthInitializer } from '@/features/auth/components/auth-initializer';
 import { ThemeProvider } from '@/components/theme/theme-provider';
 
 /**

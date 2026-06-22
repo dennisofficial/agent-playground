@@ -135,14 +135,28 @@ class StubAuth implements AtlasAuth {
   }
 }
 
-/** Real adapter — wraps `@workspace/auth` against the future `/auth/*` (same-origin). */
+/**
+ * Pull the human message out of an Axios-style error. The `@workspace/auth` client rethrows the raw
+ * Axios error on a 4xx, whose `.response.data.message` carries our Nest exception message (e.g. the
+ * pending-approval text on register, or "Invalid email or password." on login). class-validator
+ * failures arrive as a `string[]`; join them. Falls back to the generic message when absent.
+ */
+function authErrorMessage(err: unknown, fallback: string): Error {
+  const data = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data;
+  const message = data?.message;
+  if (Array.isArray(message)) return new Error(message.join('; '));
+  if (typeof message === 'string' && message) return new Error(message);
+  return new Error(err instanceof Error && err.message ? err.message : fallback);
+}
+
+/** Real adapter — wraps `@workspace/auth` against the Atlas app's `/auth/*` (direct, credentialed CORS). */
 class RealAuth implements AtlasAuth {
   private readonly inner = new Auth<{ id: string }>();
 
   constructor() {
     this.inner.configure({
-      // Relative base → same origin, proxied to wherever the team mounts `/auth/*`.
-      apiBaseUrl: '',
+      // Absolute base → the Atlas HTTP app directly (cookie session rides on credentialed CORS).
+      apiBaseUrl: env.NEXT_PUBLIC_ATLAS_HTTP_URL,
       authBasePath: '/auth',
       sessionToAuthState: (s) => ({ authenticated: true, authProviderId: s.id, profileId: s.id }),
     });
@@ -158,10 +172,20 @@ class RealAuth implements AtlasAuth {
     return this.inner.onAuthStateChanged(cb);
   }
   async signIn(email: string, password: string): Promise<void> {
-    await this.inner.signIn(email, password);
+    try {
+      await this.inner.signIn(email, password);
+    } catch (err) {
+      throw authErrorMessage(err, 'Sign in failed.');
+    }
   }
   async register(email: string, password: string): Promise<void> {
-    await this.inner.register(email, password);
+    try {
+      await this.inner.register(email, password);
+    } catch (err) {
+      // New accounts are created blocked → the backend returns 403 with the pending-approval message,
+      // which surfaces in the signup banner here.
+      throw authErrorMessage(err, 'Could not create your account.');
+    }
   }
   async signInWithGoogle(): Promise<void> {
     throw new Error('Google sign-in is not configured on the backend yet.');

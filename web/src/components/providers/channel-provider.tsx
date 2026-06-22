@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useChannelEvents, type StreamStatus } from '@/lib/api/events';
-import { useChannels } from '@/lib/api/queries';
+import { useChannels } from '@/lib/api/channels';
 
 const STORAGE_KEY = 'atlas-channel';
 

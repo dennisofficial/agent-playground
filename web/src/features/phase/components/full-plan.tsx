@@ -1,8 +1,8 @@
 'use client';
 
-import { PlanMarkdown } from '@/components/plan/markdown';
-import { VerdictButtons } from '@/components/conversation/verdict-buttons';
-import { useThreadMessages } from '@/lib/api/queries';
+import { PlanMarkdown } from '@/features/phase/components/markdown';
+import { VerdictButtons } from '@/components/approval/verdict-buttons';
+import { useThreadMessages } from '@/lib/api/messages';
 import { APPROVE_ACTION_ID, type WebApprovalCard } from '@/lib/api/types';
 import { DocFrame, EmptyDoc } from './doc-frame';
 

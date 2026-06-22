@@ -2,7 +2,7 @@
 
 import { ExternalLink, Lock } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import type { SystemTone } from '@/lib/api/classify';
+import type { SystemTone } from '@/features/conversation/classify';
 import type { WebOutboundMessage } from '@/lib/api/types';
 
 /** Small Atlas/Claude avatar — the brand mark, mini. */

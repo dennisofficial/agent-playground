@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { LogOut } from 'lucide-react';
-import { AuthCard } from '@/components/auth/auth-ui';
+import { AuthCard } from '@/features/auth/components/auth-ui';
 import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
 

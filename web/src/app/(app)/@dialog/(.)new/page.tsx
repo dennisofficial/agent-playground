@@ -1,8 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Modal } from '@/components/create/modal';
-import { CreateThread } from '@/components/create/create-thread';
+import { Modal } from '@/features/create/components/modal';
+import { CreateThread } from '@/features/create/components/create-thread';
 
 /**
  * Intercepted `/new` — opens the create-thread form as a modal over the current view (soft nav). A

@@ -2,7 +2,7 @@
 
 import { use, useEffect, type ReactNode } from 'react';
 import { decodeThreadKey } from '@/lib/routes';
-import { Navigator } from '@/components/thread/navigator';
+import { Navigator } from '@/features/thread-nav/components/navigator';
 import { useChannel } from '@/components/providers/channel-provider';
 
 /**

@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, GitBranch, Plug } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
-import { useChannels, useSay } from '@/lib/api/queries';
+import { useChannels } from '@/lib/api/channels';
+import { useSay } from '@/lib/api/mutations';
 import { encodeThreadKey, ROUTES } from '@/lib/routes';
 
 /**

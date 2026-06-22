@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ArrowUp } from 'lucide-react';
-import { useSay } from '@/lib/api/queries';
+import { useSay } from '@/lib/api/mutations';
 
 /**
  * Conversation composer. Posts to `/web/say` in the current thread. Typed ops ("pause", "approve",

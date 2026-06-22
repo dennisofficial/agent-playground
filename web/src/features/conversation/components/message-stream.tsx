@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { classifyMessage } from '@/lib/api/classify';
-import { useThreadMessages } from '@/lib/api/queries';
+import { classifyMessage } from '@/features/conversation/classify';
+import { useThreadMessages } from '@/lib/api/messages';
 import {
   ClaudeBubble,
   DecisionChip,

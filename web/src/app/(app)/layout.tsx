@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { PrivateGuard } from '@/components/auth/guards';
+import { PrivateGuard } from '@/features/auth/components/guards';
 import { ChannelProvider } from '@/components/providers/channel-provider';
-import { AppChrome } from '@/components/shell/app-chrome';
+import { AppChrome } from '@/features/shell/components/app-chrome';
 
 /**
  * Protected app shell. `PrivateGuard` gates on auth; `ChannelProvider` holds the active channel and

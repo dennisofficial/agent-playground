@@ -3,11 +3,12 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/components/auth/auth-ui';
-import { GoogleButton } from '@/components/auth/google-button';
+import { AuthCard, AuthHeader, ErrorBanner, OrDivider } from '@/features/auth/components/auth-ui';
+import { GoogleButton } from '@/features/auth/components/google-button';
 import { Button } from '@/components/ui/button';
 import { Field, PasswordField } from '@/components/ui/field';
 import { auth } from '@/lib/auth';
+import { EAuthMode, env } from '@/lib/env';
 import { ROUTES, safeNext } from '@/lib/routes';
 import { validateEmail, validatePasswordRequired } from '@/lib/validation';
 
@@ -82,9 +83,11 @@ export default function LoginPage() {
           Create an account
         </Link>
       </p>
-      <p className="mt-3 text-center font-mono text-[10px] text-faint">
-        demo · dennis@atlas.dev · any 8+ char password
-      </p>
+      {env.NEXT_PUBLIC_AUTH_MODE === EAuthMode.STUB && (
+        <p className="mt-3 text-center font-mono text-[10px] text-faint">
+          demo · dennis@atlas.dev · any 8+ char password
+        </p>
+      )}
     </AuthCard>
   );
 }

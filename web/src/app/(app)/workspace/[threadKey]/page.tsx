@@ -2,9 +2,9 @@
 
 import { use } from 'react';
 import { decodeThreadKey } from '@/lib/routes';
-import { MessageStream } from '@/components/conversation/message-stream';
-import { Composer } from '@/components/conversation/composer';
-import { usePipelineOutline } from '@/lib/api/queries';
+import { MessageStream } from '@/features/conversation/components/message-stream';
+import { Composer } from '@/features/conversation/components/composer';
+import { usePipelineOutline } from '@/lib/api/pipeline';
 
 /** Default work view — the Conversation (the thread's brain). */
 export default function ConversationPage({
