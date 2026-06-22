@@ -32,4 +32,12 @@ export class AtlasThread extends TimestampedEntity {
   /** Short human-readable label (the feature/notification title). */
   @Column({ type: 'text', nullable: true })
   title!: string | null;
+
+  /**
+   * The base branch the operator picked at thread creation (default = repo default). Null for
+   * inbound-message-derived threads that pre-date R2 (they inherit from the project's default_branch
+   * at build time, as before).
+   */
+  @Column({ type: 'text', nullable: true })
+  base_branch!: string | null;
 }

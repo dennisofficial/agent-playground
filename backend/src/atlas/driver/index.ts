@@ -6,6 +6,7 @@
 export * from './driver.module';
 export * from './section-driver.service';
 export * from './driver-store.service';
+export * from './thread-lifecycle.service';
 export {
   ATLAS_DRIVER_REPO,
   GitDriverRepoResolver,

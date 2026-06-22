@@ -32,6 +32,7 @@ import {
   type DriverRepoResolver,
   type ResolvedRepo,
 } from './repo-resolver';
+import { ThreadLifecycleService } from './thread-lifecycle.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -66,6 +67,7 @@ export class SectionDriver implements JobDispatcher {
     private readonly env: EnvService,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
+    private readonly threadLifecycle: ThreadLifecycleService,
   ) {}
 
   /** Sanity ceiling on a job's sections — a malformed plan can't drive an unbounded build. */
@@ -788,22 +790,43 @@ export class SectionDriver implements JobDispatcher {
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Ensure the job's per-feature sandbox (worktree) exists and the feature branch is recorded. Idempotent
-   * — a resume reuses the existing worktree/branch. The branch is derived once from the job id and stored.
+   * Ensure the job's sandbox (worktree) exists and the feature branch is recorded. Idempotent — a resume
+   * reuses the existing worktree/branch.
+   *
+   * R2 path (per-thread sandbox): if the job's thread has a pre-provisioned sandbox row (created at
+   * thread-creation time), we REUSE it — cutting the feature branch in-place via `branchSwitch` on the
+   * first dispatch and returning the existing sandbox on resume. This is the happy path for threads
+   * created via the explicit create-thread control path.
+   *
+   * Legacy path (per-feature sandbox): if no thread sandbox exists (inbound-message-derived threads,
+   * or pre-R2 jobs), fall back to the old `createFeatureSandbox` + `SandboxProvider.attach` behavior —
+   * byte-identical to before R2.
    */
   private async ensureSandbox(
     job: Job,
     repo: ResolvedRepo,
   ): Promise<FeatureSandbox> {
-    const branch =
-      job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
-    const sandbox = await this.git.createFeatureSandbox(
-      repo.projectRepo,
-      branch,
-    );
+    const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
+
+    // ── R2: per-thread sandbox path ──────────────────────────────────────────────────────────────
+    const threadSandbox = await this.threadLifecycle.findSandbox(job.threadId, job.teamId);
+    if (threadSandbox) {
+      // If still on the base branch, perform the in-place branch-switch now (approval → build).
+      if (threadSandbox.branch !== branch) {
+        const switched = await this.threadLifecycle.branchSwitch(job.threadId, job.teamId, branch);
+        if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
+        this.logger.log(`job=${job.id} reusing thread sandbox (branched to ${branch})`);
+        return switched;
+      }
+      // Already branched (a resume) — return as-is.
+      if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
+      this.logger.log(`job=${job.id} reusing thread sandbox (already on ${branch})`);
+      return threadSandbox;
+    }
+
+    // ── Legacy path: per-feature worktree + attach ───────────────────────────────────────────────
+    const sandbox = await this.git.createFeatureSandbox(repo.projectRepo, branch);
     if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
-    // Attach the execution environment: a no-op in local mode; a per-feature container in docker mode
-    // (returns the sandbox augmented with `containerId`/`execUser` the turns + auto-fix exec into).
     return this.sandboxes.attach({ sandbox, teamId: job.teamId });
   }
 

@@ -64,7 +64,7 @@ export interface PostOptions {
  * a test driver send to Atlas and read replies. Both honor threading.
  */
 export interface ChatSurface {
-  readonly name: string; // 'slack' | 'agent'
+  readonly name: string; // 'slack' | 'agent' | 'web'
   /** Inbound human messages — INCLUDING thread replies (each carrying its `threadTs`). */
   readonly inbound$: Observable<InboundChatMessage>;
   /**
@@ -77,4 +77,16 @@ export interface ChatSurface {
   react(channel: string, ts: string, emoji: string, teamId?: string): Promise<void>;
   /** Remove an emoji reaction this surface added (clears a transient marker). */
   unreact(channel: string, ts: string, emoji: string, teamId?: string): Promise<void>;
+  /**
+   * OPTIONAL — repaint a previously posted message (e.g. replace the approval card with a verdict
+   * card after the operator rules). The Slack adapter implements this via `chat.update`; the web
+   * adapter mutates the outbox entry and re-emits on `outbound$`; the agent adapter is a no-op.
+   * Surfaces that do NOT support live edits may omit this method — callers check with `canUpdate`.
+   */
+  update?(
+    channel: string,
+    ts: string,
+    args: { text?: string; blocks?: Array<Record<string, unknown>> },
+    teamId?: string,
+  ): Promise<void> | void;
 }

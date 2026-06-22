@@ -69,7 +69,22 @@ export class LocalGitService {
     );
   }
 
-  /** Run one git command, returning trimmed stdout. `auth` mode adds GIT_CONFIG_* token env. */
+  /**
+   * Run one git command, returning trimmed stdout.
+   *
+   * HOST-GIT POLICY (R2): every git invocation runs with hooks and code-executing filters disabled
+   * so tenant-repo hooks never execute on the host (the multi-tenancy invariant). The flags are
+   * prepended to every call so even an accidental omission can't bypass them:
+   *
+   *   -c core.hooksPath=/dev/null   — disables all hooks (pre-commit, post-checkout, …)
+   *   -c core.fsmonitor=false       — disables any fsmonitor daemon that could run tenant code
+   *   -c filter.lfs.clean=         — disables the git-lfs clean filter (code-executing)
+   *   -c filter.lfs.smudge=        — disables the git-lfs smudge filter (code-executing)
+   *   -c filter.lfs.process=       — disables the git-lfs process filter (code-executing)
+   *   -c filter.lfs.required=false — avoids the "required filter missing" abort
+   *
+   * This is the one place all host git traffic passes through; callers add no extra guards.
+   */
   private async git(
     args: string[],
     opts: { cwd?: string; gitUrl?: string; token?: string } = {},
@@ -77,9 +92,20 @@ export class LocalGitService {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       GIT_TERMINAL_PROMPT: '0', // never block on a credential prompt
+      // Belt-and-suspenders: env-level hook disabling (complements the -c flags below).
+      GIT_CONFIG_NOSYSTEM: '1', // don't source /etc/gitconfig (tenant hooks via system config)
       ...(opts.gitUrl ? gitAuthEnv(opts.gitUrl, opts.token) : {}),
     };
-    const { stdout } = await execFileAsync('git', args, {
+    // These -c flags are prepended BEFORE the subcommand so they apply to every git op.
+    const safetyFlags = [
+      '-c', 'core.hooksPath=/dev/null',
+      '-c', 'core.fsmonitor=false',
+      '-c', 'filter.lfs.clean=',
+      '-c', 'filter.lfs.smudge=',
+      '-c', 'filter.lfs.process=',
+      '-c', 'filter.lfs.required=false',
+    ];
+    const { stdout } = await execFileAsync('git', [...safetyFlags, ...args], {
       cwd: opts.cwd,
       env,
       maxBuffer: 64 * 1024 * 1024,
@@ -238,6 +264,72 @@ export class LocalGitService {
         token: sandbox.token,
       }),
     );
+  }
+
+  /**
+   * Cut a per-THREAD worktree on the BASE branch (R2: thread-creation time). Unlike
+   * `createFeatureSandbox` this does NOT create a new branch — it checks out the existing
+   * `origin/<baseBranch>` so planning turns read the repo as-is. The worktree lands at
+   * `<repoPath>/.worktrees/thread-<threadId>`.
+   *
+   * Idempotent: if the worktree already exists it is reused (boot recovery).
+   */
+  async createBaseWorktree(
+    repo: ProjectRepo,
+    threadId: string,
+  ): Promise<FeatureSandbox> {
+    const slug = `thread-${threadId.replace(/[^a-z0-9_-]/gi, '-')}`;
+    const worktreePath = join(repo.repoPath, '.worktrees', slug);
+
+    await this.withLock(repo.repoPath, async () => {
+      if (existsSync(worktreePath)) return; // reuse on recovery
+      // Ensure we have the freshest base.
+      await this.git(['fetch', 'origin', repo.defaultBranch], {
+        cwd: repo.repoPath,
+        gitUrl: repo.gitUrl,
+        token: repo.token,
+      });
+      // Check out detached at origin/<defaultBranch> — no new branch ref so it stays read-only.
+      await this.git(
+        ['worktree', 'add', '--detach', worktreePath, `origin/${repo.defaultBranch}`],
+        { cwd: repo.repoPath },
+      );
+    });
+
+    return {
+      projectId: repo.projectId,
+      branch: repo.defaultBranch, // still on the base; updated by switchBranch
+      worktreePath,
+      gitUrl: repo.gitUrl,
+      token: repo.token,
+    };
+  }
+
+  /**
+   * Switch a base-branch worktree to a feature branch IN-PLACE (R2: approval → build start).
+   * Cuts `featureBranch` off `origin/<baseBranch>` inside the existing worktree checkout. This is
+   * the branch-switch that happens once: planning ran on the base, build runs on the feature.
+   *
+   * Idempotent: if the branch already exists locally it is checked out without recreating (resume).
+   * Returns the updated `FeatureSandbox` (same worktreePath, new branch name).
+   */
+  async switchBranch(
+    sandbox: FeatureSandbox,
+    repo: ProjectRepo,
+    featureBranch: string,
+  ): Promise<FeatureSandbox> {
+    await this.withLock(sandbox.worktreePath, async () => {
+      const branchExists = await this.refExists(repo.repoPath, `refs/heads/${featureBranch}`);
+      if (branchExists) {
+        // Resume: the branch was already cut — just check it out.
+        await this.git(['checkout', featureBranch], { cwd: sandbox.worktreePath });
+      } else {
+        // Fresh approval: cut the branch off the current detached HEAD (which is on base).
+        await this.git(['-c', `user.name=Atlas`, '-c', `user.email=atlas@users.noreply.github.com`,
+          'checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
+      }
+    });
+    return { ...sandbox, branch: featureBranch };
   }
 
   /** Remove a feature worktree (cleanup). Leaves the branch ref (the PR still references it). */

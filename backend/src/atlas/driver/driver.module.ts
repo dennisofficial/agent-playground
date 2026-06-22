@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AutoFixModule } from '../autofix';
 import { JOB_DISPATCHER } from '../brain';
 import { DecisionGateModule } from '../decision-gate';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver, OnboardingService } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
@@ -14,12 +14,14 @@ import {
   AtlasProject,
   AtlasSection,
   AtlasThread,
+  AtlasThreadSandbox,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
 import { ATLAS_PLANNER_LLM, AnthropicPlannerLlm } from './planner-llm';
 import { DriverStoreService } from './driver-store.service';
 import { ATLAS_DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { SectionDriver } from './section-driver.service';
+import { ThreadLifecycleService } from './thread-lifecycle.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
@@ -56,6 +58,7 @@ import { SectionDriver } from './section-driver.service';
         AtlasThread,
         AtlasChannel,
         AtlasProject,
+        AtlasThreadSandbox,
       ],
       ATLAS_CONNECTION,
     ),
@@ -73,10 +76,11 @@ import { SectionDriver } from './section-driver.service';
         ),
     },
     SectionDriver,
+    ThreadLifecycleService,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
     { provide: JOB_DISPATCHER, useExisting: SectionDriver },
   ],
-  exports: [SectionDriver, JOB_DISPATCHER],
+  exports: [SectionDriver, JOB_DISPATCHER, ThreadLifecycleService],
 })
 export class DriverModule implements OnApplicationBootstrap {
   constructor(

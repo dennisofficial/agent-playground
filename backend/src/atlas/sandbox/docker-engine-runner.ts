@@ -7,12 +7,17 @@ import {
   type EngineRunnerPort,
   type RunEngineArgs,
 } from '../engine';
+import { ToolBridgeHost, type InboundFrame } from '../engine/tool-bridge-host';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 
 /** The engine's isolated agent home INSIDE the sandbox (long-lived → session resume across turns). */
 export const CONTAINER_AGENT_HOME = '/atlas-home';
 
-/** One NDJSON frame the in-container entrypoint emits. */
+/**
+ * One NDJSON frame the in-container entrypoint emits (one-shot mode).
+ * In bidirectional (tool-bridge) mode the additional `tool_request` frame is handled by
+ * `ToolBridgeHost`; these are the remaining frame types.
+ */
 type Frame =
   | { t: 'event'; e: EngineEvent }
   | { t: 'final'; r: EngineRunResult }
@@ -56,8 +61,22 @@ export class DockerEngineRunner implements EngineRunnerPort {
       ...(args.sessionId ? { sessionId: args.sessionId } : {}),
       ...(args.auth ? { auth: args.auth } : {}),
       ...(args.model ? { model: args.model } : {}),
+      // Signal to the entrypoint that the tool bridge is active (tool names list).
+      ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
     };
 
+    if (args.toolBridge) {
+      return this._runBidirectional(args, target, spec);
+    }
+    return this._runOneShot(args, target, spec);
+  }
+
+  /** One-shot (existing build-turn) path: write spec to stdin, close, consume stdout NDJSON. */
+  private async _runOneShot(
+    args: RunEngineArgs,
+    target: NonNullable<RunEngineArgs['target']>,
+    spec: object,
+  ): Promise<EngineRunResult> {
     let result: EngineRunResult | undefined;
     let errorMsg: string | undefined;
     let errorAuth = false;
@@ -70,7 +89,6 @@ export class DockerEngineRunner implements EngineRunnerPort {
       try {
         frame = JSON.parse(trimmed) as Frame;
       } catch {
-        // Non-JSON noise on stdout (shouldn't happen — diagnostics go to stderr) — ignore.
         return;
       }
       if (frame.t === 'event') args.onEvent?.(frame.e);
@@ -96,11 +114,73 @@ export class DockerEngineRunner implements EngineRunnerPort {
       },
       ...(args.signal ? { signal: args.signal } : {}),
     });
-    if (buf.trim()) handleLine(buf); // a trailing frame without a newline
+    if (buf.trim()) handleLine(buf);
 
     if (errorMsg) {
-      // Auth (401) → a resumable EngineAuthError carrying the live session, so the driver pauses
-      // (not fails) and a re-ping continues the same in-sandbox session.
+      if (errorAuth) throw new EngineAuthError(errorMsg, errorSession);
+      throw new Error(`in-sandbox engine turn failed: ${errorMsg}`);
+    }
+    if (!result) {
+      throw new Error(
+        `in-sandbox engine turn produced no result (exit ${exec.exitCode}); stderr: ${exec.stderr.slice(0, 800)}`,
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Bidirectional (tool-bridge) path: stdin stays open, the host dispatches `tool_request` frames
+   * and writes `tool_response`/`tool_error` frames back until the turn ends.
+   */
+  private async _runBidirectional(
+    args: RunEngineArgs,
+    target: NonNullable<RunEngineArgs['target']>,
+    spec: object,
+  ): Promise<EngineRunResult> {
+    const bridge = args.toolBridge!;
+
+    let stdinWrite!: (data: string) => void;
+    let stdinEnd!: () => void;
+
+    let result: EngineRunResult | undefined;
+    let errorMsg: string | undefined;
+    let errorAuth = false;
+    let errorSession: string | undefined;
+
+    const host = new ToolBridgeHost(
+      bridge,
+      (line) => stdinWrite(line),
+      () => stdinEnd(),
+    );
+
+    host.onFrame((frame: InboundFrame) => {
+      if (frame.t === 'event') args.onEvent?.(frame.e as EngineEvent);
+      else if (frame.t === 'final') result = frame.r as EngineRunResult;
+      else if (frame.t === 'error') {
+        errorMsg = frame.message;
+        errorAuth = !!frame.auth;
+        errorSession = frame.sessionId;
+      }
+    });
+
+    const exec = await this.containers.exec(target.containerId, ['atlas-engine-turn'], {
+      ...(target.user ? { user: target.user } : {}),
+      env: this.execEnv(),
+      onStdinReady: (write, end) => {
+        stdinWrite = write;
+        stdinEnd = end;
+        // Write the initial turn spec then leave stdin open.
+        write(`${JSON.stringify(spec)}\n`);
+      },
+      onStdout: (chunk) => host.feedChunk(chunk),
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+
+    host.flush();
+    // Wait until the in-container turn signals it's done.
+    await host.closed;
+
+    if (errorMsg) {
       if (errorAuth) throw new EngineAuthError(errorMsg, errorSession);
       throw new Error(`in-sandbox engine turn failed: ${errorMsg}`);
     }

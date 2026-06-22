@@ -7,3 +7,4 @@ export * from './local-sandbox.provider';
 export * from './sandbox-manager.service';
 export * from './sandbox-refs.service';
 export * from './sandbox.module';
+export { LocalToolBridgeRunner } from './local-tool-bridge-runner';

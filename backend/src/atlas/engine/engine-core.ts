@@ -122,9 +122,26 @@ export class EngineCore {
     return args.engine === 'codex' ? this.runCodex(args) : this.runClaude(args);
   }
 
+  /**
+   * Like `run`, but passes extra Claude SDK options (e.g. `mcpServers` for the tool bridge).
+   * Used by the in-container entrypoint when the tool-bridge is active; the host `EngineRunner`
+   * calls the plain `run` path (the bridge is wired host-side there).
+   */
+  async runWithExtras(
+    args: RunEngineArgs,
+    extraClaudeOptions?: Record<string, unknown>,
+  ): Promise<EngineRunResult> {
+    return args.engine === 'codex'
+      ? this.runCodex(args)
+      : this.runClaude(args, extraClaudeOptions);
+  }
+
   // ── Claude ────────────────────────────────────────────────────────────────────────────────────
 
-  private async runClaude(args: RunEngineArgs): Promise<EngineRunResult> {
+  private async runClaude(
+    args: RunEngineArgs,
+    extraClaudeOptions?: Record<string, unknown>,
+  ): Promise<EngineRunResult> {
     const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal } = args;
 
     const abortController = new AbortController();
@@ -165,7 +182,9 @@ export class EngineCore {
       env: subprocessEnv,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(model ? { model } : {}),
-    };
+      // R1 tool-bridge: optional extra options (e.g. mcpServers) from the in-container entrypoint.
+      ...(extraClaudeOptions ?? {}),
+    } as Options;
 
     let result = '';
     let resolvedSession = sessionId;

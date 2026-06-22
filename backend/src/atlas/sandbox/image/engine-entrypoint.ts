@@ -1,37 +1,126 @@
 /**
- * The in-container engine entrypoint (D1). Bundled by esbuild into `engine-entrypoint.mjs`, baked into
- * the sandbox image, and invoked by the host's `DockerEngineRunner` via `docker exec atlas-engine-turn`.
+ * The in-container engine entrypoint (D1, R1-extended). Bundled by esbuild into
+ * `engine-entrypoint.mjs`, baked into the sandbox image, and invoked by the host's
+ * `DockerEngineRunner` via `docker exec atlas-engine-turn`.
  *
- * Protocol (so a turn runs IDENTICALLY here and on the host):
+ * Protocol (BASELINE — one-shot, unchanged):
  *   - stdin: one JSON `TurnSpec` (a serialized `RunEngineArgs` minus the host-only callbacks).
  *   - stdout: NDJSON frames — `{t:'event', e:EngineEvent}` per progress event, then a single
  *     `{t:'final', r:EngineRunResult}` (or `{t:'error', message}` on failure).
  *   - stderr: diagnostics only (kept off stdout so the NDJSON stays parseable).
  *
- * It reuses the SAME {@link EngineCore} as the host runner (esbuild bundles it in), constructing it from
- * the exec env (ANTHROPIC_API_KEY / ATLAS_ENGINE_AUTH_MODE / models / ATLAS_AGENT_HOME_ROOT — the host
- * passes secrets as exec env, never baked into the image). The engine SDKs are external (installed in
- * the image) and dynamically imported here.
+ * Protocol (TOOL-BRIDGE — new, additive, R1):
+ *   When `spec.toolBridgeTools` is present (a list of tool names the host exposes), stdin stays
+ *   open after the initial spec. The entrypoint hosts a thin `createSdkMcpServer` (from
+ * `@anthropic-ai/claude-agent-sdk`) whose tool handlers proxy to the host via the bidirectional
+ *   frame protocol:
+ *     - entrypoint emits `{t:'tool_request', id, name, args}` on stdout
+ *     - host replies `{t:'tool_response', id, result}` or `{t:'tool_error', id, message}` on stdin
+ *     - correlation is by `id` (UUID generated in the entrypoint)
+ *   The final frame (`{t:'final',...}`) is still the last thing emitted on stdout; after emitting
+ *   it the entrypoint exits and the exec stream closes naturally.
+ *
+ * It reuses the SAME {@link EngineCore} as the host runner (esbuild bundles it in). Credentials are
+ * passed as exec env, never baked into the image.
  */
+import { randomUUID } from 'node:crypto';
 import { EngineCore, type EngineCoreConfig } from '../../engine/engine-core';
 import type { EngineEvent, EngineRunResult, RunEngineArgs } from '../../engine/engine.types';
 
 /** The serialized turn — everything `RunEngineArgs` carries except host-only, non-serializable bits. */
-type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target'>;
+type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge'> & {
+  /**
+   * When present, activates the tool bridge. Contains the list of tool names the host exposes.
+   * The entrypoint creates a thin MCP server proxy for each tool.
+   */
+  toolBridgeTools?: string[];
+};
+
+/** Frames the host may write on stdin. */
+type HostFrame =
+  | { t: 'tool_response'; id: string; result: unknown }
+  | { t: 'tool_error'; id: string; message: string };
 
 function emit(frame: unknown): void {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
 }
 
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString('utf8');
+/**
+ * Read exactly ONE NDJSON line from stdin (the initial spec). In tool-bridge mode stdin stays
+ * open for host-frame responses; in one-shot mode we consume all stdin then return.
+ */
+async function readFirstLine(): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let buf = '';
+    const onData = (chunk: Buffer | string) => {
+      buf += chunk.toString('utf8');
+      const nl = buf.indexOf('\n');
+      if (nl >= 0) {
+        // Got the first complete line — extract it and stop reading.
+        process.stdin.removeListener('data', onData);
+        process.stdin.removeListener('error', onError);
+        resolve(buf.slice(0, nl).trim());
+      }
+    };
+    const onError = (err: Error) => reject(err);
+    // For one-shot mode (no newline in the spec) we need to handle end-of-stream too.
+    const onEnd = () => {
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('error', onError);
+      resolve(buf.trim());
+    };
+    process.stdin.on('data', onData);
+    process.stdin.on('error', onError);
+    process.stdin.once('end', onEnd);
+    process.stdin.resume();
+  });
+}
+
+/**
+ * In tool-bridge mode: reads pending host-frame lines from stdin, resolving the matching
+ * pending promise. Runs as a background async loop for the duration of the turn.
+ */
+function startStdinFrameReader(
+  pending: Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>,
+): void {
+  let buf = '';
+  const drain = () => {
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let frame: HostFrame;
+      try {
+        frame = JSON.parse(line) as HostFrame;
+      } catch {
+        process.stderr.write(`[entrypoint] non-JSON stdin line: ${line}\n`);
+        continue;
+      }
+      const entry = pending.get(frame.id);
+      if (!entry) {
+        process.stderr.write(`[entrypoint] unexpected frame id: ${frame.id}\n`);
+        continue;
+      }
+      pending.delete(frame.id);
+      if (frame.t === 'tool_response') {
+        entry.resolve(frame.result);
+      } else {
+        entry.reject(new Error(frame.message));
+      }
+    }
+  };
+
+  process.stdin.on('data', (chunk: Buffer | string) => {
+    buf += chunk.toString('utf8');
+    drain();
+  });
+  // Don't call process.stdin.resume() — it was already resumed by readFirstLine.
 }
 
 async function main(): Promise<void> {
-  const raw = await readStdin();
-  if (!raw.trim()) throw new Error('engine-entrypoint: empty turn spec on stdin');
+  const raw = await readFirstLine();
+  if (!raw) throw new Error('engine-entrypoint: empty turn spec on stdin');
   const spec = JSON.parse(raw) as TurnSpec;
 
   const claudeSdk = await import('@anthropic-ai/claude-agent-sdk');
@@ -50,16 +139,72 @@ async function main(): Promise<void> {
     warn: (m) => process.stderr.write(`[engine-core] ${m}\n`),
   });
 
-  const result: EngineRunResult = await core.run({
+  // ── Build extra Claude options for the tool bridge ─────────────────────────────────────────
+  let mcpServers: Record<string, unknown> | undefined;
+
+  if (spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
+    // A shared map: tool_request id → { resolve, reject }.  Populated by each tool call handler,
+    // drained by the stdin reader loop.
+    const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
+
+    // Start reading host responses from stdin in the background.
+    startStdinFrameReader(pending);
+
+    // Build the thin MCP server: one tool per declared name that proxies via the frame protocol.
+    const z = (await import('zod/v4')).z;
+    const tools = spec.toolBridgeTools.map((toolName: string) =>
+      claudeSdk.tool(
+        toolName,
+        `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
+        // Accept any JSON object as input (we forward it verbatim to the host).
+        { args: z.record(z.string(), z.unknown()).optional().describe('Tool arguments') },
+        async (input: { args?: Record<string, unknown> }) => {
+          const id = randomUUID();
+          const resultPromise = new Promise<unknown>((resolve, reject) => {
+            pending.set(id, { resolve, reject });
+          });
+          // Emit the tool_request on stdout.
+          emit({ t: 'tool_request', id, name: toolName, args: input.args ?? {} });
+          try {
+            const result = await resultPromise;
+            const text = typeof result === 'string' ? result : JSON.stringify(result);
+            return { content: [{ type: 'text' as const, text }] };
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true };
+          }
+        },
+      ),
+    );
+
+    const server = claudeSdk.createSdkMcpServer({
+      name: 'atlas-host-bridge',
+      version: '1.0.0',
+      instructions: 'Atlas host tools. Call these to interact with the host harness.',
+      tools,
+      alwaysLoad: true,
+    });
+
+    mcpServers = { 'atlas-host-bridge': server };
+  }
+
+  // ── Build the RunEngineArgs for EngineCore ────────────────────────────────────────────────
+  const runArgs: RunEngineArgs & { _extraClaudeOptions?: Record<string, unknown> } = {
     ...spec,
     onEvent: (e: EngineEvent) => emit({ t: 'event', e }),
-  });
+    // Pass the MCP servers through as extra options (EngineCore's runClaude merges them in below).
+    ...(mcpServers ? { _extraClaudeOptions: { mcpServers } } : {}),
+  };
+
+  // EngineCore.run doesn't accept _extraClaudeOptions — we need to pass mcpServers through the
+  // SDK's Options.  Patch EngineCore to accept an optional extraOptions param for the bridge.
+  // Since we control EngineCore and it's bundled, we call it directly with the extended contract.
+  const result: EngineRunResult = await core.runWithExtras(runArgs, mcpServers as Record<string, unknown> | undefined);
   emit({ t: 'final', r: result });
 }
 
 main().catch((err: unknown) => {
   const e = err as { isAuthError?: boolean; sessionId?: string; stack?: string; message?: string };
-  // Auth (401) errors carry the live session id so the host can PAUSE + resume this same session.
   emit({
     t: 'error',
     message: err instanceof Error ? (err.stack ?? err.message) : String(err),

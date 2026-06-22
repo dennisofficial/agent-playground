@@ -109,18 +109,19 @@ export class DockerodeContainerEngine implements ContainerEngine {
   }
 
   async exec(id: string, argv: string[], opts: ExecOptions = {}): Promise<ExecResult> {
+    const needsStdin = opts.stdin !== undefined || opts.onStdinReady !== undefined;
     const exec = await this.docker.getContainer(id).exec({
       Cmd: argv,
       AttachStdout: true,
       AttachStderr: true,
-      AttachStdin: opts.stdin !== undefined,
+      AttachStdin: needsStdin,
       Tty: false,
       ...(opts.user ? { User: opts.user } : {}),
       ...(opts.env ? { Env: toEnvList(opts.env) } : {}),
       ...(opts.cwd ? { WorkingDir: opts.cwd } : {}),
     });
 
-    const stream = await exec.start({ hijack: true, stdin: opts.stdin !== undefined });
+    const stream = await exec.start({ hijack: true, stdin: needsStdin });
 
     let stdout = '';
     let stderr = '';
@@ -143,8 +144,15 @@ export class DockerodeContainerEngine implements ContainerEngine {
     this.docker.modem.demuxStream(stream, outW, errW);
 
     if (opts.stdin !== undefined) {
+      // One-shot: write the whole payload then close stdin immediately.
       stream.write(opts.stdin);
       stream.end();
+    } else if (opts.onStdinReady) {
+      // Bidirectional: hand the caller a write/end handle; caller decides when stdin closes.
+      opts.onStdinReady(
+        (data) => stream.write(data),
+        () => stream.end(),
+      );
     }
 
     const onAbort = (): void => {

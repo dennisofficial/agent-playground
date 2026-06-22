@@ -260,11 +260,12 @@ export interface IEnvConfig {
   // back to the v1 SLACK_BOT_TOKEN / SLACK_APP_TOKEN (xoxb-/xapp-). Unset → the Slack surface is inert.
   ATLAS_SLACK_BOT_TOKEN?: string;
   ATLAS_SLACK_APP_TOKEN?: string;
-  // ATLAS_SURFACE: which `ChatSurface` is bound as the CHAT_SURFACE (W6). 'slack' (default) → the real
-  // thread-aware Slack adapter; 'agent' → the in-process programmatic surface a test/script drives Atlas
-  // through (send → read replies → approve) with no Slack. Both providers are always constructed; only
-  // the binding switches.
-  ATLAS_SURFACE?: 'slack' | 'agent';
+  // ATLAS_SURFACE: which `ChatSurface` is bound as the CHAT_SURFACE (W6/R0). 'slack' (default) → the
+  // real thread-aware Slack adapter; 'agent' → the in-process programmatic surface a test/script drives
+  // Atlas through (send → read replies → approve) with no Slack; 'web' → the SSE + REST web adapter
+  // (R0: GET /web/events SSE, POST /web/say, POST /web/approve, GET /web/thread). All providers are
+  // always constructed; only the binding switches.
+  ATLAS_SURFACE?: 'slack' | 'agent' | 'web';
   // ── Atlas v2 ingress (W2 — the notification HTTP edge) ───────────────────────────────────────
   // ATLAS_HTTP_PORT: the port the Atlas HTTP app listens on (hosts POST /ingress/github + /webhook).
   // Default 4002 in code (kept off v1's slack-app :4001). Cloud Run injects PORT for v1, but Atlas v2
@@ -491,7 +492,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   GITHUB_TOKEN: Joi.string().optional(),
   ATLAS_SLACK_BOT_TOKEN: Joi.string().optional(),
   ATLAS_SLACK_APP_TOKEN: Joi.string().optional(),
-  ATLAS_SURFACE: Joi.string().valid('slack', 'agent').optional(),
+  ATLAS_SURFACE: Joi.string().valid('slack', 'agent', 'web').optional(),
   // Atlas v2 ingress (W2)
   ATLAS_HTTP_PORT: Joi.number().port().optional(),
   ATLAS_GITHUB_WEBHOOK_SECRET: Joi.string().optional(),

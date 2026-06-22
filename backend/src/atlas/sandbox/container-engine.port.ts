@@ -64,8 +64,17 @@ export interface ExecOptions {
   env?: Record<string, string>;
   /** Working directory for the exec. */
   cwd?: string;
-  /** Optional stdin piped to the process (the engine turn spec JSON). */
+  /**
+   * Optional stdin piped to the process (the engine turn spec JSON).
+   * For bidirectional (tool-bridge) turns, leave this undefined and use `onStdinReady` instead.
+   */
   stdin?: string;
+  /**
+   * Called once the exec's stdin writable stream is open, giving the caller a handle to write
+   * subsequent frames (tool_response/tool_error) and close stdin when the turn ends.
+   * Mutually exclusive with `stdin`: set one or the other, not both.
+   */
+  onStdinReady?: (write: (data: string) => void, end: () => void) => void;
   /** Streamed stdout chunks (decoded utf-8). */
   onStdout?: (chunk: string) => void;
   /** Streamed stderr chunks (decoded utf-8). */
