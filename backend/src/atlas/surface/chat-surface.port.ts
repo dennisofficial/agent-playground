@@ -56,6 +56,12 @@ export interface PostOptions {
    * teamId that has no installed token (and no fallback) is dropped, never mis-routed to another team.
    */
   teamId?: string;
+  /**
+   * Optional opaque metadata carried by this post — surface-specific consumers may use it to type
+   * events (e.g. the web surface attaches it to `WebOutboundMessage.meta` so SSE subscribers can
+   * distinguish build-phase engine events from conversational chat messages). Other surfaces ignore it.
+   */
+  meta?: Record<string, unknown>;
 }
 
 /**

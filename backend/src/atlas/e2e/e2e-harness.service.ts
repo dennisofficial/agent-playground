@@ -7,7 +7,7 @@ import { DataSource, Repository } from 'typeorm';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import { AgentChatSurface, type CapturedApprovalCard } from '../agent-surface';
 import { AtlasModule } from '../atlas.module';
-import { ATLAS_BRAIN_LLM, DecisionApprovalService } from '../brain';
+import { ATLAS_BRAIN_LLM, AgentSessionManager, DecisionApprovalService } from '../brain';
 import { ATLAS_CLASSIFIER_LLM } from '../decision-gate';
 import { ATLAS_PLANNER_LLM } from '../driver';
 import { EngineRunner } from '../engine';
@@ -18,7 +18,9 @@ import {
   AtlasJob,
   AtlasProject,
   AtlasTeam,
+  AtlasThread,
 } from '../persistence/entities';
+import type { ChatStimulus } from '../domain';
 import {
   FakeBrainLlm,
   FakeClassifierLlm,
@@ -62,6 +64,10 @@ const TEAM_ID = 'T-AGENT'; // matches AgentChatSurface's DEFAULT_TEAM_ID
 const CHANNEL_REF = 'C-E2E';
 const PROJECT_ID = 'e2e-project';
 const OFFLINE_REPO_URL = 'https://github.com/atlas-e2e/sample.git';
+/** Stable thread id pre-seeded by the harness for the feature scenario's direct submit_plan call. */
+const FEATURE_THREAD_ID = '00000000-e2e0-4000-8000-e2e000000001';
+/** Human author id stamped on the fake ChatStimulus in the feature scenario. */
+const DEFAULT_HUMAN_ID = 'U-E2E';
 
 /**
  * THE `atlas:e2e` HARNESS — the end-to-end verification (W9) of the whole Atlas v2 graph driven over the
@@ -89,6 +95,7 @@ export class E2eHarness {
   private app!: INestApplication;
   private agent!: AgentChatSurface;
   private approvals!: DecisionApprovalService;
+  private sessionManager!: AgentSessionManager;
   private dataSource!: DataSource;
   private serverPort = 0;
 
@@ -138,6 +145,7 @@ export class E2eHarness {
 
     this.agent = this.app.get(AgentChatSurface);
     this.approvals = this.app.get(DecisionApprovalService);
+    this.sessionManager = this.app.get(AgentSessionManager);
     this.dataSource = this.app.get<DataSource>(getDataSourceToken(ATLAS_CONNECTION));
 
     this.logger.log(
@@ -163,7 +171,11 @@ export class E2eHarness {
 
   // ── seed ─────────────────────────────────────────────────────────────────────────────────────
 
-  /** Insert the tenant graph (team → project → 1:1 channel) the chat bridge + routing resolve against. */
+  /**
+   * Insert the tenant graph (team → project → 1:1 channel → feature thread) the chat bridge +
+   * routing resolve against. Also seeds the single `atlas_threads` row the feature scenario's direct
+   * `submit_plan` call needs (so `route()` can resolve channel + threadTs for the approval card).
+   */
   private async seedTenant(): Promise<void> {
     const gitUrl = this.config.live ? this.repoUrl() : OFFLINE_REPO_URL;
     const baseBranch = this.config.baseBranch ?? 'main';
@@ -175,6 +187,7 @@ export class E2eHarness {
     const teams = this.repo(AtlasTeam);
     const projects = this.repo(AtlasProject);
     const channels = this.repo(AtlasChannel);
+    const threads = this.repo(AtlasThread);
 
     await teams.save(
       teams.create({ team_id: TEAM_ID, team_name: 'Atlas E2E', status: 'active' }),
@@ -198,7 +211,23 @@ export class E2eHarness {
         display_name: 'e2e-channel',
       }),
     );
-    this.logger.log(`Seeded tenant ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (channel ${CHANNEL_REF})`);
+
+    // The feature scenario drives `submit_plan` directly (offline: no in-sandbox session). We pre-seed
+    // the thread row so `BrainStoreService.route()` can resolve the channel + threadTs for the card.
+    // The surface_thread_ref is set to CHANNEL_REF so the agent surface posts into the right channel.
+    await threads.save(
+      threads.create({
+        id: FEATURE_THREAD_ID,
+        team_id: TEAM_ID,
+        project_id: PROJECT_ID,
+        origin: 'control',
+        surface_thread_ref: CHANNEL_REF,
+        title: 'e2e-feature-thread',
+        base_branch: baseBranch,
+      }),
+    );
+
+    this.logger.log(`Seeded tenant ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (channel ${CHANNEL_REF}, thread ${FEATURE_THREAD_ID})`);
   }
 
   /**
@@ -219,6 +248,7 @@ export class E2eHarness {
       [TEAM_ID],
     ).catch(() => undefined);
     await q(`DELETE FROM atlas_stimuli WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_thread_sandboxes WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM atlas_threads WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM atlas_channels WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM atlas_projects WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
@@ -227,47 +257,57 @@ export class E2eHarness {
 
   // ── scenario 1: feature (chat-initiated) ───────────────────────────────────────────────────────
 
+  /**
+   * FEATURE SCENARIO — the R5 end-to-end spine:
+   *   submit_plan (direct, offline) → Codex pre-review (skipped: no sandbox) → approval card →
+   *   approve → dispatch → SectionDriver build phases (FakeEngineRunner) → FakeLocalGitService
+   *   commits → FakeGithubPrService opens PR → job reaches done + pr_url.
+   *
+   * In OFFLINE mode we call `AgentSessionManager.buildTools(stimulus).submit_plan(args)` directly
+   * (bypassing the in-sandbox subprocess — `LocalToolBridgeRunner` requires a real entrypoint.mjs
+   * which is billed/network). This is correct: the R5 gate proves the approval→build→PR spine; the
+   * chat→plan path is proven by the R3 unit tests for `AgentSessionManager`.
+   *
+   * In LIVE mode the full chat→grill→plan→approve→build→PR path runs with real LLM + git + PR.
+   */
   private async scenarioFeature(): Promise<E2eScenarioResult> {
     const steps: E2eStep[] = [];
     const record = mkRecorder(steps, this.logger, 'feature');
     try {
-      // Send the (tiny) feature request, then loop: read Atlas's reply; answer a grill question
-      // generically; resolve when an approval card appears.
       let card: CapturedApprovalCard | undefined;
-      let threadTs: string | undefined;
-      const featureText = 'Please add a short note to the README about the project.';
 
-      // Arm the first wait BEFORE sending (request/await ordering: a fast reply can't race ahead).
-      let waitReply = this.agent.waitForReply(() => true, 20_000);
-      threadTs = this.agent.sendFromHuman(CHANNEL_REF, featureText);
-
-      for (let i = 0; i < 6; i++) {
-        const reply = await waitReply.catch(() => undefined);
-        if (!reply) break;
-        // Did this reply (or any prior post) carry the approval card?
-        card = this.agent.latestApprovalCard();
-        if (card) break;
-        // Otherwise it's a grill question — answer generically, in-thread, and wait for the next reply.
-        waitReply = this.agent.waitForReply(() => true, 20_000);
-        this.agent.sendFromHuman(
-          CHANNEL_REF,
-          'Use your best judgment — keep it minimal and self-contained.',
-          { threadTs },
-        );
+      if (this.config.live) {
+        // LIVE: drive via real chat → grill → plan → card.
+        const featureText = 'Please add a short note to the README about the project.';
+        let threadTs: string | undefined;
+        let waitReply = this.agent.waitForReply(() => true, 60_000);
+        threadTs = this.agent.sendFromHuman(CHANNEL_REF, featureText);
+        for (let i = 0; i < 10; i++) {
+          const reply = await waitReply.catch(() => undefined);
+          if (!reply) break;
+          card = this.agent.latestApprovalCard();
+          if (card) break;
+          waitReply = this.agent.waitForReply(() => true, 60_000);
+          this.agent.sendFromHuman(CHANNEL_REF, 'Use your best judgment — keep it minimal.', { threadTs });
+        }
+        if (!card) card = await this.agent.waitForApprovalCard(60_000).catch(() => undefined);
+      } else {
+        // OFFLINE: bypass the in-sandbox session — call `submit_plan` tool impl directly. This
+        // exercises persistPlan → plan-review skip (no sandbox) → requestApprovalAndAct → card post.
+        card = await this.submitPlanDirect();
       }
 
-      // Fallback: if the loop ended without spotting the card, block explicitly for it.
-      if (!card) card = await this.agent.waitForApprovalCard(20_000).catch(() => undefined);
-      record('grill→approval-card', !!card, card ? `card for job ${card.jobId}` : 'no approval card posted');
+      record('submit_plan→approval-card', !!card, card ? `card for job ${card.jobId}` : 'no approval card posted');
       if (!card) return { name: 'feature', ok: false, steps };
 
       // Approve the decision record (the human gate) — the seam the Slack button would hit.
       const resolved = this.approvals.resolve(card.jobId, 'approve', 'e2e');
       record('approve', resolved, resolved ? `resolved job ${card.jobId}` : 'no pending approval to resolve');
+      if (!resolved) return { name: 'feature', ok: false, steps };
 
       // The driver runs async after approval. Poll the job until it reaches PR-ready — the driver's
       // terminal state is `done` WITH a recorded `pr_url` (see `DriverStoreService.setPrReady`).
-      const job = await this.waitForPrReady(card.jobId, 420_000);
+      const job = await this.waitForPrReady(card.jobId, 120_000);
       const ok = !!job?.pr_url && job.status === 'done';
       record('pr-ready', ok, job ? `status=${job.status} pr=${job.pr_url ?? '-'}` : 'job never reached pr_ready (done + pr_url)');
 
@@ -280,6 +320,52 @@ export class E2eHarness {
       record('error', false, errText(err));
       return { name: 'feature', ok: false, steps };
     }
+  }
+
+  /**
+   * OFFLINE HELPER — call `submit_plan` via the real `AgentSessionManager` tool impl (bypassing the
+   * in-sandbox subprocess). Constructs a minimal fake ChatStimulus pointing to the pre-seeded feature
+   * thread so `route()` can resolve the channel/threadTs for the approval card post.
+   *
+   * Returns the posted approval card (or undefined on timeout).
+   */
+  private async submitPlanDirect(): Promise<CapturedApprovalCard | undefined> {
+    const stimulus: ChatStimulus = {
+      id: 'e2e-stimulus-feature',
+      kind: 'chat',
+      trust: 'trusted',
+      teamId: TEAM_ID,
+      projectId: PROJECT_ID,
+      threadId: FEATURE_THREAD_ID,
+      body: 'Please add a short note to the README about the project.',
+      author: { id: DEFAULT_HUMAN_ID, displayName: 'Dennis (e2e)' },
+      replyRoute: { surfaceId: 'agent', threadRef: CHANNEL_REF },
+      receivedAt: new Date(),
+    };
+
+    // Build the tool impls (the full host-side dispatch table for this stimulus's thread).
+    const tools = this.sessionManager.buildTools(stimulus);
+
+    // Arm the card wait BEFORE calling submit_plan (it fires async via requestApprovalAndAct).
+    const cardWait = this.agent.waitForApprovalCard(15_000);
+
+    // Call submit_plan directly — goes through persistPlan → planReview (skipped: no sandbox) →
+    // requestApprovalAndAct → approval card posted.
+    const result = await tools.submit_plan({
+      overview: 'Add a short note to the README describing what this project does and how to run it.',
+      decisions: [
+        {
+          decisionClass: 'cross_cutting',
+          title: 'README format',
+          ruling: 'Append a "## About" section to the existing README.md; keep it to ≤5 lines.',
+        },
+      ],
+      sections: ['Update README.md with a short "About" section and a one-line run instruction.'],
+    });
+
+    this.logger.debug(`submit_plan direct result: ${JSON.stringify(result)}`);
+
+    return cardWait.catch(() => undefined);
   }
 
   // ── scenario 2: autonomous (notification) ──────────────────────────────────────────────────────

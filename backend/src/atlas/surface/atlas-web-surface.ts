@@ -15,6 +15,12 @@ export interface WebOutboundMessage {
   threadTs?: string;
   /** Web approval card payload (rendered when the post carries an approval card). */
   card?: WebApprovalCard;
+  /**
+   * Optional opaque metadata (from `PostOptions.meta`). The driver uses this to attach build-phase
+   * event context (e.g. `{ kind: 'build_event', phaseId, sectionOrdinal, eventKind }`) so a web UI
+   * can distinguish build-phase engine events from conversational chat messages.
+   */
+  meta?: Record<string, unknown>;
   postedAt: Date;
 }
 
@@ -161,6 +167,7 @@ export class AtlasWebSurface implements ChatSurface {
       text,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
       ...(card ? { card } : {}),
+      ...(opts.meta ? { meta: opts.meta } : {}),
       postedAt: new Date(),
     };
     this.outbox.push(message);

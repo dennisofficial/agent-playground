@@ -18,6 +18,7 @@ import {
 import { AtlasWebSurface } from './atlas-web-surface';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebOutboundMessage } from './atlas-web-surface';
+import { DriverStoreService } from '../driver/driver-store.service';
 
 /** Body for `POST /web/say`. */
 export interface WebSayRequest {
@@ -67,7 +68,10 @@ const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, 
 export class WebSurfaceController {
   private readonly logger = new Logger(WebSurfaceController.name);
 
-  constructor(private readonly surface: AtlasWebSurface) {}
+  constructor(
+    private readonly surface: AtlasWebSurface,
+    private readonly driverStore: DriverStoreService,
+  ) {}
 
   /**
    * SSE stream — `GET /web/events?channel=<channel>`. Clients subscribe once and receive every
@@ -145,6 +149,25 @@ export class WebSurfaceController {
       throw new BadRequestException('channel query param is required');
     }
     return this.surface.channelMessages(channel, threadTs);
+  }
+
+  /**
+   * `GET /web/pipeline?threadId=<id>&teamId=<id>` — current pipeline state for a thread. Returns the
+   * job + section statuses + pr_url so the web UI can render the pipeline view. Delegates to
+   * `DriverStoreService.getPipelineState` (same source the in-sandbox `get_pipeline_state` tool reads).
+   *
+   * Returns `{ status: 'no_job' }` when no job exists on the thread yet. Never 404s — the UI polls
+   * from thread creation onwards.
+   */
+  @Get('pipeline')
+  async pipeline(
+    @Query('threadId') threadId: string,
+    @Query('teamId') teamId: string,
+  ): Promise<unknown> {
+    if (!threadId || !teamId) {
+      throw new BadRequestException('threadId and teamId query params are required');
+    }
+    return this.driverStore.getPipelineState(threadId, teamId);
   }
 
   /**

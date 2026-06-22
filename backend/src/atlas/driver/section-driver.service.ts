@@ -10,7 +10,7 @@ import {
 } from '../decision-gate';
 import { AutoFixStage } from '../autofix';
 import type { DecisionRecord, Job, Phase } from '../domain';
-import { EngineAuthError } from '../engine';
+import { EngineAuthError, type EngineEvent } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { CHAT_SURFACE, type ChatSurface } from '../surface';
 import { CredentialResolver } from '../onboarding';
@@ -671,8 +671,12 @@ export class SectionDriver implements JobDispatcher {
         task: renderPhaseTask(record, section, phase),
         auth: await this.creds.engineAuth(job.teamId, 'claude'),
         onEvent: (e) => {
-          if (e.kind === 'tool')
+          if (e.kind === 'tool') {
             this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
+          }
+          // R5: relay engine events to the surface so the web UI can render per-phase transcripts.
+          // Best-effort — a failed post never breaks the build pipeline.
+          void this.postPhaseEvent(route, phase.id, section.ordinal, phase.ordinal, e);
         },
       },
       `phase "${label}"`,
@@ -856,6 +860,47 @@ export class SectionDriver implements JobDispatcher {
       });
     } catch (err) {
       this.logger.warn(`post failed (continuing): ${err}`);
+    }
+  }
+
+  /**
+   * R5: relay a per-phase engine event to the web surface (SSE) so the UI can render the live
+   * phase transcript. Only text/tool/result events are relayed (session events carry no useful text).
+   * Posts with a `meta.kind='build_event'` marker so SSE subscribers can distinguish them from
+   * conversational messages. Best-effort — a failed post never breaks the build.
+   */
+  private async postPhaseEvent(
+    route: JobRoute,
+    phaseId: string,
+    sectionOrdinal: number,
+    phaseOrdinal: number,
+    e: EngineEvent,
+  ): Promise<void> {
+    if (!route.channel) return;
+    // Only relay events that carry useful text — skip bare session events.
+    const text =
+      e.kind === 'text'
+        ? e.text.trim()
+        : e.kind === 'tool'
+          ? `[tool] ${e.name}${e.detail ? `: ${e.detail}` : ''}`
+          : e.kind === 'result'
+            ? e.text.trim()
+            : '';
+    if (!text) return;
+    try {
+      await this.surface.post(route.channel, text, {
+        ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+        ...(route.teamId ? { teamId: route.teamId } : {}),
+        meta: {
+          kind: 'build_event',
+          phaseId,
+          sectionOrdinal,
+          phaseOrdinal,
+          eventKind: e.kind,
+        },
+      });
+    } catch {
+      // Silently drop — phase event relay is purely informational.
     }
   }
 }
