@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { Observable, filter, map } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
+import { Public } from '@workspace/auth/server';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
@@ -73,13 +74,13 @@ export class WebSurfaceController {
     private readonly driverStore: DriverStoreService,
   ) {}
 
-  // TODO: authn — add operator authentication before exposing these control endpoints to a network
-  // boundary. Web is the production surface, so the endpoints are always mounted/active.
+  // AUTH: every route here is gated by the global `AtlasAuthGuard` (a valid `access_token` cookie),
+  // EXCEPT `GET /web/ping` (marked `@Public()`). The browser calls this app directly with credentialed
+  // CORS, so the session cookie rides on both the REST calls and the `withCredentials` SSE stream.
 
   /**
    * SSE stream — `GET /web/events?channel=<channel>`. Clients subscribe once and receive every
-   * `WebOutboundMessage` for the channel as a `data:` JSON line. Filtered to the requested channel;
-   * no authentication in R0 (added in a follow-up gate or middleware layer).
+   * `WebOutboundMessage` for the channel as a `data:` JSON line. Filtered to the requested channel.
    *
    * Uses NestJS `@Sse` decorator which sets `Content-Type: text/event-stream` and `Transfer-Encoding:
    * chunked` automatically. The browser `EventSource` API or a `fetch` with streaming can consume it.
@@ -175,8 +176,10 @@ export class WebSurfaceController {
 
   /**
    * `GET /web/ping` — liveness probe. Useful for the web client to detect whether the Atlas HTTP
-   * server is up before opening the SSE stream.
+   * server is up before opening the SSE stream. PUBLIC (no session needed) so the login screen can
+   * detect backend reachability before the operator authenticates.
    */
+  @Public()
   @Get('ping')
   ping(): { ok: boolean; surface: string } {
     return { ok: true, surface: this.surface.name };

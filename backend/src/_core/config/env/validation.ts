@@ -183,7 +183,11 @@ export interface IEnvConfig {
   // Bearer token gating the admin REST endpoints (projects/tokens). Unset → admin API disabled.
   ADMIN_API_TOKEN?: string;
 
-  // JWT auth for the admin portal (all optional — portal is disabled until secrets are set)
+  // JWT auth for the Atlas web console (/auth/*). Optional in the SHARED schema (slack-app / api boot
+  // without them), but the Atlas HTTP app's JwtModule factory FAILS FAST if the two secrets are unset —
+  // its auth guard is global. COOKIE_DOMAIN scopes the session cookies in deploy (host-only in dev).
+  // ADMIN_SEED_* provisions an approved admin on boot (a guaranteed way in; registration is open but
+  // new accounts start blocked until approved).
   JWT_ACCESS_SECRET?: string;
   JWT_REFRESH_SECRET?: string;
   COOKIE_DOMAIN?: string;
@@ -441,7 +445,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SECRETS_ENCRYPTION_KEY: Joi.string().optional(),
   ADMIN_API_TOKEN: Joi.string().optional(),
 
-  // JWT auth for the admin portal
+  // JWT auth for the Atlas web console (optional in the shared schema; Atlas fails fast if unset)
   JWT_ACCESS_SECRET: Joi.string().optional(),
   JWT_REFRESH_SECRET: Joi.string().optional(),
   COOKIE_DOMAIN: Joi.string().optional(),

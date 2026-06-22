@@ -17,6 +17,7 @@ export * from './atlas-decision-record.entity';
 export * from './atlas-memory.entity';
 export * from './atlas-tenant-credentials.entity';
 export * from './atlas-thread-sandbox.entity';
+export * from './atlas-user.entity';
 
 import { AtlasTeam } from './atlas-team.entity';
 import { AtlasProject } from './atlas-project.entity';
@@ -31,6 +32,7 @@ import { AtlasDecisionRecord } from './atlas-decision-record.entity';
 import { AtlasMemory } from './atlas-memory.entity';
 import { AtlasTenantCredentials } from './atlas-tenant-credentials.entity';
 import { AtlasThreadSandbox } from './atlas-thread-sandbox.entity';
+import { AtlasUser } from './atlas-user.entity';
 
 /** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ATLAS_ENTITIES = [
@@ -47,4 +49,5 @@ export const ATLAS_ENTITIES = [
   AtlasMemory,
   AtlasTenantCredentials,
   AtlasThreadSandbox,
+  AtlasUser,
 ];

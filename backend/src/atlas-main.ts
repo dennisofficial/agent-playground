@@ -5,6 +5,7 @@ import { setupLogger } from '@core/setup-logger';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import cookieParser from 'cookie-parser';
 import { AtlasModule } from './atlas/atlas.module';
 
 /**
@@ -35,7 +36,18 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
 
-  const port = app.get(EnvService).get('ATLAS_HTTP_PORT') ?? 4002;
+  const env = app.get(EnvService);
+
+  // Populates `req.cookies` — the auth guard + `/auth/*` read the access/refresh cookies from it.
+  app.use(cookieParser());
+
+  // The browser talks to this app DIRECTLY (no Next.js proxy), so allow the web console's origin with
+  // credentials — required for the httpOnly session cookies to ride on cross-origin `/web` + `/auth`
+  // requests. `localhost:3000` and `localhost:4002` are the SAME site, so the SameSite=Lax cookies are
+  // sent on these cross-origin-but-same-site calls; CORS just needs the explicit origin + credentials.
+  app.enableCors({ origin: env.get('FRONTEND_HOST'), credentials: true });
+
+  const port = env.get('ATLAS_HTTP_PORT') ?? 4002;
   await app.listen(port);
 
   log.log(

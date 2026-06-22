@@ -1,4 +1,5 @@
 import { Controller, HttpCode, Logger, Post, Req } from '@nestjs/common';
+import { Public } from '@workspace/auth/server';
 import { GithubNotificationSource } from './github-notification.source';
 import { runIngress, type RawBodyRequest } from './ingress-http';
 import { StimulusIntake } from '../stimulus';
@@ -13,6 +14,7 @@ import { StimulusIntake } from '../stimulus';
  * no reply path; the notification SEEDS a thread and the conversation continues over the chat surface.
  * Zero v1 imports.
  */
+@Public() // verifies itself via GitHub HMAC; no operator session involved
 @Controller('ingress/github')
 export class GithubIngressController {
   private readonly logger = new Logger(GithubIngressController.name);

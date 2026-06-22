@@ -9,6 +9,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Public } from '@workspace/auth/server';
 import { Repository } from 'typeorm';
 import {
   AgentChatSurface,
@@ -51,6 +52,7 @@ const TESTER_ID = 'tester';
  * approval gate). It owns NO orchestration logic — it's thin plumbing over the agent surface, the
  * approval service, and the `atlas_*` repos. Zero v1 imports.
  */
+@Public() // dev/test-only edge, gated by ATLAS_TEST_BRIDGE; never behind the operator session
 @Controller('test')
 export class TestBridgeController {
   private readonly logger = new Logger(TestBridgeController.name);

@@ -1,4 +1,5 @@
 import { Controller, HttpCode, Logger, Post, Req } from '@nestjs/common';
+import { Public } from '@workspace/auth/server';
 import { GenericWebhookNotificationSource } from './generic-webhook-notification.source';
 import { runIngress, type RawBodyRequest } from './ingress-http';
 import { StimulusIntake } from '../stimulus';
@@ -9,6 +10,7 @@ import { StimulusIntake } from '../stimulus';
  * routing live in the `GenericWebhookNotificationSource` adapter; this controller is the same thin
  * plumbing as the GitHub one. Inbound-only — seeds a thread, no reply path. Zero v1 imports.
  */
+@Public() // verifies itself via a shared-secret header; no operator session involved
 @Controller('ingress/webhook')
 export class WebhookIngressController {
   private readonly logger = new Logger(WebhookIngressController.name);
