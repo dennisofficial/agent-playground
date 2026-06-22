@@ -84,4 +84,11 @@ export interface ChatSurface {
     args: { text?: string; blocks?: Array<Record<string, unknown>> },
     teamId?: string,
   ): Promise<void> | void;
+  /**
+   * OPTIONAL — operator "resume" requests for a job PAUSED on a credential/401 error. The web adapter
+   * emits here on `POST /web/resume`; the driver subscribes and re-drives the job. Routing it through
+   * the port (rather than injecting the driver into the surface) keeps SurfaceModule and DriverModule
+   * acyclic. Surfaces without a resume affordance (e.g. the agent test surface) omit this.
+   */
+  readonly resumeRequests$?: Observable<{ jobId: string }>;
 }

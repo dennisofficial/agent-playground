@@ -218,6 +218,15 @@ describe('AtlasWebSurface — approval click via approval$', () => {
     const event = await click;
     expect(event.note).toBeUndefined();
   });
+
+  it('requestResume emits the jobId on resumeRequests$ (BACKEND_GAPS #9)', async () => {
+    const surface = new AtlasWebSurface();
+    const req = firstValueFrom(surface.resumeRequests$.pipe(take(1)));
+
+    surface.requestResume('job-xyz');
+
+    expect(await req).toEqual({ jobId: 'job-xyz' });
+  });
 });
 
 // ── 5: update() ───────────────────────────────────────────────────────────────────────────────

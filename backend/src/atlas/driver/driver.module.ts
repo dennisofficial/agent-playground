@@ -1,6 +1,13 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Global, Module, type OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Global,
+  Inject,
+  Module,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import type { Subscription } from 'rxjs';
 import { AutoFixModule } from '../autofix';
 import { JOB_DISPATCHER } from '../brain';
 import { DecisionGateModule } from '../decision-gate';
@@ -17,6 +24,8 @@ import {
   AtlasThreadSandbox,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
+// Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
+import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { ATLAS_PLANNER_LLM, AnthropicPlannerLlm } from './planner-llm';
 import { DriverStoreService } from './driver-store.service';
 import { ATLAS_DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
@@ -82,17 +91,30 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
   ],
   exports: [SectionDriver, JOB_DISPATCHER, ThreadLifecycleService, DriverStoreService],
 })
-export class DriverModule implements OnApplicationBootstrap {
+export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
+  private resumeSub?: Subscription;
+
   constructor(
     private readonly driver: SectionDriver,
     private readonly env: EnvService,
+    @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
   ) {}
 
   /** On boot, reconcile any in-flight jobs — re-enter the same straight drive at the persisted cursor. */
   async onApplicationBootstrap(): Promise<void> {
+    // Operator resume requests (POST /web/resume) → re-drive the paused job. Subscribed unconditionally,
+    // independent of the boot reconcile sweep below (the agent test surface omits resumeRequests$).
+    this.resumeSub = this.surface.resumeRequests$?.subscribe(({ jobId }) => {
+      void this.driver.resumePaused(jobId);
+    });
+
     // ATLAS_DISABLE_RESUME (dev/test): a fresh test instance skips the sweep so it doesn't re-attempt
     // prior runs' stale jobs.
     if (this.env.get('ATLAS_DISABLE_RESUME')) return;
     await this.driver.resume();
+  }
+
+  onApplicationShutdown(): void {
+    this.resumeSub?.unsubscribe();
   }
 }

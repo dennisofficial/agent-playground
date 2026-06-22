@@ -43,6 +43,12 @@ export interface WebApproveRequest {
   note?: string;
 }
 
+/** Body for `POST /web/resume`. */
+export interface WebResumeRequest {
+  /** The job to continue (paused on a credential/401 error). */
+  jobId: string;
+}
+
 const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
 
 /**
@@ -174,6 +180,22 @@ export class WebSurfaceController {
       throw new BadRequestException('threadId and teamId query params are required');
     }
     return this.driverStore.getPipelineState(threadId, teamId);
+  }
+
+  /**
+   * `POST /web/resume` — continue a job PAUSED on a credential/401 error (the production equivalent of
+   * the ops-only `/test/resume`). Emits a resume request on the surface; the driver (which injects the
+   * `CHAT_SURFACE` port) subscribes and re-drives via `SectionDriver.resumePaused` (no-op if the job
+   * isn't paused). Decoupled this way so SurfaceModule never imports DriverModule. Gated by the session.
+   */
+  @Post('resume')
+  resume(@Body() body: WebResumeRequest): { ok: boolean } {
+    if (!body?.jobId) {
+      throw new BadRequestException('jobId is required');
+    }
+    this.surface.requestResume(body.jobId);
+    this.logger.log(`web resume requested job=${body.jobId}`);
+    return { ok: true };
   }
 
   /**

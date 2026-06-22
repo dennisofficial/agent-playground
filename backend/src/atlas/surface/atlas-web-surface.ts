@@ -76,6 +76,8 @@ export class AtlasWebSurface implements ChatSurface {
     ruledBy: string;
     note?: string;
   }>();
+  /** Control channel: operator resume requests (POST /web/resume) — the driver subscribes via the port. */
+  private readonly resumeSubject = new Subject<{ jobId: string }>();
 
   /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
   readonly outbox: WebOutboundMessage[] = [];
@@ -99,6 +101,17 @@ export class AtlasWebSurface implements ChatSurface {
    */
   get approval$(): Observable<{ actionId: string; value: string; ruledBy: string; note?: string }> {
     return this.approvalSubject.asObservable();
+  }
+
+  /** Operator resume requests — the driver (which injects this port) subscribes and re-drives the job. */
+  get resumeRequests$(): Observable<{ jobId: string }> {
+    return this.resumeSubject.asObservable();
+  }
+
+  /** Emit a resume request (called by the controller on `POST /web/resume`). */
+  requestResume(jobId: string): void {
+    this.logger.debug(`requestResume job=${jobId}`);
+    this.resumeSubject.next({ jobId });
   }
 
   // ── INBOUND ─────────────────────────────────────────────────────────────────────────────────────
