@@ -9,6 +9,7 @@ import {
 } from '../engine';
 import { ToolBridgeHost, type InboundFrame } from '../engine/tool-bridge-host';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
+import { SandboxActivityRegistry } from './sandbox-activity.registry';
 
 /** The engine's isolated agent home INSIDE the sandbox (long-lived → session resume across turns). */
 export const CONTAINER_AGENT_HOME = '/atlas-home';
@@ -42,6 +43,7 @@ export class DockerEngineRunner implements EngineRunnerPort {
   constructor(
     @Inject(CONTAINER_ENGINE) private readonly containers: ContainerEngine,
     private readonly env: EnvService,
+    private readonly activity: SandboxActivityRegistry,
   ) {}
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
@@ -65,10 +67,13 @@ export class DockerEngineRunner implements EngineRunnerPort {
       ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
     };
 
-    if (args.toolBridge) {
-      return this._runBidirectional(args, target, spec);
-    }
-    return this._runOneShot(args, target, spec);
+    // Mark the container busy for the duration of the exec so the idle reaper never tears it down
+    // mid-turn (which would kill a live build/plan/auto-fix turn).
+    return this.activity.track(target.containerId, () =>
+      args.toolBridge
+        ? this._runBidirectional(args, target, spec)
+        : this._runOneShot(args, target, spec),
+    );
   }
 
   /** One-shot (existing build-turn) path: write spec to stdin, close, consume stdout NDJSON. */

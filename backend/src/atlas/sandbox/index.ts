@@ -4,6 +4,7 @@ export * from './dockerode-container-engine';
 export * from './sandbox-image.builder';
 export * from './docker-engine-runner';
 export * from './sandbox-provider.port';
+export * from './sandbox-activity.registry';
 export * from './sandbox-manager.service';
 export * from './sandbox-refs.service';
 export * from './sandbox.module';

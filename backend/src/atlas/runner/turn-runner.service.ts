@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { SessionEngine, SessionMode, SessionRef } from '../domain';
-import { ENGINE_RUNNER, EngineAuthError, type EngineRunnerPort } from '../engine';
+import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, type EngineRunnerPort } from '../engine';
 import type { EngineAuth, EngineEvent, EngineRunResult, EngineUsage } from '../engine';
 import type { FeatureSandbox } from '../git';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
@@ -75,6 +75,13 @@ export class TurnRunnerService {
     // features never share engine state. The feature branch is unique per job/feature.
     const sandboxKey = `${sandbox.projectId}--${sandbox.branch}`;
 
+    // Cold re-attach + resume: the container was created/restarted fresh (warm === false) but we're
+    // resuming a session that remembers prior in-container state — tell it the box was reset. Flip warm
+    // so only the FIRST resumed turn in this drive carries the notice.
+    const needsResetNotice = sandbox.warm === false && !!priorSessionId;
+    if (sandbox.warm === false) sandbox.warm = true;
+    const task = needsResetNotice ? `${SANDBOX_RESET_NOTICE}\n\n${input.task}` : input.task;
+
     this.logger.log(
       `Turn: job=${jobId} phase=${phaseId ?? '-'} engine=${engine} mode=${mode} ` +
         `cwd=${sandbox.worktreePath}${priorSessionId ? ` resume=${priorSessionId}` : ''}`,
@@ -94,7 +101,7 @@ export class TurnRunnerService {
     try {
       result = await this.engine.run({
         engine,
-        task: input.task,
+        task,
         cwd: sandbox.worktreePath,
         systemPrompt: input.systemPrompt,
         sandboxKey,

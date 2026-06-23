@@ -335,12 +335,17 @@ export interface IEnvConfig {
   //  - ATLAS_REFS_ROOT: root for host-maintained read-only reference clones bind-mounted at /refs
   //    (falls back to REFS_ROOT).
   //  - ATLAS_MAX_CONCURRENT_SANDBOXES: cap on simultaneously-active sandboxes/turns (semaphore).
+  //  - ATLAS_SANDBOX_IDLE_TTL_MS: idle window before an attached-but-quiet per-thread sandbox container
+  //    is reaped to `detached` (worktree survives; next turn re-attaches). Default 12h.
+  //  - ATLAS_SANDBOX_REAP_INTERVAL_MS: how often the idle reaper + PR-merge cleanup sweep runs. Default 30m.
   // Reuses the generic DOCKER_SOCKET_PATH / REFS_ROOT via the ATLAS_* ?? fallback above.
   ATLAS_DOCKER_SOCKET_PATH?: string;
   ATLAS_SANDBOX_IMAGE?: string;
   ATLAS_SANDBOX_REBUILD?: string;
   ATLAS_REFS_ROOT?: string;
   ATLAS_MAX_CONCURRENT_SANDBOXES?: number;
+  ATLAS_SANDBOX_IDLE_TTL_MS?: number;
+  ATLAS_SANDBOX_REAP_INTERVAL_MS?: number;
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -511,4 +516,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   ATLAS_SANDBOX_REBUILD: Joi.string().optional(),
   ATLAS_REFS_ROOT: Joi.string().optional(),
   ATLAS_MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
+  ATLAS_SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
+  ATLAS_SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
 });

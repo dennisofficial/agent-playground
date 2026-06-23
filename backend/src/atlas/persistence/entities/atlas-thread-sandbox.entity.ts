@@ -2,15 +2,18 @@ import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 
 /**
- * The per-thread sandbox association — one row per thread that has been provisioned with a sandbox.
- * Tracks the container (docker mode) or worktree (local mode), the base + feature branches, and the
- * lifecycle status so the driver can reuse the sandbox instead of creating a per-feature one.
+ * The per-thread sandbox association — one row per thread. This row is the DURABLE record of the
+ * thread's work area: its worktree + feature branch + engine session. The container is a DISPOSABLE
+ * cache spun up against the worktree — reaped when idle, re-attached on demand — so `container_id` is
+ * transient and null whenever the thread is `detached`.
  *
  * Lifecycle:
- *  - `provisioning` — sandbox is being created on the base branch
- *  - `ready`        — sandbox is live on the base branch; planning turns may start
- *  - `branched`     — feature branch has been cut in-place; build turns use this sandbox
- *  - `teardown`     — tear-down has been requested
+ *  - `provisioning` — worktree is being cut
+ *  - `attached`     — worktree + branch are durable AND a live container is bound (`container_id` set);
+ *                     turns exec directly
+ *  - `detached`     — worktree + branch + session are durable but NO container (reaped/crashed);
+ *                     the next turn re-attaches a fresh container (with a "sandbox was reset" notice)
+ *  - `closed`       — terminal: worktree removed + container gone (PR merged / thread closed)
  */
 @Entity({ name: 'atlas_thread_sandboxes' })
 @Index(['team_id', 'thread_id'], { unique: true })
@@ -52,7 +55,7 @@ export class AtlasThreadSandbox extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   container_id!: string | null;
 
-  /** 'provisioning' | 'ready' | 'branched' | 'teardown' */
+  /** 'provisioning' | 'attached' | 'detached' | 'closed' */
   @Column({ type: 'text', default: 'provisioning' })
   lifecycle!: string;
 
@@ -63,4 +66,20 @@ export class AtlasThreadSandbox extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   session_id!: string | null;
+
+  /**
+   * Last time a turn ran for this thread (bumped at turn start). Drives the idle reaper + LRU eviction:
+   * an `attached` row idle past `ATLAS_SANDBOX_IDLE_TTL_MS` is reaped to `detached`. Null until the
+   * first turn.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  last_active_at!: Date | null;
+
+  /** The thread's PR url, recorded when the build opens its PR (so the merge poll can watch it). */
+  @Column({ type: 'text', nullable: true })
+  pr_url!: string | null;
+
+  /** The thread's PR number, recorded alongside `pr_url` — what the merge poll queries GitHub with. */
+  @Column({ type: 'int', nullable: true })
+  pr_number!: number | null;
 }

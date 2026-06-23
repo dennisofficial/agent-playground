@@ -19,6 +19,7 @@ const L_MANAGED = 'atlas.managed';
 const L_TEAM = 'atlas.team';
 const L_PROJECT = 'atlas.project';
 const L_BRANCH = 'atlas.branch';
+const L_THREAD = 'atlas.thread';
 
 /**
  * The `docker` SANDBOX_PROVIDER binding — owns the lifecycle of per-feature sandbox containers. One
@@ -44,19 +45,22 @@ export class SandboxManager implements SandboxProvider {
   ) {}
 
   async attach(input: SandboxAttachInput): Promise<FeatureSandbox> {
-    const { sandbox, teamId } = input;
-    const name = this.containerName(teamId, sandbox.projectId, sandbox.branch);
+    const { sandbox, teamId, threadId } = input;
+    const name = this.containerName(teamId, sandbox.projectId, sandbox.branch, threadId);
 
     const existing = await this.engine.inspect(name);
     if (existing) {
-      if (existing.state !== 'running') {
-        this.logger.log(`reusing stopped sandbox ${name} — starting`);
+      // Warm only when the container is already running: a stopped container we restart has lost its
+      // background processes, so it is a COLD (reset) attach just like a freshly created one.
+      const warm = existing.state === 'running';
+      if (!warm) {
+        this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
         await this.engine.start(existing.id);
         await this.waitReady(existing.id);
       } else {
         this.logger.log(`reusing running sandbox ${name}`);
       }
-      return this.augment(sandbox, existing.id);
+      return this.augment(sandbox, existing.id, warm);
     }
 
     await this.softCapCheck();
@@ -94,11 +98,12 @@ export class SandboxManager implements SandboxProvider {
         [L_TEAM]: teamId,
         [L_PROJECT]: sandbox.projectId,
         [L_BRANCH]: sandbox.branch,
+        ...(threadId ? { [L_THREAD]: threadId } : {}),
       },
     });
     await this.engine.start(id);
     await this.waitReady(id);
-    return this.augment(sandbox, id);
+    return this.augment(sandbox, id, false); // freshly created → cold
   }
 
   async teardown(sandbox: FeatureSandbox): Promise<void> {
@@ -174,9 +179,9 @@ export class SandboxManager implements SandboxProvider {
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
-  private augment(sandbox: FeatureSandbox, containerId: string): FeatureSandbox {
+  private augment(sandbox: FeatureSandbox, containerId: string, warm: boolean): FeatureSandbox {
     const user = hostExecUser();
-    return { ...sandbox, containerId, ...(user ? { execUser: user } : {}) };
+    return { ...sandbox, containerId, warm, ...(user ? { execUser: user } : {}) };
   }
 
   /**
@@ -249,8 +254,15 @@ export class SandboxManager implements SandboxProvider {
     }
   }
 
-  private containerName(teamId: string, projectId: string, branch: string): string {
+  /**
+   * Container name = `atlas-sbx-<team>-<project>-<key>`. For R2 threads the key is `thread-<id>` so the
+   * container is STABLE across the thread's branch + re-attach (1 thread = 1 container). For the legacy
+   * per-feature path + gate sandboxes (no `threadId`), the key is the branch — one container per branch,
+   * unchanged.
+   */
+  private containerName(teamId: string, projectId: string, branch: string, threadId?: string): string {
     const part = (s: string) => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 40);
-    return `atlas-sbx-${part(teamId)}-${part(projectId)}-${part(branch)}`.slice(0, 120);
+    const key = threadId ? `thread-${part(threadId)}` : part(branch);
+    return `atlas-sbx-${part(teamId)}-${part(projectId)}-${key}`.slice(0, 120);
   }
 }

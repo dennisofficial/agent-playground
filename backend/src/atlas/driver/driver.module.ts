@@ -93,10 +93,12 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
 })
 export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
   private resumeSub?: Subscription;
+  private reapTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly driver: SectionDriver,
     private readonly env: EnvService,
+    private readonly lifecycle: ThreadLifecycleService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
   ) {}
 
@@ -109,12 +111,26 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     });
 
     // ATLAS_DISABLE_RESUME (dev/test): a fresh test instance skips the sweep so it doesn't re-attempt
-    // prior runs' stale jobs.
+    // prior runs' stale jobs (and skips the sandbox reaper/reconcile).
     if (this.env.get('ATLAS_DISABLE_RESUME')) return;
+
+    // Reconcile per-thread sandboxes (mark detached; next turn re-attaches) BEFORE resuming jobs —
+    // resumed drives call `ensureContainer`, which expects the reconciled state.
+    await this.lifecycle.reconcileOnBoot();
     await this.driver.resume();
+
+    // Periodically reap idle thread-sandbox containers (worktrees survive) AND close threads whose PR
+    // has merged/closed (reclaims container + worktree). unref so it never keeps the process alive.
+    const everyMs = Number(this.env.get('ATLAS_SANDBOX_REAP_INTERVAL_MS')) || 30 * 60 * 1000;
+    this.reapTimer = setInterval(() => {
+      void this.lifecycle.reapIdle().catch(() => undefined);
+      void this.lifecycle.pollPrClosures().catch(() => undefined);
+    }, everyMs);
+    this.reapTimer.unref?.();
   }
 
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
+    if (this.reapTimer) clearInterval(this.reapTimer);
   }
 }

@@ -1,19 +1,20 @@
 /**
- * R2 GATE — Thread lifecycle + per-thread sandbox/worktree API.
+ * R2 GATE — Thread lifecycle + per-thread sandbox/worktree API (durable worktree + disposable
+ * container model).
  *
- * Proves (against live Postgres, fake git + local sandbox):
- *  1. `createThread` persists the `atlas_threads` row + `atlas_thread_sandboxes` row (lifecycle=ready,
- *     base_branch set, worktree_path set) — the "new thread" provisions a base-branch sandbox.
- *  2. `branchSwitch` cuts the feature branch in the SAME sandbox and flips lifecycle→branched.
- *  3. `findSandbox` returns the persisted sandbox with the feature branch set.
- *  4. `SectionDriver.ensureSandbox` (via `findSandbox`) REUSES the thread's sandbox (not the legacy
- *     per-feature path) and the returned sandbox carries the feature branch.
- *  5. The host-git safety flags (`core.hooksPath=/dev/null` etc.) appear in every git invocation —
- *     proved by inspecting the `LocalGitService.git` internals via a spy.
+ * Proves (against live Postgres, fake git + a fake docker-ish sandbox provider):
+ *  1. `createThread` persists the `atlas_threads` row + an `attached` `atlas_thread_sandboxes` row with
+ *     the thread's FEATURE branch cut at create (branch-at-create) + a container attached.
+ *  2. `ensureContainer` reuses the live container, bumps `last_active_at`, and reports `wasReset` from
+ *     the provider's `warm` flag (cold re-attach ⇒ reset).
+ *  3. `reapIdle` detaches the CONTAINER of an idle thread (worktree survives) → `detached`; a subsequent
+ *     `ensureContainer` re-attaches it.
+ *  4. `closeThread` tears down the container + removes the worktree → `closed` (idempotent).
+ *  5. `reconcileOnBoot` marks non-closed rows `detached` (next turn re-attaches).
+ *  6. `findSandbox` returns the persisted sandbox / null.
  *
- * Integration: real Postgres (atlas_test schema), in-memory fake git (no actual clone), local
- * sandbox (no Docker — inline no-op SANDBOX_PROVIDER). Truncates the relevant tables before each
- * test case to keep isolation.
+ * Integration: real Postgres (atlas_test schema), in-memory fake git (no actual clone), fake sandbox
+ * provider (no Docker). Truncates the relevant tables before each test case to keep isolation.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -21,7 +22,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import type { FeatureSandbox, ProjectRepo } from '../git';
@@ -39,17 +40,8 @@ import {
   AtlasThread,
   AtlasThreadSandbox,
 } from '../persistence/entities';
-import { SANDBOX_PROVIDER } from '../sandbox';
-import {
-  ATLAS_DRIVER_REPO,
-  type DriverRepoResolver,
-  ThreadLifecycleService,
-  type ResolvedRepo,
-} from '.';
-import type { Job } from '../domain';
-import { SectionDriver } from './section-driver.service';
-
-// ── Connection config (reuses the test env POSTGRES_* variables) ─────────────────────────────────
+import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
+import { ATLAS_DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, type ResolvedRepo } from '.';
 
 import { ATLAS_ENTITIES } from '../persistence/entities';
 
@@ -81,9 +73,7 @@ const FAKE_BASE_BRANCH = 'main';
 class FakeGitService {
   readonly worktreesByThreadId = new Map<string, string>();
   readonly branches: string[] = [];
-  private seq = 0;
-
-  reposRoot(): string { return '/tmp/r2-gate-fake-repos'; }
+  readonly removedWorktrees: string[] = [];
 
   async ensureRepo(input: { projectId: string; gitUrl: string; defaultBranch?: string; token?: string }): Promise<ProjectRepo> {
     return {
@@ -97,12 +87,7 @@ class FakeGitService {
   async createBaseWorktree(repo: ProjectRepo, threadId: string): Promise<FeatureSandbox> {
     const path = `${repo.repoPath}/.worktrees/thread-${threadId}`;
     this.worktreesByThreadId.set(threadId, path);
-    return {
-      projectId: repo.projectId,
-      branch: FAKE_BASE_BRANCH,
-      worktreePath: path,
-      gitUrl: repo.gitUrl,
-    };
+    return { projectId: repo.projectId, branch: FAKE_BASE_BRANCH, worktreePath: path, gitUrl: repo.gitUrl };
   }
 
   async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, featureBranch: string): Promise<FeatureSandbox> {
@@ -110,30 +95,39 @@ class FakeGitService {
     return { ...sandbox, branch: featureBranch };
   }
 
-  async createFeatureSandbox(repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
-    const path = `${repo.repoPath}/.worktrees/${branch.replace(/[^a-z0-9_-]/gi, '-')}`;
-    return { projectId: repo.projectId, branch, worktreePath: path, gitUrl: repo.gitUrl };
+  async removeSandbox(_repo: ProjectRepo, worktreePath: string): Promise<void> {
+    this.removedWorktrees.push(worktreePath);
   }
 
-  async hasChanges(): Promise<boolean> { return true; }
-  async commitAll(): Promise<string | null> { return `fakesha${String(++this.seq).padStart(8, '0')}`; }
-  async push(): Promise<void> {}
-  async removeSandbox(): Promise<void> {}
-  async headSha(): Promise<string> { return `fakehead${String(this.seq).padStart(7, '0')}`; }
-  async listWorktrees(): Promise<string[]> { return []; }
+  async createFeatureSandbox(repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
+    return { projectId: repo.projectId, branch, worktreePath: `${repo.repoPath}/.worktrees/${branch}`, gitUrl: repo.gitUrl };
+  }
+}
+
+/** A fake docker-ish SANDBOX_PROVIDER: attaches a stable container id + a configurable `warm` flag. */
+class FakeSandboxProvider {
+  warm = true;
+  readonly tornDown: string[] = [];
+  async attach({ sandbox, threadId }: { sandbox: FeatureSandbox; teamId: string; threadId?: string }): Promise<FeatureSandbox> {
+    return { ...sandbox, containerId: `fake-c-${threadId ?? sandbox.branch}`, warm: this.warm };
+  }
+  async teardown(sandbox: FeatureSandbox): Promise<void> {
+    if (sandbox.containerId) this.tornDown.push(sandbox.containerId);
+  }
 }
 
 // ── Module bootstrap ──────────────────────────────────────────────────────────────────────────────
 
 let mod: TestingModule;
 let threadLifecycle: ThreadLifecycleService;
-let threads: Repository<AtlasThread>;
 let sandboxes: Repository<AtlasThreadSandbox>;
 let ds: DataSource;
 let fakeGit: FakeGitService;
+let provider: FakeSandboxProvider;
 
 beforeEach(async () => {
   fakeGit = new FakeGitService();
+  provider = new FakeSandboxProvider();
 
   mod = await Test.createTestingModule({
     imports: [
@@ -144,19 +138,10 @@ beforeEach(async () => {
       ),
     ],
     providers: [
-      // Env
-      {
-        provide: EnvService,
-        useValue: { get: (k: string) => process.env[k] },
-      },
-      // Git — fake (no filesystem / network)
+      { provide: EnvService, useValue: { get: (k: string) => process.env[k] } },
       { provide: LocalGitService, useValue: fakeGit },
-      // Sandbox provider — inline no-op (no Docker required)
-      {
-        provide: SANDBOX_PROVIDER,
-        useValue: { attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {} },
-      },
-      // Credentials — no tenant rows (env-fallback, no real key needed for the lifecycle path)
+      { provide: SANDBOX_PROVIDER, useValue: provider },
+      SandboxActivityRegistry,
       {
         provide: TenantCredentialStore,
         useValue: {
@@ -173,13 +158,11 @@ beforeEach(async () => {
           engineAuth: async () => ({ mode: 'api_key', apiKey: undefined }),
         },
       },
-      // GitHub PR service (not used in this gate but OnboardingService imports it)
       {
         provide: GithubPrService,
-        useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }) },
+        useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' },
       },
       OnboardingService,
-      // DriverRepoResolver — not called in this gate
       {
         provide: ATLAS_DRIVER_REPO,
         useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used in this gate'); } },
@@ -189,11 +172,9 @@ beforeEach(async () => {
   }).compile();
 
   threadLifecycle = mod.get(ThreadLifecycleService);
-  threads = mod.get(getRepositoryToken(AtlasThread, ATLAS_CONNECTION));
   sandboxes = mod.get(getRepositoryToken(AtlasThreadSandbox, ATLAS_CONNECTION));
   ds = mod.get<DataSource>(getDataSourceToken(ATLAS_CONNECTION));
 
-  // Seed the team + project so the lifecycle service can look them up.
   await ds.query(`
     INSERT INTO atlas_teams (team_id, team_name, status)
     VALUES ($1, $2, 'active')
@@ -208,122 +189,100 @@ beforeEach(async () => {
   `, [FAKE_TEAM_ID, FAKE_PROJECT_ID, 'R2 Gate Project', FAKE_REPO_URL, FAKE_BASE_BRANCH]);
 });
 
+async function create(displayName = 'Gate thread') {
+  return threadLifecycle.createThread({
+    teamId: FAKE_TEAM_ID,
+    projectId: FAKE_PROJECT_ID,
+    baseBranch: FAKE_BASE_BRANCH,
+    displayName,
+  });
+}
+
 // ── GATE tests ───────────────────────────────────────────────────────────────────────────────────
 
-describe('R2 gate — ThreadLifecycleService (live Postgres + fake git)', () => {
-  it('createThread persists the thread row and a ready sandbox row on the base branch', async () => {
-    const result = await threadLifecycle.createThread({
-      teamId: FAKE_TEAM_ID,
-      projectId: FAKE_PROJECT_ID,
-      baseBranch: FAKE_BASE_BRANCH,
-      displayName: 'Add dark mode',
-    });
+describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
+  it('createThread persists an attached sandbox with the feature branch cut at create', async () => {
+    const result = await create('Add dark mode');
 
     expect(result.threadId).toBeTruthy();
-    expect(result.threadSandboxId).toBeTruthy();
-    expect(result.baseBranch).toBe(FAKE_BASE_BRANCH);
     expect(result.worktreePath).toContain(`thread-${result.threadId}`);
 
-    // Verify DB rows
-    const thread = await threads.findOneOrFail({ where: { id: result.threadId } });
-    expect(thread.team_id).toBe(FAKE_TEAM_ID);
-    expect(thread.project_id).toBe(FAKE_PROJECT_ID);
-    expect(thread.origin).toBe('control');
-    expect(thread.base_branch).toBe(FAKE_BASE_BRANCH);
-
-    const sandboxRow = await sandboxes.findOneOrFail({ where: { id: result.threadSandboxId } });
-    expect(sandboxRow.lifecycle).toBe('ready');
-    expect(sandboxRow.base_branch).toBe(FAKE_BASE_BRANCH);
-    expect(sandboxRow.feature_branch).toBeNull();
-    expect(sandboxRow.container_id).toBeNull(); // local mode — no docker
-    expect(sandboxRow.worktree_path).toContain(`thread-${result.threadId}`);
+    const row = await sandboxes.findOneOrFail({ where: { id: result.threadSandboxId } });
+    expect(row.lifecycle).toBe('attached');
+    expect(row.base_branch).toBe(FAKE_BASE_BRANCH);
+    expect(row.feature_branch).toBe(`atlas/thread-${result.threadId.slice(0, 8)}`);
+    expect(row.container_id).toBe(`fake-c-${result.threadId}`);
+    expect(row.last_active_at).not.toBeNull();
+    expect(fakeGit.branches).toContain(row.feature_branch);
   });
 
-  it('branchSwitch cuts the feature branch in the same sandbox and flips lifecycle → branched', async () => {
-    const { threadId } = await threadLifecycle.createThread({
-      teamId: FAKE_TEAM_ID,
-      projectId: FAKE_PROJECT_ID,
-      baseBranch: FAKE_BASE_BRANCH,
-      displayName: 'Test branch switch',
-    });
+  it('ensureContainer reuses the live container and reports wasReset from the provider warm flag', async () => {
+    const { threadId } = await create();
 
-    const featureBranch = `atlas/feature-${randomUUID().slice(0, 8)}`;
-    const switched = await threadLifecycle.branchSwitch(threadId, FAKE_TEAM_ID, featureBranch);
+    provider.warm = true; // reuse warm
+    const warm = await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID);
+    expect(warm).not.toBeNull();
+    expect(warm!.wasReset).toBe(false);
+    expect(warm!.sandbox.branch).toBe(`atlas/thread-${threadId.slice(0, 8)}`);
 
-    // The returned sandbox carries the feature branch
-    expect(switched.branch).toBe(featureBranch);
-    expect(switched.worktreePath).toContain(`thread-${threadId}`); // SAME worktree
+    provider.warm = false; // simulate a cold re-attach
+    const cold = await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID);
+    expect(cold!.wasReset).toBe(true);
 
-    // The fake git recorded the switchBranch call
-    expect(fakeGit.branches).toContain(featureBranch);
-
-    // Verify DB row updated
-    const sandboxRow = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
-    expect(sandboxRow.lifecycle).toBe('branched');
-    expect(sandboxRow.feature_branch).toBe(featureBranch);
+    const row = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
+    expect(row.lifecycle).toBe('attached');
   });
 
-  it('findSandbox returns the persisted sandbox after thread creation', async () => {
-    const { threadId } = await threadLifecycle.createThread({
-      teamId: FAKE_TEAM_ID,
-      projectId: FAKE_PROJECT_ID,
-      baseBranch: FAKE_BASE_BRANCH,
-    });
+  it('reapIdle detaches an idle container (worktree survives); ensureContainer re-attaches it', async () => {
+    const { threadId } = await create();
+    // Age the row well past the default idle TTL.
+    await sandboxes.update({ thread_id: threadId }, { last_active_at: new Date(0) });
 
+    const reaped = await threadLifecycle.reapIdle();
+    expect(reaped).toBeGreaterThanOrEqual(1);
+
+    const detached = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
+    expect(detached.lifecycle).toBe('detached');
+    expect(detached.container_id).toBeNull();
+    expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
+
+    // The next turn re-attaches against the surviving worktree.
+    const reattached = await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID);
+    expect(reattached).not.toBeNull();
+    const row = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
+    expect(row.lifecycle).toBe('attached');
+    expect(row.container_id).toBe(`fake-c-${threadId}`);
+  });
+
+  it('closeThread tears down the container + worktree and marks the row closed (idempotent)', async () => {
+    const { threadId, worktreePath } = await create();
+
+    await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
+    const row = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
+    expect(row.lifecycle).toBe('closed');
+    expect(row.container_id).toBeNull();
+    expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
+    expect(fakeGit.removedWorktrees).toContain(worktreePath);
+
+    // Idempotent: a second close is a no-op and ensureContainer returns null for a closed thread.
+    await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
+    expect(await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID)).toBeNull();
+  });
+
+  it('reconcileOnBoot marks non-closed rows detached', async () => {
+    const { threadId } = await create();
+    await threadLifecycle.reconcileOnBoot();
+    const row = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
+    expect(row.lifecycle).toBe('detached');
+    expect(row.container_id).toBeNull();
+  });
+
+  it('findSandbox returns the persisted sandbox, and null for an unknown thread', async () => {
+    const { threadId } = await create();
     const found = await threadLifecycle.findSandbox(threadId, FAKE_TEAM_ID);
     expect(found).not.toBeNull();
-    expect(found!.branch).toBe(FAKE_BASE_BRANCH);
-    expect(found!.worktreePath).toContain(`thread-${threadId}`);
-  });
+    expect(found!.branch).toBe(`atlas/thread-${threadId.slice(0, 8)}`);
 
-  it('findSandbox returns null for a thread with no provisioned sandbox', async () => {
-    const unknownThreadId = randomUUID();
-    const found = await threadLifecycle.findSandbox(unknownThreadId, FAKE_TEAM_ID);
-    expect(found).toBeNull();
-  });
-
-  it('branchSwitch is idempotent — calling twice with the same branch returns the same sandbox', async () => {
-    const { threadId } = await threadLifecycle.createThread({
-      teamId: FAKE_TEAM_ID,
-      projectId: FAKE_PROJECT_ID,
-      baseBranch: FAKE_BASE_BRANCH,
-    });
-
-    const featureBranch = `atlas/feature-idem-${randomUUID().slice(0, 8)}`;
-    await threadLifecycle.branchSwitch(threadId, FAKE_TEAM_ID, featureBranch);
-    const second = await threadLifecycle.branchSwitch(threadId, FAKE_TEAM_ID, featureBranch);
-
-    // Second call is idempotent — only one switchBranch call to the git layer
-    expect(fakeGit.branches.filter((b) => b === featureBranch)).toHaveLength(1);
-    expect(second.branch).toBe(featureBranch);
-  });
-
-  it('end-to-end gate: createThread provisions base sandbox; branchSwitch reuses it for a PR build', async () => {
-    // Step 1: create a thread (simulates the operator "new thread" click)
-    const { threadId, worktreePath, baseBranch } = await threadLifecycle.createThread({
-      teamId: FAKE_TEAM_ID,
-      projectId: FAKE_PROJECT_ID,
-      baseBranch: FAKE_BASE_BRANCH,
-      displayName: 'Gate: end-to-end sandbox reuse',
-    });
-
-    // Step 2: simulate approval → build start (branch-switch in-place)
-    const featureBranch = `atlas/feature-${threadId.slice(0, 8)}`;
-    const forBuild = await threadLifecycle.branchSwitch(threadId, FAKE_TEAM_ID, featureBranch);
-
-    // GATE assertion: the build sandbox is the SAME worktree as the provisioned one
-    expect(forBuild.worktreePath).toBe(worktreePath);
-    expect(forBuild.branch).toBe(featureBranch);
-    expect(baseBranch).toBe(FAKE_BASE_BRANCH);
-
-    // The DB row reflects the full lifecycle transition
-    const row = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
-    expect(row.lifecycle).toBe('branched');
-    expect(row.feature_branch).toBe(featureBranch);
-    expect(row.worktree_path).toBe(worktreePath); // same path throughout
-
-    // The fake git received exactly one createBaseWorktree (not createFeatureSandbox) + one switchBranch
-    expect(fakeGit.worktreesByThreadId.has(threadId)).toBe(true);
-    expect(fakeGit.branches).toContain(featureBranch);
+    expect(await threadLifecycle.findSandbox(randomUUID(), FAKE_TEAM_ID)).toBeNull();
   });
 });

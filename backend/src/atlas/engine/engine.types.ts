@@ -119,6 +119,21 @@ export interface ToolBridgeOptions {
   tools: Record<string, ToolImpl>;
 }
 
+/**
+ * Prepended to a RESUMED turn's task when its sandbox container was just re-attached COLD (reaped while
+ * idle, or recovered after a crash/host-restart). The resumed engine session remembers state from prior
+ * turns that no longer exists in the fresh container — this tells it the truth so it re-establishes its
+ * runtime instead of trusting stale beliefs. (Standing "verify before assuming" guidance lives in the
+ * personas; this is the one-time per-reset signal, kept OUT of the byte-stable system prompt.)
+ */
+export const SANDBOX_RESET_NOTICE = [
+  '[sandbox reset] Your sandbox was restarted since your last turn. Any background processes you started',
+  'earlier (dev servers, test watchers, headless browsers, docker compose services) are NO LONGER RUNNING',
+  'and in-memory state is gone — but files you committed to the worktree are intact. Before relying on any',
+  'server or process, verify it is actually up (curl/health-check) and restart it if needed. Do not assume',
+  'anything you started in a previous turn is still alive.',
+].join(' ');
+
 export interface RunEngineArgs {
   /** Which engine backs this run. */
   engine: SessionEngine;

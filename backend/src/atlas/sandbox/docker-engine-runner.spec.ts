@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EngineEvent } from '../engine';
 import type { ContainerEngine, ExecOptions, ExecResult } from './container-engine.port';
 import { CONTAINER_AGENT_HOME, DockerEngineRunner } from './docker-engine-runner';
+import { SandboxActivityRegistry } from './sandbox-activity.registry';
 
 const env = (values: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => values[k] }) as unknown as EnvService;
@@ -48,7 +49,7 @@ const baseArgs = {
 describe('DockerEngineRunner', () => {
   it('requires an execution target', async () => {
     const { engine } = fakeEngine([]);
-    const runner = new DockerEngineRunner(engine, env());
+    const runner = new DockerEngineRunner(engine, env(), new SandboxActivityRegistry());
     await expect(runner.run(baseArgs)).rejects.toThrow(/containerId/);
   });
 
@@ -58,7 +59,7 @@ describe('DockerEngineRunner', () => {
       JSON.stringify({ t: 'final', r: { result: 'done', sessionId: 'sess-9' } }) + '\n',
     ]);
     const events: EngineEvent[] = [];
-    const runner = new DockerEngineRunner(engine, env({ ANTHROPIC_API_KEY: 'k-123' }));
+    const runner = new DockerEngineRunner(engine, env({ ANTHROPIC_API_KEY: 'k-123' }), new SandboxActivityRegistry());
 
     const res = await runner.run({
       ...baseArgs,
@@ -88,7 +89,7 @@ describe('DockerEngineRunner', () => {
     // split a frame mid-JSON across chunks + no trailing newline on the last
     const { engine } = fakeEngine([`{"t":"even`, `t","e":{"kind":"text","text":"hi"}}\n` + final]);
     const events: EngineEvent[] = [];
-    const runner = new DockerEngineRunner(engine, env());
+    const runner = new DockerEngineRunner(engine, env(), new SandboxActivityRegistry());
     const res = await runner.run({
       ...baseArgs,
       target: { containerId: 'c' },
@@ -100,13 +101,13 @@ describe('DockerEngineRunner', () => {
 
   it('throws on an error frame', async () => {
     const { engine } = fakeEngine([JSON.stringify({ t: 'error', message: 'boom' }) + '\n']);
-    const runner = new DockerEngineRunner(engine, env());
+    const runner = new DockerEngineRunner(engine, env(), new SandboxActivityRegistry());
     await expect(runner.run({ ...baseArgs, target: { containerId: 'c' } })).rejects.toThrow(/boom/);
   });
 
   it('throws when no final frame arrives', async () => {
     const { engine } = fakeEngine([JSON.stringify({ t: 'event', e: { kind: 'text', text: 'x' } }) + '\n'], 3);
-    const runner = new DockerEngineRunner(engine, env());
+    const runner = new DockerEngineRunner(engine, env(), new SandboxActivityRegistry());
     await expect(runner.run({ ...baseArgs, target: { containerId: 'c' } })).rejects.toThrow(/no result/);
   });
 });

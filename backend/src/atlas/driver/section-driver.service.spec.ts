@@ -363,8 +363,9 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     } as unknown as CredentialResolver,
     // ThreadLifecycleService: no pre-provisioned sandbox → falls back to legacy per-feature path.
     {
+      ensureContainer: async () => null,
       findSandbox: async () => null,
-      branchSwitch: async () => { throw new Error('unexpected branchSwitch in unit test'); },
+      recordPr: async () => undefined,
     } as unknown as import('./thread-lifecycle.service').ThreadLifecycleService,
   );
   return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts };

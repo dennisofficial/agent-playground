@@ -160,6 +160,28 @@ export class GithubPrService {
     }
   }
 
+  /**
+   * The current state of a PR: `open`, `merged`, or `closed` (closed-unmerged). Used by the thread
+   * cleanup poll to detect a finished PR and tear the thread's sandbox down. Returns `gone` on 404
+   * (PR/repo deleted) so the caller can clean up too.
+   */
+  async getPullState(
+    token: string,
+    { owner, repo, number }: { owner: string; repo: string; number: number },
+  ): Promise<'open' | 'merged' | 'closed' | 'gone'> {
+    const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}/pulls/${number}`, {
+      headers: this.headers(token),
+    });
+    if (res.status === 404) return 'gone';
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(`GitHub couldn't load PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`);
+    }
+    const pr = (await res.json()) as { state: 'open' | 'closed'; merged?: boolean; merged_at?: string | null };
+    if (pr.merged || pr.merged_at) return 'merged';
+    return pr.state;
+  }
+
   /** Fetch one repo the token can see — the registration probe. null on 404/403; throws otherwise. */
   async getRepo(token: string, owner: string, repo: string): Promise<RepoInfo | null> {
     const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}`, {

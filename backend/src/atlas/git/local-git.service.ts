@@ -40,6 +40,13 @@ export interface FeatureSandbox {
   containerId?: string;
   /** The user (uid:gid) to exec turns as inside the container — host-uid so /work stays host-owned. */
   execUser?: string;
+  /**
+   * TRANSIENT (set by `SandboxProvider.attach`, never persisted): true when an already-RUNNING container
+   * was reused warm; false when the container was created fresh or restarted from stopped (cold — any
+   * background processes from prior turns are gone). `ThreadLifecycleService.ensureContainer` uses this
+   * to decide whether a resumed turn needs the "sandbox was reset" notice.
+   */
+  warm?: boolean;
 }
 
 /**

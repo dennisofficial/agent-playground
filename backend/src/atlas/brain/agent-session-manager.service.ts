@@ -9,6 +9,7 @@ import { AtlasThreadSandbox } from '../persistence/entities';
 import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
+import { SANDBOX_RESET_NOTICE } from '../engine/engine.types';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
@@ -85,6 +86,10 @@ export class AgentSessionManager {
     'The repo is checked out in your current working directory — investigate it freely (read-only until',
     'the plan is approved). Do not propose a plan with an "investigate the codebase" section — sections',
     'are real build work, not scoping work.',
+    '',
+    'SANDBOX RUNTIME: your sandbox can be restarted between turns (idle reaps, crashes, restarts). Never',
+    'assume a server or background process you started in a previous turn is still running — verify it is',
+    'up (curl/health-check) and restart it if needed before relying on it.',
   ].join('\n');
 
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
@@ -94,22 +99,27 @@ export class AgentSessionManager {
    * tools. Session is resumed if a session_id is persisted for this thread.
    */
   async handleChatTurn(stimulus: ChatStimulus): Promise<void> {
-    const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.teamId);
-    if (!sandbox) {
-      // No sandbox provisioned yet — fall back to a plain text response asking the operator to
-      // create a thread via the control path first.
+    // (Re-)attach a live container against the thread's durable worktree. Returns null only if the
+    // thread has no sandbox row (never created) or is closed.
+    const ensured = await this.lifecycle.ensureContainer(stimulus.threadId, stimulus.teamId);
+    if (!ensured) {
       this.logger.warn(
         `No sandbox for thread=${stimulus.threadId} team=${stimulus.teamId} — cannot run in-sandbox turn`,
       );
       await this.say(stimulus, 'Please create a thread via the web app to start a scoping session.');
       return;
     }
+    const sandbox = ensured.sandbox;
 
     // Resolve the current session_id for this thread (resume across turns).
     const sandboxRow = await this.sandboxRows.findOne({
       where: { thread_id: stimulus.threadId, team_id: stimulus.teamId },
     });
     const sessionId = sandboxRow?.session_id ?? undefined;
+
+    // Cold re-attach while resuming a session → the session remembers in-container state that's gone.
+    // Prepend the reset notice so it re-establishes its runtime instead of trusting stale beliefs.
+    const task = ensured.wasReset && sessionId ? `${SANDBOX_RESET_NOTICE}\n\n${stimulus.body}` : stimulus.body;
 
     // Build the host-side tool dispatch table, scoped to this thread.
     const tools = this.buildTools(stimulus);
@@ -120,7 +130,7 @@ export class AgentSessionManager {
     const sandboxKey = `brain-${stimulus.teamId}-${stimulus.projectId}-${stimulus.threadId}`;
     const runArgs: RunEngineArgs = {
       engine: 'claude',
-      task: stimulus.body,
+      task,
       cwd: sandbox.worktreePath,
       systemPrompt: AgentSessionManager.SYSTEM_PROMPT,
       sandboxKey,

@@ -785,6 +785,11 @@ export class SectionDriver implements JobDispatcher {
     });
 
     await this.store.setPrReady(job.id, opened.url);
+    // Record the PR on the thread sandbox so the merge poll can watch it and reclaim the sandbox once
+    // the PR merges/closes (best-effort — no-op for legacy threads with no sandbox row).
+    await this.threadLifecycle
+      .recordPr(job.threadId, job.teamId, opened.url, opened.number)
+      .catch((err) => this.logger.debug(`recordPr failed for job=${job.id}: ${err}`));
     this.logger.log(
       `job=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`,
     );
@@ -797,38 +802,34 @@ export class SectionDriver implements JobDispatcher {
    * Ensure the job's sandbox (worktree) exists and the feature branch is recorded. Idempotent — a resume
    * reuses the existing worktree/branch.
    *
-   * R2 path (per-thread sandbox): if the job's thread has a pre-provisioned sandbox row (created at
-   * thread-creation time), we REUSE it — cutting the feature branch in-place via `branchSwitch` on the
-   * first dispatch and returning the existing sandbox on resume. This is the happy path for threads
-   * created via the explicit create-thread control path.
+   * R2 path (per-thread sandbox): the thread owns a durable worktree + feature branch (cut at
+   * thread-creation). `ensureContainer` (re-)attaches a live container against that worktree — reusing a
+   * warm one, or re-attaching a fresh one (cold) after an idle reap / crash. The thread's `feature_branch`
+   * is the SOURCE OF TRUTH (we record it onto the job; we do NOT derive a branch from the job). On a cold
+   * re-attach the returned sandbox carries `warm: false`, so the turn-runner prepends the reset notice to
+   * the first resumed turn.
    *
    * Legacy path (per-feature sandbox): if no thread sandbox exists (inbound-message-derived threads,
-   * or pre-R2 jobs), fall back to the old `createFeatureSandbox` + `SandboxProvider.attach` behavior —
-   * byte-identical to before R2.
+   * or pre-R2 jobs), fall back to the old job-derived branch + `createFeatureSandbox` + `attach` — branch
+   * keyed (one container per branch), byte-identical to before R2.
    */
   private async ensureSandbox(
     job: Job,
     repo: ResolvedRepo,
   ): Promise<FeatureSandbox> {
-    const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
-
     // ── R2: per-thread sandbox path ──────────────────────────────────────────────────────────────
-    const threadSandbox = await this.threadLifecycle.findSandbox(job.threadId, job.teamId);
-    if (threadSandbox) {
-      // If still on the base branch, perform the in-place branch-switch now (approval → build).
-      if (threadSandbox.branch !== branch) {
-        const switched = await this.threadLifecycle.branchSwitch(job.threadId, job.teamId, branch);
-        if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
-        this.logger.log(`job=${job.id} reusing thread sandbox (branched to ${branch})`);
-        return switched;
-      }
-      // Already branched (a resume) — return as-is.
-      if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
-      this.logger.log(`job=${job.id} reusing thread sandbox (already on ${branch})`);
-      return threadSandbox;
+    const ensured = await this.threadLifecycle.ensureContainer(job.threadId, job.teamId);
+    if (ensured) {
+      const branch = ensured.sandbox.branch; // the thread's feature branch is the source of truth
+      if (job.featureBranch !== branch) await this.store.setFeatureBranch(job.id, branch);
+      this.logger.log(
+        `job=${job.id} using thread sandbox on ${branch}${ensured.wasReset ? ' (cold re-attach)' : ''}`,
+      );
+      return ensured.sandbox;
     }
 
     // ── Legacy path: per-feature worktree + attach ───────────────────────────────────────────────
+    const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
     const sandbox = await this.git.createFeatureSandbox(repo.projectRepo, branch);
     if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
     return this.sandboxes.attach({ sandbox, teamId: job.teamId });

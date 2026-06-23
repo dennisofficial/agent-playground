@@ -4,6 +4,7 @@ import { CONTAINER_ENGINE } from './container-engine.port';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { DockerEngineRunner } from './docker-engine-runner';
 import { SandboxImageBuilder } from './sandbox-image.builder';
+import { SandboxActivityRegistry } from './sandbox-activity.registry';
 import { SandboxManager } from './sandbox-manager.service';
 import { SandboxRefsService } from './sandbox-refs.service';
 import { SANDBOX_PROVIDER } from './sandbox-provider.port';
@@ -29,11 +30,19 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
     { provide: CONTAINER_ENGINE, useClass: DockerodeContainerEngine },
     SandboxImageBuilder,
     SandboxRefsService,
+    SandboxActivityRegistry,
     DockerEngineRunner,
     SandboxManager,
     { provide: ENGINE_RUNNER, useExisting: DockerEngineRunner },
     { provide: SANDBOX_PROVIDER, useExisting: SandboxManager },
   ],
-  exports: [ENGINE_RUNNER, SANDBOX_PROVIDER, CONTAINER_ENGINE, SandboxRefsService, DockerEngineRunner],
+  exports: [
+    ENGINE_RUNNER,
+    SANDBOX_PROVIDER,
+    CONTAINER_ENGINE,
+    SandboxRefsService,
+    SandboxActivityRegistry,
+    DockerEngineRunner,
+  ],
 })
 export class SandboxModule {}

@@ -20,6 +20,7 @@ import { AtlasWebSurface } from './atlas-web-surface';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebOutboundMessage } from './atlas-web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
+import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 
 /** Body for `POST /web/say`. */
 export interface WebSayRequest {
@@ -47,6 +48,14 @@ export interface WebApproveRequest {
 export interface WebResumeRequest {
   /** The job to continue (paused on a credential/401 error). */
   jobId: string;
+}
+
+/** Body for `POST /web/close-thread`. */
+export interface WebCloseThreadRequest {
+  /** The thread to close — tears down its sandbox container + worktree. */
+  threadId: string;
+  /** The owning tenant. */
+  teamId: string;
 }
 
 const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
@@ -78,6 +87,7 @@ export class WebSurfaceController {
   constructor(
     private readonly surface: AtlasWebSurface,
     private readonly driverStore: DriverStoreService,
+    private readonly threadLifecycle: ThreadLifecycleService,
   ) {}
 
   // AUTH: every route here is gated by the global `AtlasAuthGuard` (a valid `access_token` cookie),
@@ -195,6 +205,21 @@ export class WebSurfaceController {
     }
     this.surface.requestResume(body.jobId);
     this.logger.log(`web resume requested job=${body.jobId}`);
+    return { ok: true };
+  }
+
+  /**
+   * `POST /web/close-thread` — the operator closes/abandons a thread. Tears down its sandbox container
+   * AND removes its worktree (the branch ref survives for any open PR), via `ThreadLifecycleService`.
+   * Idempotent. The merge poll closes threads automatically on PR merge; this is the manual path.
+   */
+  @Post('close-thread')
+  async closeThread(@Body() body: WebCloseThreadRequest): Promise<{ ok: boolean }> {
+    if (!body?.threadId || !body?.teamId) {
+      throw new BadRequestException('threadId and teamId are required');
+    }
+    await this.threadLifecycle.closeThread(body.threadId, body.teamId);
+    this.logger.log(`web close-thread thread=${body.threadId}`);
     return { ok: true };
   }
 

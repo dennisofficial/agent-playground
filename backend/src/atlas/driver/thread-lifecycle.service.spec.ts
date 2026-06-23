@@ -7,13 +7,14 @@
  * No DB, no Docker — all TypeORM repositories are mocked stubs.
  */
 
+import type { EnvService } from '@core/config/env/env.service';
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { AtlasProject, AtlasThread, AtlasThreadSandbox } from '../persistence/entities';
-import type { LocalGitService } from '../git';
+import type { GithubPrService, LocalGitService } from '../git';
 import type { CredentialResolver, OnboardingService } from '../onboarding';
 import type { DriverRepoResolver } from './repo-resolver';
-import type { SandboxProvider } from '../sandbox';
+import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { ThreadLifecycleService } from './thread-lifecycle.service';
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
@@ -29,8 +30,11 @@ function makeRow(overrides: Partial<AtlasThreadSandbox> = {}): AtlasThreadSandbo
     feature_branch: null,
     worktree_path: '/repos/proj/.worktrees/thread-1',
     container_id: null,
-    lifecycle: 'ready',
+    lifecycle: 'attached',
     session_id: null,
+    last_active_at: null,
+    pr_url: null,
+    pr_number: null,
     created_at: new Date(),
     updated_at: new Date(),
     ...overrides,
@@ -52,7 +56,10 @@ function makeService(): ThreadLifecycleService {
     stubRepo() as unknown as Repository<AtlasProject>,
     { bindChannel: vi.fn() } as unknown as OnboardingService,
     {} as unknown as LocalGitService,
+    { getPullState: vi.fn() } as unknown as GithubPrService,
     { githubToken: vi.fn() } as unknown as CredentialResolver,
+    { get: vi.fn() } as unknown as EnvService,
+    new SandboxActivityRegistry(),
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
     { attach: vi.fn(), teardown: vi.fn() } as unknown as SandboxProvider,
   );
