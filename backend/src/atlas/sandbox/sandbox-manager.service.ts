@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import type { FeatureSandbox } from '../git';
 import { CONTAINER_AGENT_HOME } from './docker-engine-runner';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
+import { hostExecUser } from './host-exec-user';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import type { SandboxAttachInput, SandboxProvider } from './sandbox-provider.port';
 
@@ -129,15 +130,8 @@ export class SandboxManager implements SandboxProvider {
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
   private augment(sandbox: FeatureSandbox, containerId: string): FeatureSandbox {
-    const user = this.hostUser();
+    const user = hostExecUser();
     return { ...sandbox, containerId, ...(user ? { execUser: user } : {}) };
-  }
-
-  /** Run engine turns as the host uid so worktree files written in-container stay host-owned. */
-  private hostUser(): string | undefined {
-    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-    const gid = typeof process.getgid === 'function' ? process.getgid() : undefined;
-    return uid !== undefined && gid !== undefined ? `${uid}:${gid}` : undefined;
   }
 
   private agentHomeRootHost(): string {

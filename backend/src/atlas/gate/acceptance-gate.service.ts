@@ -170,6 +170,10 @@ export class AcceptanceGateService {
       // Leave the worktree in place on the live gate (the PR references the branch); clean up only
       // the throwaway dry-run worktree to avoid disk leak.
       if (config.dryRun && sandbox && repoPath) {
+        // Tear down the container (now that Docker is the only mode, every sandbox has a containerId).
+        if (sandbox.containerId) {
+          await this.sandboxes.teardown(sandbox).catch(() => undefined);
+        }
         await this.git
           .removeSandbox(
             {

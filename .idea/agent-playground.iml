@@ -8,6 +8,9 @@
       <excludeFolder url="file://$MODULE_DIR$/graphify-out" />
       <excludeFolder url="file://$MODULE_DIR$/playground/.data" />
       <excludeFolder url="file://$MODULE_DIR$/playground/graphify-out" />
+      <excludeFolder url="file://$MODULE_DIR$/.claude/worktrees" />
+      <excludeFolder url="file://$MODULE_DIR$/.cocoindex_code" />
+      <excludeFolder url="file://$MODULE_DIR$/web/.playwright-cli" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

@@ -7,7 +7,7 @@ import { CredentialResolver } from '../onboarding';
 import { OnboardingService, type BindChannelArgs } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasProject, AtlasThread, AtlasThreadSandbox } from '../persistence/entities';
-import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
+import { hostExecUser, SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import { ATLAS_DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 
 /**
@@ -238,12 +238,14 @@ export class ThreadLifecycleService {
 
   /** Convert a persisted `AtlasThreadSandbox` row to an in-memory `FeatureSandbox`. */
   private rowToSandbox(row: AtlasThreadSandbox): FeatureSandbox {
+    const execUser = row.container_id ? hostExecUser() : undefined;
     return {
       projectId: row.project_id,
       branch: row.feature_branch ?? row.base_branch,
       worktreePath: row.worktree_path,
       gitUrl: '', // Not stored on the row — resolved lazily when needed (push/PR is repo-level)
       ...(row.container_id ? { containerId: row.container_id } : {}),
+      ...(execUser ? { execUser } : {}),
     };
   }
 }

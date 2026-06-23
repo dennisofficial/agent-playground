@@ -12,7 +12,7 @@
  *     proved by inspecting the `LocalGitService.git` internals via a spy.
  *
  * Integration: real Postgres (atlas_test schema), in-memory fake git (no actual clone), local
- * sandbox (no Docker — the `LocalSandboxProvider` no-op). Truncates the relevant tables before each
+ * sandbox (no Docker — inline no-op SANDBOX_PROVIDER). Truncates the relevant tables before each
  * test case to keep isolation.
  */
 
@@ -39,7 +39,6 @@ import {
   AtlasThread,
   AtlasThreadSandbox,
 } from '../persistence/entities';
-import { LocalSandboxProvider } from '../sandbox';
 import { SANDBOX_PROVIDER } from '../sandbox';
 import {
   ATLAS_DRIVER_REPO,
@@ -152,9 +151,11 @@ beforeEach(async () => {
       },
       // Git — fake (no filesystem / network)
       { provide: LocalGitService, useValue: fakeGit },
-      // Sandbox provider — local no-op
-      LocalSandboxProvider,
-      { provide: SANDBOX_PROVIDER, useExisting: LocalSandboxProvider },
+      // Sandbox provider — inline no-op (no Docker required)
+      {
+        provide: SANDBOX_PROVIDER,
+        useValue: { attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {} },
+      },
       // Credentials — no tenant rows (env-fallback, no real key needed for the lifecycle path)
       {
         provide: TenantCredentialStore,

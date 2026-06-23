@@ -174,9 +174,9 @@ export interface EngineRunResult {
 }
 
 /**
- * The ENGINE_RUNNER port — the seam the driver / auto-fix / acceptance-gate consume to run a turn. Two
- * bindings: `EngineRunner` (in-process host-local) and `DockerEngineRunner` (exec inside a sandbox).
- * Selected by `ATLAS_SANDBOX_MODE`. Both honor the same `RunEngineArgs`/`EngineRunResult` contract.
+ * The ENGINE_RUNNER port — the seam the driver / auto-fix / acceptance-gate consume to run a turn.
+ * Always bound to `DockerEngineRunner` (exec inside a sandbox container). Docker is the only execution
+ * mode; the former in-process `EngineRunner` has been removed.
  */
 export interface EngineRunnerPort {
   run(args: RunEngineArgs): Promise<EngineRunResult>;

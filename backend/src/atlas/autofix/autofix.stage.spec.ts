@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutoFixStage } from './autofix.stage';
-import type { EngineRunner } from '../engine';
+import type { EngineRunnerPort } from '../engine';
 import type { LocalGitService } from '../git';
 import type { AutoFixContext, ReviewLens } from './autofix.types';
 
@@ -33,7 +33,7 @@ function reportWith(findings: Array<Record<string, unknown>>): string {
 function mockEngine(opts: {
   reviewReports: Record<string, string>;
   fixReport?: string;
-}): { engine: EngineRunner; calls: Array<{ mode: string; sandboxKey: string }> } {
+}): { engine: EngineRunnerPort; calls: Array<{ mode: string; sandboxKey: string }> } {
   const calls: Array<{ mode: string; sandboxKey: string }> = [];
   const run = vi.fn(async (args: { mode: string; sandboxKey: string }) => {
     calls.push({ mode: args.mode, sandboxKey: args.sandboxKey });
@@ -44,7 +44,7 @@ function mockEngine(opts: {
     const lensId = args.sandboxKey.split('--review-')[1];
     return { result: opts.reviewReports[lensId] ?? reportWith([]), sessionId: `rev-${lensId}` };
   });
-  return { engine: { run } as unknown as EngineRunner, calls };
+  return { engine: { run } as unknown as EngineRunnerPort, calls };
 }
 
 /** A mocked LocalGitService — `hasChanges` + `commitAll` are the only surface the stage touches. */
@@ -227,7 +227,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       if (lensId === 'l1') throw new Error('engine boom');
       return { result: reportWith([{ severity: 'high', file: 'a.ts', title: 'survivor' }]) };
     });
-    const engine = { run } as unknown as EngineRunner;
+    const engine = { run } as unknown as EngineRunnerPort;
     const { git } = mockGit({ hasChanges: true, sha: 's' });
     const stage = new AutoFixStage(engine, git);
 
@@ -248,7 +248,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       }
       return { result: reportWith([]) };
     });
-    const engine = { run } as unknown as EngineRunner;
+    const engine = { run } as unknown as EngineRunnerPort;
     const { git } = mockGit({});
     const stage = new AutoFixStage(engine, git);
 

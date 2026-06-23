@@ -1,15 +1,14 @@
 import { Module } from '@nestjs/common';
 import { AtlasEsmModule } from './esm.module';
-import { EngineRunner } from './engine-runner.service';
 
 /**
- * The Atlas v2 ENGINE module — provides the minimal `EngineRunner` (Claude/Codex in plan/execute
- * with credentials + an isolated agent home) and the lazy ESM SDK tokens it needs. Zero v1 imports:
- * the SDKs come from Atlas's own `AtlasEsmModule`, not v1's `_lib/esm`.
+ * The Atlas v2 ENGINE module — provides the lazy ESM SDK tokens used by DockerEngineRunner and
+ * EngineCore. The in-process EngineRunner has been removed; all turns now run inside a Docker
+ * sandbox container via DockerEngineRunner (wired in SandboxModule). Zero v1 imports.
  */
 @Module({
   imports: [AtlasEsmModule],
-  providers: [EngineRunner],
-  exports: [EngineRunner],
+  providers: [],
+  exports: [],
 })
 export class EngineModule {}

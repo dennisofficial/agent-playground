@@ -2,15 +2,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
-import { EngineRunner } from './engine-runner.service';
+import { EngineCore } from './engine-core';
 
-const HOME_ROOT = join(tmpdir(), `atlas-engine-spec-${process.pid}`);
+const HOME_ROOT = join(tmpdir(), `atlas-engine-core-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
-
-/** A stub EnvService driven by a plain record. */
-function envStub(values: Record<string, string | undefined>) {
-  return { get: (k: string) => values[k] } as never;
-}
 
 /** A fake Claude SDK whose `query` records the options it was called with and yields a success. */
 function fakeClaudeSdk() {
@@ -64,11 +59,11 @@ function fakeCodexSdk() {
   return { sdk, ctorCalls, threadCalls };
 }
 
-describe('EngineRunner — Claude mode/home/credential wiring', () => {
+describe('EngineCore — Claude mode/home/credential wiring', () => {
   it('execute mode: write tools, default permission, isolated CLAUDE_CONFIG_DIR, api key threaded', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const runner = new EngineRunner(sdk, fakeCodexSdk().sdk, envStub({ ATLAS_AGENT_HOME_ROOT: HOME_ROOT }));
-    const res = await runner.run({
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const res = await core.run({
       engine: 'claude',
       task: 'do it',
       cwd: '/tmp/wt',
@@ -101,8 +96,8 @@ describe('EngineRunner — Claude mode/home/credential wiring', () => {
 
   it('plan mode: permissionMode plan, ExitPlanMode tool present, no writes flag in canUseTool', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const runner = new EngineRunner(sdk, fakeCodexSdk().sdk, envStub({ ATLAS_AGENT_HOME_ROOT: HOME_ROOT }));
-    await runner.run({
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    await core.run({
       engine: 'claude',
       task: 'plan it',
       cwd: '/tmp/wt',
@@ -117,8 +112,8 @@ describe('EngineRunner — Claude mode/home/credential wiring', () => {
 
   it('review mode: read-only tool set, default permission, no Write/Edit', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const runner = new EngineRunner(sdk, fakeCodexSdk().sdk, envStub({ ATLAS_AGENT_HOME_ROOT: HOME_ROOT }));
-    await runner.run({
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    await core.run({
       engine: 'claude',
       task: 'review it',
       cwd: '/tmp/wt',
@@ -134,17 +129,13 @@ describe('EngineRunner — Claude mode/home/credential wiring', () => {
 
   it('subscription auth from env strips the API key and sets the OAuth token', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const runner = new EngineRunner(
-      sdk,
-      fakeCodexSdk().sdk,
-      envStub({
-        ATLAS_AGENT_HOME_ROOT: HOME_ROOT,
-        ATLAS_ENGINE_AUTH_MODE: 'subscription',
-        ATLAS_CLAUDE_OAUTH_TOKEN: 'oauth-from-env',
-        ANTHROPIC_API_KEY: 'should-be-stripped',
-      }),
-    );
-    await runner.run({
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+      authMode: 'subscription',
+      claudeOauthToken: 'oauth-from-env',
+      anthropicApiKey: 'should-be-stripped',
+    });
+    await core.run({
       engine: 'claude',
       task: 'x',
       cwd: '/tmp/wt',
@@ -158,11 +149,11 @@ describe('EngineRunner — Claude mode/home/credential wiring', () => {
   });
 });
 
-describe('EngineRunner — Codex mode/home/credential wiring', () => {
+describe('EngineCore — Codex mode/home/credential wiring', () => {
   it('execute mode: workspace-write sandbox, isolated CODEX_HOME, api key on the client', async () => {
     const { sdk, ctorCalls, threadCalls } = fakeCodexSdk();
-    const runner = new EngineRunner(fakeClaudeSdk().sdk, sdk, envStub({ ATLAS_AGENT_HOME_ROOT: HOME_ROOT }));
-    const res = await runner.run({
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
+    const res = await core.run({
       engine: 'codex',
       task: 'do it',
       cwd: '/tmp/wt',
@@ -183,8 +174,8 @@ describe('EngineRunner — Codex mode/home/credential wiring', () => {
 
   it('plan mode: read-only sandbox', async () => {
     const { sdk, threadCalls } = fakeCodexSdk();
-    const runner = new EngineRunner(fakeClaudeSdk().sdk, sdk, envStub({ ATLAS_AGENT_HOME_ROOT: HOME_ROOT }));
-    await runner.run({
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
+    await core.run({
       engine: 'codex',
       task: 'plan it',
       cwd: '/tmp/wt',

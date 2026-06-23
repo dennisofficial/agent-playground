@@ -10,7 +10,6 @@ import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import type { ChatSurface } from '../surface';
 import type { Repository } from 'typeorm';
 import type { AtlasThreadSandbox } from '../persistence/entities';
-import type { EnvService } from '@core/config/env/env.service';
 import { AgentSessionManager } from './agent-session-manager.service';
 import type { EventTriageService } from './event-triage.service';
 import type { EventStimulus } from '../domain';
@@ -82,10 +81,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     save: vi.fn(),
   } as unknown as Repository<AtlasThreadSandbox>;
 
-  const mockEnv = {
-    get: vi.fn().mockReturnValue(undefined),
-  } as unknown as EnvService;
-
   const TEAM_ID = 'T-R3GATE';
   const PROJECT_ID = 'r3gate-proj';
   const THREAD_ID = 'th-r3gate-001';
@@ -146,7 +141,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     manager = new AgentSessionManager(
-      mockEnv,
       mockStore,
       mockDriverStore,
       mockMemory,

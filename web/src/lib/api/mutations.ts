@@ -65,3 +65,10 @@ export function useApprove() {
     mutationFn: (body: ApproveRequest) => webClient.approve(body),
   });
 }
+
+/** Continue a job paused on a credential/401 error (production POST /web/resume). */
+export function useResume() {
+  return useMutation({
+    mutationFn: (jobId: string) => webClient.resume(jobId),
+  });
+}

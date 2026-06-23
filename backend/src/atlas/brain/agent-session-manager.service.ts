@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { EnvService } from '@core/config/env/env.service';
 import type { ChatStimulus, Job } from '../domain';
 import { AtlasMemoryStore } from '../memory';
 import { CHAT_SURFACE, type ChatSurface, type DecisionApprovalCard } from '../surface';
@@ -9,7 +8,6 @@ import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasThreadSandbox } from '../persistence/entities';
 import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
-import { LocalToolBridgeRunner } from '../sandbox/local-tool-bridge-runner';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
@@ -24,8 +22,8 @@ import { PlanReviewService, buildRevisionInstruction } from './plan-review.servi
  * Claude Agent SDK session that runs INSIDE the thread's sandbox via the R1 tool bridge.
  *
  * Architecture:
- *   - On a chat stimulus: run an in-sandbox engine turn via `LocalToolBridgeRunner` (local mode) or
- *     `DockerEngineRunner` (docker mode), resuming the persisted session_id for the thread.
+ *   - On a chat stimulus: run an in-sandbox engine turn via `DockerEngineRunner` (always Docker),
+ *     resuming the persisted session_id for the thread.
  *   - The session runs with a custom system prompt (NOT the SDK's native ExitPlanMode) + 6 host-side
  *     tool impls dispatched through the tool bridge.
  *   - `submit_plan` → `BrainStoreService.persistPlan` → approval card via `DecisionApprovalService`.
@@ -37,7 +35,6 @@ export class AgentSessionManager {
   private readonly logger = new Logger(AgentSessionManager.name);
 
   constructor(
-    private readonly env: EnvService,
     private readonly store: BrainStoreService,
     private readonly driverStore: DriverStoreService,
     private readonly memory: AtlasMemoryStore,
@@ -117,8 +114,8 @@ export class AgentSessionManager {
     // Build the host-side tool dispatch table, scoped to this thread.
     const tools = this.buildTools(stimulus);
 
-    // Choose the runner: docker if a container is available AND mode=docker, local subprocess otherwise.
-    const runner: EngineRunnerPort = this.pickRunner(sandbox.containerId);
+    // All turns run inside the Docker sandbox container.
+    const runner: EngineRunnerPort = this.dockerRunner;
 
     const sandboxKey = `brain-${stimulus.teamId}-${stimulus.projectId}-${stimulus.threadId}`;
     const runArgs: RunEngineArgs = {
@@ -390,17 +387,6 @@ export class AgentSessionManager {
 
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Pick the right runner for a brain turn.
-   *  - ATLAS_SANDBOX_MODE=docker AND containerId present → use the injected DockerEngineRunner
-   *  - otherwise → construct a LocalToolBridgeRunner (Nest-free subprocess bridge)
-   */
-  private pickRunner(containerId: string | undefined): EngineRunnerPort {
-    if (this.env.get('ATLAS_SANDBOX_MODE') === 'docker' && containerId) {
-      return this.dockerRunner;
-    }
-    return new LocalToolBridgeRunner();
-  }
 
   /** Stream an engine event to the web surface for the UI. */
   private async streamEvent(stimulus: ChatStimulus, e: EngineEvent): Promise<void> {

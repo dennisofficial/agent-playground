@@ -98,9 +98,6 @@ export interface IEnvConfig {
   // Slack user id allowed to rule on approval cards when the workspace has no OAuth installer
   // (tenant.installed_by is null on env-token dev workspaces). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
-  // Directory worker engines are jailed to. No code default on purpose: dispatching a job without
-  // it fails loudly rather than letting a worker loose in an arbitrary cwd.
-  WORKER_ROOT?: string;
   // Root for per-project repo clones (code default: ~/.agent-playground/repos)
   REPOS_ROOT?: string;
   // Root for the worker engines' OWN config/state homes — CLAUDE_CONFIG_DIR (<root>/claude) and
@@ -328,8 +325,8 @@ export interface IEnvConfig {
   ATLAS_DISABLE_RESUME?: string;
 
   // ── Atlas v2 Docker sandbox layer ──────────────────────────────────────────────────────────────
-  //  - ATLAS_SANDBOX_MODE: where engine turns execute — 'local' (default, in-process host worktree)
-  //    or 'docker' (a per-feature privileged container; turns run via `docker exec`).
+  //  Docker is the ONLY execution mode — every engine turn runs inside a per-feature container via
+  //  `docker exec`. The former 'local' in-process path has been removed.
   //  - ATLAS_DOCKER_SOCKET_PATH: host Docker socket the manager drives (falls back to
   //    DOCKER_SOCKET_PATH, else dockerode's default /var/run/docker.sock).
   //  - ATLAS_SANDBOX_IMAGE: the sandbox base-image tag (default 'atlas-sandbox:latest'). Deliberately
@@ -339,7 +336,6 @@ export interface IEnvConfig {
   //    (falls back to REFS_ROOT).
   //  - ATLAS_MAX_CONCURRENT_SANDBOXES: cap on simultaneously-active sandboxes/turns (semaphore).
   // Reuses the generic DOCKER_SOCKET_PATH / REFS_ROOT via the ATLAS_* ?? fallback above.
-  ATLAS_SANDBOX_MODE?: 'local' | 'docker';
   ATLAS_DOCKER_SOCKET_PATH?: string;
   ATLAS_SANDBOX_IMAGE?: string;
   ATLAS_SANDBOX_REBUILD?: string;
@@ -511,7 +507,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   ATLAS_TEST_BRIDGE: Joi.string().valid('on').optional(),
   ATLAS_DISABLE_RESUME: Joi.string().optional(),
   // Atlas v2 Docker sandbox layer
-  ATLAS_SANDBOX_MODE: Joi.string().valid('local', 'docker').optional(),
   ATLAS_DOCKER_SOCKET_PATH: Joi.string().optional(),
   ATLAS_SANDBOX_IMAGE: Joi.string().optional(),
   ATLAS_SANDBOX_REBUILD: Joi.string().optional(),

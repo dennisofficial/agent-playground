@@ -10,8 +10,9 @@ import { AtlasModule } from '../atlas.module';
 import { ATLAS_BRAIN_LLM, AgentSessionManager, DecisionApprovalService } from '../brain';
 import { ATLAS_CLASSIFIER_LLM } from '../decision-gate';
 import { ATLAS_PLANNER_LLM } from '../driver';
-import { EngineRunner } from '../engine';
+import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
+import { SANDBOX_PROVIDER } from '../sandbox';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
@@ -127,8 +128,10 @@ export class E2eHarness {
         .useValue(new FakePlannerLlm())
         .overrideProvider(ATLAS_CLASSIFIER_LLM)
         .useValue(new FakeClassifierLlm())
-        .overrideProvider(EngineRunner)
+        .overrideProvider(ENGINE_RUNNER)
         .useValue(new FakeEngineRunner())
+        .overrideProvider(SANDBOX_PROVIDER)
+        .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {} })
         .overrideProvider(LocalGitService)
         .useValue(new FakeLocalGitService())
         .overrideProvider(GithubPrService)

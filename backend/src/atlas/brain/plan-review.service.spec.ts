@@ -11,7 +11,6 @@ import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import type { ChatSurface } from '../surface';
 import type { Repository } from 'typeorm';
 import type { AtlasThreadSandbox } from '../persistence/entities';
-import type { EnvService } from '@core/config/env/env.service';
 import type { JobDispatcher } from './job-dispatcher';
 import { AgentSessionManager } from './agent-session-manager.service';
 
@@ -240,10 +239,6 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
     save: vi.fn(),
   } as unknown as Repository<AtlasThreadSandbox>;
 
-  const mockEnv = {
-    get: vi.fn().mockReturnValue(undefined),
-  } as unknown as EnvService;
-
   const TEAM_ID = 'T-R4GATE';
   const PROJECT_ID = 'r4gate-proj';
   const THREAD_ID = 'th-r4gate-001';
@@ -280,7 +275,6 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
 
   function makeManager(review: PlanReviewService) {
     return new AgentSessionManager(
-      mockEnv,
       mockStore,
       mockDriverStore,
       mockMemory,

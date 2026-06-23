@@ -12,17 +12,14 @@ export interface SandboxAttachInput {
 }
 
 /**
- * The SANDBOX_PROVIDER port — where a feature's turns execute. Two bindings, chosen by
- * `ATLAS_SANDBOX_MODE`:
- *  - `LocalSandboxProvider` ('local', default): a no-op — turns run in-process against the host
- *    worktree (today's behavior, byte-identical).
- *  - `SandboxManager` ('docker'): ensures a long-lived, network-isolated, privileged per-feature
- *    container with the worktree bind-mounted at /work, and returns the sandbox augmented with the
- *    `containerId`/`execUser` the `DockerEngineRunner` execs turns into.
+ * The SANDBOX_PROVIDER port — where a feature's turns execute. Always bound to `SandboxManager`:
+ * ensures a long-lived, network-isolated, privileged per-feature container with the worktree
+ * bind-mounted at /work, and returns the sandbox augmented with the `containerId`/`execUser` the
+ * `DockerEngineRunner` execs turns into. Docker is the only execution mode.
  *
  * `attach` is idempotent (a resume reuses the existing container). The driver calls it once per job
  * right after cutting the worktree; the returned `FeatureSandbox` flows unchanged through the rest of
- * the pipeline (turns, auto-fix), so only this one call differs between modes.
+ * the pipeline (turns, auto-fix).
  */
 export interface SandboxProvider {
   attach(input: SandboxAttachInput): Promise<FeatureSandbox>;

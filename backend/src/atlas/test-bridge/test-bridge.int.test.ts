@@ -6,7 +6,7 @@ import { DataSource } from 'typeorm';
 import { ATLAS_BRAIN_LLM } from '../brain';
 import { ATLAS_CLASSIFIER_LLM } from '../decision-gate';
 import { ATLAS_PLANNER_LLM } from '../driver';
-import { EngineRunner } from '../engine';
+import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AtlasModule } from '../atlas.module';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
@@ -54,7 +54,7 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
       .useValue(new FakePlannerLlm())
       .overrideProvider(ATLAS_CLASSIFIER_LLM)
       .useValue(new FakeClassifierLlm())
-      .overrideProvider(EngineRunner)
+      .overrideProvider(ENGINE_RUNNER)
       .useValue(new FakeEngineRunner())
       .overrideProvider(LocalGitService)
       .useValue(new FakeLocalGitService())
