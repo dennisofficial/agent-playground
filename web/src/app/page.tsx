@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { ServerUnreachable } from '@/components/error/server-unreachable';
 import { auth, type AuthState } from '@/lib/auth';
 import { ROUTES } from '@/lib/routes';
 
@@ -17,11 +18,11 @@ export default function Home() {
     router.replace(state.authenticated ? ROUTES.workspace() : ROUTES.auth.login());
   }, [state, router]);
 
+  if (state?.backendUnreachable) return <ServerUnreachable />;
+
   return (
     <main className="flex min-h-dvh items-center justify-center px-6">
-      <p className="text-[13px] text-dim">
-        {state?.backendUnreachable ? "Can't reach the server" : 'Loading…'}
-      </p>
+      <p className="text-[13px] text-dim">Loading…</p>
     </main>
   );
 }

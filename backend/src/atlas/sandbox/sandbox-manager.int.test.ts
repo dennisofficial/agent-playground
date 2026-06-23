@@ -39,6 +39,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
   let sandbox: FeatureSandbox;
   let manager: SandboxManager;
   let containerId: string | undefined;
+  let artifacts: { net: string; vol: string } | undefined;
 
   beforeAll(() => {
     if (!dockerUp) return;
@@ -60,6 +61,10 @@ describe('SandboxManager (integration, needs Docker)', () => {
 
   afterAll(async () => {
     if (containerId) await engine.remove(containerId, { force: true }).catch(() => undefined);
+    if (artifacts) {
+      await engine.removeNetwork(artifacts.net).catch(() => undefined);
+      await engine.removeVolume(artifacts.vol).catch(() => undefined);
+    }
     for (const p of [repoRoot, homeRoot]) if (p) rmSync(p, { recursive: true, force: true });
   });
 
@@ -97,9 +102,73 @@ describe('SandboxManager (integration, needs Docker)', () => {
     const again = await manager.attach({ sandbox, teamId: 'team1' });
     expect(again.containerId).toBe(attached.containerId);
 
-    // teardown removes it.
+    // the per-sandbox network + DinD volume exist while the sandbox is up (named off the container).
+    const docker = new Docker();
+    const containerName = (await engine.inspect(attached.containerId!))!.name;
+    const netName = `${containerName}-net`;
+    const volName = `${containerName}-dind`;
+    artifacts = { net: netName, vol: volName };
+    const netExists = async () =>
+      (await docker.listNetworks({ filters: { name: [netName] } })).some((n) => n.Name === netName);
+    const volExists = async () => {
+      try {
+        await docker.getVolume(volName).inspect();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect(await netExists()).toBe(true);
+    expect(await volExists()).toBe(true);
+
+    // teardown removes the container AND reclaims its network + DinD volume (no orphan accumulation).
     await manager.teardown(attached);
     expect(await engine.inspect(attached.containerId!)).toBeNull();
+    expect(await netExists()).toBe(false);
+    expect(await volExists()).toBe(false);
     containerId = undefined;
+    artifacts = undefined;
+  }, 600_000);
+
+  it('reaps a fully orphaned network + volume left behind by a crashed teardown', async () => {
+    if (!dockerUp) {
+      // eslint-disable-next-line no-console
+      console.warn('Docker not reachable — skipping SandboxManager orphan-reap test');
+      return;
+    }
+    await builder.ensureImage();
+
+    // A distinct team → a distinct container name, independent of the first test.
+    const attached = await manager.attach({ sandbox, teamId: 'team2' });
+    containerId = attached.containerId;
+    const docker = new Docker();
+    const containerName = (await engine.inspect(attached.containerId!))!.name;
+    const netName = `${containerName}-net`;
+    const volName = `${containerName}-dind`;
+    artifacts = { net: netName, vol: volName };
+    const netExists = async () =>
+      (await docker.listNetworks({ filters: { name: [netName] } })).some((n) => n.Name === netName);
+    const volExists = async () => {
+      try {
+        await docker.getVolume(volName).inspect();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Simulate a crash: drop ONLY the container (teardown never ran) — net + volume are now orphaned.
+    await engine.remove(attached.containerId!, { force: true });
+    containerId = undefined;
+    expect(await netExists()).toBe(true);
+    expect(await volExists()).toBe(true);
+
+    // The catch-all reaper reclaims them (their owning container no longer exists).
+    const result = await manager.reapOrphanedArtifacts();
+    expect(result.networks).toBeGreaterThanOrEqual(1);
+    expect(result.volumes).toBeGreaterThanOrEqual(1);
+    expect(await netExists()).toBe(false);
+    expect(await volExists()).toBe(false);
+    artifacts = undefined;
   }, 600_000);
 });

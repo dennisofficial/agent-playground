@@ -212,6 +212,47 @@ body {
     opacity: 0;
   }
 }
+/* ── Server-unreachable illustration loops (decorative; opacity is intentional here). ────────── */
+@keyframes atlas-node-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes atlas-ping {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.55;
+  }
+  70% {
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes atlas-ping-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  95% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes atlas-cable-dash {
+  to {
+    background-position: -26px 0;
+  }
+}
 
 .anim-fadeUp {
   animation: atlas-fadeUp 0.22s ease both;

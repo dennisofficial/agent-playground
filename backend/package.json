@@ -13,6 +13,7 @@
     "atlas:gate": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.atlas-gate.json node -r tsconfig-paths/register -r ts-node/register src/atlas/gate/gate-main.ts",
     "atlas:e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.atlas-e2e.json node -r tsconfig-paths/register -r ts-node/register src/atlas/e2e/e2e-main.ts",
     "atlas:sandbox:bundle": "node src/atlas/sandbox/build-entrypoint.mjs",
+    "atlas:reap": "cross-env TS_NODE_PROJECT=tsconfig.cli.json node -r ts-node/register cli/atlas-reap-sandboxes.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\" --fix",

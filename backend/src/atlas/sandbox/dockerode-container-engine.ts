@@ -10,6 +10,8 @@ import type {
   CreateContainerSpec,
   ExecOptions,
   ExecResult,
+  NetworkInfo,
+  VolumeInfo,
 } from './container-engine.port';
 
 /**
@@ -194,6 +196,26 @@ export class DockerodeContainerEngine implements ContainerEngine {
     }
   }
 
+  async removeNetwork(name: string): Promise<void> {
+    try {
+      await this.docker.getNetwork(name).remove();
+    } catch (err) {
+      // 404 = already gone — fine. An "active endpoints" error means a container still holds it; let
+      // the caller (best-effort cleanup) decide whether to swallow it.
+      if (!/no such network|not found|404/i.test(String(err))) throw err;
+    }
+  }
+
+  async removeVolume(name: string): Promise<void> {
+    try {
+      await this.docker.getVolume(name).remove();
+    } catch (err) {
+      // 404 = already gone — fine. An "in use" error means a container still mounts it; let the caller
+      // (best-effort cleanup) decide whether to swallow it.
+      if (!/no such volume|not found|404/i.test(String(err))) throw err;
+    }
+  }
+
   async list(opts: { label?: string | string[]; all?: boolean } = {}): Promise<ContainerInfo[]> {
     const labels = opts.label ? (Array.isArray(opts.label) ? opts.label : [opts.label]) : undefined;
     const raw = await this.docker.listContainers({
@@ -206,6 +228,16 @@ export class DockerodeContainerEngine implements ContainerEngine {
       state: c.State,
       labels: c.Labels ?? {},
     }));
+  }
+
+  async listNetworks(): Promise<NetworkInfo[]> {
+    const raw = await this.docker.listNetworks();
+    return raw.map((n) => ({ id: n.Id, name: n.Name }));
+  }
+
+  async listVolumes(): Promise<VolumeInfo[]> {
+    const res = await this.docker.listVolumes();
+    return (res.Volumes ?? []).map((v) => ({ name: v.Name }));
   }
 
   async inspect(idOrName: string): Promise<ContainerInfo | null> {

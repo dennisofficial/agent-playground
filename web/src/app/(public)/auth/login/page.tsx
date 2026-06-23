@@ -8,7 +8,6 @@ import { GoogleButton } from '@/features/auth/components/google-button';
 import { Button } from '@/components/ui/button';
 import { Field, PasswordField } from '@/components/ui/field';
 import { auth } from '@/lib/auth';
-import { EAuthMode, env } from '@/lib/env';
 import { ROUTES, safeNext } from '@/lib/routes';
 import { validateEmail, validatePasswordRequired } from '@/lib/validation';
 
@@ -83,11 +82,6 @@ export default function LoginPage() {
           Create an account
         </Link>
       </p>
-      {env.NEXT_PUBLIC_AUTH_MODE === EAuthMode.STUB && (
-        <p className="mt-3 text-center font-mono text-[10px] text-faint">
-          demo · dennis@atlas.dev · any 8+ char password
-        </p>
-      )}
     </AuthCard>
   );
 }

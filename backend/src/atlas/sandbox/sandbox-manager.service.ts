@@ -106,7 +106,8 @@ export class SandboxManager implements SandboxProvider {
     const info = await this.engine.inspect(sandbox.containerId);
     await this.engine.remove(sandbox.containerId, { force: true });
     if (info) {
-      // Best-effort: drop the per-sandbox network (it shares the container name stem).
+      // The network + DinD volume share the container name stem; drop them so they don't accumulate.
+      await this.cleanupArtifacts(info.name);
       this.logger.log(`tore down sandbox ${info.name}`);
     }
   }
@@ -120,11 +121,55 @@ export class SandboxManager implements SandboxProvider {
     for (const c of managed) {
       if (c.state !== 'running') {
         await this.engine.remove(c.id, { force: true }).catch(() => undefined);
+        await this.cleanupArtifacts(c.name);
         reaped++;
       }
     }
     if (reaped) this.logger.log(`reaped ${reaped} stopped sandbox(es)`);
+    // Catch-all sweep for artifacts whose container is already gone (crashes / pre-fix leaks).
+    await this.reapOrphanedArtifacts();
     return reaped;
+  }
+
+  /**
+   * Reclaim FULLY ORPHANED sandbox artifacts — `atlas-sbx-*-net` networks and `atlas-sbx-*-dind`
+   * volumes whose owning container no longer exists. {@link teardown}/{@link reapStopped} handle the
+   * normal path; this is the catch-all for leaks from crashes, `kill -9`, or pre-fix runs (where
+   * teardown dropped the container but not its network/volume). Each artifact's name stem is checked
+   * against live container names, so one still attached to a container is never touched. Best-effort —
+   * an unremovable artifact is logged and skipped. Returns how many of each were reclaimed.
+   */
+  async reapOrphanedArtifacts(): Promise<{ networks: number; volumes: number }> {
+    const live = new Set((await this.engine.list({ all: true })).map((c) => c.name));
+    const isOrphan = (name: string, suffix: string): boolean =>
+      name.startsWith('atlas-sbx-') && name.endsWith(suffix) && !live.has(name.slice(0, -suffix.length));
+
+    let networks = 0;
+    for (const n of await this.engine.listNetworks()) {
+      if (!isOrphan(n.name, '-net')) continue;
+      try {
+        await this.engine.removeNetwork(n.name);
+        networks++;
+      } catch (err) {
+        this.logger.debug(`orphan network ${n.name} not removed: ${err}`);
+      }
+    }
+
+    let volumes = 0;
+    for (const v of await this.engine.listVolumes()) {
+      if (!isOrphan(v.name, '-dind')) continue;
+      try {
+        await this.engine.removeVolume(v.name);
+        volumes++;
+      } catch (err) {
+        this.logger.debug(`orphan volume ${v.name} not removed: ${err}`);
+      }
+    }
+
+    if (networks || volumes) {
+      this.logger.log(`reaped ${networks} orphan network(s) + ${volumes} orphan volume(s)`);
+    }
+    return { networks, volumes };
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
@@ -132,6 +177,23 @@ export class SandboxManager implements SandboxProvider {
   private augment(sandbox: FeatureSandbox, containerId: string): FeatureSandbox {
     const user = hostExecUser();
     return { ...sandbox, containerId, ...(user ? { execUser: user } : {}) };
+  }
+
+  /**
+   * Best-effort removal of a sandbox's per-container Docker artifacts: the `<name>-net` network and the
+   * `<name>-dind` inner-docker volume (named off the container name in {@link attach}). MUST run AFTER
+   * the container is removed — Docker refuses to drop a network/volume still attached/mounted. Never
+   * throws: a missing or still-in-use artifact must not fail teardown (it's reclaimed on the next pass).
+   */
+  private async cleanupArtifacts(containerName: string): Promise<void> {
+    const net = `${containerName}-net`;
+    const vol = `${containerName}-dind`;
+    await this.engine.removeNetwork(net).catch((err) => {
+      this.logger.debug(`could not remove network ${net}: ${err}`);
+    });
+    await this.engine.removeVolume(vol).catch((err) => {
+      this.logger.debug(`could not remove volume ${vol}: ${err}`);
+    });
   }
 
   private agentHomeRootHost(): string {

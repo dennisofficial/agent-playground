@@ -21,8 +21,12 @@ function fakeEngine(chunks: string[], exitCode = 0) {
     start: vi.fn(),
     stop: vi.fn(),
     remove: vi.fn(),
+    removeNetwork: vi.fn(),
+    removeVolume: vi.fn(),
     list: vi.fn(),
     inspect: vi.fn(),
+    listNetworks: vi.fn(),
+    listVolumes: vi.fn(),
     async exec(id, argv, opts = {}): Promise<ExecResult> {
       calls.push({ id, argv, opts });
       for (const c of chunks) opts.onStdout?.(c);

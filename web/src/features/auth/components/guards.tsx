@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
+import { ServerUnreachable } from '@/components/error/server-unreachable';
 import { auth, type AuthState } from '@/lib/auth';
 import { ROUTES, safeNext } from '@/lib/routes';
 
@@ -35,8 +36,7 @@ export function PrivateGuard({ children }: { children: ReactNode }) {
   }, [state, router, pathname]);
 
   if (state === null) return <FullScreenMessage>Loading…</FullScreenMessage>;
-  if (state.backendUnreachable)
-    return <FullScreenMessage tone="error">Can&apos;t reach the server</FullScreenMessage>;
+  if (state.backendUnreachable) return <ServerUnreachable />;
   if (!state.authenticated) return null; // redirecting
   return <>{children}</>;
 }
@@ -56,6 +56,7 @@ export function PublicGuard({ children }: { children: ReactNode }) {
   }, [state, router]);
 
   if (state === null) return <FullScreenMessage>Loading…</FullScreenMessage>;
+  if (state.backendUnreachable) return <ServerUnreachable />;
   if (state.authenticated) return null; // redirecting
   return <>{children}</>;
 }

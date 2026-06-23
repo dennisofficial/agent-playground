@@ -99,6 +99,17 @@ export interface ContainerInfo {
   labels: Record<string, string>;
 }
 
+/** A minimal view of a network, enough to reap orphans by name. */
+export interface NetworkInfo {
+  id: string;
+  name: string;
+}
+
+/** A minimal view of a named volume, enough to reap orphans by name. */
+export interface VolumeInfo {
+  name: string;
+}
+
 /** Build a single image from a context directory. */
 export interface BuildImageSpec {
   /** Absolute path to the build context (holds the Dockerfile + any copied assets). */
@@ -142,9 +153,23 @@ export interface ContainerEngine {
   /** Remove a container (force kills if running). */
   remove(id: string, opts?: { force?: boolean }): Promise<void>;
 
+  /** Remove a network by name (idempotent — a missing network resolves quietly). The network must have
+   * no attached containers, so remove them first. */
+  removeNetwork(name: string): Promise<void>;
+
+  /** Remove a named volume (idempotent — a missing volume resolves quietly). The volume must not be in
+   * use by a container, so remove the container first. */
+  removeVolume(name: string): Promise<void>;
+
   /** List containers, optionally filtered by label(s) (`key` or `key=value`). */
   list(opts?: { label?: string | string[]; all?: boolean }): Promise<ContainerInfo[]>;
 
   /** Inspect one container by id or name; null if it doesn't exist. */
   inspect(idOrName: string): Promise<ContainerInfo | null>;
+
+  /** List all networks (no useful label scheme on our networks, so callers filter by name). */
+  listNetworks(): Promise<NetworkInfo[]>;
+
+  /** List all named volumes (callers filter by name). */
+  listVolumes(): Promise<VolumeInfo[]>;
 }
