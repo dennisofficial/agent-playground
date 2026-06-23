@@ -42,7 +42,7 @@ decrypts it. So onboarding a new teammate is:
 # 2. Get backend/.env.keys (DOTENV_PRIVATE_KEY_LOCAL_ENC) from 1Password, drop it in backend/.
 #    .env.keys is git-ignored — it never lives in the repo.
 # 3. Copy the example for your personal secrets (LLM keys, machine paths):
-cp .env.example .env.personal       # then fill in ANTHROPIC_API_KEY / OPENAI_API_KEY / WORKER_ROOT
+cp .env.example .env.personal       # then fill in ANTHROPIC_API_KEY / OPENAI_API_KEY
 # 4. Start Postgres and build the DB (drops → migrates → seeds Slack identities + tenant row):
 docker compose up -d postgres       # from the repo root
 pnpm install

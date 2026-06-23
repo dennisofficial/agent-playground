@@ -411,7 +411,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
     .default('advisory'),
   MAX_CONCURRENT_EXECUTIONS: Joi.number().integer().min(1).optional(),
   APPROVAL_BOSS_USER_ID: Joi.string().optional(),
-  WORKER_ROOT: Joi.string().optional(),
   REPOS_ROOT: Joi.string().optional(),
   AGENT_HOME_ROOT: Joi.string().optional(),
   REFS_ROOT: Joi.string().optional(),
