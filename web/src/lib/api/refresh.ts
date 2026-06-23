@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { env } from '@/lib/env';
+import { connectivity } from './connectivity';
 
 /**
  * Single-flight session refresh for the NATIVE fetch (`/web/*`, `/auth/session`) and SSE paths. Unlike
@@ -40,7 +41,14 @@ export function refreshSession(): Promise<boolean> {
  */
 export async function fetchWithRefresh(input: string, init?: RequestInit): Promise<Response> {
   const opts: RequestInit = { ...init, credentials: 'include' };
-  const res = await fetch(input, opts);
+  let res: Response;
+  try {
+    res = await fetch(input, opts);
+  } catch (err) {
+    connectivity.reportUnreachable(); // network-level failure — the backend didn't answer
+    throw err;
+  }
+  connectivity.reportReachable(); // the server responded (any status) → backend is up
   if (res.status !== 401) return res;
   const refreshed = await refreshSession();
   return refreshed ? fetch(input, opts) : res;

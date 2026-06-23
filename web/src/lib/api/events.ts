@@ -3,6 +3,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { env } from '@/lib/env';
+import { connectivity } from './connectivity';
 import { upsertByTs } from './message-cache';
 import { qk } from './query-keys';
 import { refreshSession } from './refresh';
@@ -39,9 +40,11 @@ export function useChannelEvents(channel: string | undefined): StreamStatus {
 
       es.onopen = () => {
         refreshedOnce = false; // a healthy connection re-arms the guard for the next expiry
+        connectivity.reportReachable(); // the stream connected → backend is up
         setStatus('open');
       };
       es.onmessage = (e: MessageEvent<string>) => {
+        connectivity.reportReachable(); // a live frame proves the backend is up (no-op when already healthy)
         try {
           const msg = JSON.parse(e.data) as WebOutboundMessage;
           if (msg.channel !== channel) return;
@@ -53,6 +56,7 @@ export function useChannelEvents(channel: string | undefined): StreamStatus {
         }
       };
       es.onerror = () => {
+        connectivity.reportUnreachable(); // stream dropped — arm the global outage signal (debounced)
         setStatus('error');
         // CONNECTING (0): a transient drop — EventSource reconnects on its own, leave it.
         // CLOSED (2): fatal (e.g. a 401 on an expired cookie) — EventSource will NOT retry. Refresh once
