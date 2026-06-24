@@ -1,8 +1,16 @@
+'use client';
+
+import { Modal } from '@/features/create/components/modal';
+import { CreateThread } from '@/features/create/components/create-thread';
+
 /**
- * Intercepted `/new` — DEFERRED. The create-thread modal posted to the removed channel API. Nothing
- * routes to `/new` anymore (the sidebar CTA is disabled), so this intercept renders nothing; a hard load
- * of `/new` falls through to the full-page placeholder. Returns with the rebuilt create-thread flow.
+ * Intercepted `/new` — the create-thread modal over the current view (the org rail / board stay behind
+ * it). Creating navigates to the new thread, which pops the intercept; ✕ / backdrop / Esc `router.back()`.
  */
 export default function NewThreadModal() {
-  return null;
+  return (
+    <Modal title="New thread" subtitle="Pick a repo and describe the work — Atlas starts the conversation.">
+      <CreateThread />
+    </Modal>
+  );
 }

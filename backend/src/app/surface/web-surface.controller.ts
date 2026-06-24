@@ -5,7 +5,9 @@ import {
   Delete,
   Get,
   Logger,
+  NotFoundException,
   Param,
+  Patch,
   Post,
   Sse,
   UseGuards,
@@ -41,6 +43,9 @@ interface CreateThreadDto {
 }
 interface SayDto {
   text: string;
+}
+interface RenameThreadDto {
+  title: string;
 }
 interface ApproveDto {
   actionId: string;
@@ -238,6 +243,23 @@ export class WebSurfaceController {
     @Param('threadId') threadId: string,
   ): Promise<unknown> {
     return this.driverStore.getPipelineState(threadId, org.id);
+  }
+
+  /** `PATCH …/threads/:threadId` — rename a thread (the only thread Update op). Org-scoped. */
+  @Patch('orgs/:orgId/repos/:repoId/threads/:threadId')
+  @UseGuards(OrgMembershipGuard)
+  async renameThread(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('threadId') threadId: string,
+    @Body() body: RenameThreadDto,
+  ): Promise<{ ok: boolean; title: string }> {
+    const title = body?.title?.trim().slice(0, 200);
+    if (!title) throw new BadRequestException('title is required');
+    // Scope the update to the caller's org (defense in depth beyond the membership guard).
+    const result = await this.threads.update({ id: threadId, org_id: org.id }, { title });
+    if (!result.affected) throw new NotFoundException('thread not found');
+    this.logger.log(`web renamed thread ${threadId} (org ${org.id})`);
+    return { ok: true, title };
   }
 
   /** `DELETE …/threads/:threadId` — tear down the sandbox + remove the thread and its messages. */

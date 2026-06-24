@@ -5,16 +5,20 @@ import { usePathname } from 'next/navigation';
 import { useMemo } from 'react';
 import { LayoutGrid, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { ROUTES } from '@/lib/routes';
+import { ROUTES, threadHref } from '@/lib/routes';
 import { useOrgFilter } from '@/components/providers/orgs-provider';
 import { useInbox, type InboxThread } from '@/lib/api/inbox';
+import { useThreadStatuses } from '@/lib/api/thread-status';
 import { orgColor, orgInitials, roleLabel } from '@/lib/org-display';
 import { KIND_META } from '@/lib/api/status';
+import { StatusDot } from '@/components/ui/badges';
+import type { ThreadStatusEntry } from '@/lib/api/thread-status';
 
 /**
- * Left sidebar (240px): New thread (deferred), Coordinator (the cross-org board), then threads grouped by
- * org — every org's threads in one list, never a switch. Rows are read-only this phase (opening a thread
- * is the deferred follow-up).
+ * Left sidebar (240px): New thread, Coordinator (the cross-org board), then threads grouped by org —
+ * every org's threads in one list, never a switch. Rows open the thread workspace; the active row + any
+ * live status dot / "NEEDS YOU" come from the shared status seam (today only the open thread; see
+ * `thread-status.ts`).
  */
 export function Sidebar() {
   const pathname = usePathname();
@@ -22,6 +26,7 @@ export function Sidebar() {
   const orgOrder = useMemo(() => orgs.map((o) => ({ id: o.id, name: o.name })), [orgs]);
   const { threads, groups, isLoading } = useInbox(filter, orgOrder);
   const roleOf = useMemo(() => new Map(orgs.map((o) => [o.id, o.role])), [orgs]);
+  const statuses = useThreadStatuses();
 
   const onOverview = pathname === ROUTES.workspace();
   // When a single org is selected, its name is already in the top-bar chip — skip per-group headers.
@@ -33,18 +38,13 @@ export function Sidebar() {
       style={{ background: 'color-mix(in srgb, var(--panel) 60%, transparent)' }}
     >
       <div className="p-3">
-        <button
-          type="button"
-          disabled
-          title="Creating threads from the multi-org shell is coming soon"
-          className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-md border py-2 text-[12.5px] font-medium text-accent opacity-60"
+        <Link
+          href={ROUTES.newThread()}
+          className="flex w-full items-center justify-center gap-2 rounded-md border py-2 text-[12.5px] font-medium text-accent transition hover:brightness-105"
           style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
         >
           <Plus size={15} /> New thread
-          <span className="ml-1 rounded-full border border-accent-line px-1.5 py-px font-mono text-[8px] tracking-wide">
-            soon
-          </span>
-        </button>
+        </Link>
       </div>
 
       <nav className="px-3 pb-1">
@@ -84,9 +84,18 @@ export function Sidebar() {
                   <span className="font-mono text-[8px] text-faint">{roleLabel(roleOf.get(g.orgId) ?? 'member')}</span>
                 </div>
               ) : null}
-              {g.threads.map((t) => (
-                <ThreadRow key={t.id} thread={t} />
-              ))}
+              {g.threads.map((t) => {
+                const href = threadHref({ orgId: t.org.id, repoId: t.repo.id, threadId: t.id });
+                return (
+                  <ThreadRow
+                    key={t.id}
+                    thread={t}
+                    href={href}
+                    active={pathname === href}
+                    status={statuses.get(t.id)}
+                  />
+                );
+              })}
             </div>
           ))
         )}
@@ -95,21 +104,56 @@ export function Sidebar() {
   );
 }
 
-/** Read-only thread row (opening a thread is deferred). Kind-colored dot + title + repo. */
-function ThreadRow({ thread }: { thread: InboxThread }) {
+/** A thread row — opens the workspace. Leading dot is the live status (if known) else the kind tint. */
+function ThreadRow({
+  thread,
+  href,
+  active,
+  status,
+}: {
+  thread: InboxThread;
+  href: string;
+  active: boolean;
+  status?: ThreadStatusEntry;
+}) {
   return (
-    <div className="flex items-center gap-2 rounded-md px-2 py-2" title={`${thread.org.name} · ${thread.repo.name}`}>
-      <span
-        className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ background: KIND_META[thread.kind].color }}
-        aria-hidden
-      />
+    <Link
+      href={href}
+      title={`${thread.org.name} · ${thread.repo.name}`}
+      className={cn(
+        'flex items-center gap-2 rounded-md px-2 py-2 transition',
+        active ? '' : 'hover:bg-surface-2',
+        status?.needsYou && !active && 'border-l-[3px] pl-[5px]',
+      )}
+      style={
+        active
+          ? { background: 'var(--accent-soft)', border: '1px solid var(--accent-line)' }
+          : status?.needsYou
+            ? {
+                background: 'color-mix(in srgb, var(--rose) 8%, transparent)',
+                borderLeftColor: 'var(--rose)',
+              }
+            : undefined
+      }
+    >
+      {status ? (
+        <StatusDot status={status.status} size={7} />
+      ) : (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: KIND_META[thread.kind].color }} aria-hidden />
+      )}
       <div className="min-w-0 flex-1">
         <div className="truncate text-[12px] font-semibold text-text">{thread.title}</div>
       </div>
-      <span className="shrink-0 truncate font-mono text-[8.5px] uppercase tracking-wide text-faint">
-        {thread.repo.name}
-      </span>
-    </div>
+      {status?.needsYou ? (
+        <span className="flex shrink-0 items-center gap-1 font-mono text-[8px] font-semibold text-rose">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--rose)' }} />
+          NEEDS YOU
+        </span>
+      ) : (
+        <span className="shrink-0 truncate font-mono text-[8.5px] uppercase tracking-wide text-faint">
+          {thread.repo.name}
+        </span>
+      )}
+    </Link>
   );
 }

@@ -1,15 +1,21 @@
-import { DeferredWorkspace } from '@/components/deferred-workspace';
+'use client';
+
+import { CreateThread } from '@/features/create/components/create-thread';
 
 /**
- * Create-thread — DEFERRED. The old flow posted to the removed `/web/say`/channel API. Creating a thread
- * now needs the org → repo picker + `POST /web/orgs/:orgId/repos/:repoId/threads` AND a thread workspace
- * to land in, so it ships with that rewire. The sidebar's "New thread" CTA is disabled meanwhile.
+ * Full-page `/new` — the create-thread fallback for a hard load (the intercepted modal handles in-app
+ * navigation). Same form, same source.
  */
 export default function NewThreadPage() {
   return (
-    <DeferredWorkspace
-      title="Creating threads is coming soon"
-      body="Thread creation is moving to the org → repo flow and ships with the rebuilt thread workspace."
-    />
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-lg px-6 py-10">
+        <h1 className="font-disp text-[20px] font-semibold text-text">New thread</h1>
+        <p className="mb-6 mt-1 text-[13px] text-dim">
+          Pick a repo and describe the work — Atlas starts the conversation.
+        </p>
+        <CreateThread />
+      </div>
+    </div>
   );
 }

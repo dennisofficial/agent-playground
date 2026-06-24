@@ -1,21 +1,28 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { useAllThreads } from '@/lib/api/inbox';
+import { useAllThreads, type InboxThread } from '@/lib/api/inbox';
 import { orgColor } from '@/lib/org-display';
+import { threadHref } from '@/lib/routes';
 
 /**
- * ⌘K command palette — cross-org thread search over `GET /web/threads`. Read-only this phase: opening a
- * thread is deferred (no thread workspace yet), so a result just reflects what exists across every org.
- * `esc` closes (handled by the host).
+ * ⌘K command palette — cross-org thread search over `GET /web/threads`. Picking a result opens its thread
+ * workspace. `esc` closes (handled by the host).
  */
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const router = useRouter();
   const { data: threads = [] } = useAllThreads();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  function openThread(t: InboxThread) {
+    router.push(threadHref({ orgId: t.org.id, repoId: t.repo.id, threadId: t.id }));
+    onClose();
+  }
 
   useEffect(() => {
     if (open) {
@@ -48,6 +55,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setActive((a) => Math.max(0, a - 1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const pick = results[active];
+      if (pick) openThread(pick);
     }
   }
 
@@ -83,9 +94,11 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             <p className="px-3 py-6 text-center text-[12.5px] text-faint">No matching threads</p>
           ) : (
             results.map((t, i) => (
-              <div
+              <button
                 key={t.id}
+                type="button"
                 onMouseEnter={() => setActive(i)}
+                onClick={() => openThread(t)}
                 className={cn(
                   'flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left',
                   i === active ? 'bg-surface-2' : '',
@@ -96,12 +109,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 <span className="shrink-0 font-mono text-[10px] text-faint">
                   {t.org.name} · {t.repo.name}
                 </span>
-              </div>
+              </button>
             ))
           )}
         </div>
         <div className="border-t border-border px-4 py-2 font-mono text-[9.5px] text-faint">
-          Read-only — opening a thread is coming with the multi-org workspace.
+          ↑↓ to navigate · ↵ to open · esc to close
         </div>
       </div>
     </div>

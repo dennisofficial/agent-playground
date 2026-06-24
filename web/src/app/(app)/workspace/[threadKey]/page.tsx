@@ -1,25 +1,36 @@
 'use client';
 
 import { use } from 'react';
-import { decodeThreadKey } from '@/lib/routes';
-import { MessageStream } from '@/features/conversation/components/message-stream';
-import { Composer } from '@/features/conversation/components/composer';
-import { usePipelineOutline } from '@/lib/api/pipeline';
+import Link from 'next/link';
+import { decodeThreadRef, ROUTES } from '@/lib/routes';
+import { ThreadWorkspace } from '@/features/thread-workspace/thread-workspace';
 
-/** Default work view — the Conversation (the thread's brain). */
-export default function ConversationPage({
-  params,
-}: {
-  params: Promise<{ threadKey: string }>;
-}) {
+/**
+ * The thread workspace — navigator + work column (Conversation / Phase). The `[threadKey]` segment
+ * encodes the `org/repo/thread` triple (see `routes.ts`); a malformed key shows a recover link rather
+ * than crashing.
+ */
+export default function ThreadPage({ params }: { params: Promise<{ threadKey: string }> }) {
   const { threadKey } = use(params);
-  const { channel, threadTs } = decodeThreadKey(threadKey);
-  const outline = usePipelineOutline(channel, threadTs);
+  const ref = decodeThreadRef(threadKey);
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <MessageStream channel={channel} threadTs={threadTs} threadKey={threadKey} live={outline.live} />
-      <Composer channel={channel} threadTs={threadTs} />
-    </div>
-  );
+  if (!ref) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center px-6">
+        <div className="max-w-md text-center">
+          <h2 className="font-disp text-[16px] font-semibold text-text">Thread not found</h2>
+          <p className="mt-2 text-[13px] leading-relaxed text-dim">That thread link is malformed.</p>
+          <Link
+            href={ROUTES.workspace()}
+            className="mt-5 inline-block rounded-md border px-3.5 py-2 text-[12.5px] font-medium text-accent"
+            style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
+          >
+            ← All organizations
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return <ThreadWorkspace orgId={ref.orgId} repoId={ref.repoId} threadId={ref.threadId} />;
 }

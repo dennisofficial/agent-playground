@@ -2,29 +2,30 @@
 
 import { useState } from 'react';
 import { ArrowUp } from 'lucide-react';
-import { useSay } from '@/lib/api/mutations';
+import { useSay } from '@/lib/api/thread-queries';
+import type { ThreadRef } from '@/lib/api/thread-api';
 
 /**
- * Conversation composer. Posts to `/web/say` in the current thread. Typed ops ("pause", "approve",
- * "resume", "request changes"…) run the same deterministic ops as the buttons — the brain interprets
- * the text, so the composer just sends it. Enter sends; Shift+Enter newlines.
+ * The conversation composer — talks to the thread's brain. Posts to `…/threads/:threadId/say`. Typed
+ * ops ("pause", "approve", "resume", "simplify the rest"…) run the same operations as the buttons; the
+ * brain interprets the text, so the composer just sends it. Enter sends; Shift+Enter newlines.
  */
 export function Composer({
-  channel,
-  threadTs,
+  threadRef,
   placeholder = 'Message Atlas — ask, plan, or steer…',
+  hint,
 }: {
-  channel: string;
-  threadTs?: string;
+  threadRef: ThreadRef;
   placeholder?: string;
+  hint?: string;
 }) {
-  const say = useSay();
+  const say = useSay(threadRef);
   const [text, setText] = useState('');
 
   function send() {
     const trimmed = text.trim();
     if (!trimmed) return;
-    say.mutate({ channel, text: trimmed, threadTs });
+    say.mutate(trimmed);
     setText('');
   }
 
@@ -36,7 +37,10 @@ export function Composer({
   }
 
   return (
-    <div className="border-t border-border bg-panel px-6 py-3">
+    <div
+      className="shrink-0 border-t border-border px-6 py-3"
+      style={{ background: 'color-mix(in srgb, var(--panel) 45%, transparent)' }}
+    >
       <div className="mx-auto flex max-w-[760px] items-end gap-2">
         <textarea
           value={text}
@@ -44,7 +48,7 @@ export function Composer({
           onKeyDown={onKeyDown}
           rows={1}
           placeholder={placeholder}
-          className="max-h-40 min-h-[42px] flex-1 resize-none rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13.5px] text-text outline-none transition placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
+          className="max-h-40 min-h-[42px] flex-1 resize-none rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none transition placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
         />
         <button
           type="button"
@@ -57,6 +61,7 @@ export function Composer({
           <ArrowUp size={17} />
         </button>
       </div>
+      {hint ? <p className="mt-1.5 text-center font-mono text-[9px] text-faint">{hint}</p> : null}
     </div>
   );
 }

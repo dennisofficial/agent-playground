@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useOrgFilter } from '@/components/providers/orgs-provider';
 import { useInbox } from '@/lib/api/inbox';
 import { OrgBoard } from '@/features/inbox/components/org-board';
+import { NeedsYouBand } from '@/features/inbox/components/needs-you-band';
 import { roleLabel } from '@/lib/org-display';
 
 /**
@@ -48,6 +49,7 @@ export default function CoordinatorPage() {
           />
         ) : (
           <div className="mt-7">
+            <NeedsYouBand threads={threads} />
             <OrgBoard groups={groups} roleOf={roleOf} />
           </div>
         )}

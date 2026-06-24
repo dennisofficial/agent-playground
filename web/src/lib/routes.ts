@@ -2,25 +2,45 @@
  * Typed route helpers (house pattern from rs-crm/cubix `SITE_MAP`, hand-rolled here since
  * `@workspace/site-map` isn't vendored in this repo).
  *
- * A thread is addressed by an ENCODED SURFACE COORDINATE (`channel::threadTs`), not `atlas_threads.id`
- * — there is no id↔coord endpoint yet (BACKEND_GAPS.md #3). When `/web/threads` lands, swap the
- * encode/decode for the stable id and the route shapes stay identical.
+ * A thread is addressed by its real `org/repo/thread` coordinate — every thread API call is org+repo
+ * scoped, and the cross-org inbox (`/web/threads`) carries all three ids per row. The triple is encoded
+ * into the single `[threadKey]` path segment so the route shape (`/workspace/:threadKey`) is stable.
  */
 
-const SEP = '::';
-
-export function encodeThreadKey(channel: string, threadTs: string): string {
-  return encodeURIComponent(`${channel}${SEP}${threadTs}`);
+/** The ids needed to address one thread against the org → repo → thread API. */
+export interface ThreadRefParts {
+  orgId: string;
+  repoId: string;
+  threadId: string;
 }
 
-export function decodeThreadKey(threadKey: string): { channel: string; threadTs: string } {
-  const raw = decodeURIComponent(threadKey);
-  const idx = raw.indexOf(SEP);
-  if (idx === -1) return { channel: raw, threadTs: '' };
-  return { channel: raw.slice(0, idx), threadTs: raw.slice(idx + SEP.length) };
+// `~` is never present in a UUID (org/thread ids) or a repo slug, so it's a safe separator that keeps the
+// key a single path segment — unlike `/`, which `encodeURIComponent` turns into `%2F` (encoded slashes are
+// normalized inconsistently by servers/Next and can break single-segment matching).
+const REF_SEP = '~';
+
+/** Encode `{ orgId, repoId, threadId }` into one URL path segment. */
+export function encodeThreadRef(ref: ThreadRefParts): string {
+  return [ref.orgId, ref.repoId, ref.threadId].map(encodeURIComponent).join(REF_SEP);
 }
 
-export type PhaseTab = 'transcript' | 'diff' | 'logs';
+/** Decode a `[threadKey]` segment back to its ids; `null` if it isn't a well-formed triple. */
+export function decodeThreadRef(threadKey: string): ThreadRefParts | null {
+  const parts = threadKey.split(REF_SEP);
+  if (parts.length !== 3) return null;
+  try {
+    const [orgId, repoId, threadId] = parts.map(decodeURIComponent);
+    if (!orgId || !repoId || !threadId) return null;
+    return { orgId, repoId, threadId };
+  } catch {
+    return null;
+  }
+}
+
+/** Full href to a thread workspace. */
+export function threadHref(ref: ThreadRefParts): string {
+  return `/workspace/${encodeThreadRef(ref)}`;
+}
 
 export const ROUTES = {
   home: () => '/',
@@ -33,11 +53,6 @@ export const ROUTES = {
   },
   workspace: () => '/workspace',
   thread: (threadKey: string) => `/workspace/${threadKey}`,
-  threadPlan: (threadKey: string) => `/workspace/${threadKey}/plan`,
-  threadDoc: (threadKey: string, docId: string) =>
-    `/workspace/${threadKey}/doc/${encodeURIComponent(docId)}`,
-  threadPhase: (threadKey: string, phaseId: string, tab: PhaseTab = 'transcript') =>
-    `/workspace/${threadKey}/phase/${encodeURIComponent(phaseId)}/${tab}`,
   newThread: () => '/new',
   /** Org settings (General / Credentials / Members). `section` deep-links a tab. */
   orgSettings: (orgId: string, section?: SettingsSection) =>

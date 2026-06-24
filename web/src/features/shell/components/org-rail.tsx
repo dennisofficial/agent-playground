@@ -1,7 +1,10 @@
 'use client';
 
+import { useMemo } from 'react';
 import { LayoutGrid, Plus } from 'lucide-react';
 import { useOrgFilter } from '@/components/providers/orgs-provider';
+import { useAllThreads } from '@/lib/api/inbox';
+import { useThreadStatuses } from '@/lib/api/thread-status';
 import type { OrgSummary } from '@/lib/api/me';
 import { orgColor, orgInitials, roleLabel } from '@/lib/org-display';
 
@@ -9,9 +12,23 @@ import { orgColor, orgInitials, roleLabel } from '@/lib/org-display';
  * Org rail (64px) — the multi-org spine. "All" (the unified board across every org) sits on top, then the
  * orgs the operator OWNS, a "JOINED" divider, then orgs they were invited to. Selecting an org is a
  * filter, not a switch (handoff north star). The dashed "＋" (create org) is a not-yet-wired affordance.
+ *
+ * Attention badges count threads that need you, per org, from the shared status seam (today only the open
+ * thread populates it; lights up across orgs when the realtime feed lands — see `thread-status.ts`).
  */
 export function OrgRail() {
   const { filter, setFilter, owned, joined } = useOrgFilter();
+  const { data: threads = [] } = useAllThreads();
+  const statuses = useThreadStatuses();
+
+  const attnByOrg = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of threads) {
+      if (statuses.get(t.id)?.needsYou) m.set(t.org.id, (m.get(t.org.id) ?? 0) + 1);
+    }
+    return m;
+  }, [threads, statuses]);
+  const attnTotal = useMemo(() => [...attnByOrg.values()].reduce((a, b) => a + b, 0), [attnByOrg]);
 
   return (
     <aside
@@ -25,6 +42,7 @@ export function OrgRail() {
         onClick={() => setFilter('all')}
         tip="All organizations"
         sub="one board · no switching"
+        badge={attnTotal}
       >
         <span className="flex items-center justify-center text-dim">
           <LayoutGrid size={17} />
@@ -34,14 +52,14 @@ export function OrgRail() {
       <div className="my-0.5 h-px w-6" style={{ background: 'var(--border-2)' }} />
 
       {owned.map((o) => (
-        <OrgTile key={o.id} org={o} active={filter === o.id} onClick={() => setFilter(o.id)} />
+        <OrgTile key={o.id} org={o} active={filter === o.id} badge={attnByOrg.get(o.id) ?? 0} onClick={() => setFilter(o.id)} />
       ))}
 
       {joined.length > 0 ? (
         <div className="mt-1 font-mono text-[7.5px] tracking-[0.12em] text-faint">JOINED</div>
       ) : null}
       {joined.map((o) => (
-        <OrgTile key={o.id} org={o} active={filter === o.id} onClick={() => setFilter(o.id)} joined />
+        <OrgTile key={o.id} org={o} active={filter === o.id} badge={attnByOrg.get(o.id) ?? 0} onClick={() => setFilter(o.id)} joined />
       ))}
 
       <div className="flex-1" />
@@ -64,11 +82,13 @@ function OrgTile({
   org,
   active,
   onClick,
+  badge = 0,
   joined = false,
 }: {
   org: OrgSummary;
   active: boolean;
   onClick: () => void;
+  badge?: number;
   joined?: boolean;
 }) {
   const color = orgColor(org.id);
@@ -79,6 +99,7 @@ function OrgTile({
       onClick={onClick}
       tip={org.name}
       sub={`${roleLabel(org.role)} · ${org.status}`}
+      badge={badge}
     >
       <span
         className="flex h-full w-full items-center justify-center font-disp text-[13px] font-semibold text-white"
@@ -90,13 +111,14 @@ function OrgTile({
   );
 }
 
-/** A 40px rail avatar with an active ring + a hover flyout tooltip (name + sub-line). */
+/** A 40px rail avatar with an active ring, attention badge, + a hover flyout tooltip (name + sub-line). */
 function RailButton({
   active,
   color,
   onClick,
   tip,
   sub,
+  badge = 0,
   children,
 }: {
   active: boolean;
@@ -104,6 +126,7 @@ function RailButton({
   onClick: () => void;
   tip: string;
   sub: string;
+  badge?: number;
   children: React.ReactNode;
 }) {
   return (
@@ -114,6 +137,14 @@ function RailButton({
       >
         {children}
       </span>
+      {badge > 0 ? (
+        <span
+          className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-mono text-[9px] font-bold text-white"
+          style={{ background: 'var(--rose)', border: '2px solid var(--bg)' }}
+        >
+          {badge}
+        </span>
+      ) : null}
       {/* flyout tooltip */}
       <span
         className="pointer-events-none absolute left-[52px] top-1/2 z-[60] flex -translate-y-1/2 -translate-x-1.5 flex-col gap-0.5 whitespace-nowrap rounded-md border border-border-2 bg-panel px-2.5 py-1.5 opacity-0 transition-all duration-100 group-hover:translate-x-0 group-hover:opacity-100"

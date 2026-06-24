@@ -1,12 +1,9 @@
 /**
  * Contracts for the Atlas web surface (`/web/*`). These MIRROR the backend shapes verbatim:
- *  - `WebOutboundMessage` / `WebApprovalCard` / `WebVerdictCard` — `backend/.../atlas-web-surface.ts`
- *    + `web-approval-card.ts`.
- *  - `PipelineState` — `DriverStoreService.getPipelineState` (note: NO pr_url / branch / diff).
- *  - build-event `meta` — `section-driver.service.ts` (NO threadId; see BACKEND_GAPS.md #3).
+ *  - `WebApprovalCard` / `WebVerdictCard` — the approval-card payload carried on a message's `card`.
+ *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + sections; NO pr_url / branch / diff).
  *
- * `WebThreadSummary` is the ideal-but-unbuilt `/web/threads` read model — kept here so the UI codes
- * against the eventual contract while we derive a demo list from the outbox today.
+ * The live message + request shapes are owned by `thread-api.ts` (the org → repo → thread client).
  */
 
 // ── Backend enums ──────────────────────────────────────────────────────────────────────────────
@@ -80,32 +77,7 @@ export interface WebVerdictCard {
 
 export type WebCard = WebApprovalCard | WebVerdictCard;
 
-// ── Outbound message + build-event meta ────────────────────────────────────────────────────────
-export interface BuildEventMeta {
-  kind: 'build_event';
-  phaseId?: string;
-  sectionOrdinal?: number;
-  phaseOrdinal?: number;
-  eventKind?: string;
-}
-
-export type OutboundMeta = BuildEventMeta | Record<string, unknown>;
-
-export interface WebOutboundMessage {
-  ts: string;
-  channel: string;
-  text: string;
-  threadTs?: string;
-  card?: WebCard;
-  meta?: OutboundMeta;
-  postedAt: string;
-  /** Client-only: a human message the operator just sent (never echoed by history/SSE). */
-  local?: boolean;
-  /** Client-only author tag — outbound posts are 'atlas'; optimistic posts are 'user'. */
-  author?: 'atlas' | 'user';
-}
-
-// ── Pipeline (real `/web/pipeline`, currently unreachable — no threadId; kept for the flip) ──────
+// ── Pipeline (`…/threads/:threadId/pipeline`) ────────────────────────────────────────────────────
 export interface PipelineSection {
   id: string;
   ordinal: number;
@@ -137,36 +109,3 @@ export type ThreadStatus =
 
 /** UI kind badge — `feat`/`fix` from JobKind; `event` denotes a notification-seeded thread. */
 export type ThreadKind = 'feat' | 'fix' | 'event';
-
-/** The ideal `/web/threads` row (contract-ahead — derived from the outbox today). */
-export interface WebThreadSummary {
-  threadKey: string;
-  channel: string;
-  threadTs: string;
-  threadId?: string;
-  title: string;
-  kind: ThreadKind;
-  status: ThreadStatus;
-  branch?: string;
-  tracker?: string;
-  meta?: string;
-  /** Most-recent activity ts (for sort + "active" sub-line). */
-  lastTs: string;
-}
-
-// ── Request bodies ─────────────────────────────────────────────────────────────────────────────
-export interface SayRequest {
-  channel: string;
-  text: string;
-  threadTs?: string;
-  authorId?: string;
-  authorName?: string;
-  teamId?: string;
-}
-
-export interface ApproveRequest {
-  actionId: ApprovalActionId;
-  value: string;
-  ruledBy: string;
-  note?: string;
-}
