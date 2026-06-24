@@ -1,11 +1,23 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
+import { ModuleRef } from '@nestjs/core';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import { In, IsNull, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
+  DecisionRecordEntity,
+  JobEntity,
+  MemoryEntity,
+  MessageEntity,
+  OrgCredentialsEntity,
   OrgInviteEntity,
+  PhaseEntity,
+  RepoEntity,
+  SectionEntity,
+  StimulusEntity,
+  ThreadEntity,
+  ThreadSandboxEntity,
   UserEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
@@ -74,6 +86,14 @@ export class OrganizationService {
     private readonly invites: Repository<OrgInviteEntity>,
     @InjectRepository(UserEntity, DB_CONNECTION)
     private readonly users: Repository<UserEntity>,
+    @InjectDataSource(DB_CONNECTION)
+    private readonly dataSource: DataSource,
+    // `ThreadLifecycleService` is resolved LAZILY in `deleteOrg` via this ref + a dynamic `import()`.
+    // A STATIC import of the driver service would close an ES module cycle
+    // (organization.service → driver/thread-lifecycle → onboarding barrel → onboarding controllers →
+    // org-membership.guard → organization.service), which leaves `OrganizationService` undefined at boot.
+    // `ModuleRef` is core (no module dependency) and the dynamic import is evaluated after boot.
+    private readonly moduleRef: ModuleRef,
     private readonly env: EnvService,
   ) {}
 
@@ -88,6 +108,72 @@ export class OrganizationService {
       this.members.create({ org_id: id, user_id: userId, role: 'owner' }),
     );
     return { id: org.id, slug: org.slug, name: org.name, status: org.status, role: 'owner' };
+  }
+
+  /**
+   * Rename / re-slug an org (owner-only at the controller). `name` is re-validated at the DTO; `slug`, when
+   * given, is slugified + kept unique (excluding this org). `role` is the caller's role, folded into the
+   * returned summary so it's complete. Throws `NotFoundException` if the org is gone.
+   */
+  async rename(
+    orgId: string,
+    patch: { name?: string; slug?: string },
+    role: string,
+  ): Promise<OrgSummary> {
+    const org = await this.orgs.findOne({ where: { id: orgId } });
+    if (!org) throw new NotFoundException('OrganizationEntity not found');
+
+    if (patch.name !== undefined) org.name = patch.name;
+    if (patch.slug !== undefined) {
+      const desired = slugifyName(patch.slug);
+      if (desired !== org.slug) org.slug = await this.uniqueSlug(desired, orgId);
+    }
+    const saved = await this.orgs.save(org);
+    return { id: saved.id, slug: saved.slug, name: saved.name, status: saved.status, role };
+  }
+
+  /**
+   * Delete an org and everything under it. There are no DB FK cascades — every dependent table carries an
+   * `org_id` (messages carry `thread_id`), so we sweep explicitly. Threads are CLOSED first (tearing down
+   * the per-thread container + git worktree, best-effort/idempotent in `closeThread`) BEFORE the DB rows go,
+   * because that teardown is side-effecting and not part of the transaction. Then a single transaction
+   * deletes every org-scoped row + the org itself. Idempotent-ish: a missing org just deletes nothing.
+   */
+  async deleteOrg(orgId: string): Promise<void> {
+    const threads = await this.dataSource
+      .getRepository(ThreadEntity)
+      .find({ where: { org_id: orgId }, select: { id: true } });
+    const threadIds = threads.map((t) => t.id);
+
+    // Side-effecting teardown (containers + worktrees) — outside the DB transaction. Resolve the driver
+    // service lazily (see the constructor note on the cycle); `strict: false` searches the whole app.
+    // `.js` extension: a relative dynamic `import()` carries ESM semantics under `moduleResolution:
+    // nodenext`, which requires the explicit extension (static CJS imports don't).
+    const { ThreadLifecycleService } = await import('../driver/thread-lifecycle.service.js');
+    const threadLifecycle = this.moduleRef.get(ThreadLifecycleService, { strict: false });
+    for (const threadId of threadIds) {
+      await threadLifecycle.closeThread(threadId, orgId);
+    }
+
+    await this.dataSource.transaction(async (m) => {
+      if (threadIds.length > 0) {
+        await m.delete(MessageEntity, { thread_id: In(threadIds) });
+      }
+      // Children → parents (order is cosmetic without FKs, but tidy).
+      await m.delete(ThreadSandboxEntity, { org_id: orgId });
+      await m.delete(PhaseEntity, { org_id: orgId });
+      await m.delete(SectionEntity, { org_id: orgId });
+      await m.delete(DecisionRecordEntity, { org_id: orgId });
+      await m.delete(JobEntity, { org_id: orgId });
+      await m.delete(StimulusEntity, { org_id: orgId });
+      await m.delete(MemoryEntity, { org_id: orgId });
+      await m.delete(ThreadEntity, { org_id: orgId });
+      await m.delete(RepoEntity, { org_id: orgId });
+      await m.delete(OrgCredentialsEntity, { org_id: orgId });
+      await m.delete(OrgInviteEntity, { org_id: orgId });
+      await m.delete(OrganizationMemberEntity, { org_id: orgId });
+      await m.delete(OrganizationEntity, { id: orgId });
+    });
   }
 
   /** Every org the user belongs to, with their role. */
@@ -213,11 +299,12 @@ export class OrganizationService {
     };
   }
 
-  private async uniqueSlug(base: string): Promise<string> {
+  /** A slug not used by any OTHER org (`exceptId` lets an org keep/reshape its own slug on rename). */
+  private async uniqueSlug(base: string, exceptId?: string): Promise<string> {
     for (let i = 0; i < 50; i++) {
       const slug = i === 0 ? base : `${base}-${i + 1}`;
       const exists = await this.orgs.findOne({ where: { slug } });
-      if (!exists) return slug;
+      if (!exists || exists.id === exceptId) return slug;
     }
     return `${base}-${randomUUID().slice(0, 6)}`;
   }

@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { LayoutGrid, Plus } from 'lucide-react';
 import { useOrgFilter } from '@/components/providers/orgs-provider';
 import { useAllThreads } from '@/lib/api/inbox';
 import { useThreadStatuses } from '@/lib/api/thread-status';
 import type { OrgSummary } from '@/lib/api/me';
 import { orgColor, orgInitials, roleLabel } from '@/lib/org-display';
+import { CreateOrgDialog } from './create-org-dialog';
 
 /**
  * Org rail (64px) — the multi-org spine. "All" (the unified board across every org) sits on top, then the
@@ -20,6 +21,7 @@ export function OrgRail() {
   const { filter, setFilter, owned, joined } = useOrgFilter();
   const { data: threads = [] } = useAllThreads();
   const statuses = useThreadStatuses();
+  const [showCreate, setShowCreate] = useState(false);
 
   const attnByOrg = useMemo(() => {
     const m = new Map<string, number>();
@@ -64,16 +66,18 @@ export function OrgRail() {
 
       <div className="flex-1" />
 
-      {/* Create org — not wired this phase. */}
+      {/* Create org */}
       <button
         type="button"
-        disabled
-        title="Create organization — coming soon"
-        className="flex h-10 w-10 cursor-not-allowed items-center justify-center rounded-[11px] border border-dashed border-border-2 text-faint"
-        aria-label="Create organization (coming soon)"
+        onClick={() => setShowCreate(true)}
+        title="Create organization"
+        className="flex h-10 w-10 items-center justify-center rounded-[11px] border border-dashed border-border-2 text-faint transition hover:border-accent-line hover:text-accent"
+        aria-label="Create organization"
       >
         <Plus size={18} strokeWidth={1.5} />
       </button>
+
+      {showCreate ? <CreateOrgDialog onClose={() => setShowCreate(false)} /> : null}
     </aside>
   );
 }

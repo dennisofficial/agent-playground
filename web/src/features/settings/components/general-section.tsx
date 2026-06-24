@@ -4,29 +4,32 @@ import { useState } from 'react';
 import { inputCls } from '@/components/ui/field';
 import { orgColor, orgInitials, slugify } from '@/lib/org-display';
 import type { OrgSummary } from '@/lib/api/me';
+import { useUpdateOrg } from '@/lib/api/orgs';
 import { DeleteOrgDialog } from './delete-org-dialog';
 
 /**
- * General settings — org identity + status + the danger zone. Org rename / slug / leave / delete have no
- * backend endpoints yet (frontend-only phase), so edits are local and the actions surface a "not wired"
- * affordance rather than persisting or destroying anything.
+ * General settings — org identity + status + the danger zone. Rename / re-slug persist via
+ * `PATCH /web/orgs/:orgId` and delete via `DELETE /web/orgs/:orgId` (both owner-only); a non-owner sees
+ * the write affordances disabled, and the backend enforces it regardless.
  */
 export function GeneralSection({ org }: { org: OrgSummary }) {
   const [name, setName] = useState(org.name);
   const [slug, setSlug] = useState(org.slug);
-  const [saved, setSaved] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const active = org.status === 'active';
+  const isOwner = org.role === 'owner';
+  const update = useUpdateOrg(org.id);
+  const dirty = name.trim() !== org.name || slug !== org.slug;
 
   function onName(v: string) {
     setName(v);
     setSlug(slugify(v));
-    setSaved(false);
+    update.reset();
   }
 
   function save() {
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2200);
+    if (!isOwner || !dirty || update.isPending) return;
+    update.mutate({ name: name.trim(), slug });
   }
 
   return (
@@ -60,7 +63,7 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
                 value={slug}
                 onChange={(e) => {
                   setSlug(slugify(e.target.value));
-                  setSaved(false);
+                  update.reset();
                 }}
                 className="flex-1 bg-transparent py-2.5 pl-px pr-3 font-mono text-[12.5px] font-semibold text-accent outline-none"
               />
@@ -87,14 +90,23 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
             <button
               type="button"
               onClick={save}
-              className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105"
+              disabled={!isOwner || !dirty || update.isPending}
+              title={isOwner ? undefined : 'Only the organization owner can rename it'}
+              className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45"
               style={{ background: 'var(--accent)' }}
             >
-              Save changes
+              {update.isPending ? 'Saving…' : 'Save changes'}
             </button>
-            {saved ? <span className="text-[11.5px] text-green">✓ Saved locally</span> : null}
+            {update.isSuccess && !dirty ? <span className="text-[11.5px] text-green">✓ Saved</span> : null}
+            {update.isError ? (
+              <span className="text-[11.5px] text-red">
+                {(update.error as Error)?.message ?? 'Could not save changes.'}
+              </span>
+            ) : null}
           </div>
-          <p className="text-[11px] text-faint">Renaming isn’t persisted to the backend yet (frontend-only phase).</p>
+          {!isOwner ? (
+            <p className="text-[11px] text-faint">Only the organization owner can change these settings.</p>
+          ) : null}
         </div>
       </div>
 
@@ -131,7 +143,9 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
             <button
               type="button"
               onClick={() => setShowDelete(true)}
-              className="rounded-md px-3.5 py-2 text-[12px] font-semibold text-white transition hover:brightness-105"
+              disabled={!isOwner}
+              title={isOwner ? undefined : 'Only the organization owner can delete it'}
+              className="rounded-md px-3.5 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45"
               style={{ background: 'var(--red)' }}
             >
               Delete
@@ -141,7 +155,12 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
       </div>
 
       {showDelete ? (
-        <DeleteOrgDialog orgName={org.name} slug={org.slug} onClose={() => setShowDelete(false)} />
+        <DeleteOrgDialog
+          orgId={org.id}
+          orgName={org.name}
+          slug={org.slug}
+          onClose={() => setShowDelete(false)}
+        />
       ) : null}
     </>
   );

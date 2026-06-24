@@ -1,25 +1,45 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { inputCls } from '@/components/ui/field';
+import { useOrgFilter } from '@/components/providers/orgs-provider';
+import { useDeleteOrg } from '@/lib/api/orgs';
+import { ROUTES } from '@/lib/routes';
 
 /**
- * Type-the-slug-to-confirm delete dialog. Deleting an org (with repo/thread/session teardown) has no
- * backend endpoint yet, so confirming surfaces a "not wired" note rather than destroying anything.
+ * Type-the-slug-to-confirm delete dialog. Confirming hits `DELETE /web/orgs/:orgId` (owner-only), which
+ * tears down the org's repos, threads, and live agent sessions. On success we drop the rail filter back to
+ * "All" and route to the workspace (the deleted org's settings page no longer resolves).
  */
 export function DeleteOrgDialog({
+  orgId,
   orgName,
   slug,
   onClose,
 }: {
+  orgId: string;
   orgName: string;
   slug: string;
   onClose: () => void;
 }) {
+  const router = useRouter();
+  const { setFilter } = useOrgFilter();
+  const del = useDeleteOrg(orgId);
   const [text, setText] = useState('');
-  const [attempted, setAttempted] = useState(false);
   const armed = text.trim() === slug;
+
+  function confirmDelete() {
+    if (!armed || del.isPending) return;
+    del.mutate(undefined, {
+      onSuccess: () => {
+        setFilter('all');
+        onClose();
+        router.push(ROUTES.workspace());
+      },
+    });
+  }
 
   return (
     <div
@@ -55,15 +75,18 @@ export function DeleteOrgDialog({
             value={text}
             onChange={(e) => {
               setText(e.target.value);
-              setAttempted(false);
+              del.reset();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') confirmDelete();
             }}
             placeholder={slug}
             className={inputCls}
             autoFocus
           />
-          {attempted ? (
+          {del.isError ? (
             <p className="mt-2.5 text-[11.5px] text-red">
-              Organization deletion isn’t wired to the backend yet — nothing was deleted.
+              {(del.error as Error)?.message ?? 'Could not delete the organization.'}
             </p>
           ) : null}
         </div>
@@ -80,12 +103,12 @@ export function DeleteOrgDialog({
           </button>
           <button
             type="button"
-            disabled={!armed}
-            onClick={() => setAttempted(true)}
+            disabled={!armed || del.isPending}
+            onClick={confirmDelete}
             className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
             style={{ background: 'var(--red)' }}
           >
-            Delete organization
+            {del.isPending ? 'Deleting…' : 'Delete organization'}
           </button>
         </div>
       </div>

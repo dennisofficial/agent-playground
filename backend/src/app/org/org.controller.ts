@@ -5,13 +5,14 @@ import {
   Get,
   NotFoundException,
   Param,
+  Patch,
   Post,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import type { UserEntity } from '../persistence/entities';
 import { CurrentOrg, type CurrentOrgCtx } from './current-org.decorator';
@@ -28,6 +29,19 @@ class CreateOrgDto {
   @IsString()
   @MinLength(2, { message: 'OrganizationEntity name must be at least 2 characters' })
   name!: string;
+}
+
+class UpdateOrgDto {
+  // Both fields optional — `@IsOptional()` makes class-validator skip the other validators when the field is
+  // absent (otherwise an omitted `name` would still fail `@IsString`/`@MinLength`).
+  @IsOptional()
+  @IsString()
+  @MinLength(2, { message: 'OrganizationEntity name must be at least 2 characters' })
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  slug?: string;
 }
 
 class InviteDto {
@@ -84,6 +98,24 @@ export class OrgController {
         missing: onboarding.missing,
       },
     };
+  }
+
+  /** `PATCH /web/orgs/:orgId` — rename / re-slug the org (owner only). */
+  @Patch(':orgId')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async update(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Body() body: UpdateOrgDto,
+  ): Promise<OrgSummary> {
+    return this.orgs.rename(org.id, body, org.role);
+  }
+
+  /** `DELETE /web/orgs/:orgId` — delete the org + all repos/threads/sessions (owner only). */
+  @Delete(':orgId')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async remove(@CurrentOrg() org: CurrentOrgCtx): Promise<{ ok: boolean }> {
+    await this.orgs.deleteOrg(org.id);
+    return { ok: true };
   }
 
   /** `GET /web/orgs/:orgId/members` — the org's members. */

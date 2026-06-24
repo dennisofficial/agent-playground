@@ -1,6 +1,7 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import type { ModuleRef } from '@nestjs/core';
 import { describe, expect, it } from 'vitest';
-import type { Repository } from 'typeorm';
+import type { DataSource, Repository } from 'typeorm';
 import { OrganizationService } from './organization.service';
 import type {
   OrgInviteEntity,
@@ -9,7 +10,14 @@ import type {
   OrganizationMemberEntity,
 } from '../persistence/entities';
 
-function makeSvc(opts: { invite?: Partial<OrgInviteEntity>; alreadyMember?: boolean } = {}) {
+function makeSvc(
+  opts: {
+    invite?: Partial<OrgInviteEntity>;
+    alreadyMember?: boolean;
+    orgRows?: OrganizationEntity[];
+    threadIds?: string[];
+  } = {},
+) {
   const inviteRows: OrgInviteEntity[] = opts.invite
     ? [
         {
@@ -50,15 +58,61 @@ function makeSvc(opts: { invite?: Partial<OrgInviteEntity>; alreadyMember?: bool
     },
   } as unknown as Repository<OrganizationMemberEntity>;
 
+  const orgRows: OrganizationEntity[] = opts.orgRows ?? [
+    { id: 'O1', name: 'HannibalAI', slug: 'hannibalai', status: 'onboarding' } as OrganizationEntity,
+  ];
   const orgs = {
-    findOne: async ({ where }: { where: { id: string } }) =>
-      ({ id: where.id, name: 'HannibalAI', slug: 'hannibalai', status: 'onboarding' }) as OrganizationEntity,
+    findOne: async ({ where }: { where: { id?: string; slug?: string } }) => {
+      if (where.id !== undefined) return orgRows.find((o) => o.id === where.id) ?? null;
+      if (where.slug !== undefined) return orgRows.find((o) => o.slug === where.slug) ?? null;
+      return null;
+    },
+    create: (x: Partial<OrganizationEntity>) => x as OrganizationEntity,
+    save: async (x: OrganizationEntity) => {
+      const i = orgRows.findIndex((o) => o.id === x.id);
+      if (i >= 0) orgRows[i] = x;
+      else orgRows.push(x);
+      return x;
+    },
   } as unknown as Repository<OrganizationEntity>;
   const users = {} as unknown as Repository<UserEntity>;
   const env = { get: () => 'http://host' } as never;
 
-  const svc = new OrganizationService(orgs, members, invites, users, env);
-  return { svc, inviteRows, memberRows };
+  // Records the teardown side effects so the deleteOrg test can assert on them. `ThreadLifecycleService`
+  // is pulled lazily via `ModuleRef.get(...)` in `deleteOrg`, so the mock ref just hands back this fake.
+  const closed: Array<{ threadId: string; orgId: string }> = [];
+  const threadLifecycle = {
+    closeThread: async (threadId: string, orgId: string) => {
+      closed.push({ threadId, orgId });
+    },
+  };
+  const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
+
+  const deletes: Array<{ entity: string; criteria: Record<string, unknown> }> = [];
+  const manager = {
+    delete: async (entity: { name: string }, criteria: Record<string, unknown>) => {
+      deletes.push({ entity: entity.name, criteria });
+      return { affected: 1 };
+    },
+  };
+  const threadRows = (opts.threadIds ?? []).map((id) => ({ id }));
+  const dataSource = {
+    getRepository: () => ({ find: async () => threadRows }),
+    transaction: async (cb: (m: typeof manager) => Promise<void>) => {
+      await cb(manager);
+    },
+  } as unknown as DataSource;
+
+  const svc = new OrganizationService(
+    orgs,
+    members,
+    invites,
+    users,
+    dataSource,
+    moduleRef,
+    env,
+  );
+  return { svc, inviteRows, memberRows, orgRows, closed, deletes };
 }
 
 describe('OrganizationService invites', () => {
@@ -88,5 +142,61 @@ describe('OrganizationService invites', () => {
   it('acceptInvite rejects a different user once redeemed', async () => {
     const { svc } = makeSvc({ invite: { accepted_at: new Date(), accepted_by: 'B' } });
     await expect(svc.acceptInvite('t1', 'C')).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('OrganizationService rename', () => {
+  it('updates the name (slug untouched) and folds in the caller role', async () => {
+    const { svc, orgRows } = makeSvc();
+    const out = await svc.rename('O1', { name: 'NewName' }, 'owner');
+    expect(out).toEqual({ id: 'O1', slug: 'hannibalai', name: 'NewName', status: 'onboarding', role: 'owner' });
+    expect(orgRows[0].name).toBe('NewName');
+  });
+
+  it('slugifies a new slug and keeps it unique against OTHER orgs', async () => {
+    const { svc } = makeSvc({
+      orgRows: [
+        { id: 'O1', name: 'A', slug: 'a', status: 'onboarding' } as OrganizationEntity,
+        { id: 'O2', name: 'Taken', slug: 'taken', status: 'active' } as OrganizationEntity,
+      ],
+    });
+    const out = await svc.rename('O1', { slug: 'Taken!!' }, 'owner');
+    expect(out.slug).toBe('taken-2'); // 'taken' is owned by O2, so suffix
+  });
+
+  it('throws NotFound when the org is gone', async () => {
+    const { svc } = makeSvc();
+    await expect(svc.rename('NOPE', { name: 'x' }, 'owner')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('OrganizationService deleteOrg', () => {
+  it('closes every thread then sweeps all org-scoped rows (org deleted last)', async () => {
+    const { svc, closed, deletes } = makeSvc({ threadIds: ['T1', 'T2'] });
+    await svc.deleteOrg('O1');
+
+    // Threads are torn down (container + worktree) before the DB rows go.
+    expect(closed).toEqual([
+      { threadId: 'T1', orgId: 'O1' },
+      { threadId: 'T2', orgId: 'O1' },
+    ]);
+
+    const entities = deletes.map((d) => d.entity);
+    expect(entities).toContain('MessageEntity');
+    expect(entities).toContain('ThreadEntity');
+    expect(entities).toContain('RepoEntity');
+    expect(entities).toContain('OrganizationMemberEntity');
+    expect(entities.at(-1)).toBe('OrganizationEntity'); // org row deleted last
+    // Messages are swept by thread_id, everything else by org_id.
+    expect(deletes.find((d) => d.entity === 'MessageEntity')?.criteria).toMatchObject({ thread_id: expect.anything() });
+    expect(deletes.find((d) => d.entity === 'ThreadEntity')?.criteria).toEqual({ org_id: 'O1' });
+  });
+
+  it('skips thread teardown + message delete when the org has no threads', async () => {
+    const { svc, closed, deletes } = makeSvc({ threadIds: [] });
+    await svc.deleteOrg('O1');
+    expect(closed).toHaveLength(0);
+    expect(deletes.map((d) => d.entity)).not.toContain('MessageEntity');
+    expect(deletes.at(-1)?.entity).toBe('OrganizationEntity');
   });
 });

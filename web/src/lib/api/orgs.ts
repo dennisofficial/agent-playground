@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { env } from '@/lib/env';
+import type { OrgSummary } from './me';
 import { fetchWithRefresh } from './refresh';
 import { qk } from './query-keys';
 
@@ -102,6 +103,54 @@ export function useSaveCredentials(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       // Credential changes can flip an org `onboarding` → `active`; refresh the session orgs too.
       void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+// ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────
+// The org rail + settings read orgs off the SESSION (`GET /auth/session`), so every write invalidates
+// `qk.session()`. The cross-org inbox (`/web/threads`, `useAllThreads`) embeds `org.name` per row and
+// feeds the sidebar / workspace / command palette / rail badges, so rename + delete also invalidate it.
+
+/** Create an org — the caller becomes its owner; it starts in `onboarding`. */
+export function useCreateOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      webJson<OrgSummary>(`/orgs`, { method: 'POST', body: JSON.stringify({ name }) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/** Body for `PATCH /web/orgs/:orgId` — rename and/or re-slug (owner only). */
+export interface UpdateOrgBody {
+  name?: string;
+  slug?: string;
+}
+
+/** Owner-only rename / re-slug. */
+export function useUpdateOrg(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateOrgBody) =>
+      webJson<OrgSummary>(`/orgs/${orgId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+    },
+  });
+}
+
+/** Owner-only delete — tears down the org's repos, threads, and live agent sessions. Irreversible. */
+export function useDeleteOrg(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => webJson<{ ok: boolean }>(`/orgs/${orgId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.session() });
+      void qc.invalidateQueries({ queryKey: qk.allThreads() });
     },
   });
 }
