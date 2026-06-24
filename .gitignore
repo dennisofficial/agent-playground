@@ -24,3 +24,4 @@ dist
 backend/slack-manifests/.app-credentials.json
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+.playwright-cli/
