@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Put, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
 import { IsIn, IsOptional, IsString } from 'class-validator';
-import { CurrentOrg, type CurrentOrgCtx, OrgMembershipGuard } from '../org';
+import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
+import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OnboardingService, type ValidationResult } from './onboarding.service';
 import { TenantCredentialStore, type TenantCredentialPatch } from './tenant-credential.store';
 

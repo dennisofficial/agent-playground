@@ -10,7 +10,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsOptional, IsString } from 'class-validator';
 import { Repository } from 'typeorm';
-import { CurrentOrg, type CurrentOrgCtx, OrgMembershipGuard } from '../org';
+import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
+import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasRepo } from '../persistence/entities';
 import { OnboardingService, type ConnectedRepo } from './onboarding.service';

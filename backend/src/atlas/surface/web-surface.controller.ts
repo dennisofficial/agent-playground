@@ -25,7 +25,8 @@ import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebOutboundMessage } from './atlas-web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
-import { CurrentOrg, type CurrentOrgCtx, OrgMembershipGuard } from '../org';
+import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
+import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasMessage, AtlasThread } from '../persistence/entities';
 

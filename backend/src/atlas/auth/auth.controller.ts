@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import type { Request, Response } from 'express';
-import { OrganizationService, type OrgSummary } from '../org';
+import { OrganizationService, type OrgSummary } from '../org/organization.service';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto, type AtlasSession } from './dto/auth.dto';
 import type { AtlasUser } from '../persistence/entities';

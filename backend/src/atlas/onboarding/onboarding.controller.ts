@@ -1,5 +1,6 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
-import { CurrentOrg, type CurrentOrgCtx, OrgMembershipGuard } from '../org';
+import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
+import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OnboardingService } from './onboarding.service';
 
 /**

@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
 import { IsString, MinLength } from 'class-validator';
-import { OnboardingService } from '../onboarding';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import type { AtlasUser } from '../persistence/entities';
 import { CurrentOrg, type CurrentOrgCtx } from './current-org.decorator';
 import { OrgMembershipGuard } from './org-membership.guard';
