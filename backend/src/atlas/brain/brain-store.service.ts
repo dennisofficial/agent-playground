@@ -4,7 +4,6 @@ import { Repository } from 'typeorm';
 import type { Decision, Job, JobKind } from '../domain';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasDecisionRecord,
   AtlasJob,
   AtlasMessage,
@@ -47,8 +46,6 @@ export class BrainStoreService {
     private readonly threads: Repository<AtlasThread>,
     @InjectRepository(AtlasMessage, ATLAS_CONNECTION)
     private readonly messages: Repository<AtlasMessage>,
-    @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
-    private readonly channels: Repository<AtlasChannel>,
     @InjectRepository(AtlasJob, ATLAS_CONNECTION)
     private readonly jobs: Repository<AtlasJob>,
     @InjectRepository(AtlasDecisionRecord, ATLAS_CONNECTION)
@@ -95,18 +92,10 @@ export class BrainStoreService {
     );
   }
 
-  /** Resolve where to post into a thread: the project's channel coordinate + the thread's root ts. */
+  /** Resolve where to post into a thread: the repo coordinate + the real thread id. The web/agent
+   *  surface keys its conversation by these directly — no channel/surface-ref indirection. */
   async route(thread: { orgId: string; repoId: string; threadId: string }): Promise<ThreadRoute> {
-    const [channel, row] = await Promise.all([
-      this.channels.findOne({
-        where: { org_id: thread.orgId, repo_id: thread.repoId },
-      }),
-      this.threads.findOne({ where: { id: thread.threadId } }),
-    ]);
-    return {
-      channel: channel?.surface_channel_ref ?? null,
-      threadTs: row?.surface_thread_ref ?? null,
-    };
+    return { channel: thread.repoId, threadTs: thread.threadId };
   }
 
   /**

@@ -20,10 +20,10 @@ import { DecisionApprovalService } from '../brain';
 import { SectionDriver } from '../driver';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasJob,
   AtlasMessage,
   AtlasRepo,
+  AtlasThread,
   Organization,
 } from '../persistence/entities';
 import type {
@@ -71,8 +71,8 @@ export class TestBridgeController {
     private readonly orgs: Repository<Organization>,
     @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
     private readonly repos: Repository<AtlasRepo>,
-    @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
-    private readonly channels: Repository<AtlasChannel>,
+    @InjectRepository(AtlasThread, ATLAS_CONNECTION)
+    private readonly threads: Repository<AtlasThread>,
     @InjectRepository(AtlasJob, ATLAS_CONNECTION)
     private readonly jobs: Repository<AtlasJob>,
     @InjectRepository(AtlasMessage, ATLAS_CONNECTION)
@@ -87,17 +87,14 @@ export class TestBridgeController {
   }
 
   /**
-   * `POST /test/seed` — idempotently upsert an `atlas_teams` + `atlas_projects` (git_url=repoUrl, base) +
-   * `atlas_channels` (1:1, `surface_channel_ref`=channel) so an injected message routes to a real repo.
-   * Re-seeding the same (orgId, repoId) updates the repo/branch/channel in place. Returns the
-   * channel id.
+   * `POST /test/seed` — idempotently upsert a ready-to-use (`active`) org + connected repo so an injected
+   * message routes to a real repo. Re-seeding the same (orgId, repoId) updates the rows in place. The
+   * `channel` field of the request maps to the repo coordinate (`repoId`) in the channel-free model.
    */
   @Post('seed')
   async seed(@Body() body: SeedRequest): Promise<SeedResponse> {
     this.assertEnabled();
-    const { orgId, repoId, repoUrl, channel } = body;
-    // Directly seed a ready-to-use (`active`) org + connected repo + bound channel so an injected message
-    // routes to a real repo. Re-seeding the same (orgId, repoId) updates the rows in place.
+    const { orgId, repoId, repoUrl } = body;
     await this.orgs.upsert({ id: orgId, name: orgId, slug: orgId, status: 'active' }, ['id']);
     await this.repos.upsert(
       {
@@ -112,25 +109,8 @@ export class TestBridgeController {
       },
       ['org_id', 'repo_id'],
     );
-    let channelRow = await this.channels.findOne({ where: { org_id: orgId, repo_id: repoId } });
-    if (channelRow) {
-      channelRow.surface_channel_ref = channel;
-      channelRow.display_name = channel;
-      channelRow = await this.channels.save(channelRow);
-    } else {
-      channelRow = await this.channels.save(
-        this.channels.create({
-          org_id: orgId,
-          repo_id: repoId,
-          surface_channel_ref: channel,
-          display_name: channel,
-        }),
-      );
-    }
-    this.logger.log(
-      `seed org=${orgId} repo=${repoId} url=${repoUrl} channel=${channel} → channel ${channelRow.id}`,
-    );
-    return { channelId: channelRow.id, orgId, repoId };
+    this.logger.log(`seed org=${orgId} repo=${repoId} url=${repoUrl}`);
+    return { channelId: repoId, orgId, repoId };
   }
 
   /**
@@ -142,33 +122,41 @@ export class TestBridgeController {
   @Post('say')
   async say(@Body() body: SayRequest): Promise<SayResponse> {
     this.assertEnabled();
-    const { channel, text } = body;
+    const { channel, text } = body; // `channel` is the repo coordinate (repo_id)
 
-    // Resolve the channel's tenant so the injected message routes (the chat bridge keys on
-    // (org_id, surface_channel_ref)). The bridge is self-sufficient from just the channel ref.
-    const channelRow = await this.channels.findOne({
-      where: { surface_channel_ref: channel },
-    });
-    if (!channelRow) {
-      throw new NotFoundException(
-        `No seeded channel with surface_channel_ref=${channel} — POST /test/seed first.`,
+    // Resolve the repo's org (the surface addresses by repo + real thread id, no channel indirection).
+    const repo = await this.repos.findOne({ where: { repo_id: channel } });
+    if (!repo) {
+      throw new NotFoundException(`No seeded repo ${channel} — POST /test/seed first.`);
+    }
+
+    // A reply continues the supplied thread; a new conversation creates a real thread up front so its id
+    // is the durable handle (the chat bridge resolves inbound by this id).
+    let threadId = body.threadTs;
+    if (!threadId) {
+      const thread = await this.threads.save(
+        this.threads.create({
+          org_id: repo.org_id,
+          repo_id: repo.repo_id,
+          origin: 'chat',
+          surface_thread_ref: null,
+          title: null,
+        }),
       );
+      threadId = thread.id;
     }
 
     // Snapshot the outbox cursor BEFORE sending so we only collect posts triggered by this message.
     const cursor = this.surface.outbox.length;
-    const inboundTs = this.surface.sendFromHuman(channel, text, {
-      orgId: channelRow.org_id,
+    this.surface.sendFromHuman(channel, text, {
+      orgId: repo.org_id,
       authorId: TESTER_ID,
       authorName: 'Tester',
-      ...(body.threadTs ? { threadTs: body.threadTs } : {}),
+      threadTs: threadId,
     });
-    // The thread root: a reply continues the supplied thread; a top-level message seeds a thread keyed
-    // by its own inbound ts (mirrors the chat bridge's `surface_thread_ref = threadTs ?? msg.id`).
-    const threadTs = body.threadTs ?? inboundTs;
 
-    const { replies, approvalCard } = await this.waitForReplies(cursor, threadTs);
-    return { threadTs, replies, ...(approvalCard ? { approvalCard } : {}) };
+    const { replies, approvalCard } = await this.waitForReplies(cursor, threadId);
+    return { threadTs: threadId, replies, ...(approvalCard ? { approvalCard } : {}) };
   }
 
   /**
@@ -219,17 +207,11 @@ export class TestBridgeController {
   @Get('thread')
   async thread(@Query('threadTs') threadTs: string): Promise<ThreadLine[]> {
     this.assertEnabled();
-    // The thread's surface ref is the ts the caller has; join through to its messages.
-    const rows = await this.messages
-      .createQueryBuilder('m')
-      .innerJoin(
-        'atlas_threads',
-        't',
-        't.id = m.thread_id AND t.surface_thread_ref = :ref',
-        { ref: threadTs },
-      )
-      .orderBy('m.created_at', 'ASC')
-      .getMany();
+    // `threadTs` is the real thread id — read its durable message log directly.
+    const rows = await this.messages.find({
+      where: { thread_id: threadTs },
+      order: { created_at: 'ASC' },
+    });
     return rows.map((m) => ({
       author: m.author,
       isAtlas: m.author_bot_id != null,

@@ -2,31 +2,24 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasChannel, AtlasRepo } from '../persistence/entities';
+import { AtlasRepo } from '../persistence/entities';
 
-/** A resolved route: the project a notification belongs to + its 1:1 channel. */
+/** A resolved route: the org + repo a notification belongs to (where its seeded thread lives). */
 export interface ProjectRoute {
   orgId: string;
   repoId: string;
-  /** The 1:1 channel row for the project (where the seeded thread lives). */
-  channel: AtlasChannel;
-  project: AtlasRepo;
+  repo: AtlasRepo;
 }
 
 /**
- * Notification PROJECT ROUTING — the shared step every `NotificationSource` adapter funnels through
- * after it has extracted a gateway-native identifier (a GitHub `owner/repo`, a generic webhook's
- * `repoId`). Maps that identifier → an `atlas_projects` row → its 1:1 `atlas_channels` row, the
- * channel the seeded thread opens in.
- *
- * Tenancy: `org_id` ⊃ `projects` ⊃ one `channel` per project. An MVP single-tenant deploy has one
- * `atlas_team`; the adapter still passes `orgId` so multi-tenant routing needs no rework. A repo that
- * maps to no registered project is `unroutable` (the controller answers 404) — Atlas never works a
- * repo it doesn't own.
+ * Notification REPO ROUTING — the shared step every `NotificationSource` adapter funnels through after
+ * it has extracted a gateway-native identifier (a GitHub `owner/repo`, a generic webhook's repo id).
+ * Maps that identifier → an `atlas_repos` row. A repo that maps to no connected repo is `unroutable`
+ * (the controller answers 404) — Atlas never works a repo it doesn't own.
  *
  * GitHub repos are matched by their `git_url` (normalized to `owner/repo`, host/scheme/.git-suffix
- * insensitive) so a project registered as `https://github.com/acme/web.git` routes a webhook for
- * `git@github.com:acme/web`. Zero v1 imports.
+ * insensitive) so a repo connected as `https://github.com/acme/web.git` routes a webhook for
+ * `git@github.com:acme/web`.
  */
 @Injectable()
 export class ProjectRoutingService {
@@ -34,65 +27,34 @@ export class ProjectRoutingService {
 
   constructor(
     @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
-    private readonly projects: Repository<AtlasRepo>,
-    @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
-    private readonly channels: Repository<AtlasChannel>,
+    private readonly repos: Repository<AtlasRepo>,
   ) {}
 
   /**
-   * Resolve a GitHub `owner/repo` (case-insensitive) to a project route. A GitHub webhook carries NO
-   * Slack team id, so the repo IS the tenant key: we match across ALL registered projects (every team)
-   * by normalized `git_url`. This keeps GitHub multi-tenant-ready with no per-payload team — a repo is
-   * registered to exactly one project, which carries its `org_id`. Returns null when no project's
-   * `git_url` matches (→ `unroutable`). The matched project's `org_id` is the resolved tenant.
+   * Resolve a GitHub `owner/repo` (case-insensitive) to a repo route. A GitHub webhook carries NO org
+   * id, so the repo IS the routing key: match across ALL connected repos by normalized `git_url`. Null
+   * when nothing matches (→ `unroutable`).
    */
   async routeGithubRepo(ownerRepo: string): Promise<ProjectRoute | null> {
     const target = normalizeRepoSlug(ownerRepo);
     if (!target) return null;
-    // Repo is the routing key across teams — load candidates and match by normalized slug. (Projects
-    // are few; an in-memory match is fine and avoids a non-normalized SQL comparison.)
-    const candidates = await this.projects.find();
-    const match = candidates.find((p) => normalizeRepoSlug(p.git_url) === target);
+    const candidates = await this.repos.find();
+    const match = candidates.find((r) => normalizeRepoSlug(r.git_url) === target);
     if (!match) {
-      this.logger.debug(`No atlas_project matches github repo ${target}`);
+      this.logger.debug(`No atlas_repo matches github repo ${target}`);
       return null;
     }
-    return this.attachChannel(match);
+    return { orgId: match.org_id, repoId: match.repo_id, repo: match };
   }
 
-  /**
-   * Resolve a caller-supplied `repoId` (the generic webhook's routing key) to a project route.
-   * Returns null when the project isn't registered for the tenant.
-   */
+  /** Resolve a caller-supplied `(orgId, repoId)` to a repo route. Null when not connected. */
   async routeProjectId(orgId: string, repoId: string): Promise<ProjectRoute | null> {
-    const match = await this.projects.findOne({
-      where: { org_id: orgId, repo_id: repoId },
-    });
+    const match = await this.repos.findOne({ where: { org_id: orgId, repo_id: repoId } });
     if (!match) {
-      this.logger.debug(`No atlas_project ${orgId}/${repoId}`);
+      this.logger.debug(`No atlas_repo ${orgId}/${repoId}`);
       return null;
     }
-    return this.attachChannel(match);
-  }
-
-  private async attachChannel(project: AtlasRepo): Promise<ProjectRoute | null> {
-    const channel = await this.channels.findOne({
-      where: { org_id: project.org_id, repo_id: project.repo_id },
-    });
-    if (!channel) {
-      // A project with no channel is a misconfiguration — log loudly and treat as unroutable rather
-      // than seeding a thread into a channel that doesn't exist.
-      this.logger.warn(
-        `atlas_project ${project.org_id}/${project.repo_id} has no 1:1 atlas_channel — unroutable`,
-      );
-      return null;
-    }
-    return {
-      orgId: project.org_id,
-      repoId: project.repo_id,
-      project,
-      channel,
-    };
+    return { orgId: match.org_id, repoId: match.repo_id, repo: match };
   }
 }
 
@@ -106,7 +68,6 @@ export class ProjectRoutingService {
 export function normalizeRepoSlug(ref: string | null | undefined): string | null {
   if (!ref) return null;
   let s = ref.trim();
-  // Strip scheme + host for https/ssh URLs, leaving the path.
   s = s.replace(/^[a-z]+:\/\//i, ''); // https:// , ssh://
   s = s.replace(/^git@[^:]+:/i, ''); // git@github.com:
   s = s.replace(/^[^/]+\//, (m) => (m.includes('.') ? '' : m)); // drop a leading host segment (github.com/)
@@ -114,7 +75,6 @@ export function normalizeRepoSlug(ref: string | null | undefined): string | null
   s = s.replace(/^\/+|\/+$/g, '');
   const parts = s.split('/').filter(Boolean);
   if (parts.length < 2) return null;
-  // Last two path segments are owner/repo (covers enterprise hosts with extra path prefixes).
   const owner = parts[parts.length - 2];
   const repo = parts[parts.length - 1];
   return `${owner}/${repo}`.toLowerCase();

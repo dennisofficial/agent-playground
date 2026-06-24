@@ -6,7 +6,6 @@ import { MemoryModule } from '../memory';
 import { CredentialResolver } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasDecisionRecord,
   AtlasJob,
   AtlasMessage,
@@ -63,7 +62,6 @@ import { PlanReviewService } from './plan-review.service';
       [
         AtlasThread,
         AtlasMessage,
-        AtlasChannel,
         AtlasJob,
         AtlasDecisionRecord,
         AtlasSection,

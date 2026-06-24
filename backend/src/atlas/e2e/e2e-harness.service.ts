@@ -15,7 +15,6 @@ import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { SANDBOX_PROVIDER } from '../sandbox';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasJob,
   AtlasRepo,
   AtlasThread,
@@ -189,7 +188,6 @@ export class E2eHarness {
 
     const orgs = this.repo(Organization);
     const projects = this.repo(AtlasRepo);
-    const channels = this.repo(AtlasChannel);
     const threads = this.repo(AtlasThread);
 
     await orgs.save(
@@ -207,31 +205,22 @@ export class E2eHarness {
         access_checked_at: new Date(),
       }),
     );
-    await channels.save(
-      channels.create({
-        org_id: TEAM_ID,
-        repo_id: PROJECT_ID,
-        surface_channel_ref: CHANNEL_REF,
-        display_name: 'e2e-channel',
-      }),
-    );
 
     // The feature scenario drives `submit_plan` directly (offline: no in-sandbox session). We pre-seed
-    // the thread row so `BrainStoreService.route()` can resolve the channel + threadTs for the card.
-    // The surface_thread_ref is set to CHANNEL_REF so the agent surface posts into the right channel.
+    // the thread row so `BrainStoreService.route()` resolves the repo + real thread id for the card.
     await threads.save(
       threads.create({
         id: FEATURE_THREAD_ID,
         org_id: TEAM_ID,
         repo_id: PROJECT_ID,
         origin: 'control',
-        surface_thread_ref: CHANNEL_REF,
+        surface_thread_ref: null,
         title: 'e2e-feature-thread',
         base_branch: baseBranch,
       }),
     );
 
-    this.logger.log(`Seeded tenant ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (channel ${CHANNEL_REF}, thread ${FEATURE_THREAD_ID})`);
+    this.logger.log(`Seeded ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (thread ${FEATURE_THREAD_ID})`);
   }
 
   /**

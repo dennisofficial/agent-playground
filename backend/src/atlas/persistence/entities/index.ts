@@ -7,7 +7,6 @@
 export * from './organization.entity';
 export * from './organization-member.entity';
 export * from './atlas-repo.entity';
-export * from './atlas-channel.entity';
 export * from './atlas-thread.entity';
 export * from './atlas-message.entity';
 export * from './atlas-stimulus.entity';
@@ -23,7 +22,6 @@ export * from './atlas-user.entity';
 import { Organization } from './organization.entity';
 import { OrganizationMember } from './organization-member.entity';
 import { AtlasRepo } from './atlas-repo.entity';
-import { AtlasChannel } from './atlas-channel.entity';
 import { AtlasThread } from './atlas-thread.entity';
 import { AtlasMessage } from './atlas-message.entity';
 import { AtlasStimulus } from './atlas-stimulus.entity';
@@ -41,7 +39,6 @@ export const ATLAS_ENTITIES = [
   Organization,
   OrganizationMember,
   AtlasRepo,
-  AtlasChannel,
   AtlasThread,
   AtlasMessage,
   AtlasStimulus,

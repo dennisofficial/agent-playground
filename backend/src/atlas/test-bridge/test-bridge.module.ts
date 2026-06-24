@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasJob,
   AtlasMessage,
   AtlasRepo,
@@ -23,7 +22,7 @@ import { TestBridgeController } from './test-bridge.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [Organization, AtlasRepo, AtlasChannel, AtlasJob, AtlasMessage],
+      [Organization, AtlasRepo, AtlasJob, AtlasMessage],
       ATLAS_CONNECTION,
     ),
   ],

@@ -14,7 +14,6 @@ import { DecisionGateModule } from '../decision-gate';
 import { CredentialResolver, OnboardingService } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasDecisionRecord,
   AtlasJob,
   AtlasPhase,
@@ -65,7 +64,6 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
         AtlasPhase,
         AtlasDecisionRecord,
         AtlasThread,
-        AtlasChannel,
         AtlasRepo,
         AtlasThreadSandbox,
       ],

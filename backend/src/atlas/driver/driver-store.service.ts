@@ -13,7 +13,6 @@ import type {
 } from '../domain';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasDecisionRecord,
   AtlasJob,
   AtlasPhase,
@@ -64,8 +63,6 @@ export class DriverStoreService {
     private readonly records: Repository<AtlasDecisionRecord>,
     @InjectRepository(AtlasThread, ATLAS_CONNECTION)
     private readonly threads: Repository<AtlasThread>,
-    @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
-    private readonly channels: Repository<AtlasChannel>,
   ) {}
 
   // ── jobs ─────────────────────────────────────────────────────────────────────────────────────
@@ -226,17 +223,9 @@ export class DriverStoreService {
 
   // ── routing ──────────────────────────────────────────────────────────────────────────────────
 
-  /** Resolve where to post a job's chatter: the project's channel + the thread root ts. */
+  /** Resolve where to post a job's chatter: the repo coordinate + the real thread id. */
   async route(job: Job): Promise<JobRoute> {
-    const [channel, thread] = await Promise.all([
-      this.channels.findOne({ where: { org_id: job.orgId, repo_id: job.repoId } }),
-      this.threads.findOne({ where: { id: job.threadId } }),
-    ]);
-    return {
-      channel: channel?.surface_channel_ref ?? null,
-      threadTs: thread?.surface_thread_ref ?? null,
-      orgId: job.orgId,
-    };
+    return { channel: job.repoId, threadTs: job.threadId, orgId: job.orgId };
   }
 }
 

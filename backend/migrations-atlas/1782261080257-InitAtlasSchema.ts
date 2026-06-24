@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-export class InitAtlasSchema1782259781450 implements MigrationInterface {
-    name = 'InitAtlasSchema1782259781450'
+export class InitAtlasSchema1782261080257 implements MigrationInterface {
+    name = 'InitAtlasSchema1782261080257'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
@@ -12,8 +12,6 @@ export class InitAtlasSchema1782259781450 implements MigrationInterface {
         await queryRunner.query(`CREATE INDEX "idx_atlas_organization_members_user_id" ON "atlas_organization_members" ("user_id") `);
         await queryRunner.query(`CREATE TABLE "atlas_repos" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "org_id" text NOT NULL, "repo_id" text NOT NULL, "name" text NOT NULL, "git_url" text NOT NULL, "default_branch" text NOT NULL DEFAULT 'main', "token_name" text, "access_ok" boolean NOT NULL DEFAULT false, "access_checked_at" TIMESTAMP WITH TIME ZONE, CONSTRAINT "pk_atlas_repos" PRIMARY KEY ("org_id", "repo_id"))`);
         await queryRunner.query(`CREATE INDEX "idx_atlas_repos_org_id" ON "atlas_repos" ("org_id") `);
-        await queryRunner.query(`CREATE TABLE "atlas_channels" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "org_id" text NOT NULL, "repo_id" text NOT NULL, "surface_channel_ref" text, "display_name" text NOT NULL, CONSTRAINT "uq_atlas_channels_org_id_repo_id" UNIQUE ("org_id", "repo_id"), CONSTRAINT "pk_atlas_channels" PRIMARY KEY ("id"))`);
-        await queryRunner.query(`CREATE INDEX "idx_atlas_channels_org_id" ON "atlas_channels" ("org_id") `);
         await queryRunner.query(`CREATE TABLE "atlas_threads" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "org_id" text NOT NULL, "repo_id" text NOT NULL, "origin" text NOT NULL, "surface_thread_ref" text, "title" text, "base_branch" text, CONSTRAINT "pk_atlas_threads" PRIMARY KEY ("id"))`);
         await queryRunner.query(`CREATE INDEX "idx_atlas_threads_org_id_repo_id" ON "atlas_threads" ("org_id", "repo_id") `);
         await queryRunner.query(`CREATE TABLE "atlas_messages" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "thread_id" uuid NOT NULL, "author" text NOT NULL, "author_id" text NOT NULL, "author_bot_id" text, "text" text NOT NULL, "ts" text, "kind" text NOT NULL DEFAULT 'chat', "card" jsonb, "meta" jsonb, CONSTRAINT "pk_atlas_messages" PRIMARY KEY ("id"))`);
@@ -72,8 +70,6 @@ export class InitAtlasSchema1782259781450 implements MigrationInterface {
         await queryRunner.query(`DROP TABLE "atlas_messages"`);
         await queryRunner.query(`DROP INDEX "public"."idx_atlas_threads_org_id_repo_id"`);
         await queryRunner.query(`DROP TABLE "atlas_threads"`);
-        await queryRunner.query(`DROP INDEX "public"."idx_atlas_channels_org_id"`);
-        await queryRunner.query(`DROP TABLE "atlas_channels"`);
         await queryRunner.query(`DROP INDEX "public"."idx_atlas_repos_org_id"`);
         await queryRunner.query(`DROP TABLE "atlas_repos"`);
         await queryRunner.query(`DROP INDEX "public"."idx_atlas_organization_members_user_id"`);

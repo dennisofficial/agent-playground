@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
   AtlasMessage,
   AtlasRepo,
   AtlasStimulus,
@@ -41,7 +40,7 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [AtlasRepo, AtlasChannel, AtlasThread, AtlasMessage, AtlasStimulus],
+      [AtlasRepo, AtlasThread, AtlasMessage, AtlasStimulus],
       ATLAS_CONNECTION,
     ),
   ],

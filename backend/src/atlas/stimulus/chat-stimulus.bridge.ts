@@ -10,7 +10,7 @@ import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
 import type { ChatStimulus } from '../domain';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasChannel, AtlasThread } from '../persistence/entities';
+import { AtlasThread } from '../persistence/entities';
 import {
   CHAT_SURFACE,
   type ChatSurface,
@@ -20,21 +20,14 @@ import { StimulusIntake } from './stimulus-intake.service';
 
 /**
  * The CHAT EDGE → `ChatStimulus` mapper. Subscribes to the bound `ChatSurface.inbound$` and turns each
- * inbound human message into a `ChatStimulus` that CONTINUES an existing thread (the duplex half of
- * the model), then hands it to the intake seam. Counterpart to the `NotificationSource` adapters that
- * OPEN a thread; both converge on the same `StimulusIntake`.
+ * inbound human message into a `ChatStimulus` that CONTINUES a thread, then hands it to the intake seam.
+ * Counterpart to the `NotificationSource` adapters that OPEN a thread; both converge on `StimulusIntake`.
  *
- * Threading + routing:
- *  - The Slack `channel` maps to an `atlas_channels.surface_channel_ref` → the project. A message in an
- *    unregistered channel is ignored (Atlas only listens where it's bound).
- *  - A reply carrying `threadTs` continues the `atlas_threads` row whose `surface_thread_ref` == that
- *    ts. A NEW top-level message (no `threadTs`) opens a chat-origin thread on the fly (a human
- *    starting a conversation) — its `surface_thread_ref` is the message's own ts.
- *  - The `replyRoute` lets the brain talk back over the SAME surface/thread (surfaceId = the surface
- *    name, threadRef = the Slack thread root ts).
+ * Addressing: the web surface addresses by the REAL thread id (`msg.threadTs` carries `atlas_threads.id`)
+ * and the repo coordinate (`msg.channel` carries `repo_id`). A message referencing an existing thread
+ * continues it; an unaddressed message opens a chat-origin thread on the repo. No channel indirection.
  *
- * Boot order mirrors v1's bridge: subscribe to `inbound$` FIRST, then connect the surface — so no
- * early message is missed. Zero v1 imports.
+ * Boot order: subscribe to `inbound$` FIRST, then connect the surface — so no early message is missed.
  */
 @Injectable()
 export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -44,8 +37,6 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
   constructor(
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly intake: StimulusIntake,
-    @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
-    private readonly channels: Repository<AtlasChannel>,
     @InjectRepository(AtlasThread, ATLAS_CONNECTION)
     private readonly threads: Repository<AtlasThread>,
   ) {}
@@ -58,8 +49,8 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       );
     });
 
-    // Connect the surface if it exposes a connect() (the Slack adapter does; an agent-facing one may
-    // not). Done here, after the subscription is live.
+    // Connect the surface if it exposes a connect() (an agent-facing one may not). Done here, after the
+    // subscription is live.
     const connectable = this.surface as ChatSurface & {
       connect?: () => Promise<unknown>;
     };
@@ -76,21 +67,20 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
     this.sub?.unsubscribe();
   }
 
-  /** Resolve channel→project + thread, build the `ChatStimulus`, hand it to intake. */
+  /** Resolve the thread, build the `ChatStimulus`, hand it to intake. */
   async onInbound(msg: InboundChatMessage): Promise<void> {
-    const channel = await this.channels.findOne({
-      where: { org_id: msg.orgId, surface_channel_ref: msg.channel },
-    });
-    if (!channel) {
-      this.logger.debug(`inbound in unregistered channel ${msg.channel} (team ${msg.orgId}) — ignored`);
+    const thread = await this.resolveThread(msg);
+    if (!thread) {
+      this.logger.debug(
+        `inbound for an unknown thread/repo (org ${msg.orgId}, repo ${msg.channel}) — ignored`,
+      );
       return;
     }
 
-    const thread = await this.resolveThread(channel, msg);
     const stimulus: ChatStimulus = {
       id: '', // minted by the store on persist
-      orgId: msg.orgId,
-      repoId: channel.repo_id,
+      orgId: thread.org_id,
+      repoId: thread.repo_id,
       kind: 'chat',
       trust: 'trusted',
       body: msg.text,
@@ -98,7 +88,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       author: { id: msg.authorId, displayName: msg.authorName },
       replyRoute: {
         surfaceId: this.surface.name,
-        threadRef: thread.surface_thread_ref ?? msg.id,
+        threadRef: thread.id,
       },
       receivedAt: msg.ts,
     };
@@ -106,30 +96,22 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
   }
 
   /**
-   * Find the `atlas_threads` row this message belongs to. A `threadTs` reply continues the thread
-   * whose `surface_thread_ref` matches; a top-level message opens a fresh chat-origin thread keyed by
-   * its own ts (so subsequent replies in that Slack thread resolve back to it).
+   * The `atlas_threads` row this message belongs to. `msg.threadTs` carries the real thread id when the
+   * caller addresses an existing thread (the web operator path always does). Otherwise open a fresh
+   * chat-origin thread on the repo (`msg.channel` = repo_id).
    */
-  private async resolveThread(
-    channel: AtlasChannel,
-    msg: InboundChatMessage,
-  ): Promise<AtlasThread> {
-    const surfaceThreadRef = msg.threadTs ?? msg.id;
-    const existing = await this.threads.findOne({
-      where: {
-        org_id: channel.org_id,
-        repo_id: channel.repo_id,
-        surface_thread_ref: surfaceThreadRef,
-      },
-    });
-    if (existing) return existing;
-
+  private async resolveThread(msg: InboundChatMessage): Promise<AtlasThread | null> {
+    if (msg.threadTs) {
+      const existing = await this.threads.findOne({ where: { id: msg.threadTs } });
+      if (existing) return existing;
+    }
+    if (!msg.orgId || !msg.channel) return null;
     return this.threads.save(
       this.threads.create({
-        org_id: channel.org_id,
-        repo_id: channel.repo_id,
+        org_id: msg.orgId,
+        repo_id: msg.channel,
         origin: 'chat',
-        surface_thread_ref: surfaceThreadRef,
+        surface_thread_ref: null,
         title: null,
       }),
     );
