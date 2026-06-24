@@ -2,26 +2,27 @@ import { Column, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 
 /**
- * One SECTION of a job — a coherent slice (e.g. backend) that becomes a just-in-time phased plan.
- * Sections stack on the job's one feature branch and run sequentially (ORDER BY ordinal). `status` is
- * the explicit, resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
+ * One SECTION of a thread's build — a coherent slice (e.g. backend) that becomes a just-in-time phased
+ * plan. Sections stack on the thread's one feature branch and run sequentially (ORDER BY ordinal).
+ * `status` is the explicit, resumable cursor. Gap-numbered ordinals so a re-plan can splice without
+ * renumbering.
  */
 @Entity({ name: 'sections' })
-@Index(['job_id'])
-@Unique(['job_id', 'ordinal'])
+@Index(['thread_id'])
+@Unique(['thread_id', 'ordinal'])
 export class SectionEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The owning job (FK → jobs). */
+  /** The owning thread (FK → threads.id). */
   @Column({ type: 'uuid' })
-  job_id!: string;
+  thread_id!: string;
 
-  /** The tenant (Slack team id) — denormalized for team-scoped queries. */
-  @Column({ type: 'text' })
+  /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
+  @Column({ type: 'uuid' })
   org_id!: string;
 
-  /** Execution order within the job, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
+  /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   @Column({ type: 'int' })
   ordinal!: number;
 

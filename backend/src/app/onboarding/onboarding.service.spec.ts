@@ -24,24 +24,42 @@ function makeOrgs() {
 }
 
 function makeRepos() {
-  const map = new Map<string, RepoEntity>();
-  const k = (o: string, r: string) => `${o}:${r}`;
+  const map = new Map<string, RepoEntity>(); // keyed by `${org_id}:${slug}`
+  const k = (o: string, s: string) => `${o}:${s}`;
+  let seq = 0;
   const repo = {
-    async findOne({ where }: { where: { org_id: string; repo_id?: string; access_ok?: boolean } }) {
+    async findOne({ where }: { where: { id?: string; org_id?: string; slug?: string; access_ok?: boolean } }) {
+      if (where.id !== undefined) {
+        for (const v of map.values()) if (v.id === where.id) return v;
+        return null;
+      }
       if (where.access_ok !== undefined) {
         for (const v of map.values()) {
           if (v.org_id === where.org_id && v.access_ok === where.access_ok) return v;
         }
         return null;
       }
-      return map.get(k(where.org_id, where.repo_id as string)) ?? null;
+      return map.get(k(where.org_id as string, where.slug as string)) ?? null;
+    },
+    async findOneOrFail({ where }: { where: { org_id: string; slug: string } }) {
+      const found = map.get(k(where.org_id, where.slug));
+      if (!found) throw new Error('repo not found');
+      return found;
     },
     async upsert(obj: Partial<RepoEntity>) {
-      const key = k(obj.org_id as string, obj.repo_id as string);
-      map.set(key, { ...(map.get(key) ?? {}), ...obj } as RepoEntity);
+      const key = k(obj.org_id as string, obj.slug as string);
+      const prev = map.get(key);
+      map.set(key, { id: prev?.id ?? `repo-${++seq}`, ...(prev ?? {}), ...obj } as RepoEntity);
     },
-    async update({ org_id, repo_id }: { org_id: string; repo_id: string }, patch: Partial<RepoEntity>) {
-      const key = k(org_id, repo_id);
+    async update(
+      where: { id?: string; org_id?: string; slug?: string },
+      patch: Partial<RepoEntity>,
+    ) {
+      if (where.id !== undefined) {
+        for (const [key, v] of map) if (v.id === where.id) map.set(key, { ...v, ...patch });
+        return;
+      }
+      const key = k(where.org_id as string, where.slug as string);
       if (map.has(key)) map.set(key, { ...map.get(key)!, ...patch });
     },
   } as unknown as Repository<RepoEntity>;
@@ -122,7 +140,7 @@ describe('OnboardingService', () => {
       const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
       const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const result = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      expect(result.repoId).toBe('web');
+      expect(result.slug).toBe('web');
       expect(result.accessOk).toBe(true);
       expect(repos.map.get('T1:web')?.git_url).toBe(REPO);
       expect(repos.map.get('T1:web')?.access_ok).toBe(true);

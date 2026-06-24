@@ -103,7 +103,7 @@ export class WebSurfaceController {
       this.repos.find({ where: { org_id: In(orgIds) } }),
     ]);
     const orgById = new Map(orgs.map((o) => [o.id, o]));
-    const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.repo_id}`, r.name]));
+    const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
     return threads.map((t) => {
       const org = orgById.get(t.org_id);
       return {
@@ -149,10 +149,13 @@ export class WebSurfaceController {
   ): Promise<{ threadId: string }> {
     const text = body?.firstMessage?.trim();
     if (!text) throw new BadRequestException('firstMessage is required');
+    // Resolve the repo WITHIN the caller's org — the thread's org_id/repo_id derive from this resolved
+    // row, never from raw input (so the denormalized tenant keys can't be pointed at another org's repo).
+    const repo = await this.requireRepo(repoId, org.id);
     const thread = await this.threads.save(
       this.threads.create({
         org_id: org.id,
-        repo_id: repoId,
+        repo_id: repo.id,
         origin: 'control',
         surface_thread_ref: null,
         title: body.title ?? null,
@@ -160,19 +163,23 @@ export class WebSurfaceController {
       }),
     );
     // Inject the first message — the chat bridge resolves the thread by its real id and triages it.
-    this.surface.receiveFromClient(repoId, text, {
+    this.surface.receiveFromClient(repo.id, text, {
       orgId: org.id,
       threadTs: thread.id,
       ...OPERATOR,
     });
-    this.logger.log(`web created thread ${thread.id} on ${org.id}/${repoId}`);
+    this.logger.log(`web created thread ${thread.id} on ${org.id}/${repo.id}`);
     return { threadId: thread.id };
   }
 
-  /** `GET …/threads/:threadId/messages` — the durable message log (oldest-first). */
+  /** `GET …/threads/:threadId/messages` — the durable message log (oldest-first). Org-scoped. */
   @Get('orgs/:orgId/repos/:repoId/threads/:threadId/messages')
   @UseGuards(OrgMembershipGuard)
-  async messageHistory(@Param('threadId') threadId: string): Promise<unknown[]> {
+  async messageHistory(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('threadId') threadId: string,
+  ): Promise<unknown[]> {
+    await this.requireThread(threadId, org.id);
     const rows = await this.messages.find({
       where: { thread_id: threadId },
       order: { created_at: 'ASC' },
@@ -193,14 +200,15 @@ export class WebSurfaceController {
   /** `POST …/threads/:threadId/say` — inject a human reply. Returns the synthetic ts. */
   @Post('orgs/:orgId/repos/:repoId/threads/:threadId/say')
   @UseGuards(OrgMembershipGuard)
-  say(
+  async say(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('repoId') repoId: string,
     @Param('threadId') threadId: string,
     @Body() body: SayDto,
-  ): { ts: string } {
+  ): Promise<{ ts: string }> {
     if (!body?.text) throw new BadRequestException('text is required');
-    const ts = this.surface.receiveFromClient(repoId, body.text, {
+    const thread = await this.requireThread(threadId, org.id);
+    const ts = this.surface.receiveFromClient(thread.repo_id, body.text, {
       orgId: org.id,
       threadTs: threadId,
       ...OPERATOR,
@@ -221,7 +229,10 @@ export class WebSurfaceController {
   /** `POST …/threads/:threadId/approve` — submit a plan verdict. */
   @Post('orgs/:orgId/repos/:repoId/threads/:threadId/approve')
   @UseGuards(OrgMembershipGuard)
-  approve(@Body() body: ApproveDto): { ok: boolean; jobId?: string } {
+  async approve(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Body() body: ApproveDto,
+  ): Promise<{ ok: boolean; jobId?: string }> {
     const { actionId, value, ruledBy, note } = body;
     if (!actionId || !value || !ruledBy) {
       throw new BadRequestException('actionId, value, and ruledBy are required');
@@ -231,6 +242,8 @@ export class WebSurfaceController {
     }
     const meta = parseWebApprovalMeta(value);
     if (!meta) throw new BadRequestException('value is not a valid ApprovalActionMeta JSON');
+    // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
+    await this.requireThread(meta.jobId, org.id);
     this.surface.receiveApprovalClick(actionId, value, ruledBy, note);
     return { ok: true, jobId: meta.jobId };
   }
@@ -242,6 +255,7 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('threadId') threadId: string,
   ): Promise<unknown> {
+    await this.requireThread(threadId, org.id);
     return this.driverStore.getPipelineState(threadId, org.id);
   }
 
@@ -269,10 +283,30 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('threadId') threadId: string,
   ): Promise<{ ok: boolean }> {
+    // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable
+    // (the FK cascade would otherwise wipe another tenant's thread + all its children).
+    await this.requireThread(threadId, org.id);
     await this.threadLifecycle.closeThread(threadId, org.id);
-    await this.messages.delete({ thread_id: threadId });
-    await this.threads.delete({ id: threadId });
+    // One scoped delete — the FK ON DELETE CASCADE removes messages/sections/phases/decision_records/
+    // stimuli/sandbox for this thread.
+    await this.threads.delete({ id: threadId, org_id: org.id });
     this.logger.log(`web deleted thread ${threadId} (org ${org.id})`);
     return { ok: true };
+  }
+
+  // ── scoping helpers (cross-tenant isolation: resolve scoped-to-org or 404) ──────────────────────
+
+  /** Resolve a thread scoped to the org, or 404 — the guard for every thread-keyed op. */
+  private async requireThread(threadId: string, orgId: string): Promise<ThreadEntity> {
+    const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+    if (!thread) throw new NotFoundException('thread not found');
+    return thread;
+  }
+
+  /** Resolve a repo (by uuid id) scoped to the org, or 404 — so creation never crosses tenants. */
+  private async requireRepo(repoId: string, orgId: string): Promise<RepoEntity> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo) throw new NotFoundException('repo not found');
+    return repo;
   }
 }

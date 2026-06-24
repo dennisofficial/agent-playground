@@ -1,9 +1,9 @@
 /**
- * The `NotificationSource` edge — the INBOUND-ONLY half of the two-edges-one-brain model. Where a
- * `ChatSurface` is duplex (post/react/inbound$, bound to a thread), a `NotificationSource` only ever
- * EMITS: it parses + verifies + routes a gateway's webhook payload into one `EventStimulus` and ends
- * its job. It has NO reply path — a notification never has a conversation of its own, it SEEDS one
- * (the `EventStimulus` opens a thread and every further exchange happens over the `ChatSurface`).
+ * The `NotificationSource` edge — the INBOUND-ONLY notification edge. Where a `ChatSurface` is duplex
+ * (post + `inbound$`, bound to a thread), a `NotificationSource` only ever EMITS: it parses + verifies +
+ * routes a gateway's webhook payload into one `EventStimulus`. It has NO reply path — a notification
+ * SEEDS a thread (the `EventStimulus` opens it) and every further exchange happens over the `ChatSurface`.
+ * (Slated for rework — see `./stimulus.ts` + `../ARCHITECTURE.md` §7.)
  *
  * Each gateway gets its OWN adapter (GitHub, generic webhook, later Sentry/PostHog/email) because
  * gateways are not equal: each owns its payload shape, signature/auth VERIFICATION, `dedupeKey`

@@ -17,7 +17,7 @@ import { EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding';
  */
 
 export interface StoredFact {
-  id: number;
+  id: string;
   fact: string;
   scope: string;
   org_id: string | null;
@@ -79,7 +79,7 @@ export class MemoryStore {
    * Store a fact at its scope, or merge into a near-duplicate (cosine ≥ DEDUP_THRESHOLD) in that
    * same scope/team. Strict team equality — a tenant fact never merges into the global tier.
    */
-  async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: number }> {
+  async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: string }> {
     const qv = vecSql(await this.embedder.embed(input.fact, input.orgId ?? undefined));
 
     const qb = this.facts
@@ -121,7 +121,7 @@ export class MemoryStore {
       })
       .setParameter('qv', qv)
       .execute();
-    return { action: 'inserted', id: result.identifiers[0].id as number };
+    return { action: 'inserted', id: result.identifiers[0].id as string };
   }
 
   /**
@@ -152,7 +152,7 @@ export class MemoryStore {
   }
 
   /** Soft-delete a fact by id. */
-  async forget(id: number): Promise<void> {
+  async forget(id: string): Promise<void> {
     await this.facts.softDelete(id);
   }
 }

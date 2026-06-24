@@ -1,6 +1,15 @@
-# Atlas v2 — canonical reference
+# Atlas v2 — detail & build history (NOT the canonical model)
 
-> Single source of truth for the clean-room orchestrator in `backend/src/app/`. Written 2026-06-20 after the overnight W0–W9 build. Read this first when resuming Atlas work (esp. the Docker sandbox rework). Full design history: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-greedy-parnas.md`.
+> **⚠️ The canonical model now lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md) — read that first.** This
+> file is kept for **deeper detail and build history** (Docker sandbox internals §8, durability §9, the
+> R0–R6 redesign §10). Beware: parts of it **predate the org→repo→thread rebuild** and are stale —
+> notably §2 *Tenancy* (Slack `team_id` / channels), the §2 *"two adapters, one brain"* framing, and the
+> §3 module map / §4 table names (`atlas_teams`, `channels`, `jobs`, `triage.service.ts`,
+> `conversational-brain.service.ts` no longer exist; `jobs` collapsed into `threads`). Cross-check any
+> claim here against `ARCHITECTURE.md` + `../../../CLAUDE.md` before trusting it.
+>
+> Written 2026-06-20 after the overnight W0–W9 build. Full design history:
+> `/Users/dennis/.claude/plans/this-ai-orchestrator-is-greedy-parnas.md`.
 
 ## 1. Why this exists
 
@@ -14,13 +23,21 @@ Atlas v2 re-implements the proven semantics **legibly and daemon-free**, in a **
 
 **Brain vs hands.** `Atlas = brain`: a small conversational/reactive decider (triage → ignore/ask/dispatch; grill → decision record + section list). The `pipeline = hands`: a plain deterministic `async` driver that walks a planner-emitted list — **legible top-to-bottom, NOT an implicit FSM**. Dynamism (count of sections/phases) is data the planner emits; control flow stays a readable loop. Explicit step-state rows exist only so `resume()` knows where to re-enter.
 
-**Tenancy.** `Tenant` (Slack workspace = `team_id`) ⊃ `Projects` (GitHub repos) ⊃ `Channel` (**1:1 per project**) + per-feature **sandbox** (`local` = a git worktree; `docker` = a per-feature container — same abstraction, see §8). Channel-per-project: notifications route to the project's channel; collapses to one channel for single-repo tenants.
+**Tenancy.** ⚠️ **STALE — superseded by `ARCHITECTURE.md` §2.** The real model is `Organization` (`org_id`)
+⊃ `Repos` ⊃ `Threads` (channels removed; a thread is the conversation container *and* the build unit).
+The original text: ~~`Tenant` (Slack workspace = `team_id`) ⊃ `Projects` (GitHub repos) ⊃ `Channel` (**1:1 per project**)~~ + per-feature **sandbox** (`local` = a git worktree; `docker` = a per-feature/per-thread container — same abstraction, see §8).
 
 **Work model.** A `job` = an ordered list of `sections` (e.g. backend → frontend → devops). Two-level planning: (1) upfront grill → a **locked decision record** + high-level section list, approved once; (2) per-section just-in-time detailed phase plan. **Sections stack on ONE feature branch**; phases run as **sequential fresh engine sessions** on that shared checkout (fresh context per phase to dodge 300k rot; shared tree so later sections build on earlier code). **Isolation is per-feature/sandbox** (parallel features = separate sandboxes), NOT per-phase. **One PR per feature.**
 
 **Gates / autonomy (adaptive).** Approve the high-level plan once; sections auto-run unless a planner hits an **always-ask** decision class not covered by the record → park & ask async. Always-ask: data-model/schema, public/cross-service API contracts, new deps, infra/topology, cross-cutting patterns (auth/caching/state/concurrency/error-handling), one-way doors. Never-ask: internal structure, naming, file placement, test layout, refactor mechanics. The always-ask gate doubles as a **security control** for untrusted events.
 
-**Two adapters, one brain.** `ChatSurface` (duplex: post/react/`inbound$`, threaded) vs `NotificationSource` (inbound-only, one custom adapter PER gateway). Both converge to a `Stimulus` subtype: `ChatStimulus` (continues a thread; trusted) or `EventStimulus` (opens a NEW thread; `trust:untrusted`; has `dedupeKey`+`severity`). A notification **seeds a thread** then all duplex happens over the ChatSurface. Notifications announce a headline in the channel timeline; job chatter lives in the thread. Many histories = one `messages` table by `thread_id`; cross-thread coherence = shared memory only.
+**Two adapters, one brain.** ⚠️ **STALE framing — there is no single central brain.** Each thread is its
+own continuous Claude Code session (the *thread brain*); see `ARCHITECTURE.md` §4 + §7. The `Stimulus`
+union + `StimulusRouter` + event-only `EventTriageService` described below are a leftover from the
+single-brain era and are **slated for rework** (event → opening message to the thread brain). Original
+text retained for history: `ChatSurface` (duplex: `inbound$`, threaded) vs `NotificationSource`
+(inbound-only, one adapter PER gateway), both converging to a `Stimulus` subtype — `ChatStimulus`
+(continues a thread; trusted) or `EventStimulus` (opens a NEW thread; `trust:untrusted`; `dedupeKey`+`severity`).
 
 **Engines from scratch, minimal.** Just: invoke Claude/Codex in plan/review/execute modes, thread credentials (api_key | subscription), and pin an **isolated agent home** (`CLAUDE_CONFIG_DIR`/`CODEX_HOME` under `AGENT_HOME_ROOT`, never `~/.claude`/`~/.codex`). **No skills/MCP loader** (dropped — "honestly sucks"). **No boards/backlogs.**
 
@@ -72,6 +89,9 @@ Dev env (`backend/.env.personal`): first 3 keys (Anthropic/OpenAI/`GITHUB_PAT`) 
 
 ## 6. Build status (2026-06-20)
 
+> ⏳ **Point-in-time snapshot** (the W-stream notation is retired). For the *current* built-vs-planned
+> status and known divergences, see `ARCHITECTURE.md` §8; for open tuning items see `TUNING_HANDOFF.md`.
+
 All build workstreams **W0–W9 DONE**; **W8 (delete v1) DONE** — v1 `harness/**` removed in commit `f82a748` on `main`, atlas is the sole orchestrator. **The Docker sandbox layer is also BUILT + verified** (see §8). 198 atlas tests green (unit + Docker/Postgres integration), full graph boots, zero v1 imports.
 
 **Proven LIVE end-to-end:** the W1 gate (real engine turn → Slack thread → PR #44) AND a full chat-driven feature drive that opened **`dennisofficial/ai-crew#45`** (grill → approve → section "investigate" → section "write README" committed → 3-lens auto-fix found+fixed 2 issues → PR-tail → PR). `resume()` reconciles interrupted jobs (it correctly 422'd a stale empty-commit job on reboot). Offline e2e (fake LLM): all 3 scenarios pass deterministically.
@@ -79,6 +99,9 @@ All build workstreams **W0–W9 DONE**; **W8 (delete v1) DONE** — v1 `harness/
 **Bug found + fixed during W9:** mid-grill, a human follow-up was being **re-triaged and dropped** (continuity check looked for an open *job*, but none exists during the question phase). Fixed by anchoring a `scoping` job at triage time (`triage.service.ts`); regression-tested in `triage.service.spec.ts`.
 
 ## 7. OPEN tuning/design items (Dennis's to dial in — NOT architectural, orthogonal to Docker)
+
+> ⏳ **Largely migrated to `TUNING_HANDOFF.md` (current).** Item 2 (move the autonomy gate out of triage)
+> is now part of the broader event-intake rework tracked in `ARCHITECTURE.md` §7.
 
 1. **Builds are slow** (~7 min for a trivial README change). The planner inserts an "investigate" section first and runs the 3-lens auto-fix on *every* section incl. zero-change ones. Many LLM turns for small work. Tuning: planner shouldn't over-decompose; skip auto-fix on 0-change sections; the e2e PR poll (now 420s in `e2e-harness.service.ts`) still missed PR #45 by ~6s.
 2. **Autonomy/security triage is non-deterministic.** The real triage LLM sometimes PARKS an untrusted event (safe), sometimes summarizes it as a benign job and DISPATCHES (e2e runs 1-2 parked the injection; run 3 dispatched a benign "fix CI failure"). The injected **destructive action never executed**, but the triage-level guard isn't reliable — it relies on the driver's per-section gate as defense-in-depth. **RECOMMENDATION: move the autonomy gate out of triage** (which classifies an *unplanned* fix it can't verify) **into the driver's per-section gate** (where real decisions are known) — both more deterministic and the right layer. The classifier itself is deterministic on rules; the non-determinism is the triage LLM's event→summary step.

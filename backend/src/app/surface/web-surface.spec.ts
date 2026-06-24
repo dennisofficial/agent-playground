@@ -74,7 +74,7 @@ describe('WebSurface — inbound + outbound', () => {
     const received = firstValueFrom(surface.inbound$.pipe(take(1)));
     surface.receiveFromClient('C-web', 'Hi');
     const msg = await received;
-    expect(msg.orgId).toBe('T-WEB');
+    expect(msg.orgId).toBe('a0a0a0a0-0000-4000-8000-000000000001'); // web default-tenant sentinel uuid
     expect(msg.authorId).toBe('U-OPERATOR');
     expect(msg.threadTs).toBeUndefined();
   });

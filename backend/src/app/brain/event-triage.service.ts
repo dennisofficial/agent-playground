@@ -4,7 +4,7 @@ import {
   ParkAndAskService,
   type ClassifierRecord,
 } from '../decision-gate';
-import type { EventStimulus, Job } from '../domain';
+import type { EventStimulus, Thread } from '../domain';
 import { BRAIN_LLM, type BrainLlm } from './brain-llm';
 import { BrainStoreService } from './brain-store.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
@@ -117,7 +117,7 @@ export class EventTriageService {
     threadId: string,
     summary: string,
   ): Promise<void> {
-    const jobId = await this.store.openJob({
+    await this.store.openJob({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
       threadId,
@@ -125,26 +125,28 @@ export class EventTriageService {
       kind: 'bugfix',
     });
     // A bugfix has one section and no upfront decision record (the gate already cleared it).
-    const { job } = await this.store.persistPlan({
+    const { thread } = await this.store.persistPlan({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
-      jobId,
+      threadId,
       title: jobTitle(summary),
       kind: 'bugfix',
       overview: summary,
       decisions: [],
       sectionBriefs: [summary],
     });
-    const running = await this.store.approve(job.id, requireRecordId(job), 'atlas:autonomous');
+    const running = await this.store.approve(thread.id, requireRecordId(thread), 'atlas:autonomous');
     await this.dispatcher.dispatch(running);
-    this.logger.log(`event ${stimulus.id} dispatched as autonomous bugfix job ${job.id}.`);
+    this.logger.log(`event ${stimulus.id} dispatched as autonomous bugfix on thread ${thread.id}.`);
   }
 }
 
-/** A `Job` produced by `persistPlan` always has a decision record id. */
-function requireRecordId(job: Job): string {
-  if (!job.decisionRecordId) throw new Error(`job ${job.id} has no decision record id after persistPlan`);
-  return job.decisionRecordId;
+/** A `Thread` scoped by `persistPlan` always has a decision record id. */
+function requireRecordId(thread: Thread): string {
+  if (!thread.decisionRecordId) {
+    throw new Error(`thread ${thread.id} has no decision record id after persistPlan`);
+  }
+  return thread.decisionRecordId;
 }
 
 /** A short job title from a summary line. */

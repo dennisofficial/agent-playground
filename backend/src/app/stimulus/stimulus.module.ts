@@ -16,26 +16,26 @@ import { StimulusStoreService } from './stimulus-store.service';
 import { SurfaceOrchestration } from './surface-orchestration.service';
 
 /**
- * The Atlas v2 STIMULUS seam — where both edges converge into one currency and reach the brain:
+ * The STIMULUS seam — the intake pipeline both edges (chat + events) flow through:
  *
- *  - `StimulusIntake` — the single injectable normalized stimuli flow into; exposes `intakeEvent` /
- *    `intakeChat`. W3's triage plugs in by binding `STIMULUS_CONSUMER`.
+ *  - `StimulusIntake` — the single entry point; exposes `intakeEvent` / `intakeChat`.
  *  - `EventFilterService` — the mechanical (no-LLM) dedup + rate-limit on events.
  *  - `StimulusStoreService` — notification-seeds-a-thread persistence (threads/messages/stimuli on the
  *    'app' connection).
- *  - `ProjectRoutingService` — gateway identifier → `atlas_projects` → 1:1 `atlas_channels` (exported
- *    so each `NotificationSource` adapter routes through it).
+ *  - `ProjectRoutingService` — gateway identifier (`owner/repo`) → a connected `repos` row (exported so
+ *    each `NotificationSource` adapter routes through it).
  *  - `ChatStimulusBridge` — subscribes the bound `CHAT_SURFACE.inbound$`, maps chat → `ChatStimulus`,
  *    feeds intake (and connects the surface on boot).
  *
- * The `STIMULUS_CONSUMER` the intake injects is provided by W3's @Global `BrainModule` (its
- * `TriageService`) — the single binding the seam was designed for. W2's `LoggingStimulusConsumer` stays
- * as an exported fallback class for headless / no-brain composition, but is no longer bound here so the
- * brain's binding is the one `StimulusIntake` resolves (a module-local default would shadow the global).
+ * The `STIMULUS_CONSUMER` the intake injects is bound by the @Global `BrainModule` (`StimulusRouter`,
+ * which demuxes chat → the thread's brain session and event → `EventTriageService`). The
+ * `LoggingStimulusConsumer` stays as an exported no-op fallback for headless composition.
  *
- * Exports the intake + routing so the `ingress/` adapters/controllers depend only on these seams (not
- * the store internals). The `CHAT_SURFACE` it injects comes from the @Global `SurfaceModule`. Zero v1
- * imports.
+ * Exports the intake + routing so the `ingress/` adapters/controllers depend only on these seams (not the
+ * store internals). The `CHAT_SURFACE` it injects comes from the @Global `SurfaceModule`.
+ *
+ * NOTE — slated for rework: the `Stimulus` union + consumer-port + router demux are leftover indirection
+ * from the single-central-brain era. See `../ARCHITECTURE.md` §7.
  */
 @Module({
   imports: [

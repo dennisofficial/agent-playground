@@ -42,7 +42,7 @@ export interface CapturedApprovalCard {
   decisionRecordId?: string;
 }
 
-const DEFAULT_TEAM_ID = 'T-AGENT';
+const DEFAULT_TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000002'; // sentinel org uuid (agent default tenant)
 const DEFAULT_AUTHOR_ID = 'U-DENNIS';
 const DEFAULT_AUTHOR_NAME = 'Dennis';
 

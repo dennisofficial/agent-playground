@@ -18,20 +18,21 @@ export type IntakeOutcome =
   | { admitted: false; reason: 'duplicate' | 'rate-limited'; detail: string };
 
 /**
- * The STIMULUS INTAKE SEAM — the single injectable normalized stimuli flow INTO and through which the
- * brain (W3) is reached. Both edges converge here:
+ * The STIMULUS INTAKE SEAM — the single entry point normalized stimuli flow through:
  *
  *  - `intakeEvent(ParsedEvent)` — the `NotificationSource` path. Runs the mechanical dedup/rate-limit
  *    filter; on pass, SEEDS a new thread + persists the event row (the body fenced as untrusted),
  *    then hands the `EventStimulus` to the consumer. On a filter drop OR a DB unique-violation
- *    backstop, nothing is consumed (the firehose pays no Atlas turn).
+ *    backstop, nothing is consumed (the firehose pays no engine turn).
  *  - `intakeChat(ChatStimulus)` — the `ChatSurface` path. Persists the chat message + row (no filter —
  *    chat bypasses it), then hands the `ChatStimulus` to the consumer.
  *
- * The consumer is a port (`STIMULUS_CONSUMER`): W2 binds a logging no-op so the pipeline is observable
- * end-to-end; W3 swaps in real triage with zero changes here. The untrusted-content fence is applied
- * to the EVENT body before it reaches the consumer — the contract lives at this single seam. Zero v1
- * imports.
+ * The consumer is a port (`STIMULUS_CONSUMER`), bound to `StimulusRouter`, which demuxes chat → the
+ * thread's brain session and event → `EventTriageService`. The untrusted-content fence is applied to the
+ * EVENT body before it reaches the consumer — the contract lives at this single seam.
+ *
+ * NOTE — slated for rework: this `Stimulus`-union + consumer-port indirection is a leftover from the
+ * single-central-brain era. See `../ARCHITECTURE.md` §7 (event → opening message to the thread brain).
  */
 @Injectable()
 export class StimulusIntake {

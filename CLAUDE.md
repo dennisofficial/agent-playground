@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **`web/` — the Next.js operator console.** Talks to the backend DIRECTLY (no proxy) at `NEXT_PUBLIC_HTTP_URL` (`:4002`) with credentialed CORS: `/auth/*` + `/web/*`. (NOTE: as of the org/repo/thread rebuild the web app still calls some removed endpoints — it needs rewiring to the `/web/orgs/:orgId/...` API; see `atlas-org-repo-thread-rebuild` memory.)
 - `shared/` (`@workspace/shared` — base TypeORM entities like `TimestampedEntity` under `./schemas`), `packages/*`, `docs/`, `prompts/`, `skills/`, `assets/`.
 
-**Canonical design doc:** `backend/src/app/ATLAS_V2.md` — read it first when resuming Atlas work. (Its §2 tenancy section predates the org rebuild: `Tenant/team_id ⊃ Projects ⊃ Channel` is **superseded** by `Organization/org_id ⊃ Repos ⊃ Threads`, channels removed — see below.)
+**Canonical architecture doc:** `backend/src/app/ARCHITECTURE.md` — the thread/session model (the thread brain vs phase workers, event intake, known divergences). **Read it first** when resuming Atlas work. `backend/src/app/ATLAS_V2.md` is kept for deeper detail + build history but **predates the org→repo→thread rebuild** (stale in parts — it now points at `ARCHITECTURE.md`).
 
 **Submodule prerequisite:** `packages/jwt-auth` (`@workspace/auth`), `packages/nestjs-ai-essentials` (`@workspace/langfuse`), and `packages/nestjs-core-essentials` (`@workspace/nestjs-core` — `@CreateModule`, `BaseEnvService`) are git submodules — run `pnpm run setup` from repo root (submodule init + install + package builds), otherwise TS2307 "Cannot find module '@workspace/…'" at test/typecheck time.
 
@@ -34,9 +34,9 @@ Composed by `app/app.module.ts` (inside `AppModule`). One Nest module per domain
 | `org/` | `Organization` + membership; `OrgMembershipGuard` + `@CurrentOrg` (cross-tenant isolation); `OrgController`. `@Global`. |
 | `onboarding/` | Per-org encrypted credentials (`OrgCredentialsEntity`, AES-256-GCM via `secret-cipher`), `CredentialResolver` (env-fallback), `connectRepo` + validated checklist + `tryActivate`; credentials/repo/onboarding controllers. `@Global`. |
 | `surface/` | The web `CHAT_SURFACE` (`WebSurface`, SSE+REST) + `WebSurfaceController` (the org/repo/thread API). `agent-surface/` is the in-process test surface. `SURFACE=agent` swaps it. |
-| `stimulus/` | Intake seam: the chat bridge (`CHAT_SURFACE.inbound$` → `ChatStimulus`, resolves the thread by real id) + notification routing (`ProjectRoutingService`, repo-addressed). |
+| `stimulus/` | Intake seam: the chat bridge (`CHAT_SURFACE.inbound$` → `ChatStimulus`, resolves the thread by real id) + event firehose guards (dedup/rate-limit, repo routing, untrusted fence, seed-thread). The `Stimulus` union + router are slated for rework — see `ARCHITECTURE.md` §7. |
 | `ingress/` | HTTP edge for notifications: `POST /ingress/github` + `/ingress/webhook` (`NotificationSource` adapters → seed a thread). |
-| `brain/` | Triage (respond/ask/dispatch) + conversational grill → locked decision record; the in-sandbox `AgentSessionManager`; the approval gate (`DecisionApprovalService`). |
+| `brain/` | The per-thread in-sandbox Claude Code session (`AgentSessionManager`) = the **thread brain** (intent/grill → locked decision record → plan → steer); the approval gate (`DecisionApprovalService`); the untrusted-event triage lane (`EventTriageService`, slated for rework). No central brain — see `ARCHITECTURE.md` §4. |
 | `driver/` | The deterministic, resumable section/phase build driver (legible loop, NOT an implicit FSM) + `ThreadLifecycleService` (durable worktree/branch/session + disposable container; `createThread`/`closeThread`). |
 | `decision-gate/` | Always-ask decision classification + park-and-ask (doubles as a security control for untrusted events). |
 | `sandbox/` | Engine turns run `local` (git worktree) or `docker` (per-thread container) behind `SANDBOX_PROVIDER`/`ENGINE_RUNNER` (`SANDBOX_MODE`). |

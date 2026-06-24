@@ -13,8 +13,8 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
 @Index(['scope'])
 @Index(['org_id', 'scope'])
 export class MemoryEntity extends TimestampedEntity {
-  @PrimaryGeneratedColumn()
-  id!: number;
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
 
   @Column({ type: 'text' })
   fact!: string;
@@ -25,8 +25,8 @@ export class MemoryEntity extends TimestampedEntity {
   @Column({ type: 'vector', length: 1536, select: false })
   embedding!: string;
 
-  /** The tenant (Slack team id). NULL = the shared/global tier (recalled in every workspace). */
-  @Column({ type: 'text', nullable: true })
+  /** The tenant (org id). NULL = the shared/global tier (recalled in every workspace). */
+  @Column({ type: 'uuid', nullable: true })
   org_id!: string | null;
 
   /** Access tier: team:<id> | project:<id>. */

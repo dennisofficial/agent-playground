@@ -2,10 +2,15 @@ import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 
 /**
- * A conversation thread within a project's channel. Notifications announce in the main timeline; each
- * job's chatter lives in a thread off the announcement (main stays readable). Threads are isolated
- * for context hygiene — cross-thread coherence is shared memory only, never transcript sharing.
- * `messages` partition by `thread_id`.
+ * A THREAD — the unit of work. One intent (a feature or a bugfix) = one sandbox = one worktree = one
+ * feature branch = ONE PR. A thread may stay a plain conversation (`status='open'`) or enter the build
+ * lifecycle; when it builds, the `sections`/`phases` rows hang directly off it (the former `jobs` layer
+ * is folded in here). `decision_records` (1:many — the draft→superseded proposal trail) reference it.
+ * `messages` partition by `thread_id`. Threads are isolated for context hygiene — cross-thread coherence
+ * is shared memory only, never transcript sharing.
+ *
+ * `status` (build lifecycle) is a SEPARATE axis from `thread_sandboxes.lifecycle` (container/worktree
+ * infra). The branch + PR live HERE (single owner); the sandbox is the disposable workspace.
  */
 @Entity({ name: 'threads' })
 @Index(['org_id', 'repo_id'])
@@ -13,15 +18,15 @@ export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The tenant (Slack team id). */
-  @Column({ type: 'text' })
+  /** The tenant (FK → organizations.id). */
+  @Column({ type: 'uuid' })
   org_id!: string;
 
-  /** The project (and thus channel) this thread lives in. */
-  @Column({ type: 'text' })
+  /** The repo this thread builds against (FK → repos.id). */
+  @Column({ type: 'uuid' })
   repo_id!: string;
 
-  /** What opened the thread: 'chat' (human-started) | 'event' (notification-seeded). */
+  /** What opened the thread: 'chat' | 'event' | 'control' (operator-created). */
   @Column({ type: 'text' })
   origin!: string;
 
@@ -33,11 +38,32 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   title!: string | null;
 
-  /**
-   * The base branch the operator picked at thread creation (default = repo default). Null for
-   * inbound-message-derived threads that pre-date R2 (they inherit from the project's default_branch
-   * at build time, as before).
-   */
+  /** The base branch the build cuts from (operator-picked; null → the repo's default_branch). */
   @Column({ type: 'text', nullable: true })
   base_branch!: string | null;
+
+  // ── build lifecycle (folded in from the former `jobs` table) ───────────────────────────────────────
+  /** Build intent: 'feature' (many sections) | 'bugfix' (one). Null until the thread is scoped. */
+  @Column({ type: 'text', nullable: true })
+  kind!: string | null;
+
+  // 'open' | 'scoping' | 'awaiting_approval' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled'
+  @Column({ type: 'text', default: 'open' })
+  status!: string;
+
+  /** The locked decision record (FK → decision_records.id); null until the upfront grill produces one. */
+  @Column({ type: 'uuid', nullable: true })
+  decision_record_id!: string | null;
+
+  /** The feature branch all sections stack on; null until the branch is cut. */
+  @Column({ type: 'text', nullable: true })
+  feature_branch!: string | null;
+
+  /** The opened PR url; null until the PR-tail stage opens one. */
+  @Column({ type: 'text', nullable: true })
+  pr_url!: string | null;
+
+  /** The opened PR number — what the merge poll queries GitHub with; null until opened. */
+  @Column({ type: 'int', nullable: true })
+  pr_number!: number | null;
 }

@@ -1,18 +1,20 @@
 /**
- * The two-edges-one-brain stimulus model. Everything that reaches Atlas's triage step arrives as a
- * `Stimulus` — one internal currency, two subtypes:
+ * The intake currency. Every inbound request reaches the system as a `Stimulus` — two subtypes:
  *
- *  - `ChatStimulus` — duplex. CONTINUES an existing thread. Carries the author and a reply-route so
- *    Atlas can talk back over the same `ChatSurface` (Slack thread, terminal, agent-facing).
- *  - `EventStimulus` — inbound-only. OPENS a new thread in the project's channel. Comes from a
- *    `NotificationSource` (GitHub webhook, generic webhook, later Sentry/PostHog/email). Always
- *    `trust: 'untrusted'` — its body is DATA to triage, never instructions. Carries a `dedupeKey`
- *    (the mechanical pre-harness filter collapses duplicates by it) and a `severity`.
+ *  - `ChatStimulus` — duplex. CONTINUES an existing thread; handled by that thread's own Claude Code
+ *    session (the "thread brain"). Carries the author + a reply-route so the system can post back over
+ *    the same `ChatSurface` (the web operator console, or the in-process agent surface in tests).
+ *  - `EventStimulus` — inbound-only. SEEDS a new thread from a `NotificationSource` (GitHub/generic
+ *    webhook, later Sentry/PostHog/email). Always `trust: 'untrusted'` — its body is DATA, never
+ *    instructions. Carries a `dedupeKey` (the mechanical dedup/rate-limit filter collapses duplicates
+ *    by it) and a `severity`.
  *
- * A notification never has a conversation of its own — it SEEDS one: the `EventStimulus` opens a
- * thread and ends its job there; every further exchange happens over the `ChatSurface` in that
- * thread. These are in-memory shapes (the triage/intake currency), kept separate from the
- * `stimuli` persistence row.
+ * These are in-memory shapes, kept separate from the `stimuli` persistence row.
+ *
+ * NOTE — slated for rework: the unified `Stimulus` union + `StimulusRouter` demux + the event-only
+ * `EventTriageService` are a leftover from the single-central-brain era. There is no central brain now —
+ * each thread is its own session. The intended direction is to make an event the *opening message* to a
+ * spawned thread's brain (keeping the mechanical guards). See `../ARCHITECTURE.md` §7.
  */
 
 /** Trust label. Chat from a known surface is `trusted`; every notification body is `untrusted`. */
@@ -28,9 +30,9 @@ export type StimulusKind = 'chat' | 'event';
 interface BaseStimulus {
   /** Stable id minted at intake (the `stimuli` PK once persisted). */
   id: string;
-  /** The tenant (Slack team id) this stimulus belongs to. */
+  /** The owning organization (`org_id`). */
   orgId: string;
-  /** The project (and thus channel) this stimulus routes to. */
+  /** The repo this stimulus routes to (`repo_id`). */
   repoId: string;
   /** The raw text/body Atlas triages. */
   body: string;
@@ -49,7 +51,7 @@ export interface ChatStimulus extends BaseStimulus {
   threadId: string;
   /** Who authored the message — display name + scope id. */
   author: { id: string; displayName: string };
-  /** Where Atlas replies: the surface id + the surface-native thread coordinate (e.g. a Slack ts). */
+  /** Where the system replies: the surface id + the surface-native thread coordinate (the web thread ref). */
   replyRoute: { surfaceId: string; threadRef: string };
 }
 
@@ -69,5 +71,5 @@ export interface EventStimulus extends BaseStimulus {
   severity: EventSeverity;
 }
 
-/** The intake currency: one brain, two subtypes, discriminated by `kind`. */
+/** The intake currency: two subtypes, discriminated by `kind`. */
 export type Stimulus = ChatStimulus | EventStimulus;

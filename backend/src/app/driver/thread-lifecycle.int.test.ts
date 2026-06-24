@@ -62,8 +62,8 @@ function dbOpts() {
 
 // ── Fake collaborators ────────────────────────────────────────────────────────────────────────────
 
-const FAKE_PROJECT_ID = 'r2-gate-proj';
-const FAKE_TEAM_ID = 'T-R2-GATE';
+const FAKE_PROJECT_SLUG = 'r2-gate-proj';
+const FAKE_TEAM_ID = '11111111-1111-4111-8111-111111111111'; // sentinel org uuid
 const FAKE_REPO_URL = 'https://github.com/atlas-r2-gate/sample.git';
 const FAKE_BASE_BRANCH = 'main';
 
@@ -119,9 +119,12 @@ class FakeSandboxProvider {
 let mod: TestingModule;
 let threadLifecycle: ThreadLifecycleService;
 let sandboxes: Repository<ThreadSandboxEntity>;
+let threads: Repository<ThreadEntity>;
 let ds: DataSource;
 let fakeGit: FakeGitService;
 let provider: FakeSandboxProvider;
+/** The seeded repo's uuid id (the API + child rows reference this, not the slug). */
+let repoId: string;
 
 beforeEach(async () => {
   fakeGit = new FakeGitService();
@@ -170,26 +173,30 @@ beforeEach(async () => {
 
   threadLifecycle = mod.get(ThreadLifecycleService);
   sandboxes = mod.get(getRepositoryToken(ThreadSandboxEntity, DB_CONNECTION));
+  threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
   ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
   await ds.query(`
     INSERT INTO organizations (id, name, slug, status)
     VALUES ($1, $2, $3, 'active')
     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
-  `, [FAKE_TEAM_ID, 'R2 Gate Org', `r2-gate-${FAKE_TEAM_ID}`]);
+  `, [FAKE_TEAM_ID, 'R2 Gate Org', `r2-gate-org`]);
 
-  await ds.query(`
-    INSERT INTO repos (org_id, repo_id, name, git_url, default_branch, token_name, access_ok)
+  // Surrogate uuid id is DB-generated; capture it for the (org_id, slug)-unique repo.
+  const repoRows = await ds.query(`
+    INSERT INTO repos (org_id, slug, name, git_url, default_branch, token_name, access_ok)
     VALUES ($1, $2, $3, $4, $5, NULL, true)
-    ON CONFLICT (org_id, repo_id) DO UPDATE
+    ON CONFLICT (org_id, slug) DO UPDATE
       SET git_url = EXCLUDED.git_url, default_branch = EXCLUDED.default_branch
-  `, [FAKE_TEAM_ID, FAKE_PROJECT_ID, 'R2 Gate Repo', FAKE_REPO_URL, FAKE_BASE_BRANCH]);
+    RETURNING id
+  `, [FAKE_TEAM_ID, FAKE_PROJECT_SLUG, 'R2 Gate Repo', FAKE_REPO_URL, FAKE_BASE_BRANCH]);
+  repoId = repoRows[0].id;
 });
 
 async function create(displayName = 'Gate thread') {
   return threadLifecycle.createThread({
     orgId: FAKE_TEAM_ID,
-    repoId: FAKE_PROJECT_ID,
+    repoId,
     baseBranch: FAKE_BASE_BRANCH,
     displayName,
   });
@@ -206,11 +213,13 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
 
     const row = await sandboxes.findOneOrFail({ where: { id: result.threadSandboxId } });
     expect(row.lifecycle).toBe('attached');
-    expect(row.base_branch).toBe(FAKE_BASE_BRANCH);
-    expect(row.feature_branch).toBe(`atlas/thread-${result.threadId.slice(0, 8)}`);
     expect(row.container_id).toBe(`fake-c-${result.threadId}`);
     expect(row.last_active_at).not.toBeNull();
-    expect(fakeGit.branches).toContain(row.feature_branch);
+    // The branch lives on the THREAD now (single owner — sandbox is pure infra).
+    const thread = await threads.findOneOrFail({ where: { id: result.threadId } });
+    expect(thread.base_branch).toBe(FAKE_BASE_BRANCH);
+    expect(thread.feature_branch).toBe(`atlas/thread-${result.threadId.slice(0, 8)}`);
+    expect(fakeGit.branches).toContain(thread.feature_branch);
   });
 
   it('ensureContainer reuses the live container and reports wasReset from the provider warm flag', async () => {

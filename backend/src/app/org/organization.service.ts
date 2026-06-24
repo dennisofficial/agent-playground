@@ -6,18 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  DecisionRecordEntity,
-  JobEntity,
-  MemoryEntity,
-  MessageEntity,
-  OrgCredentialsEntity,
   OrgInviteEntity,
-  PhaseEntity,
-  RepoEntity,
-  SectionEntity,
-  StimulusEntity,
   ThreadEntity,
-  ThreadSandboxEntity,
   UserEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
@@ -46,7 +36,7 @@ export interface InviteView {
   email: string;
   role: string;
   link: string;
-  invitedBy: string;
+  invitedBy: string | null;
   createdAt: Date;
 }
 
@@ -99,13 +89,12 @@ export class OrganizationService {
 
   /** Create an org (status `onboarding`) and make `userId` its owner. */
   async create(userId: string, name: string): Promise<OrgSummary> {
-    const id = randomUUID();
     const slug = await this.uniqueSlug(slugifyName(name));
     const org = await this.orgs.save(
-      this.orgs.create({ id, name, slug, status: 'onboarding' }),
+      this.orgs.create({ name, slug, status: 'onboarding' }), // id is DB-generated (uuid)
     );
     await this.members.save(
-      this.members.create({ org_id: id, user_id: userId, role: 'owner' }),
+      this.members.create({ org_id: org.id, user_id: userId, role: 'owner' }),
     );
     return { id: org.id, slug: org.slug, name: org.name, status: org.status, role: 'owner' };
   }
@@ -133,11 +122,11 @@ export class OrganizationService {
   }
 
   /**
-   * Delete an org and everything under it. There are no DB FK cascades — every dependent table carries an
-   * `org_id` (messages carry `thread_id`), so we sweep explicitly. Threads are CLOSED first (tearing down
-   * the per-thread container + git worktree, best-effort/idempotent in `closeThread`) BEFORE the DB rows go,
-   * because that teardown is side-effecting and not part of the transaction. Then a single transaction
-   * deletes every org-scoped row + the org itself. Idempotent-ish: a missing org just deletes nothing.
+   * Delete an org and everything under it. DB FK cascades (org → repos → threads → messages/sections/
+   * phases/decision_records/stimuli/sandboxes, plus members/credentials/invites/memory) do the row sweep,
+   * so this just CLOSES the threads first (tearing down each per-thread container + git worktree —
+   * side-effecting, not part of the cascade) then deletes the org row. Idempotent-ish: a missing org
+   * deletes nothing.
    */
   async deleteOrg(orgId: string): Promise<void> {
     const threads = await this.dataSource
@@ -145,9 +134,9 @@ export class OrganizationService {
       .find({ where: { org_id: orgId }, select: { id: true } });
     const threadIds = threads.map((t) => t.id);
 
-    // Side-effecting teardown (containers + worktrees) — outside the DB transaction. Resolve the driver
-    // service lazily (see the constructor note on the cycle); `strict: false` searches the whole app.
-    // `.js` extension: a relative dynamic `import()` carries ESM semantics under `moduleResolution:
+    // Side-effecting teardown (containers + worktrees) — before the cascade removes the rows. Resolve the
+    // driver service lazily (see the constructor note on the cycle); `strict: false` searches the whole
+    // app. `.js` extension: a relative dynamic `import()` carries ESM semantics under `moduleResolution:
     // nodenext`, which requires the explicit extension (static CJS imports don't).
     const { ThreadLifecycleService } = await import('../driver/thread-lifecycle.service.js');
     const threadLifecycle = this.moduleRef.get(ThreadLifecycleService, { strict: false });
@@ -155,25 +144,8 @@ export class OrganizationService {
       await threadLifecycle.closeThread(threadId, orgId);
     }
 
-    await this.dataSource.transaction(async (m) => {
-      if (threadIds.length > 0) {
-        await m.delete(MessageEntity, { thread_id: In(threadIds) });
-      }
-      // Children → parents (order is cosmetic without FKs, but tidy).
-      await m.delete(ThreadSandboxEntity, { org_id: orgId });
-      await m.delete(PhaseEntity, { org_id: orgId });
-      await m.delete(SectionEntity, { org_id: orgId });
-      await m.delete(DecisionRecordEntity, { org_id: orgId });
-      await m.delete(JobEntity, { org_id: orgId });
-      await m.delete(StimulusEntity, { org_id: orgId });
-      await m.delete(MemoryEntity, { org_id: orgId });
-      await m.delete(ThreadEntity, { org_id: orgId });
-      await m.delete(RepoEntity, { org_id: orgId });
-      await m.delete(OrgCredentialsEntity, { org_id: orgId });
-      await m.delete(OrgInviteEntity, { org_id: orgId });
-      await m.delete(OrganizationMemberEntity, { org_id: orgId });
-      await m.delete(OrganizationEntity, { id: orgId });
-    });
+    // One delete — the FK ON DELETE CASCADE chain removes every dependent row.
+    await this.orgs.delete({ id: orgId });
   }
 
   /** Every org the user belongs to, with their role. */

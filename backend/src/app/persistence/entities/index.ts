@@ -11,7 +11,6 @@ export * from './repo.entity';
 export * from './thread.entity';
 export * from './message.entity';
 export * from './stimulus.entity';
-export * from './job.entity';
 export * from './section.entity';
 export * from './phase.entity';
 export * from './decision-record.entity';
@@ -27,7 +26,6 @@ import { RepoEntity } from './repo.entity';
 import { ThreadEntity } from './thread.entity';
 import { MessageEntity } from './message.entity';
 import { StimulusEntity } from './stimulus.entity';
-import { JobEntity } from './job.entity';
 import { SectionEntity } from './section.entity';
 import { PhaseEntity } from './phase.entity';
 import { DecisionRecordEntity } from './decision-record.entity';
@@ -45,7 +43,6 @@ export const ENTITIES = [
   ThreadEntity,
   MessageEntity,
   StimulusEntity,
-  JobEntity,
   SectionEntity,
   PhaseEntity,
   DecisionRecordEntity,

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecisionClassifier } from '../decision-gate';
 import type { DecisionClassification } from '../decision-gate';
 import type { ParkAndAskService } from '../decision-gate';
-import type { EventStimulus, Job } from '../domain';
+import type { EventStimulus, Thread } from '../domain';
 import type { BrainLlm, TriageInput } from './brain-llm';
 import type { BrainStoreService, ThreadRoute } from './brain-store.service';
 import type { JobDispatcher } from './job-dispatcher';
@@ -48,13 +48,13 @@ function fakeStore(over: Partial<BrainStoreService> = {}): BrainStoreService & {
     },
     async persistPlan() {
       return {
-        job: { id: 'job-1', decisionRecordId: 'dr-1' } as Job,
+        thread: { id: 'job-1', decisionRecordId: 'dr-1' } as Thread,
         decisionRecordId: 'dr-1',
       };
     },
     async approve(jobId: string) {
       (this as { approvedJobIds: string[] }).approvedJobIds.push(jobId);
-      return { id: jobId, kind: 'bugfix', decisionRecordId: 'dr-1' } as Job;
+      return { id: jobId, kind: 'bugfix', decisionRecordId: 'dr-1' } as Thread;
     },
   };
   return Object.assign(base, over) as unknown as BrainStoreService & {
@@ -78,11 +78,11 @@ function fakePark(): ParkAndAskService & { asks: Array<{ channel: string; questi
   } as unknown as ParkAndAskService & { asks: Array<{ channel: string; question: string }> };
 }
 
-function fakeDispatcher(): JobDispatcher & { jobs: Job[] } {
-  const jobs: Job[] = [];
+function fakeDispatcher(): JobDispatcher & { jobs: Thread[] } {
+  const jobs: Thread[] = [];
   return {
     jobs,
-    async dispatch(job: Job) {
+    async dispatch(job: Thread) {
       jobs.push(job);
     },
   };

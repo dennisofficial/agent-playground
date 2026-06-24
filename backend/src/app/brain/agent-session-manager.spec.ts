@@ -110,7 +110,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     // persistPlan returns the canonical shape BrainStoreService returns.
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
-      job: {
+      thread: {
         id: FAKE_JOB_ID,
         status: 'awaiting_approval',
         title: 'Add rate limiting to the API',
@@ -207,7 +207,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // The job/team/project binding is correct.
     expect(persistArgs.orgId).toBe(TEAM_ID);
     expect(persistArgs.repoId).toBe(PROJECT_ID);
-    expect(persistArgs.jobId).toBe(FAKE_JOB_ID);
+    expect(persistArgs.threadId).toBe(FAKE_JOB_ID);
 
     // 2. The tool returns ok=true + the job and record ids.
     expect(result).toMatchObject({

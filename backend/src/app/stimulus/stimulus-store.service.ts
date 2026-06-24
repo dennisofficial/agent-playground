@@ -35,9 +35,9 @@ const PG_UNIQUE_VIOLATION = '23505';
  * Persistence for the intake seam — the single place stimuli/threads/messages land on the 'atlas'
  * connection. Realizes "notification-seeds-a-thread":
  *
- *  - `seedEventThread` — an `EventStimulus` OPENS a new `threads` row (origin 'event') in the
- *    routed project's channel, persists the originating `messages` row (the notification body)
- *    AND the `stimuli` event row. The partial-unique index on (team, project, source,
+ *  - `seedEventThread` — an `EventStimulus` OPENS a new `threads` row (origin 'event') on the
+ *    routed repo, persists the originating `messages` row (the notification body)
+ *    AND the `stimuli` event row. The partial-unique index on (org, repo, source,
  *    dedupe_key) is the durable backstop to the in-memory filter: a racing duplicate that slips past
  *    the window is rejected at insert (→ `DuplicateStimulusError`), so we never seed two threads for
  *    one event.

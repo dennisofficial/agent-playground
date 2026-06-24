@@ -15,7 +15,7 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
 @Index(['org_id'])
 export class OrgCredentialsEntity extends TimestampedEntity {
   /** The owning org (FK → organizations). */
-  @PrimaryColumn({ type: 'text' })
+  @PrimaryColumn({ type: 'uuid' })
   org_id!: string;
 
   /** Credential scope: '*' = org default; otherwise a repo / token_name override. */

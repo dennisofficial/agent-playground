@@ -1,24 +1,28 @@
-import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 
 /**
- * A connected GitHub repo — what Atlas works against. Org ⊃ repos; threads/jobs/memory scope to a repo
- * via the composite `(org_id, repo_id)`. Replaces the Slack-era `atlas_projects` + `atlas_channels` pair
- * — a repo IS the conversation container now. `repo_id` is a URL-safe slug (the identifier the web app
- * addresses, e.g. `/orgs/:orgId/repos/:repoId`), stable for the life of the connection. `access_ok`
- * records whether the org's GitHub token reached the repo at connect time; onboarding activates the org
- * only on validated access.
+ * A connected GitHub repo — what Atlas works against. Org ⊃ repos; threads/memory scope to a repo via
+ * `repo_id` (this row's `id`, a `uuid`). `slug` is the URL-safe, human-readable identity (unique within
+ * the org) used for the on-disk clone dir, worktree key, container label, and UX — DB relations use
+ * `id`. `access_ok` records whether the org's GitHub token reached the repo at connect time; onboarding
+ * activates the org only on validated access.
  */
 @Entity({ name: 'repos' })
 @Index(['org_id'])
+@Unique(['org_id', 'slug'])
 export class RepoEntity extends TimestampedEntity {
+  /** DB-generated UUID — the FK target child rows store. */
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
   /** The owning org (FK → organizations.id). */
-  @PrimaryColumn({ type: 'text' })
+  @Column({ type: 'uuid' })
   org_id!: string;
 
-  /** URL-safe slug, unique within the org (derived from the repo name). The web-facing repo id. */
-  @PrimaryColumn({ type: 'text' })
-  repo_id!: string;
+  /** URL-safe slug, unique within the org (derived from the repo name). The clone/worktree/UX identity. */
+  @Column({ type: 'text' })
+  slug!: string;
 
   /** Display name. */
   @Column({ type: 'text' })

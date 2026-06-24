@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { Job } from '../domain';
+import type { Thread } from '../domain';
 import { LocalGitService, parseGithubRepoUrl, type ProjectRepo } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -24,9 +24,9 @@ export interface ResolvedRepo {
   token?: string;
 }
 
-/** The narrow surface the driver consumes — resolve a job into a ready-to-use repo. */
+/** The narrow surface the driver consumes — resolve a thread's repo into a ready-to-use clone. */
 export interface DriverRepoResolver {
-  resolve(job: Job): Promise<ResolvedRepo>;
+  resolve(thread: Thread): Promise<ResolvedRepo>;
 }
 
 /**
@@ -44,20 +44,21 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
     private readonly projects: Repository<RepoEntity>,
   ) {}
 
-  async resolve(job: Job): Promise<ResolvedRepo> {
+  async resolve(thread: Thread): Promise<ResolvedRepo> {
     const project = await this.projects.findOne({
-      where: { org_id: job.orgId, repo_id: job.repoId },
+      where: { id: thread.repoId },
     });
     if (!project) {
-      throw new Error(`No repos row for team=${job.orgId} project=${job.repoId}`);
+      throw new Error(`No repos row for id=${thread.repoId} (org=${thread.orgId})`);
     }
     const parsed = parseGithubRepoUrl(project.git_url);
     if (!parsed) {
-      throw new Error(`Project ${job.repoId} git_url is not an HTTPS GitHub URL: ${project.git_url}`);
+      throw new Error(`Repo ${project.slug} git_url is not an HTTPS GitHub URL: ${project.git_url}`);
     }
-    const token = await this.creds.githubToken(job.orgId);
+    const token = await this.creds.githubToken(thread.orgId);
+    // The repo's SLUG is the on-disk clone/worktree identity (human-readable), NOT the uuid id.
     const projectRepo = await this.git.ensureRepo({
-      repoId: job.repoId,
+      repoId: project.slug,
       gitUrl: project.git_url,
       defaultBranch: project.default_branch,
       ...(token ? { token } : {}),

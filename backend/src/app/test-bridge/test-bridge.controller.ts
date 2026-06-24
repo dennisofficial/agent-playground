@@ -20,7 +20,6 @@ import { DecisionApprovalService } from '../brain';
 import { SectionDriver } from '../driver';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  JobEntity,
   MessageEntity,
   RepoEntity,
   ThreadEntity,
@@ -73,8 +72,6 @@ export class TestBridgeController {
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
   ) {}
@@ -99,7 +96,7 @@ export class TestBridgeController {
     await this.repos.upsert(
       {
         org_id: orgId,
-        repo_id: repoId,
+        slug: repoId,
         name: repoId,
         git_url: repoUrl,
         default_branch: body.baseBranch ?? 'main',
@@ -107,7 +104,7 @@ export class TestBridgeController {
         access_ok: true,
         access_checked_at: new Date(),
       },
-      ['org_id', 'repo_id'],
+      ['org_id', 'slug'],
     );
     this.logger.log(`seed org=${orgId} repo=${repoId} url=${repoUrl}`);
     return { channelId: repoId, orgId, repoId };
@@ -124,8 +121,8 @@ export class TestBridgeController {
     this.assertEnabled();
     const { channel, text } = body; // `channel` is the repo coordinate (repo_id)
 
-    // Resolve the repo's org (the surface addresses by repo + real thread id, no channel indirection).
-    const repo = await this.repos.findOne({ where: { repo_id: channel } });
+    // Resolve the repo by its slug (the test-bridge addresses repos by their human slug).
+    const repo = await this.repos.findOne({ where: { slug: channel } });
     if (!repo) {
       throw new NotFoundException(`No seeded repo ${channel} — POST /test/seed first.`);
     }
@@ -137,7 +134,7 @@ export class TestBridgeController {
       const thread = await this.threads.save(
         this.threads.create({
           org_id: repo.org_id,
-          repo_id: repo.repo_id,
+          repo_id: repo.id,
           origin: 'chat',
           surface_thread_ref: null,
           title: null,
@@ -184,18 +181,18 @@ export class TestBridgeController {
     return { ok: true };
   }
 
-  /** `GET /test/job?jobId=...` — the `jobs` row (status/title/prUrl/kind) for the driver to poll. */
+  /** `GET /test/job?jobId=...` — the thread (build unit) row (status/title/prUrl/kind) for the driver to poll. */
   @Get('job')
   async job(@Query('jobId') jobId: string): Promise<JobView> {
     this.assertEnabled();
-    const row = await this.jobs.findOne({ where: { id: jobId } });
-    if (!row) throw new NotFoundException(`No job ${jobId}`);
+    const row = await this.threads.findOne({ where: { id: jobId } });
+    if (!row) throw new NotFoundException(`No thread ${jobId}`);
     return {
       id: row.id,
       status: row.status,
-      title: row.title,
+      title: row.title ?? '',
       prUrl: row.pr_url,
-      kind: row.kind,
+      kind: row.kind ?? '',
     };
   }
 

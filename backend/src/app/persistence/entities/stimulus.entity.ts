@@ -20,12 +20,12 @@ export class StimulusEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The tenant (Slack team id). */
-  @Column({ type: 'text' })
+  /** The tenant (org id; FK → organizations.id). */
+  @Column({ type: 'uuid' })
   org_id!: string;
 
-  /** The project (and thus channel) this stimulus routes to. */
-  @Column({ type: 'text' })
+  /** The repo this stimulus routes to (FK → repos.id). */
+  @Column({ type: 'uuid' })
   repo_id!: string;
 
   /** Subtype discriminator: 'chat' | 'event'. */

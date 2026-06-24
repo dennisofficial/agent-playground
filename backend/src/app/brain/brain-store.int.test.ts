@@ -30,8 +30,8 @@ import { BrainStoreService } from './brain-store.service';
  * Boots the REAL AppModule (agent surface) against live Postgres, mocking only the external boundaries
  * (LLMs/engine/git/PR) — none are exercised here; we drive `BrainStoreService` directly.
  */
-const TEAM_ID = 'T-BRAINSTORE-IT';
-const PROJECT_ID = 'brainstore-it';
+const TEAM_ID = '33333333-3333-4333-8333-333333333333'; // sentinel org uuid
+const PROJECT_SLUG = 'brainstore-it';
 
 describe('BrainStoreService re-propose (live Postgres)', () => {
   let app: NestExpressApplication;
@@ -74,17 +74,32 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     else process.env.SURFACE = prevSurface;
   });
 
-  it('a re-propose on the same scoping job clears the prior draft instead of colliding', async () => {
-    // jobs.thread_id FK → threads.id, so anchor a real thread first.
+  it('a re-propose on the same scoping thread clears the prior draft instead of colliding', async () => {
+    // The thread IS the build unit; sections/decision_records FK → threads.id, and threads.repo_id
+    // FK → repos.id — so seed an org + repo, then anchor a real thread.
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+         ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, $2, 'BrainStore Repo', 'https://github.com/acme/brainstore.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+      [TEAM_ID, PROJECT_SLUG],
+    );
+    const repoId = repoRow.id;
     const [thread]: Array<{ id: string }> = await dataSource.query(
       `INSERT INTO threads (org_id, repo_id, origin, title)
          VALUES ($1, $2, 'chat', 'rate limiting') RETURNING id`,
-      [TEAM_ID, PROJECT_ID],
+      [TEAM_ID, repoId],
     );
     const threadId = thread.id;
-    const jobId = await store.openJob({
+    await store.openJob({
       orgId: TEAM_ID,
-      repoId: PROJECT_ID,
+      repoId,
       threadId,
       title: 'rate limiting',
       kind: 'feature',
@@ -93,28 +108,28 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // First proposal — two sections at ordinals 10, 20.
     const first = await store.persistPlan({
       orgId: TEAM_ID,
-      repoId: PROJECT_ID,
-      jobId,
+      repoId,
+      threadId,
       title: 'rate limiting v1',
       kind: 'feature',
       overview: 'overview v1',
       decisions: [],
       sectionBriefs: ['backend middleware', 'frontend banner'],
     });
-    expect(first.job.status).toBe('awaiting_approval');
-    expect(await sectionBriefs(dataSource, jobId)).toEqual([
+    expect(first.thread.status).toBe('awaiting_approval');
+    expect(await sectionBriefs(dataSource, threadId)).toEqual([
       'backend middleware',
       'frontend banner',
     ]);
 
     // Human requests changes → back to scoping.
-    await store.reopenScoping(jobId);
+    await store.reopenScoping(threadId);
 
-    // Second proposal on the SAME job — fewer sections, re-using ordinal 10. Must NOT throw.
+    // Second proposal on the SAME thread — fewer sections, re-using ordinal 10. Must NOT throw.
     const second = await store.persistPlan({
       orgId: TEAM_ID,
-      repoId: PROJECT_ID,
-      jobId,
+      repoId,
+      threadId,
       title: 'rate limiting v2',
       kind: 'feature',
       overview: 'overview v2',
@@ -122,24 +137,24 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       sectionBriefs: ['backend middleware only'],
     });
 
-    expect(second.job.status).toBe('awaiting_approval');
+    expect(second.thread.status).toBe('awaiting_approval');
     expect(second.decisionRecordId).not.toBe(first.decisionRecordId);
-    expect(second.job.title).toBe('rate limiting v2');
+    expect(second.thread.title).toBe('rate limiting v2');
 
     // Sections reflect ONLY the new proposal — the stale ones are gone.
-    expect(await sectionBriefs(dataSource, jobId)).toEqual(['backend middleware only']);
+    expect(await sectionBriefs(dataSource, threadId)).toEqual(['backend middleware only']);
 
     // The prior draft record is superseded; exactly one draft remains (the new one).
     expect(await recordStatus(dataSource, first.decisionRecordId)).toBe('superseded');
     expect(await recordStatus(dataSource, second.decisionRecordId)).toBe('draft');
-    expect(await draftCount(dataSource, jobId)).toBe(1);
+    expect(await draftCount(dataSource, threadId)).toBe(1);
   }, 30_000);
 });
 
-async function sectionBriefs(ds: DataSource, jobId: string): Promise<string[]> {
+async function sectionBriefs(ds: DataSource, threadId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
-    `SELECT brief FROM sections WHERE job_id = $1 ORDER BY ordinal ASC`,
-    [jobId],
+    `SELECT brief FROM sections WHERE thread_id = $1 ORDER BY ordinal ASC`,
+    [threadId],
   );
   return rows.map((r) => r.brief);
 }
@@ -152,20 +167,18 @@ async function recordStatus(ds: DataSource, recordId: string): Promise<string | 
   return rows[0]?.status ?? null;
 }
 
-async function draftCount(ds: DataSource, jobId: string): Promise<number> {
+async function draftCount(ds: DataSource, threadId: string): Promise<number> {
   const rows: Array<{ n: string }> = await ds.query(
-    `SELECT COUNT(*)::int AS n FROM decision_records WHERE job_id = $1 AND status = 'draft'`,
-    [jobId],
+    `SELECT COUNT(*)::int AS n FROM decision_records WHERE thread_id = $1 AND status = 'draft'`,
+    [threadId],
   );
   return Number(rows[0]?.n ?? 0);
 }
 
-/** Delete every row this test's synthetic tenant owns. */
+/** Delete every row this test's synthetic tenant owns (FK cascade from threads/org does the rest). */
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
-  await q(`DELETE FROM phases WHERE org_id = $1`);
-  await q(`DELETE FROM sections WHERE org_id = $1`);
-  await q(`DELETE FROM decision_records WHERE org_id = $1`);
-  await q(`DELETE FROM jobs WHERE org_id = $1`);
   await q(`DELETE FROM threads WHERE org_id = $1`);
+  await q(`DELETE FROM repos WHERE org_id = $1`);
+  await q(`DELETE FROM organizations WHERE id = $1`);
 }

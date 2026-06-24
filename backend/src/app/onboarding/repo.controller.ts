@@ -68,8 +68,8 @@ export class RepoController {
   async list(@CurrentOrg() org: CurrentOrgCtx): Promise<RepoView[]> {
     const rows = await this.repos.find({ where: { org_id: org.id } });
     return rows.map((r) => ({
-      id: r.repo_id,
-      slug: r.repo_id,
+      id: r.id,
+      slug: r.slug,
       name: r.name,
       gitUrl: r.git_url,
       defaultBranch: r.default_branch,

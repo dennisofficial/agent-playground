@@ -296,7 +296,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
 
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
-      job: {
+      thread: {
         id: FAKE_JOB_ID,
         status: 'awaiting_approval',
         title: 'Add OAuth2 login to the API.',

@@ -25,9 +25,13 @@ import { StimulusIntake } from './stimulus-intake.service';
  *
  * Addressing: the web surface addresses by the REAL thread id (`msg.threadTs` carries `threads.id`)
  * and the repo coordinate (`msg.channel` carries `repo_id`). A message referencing an existing thread
- * continues it; an unaddressed message opens a chat-origin thread on the repo. No channel indirection.
+ * continues it; an unaddressed message opens a chat-origin thread on the repo (the web path always
+ * addresses, so that branch is effectively the agent-surface/test path). No channel indirection.
  *
  * Boot order: subscribe to `inbound$` FIRST, then connect the surface — so no early message is missed.
+ *
+ * NOTE — the chat-intake indirection is slated for rework alongside the `Stimulus` union; see
+ * `../ARCHITECTURE.md` §7.
  */
 @Injectable()
 export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplicationShutdown {

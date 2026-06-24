@@ -44,17 +44,17 @@ export class ProjectRoutingService {
       this.logger.debug(`No repo matches github repo ${target}`);
       return null;
     }
-    return { orgId: match.org_id, repoId: match.repo_id, repo: match };
+    return { orgId: match.org_id, repoId: match.id, repo: match };
   }
 
-  /** Resolve a caller-supplied `(orgId, repoId)` to a repo route. Null when not connected. */
+  /** Resolve a caller-supplied `(orgId, repoId-uuid)` to a repo route. Null when not connected. */
   async routeProjectId(orgId: string, repoId: string): Promise<ProjectRoute | null> {
-    const match = await this.repos.findOne({ where: { org_id: orgId, repo_id: repoId } });
+    const match = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
     if (!match) {
       this.logger.debug(`No repo ${orgId}/${repoId}`);
       return null;
     }
-    return { orgId: match.org_id, repoId: match.repo_id, repo: match };
+    return { orgId: match.org_id, repoId: match.id, repo: match };
   }
 }
 

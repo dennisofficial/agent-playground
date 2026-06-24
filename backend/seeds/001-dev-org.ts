@@ -75,23 +75,28 @@ export default (async (ds) => {
 
     await orgs.save(orgs.create({ id: o.id, name: o.name, slug: o.slug, status: 'active' }));
     await members.save(members.create({ org_id: o.id, user_id: owner.id, role: 'owner' }));
-    await repos.save(
-      repos.create({
-        org_id: o.id,
-        repo_id: o.repo,
-        name: o.repo,
-        git_url: `https://github.com/${o.slug}/${o.repo}.git`,
-        default_branch: 'main',
-        access_ok: true,
-        access_checked_at: new Date(),
-      }),
-    );
+    // Repos now have a surrogate uuid id (DB-generated) + an org-unique slug. Find-or-create so a
+    // re-seed doesn't collide on UNIQUE(org_id, slug); capture the id for the thread FKs.
+    let repo = await repos.findOne({ where: { org_id: o.id, slug: o.repo } });
+    if (!repo) {
+      repo = await repos.save(
+        repos.create({
+          org_id: o.id,
+          slug: o.repo,
+          name: o.repo,
+          git_url: `https://github.com/${o.slug}/${o.repo}.git`,
+          default_branch: 'main',
+          access_ok: true,
+          access_checked_at: new Date(),
+        }),
+      );
+    }
     for (const t of o.threads) {
       await threads.save(
         threads.create({
           id: t.id,
           org_id: o.id,
-          repo_id: o.repo,
+          repo_id: repo.id,
           origin: t.origin,
           title: t.title,
           base_branch: t.branch,

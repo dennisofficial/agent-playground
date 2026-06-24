@@ -30,19 +30,19 @@ export interface Decision {
   ruling: string;
 }
 
-/** The record's lifecycle. Approved ONCE upfront, then immutable for the job's duration. */
+/** The record's lifecycle. Approved ONCE upfront, then immutable for the thread's build duration. */
 export type DecisionRecordStatus = 'draft' | 'approved' | 'superseded';
 
 /** The upfront grill's locked output: the system calls + the high-level section list. */
 export interface DecisionRecord {
   /** Stable id (`decision_records.id`). */
   id: string;
-  /** The tenant (Slack team id). */
+  /** The owning organization (`org_id`). */
   orgId: string;
   /** The project this record scopes to. */
   repoId: string;
-  /** The job this record was produced for. */
-  jobId: string;
+  /** The thread this record was produced for. */
+  threadId: string;
   status: DecisionRecordStatus;
   /**
    * The agreed overview — the feature's intent, stack, constraints, and how the sections fit
@@ -52,7 +52,7 @@ export interface DecisionRecord {
   overview: string;
   /** The locked architecture/system calls. */
   decisions: Decision[];
-  /** The high-level section list (briefs) approved upfront — drives the job's `Section` rows. */
+  /** The high-level section list (briefs) approved upfront — drives the thread's `Section` rows. */
   sectionBriefs: string[];
   /** Who approved it (Dennis's id); null until approved. */
   approvedBy: string | null;

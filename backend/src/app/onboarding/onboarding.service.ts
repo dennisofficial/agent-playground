@@ -44,7 +44,10 @@ export interface ConnectRepoArgs {
 }
 
 export interface ConnectedRepo {
-  repoId: string;
+  /** The repo's uuid id (the API + child rows reference this). */
+  id: string;
+  /** The URL-safe slug (the clone/worktree/UX identity). */
+  slug: string;
   name: string;
   gitUrl: string;
   defaultBranch: string;
@@ -95,7 +98,8 @@ export class OnboardingService {
     const parsed = parseGithubRepoUrl(repoUrl);
     if (!parsed) {
       return {
-        repoId: '',
+        id: '',
+        slug: '',
         name: '',
         gitUrl: repoUrl,
         defaultBranch: args.baseBranch ?? 'main',
@@ -103,31 +107,34 @@ export class OnboardingService {
         reason: `not an HTTPS GitHub URL: ${repoUrl}`,
       };
     }
-    const repoId = slugifyRepo(parsed.repo);
+    const slug = slugifyRepo(parsed.repo);
     const name = args.displayName ?? parsed.repo;
     const baseBranch = args.baseBranch ?? 'main';
 
+    // Upsert by the org-unique slug; the surrogate uuid `id` is DB-generated (or kept on conflict).
     await this.repos.upsert(
       {
         org_id: orgId,
-        repo_id: repoId,
+        slug,
         name,
         git_url: repoUrl,
         default_branch: baseBranch,
         token_name: null,
       },
-      ['org_id', 'repo_id'],
+      ['org_id', 'slug'],
     );
+    const repo = await this.repos.findOneOrFail({ where: { org_id: orgId, slug } });
 
-    const validation = await this.validateRepo(orgId, repoId);
+    const validation = await this.validateRepo(orgId, slug);
     await this.repos.update(
-      { org_id: orgId, repo_id: repoId },
+      { id: repo.id },
       { access_ok: validation.ok, access_checked_at: new Date() },
     );
-    this.logger.log(`connected repo ${repoId} → org ${orgId} (access_ok=${validation.ok})`);
+    this.logger.log(`connected repo ${slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`);
 
     return {
-      repoId,
+      id: repo.id,
+      slug,
       name,
       gitUrl: repoUrl,
       defaultBranch: baseBranch,
@@ -169,8 +176,8 @@ export class OnboardingService {
   }
 
   /** Probe that the repo is reachable with the org's token (fails fast on a bad PAT/url). */
-  async validateRepo(orgId: string, repoId: string): Promise<ValidationResult> {
-    const repo = await this.repos.findOne({ where: { org_id: orgId, repo_id: repoId } });
+  async validateRepo(orgId: string, slug: string): Promise<ValidationResult> {
+    const repo = await this.repos.findOne({ where: { org_id: orgId, slug } });
     if (!repo?.git_url) return { ok: false, reason: 'no repo configured' };
     const parsed = parseGithubRepoUrl(repo.git_url);
     if (!parsed) return { ok: false, reason: `not an HTTPS GitHub URL: ${repo.git_url}` };

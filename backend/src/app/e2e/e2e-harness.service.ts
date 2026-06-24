@@ -15,7 +15,6 @@ import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { SANDBOX_PROVIDER } from '../sandbox';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  JobEntity,
   RepoEntity,
   ThreadEntity,
   OrganizationEntity,
@@ -60,7 +59,7 @@ export interface E2eConfig {
   baseBranch?: string;
 }
 
-const TEAM_ID = 'T-AGENT'; // matches AgentChatSurface's DEFAULT_TEAM_ID
+const TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000002'; // matches AgentChatSurface's DEFAULT_TEAM_ID (sentinel org uuid)
 const CHANNEL_REF = 'C-E2E';
 const PROJECT_ID = 'e2e-project';
 const OFFLINE_REPO_URL = 'https://github.com/atlas-e2e/sample.git';
@@ -196,7 +195,7 @@ export class E2eHarness {
     await projects.save(
       projects.create({
         org_id: TEAM_ID,
-        repo_id: PROJECT_ID,
+        slug: PROJECT_ID,
         name: 'Atlas E2E Project',
         git_url: gitUrl,
         default_branch: baseBranch,
@@ -234,7 +233,6 @@ export class E2eHarness {
     await q(`DELETE FROM phases WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM sections WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM decision_records WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(
       `DELETE FROM messages WHERE thread_id IN (
          SELECT id FROM threads WHERE org_id = $1)`,
@@ -399,11 +397,11 @@ export class E2eHarness {
       const reachedPr = !!job?.pr_url && job.status === 'done';
       record('bugfix-pr-ready', reachedPr, job ? `status=${job.status} pr=${job.pr_url ?? '-'} kind=${job.kind}` : 'no job reached PR-ready (done + pr_url)');
 
-      // Assert exactly ONE job exists on the event thread (dedup held — the duplicate spawned none).
-      const jobsOnThread = threadId
-        ? await this.repo(JobEntity).count({ where: { thread_id: threadId } })
-        : 0;
-      record('single-job', jobsOnThread === 1, `${jobsOnThread} job(s) on the event thread`);
+      // Assert exactly ONE event thread exists for the repo (dedup held — the duplicate seeded none).
+      const eventThreads = await this.repo(ThreadEntity).count({
+        where: { org_id: TEAM_ID, origin: 'event' },
+      });
+      record('single-thread', eventThreads === 1, `${eventThreads} event thread(s) on the repo`);
 
       return { name: 'autonomous', ok: steps.every((s) => s.ok), steps };
     } catch (err) {
@@ -453,12 +451,12 @@ export class E2eHarness {
       }
       record('parked-and-asked', !!parkMsg, parkMsg ? 'posted an always-ask park question in-thread' : 'no park question posted');
 
-      // Give any (erroneous) dispatch a beat, then assert NO job exists on the thread (parked, not run).
+      // Give any (erroneous) dispatch a beat, then assert NO thread reached a build (parked, not run).
       await delay(750);
-      const jobsOnThread = threadId
-        ? await this.repo(JobEntity).count({ where: { thread_id: threadId } })
-        : 0;
-      record('no-destructive-job', jobsOnThread === 0, `${jobsOnThread} job(s) on the injection thread (expected 0)`);
+      const builtThreads = await this.repo(ThreadEntity).count({
+        where: { org_id: TEAM_ID, status: 'running' },
+      });
+      record('no-destructive-build', builtThreads === 0, `${builtThreads} thread(s) reached a build (expected 0)`);
 
       return { name: 'security', ok: steps.every((s) => s.ok), steps };
     } catch (err) {
@@ -497,39 +495,39 @@ export class E2eHarness {
   }
 
   /** PR-ready = the driver's terminal `done` status WITH a recorded `pr_url`. */
-  private isPrReady(row: JobEntity | null): boolean {
+  private isPrReady(row: ThreadEntity | null): boolean {
     return !!row && row.status === 'done' && !!row.pr_url;
   }
 
   /** A terminal state the poll can stop on (so a `failed`/`cancelled` job surfaces fast, not on timeout). */
-  private isTerminal(row: JobEntity | null): boolean {
+  private isTerminal(row: ThreadEntity | null): boolean {
     return !!row && (this.isPrReady(row) || row.status === 'failed' || row.status === 'cancelled');
   }
 
   /** Poll a specific job until it reaches a terminal state (PR-ready / failed / cancelled) or times out. */
-  private async waitForPrReady(jobId: string, timeoutMs: number): Promise<JobEntity | undefined> {
+  private async waitForPrReady(jobId: string, timeoutMs: number): Promise<ThreadEntity | undefined> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
+      const row = await this.repo(ThreadEntity).findOne({ where: { id: jobId } });
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
+    return (await this.repo(ThreadEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
   /** Poll for the job on a thread (the autonomous path opens it itself) reaching a terminal state. */
   private async waitForJobOnThread(
     threadId: string | undefined,
     timeoutMs: number,
-  ): Promise<JobEntity | undefined> {
+  ): Promise<ThreadEntity | undefined> {
     if (!threadId) return undefined;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const row = await this.repo(JobEntity).findOne({ where: { thread_id: threadId } });
+      const row = await this.repo(ThreadEntity).findOne({ where: { id: threadId } });
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (await this.repo(JobEntity).findOne({ where: { thread_id: threadId } })) ?? undefined;
+    return (await this.repo(ThreadEntity).findOne({ where: { id: threadId } })) ?? undefined;
   }
 
   // ── repo identity ──────────────────────────────────────────────────────────────────────────────

@@ -2,17 +2,19 @@ import { Logger } from '@nestjs/common';
 import type { Stimulus } from '../domain';
 
 /**
- * DI token a hosting app (W3) binds its triage consumer to — exactly like `CHAT_SURFACE` on the other
- * edge. W2 ships the logging no-op below as the default binding so the pipeline is observable
- * end-to-end; W3 overrides it with `{ provide: STIMULUS_CONSUMER, useExisting: TriageService }`.
+ * DI token the downstream consumer binds to — exactly like `CHAT_SURFACE` on the other edge. The
+ * production binding is `StimulusRouter` (in `brain/`), which demuxes chat → the thread's brain session
+ * and event → `EventTriageService`. The `LoggingStimulusConsumer` below stays as a no-op fallback for
+ * headless composition.
  */
 export const STIMULUS_CONSUMER = Symbol('STIMULUS_CONSUMER');
 
 /**
  * The downstream of the intake seam: a single `consume(stimulus)` the normalized + filtered stimuli
- * flow into. W3's triage (ignore / ask / dispatch) implements this. Keeping it a port means W2 can
- * stand the whole intake pipeline up — adapters → filter → seed → consume — and prove it end-to-end
- * with a no-op, before any brain exists.
+ * flow into. Keeping it a port lets the whole intake pipeline — adapters → filter → seed → consume —
+ * be stood up and tested with a no-op.
+ *
+ * NOTE — slated for rework: see `../ARCHITECTURE.md` §7 (the union + router are leftover indirection).
  */
 export interface StimulusConsumer {
   /** Called once per surviving stimulus (chat or event), after normalization + persistence. */
@@ -20,9 +22,9 @@ export interface StimulusConsumer {
 }
 
 /**
- * The W2 default consumer — a logging NO-OP. It makes the intake pipeline observable (every surviving
- * stimulus logs its kind/source/severity/thread) without deciding anything. W3 replaces it with real
- * triage; until then this proves the seam is wired and stimuli reach the brain's doorstep.
+ * A logging NO-OP consumer — the fallback binding for headless composition. It makes the intake pipeline
+ * observable (every surviving stimulus logs its kind/source/severity/thread) without deciding anything.
+ * Production binds `StimulusRouter` instead.
  */
 export class LoggingStimulusConsumer implements StimulusConsumer {
   private readonly logger = new Logger('StimulusConsumer');

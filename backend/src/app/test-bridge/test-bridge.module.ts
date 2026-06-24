@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  JobEntity,
   MessageEntity,
   RepoEntity,
   ThreadEntity,
@@ -23,7 +22,7 @@ import { TestBridgeController } from './test-bridge.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [OrganizationEntity, RepoEntity, ThreadEntity, JobEntity, MessageEntity],
+      [OrganizationEntity, RepoEntity, ThreadEntity, MessageEntity],
       DB_CONNECTION,
     ),
   ],

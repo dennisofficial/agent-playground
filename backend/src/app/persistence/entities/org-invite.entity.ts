@@ -1,4 +1,4 @@
-import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 
 /**
@@ -10,13 +10,17 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
 @Entity({ name: 'org_invites' })
 @Index(['org_id'])
 @Index(['email'])
+@Index(['token'], { unique: true })
 export class OrgInviteEntity extends TimestampedEntity {
-  /** The invite token — the capability embedded in the invite link. */
-  @PrimaryColumn({ type: 'text' })
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
+
+  /** The invite token — the capability embedded in the invite link (unique). */
+  @Column({ type: 'text' })
   token!: string;
 
   /** FK → organizations.id */
-  @Column({ type: 'text' })
+  @Column({ type: 'uuid' })
   org_id!: string;
 
   /** The intended recipient's email. */
@@ -27,15 +31,15 @@ export class OrgInviteEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'member' })
   role!: string;
 
-  /** The member who created the invite (user id). */
-  @Column({ type: 'text' })
-  invited_by!: string;
+  /** The member who created the invite (FK → users.id; SET NULL if that user is deleted). */
+  @Column({ type: 'uuid', nullable: true })
+  invited_by!: string | null;
 
   /** Set once redeemed; a non-null value means the invite is spent. */
   @Column({ type: 'timestamptz', nullable: true })
   accepted_at!: Date | null;
 
-  /** The user who accepted (user id); null until redeemed. */
-  @Column({ type: 'text', nullable: true })
+  /** The user who accepted (FK → users.id); null until redeemed. */
+  @Column({ type: 'uuid', nullable: true })
   accepted_by!: string | null;
 }

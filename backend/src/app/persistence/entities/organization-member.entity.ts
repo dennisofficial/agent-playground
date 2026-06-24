@@ -11,11 +11,11 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
 @Index(['user_id'])
 export class OrganizationMemberEntity extends TimestampedEntity {
   /** FK → organizations.id */
-  @PrimaryColumn({ type: 'text' })
+  @PrimaryColumn({ type: 'uuid' })
   org_id!: string;
 
   /** FK → users.id */
-  @PrimaryColumn({ type: 'text' })
+  @PrimaryColumn({ type: 'uuid' })
   user_id!: string;
 
   /** 'owner' (the creator) | 'member'. */

@@ -5,14 +5,17 @@ import { AgentSessionManager } from './agent-session-manager.service';
 import { EventTriageService } from './event-triage.service';
 
 /**
- * R3 — STIMULUS ROUTER (thin; replaces the old TriageService as the STIMULUS_CONSUMER binding).
+ * STIMULUS ROUTER — the `STIMULUS_CONSUMER` binding.
  *
  * Routes by kind:
- *   - 'chat'  → AgentSessionManager (the in-sandbox SDK session brain)
- *   - 'event' → EventTriageService (the unchanged untrusted-notification triage lane)
+ *   - 'chat'  → AgentSessionManager (the thread's continuous in-sandbox Claude Code session — the brain)
+ *   - 'event' → EventTriageService (the untrusted-notification triage lane)
  *
- * No logic lives here: it is purely a demux. The split is structural — the event lane is unchanged
- * in behavior (verbatim extraction from the old TriageService); the chat lane is the new brain.
+ * No logic lives here: it is purely a demux.
+ *
+ * NOTE — slated for rework: that this router exists to immediately un-merge a `Stimulus` union by `kind`
+ * is the tell that the union earns nothing. The intended direction is to drop the union + this router and
+ * make an event the *opening message* to a spawned thread's brain. See `../ARCHITECTURE.md` §7.
  */
 @Injectable()
 export class StimulusRouter implements StimulusConsumer {

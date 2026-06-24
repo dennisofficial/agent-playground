@@ -32,7 +32,7 @@ export interface WebInboundOptions {
   orgId?: string;
 }
 
-const DEFAULT_TEAM_ID = 'T-WEB';
+const DEFAULT_TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000001'; // sentinel org uuid (web default tenant)
 const DEFAULT_AUTHOR_ID = 'U-OPERATOR';
 const DEFAULT_AUTHOR_NAME = 'Operator';
 

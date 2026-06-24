@@ -21,8 +21,8 @@ export type SessionMode = 'plan' | 'execute' | 'review' | 'investigate';
 export interface SessionRef {
   /** Stable session id (the engine conversation handle). */
   id: string;
-  /** The job this session serves. */
-  jobId: string;
+  /** The thread this session serves. */
+  threadId: string;
   /** The phase this session is building (null for non-phase sessions, e.g. planning). */
   phaseId: string | null;
   engine: SessionEngine;

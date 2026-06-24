@@ -15,7 +15,6 @@ import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  JobEntity,
   PhaseEntity,
   RepoEntity,
   SectionEntity,
@@ -59,7 +58,6 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
     AutoFixModule,
     TypeOrmModule.forFeature(
       [
-        JobEntity,
         SectionEntity,
         PhaseEntity,
         DecisionRecordEntity,

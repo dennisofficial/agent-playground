@@ -1,11 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { Decision, Job, JobKind } from '../domain';
+import type { Decision, Thread, ThreadKind } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  JobEntity,
   MessageEntity,
   SectionEntity,
   StimulusEntity,
@@ -21,9 +20,9 @@ export interface ThreadRoute {
   threadTs: string | null;
 }
 
-/** The persisted output of a locked plan: the job + its decision record + its section rows. */
+/** The persisted output of a locked plan: the thread (build unit) + its decision record id. */
 export interface PersistedPlan {
-  job: Job;
+  thread: Thread;
   decisionRecordId: string;
 }
 
@@ -32,8 +31,10 @@ const ORDINAL_GAP = 10;
 
 /**
  * W3 — the BRAIN's persistence. The single place the brain reads the thread transcript and writes the
- * locked plan (decision record + job + section rows) on the 'app' connection. Keeps the
- * conversational brain free of repository wiring — it speaks domain shapes, this maps them to rows.
+ * locked plan (decision record + section rows) on the 'app' connection. The THREAD is the build unit
+ * (the former `jobs` layer is folded into it), so "open a job" / "load a job" here are thread status
+ * transitions on the same row. Keeps the conversational brain free of repository wiring — it speaks
+ * domain shapes, this maps them to rows.
  *
  * The detailed per-section PHASE plan is W4's job, NOT the brain's: this writes the high-level section
  * BRIEFS (each a `pending` section with no `plan` yet); W4's driver fills `plan` + the phase rows
@@ -46,8 +47,6 @@ export class BrainStoreService {
     private readonly threads: Repository<ThreadEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
-    @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly jobs: Repository<JobEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(SectionEntity, DB_CONNECTION)
@@ -99,63 +98,54 @@ export class BrainStoreService {
   }
 
   /**
-   * Find an open (scoping) job already on this thread, if any — so a multi-turn grill continues ONE job
-   * rather than minting a fresh one per message. Returns the job id or null.
+   * If this thread is already being scoped (`status='scoping'`), return its id — so a multi-turn grill
+   * continues ONE build rather than re-anchoring per message. Null otherwise.
    */
   async openJobOnThread(threadId: string): Promise<string | null> {
-    const row = await this.jobs.findOne({
-      where: { thread_id: threadId, status: 'scoping' },
+    const row = await this.threads.findOne({
+      where: { id: threadId, status: 'scoping' },
     });
     return row?.id ?? null;
   }
 
-  /** Open a fresh `scoping` job on a thread (the upfront grill's anchor). */
+  /** Anchor the upfront grill: flip the thread into the build lifecycle (`scoping`) + set intent/title. */
   async openJob(input: {
     orgId: string;
     repoId: string;
     threadId: string;
     title: string;
-    kind: JobKind;
+    kind: ThreadKind;
   }): Promise<string> {
-    const row = await this.jobs.save(
-      this.jobs.create({
-        org_id: input.orgId,
-        repo_id: input.repoId,
-        thread_id: input.threadId,
-        kind: input.kind,
-        status: 'scoping',
-        title: input.title,
-        decision_record_id: null,
-        feature_branch: null,
-        pr_url: null,
-      }),
+    await this.threads.update(
+      { id: input.threadId },
+      { kind: input.kind, status: 'scoping', title: input.title },
     );
-    return row.id;
+    return input.threadId;
   }
 
   /**
-   * Persist a LOCKED plan: the decision record (draft) + the section rows + flip the job to
+   * Persist a LOCKED plan: the decision record (draft) + the section rows + flip the thread to
    * `awaiting_approval`. Writes the high-level section BRIEFS only (gap-numbered, no `plan` yet — W4
-   * fills the detailed phase plan). Returns the job (domain shape) + the decision record id.
+   * fills the detailed phase plan). Returns the thread (domain shape) + the decision record id.
    */
   async persistPlan(input: {
     orgId: string;
     repoId: string;
-    jobId: string;
+    threadId: string;
     title: string;
-    kind: JobKind;
+    kind: ThreadKind;
     overview: string;
     decisions: Decision[];
     sectionBriefs: string[];
   }): Promise<PersistedPlan> {
-    // A re-propose (request_changes → reopenScoping → the grill proposes again) reuses the SAME scoping
-    // job, so any prior DRAFT sections/record from the earlier proposal are still here. Clear them first:
-    // sections MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal) collision),
-    // and the prior draft record is marked `superseded` (audit trail, never an approved one). Idempotent
-    // on the first proposal (nothing to clear).
-    await this.sections.delete({ job_id: input.jobId });
+    // A re-propose (request_changes → reopenScoping → the grill proposes again) reuses the SAME thread,
+    // so any prior DRAFT sections/record from the earlier proposal are still here. Clear them first:
+    // sections MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(thread_id, ordinal)
+    // collision), and the prior draft record is marked `superseded` (audit trail, never an approved
+    // one). Idempotent on the first proposal (nothing to clear).
+    await this.sections.delete({ thread_id: input.threadId });
     await this.records.update(
-      { job_id: input.jobId, status: 'draft' },
+      { thread_id: input.threadId, status: 'draft' },
       { status: 'superseded' },
     );
 
@@ -163,7 +153,7 @@ export class BrainStoreService {
       this.records.create({
         org_id: input.orgId,
         repo_id: input.repoId,
-        job_id: input.jobId,
+        thread_id: input.threadId,
         status: 'draft',
         overview: input.overview,
         decisions: input.decisions,
@@ -176,7 +166,7 @@ export class BrainStoreService {
     await this.sections.save(
       input.sectionBriefs.map((brief, i) =>
         this.sections.create({
-          job_id: input.jobId,
+          thread_id: input.threadId,
           org_id: input.orgId,
           ordinal: (i + 1) * ORDINAL_GAP,
           brief,
@@ -188,8 +178,8 @@ export class BrainStoreService {
       ),
     );
 
-    await this.jobs.update(
-      { id: input.jobId },
+    await this.threads.update(
+      { id: input.threadId },
       {
         kind: input.kind,
         title: input.title,
@@ -198,51 +188,54 @@ export class BrainStoreService {
       },
     );
 
-    const job = await this.loadJob(input.jobId);
-    return { job, decisionRecordId: record.id };
+    const thread = await this.loadJob(input.threadId);
+    return { thread, decisionRecordId: record.id };
   }
 
-  /** Mark a decision record approved + flip its job to `running` (the dispatch precondition). */
-  async approve(jobId: string, decisionRecordId: string, approvedBy: string): Promise<Job> {
+  /** Mark a decision record approved + flip its thread to `running` (the dispatch precondition). */
+  async approve(threadId: string, decisionRecordId: string, approvedBy: string): Promise<Thread> {
     const now = new Date();
     await this.records.update(
       { id: decisionRecordId },
       { status: 'approved', approved_by: approvedBy, approved_at: now },
     );
-    await this.jobs.update({ id: jobId }, { status: 'running' });
-    return this.loadJob(jobId);
+    await this.threads.update({ id: threadId }, { status: 'running' });
+    return this.loadJob(threadId);
   }
 
-  /** Flip a job back to `scoping` (a rejected / change-requested plan returns to the grill). */
-  async reopenScoping(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { status: 'scoping' });
+  /** Flip a thread back to `scoping` (a rejected / change-requested plan returns to the grill). */
+  async reopenScoping(threadId: string): Promise<void> {
+    await this.threads.update({ id: threadId }, { status: 'scoping' });
   }
 
-  /** Cancel a job (a denied plan). */
-  async cancel(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { status: 'cancelled' });
+  /** Cancel a thread's build (a denied plan). */
+  async cancel(threadId: string): Promise<void> {
+    await this.threads.update({ id: threadId }, { status: 'cancelled' });
   }
 
-  /** Load a job row as the domain `Job` shape. */
-  async loadJob(jobId: string): Promise<Job> {
-    const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
-    return toJob(row);
+  /** Load a thread row as the domain `Thread` shape. */
+  async loadJob(threadId: string): Promise<Thread> {
+    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+    return toThread(row);
   }
 }
 
-/** Map an `JobEntity` row to the in-memory `Job` shape. */
-function toJob(row: JobEntity): Job {
+/** Map a `ThreadEntity` row to the in-memory `Thread` shape. */
+function toThread(row: ThreadEntity): Thread {
   return {
     id: row.id,
     orgId: row.org_id,
     repoId: row.repo_id,
-    threadId: row.thread_id,
-    kind: row.kind as JobKind,
-    status: row.status as Job['status'],
+    origin: row.origin as Thread['origin'],
+    surfaceThreadRef: row.surface_thread_ref,
     title: row.title,
+    baseBranch: row.base_branch,
+    kind: row.kind as ThreadKind | null,
+    status: row.status as Thread['status'],
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     prUrl: row.pr_url,
+    prNumber: row.pr_number,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

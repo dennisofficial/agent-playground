@@ -7,7 +7,6 @@ import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  JobEntity,
   MessageEntity,
   RepoEntity,
   SectionEntity,
@@ -62,7 +61,6 @@ import { PlanReviewService } from './plan-review.service';
       [
         ThreadEntity,
         MessageEntity,
-        JobEntity,
         DecisionRecordEntity,
         SectionEntity,
         StimulusEntity,

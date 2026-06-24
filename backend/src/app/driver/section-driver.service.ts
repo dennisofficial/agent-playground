@@ -9,7 +9,7 @@ import {
   type DecisionClassification,
 } from '../decision-gate';
 import { AutoFixStage } from '../autofix';
-import type { DecisionRecord, Job, Phase } from '../domain';
+import type { DecisionRecord, Phase, Thread } from '../domain';
 import { EngineAuthError, type EngineEvent } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { CHAT_SURFACE, type ChatSurface } from '../surface';
@@ -111,9 +111,9 @@ export class SectionDriver implements JobDispatcher {
    * off the deterministic drive ASYNC — return promptly so the brain doesn't block on the whole build.
    * Errors inside the drive are caught + recorded (the job flips to `failed`), never surfaced here.
    */
-  async dispatch(job: Job): Promise<void> {
+  async dispatch(job: Thread): Promise<void> {
     this.logger.log(
-      `dispatch job=${job.id} kind=${job.kind} title="${job.title}"`,
+      `dispatch thread=${job.id} kind=${job.kind} title="${job.title}"`,
     );
     void this.drive(job.id).catch((err) => {
       this.logger.error(
@@ -309,7 +309,7 @@ export class SectionDriver implements JobDispatcher {
    *   g. summarize the handoff for the next section.
    */
   private async runSection(
-    job: Job,
+    job: Thread,
     record: DecisionRecord | null,
     route: JobRoute,
     repo: ResolvedRepo,
@@ -410,7 +410,7 @@ export class SectionDriver implements JobDispatcher {
    * (returns `planned: undefined` to signal "no re-review needed").
    */
   private async planSection(
-    job: Job,
+    job: Thread,
     record: DecisionRecord | null,
     sandbox: FeatureSandbox,
     section: DriverSection,
@@ -504,7 +504,7 @@ export class SectionDriver implements JobDispatcher {
    * non-ask classifications for the visibility post.
    */
   private async gateSection(
-    job: Job,
+    job: Thread,
     route: JobRoute,
     record: DecisionRecord | null,
     section: DriverSection,
@@ -621,7 +621,7 @@ export class SectionDriver implements JobDispatcher {
    * Returns each phase's report (the handoff inputs).
    */
   private async executePhases(
-    job: Job,
+    job: Thread,
     route: JobRoute,
     sandbox: FeatureSandbox,
     section: DriverSection,
@@ -645,7 +645,7 @@ export class SectionDriver implements JobDispatcher {
    *  the work. A per-phase wall-clock timeout aborts a runaway turn; an optional verify command gates
    *  the commit so broken output never advances the cursor (issues #3, #4). */
   private async runPhase(
-    job: Job,
+    job: Thread,
     route: JobRoute,
     sandbox: FeatureSandbox,
     section: DriverSection,
@@ -737,7 +737,7 @@ export class SectionDriver implements JobDispatcher {
    * done, and post "PR ready" in-thread. Sections stacked on one branch ⇒ one PR.
    */
   private async finishWithPr(
-    job: Job,
+    job: Thread,
     record: DecisionRecord | null,
     route: JobRoute,
     repo: ResolvedRepo,
@@ -749,7 +749,7 @@ export class SectionDriver implements JobDispatcher {
         worktreePath: sandbox.worktreePath,
         sandboxKey: sandboxKey(sandbox),
         gitRange: `origin/${repo.defaultBranch}...HEAD`,
-        intent: record?.overview ?? job.title,
+        intent: record?.overview ?? job.title ?? '',
         label: 'PR-tail',
         ...(sandbox.containerId
           ? {
@@ -779,19 +779,15 @@ export class SectionDriver implements JobDispatcher {
       repo: repo.repo,
       head: sandbox.branch,
       base: repo.defaultBranch,
-      title: job.title,
+      title: job.title ?? 'Atlas build',
       body: prBody(job, record),
       draft: false,
     });
 
-    await this.store.setPrReady(job.id, opened.url);
-    // Record the PR on the thread sandbox so the merge poll can watch it and reclaim the sandbox once
-    // the PR merges/closes (best-effort — no-op for legacy threads with no sandbox row).
-    await this.threadLifecycle
-      .recordPr(job.threadId, job.orgId, opened.url, opened.number)
-      .catch((err) => this.logger.debug(`recordPr failed for job=${job.id}: ${err}`));
+    // The PR (url + number) lives on the THREAD now — one owner — so the merge poll watches it there.
+    await this.store.setPrReady(job.id, opened.url, opened.number);
     this.logger.log(
-      `job=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`,
+      `thread=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`,
     );
     await this.post(route, `:tada: PR ready for review: ${opened.url}`);
   }
@@ -814,11 +810,11 @@ export class SectionDriver implements JobDispatcher {
    * keyed (one container per branch), byte-identical to before R2.
    */
   private async ensureSandbox(
-    job: Job,
+    job: Thread,
     repo: ResolvedRepo,
   ): Promise<FeatureSandbox> {
     // ── R2: per-thread sandbox path ──────────────────────────────────────────────────────────────
-    const ensured = await this.threadLifecycle.ensureContainer(job.threadId, job.orgId);
+    const ensured = await this.threadLifecycle.ensureContainer(job.id, job.orgId);
     if (ensured) {
       const branch = ensured.sandbox.branch; // the thread's feature branch is the source of truth
       if (job.featureBranch !== branch) await this.store.setFeatureBranch(job.id, branch);
@@ -1002,7 +998,7 @@ function parkQuestion(
   ].join('\n');
 }
 
-function prBody(job: Job, record: DecisionRecord | null): string {
+function prBody(job: Thread, record: DecisionRecord | null): string {
   const lines = [`Automated by Atlas v2 for **${job.title}**.`, ''];
   if (record?.overview) lines.push(record.overview, '');
   if (record?.decisions.length) {

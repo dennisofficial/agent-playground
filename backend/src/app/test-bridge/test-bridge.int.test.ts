@@ -31,7 +31,7 @@ import { TestBridgeController } from './test-bridge.controller';
  * This proves the bridge's wiring + the seed/say/thread/job seams for real (channel routing,
  * sendFromHuman → brain → post capture, repo reads) without billing an LLM or opening a PR.
  */
-const TEAM_ID = 'T-TESTBRIDGE-IT';
+const TEAM_ID = '22222222-2222-4222-8222-222222222222'; // sentinel org uuid
 const PROJECT_ID = 'testbridge-it';
 const CHANNEL_REF = 'C-TESTBRIDGE-IT';
 
@@ -125,28 +125,11 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
   }, 30_000);
 });
 
-/** Resolve the job anchored on the thread whose surface_thread_ref == threadTs. */
-async function jobOnThread(ds: DataSource, threadTs: string): Promise<string | null> {
-  const rows: Array<{ id: string }> = await ds.query(
-    `SELECT j.id FROM jobs j
-       JOIN threads t ON t.id = j.thread_id
-      WHERE t.surface_thread_ref = $1
-      ORDER BY j.created_at DESC LIMIT 1`,
-    [threadTs],
-  );
-  return rows[0]?.id ?? null;
-}
-
-/** Delete every row this test's synthetic tenant owns (fixed ids → a re-run would PK-collide). */
+/** Delete every row this test's synthetic tenant owns (fixed ids → a re-run would PK-collide).
+ *  The FK cascade from `threads` removes messages/sections/phases/decision_records/stimuli/sandboxes. */
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
-  await q(`DELETE FROM phases WHERE org_id = $1`);
-  await q(`DELETE FROM sections WHERE org_id = $1`);
-  await q(`DELETE FROM decision_records WHERE org_id = $1`);
-  await q(`DELETE FROM jobs WHERE org_id = $1`);
-  await q(
-    `DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE org_id = $1)`,
-  );
-  await q(`DELETE FROM stimuli WHERE org_id = $1`);
   await q(`DELETE FROM threads WHERE org_id = $1`);
+  await q(`DELETE FROM repos WHERE org_id = $1`);
+  await q(`DELETE FROM organizations WHERE id = $1`);
 }

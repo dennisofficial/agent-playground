@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { ChatStimulus, Job } from '../domain';
+import type { ChatStimulus, Thread, ThreadKind } from '../domain';
 import { MemoryStore } from '../memory';
 import { CHAT_SURFACE, type ChatSurface, type DecisionApprovalCard } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -251,10 +251,10 @@ export class AgentSessionManager {
         // Ensure there's an open scoping job on this thread.
         const jobId = await this.ensureJob(stimulus, overview, 'feature');
 
-        const { job, decisionRecordId } = await this.store.persistPlan({
+        const { thread: job, decisionRecordId } = await this.store.persistPlan({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
-          jobId,
+          threadId: jobId,
           title: jobTitle(overview),
           kind: 'feature',
           overview,
@@ -348,7 +348,7 @@ export class AgentSessionManager {
    */
   async requestApprovalAndAct(
     stimulus: ChatStimulus,
-    job: Job,
+    job: Thread,
     decisionRecordId: string,
     card: DecisionApprovalCard,
   ): Promise<void> {
@@ -434,7 +434,7 @@ export class AgentSessionManager {
   private async ensureJob(
     stimulus: ChatStimulus,
     title: string,
-    kind: Job['kind'],
+    kind: ThreadKind,
   ): Promise<string> {
     const existing = await this.store.openJobOnThread(stimulus.threadId);
     if (existing) return existing;

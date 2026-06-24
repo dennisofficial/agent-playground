@@ -61,6 +61,7 @@ function makeSvc(
   const orgRows: OrganizationEntity[] = opts.orgRows ?? [
     { id: 'O1', name: 'HannibalAI', slug: 'hannibalai', status: 'onboarding' } as OrganizationEntity,
   ];
+  const orgDeletes: Array<Record<string, unknown>> = [];
   const orgs = {
     findOne: async ({ where }: { where: { id?: string; slug?: string } }) => {
       if (where.id !== undefined) return orgRows.find((o) => o.id === where.id) ?? null;
@@ -73,6 +74,10 @@ function makeSvc(
       if (i >= 0) orgRows[i] = x;
       else orgRows.push(x);
       return x;
+    },
+    delete: async (criteria: Record<string, unknown>) => {
+      orgDeletes.push(criteria);
+      return { affected: 1 };
     },
   } as unknown as Repository<OrganizationEntity>;
   const users = {} as unknown as Repository<UserEntity>;
@@ -112,7 +117,7 @@ function makeSvc(
     moduleRef,
     env,
   );
-  return { svc, inviteRows, memberRows, orgRows, closed, deletes };
+  return { svc, inviteRows, memberRows, orgRows, closed, deletes, orgDeletes };
 }
 
 describe('OrganizationService invites', () => {
@@ -171,32 +176,24 @@ describe('OrganizationService rename', () => {
 });
 
 describe('OrganizationService deleteOrg', () => {
-  it('closes every thread then sweeps all org-scoped rows (org deleted last)', async () => {
-    const { svc, closed, deletes } = makeSvc({ threadIds: ['T1', 'T2'] });
+  it('closes every thread (container + worktree) then deletes the org — FK cascade sweeps the rest', async () => {
+    const { svc, closed, orgDeletes } = makeSvc({ threadIds: ['T1', 'T2'] });
     await svc.deleteOrg('O1');
 
-    // Threads are torn down (container + worktree) before the DB rows go.
+    // Threads are torn down (container + worktree) before the DB row goes.
     expect(closed).toEqual([
       { threadId: 'T1', orgId: 'O1' },
       { threadId: 'T2', orgId: 'O1' },
     ]);
 
-    const entities = deletes.map((d) => d.entity);
-    expect(entities).toContain('MessageEntity');
-    expect(entities).toContain('ThreadEntity');
-    expect(entities).toContain('RepoEntity');
-    expect(entities).toContain('OrganizationMemberEntity');
-    expect(entities.at(-1)).toBe('OrganizationEntity'); // org row deleted last
-    // Messages are swept by thread_id, everything else by org_id.
-    expect(deletes.find((d) => d.entity === 'MessageEntity')?.criteria).toMatchObject({ thread_id: expect.anything() });
-    expect(deletes.find((d) => d.entity === 'ThreadEntity')?.criteria).toEqual({ org_id: 'O1' });
+    // A single scoped org delete — the DB's ON DELETE CASCADE removes every dependent row.
+    expect(orgDeletes).toEqual([{ id: 'O1' }]);
   });
 
-  it('skips thread teardown + message delete when the org has no threads', async () => {
-    const { svc, closed, deletes } = makeSvc({ threadIds: [] });
+  it('deletes the org directly when it has no threads (nothing to tear down)', async () => {
+    const { svc, closed, orgDeletes } = makeSvc({ threadIds: [] });
     await svc.deleteOrg('O1');
     expect(closed).toHaveLength(0);
-    expect(deletes.map((d) => d.entity)).not.toContain('MessageEntity');
-    expect(deletes.at(-1)?.entity).toBe('OrganizationEntity');
+    expect(orgDeletes).toEqual([{ id: 'O1' }]);
   });
 });
