@@ -12,6 +12,7 @@ import { IsOptional, IsString } from 'class-validator';
 import { Repository } from 'typeorm';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
+import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasRepo } from '../persistence/entities';
 import { OnboardingService, type ConnectedRepo } from './onboarding.service';
@@ -34,7 +35,8 @@ interface RepoView {
 
 /**
  * `/web/orgs/:orgId/repos` — connect + list the org's GitHub repos. POST validates reachability with the
- * org's token (persisting `access_ok`) and tries to activate the org. Membership-gated.
+ * org's token (persisting `access_ok`) and tries to activate the org. Membership-gated; connecting (POST)
+ * is an Administer action — owner only (`OrgOwnerGuard`) since it consumes the org's GitHub token.
  */
 @Controller('web/orgs/:orgId/repos')
 @UseGuards(OrgMembershipGuard)
@@ -47,6 +49,7 @@ export class RepoController {
   ) {}
 
   @Post()
+  @UseGuards(OrgOwnerGuard)
   async connect(
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: ConnectRepoDto,

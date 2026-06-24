@@ -10,6 +10,7 @@ import {
 import { InviteController } from './invite.controller';
 import { OrgController } from './org.controller';
 import { OrgMembershipGuard } from './org-membership.guard';
+import { OrgOwnerGuard } from './org-owner.guard';
 import { OrganizationService } from './organization.service';
 
 /**
@@ -26,7 +27,7 @@ import { OrganizationService } from './organization.service';
     ),
   ],
   controllers: [OrgController, InviteController],
-  providers: [OrganizationService, OrgMembershipGuard],
-  exports: [OrganizationService, OrgMembershipGuard],
+  providers: [OrganizationService, OrgMembershipGuard, OrgOwnerGuard],
+  exports: [OrganizationService, OrgMembershipGuard, OrgOwnerGuard],
 })
 export class OrgModule {}

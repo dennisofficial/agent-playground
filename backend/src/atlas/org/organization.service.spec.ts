@@ -64,7 +64,7 @@ function makeSvc(opts: { invite?: Partial<AtlasOrgInvite>; alreadyMember?: boole
 describe('OrganizationService invites', () => {
   it('createInvite returns a copy-paste link with FRONTEND_HOST + the token', async () => {
     const { svc } = makeSvc();
-    const invite = await svc.createInvite('O1', 'B@X.com', 'member', 'A');
+    const invite = await svc.createInvite('O1', 'B@X.com', 'A');
     expect(invite.email).toBe('b@x.com'); // lower-cased
     expect(invite.link).toBe(`http://host/invites/${invite.token}`);
   });

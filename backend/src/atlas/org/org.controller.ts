@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -12,11 +11,12 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsString, MinLength } from 'class-validator';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import type { AtlasUser } from '../persistence/entities';
 import { CurrentOrg, type CurrentOrgCtx } from './current-org.decorator';
 import { OrgMembershipGuard } from './org-membership.guard';
+import { OrgOwnerGuard } from './org-owner.guard';
 import {
   OrganizationService,
   type InviteView,
@@ -33,22 +33,17 @@ class CreateOrgDto {
 class InviteDto {
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email!: string;
-
-  @IsOptional()
-  @IsIn(['member', 'admin'])
-  role?: 'member' | 'admin';
-}
-
-function assertCanManage(org: CurrentOrgCtx): void {
-  if (org.role !== 'owner' && org.role !== 'admin') {
-    throw new ForbiddenException('Only owners and admins can manage members');
-  }
 }
 
 /**
  * `/web/orgs` — organization CRUD + membership/invites for the web console. Gated by the global
  * `AtlasAuthGuard` (logged in); `:orgId` routes additionally require `OrgMembershipGuard`. Creating an
  * org makes the caller its owner. Invites are copy-paste links redeemed via `/web/invites/:token`.
+ *
+ * Capability tiers (see `OrgOwnerGuard`): roles are just `owner` and `member`. Any member may read
+ * org/members and OPERATE on threads; only the `owner` may ADMINISTER — manage members (invites) and, in
+ * sibling controllers, set credentials and connect repos. Invite listing is owner-only because the rows
+ * carry the live invite-link tokens.
  */
 @Controller('web/orgs')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -98,33 +93,31 @@ export class OrgController {
     return this.orgs.membersOf(org.id);
   }
 
-  /** `POST /web/orgs/:orgId/invites` — create a copy-paste invite (owner/admin). Returns the link. */
+  /** `POST /web/orgs/:orgId/invites` — create a copy-paste invite (owner only). Returns the link. */
   @Post(':orgId/invites')
-  @UseGuards(OrgMembershipGuard)
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async invite(
     @CurrentUser() user: AtlasUser,
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: InviteDto,
   ): Promise<InviteView> {
-    assertCanManage(org);
-    return this.orgs.createInvite(org.id, body.email, body.role ?? 'member', user.id);
+    return this.orgs.createInvite(org.id, body.email, user.id);
   }
 
-  /** `GET /web/orgs/:orgId/invites` — pending invites. */
+  /** `GET /web/orgs/:orgId/invites` — pending invites (owner only; rows carry live invite tokens). */
   @Get(':orgId/invites')
-  @UseGuards(OrgMembershipGuard)
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async invites(@CurrentOrg() org: CurrentOrgCtx): Promise<InviteView[]> {
     return this.orgs.listInvites(org.id);
   }
 
-  /** `DELETE /web/orgs/:orgId/invites/:token` — revoke a pending invite (owner/admin). */
+  /** `DELETE /web/orgs/:orgId/invites/:token` — revoke a pending invite (owner only). */
   @Delete(':orgId/invites/:token')
-  @UseGuards(OrgMembershipGuard)
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async revoke(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('token') token: string,
   ): Promise<{ ok: boolean }> {
-    assertCanManage(org);
     await this.orgs.revokeInvite(org.id, token);
     return { ok: true };
   }

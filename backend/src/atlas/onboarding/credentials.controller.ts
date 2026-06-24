@@ -2,6 +2,7 @@ import { Body, Controller, Get, Put, UseGuards, UsePipes, ValidationPipe } from 
 import { IsIn, IsOptional, IsString } from 'class-validator';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
+import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OnboardingService, type ValidationResult } from './onboarding.service';
 import { TenantCredentialStore, type TenantCredentialPatch } from './tenant-credential.store';
 
@@ -16,7 +17,8 @@ class SetCredentialsDto {
 /**
  * `/web/orgs/:orgId/credentials` — set + inspect the org's encrypted credentials. PUT writes through the
  * single encrypt-on-write path, validates the Anthropic key (1-token probe), and tries to activate the
- * org. GET returns presence flags only (never secret values). Membership-gated.
+ * org. GET returns presence flags only (never secret values). Membership-gated; writing (PUT) is an
+ * Administer action — owner only (`OrgOwnerGuard`).
  */
 @Controller('web/orgs/:orgId/credentials')
 @UseGuards(OrgMembershipGuard)
@@ -28,6 +30,7 @@ export class OrgCredentialsController {
   ) {}
 
   @Put()
+  @UseGuards(OrgOwnerGuard)
   async set(
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: SetCredentialsDto,

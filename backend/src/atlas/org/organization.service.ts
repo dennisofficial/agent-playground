@@ -131,20 +131,16 @@ export class OrganizationService {
 
   // ── invites ──────────────────────────────────────────────────────────────────────────────────────
 
-  /** Create a copy-paste invite for `email`. Returns the link the operator shares. */
-  async createInvite(
-    orgId: string,
-    email: string,
-    role: string,
-    invitedBy: string,
-  ): Promise<InviteView> {
+  /** Create a copy-paste invite for `email`. Invites always grant `member` (the only invitable role —
+   *  `owner` is the creator). Returns the link the operator shares. */
+  async createInvite(orgId: string, email: string, invitedBy: string): Promise<InviteView> {
     const token = randomUUID();
     const row = await this.invites.save(
       this.invites.create({
         token,
         org_id: orgId,
         email: email.toLowerCase(),
-        role: role === 'admin' ? 'admin' : 'member',
+        role: 'member',
         invited_by: invitedBy,
         accepted_at: null,
         accepted_by: null,
