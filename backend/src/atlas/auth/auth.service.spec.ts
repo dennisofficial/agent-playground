@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Repository } from 'typeorm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,8 +16,8 @@ function makeUser(over: Partial<AtlasUser> = {}): AtlasUser {
     id: 'u1',
     email: 'a@b.com',
     password_hash: 'hashed:correct',
+    name: 'A',
     role: 'operator',
-    is_approved: true,
     created_at: new Date(),
     updated_at: new Date(),
     ...over,
@@ -54,17 +54,20 @@ describe('AuthService', () => {
   describe('register', () => {
     it('rejects a duplicate email with 409', async () => {
       users.findOne.mockResolvedValue(makeUser());
-      await expect(service.register('a@b.com', 'password1')).rejects.toBeInstanceOf(ConflictException);
+      await expect(
+        service.register('a@b.com', 'password1', 'A', res as unknown as Response),
+      ).rejects.toBeInstanceOf(ConflictException);
       expect(users.save).not.toHaveBeenCalled();
     });
 
-    it('persists an UNAPPROVED account and rejects with the pending message', async () => {
+    it('creates an account and immediately issues a session (no approval gate)', async () => {
       users.findOne.mockResolvedValue(null);
-      await expect(service.register('new@b.com', 'password1')).rejects.toBeInstanceOf(ForbiddenException);
+      const session = await service.register('new@b.com', 'password1', 'New', res as unknown as Response);
       expect(users.save).toHaveBeenCalledOnce();
       const saved = users.create.mock.calls[0][0];
-      expect(saved.is_approved).toBe(false);
-      expect(saved.password_hash).toBe('hashed:password1');
+      expect(saved).toMatchObject({ email: 'new@b.com', name: 'New', password_hash: 'hashed:password1', role: 'operator' });
+      expect(session).toMatchObject({ email: 'new@b.com', name: 'New' });
+      expect(res.cookie).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -84,20 +87,12 @@ describe('AuthService', () => {
       expect(res.cookie).not.toHaveBeenCalled();
     });
 
-    it('rejects an UNAPPROVED account with 403', async () => {
-      users.findOne.mockResolvedValue(makeUser({ is_approved: false }));
-      await expect(service.login('a@b.com', 'correct', res as unknown as Response)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
-    });
-
-    it('sets both cookies and returns the session for approved creds', async () => {
+    it('sets both cookies and returns the session for valid creds', async () => {
       users.findOne.mockResolvedValue(makeUser());
       const session = await service.login('a@b.com', 'correct', res as unknown as Response);
-      expect(session).toEqual({ id: 'u1', email: 'a@b.com' });
+      expect(session).toEqual({ id: 'u1', email: 'a@b.com', name: 'A' });
       const names = res.cookie.mock.calls.map((c) => c[0]);
       expect(names).toEqual(['access_token', 'refresh_token']);
-      // dev (NODE_ENV !== production) → non-secure so the cookie sticks over http.
       expect(res.cookie.mock.calls[0][2]).toMatchObject({ httpOnly: true, sameSite: 'lax', secure: false });
     });
   });
@@ -108,7 +103,7 @@ describe('AuthService', () => {
       await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
-    it('reissues cookies for a valid refresh token of an approved user', async () => {
+    it('reissues cookies for a valid refresh token', async () => {
       const req = { cookies: { refresh_token: 'rt' } } as unknown as Request;
       jwt.verifyRefreshToken.mockResolvedValue({ sub: 'u1' });
       users.findOne.mockResolvedValue(makeUser());
@@ -116,10 +111,10 @@ describe('AuthService', () => {
       expect(res.cookie).toHaveBeenCalledTimes(2);
     });
 
-    it('rejects when the user is no longer approved', async () => {
+    it('rejects when the user no longer exists', async () => {
       const req = { cookies: { refresh_token: 'rt' } } as unknown as Request;
       jwt.verifyRefreshToken.mockResolvedValue({ sub: 'u1' });
-      users.findOne.mockResolvedValue(makeUser({ is_approved: false }));
+      users.findOne.mockResolvedValue(null);
       await expect(service.refresh(req, res as unknown as Response)).rejects.toBeInstanceOf(UnauthorizedException);
     });
   });
@@ -131,24 +126,23 @@ describe('AuthService', () => {
       expect(users.save).not.toHaveBeenCalled();
     });
 
-    it('provisions an approved admin when seed env is set and none exists', async () => {
+    it('provisions an admin when seed env is set and none exists', async () => {
       env.get.mockImplementation((k: string) =>
         k === 'ADMIN_SEED_EMAIL' ? 'boss@atlas.dev' : k === 'ADMIN_SEED_PASSWORD' ? 'secret123' : undefined,
       );
       users.findOne.mockResolvedValue(null);
       await service.onApplicationBootstrap();
       const seeded = users.create.mock.calls[0][0];
-      expect(seeded).toMatchObject({ email: 'boss@atlas.dev', role: 'admin', is_approved: true });
+      expect(seeded).toMatchObject({ email: 'boss@atlas.dev', role: 'admin' });
     });
 
-    it('re-approves an existing but blocked seed admin', async () => {
+    it('no-ops when the seed admin already exists', async () => {
       env.get.mockImplementation((k: string) =>
         k === 'ADMIN_SEED_EMAIL' ? 'boss@atlas.dev' : k === 'ADMIN_SEED_PASSWORD' ? 'secret123' : undefined,
       );
-      const existing = makeUser({ email: 'boss@atlas.dev', is_approved: false });
-      users.findOne.mockResolvedValue(existing);
+      users.findOne.mockResolvedValue(makeUser({ email: 'boss@atlas.dev' }));
       await service.onApplicationBootstrap();
-      expect(users.save).toHaveBeenCalledWith(expect.objectContaining({ is_approved: true }));
+      expect(users.save).not.toHaveBeenCalled();
     });
   });
 });

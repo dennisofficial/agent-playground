@@ -22,9 +22,7 @@ const ROUTE: ProjectRoute = {
   orgId: 'T1',
   repoId: 'web',
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  channel: { id: 'chan-1' } as any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  project: { org_id: 'T1', repo_id: 'web', git_url: 'https://github.com/acme/web.git' } as any,
+  repo: { org_id: 'T1', repo_id: 'web', git_url: 'https://github.com/acme/web.git' } as any,
 };
 
 function fakeRouting(route: ProjectRoute | null): ProjectRoutingService {

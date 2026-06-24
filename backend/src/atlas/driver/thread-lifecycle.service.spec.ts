@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { AtlasRepo, AtlasThread, AtlasThreadSandbox } from '../persistence/entities';
 import type { GithubPrService, LocalGitService } from '../git';
-import type { CredentialResolver, OnboardingService } from '../onboarding';
+import type { CredentialResolver } from '../onboarding';
 import type { DriverRepoResolver } from './repo-resolver';
 import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { ThreadLifecycleService } from './thread-lifecycle.service';
@@ -54,7 +54,6 @@ function makeService(): ThreadLifecycleService {
     stubRepo() as unknown as Repository<AtlasThread>,
     stubRepo() as unknown as Repository<AtlasThreadSandbox>,
     stubRepo() as unknown as Repository<AtlasRepo>,
-    { bindChannel: vi.fn() } as unknown as OnboardingService,
     {} as unknown as LocalGitService,
     { getPullState: vi.fn() } as unknown as GithubPrService,
     { githubToken: vi.fn() } as unknown as CredentialResolver,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { AtlasChannel, AtlasRepo } from '../persistence/entities';
+import type { AtlasRepo } from '../persistence/entities';
 import {
   ProjectRoutingService,
   normalizeRepoSlug,
@@ -21,53 +21,37 @@ describe('normalizeRepoSlug', () => {
   });
 });
 
-function svc(projects: AtlasRepo[], channels: AtlasChannel[]): ProjectRoutingService {
-  const projectRepo = {
-    find: async (opts?: { where?: { org_id?: string } }) =>
-      opts?.where?.org_id ? projects.filter((p) => p.org_id === opts.where!.org_id) : projects,
+function svc(repos: AtlasRepo[]): ProjectRoutingService {
+  const repoRepo = {
+    find: async () => repos,
     findOne: async (opts: { where: { org_id: string; repo_id: string } }) =>
-      projects.find(
-        (p) => p.org_id === opts.where.org_id && p.repo_id === opts.where.repo_id,
+      repos.find(
+        (r) => r.org_id === opts.where.org_id && r.repo_id === opts.where.repo_id,
       ) ?? null,
   } as unknown as Repository<AtlasRepo>;
-  const channelRepo = {
-    findOne: async (opts: { where: { org_id: string; repo_id: string } }) =>
-      channels.find(
-        (c) => c.org_id === opts.where.org_id && c.repo_id === opts.where.repo_id,
-      ) ?? null,
-  } as unknown as Repository<AtlasChannel>;
-  return new ProjectRoutingService(projectRepo, channelRepo);
+  return new ProjectRoutingService(repoRepo);
 }
 
-const project = (over: Partial<AtlasRepo>): AtlasRepo =>
+const repo = (over: Partial<AtlasRepo>): AtlasRepo =>
   ({ org_id: 'T1', repo_id: 'web', git_url: 'https://github.com/acme/web.git', ...over }) as AtlasRepo;
-const channel = (over: Partial<AtlasChannel>): AtlasChannel =>
-  ({ id: 'c1', org_id: 'T1', repo_id: 'web', display_name: 'web' }) as AtlasChannel;
 
 describe('ProjectRoutingService', () => {
-  it('routes a github repo across teams by normalized git_url → project + 1:1 channel', async () => {
-    const s = svc([project({})], [channel({})]);
+  it('routes a github repo across orgs by normalized git_url', async () => {
+    const s = svc([repo({})]);
     const route = await s.routeGithubRepo('Acme/Web'); // case-insensitive
     expect(route).not.toBeNull();
     expect(route!.orgId).toBe('T1');
     expect(route!.repoId).toBe('web');
-    expect(route!.channel.id).toBe('c1');
+    expect(route!.repo.repo_id).toBe('web');
   });
 
   it('returns null for an unregistered github repo', async () => {
-    const s = svc([project({})], [channel({})]);
-    expect(await s.routeGithubRepo('other/repo')).toBeNull();
-  });
-
-  it('treats a project with no 1:1 channel as unroutable', async () => {
-    const s = svc([project({})], []); // no channel
-    expect(await s.routeGithubRepo('acme/web')).toBeNull();
+    expect(await svc([repo({})]).routeGithubRepo('other/repo')).toBeNull();
   });
 
   it('routes a generic webhook by (orgId, repoId)', async () => {
-    const s = svc([project({})], [channel({})]);
-    const route = await s.routeProjectId('T1', 'web');
-    expect(route!.repoId).toBe('web');
+    const s = svc([repo({})]);
+    expect((await s.routeProjectId('T1', 'web'))!.repoId).toBe('web');
     expect(await s.routeProjectId('T1', 'nope')).toBeNull();
   });
 });

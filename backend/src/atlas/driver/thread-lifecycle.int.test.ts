@@ -28,17 +28,15 @@ import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { LocalGitService } from '../git';
 import { CredentialResolver } from '../onboarding';
-import { OnboardingService } from '../onboarding';
 import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
-  AtlasChannel,
-  AtlasRepo,
-  AtlasTeam,
   AtlasOrgCredentials,
+  AtlasRepo,
   AtlasThread,
   AtlasThreadSandbox,
+  Organization,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { ATLAS_DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, type ResolvedRepo } from '.';
@@ -133,7 +131,7 @@ beforeEach(async () => {
     imports: [
       TypeOrmModule.forRoot(dbOpts()),
       TypeOrmModule.forFeature(
-        [AtlasTeam, AtlasRepo, AtlasChannel, AtlasThread, AtlasThreadSandbox, AtlasOrgCredentials],
+        [Organization, AtlasRepo, AtlasThread, AtlasThreadSandbox, AtlasOrgCredentials],
         ATLAS_CONNECTION,
       ),
     ],
@@ -162,7 +160,6 @@ beforeEach(async () => {
         provide: GithubPrService,
         useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' },
       },
-      OnboardingService,
       {
         provide: ATLAS_DRIVER_REPO,
         useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used in this gate'); } },
@@ -176,17 +173,17 @@ beforeEach(async () => {
   ds = mod.get<DataSource>(getDataSourceToken(ATLAS_CONNECTION));
 
   await ds.query(`
-    INSERT INTO atlas_teams (org_id, team_name, status)
-    VALUES ($1, $2, 'active')
-    ON CONFLICT (org_id) DO UPDATE SET team_name = EXCLUDED.team_name
-  `, [FAKE_TEAM_ID, 'R2 Gate Team']);
+    INSERT INTO atlas_organizations (id, name, slug, status)
+    VALUES ($1, $2, $3, 'active')
+    ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+  `, [FAKE_TEAM_ID, 'R2 Gate Org', `r2-gate-${FAKE_TEAM_ID}`]);
 
   await ds.query(`
-    INSERT INTO atlas_projects (org_id, repo_id, display_name, description, git_url, default_branch, token_name)
-    VALUES ($1, $2, $3, NULL, $4, $5, NULL)
+    INSERT INTO atlas_repos (org_id, repo_id, name, git_url, default_branch, token_name, access_ok)
+    VALUES ($1, $2, $3, $4, $5, NULL, true)
     ON CONFLICT (org_id, repo_id) DO UPDATE
       SET git_url = EXCLUDED.git_url, default_branch = EXCLUDED.default_branch
-  `, [FAKE_TEAM_ID, FAKE_PROJECT_ID, 'R2 Gate Project', FAKE_REPO_URL, FAKE_BASE_BRANCH]);
+  `, [FAKE_TEAM_ID, FAKE_PROJECT_ID, 'R2 Gate Repo', FAKE_REPO_URL, FAKE_BASE_BRANCH]);
 });
 
 async function create(displayName = 'Gate thread') {

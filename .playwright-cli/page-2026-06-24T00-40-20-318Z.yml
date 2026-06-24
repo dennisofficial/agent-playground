@@ -1,0 +1,56 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e9] [cursor=pointer]:
+    - img [ref=e10]
+  - alert [ref=e13]
+  - generic [ref=e72]:
+    - banner [ref=e73]:
+      - link "Coordinator overview" [ref=e74] [cursor=pointer]:
+        - /url: /workspace
+        - generic [ref=e79]: ATLAS
+      - button "no repo" [ref=e81]:
+        - img [ref=e82]
+        - generic [ref=e86]: no repo
+        - img [ref=e87]
+      - button "Jump to a thread, run a command… ⌘K" [ref=e89]:
+        - img [ref=e90]
+        - generic [ref=e93]: Jump to a thread, run a command…
+        - generic [ref=e94]: ⌘K
+      - radiogroup "Theme" [ref=e95]:
+        - radio "Day" [checked] [ref=e96]
+        - radio "Terminal" [ref=e97]
+        - radio "Warm" [ref=e98]
+      - generic [ref=e99]: your key
+      - button "Account" [ref=e102]: P1
+    - generic [ref=e103]:
+      - complementary [ref=e104]:
+        - link "New thread" [ref=e106] [cursor=pointer]:
+          - /url: /new
+          - img [ref=e107]
+          - text: New thread
+        - navigation [ref=e108]:
+          - link "Overview 0" [ref=e109] [cursor=pointer]:
+            - /url: /workspace
+            - img [ref=e110]
+            - generic [ref=e115]: Overview
+            - generic [ref=e116]: "0"
+        - generic [ref=e117]: Threads
+        - paragraph [ref=e119]: No threads in this channel yet.
+      - main [ref=e120]:
+        - generic [ref=e122]:
+          - generic [ref=e123]:
+            - generic [ref=e124]:
+              - heading "Coordinator" [level=1] [ref=e125]
+              - paragraph [ref=e126]: Every unit of work is a thread — its own session, branch, and PR.
+            - link "New thread" [ref=e127] [cursor=pointer]:
+              - /url: /new
+              - button "New thread" [ref=e128]:
+                - img [ref=e129]
+                - text: New thread
+          - generic [ref=e130]:
+            - heading "Connect a repo to begin" [level=2] [ref=e131]
+            - paragraph [ref=e132]: No active channel yet. Once Atlas is bound to a repo, its threads appear here.
+            - link "Start a thread" [ref=e133] [cursor=pointer]:
+              - /url: /new
+              - button "Start a thread" [ref=e134]:
+                - img [ref=e135]
+                - text: Start a thread

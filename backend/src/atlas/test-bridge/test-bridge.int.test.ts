@@ -103,7 +103,7 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
 
   it('say routes a human message to the AgentSessionManager and captures its reply on the thread', async () => {
     const said = await controller.say({
-      channel: CHANNEL_REF,
+      channel: PROJECT_ID, // the surface addresses by repo id (channel-free model)
       text: 'Add a short note to the README explaining the build step.',
     });
 

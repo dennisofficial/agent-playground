@@ -1,70 +1,68 @@
 import { describe, expect, it } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { GithubPrService, RepoInfo } from '../git';
-import type { AtlasChannel, AtlasRepo, AtlasTeam } from '../persistence/entities';
+import type { AtlasOrgCredentials, AtlasRepo, Organization } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { OnboardingService } from './onboarding.service';
 import type { CredentialPresence, TenantCredentialStore } from './tenant-credential.store';
 
 // ── in-memory fake repositories ───────────────────────────────────────────────────────────────────
 
-function makeTeams() {
-  const map = new Map<string, AtlasTeam>();
+function makeOrgs() {
+  const map = new Map<string, Organization>();
+  map.set('T1', { id: 'T1', name: 'T1', slug: 't1', status: 'onboarding' } as Organization);
   const repo = {
-    async findOne({ where }: { where: { org_id: string } }) {
-      return map.get(where.org_id) ?? null;
+    async findOne({ where }: { where: { id: string } }) {
+      return map.get(where.id) ?? null;
     },
-    async upsert(obj: Partial<AtlasTeam>) {
-      const prev = map.get(obj.org_id as string);
-      map.set(obj.org_id as string, { ...(prev ?? {}), ...obj } as AtlasTeam);
+    async update({ id }: { id: string }, patch: Partial<Organization>) {
+      const prev = map.get(id);
+      if (prev) map.set(id, { ...prev, ...patch });
     },
-    async update({ org_id }: { org_id: string }, patch: Partial<AtlasTeam>) {
-      const prev = map.get(org_id);
-      if (prev) map.set(org_id, { ...prev, ...patch });
-    },
-  } as unknown as Repository<AtlasTeam>;
+  } as unknown as Repository<Organization>;
   return { repo, map };
 }
 
-function makeProjects() {
+function makeRepos() {
   const map = new Map<string, AtlasRepo>();
-  const k = (t: string, p: string) => `${t}:${p}`;
+  const k = (o: string, r: string) => `${o}:${r}`;
   const repo = {
-    async findOne({ where }: { where: { org_id: string; repo_id: string } }) {
-      return map.get(k(where.org_id, where.repo_id)) ?? null;
+    async findOne({ where }: { where: { org_id: string; repo_id?: string; access_ok?: boolean } }) {
+      if (where.access_ok !== undefined) {
+        for (const v of map.values()) {
+          if (v.org_id === where.org_id && v.access_ok === where.access_ok) return v;
+        }
+        return null;
+      }
+      return map.get(k(where.org_id, where.repo_id as string)) ?? null;
     },
     async upsert(obj: Partial<AtlasRepo>) {
-      map.set(k(obj.org_id as string, obj.repo_id as string), {
-        ...(map.get(k(obj.org_id as string, obj.repo_id as string)) ?? {}),
-        ...obj,
-      } as AtlasRepo);
+      const key = k(obj.org_id as string, obj.repo_id as string);
+      map.set(key, { ...(map.get(key) ?? {}), ...obj } as AtlasRepo);
+    },
+    async update({ org_id, repo_id }: { org_id: string; repo_id: string }, patch: Partial<AtlasRepo>) {
+      const key = k(org_id, repo_id);
+      if (map.has(key)) map.set(key, { ...map.get(key)!, ...patch });
     },
   } as unknown as Repository<AtlasRepo>;
   return { repo, map };
 }
 
-function makeChannels() {
-  const rows: AtlasChannel[] = [];
-  let seq = 0;
+function makeOrgCreds(llmValidated = false) {
+  const map = new Map<string, AtlasOrgCredentials>();
+  if (llmValidated) {
+    map.set('T1:*', { org_id: 'T1', scope: '*', llm_validated_at: new Date() } as AtlasOrgCredentials);
+  }
   const repo = {
-    async findOne({ where }: { where: { org_id: string; repo_id: string } }) {
-      return rows.find((r) => r.org_id === where.org_id && r.repo_id === where.repo_id) ?? null;
+    async findOne({ where }: { where: { org_id: string; scope: string } }) {
+      return map.get(`${where.org_id}:${where.scope}`) ?? null;
     },
-    async find({ where }: { where: { org_id: string } }) {
-      return rows.filter((r) => r.org_id === where.org_id);
+    async update({ org_id, scope }: { org_id: string; scope: string }, patch: Partial<AtlasOrgCredentials>) {
+      const key = `${org_id}:${scope}`;
+      map.set(key, { ...(map.get(key) ?? ({ org_id, scope } as AtlasOrgCredentials)), ...patch });
     },
-    create(partial: Partial<AtlasChannel>) {
-      return { ...partial } as AtlasChannel;
-    },
-    async save(row: AtlasChannel) {
-      if (!row.id) {
-        row.id = `ch-${++seq}`;
-        rows.push(row);
-      }
-      return row;
-    },
-  } as unknown as Repository<AtlasChannel>;
-  return { repo, rows };
+  } as unknown as Repository<AtlasOrgCredentials>;
+  return { repo, map };
 }
 
 function fakeCreds(over: Partial<Record<'anthropic' | 'github', string>> = {}): CredentialResolver {
@@ -81,13 +79,7 @@ function fakeCreds(over: Partial<Record<'anthropic' | 'github', string>> = {}): 
 function fakeStore(presence: Partial<CredentialPresence> = {}): TenantCredentialStore {
   return {
     async presence() {
-      return {
-        hasAnthropic: false,
-        hasOpenai: false,
-        hasGithub: false,
-        engineAuthSet: false,
-        ...presence,
-      };
+      return { hasAnthropic: false, hasOpenai: false, hasGithub: false, engineAuthSet: false, ...presence };
     },
   } as unknown as TenantCredentialStore;
 }
@@ -100,62 +92,54 @@ function fakePr(repoInfo: RepoInfo | null): GithubPrService {
   } as unknown as GithubPrService;
 }
 
-function assemble(opts: {
-  presence?: Partial<CredentialPresence>;
-  creds?: Partial<Record<'anthropic' | 'github', string>>;
-  repoInfo?: RepoInfo | null;
-} = {}) {
-  const teams = makeTeams();
-  const projects = makeProjects();
-  const channels = makeChannels();
+function assemble(
+  opts: {
+    presence?: Partial<CredentialPresence>;
+    creds?: Partial<Record<'anthropic' | 'github', string>>;
+    repoInfo?: RepoInfo | null;
+    llmValidated?: boolean;
+  } = {},
+) {
+  const orgs = makeOrgs();
+  const repos = makeRepos();
+  const orgCreds = makeOrgCreds(opts.llmValidated);
   const svc = new OnboardingService(
-    teams.repo,
-    projects.repo,
-    channels.repo,
+    orgs.repo,
+    repos.repo,
+    orgCreds.repo,
     fakeCreds(opts.creds),
     fakeStore(opts.presence),
     fakePr(opts.repoInfo ?? null),
   );
-  return { svc, teams, projects, channels };
+  return { svc, orgs, repos, orgCreds };
 }
 
 const REPO = 'https://github.com/acme/web';
 
 describe('OnboardingService', () => {
-  describe('bindChannel', () => {
-    it('creates team (onboarding) + project + channel and binds the surface ref', async () => {
-      const { svc, teams, projects, channels } = assemble();
-      const { channelId } = await svc.bindChannel({
-        orgId: 'T1',
-        repoId: 'web',
-        channelRef: 'C1',
-        repoUrl: REPO,
-      });
-      expect(channelId).toBeTruthy();
-      expect(teams.map.get('T1')?.status).toBe('onboarding');
-      expect(projects.map.get('T1:web')?.git_url).toBe(REPO);
-      expect(channels.rows[0].surface_channel_ref).toBe('C1'); // THE routing fix
+  describe('connectRepo', () => {
+    it('connects a repo (slug from the url) and validates access', async () => {
+      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const result = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      expect(result.repoId).toBe('web');
+      expect(result.accessOk).toBe(true);
+      expect(repos.map.get('T1:web')?.git_url).toBe(REPO);
+      expect(repos.map.get('T1:web')?.access_ok).toBe(true);
     });
 
-    it('activate:true marks the tenant active (test-bridge / admin path)', async () => {
-      const { svc, teams } = assemble();
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO, activate: true });
-      expect(teams.map.get('T1')?.status).toBe('active');
+    it('records access_ok=false when the token cannot reach the repo', async () => {
+      const { svc, repos } = assemble({ repoInfo: null }); // no token
+      const result = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      expect(result.accessOk).toBe(false);
+      expect(repos.map.get('T1:web')?.access_ok).toBe(false);
     });
 
-    it('preserves an existing active team status on re-bind (repo re-point)', async () => {
-      const { svc, teams } = assemble();
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO, activate: true });
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO + '-2' });
-      expect(teams.map.get('T1')?.status).toBe('active'); // not reset to onboarding
-    });
-
-    it('re-points an existing channel surface ref (find-or-create, not duplicate)', async () => {
-      const { svc, channels } = assemble();
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C2', repoUrl: REPO });
-      expect(channels.rows).toHaveLength(1);
-      expect(channels.rows[0].surface_channel_ref).toBe('C2');
+    it('rejects a non-GitHub url', async () => {
+      const { svc } = assemble();
+      const result = await svc.connectRepo({ orgId: 'T1', repoUrl: 'not-a-url' });
+      expect(result.accessOk).toBe(false);
+      expect(result.reason).toContain('not an HTTPS GitHub URL');
     });
   });
 
@@ -164,28 +148,33 @@ describe('OnboardingService', () => {
       const { svc } = assemble(); // nothing configured
       const status = await svc.status('T1');
       expect(status.steps).toEqual({
-        installed: false,
-        channelBound: false,
+        repoConnected: false,
         llmKey: false,
         engineAuth: false,
         githubPat: false,
       });
-      expect(status.missing).toEqual(['install', 'bind_channel', 'llm_key', 'engine_auth', 'github_pat']);
-      expect(status.lifecycle).toBe('pending');
+      expect(status.missing).toEqual(['repo', 'llm_key', 'engine_auth', 'github_pat']);
+      expect(status.lifecycle).toBe('onboarding');
     });
 
-    it('marks channelBound once a channel + repo exist', async () => {
-      const { svc } = assemble();
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
+    it('marks repoConnected once a validated repo exists', async () => {
+      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       const status = await svc.status('T1');
-      expect(status.steps.installed).toBe(true);
-      expect(status.steps.channelBound).toBe(true);
+      expect(status.steps.repoConnected).toBe(true);
       expect(status.missing[0]).toBe('llm_key');
     });
 
-    it('reflects credential presence', async () => {
-      const { svc } = assemble({ presence: { hasAnthropic: true, hasGithub: true, engineAuthSet: true } });
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
+    it('reflects credential presence + validated llm key → complete', async () => {
+      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const { svc } = assemble({
+        presence: { hasAnthropic: true, hasGithub: true, engineAuthSet: true },
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+        llmValidated: true,
+      });
+      await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       const status = await svc.status('T1');
       expect(status.missing).toEqual([]);
       expect(await svc.nextStep('T1')).toBeNull();
@@ -194,21 +183,15 @@ describe('OnboardingService', () => {
 
   describe('validateRepo', () => {
     it('fails when no token is set', async () => {
-      const { svc } = assemble();
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
-      expect((await svc.validateRepo('T1', 'web')).ok).toBe(false);
-    });
-
-    it('fails when the repo is unreachable (getRepo → null)', async () => {
-      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: null });
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
+      const { svc } = assemble({ repoInfo: null });
+      await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       expect((await svc.validateRepo('T1', 'web')).ok).toBe(false);
     });
 
     it('passes when the repo is reachable', async () => {
       const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
+      await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       expect((await svc.validateRepo('T1', 'web')).ok).toBe(true);
     });
   });
@@ -222,16 +205,23 @@ describe('OnboardingService', () => {
 
   describe('tryActivate', () => {
     it('flips to active once every step is met', async () => {
-      const { svc, teams } = assemble({ presence: { hasAnthropic: true, hasGithub: true, engineAuthSet: true } });
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
+      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const { svc, orgs } = assemble({
+        presence: { hasAnthropic: true, hasGithub: true, engineAuthSet: true },
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+        llmValidated: true,
+      });
+      await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       const status = await svc.tryActivate('T1');
       expect(status.lifecycle).toBe('active');
-      expect(teams.map.get('T1')?.status).toBe('active');
+      expect(orgs.map.get('T1')?.status).toBe('active');
     });
 
     it('is a no-op while steps remain', async () => {
-      const { svc } = assemble();
-      await svc.bindChannel({ orgId: 'T1', repoId: 'web', channelRef: 'C1', repoUrl: REPO });
+      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       expect((await svc.tryActivate('T1')).lifecycle).toBe('onboarding');
     });
   });
