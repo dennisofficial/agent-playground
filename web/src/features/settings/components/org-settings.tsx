@@ -6,7 +6,6 @@ import { KeyRound, Settings as SettingsIcon, Users } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ROUTES, type SettingsSection } from '@/lib/routes';
 import { BrandLockup } from '@/components/ui/brand';
-import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { AccountMenu } from '@/features/shell/components/account-menu';
 import { useOrg, useOrgs } from '@/lib/api/me';
 import { orgColor, orgInitials } from '@/lib/org-display';
@@ -49,7 +48,6 @@ export function OrgSettings({
           <span className="text-text">Settings</span>
         </div>
         <div className="flex-1" />
-        <ThemeToggle />
         <AccountMenu />
       </header>
 

@@ -3,12 +3,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { AuthInitializer } from '@/features/auth/components/auth-initializer';
-import { ThemeProvider } from '@/components/theme/theme-provider';
 
 /**
  * Client provider composition for the whole app:
  *  - TanStack Query (REST history + mutations; the SSE subscription merges into this same cache).
- *  - ThemeProvider (reflects/persists the `data-theme` the no-flash script already set).
  *  - AuthInitializer (one-time session probe).
  *
  * The QueryClient is created once per browser session via useState (never re-created on re-render).
@@ -30,10 +28,8 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <AuthInitializer />
-        {children}
-      </ThemeProvider>
+      <AuthInitializer />
+      {children}
     </QueryClientProvider>
   );
 }

@@ -3,8 +3,7 @@
 
 /* ============================================================================================
    ATLAS DESIGN TOKENS — ported verbatim from the design handoff (§7).
-   Daylight = :root (default). Terminal / Warm = [data-theme] overrides. `data-theme` lives on
-   <html>; the no-flash script in app/layout.tsx sets it pre-paint from localStorage['atlas-theme'].
+   The app uses the single Daylight (Day) theme, defined on :root.
    ============================================================================================ */
 
 :root {
@@ -48,74 +47,7 @@
   --shadow-palette: 0 30px 80px rgba(0, 0, 0, 0.4);
 }
 
-[data-theme="terminal"] {
-  --bg: #080a0e;
-  --bg-grid: rgba(255, 255, 255, 0.02);
-  --panel: #0c0f14;
-  --surface: #11151c;
-  --surface-2: #151a22;
-  --surface-3: #1b212b;
-  --border: #1b222d;
-  --border-2: #283140;
-  --hair: rgba(255, 255, 255, 0.05);
-  --text: #e8ebf1;
-  --dim: #98a2b1;
-  --faint: #59636f;
-  --accent: #f5a524;
-  --accent-2: #ffc25a;
-  --accent-soft: rgba(245, 165, 36, 0.13);
-  --accent-line: rgba(245, 165, 36, 0.42);
-  --green: #3fd68b;
-  --green-soft: rgba(63, 214, 139, 0.13);
-  --blue: #5aa2ff;
-  --red: #fb6f6f;
-  --purple: #b08cff;
-  --rose: #ff7a90;
-  --glow: rgba(245, 165, 36, 0.13);
-  --c-comment: #6b7686;
-  --c-kw: #f5a524;
-  --c-str: #8fd3ff;
-  --c-fn: #c2a6ff;
-  --c-add: #52e0a0;
-  --c-del: #fb7a7a;
-  --c-num: #ffc25a;
-}
-
-[data-theme="warm"] {
-  --bg: #100b06;
-  --bg-grid: rgba(255, 220, 180, 0.022);
-  --panel: #150f08;
-  --surface: #1a130b;
-  --surface-2: #1f1810;
-  --surface-3: #271e13;
-  --border: #2a2015;
-  --border-2: #3a2c1b;
-  --hair: rgba(255, 224, 186, 0.06);
-  --text: #f4eae0;
-  --dim: #bcab94;
-  --faint: #7c6b56;
-  --accent: #ffb24d;
-  --accent-2: #ffcd85;
-  --accent-soft: rgba(255, 178, 77, 0.15);
-  --accent-line: rgba(255, 178, 77, 0.45);
-  --green: #88c97b;
-  --green-soft: rgba(136, 201, 123, 0.14);
-  --blue: #7aabff;
-  --red: #ff9a8a;
-  --purple: #d3a6ff;
-  --rose: #ff8fa8;
-  --glow: rgba(255, 178, 77, 0.16);
-  --c-comment: #8a795f;
-  --c-kw: #ffb24d;
-  --c-str: #ffd9a0;
-  --c-fn: #e0b3ff;
-  --c-add: #9ad98a;
-  --c-del: #ff9a8a;
-  --c-num: #ffcd85;
-}
-
-/* Map tokens to Tailwind utilities. `inline` keeps utilities referencing var(--x) so a [data-theme]
-   swap recolors every utility for free (no rebuild, no JS). */
+/* Map tokens to Tailwind utilities. `inline` keeps utilities referencing var(--x). */
 @theme inline {
   --color-bg: var(--bg);
   --color-panel: var(--panel);

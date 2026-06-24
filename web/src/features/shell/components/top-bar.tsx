@@ -3,12 +3,11 @@
 import Link from 'next/link';
 import { Search } from 'lucide-react';
 import { BrandLockup } from '@/components/ui/brand';
-import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { ROUTES } from '@/lib/routes';
 import { OrgFilter } from './org-filter';
 import { AccountMenu } from './account-menu';
 
-/** Top bar (52px): lockup → Coordinator · repo picker · ⌘K palette trigger · theme · key pill · avatar. */
+/** Top bar (52px): lockup → Coordinator · repo picker · ⌘K palette trigger · key pill · avatar. */
 export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
   return (
     <header
@@ -32,8 +31,6 @@ export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
           ⌘K
         </kbd>
       </button>
-
-      <ThemeToggle />
 
       <span
         className="hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10.5px] font-medium md:inline-flex"

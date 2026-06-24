@@ -25,9 +25,6 @@ export const metadata: Metadata = {
   description: "Operate Atlas: see all threads, talk to a thread's brain, approve plans, watch builds.",
 };
 
-// Set data-theme before first paint to avoid a flash on Terminal/Warm reloads.
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem('atlas-theme');if(t!=='terminal'&&t!=='warm')t='daylight';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -41,7 +38,6 @@ export default function RootLayout({
       className={`${display.variable} ${ui.variable} ${mono.variable} h-full`}
     >
       <body className="min-h-full">
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <Providers>{children}</Providers>
       </body>
     </html>
