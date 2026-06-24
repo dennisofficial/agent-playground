@@ -9,12 +9,12 @@ import type {
 
 /**
  * Thin typed client over the Atlas web surface. The browser hits the Atlas HTTP app DIRECTLY at
- * `NEXT_PUBLIC_ATLAS_HTTP_URL` (no proxy hop); `fetchWithRefresh` sends the httpOnly session cookie
+ * `NEXT_PUBLIC_HTTP_URL` (no proxy hop); `fetchWithRefresh` sends the httpOnly session cookie
  * (`credentials: 'include'`) so the gated `/web/*` routes authorize the operator, and transparently
  * refreshes + retries once on a 401 from an expired access cookie. CORS is enabled backend-side.
  */
 
-const WEB_BASE = `${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/web`;
+const WEB_BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
 
 class WebSurfaceError extends Error {
   constructor(

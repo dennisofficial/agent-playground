@@ -113,8 +113,8 @@ export interface IEnvConfig {
   // Code default: <homedir>/.agent-playground/refs. Point at a persistent volume in deployment.
   REFS_ROOT?: string;
   // ⚠️ DEPRECATED (v1 harness sandbox stack, removed in commit f82a748). The Atlas v2 Docker layer
-  // (src/atlas/sandbox/) REUSES only `DOCKER_SOCKET_PATH` (via ATLAS_DOCKER_SOCKET_PATH ?? this),
-  // `REFS_ROOT` (via ATLAS_REFS_ROOT ?? this), and `WORKSPACE_IMAGE` (the sandbox base-image tag). The
+  // (src/app/sandbox/) REUSES only `DOCKER_SOCKET_PATH` (via DOCKER_SOCKET_PATH ?? this),
+  // `REFS_ROOT` (via REFS_ROOT ?? this), and `WORKSPACE_IMAGE` (the sandbox base-image tag). The
   // rest below (WORKSPACE_RUNTIME/REDIS_URL/NETWORK/DOCKER_STORAGE_DRIVER/DAEMON_BUILD_VOLUME/
   // PNPM_STORE_VOLUME/IDLE_TTL_MINUTES/MAX_PER_PROJECT/DEV_PORT/PORT_RANGE_*) are ORPHANED — no code
   // reads them. Safe to delete wholesale in a follow-up cleanup (interface + Joi schema together).
@@ -204,123 +204,113 @@ export interface IEnvConfig {
   LANGFUSE_BASE_URL?: string;
   LANGFUSE_TRACING_ENVIRONMENT?: string; // tags traces by deployment env (e.g. 'development')
 
-  // ── Atlas v2 (the clean-room rebuild under src/atlas/) ────────────────────────────────────────
+  // ── Atlas v2 (the clean-room rebuild under src/app/) ────────────────────────────────────────
   // Atlas's local execution substrate is host-only (no daemon, no Docker): it clones repos and cuts
   // per-feature git worktrees on the host, runs the Claude/Codex SDKs as subprocesses, and opens PRs
   // over fetch. Where a value already exists for v1 it is REUSED (REPOS_ROOT, AGENT_HOME_ROOT,
   // ANTHROPIC_API_KEY/OPENAI_API_KEY, SLACK_BOT_TOKEN/SLACK_APP_TOKEN) — these are the few net-new vars.
   //
-  // ATLAS_REPOS_ROOT: root the per-feature worktree sandboxes clone into. Falls back to REPOS_ROOT,
-  // then ~/.agent-playground/atlas-repos. Kept separate from v1's so the two substrates never collide.
-  ATLAS_REPOS_ROOT?: string;
-  // ATLAS_AGENT_HOME_ROOT: root for Atlas engines' OWN isolated CLAUDE_CONFIG_DIR/CODEX_HOME — never
-  // the developer's personal ~/.claude / ~/.codex. Falls back to AGENT_HOME_ROOT, then
-  // ~/.agent-playground/atlas-agent-home. Point at a persistent volume in deployment.
-  ATLAS_AGENT_HOME_ROOT?: string;
-  // ATLAS_ENGINE_AUTH_MODE: how Atlas engine turns authenticate — 'api_key' (default, the metered
+  // REPOS_ROOT / AGENT_HOME_ROOT (declared above) — the root the per-feature worktree sandboxes
+  // clone into, and the root for the engines' OWN isolated CLAUDE_CONFIG_DIR/CODEX_HOME.
+  // ENGINE_AUTH_MODE: how Atlas engine turns authenticate — 'api_key' (default, the metered
   // ANTHROPIC_API_KEY / OPENAI auth) or 'subscription' (drive the run off a Claude Max / ChatGPT plan).
-  ATLAS_ENGINE_AUTH_MODE?: 'api_key' | 'subscription';
-  // ATLAS_CLAUDE_OAUTH_TOKEN: a `CLAUDE_CODE_OAUTH_TOKEN` for subscription-mode Claude turns (used
-  // only when ATLAS_ENGINE_AUTH_MODE='subscription'). Strips ambient ANTHROPIC_API_KEY at the seam.
-  ATLAS_CLAUDE_OAUTH_TOKEN?: string;
-  // ATLAS_WORKER_MODEL / ATLAS_CODEX_MODEL: model overrides for Atlas engine turns. Fall back to the
-  // v1 WORKER_MODEL / CODEX_MODEL, then the SDK defaults.
-  ATLAS_WORKER_MODEL?: string;
-  ATLAS_CODEX_MODEL?: string;
-  // ATLAS_GITHUB_TOKEN: the GitHub token Atlas's PR client + authenticated git ops use. Rides in
-  // GIT_CONFIG_* / an Authorization header per invocation — never in argv / .git/config. Falls back
-  // to GITHUB_TOKEN. Unset → public-repo / no-PR flows only.
-  ATLAS_GITHUB_TOKEN?: string;
+  ENGINE_AUTH_MODE?: 'api_key' | 'subscription';
+  // CLAUDE_OAUTH_TOKEN: a `CLAUDE_CODE_OAUTH_TOKEN` for subscription-mode Claude turns (used
+  // only when ENGINE_AUTH_MODE='subscription'). Strips ambient ANTHROPIC_API_KEY at the seam.
+  CLAUDE_OAUTH_TOKEN?: string;
+  // WORKER_MODEL / CODEX_MODEL (declared above): model overrides for engine turns, else SDK defaults.
+  // GITHUB_TOKEN: the GitHub token Atlas's PR client + authenticated git ops use. Rides in
+  // GIT_CONFIG_* / an Authorization header per invocation — never in argv / .git/config.
+  // Unset → public-repo / no-PR flows only.
   GITHUB_TOKEN?: string;
-  // ATLAS_SURFACE: which `ChatSurface` is bound as the CHAT_SURFACE. 'web' (default) → the SSE + REST web
+  // SURFACE: which `ChatSurface` is bound as the CHAT_SURFACE. 'web' (default) → the SSE + REST web
   // adapter (GET /web/events SSE, POST /web/say, POST /web/approve, GET /web/thread), the production
   // surface; 'agent' → the in-process programmatic surface a test/script drives Atlas through (send →
   // read replies → approve) with no HTTP. Both surfaces are always constructed; only the binding switches.
-  ATLAS_SURFACE?: 'web' | 'agent';
+  SURFACE?: 'web' | 'agent';
   // ── Atlas v2 ingress (W2 — the notification HTTP edge) ───────────────────────────────────────
-  // ATLAS_HTTP_PORT: the port the Atlas HTTP app listens on (hosts POST /ingress/github + /webhook).
+  // HTTP_PORT: the port the Atlas HTTP app listens on (hosts POST /ingress/github + /webhook).
   // Default 4002 in code (kept off v1's slack-app :4001). Cloud Run injects PORT for v1, but Atlas v2
   // is its own process with its own port.
-  ATLAS_HTTP_PORT?: number;
-  // ATLAS_GITHUB_WEBHOOK_SECRET: the GitHub webhook secret — the GitHub `NotificationSource` adapter
+  HTTP_PORT?: number;
+  // GITHUB_WEBHOOK_SECRET: the GitHub webhook secret — the GitHub `NotificationSource` adapter
   // HMAC-verifies `X-Hub-Signature-256` against it. Unset → the /ingress/github endpoint refuses every
   // request (401 unverifiable); never trusts an unsigned GitHub payload.
-  ATLAS_GITHUB_WEBHOOK_SECRET?: string;
-  // ATLAS_WEBHOOK_SECRET: the shared secret for the generic first-party webhook — the generic adapter
+  GITHUB_WEBHOOK_SECRET?: string;
+  // WEBHOOK_SECRET: the shared secret for the generic first-party webhook — the generic adapter
   // constant-time-compares the `X-Atlas-Webhook-Secret` header against it. Unset → /ingress/webhook
   // refuses every request (401 unverifiable).
-  ATLAS_WEBHOOK_SECRET?: string;
+  WEBHOOK_SECRET?: string;
   // Mechanical event filter (no-LLM dedup + rate-limit on EventStimulus). All optional; code defaults:
-  //  - ATLAS_EVENT_DEDUP_WINDOW_S: drop a repeat of the same (team,project,source,dedupeKey) within
+  //  - EVENT_DEDUP_WINDOW_S: drop a repeat of the same (team,project,source,dedupeKey) within
   //    this window (default 300s). Collapses redeliveries / storms grouped to one issue.
-  //  - ATLAS_EVENT_RATE_LIMIT / _WINDOW_S: at most N admissions per key per window (default 5 / 60s) —
+  //  - EVENT_RATE_LIMIT / _WINDOW_S: at most N admissions per key per window (default 5 / 60s) —
   //    guards a key that keeps mutating its dedupeKey from spawning unbounded jobs.
-  ATLAS_EVENT_DEDUP_WINDOW_S?: number;
-  ATLAS_EVENT_RATE_LIMIT?: number;
-  ATLAS_EVENT_RATE_WINDOW_S?: number;
+  EVENT_DEDUP_WINDOW_S?: number;
+  EVENT_RATE_LIMIT?: number;
+  EVENT_RATE_WINDOW_S?: number;
   // ── Atlas v2 section/phase driver (W4) ────────────────────────────────────────────────────────
   // Runaway guards on the deterministic driver — a sanity ceiling so a malformed plan can't drive an
   // unbounded build. Both optional with code defaults:
-  //  - ATLAS_MAX_SECTIONS: the most sections one job may have (excess sections are skipped + flagged).
+  //  - MAX_SECTIONS: the most sections one job may have (excess sections are skipped + flagged).
   //    Default 12. The approved section list is human-gated, so this is belt-and-braces.
-  //  - ATLAS_MAX_PHASES_PER_SECTION: the most phases one section may lock (a longer planner output is
+  //  - MAX_PHASES_PER_SECTION: the most phases one section may lock (a longer planner output is
   //    truncated to this). Default 8 — keeps a section's build bounded.
-  ATLAS_MAX_SECTIONS?: number;
-  ATLAS_MAX_PHASES_PER_SECTION?: number;
+  MAX_SECTIONS?: number;
+  MAX_PHASES_PER_SECTION?: number;
   // Circuit breakers on the driver (issue #3) — abort + relay a runaway build. Both optional, code
-  // defaults: ATLAS_PHASE_TIMEOUT_MS (per engine turn, default 20m) + ATLAS_JOB_TIMEOUT_MS (whole job,
+  // defaults: PHASE_TIMEOUT_MS (per engine turn, default 20m) + JOB_TIMEOUT_MS (whole job,
   // checked at section boundaries, default 60m).
-  ATLAS_PHASE_TIMEOUT_MS?: number;
-  ATLAS_JOB_TIMEOUT_MS?: number;
-  // ATLAS_PARK_TIMEOUT_MS: how long a mid-build park waits for the human before it fails + relays
+  PHASE_TIMEOUT_MS?: number;
+  JOB_TIMEOUT_MS?: number;
+  // PARK_TIMEOUT_MS: how long a mid-build park waits for the human before it fails + relays
   // (a park is between phases, so the phase/job timeouts don't cover it). Default 3600000 (60 min).
-  ATLAS_PARK_TIMEOUT_MS?: number;
-  // ATLAS_VERIFY_CMD (issue #4): an optional repo verify command (e.g. "pnpm typecheck") the driver runs
+  PARK_TIMEOUT_MS?: number;
+  // VERIFY_CMD (issue #4): an optional repo verify command (e.g. "pnpm typecheck") the driver runs
   // in the worktree after each phase, BEFORE the commit — a non-zero exit fails the phase so broken
   // output never advances. Unset → rely on the engine's prompt-enforced in-turn verification.
-  ATLAS_VERIFY_CMD?: string;
+  VERIFY_CMD?: string;
   // ── Atlas v2 scoping / grill (W3 — issue #1 tuning) ──────────────────────────────────────────
-  // ATLAS_SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
+  // SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
   // (default) runs a strict read-only engine pass (Read/Glob/Grep, no Bash) over the clone; 'native_plan'
   // uses Claude's native plan mode. Either way scoping never writes; it just stops the brain interrogating
   // the operator for facts it can read.
-  ATLAS_SCOPING_MODE?: 'read_only_tools' | 'native_plan';
-  // ATLAS_SCOPING_TIMEOUT_MS: wall-clock budget for one scoping investigation pass before it aborts and
+  SCOPING_MODE?: 'read_only_tools' | 'native_plan';
+  // SCOPING_TIMEOUT_MS: wall-clock budget for one scoping investigation pass before it aborts and
   // the brain grills without a digest. Default 120000 (2 min).
-  ATLAS_SCOPING_TIMEOUT_MS?: number;
+  SCOPING_TIMEOUT_MS?: number;
 
   // ── Atlas v2 dev/test tooling ─────────────────────────────────────────────────────────────────
   // Both optional, dev/test ONLY — never set in prod:
-  //  - ATLAS_TEST_BRIDGE: when 'on', mounts the in-process HTTP test-bridge (`POST /test/*`) so an
+  //  - TEST_BRIDGE: when 'on', mounts the in-process HTTP test-bridge (`POST /test/*`) so an
   //    external driver can have a real conversation with a running Atlas (seed → say → approve →
   //    inspect job/thread). Any other value (or unset) → the bridge endpoints 404.
-  //  - ATLAS_DISABLE_RESUME: when set (any truthy value), the section driver SKIPS its boot
+  //  - DISABLE_RESUME: when set (any truthy value), the section driver SKIPS its boot
   //    reconciliation sweep, so a fresh test instance doesn't re-attempt prior runs' stale jobs.
-  ATLAS_TEST_BRIDGE?: 'on';
-  ATLAS_DISABLE_RESUME?: string;
+  TEST_BRIDGE?: 'on';
+  DISABLE_RESUME?: string;
 
   // ── Atlas v2 Docker sandbox layer ──────────────────────────────────────────────────────────────
   //  Docker is the ONLY execution mode — every engine turn runs inside a per-feature container via
   //  `docker exec`. The former 'local' in-process path has been removed.
-  //  - ATLAS_DOCKER_SOCKET_PATH: host Docker socket the manager drives (falls back to
+  //  - DOCKER_SOCKET_PATH: host Docker socket the manager drives (falls back to
   //    DOCKER_SOCKET_PATH, else dockerode's default /var/run/docker.sock).
-  //  - ATLAS_SANDBOX_IMAGE: the sandbox base-image tag (default 'atlas-sandbox:latest'). Deliberately
+  //  - SANDBOX_IMAGE: the sandbox base-image tag (default 'atlas-sandbox:latest'). Deliberately
   //    NOT v1's WORKSPACE_IMAGE — that often still points at the deleted v1 workspace base image.
-  //  - ATLAS_SANDBOX_REBUILD: when set (any value), force a rebuild of the sandbox base image at boot.
-  //  - ATLAS_REFS_ROOT: root for host-maintained read-only reference clones bind-mounted at /refs
+  //  - SANDBOX_REBUILD: when set (any value), force a rebuild of the sandbox base image at boot.
+  //  - REFS_ROOT: root for host-maintained read-only reference clones bind-mounted at /refs
   //    (falls back to REFS_ROOT).
-  //  - ATLAS_MAX_CONCURRENT_SANDBOXES: cap on simultaneously-active sandboxes/turns (semaphore).
-  //  - ATLAS_SANDBOX_IDLE_TTL_MS: idle window before an attached-but-quiet per-thread sandbox container
+  //  - MAX_CONCURRENT_SANDBOXES: cap on simultaneously-active sandboxes/turns (semaphore).
+  //  - SANDBOX_IDLE_TTL_MS: idle window before an attached-but-quiet per-thread sandbox container
   //    is reaped to `detached` (worktree survives; next turn re-attaches). Default 12h.
-  //  - ATLAS_SANDBOX_REAP_INTERVAL_MS: how often the idle reaper + PR-merge cleanup sweep runs. Default 30m.
+  //  - SANDBOX_REAP_INTERVAL_MS: how often the idle reaper + PR-merge cleanup sweep runs. Default 30m.
   // Reuses the generic DOCKER_SOCKET_PATH / REFS_ROOT via the ATLAS_* ?? fallback above.
-  ATLAS_DOCKER_SOCKET_PATH?: string;
-  ATLAS_SANDBOX_IMAGE?: string;
-  ATLAS_SANDBOX_REBUILD?: string;
-  ATLAS_REFS_ROOT?: string;
-  ATLAS_MAX_CONCURRENT_SANDBOXES?: number;
-  ATLAS_SANDBOX_IDLE_TTL_MS?: number;
-  ATLAS_SANDBOX_REAP_INTERVAL_MS?: number;
+  // DOCKER_SOCKET_PATH / REFS_ROOT declared above (shared with v1).
+  SANDBOX_IMAGE?: string;
+  SANDBOX_REBUILD?: string;
+  MAX_CONCURRENT_SANDBOXES?: number;
+  SANDBOX_IDLE_TTL_MS?: number;
+  SANDBOX_REAP_INTERVAL_MS?: number;
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -436,44 +426,38 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   LANGFUSE_BASE_URL: Joi.string().uri().optional(),
   LANGFUSE_TRACING_ENVIRONMENT: Joi.string().optional(),
 
-  // Atlas v2 (host-only local substrate; reuses v1 values where they exist)
-  ATLAS_REPOS_ROOT: Joi.string().optional(),
-  ATLAS_AGENT_HOME_ROOT: Joi.string().optional(),
-  ATLAS_ENGINE_AUTH_MODE: Joi.string()
+  // Atlas v2 (host-only local substrate; reuses v1 values where they exist — REPOS_ROOT,
+  // AGENT_HOME_ROOT, WORKER_MODEL, CODEX_MODEL declared above)
+  ENGINE_AUTH_MODE: Joi.string()
     .valid('api_key', 'subscription')
     .optional(),
-  ATLAS_CLAUDE_OAUTH_TOKEN: Joi.string().optional(),
-  ATLAS_WORKER_MODEL: Joi.string().optional(),
-  ATLAS_CODEX_MODEL: Joi.string().optional(),
-  ATLAS_GITHUB_TOKEN: Joi.string().optional(),
+  CLAUDE_OAUTH_TOKEN: Joi.string().optional(),
   GITHUB_TOKEN: Joi.string().optional(),
-  ATLAS_SURFACE: Joi.string().valid('web', 'agent').optional(),
+  SURFACE: Joi.string().valid('web', 'agent').optional(),
   // Atlas v2 ingress (W2)
-  ATLAS_HTTP_PORT: Joi.number().port().optional(),
-  ATLAS_GITHUB_WEBHOOK_SECRET: Joi.string().optional(),
-  ATLAS_WEBHOOK_SECRET: Joi.string().optional(),
-  ATLAS_EVENT_DEDUP_WINDOW_S: Joi.number().integer().min(0).optional(),
-  ATLAS_EVENT_RATE_LIMIT: Joi.number().integer().min(1).optional(),
-  ATLAS_EVENT_RATE_WINDOW_S: Joi.number().integer().min(1).optional(),
+  HTTP_PORT: Joi.number().port().optional(),
+  GITHUB_WEBHOOK_SECRET: Joi.string().optional(),
+  WEBHOOK_SECRET: Joi.string().optional(),
+  EVENT_DEDUP_WINDOW_S: Joi.number().integer().min(0).optional(),
+  EVENT_RATE_LIMIT: Joi.number().integer().min(1).optional(),
+  EVENT_RATE_WINDOW_S: Joi.number().integer().min(1).optional(),
   // Atlas v2 section/phase driver (W4) runaway guards
-  ATLAS_MAX_SECTIONS: Joi.number().integer().min(1).optional(),
-  ATLAS_MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
-  ATLAS_PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  ATLAS_JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  ATLAS_PARK_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  ATLAS_VERIFY_CMD: Joi.string().optional(),
+  MAX_SECTIONS: Joi.number().integer().min(1).optional(),
+  MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
+  PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  PARK_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  VERIFY_CMD: Joi.string().optional(),
   // Atlas v2 scoping / grill (W3 — issue #1)
-  ATLAS_SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
-  ATLAS_SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
+  SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
+  SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 dev/test tooling (never prod)
-  ATLAS_TEST_BRIDGE: Joi.string().valid('on').optional(),
-  ATLAS_DISABLE_RESUME: Joi.string().optional(),
-  // Atlas v2 Docker sandbox layer
-  ATLAS_DOCKER_SOCKET_PATH: Joi.string().optional(),
-  ATLAS_SANDBOX_IMAGE: Joi.string().optional(),
-  ATLAS_SANDBOX_REBUILD: Joi.string().optional(),
-  ATLAS_REFS_ROOT: Joi.string().optional(),
-  ATLAS_MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
-  ATLAS_SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
-  ATLAS_SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
+  TEST_BRIDGE: Joi.string().valid('on').optional(),
+  DISABLE_RESUME: Joi.string().optional(),
+  // Atlas v2 Docker sandbox layer (DOCKER_SOCKET_PATH, REFS_ROOT declared above)
+  SANDBOX_IMAGE: Joi.string().optional(),
+  SANDBOX_REBUILD: Joi.string().optional(),
+  MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
+  SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
+  SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
 });

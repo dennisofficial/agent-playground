@@ -50,7 +50,7 @@ class RealAuth implements AtlasAuth {
   constructor() {
     this.inner.configure({
       // Absolute base → the Atlas HTTP app directly (cookie session rides on credentialed CORS).
-      apiBaseUrl: env.NEXT_PUBLIC_ATLAS_HTTP_URL,
+      apiBaseUrl: env.NEXT_PUBLIC_HTTP_URL,
       authBasePath: '/auth',
       sessionToAuthState: (s) => ({ authenticated: true, authProviderId: s.id, profileId: s.id }),
     });

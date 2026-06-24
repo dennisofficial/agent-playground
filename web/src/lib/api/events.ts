@@ -34,7 +34,7 @@ export function useChannelEvents(channel: string | undefined): StreamStatus {
       // Direct cross-origin SSE to the Atlas app; `withCredentials` sends the session cookie so the
       // gated `/web/events` stream authorizes. The backend enables credentialed CORS for our origin.
       es = new EventSource(
-        `${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/web/events?channel=${encodeURIComponent(channel)}`,
+        `${env.NEXT_PUBLIC_HTTP_URL}/web/events?channel=${encodeURIComponent(channel)}`,
         { withCredentials: true },
       );
 

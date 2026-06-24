@@ -17,7 +17,7 @@ export enum EAppEnv {
  * Typed env for the Atlas web operator console.
  *
  * The browser talks to the Atlas HTTP app DIRECTLY (no Next.js proxy hop) — `/web/*` REST, the `/web/events`
- * SSE stream, and `/auth/*` all hit `NEXT_PUBLIC_ATLAS_HTTP_URL` with credentials. That URL is therefore a
+ * SSE stream, and `/auth/*` all hit `NEXT_PUBLIC_HTTP_URL` with credentials. That URL is therefore a
  * CLIENT var (it reaches the browser bundle), and the Atlas app enables credentialed CORS for our origin.
  * Defaults let the app boot locally with no .env files; real values come from .env.local.enc / .env.personal
  * via the `env:inject` script.
@@ -34,12 +34,12 @@ export const env = createEnv({
   client: {
     NEXT_PUBLIC_APP_ENV: z.enum(EAppEnv).default(EAppEnv.LOCAL),
     // Where the Atlas standalone HTTP app (ATLAS_SURFACE=web) listens — the browser hits it directly.
-    NEXT_PUBLIC_ATLAS_HTTP_URL: z.url().default('http://localhost:4002'),
+    NEXT_PUBLIC_HTTP_URL: z.url().default('http://localhost:4002'),
   },
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     BUILD_ID: process.env.BUILD_ID,
     NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV,
-    NEXT_PUBLIC_ATLAS_HTTP_URL: process.env.NEXT_PUBLIC_ATLAS_HTTP_URL,
+    NEXT_PUBLIC_HTTP_URL: process.env.NEXT_PUBLIC_HTTP_URL,
   },
 });

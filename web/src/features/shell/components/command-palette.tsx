@@ -1,20 +1,18 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { ROUTES } from '@/lib/routes';
-import { StatusDot } from '@/components/ui/badges';
-import { STATUS_META } from '@/lib/api/status';
-import { useChannel } from '@/components/providers/channel-provider';
-import { useThreadList } from '@/lib/api/threads';
+import { useAllThreads } from '@/lib/api/inbox';
+import { orgColor } from '@/lib/org-display';
 
-/** ⌘K command palette: search input + filtered thread results. `esc` closes (handled by the host). */
+/**
+ * ⌘K command palette — cross-org thread search over `GET /web/threads`. Read-only this phase: opening a
+ * thread is deferred (no thread workspace yet), so a result just reflects what exists across every org.
+ * `esc` closes (handled by the host).
+ */
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter();
-  const { activeChannel } = useChannel();
-  const { threads } = useThreadList(activeChannel);
+  const { data: threads = [] } = useAllThreads();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -23,7 +21,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     if (open) {
       setQuery('');
       setActive(0);
-      // focus after paint
       const id = requestAnimationFrame(() => inputRef.current?.focus());
       return () => cancelAnimationFrame(id);
     }
@@ -31,16 +28,18 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q ? threads.filter((t) => t.title.toLowerCase().includes(q)) : threads;
+    const list = q
+      ? threads.filter(
+          (t) =>
+            t.title.toLowerCase().includes(q) ||
+            t.org.name.toLowerCase().includes(q) ||
+            t.repo.name.toLowerCase().includes(q),
+        )
+      : threads;
     return list.slice(0, 8);
   }, [threads, query]);
 
   if (!open) return null;
-
-  function go(threadKey: string) {
-    router.push(ROUTES.thread(threadKey));
-    onClose();
-  }
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
@@ -49,9 +48,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setActive((a) => Math.max(0, a - 1));
-    } else if (e.key === 'Enter' && results[active]) {
-      e.preventDefault();
-      go(results[active].threadKey);
     }
   }
 
@@ -75,7 +71,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               setActive(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="Jump to a thread, run a command…"
+            placeholder="Search threads across all organizations…"
             className="h-12 flex-1 bg-transparent text-[14px] text-text outline-none placeholder:text-faint"
           />
           <kbd className="rounded border border-border-2 bg-surface px-1.5 py-0.5 font-mono text-[9.5px] text-dim">
@@ -87,24 +83,25 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             <p className="px-3 py-6 text-center text-[12.5px] text-faint">No matching threads</p>
           ) : (
             results.map((t, i) => (
-              <button
-                key={t.threadKey}
-                type="button"
+              <div
+                key={t.id}
                 onMouseEnter={() => setActive(i)}
-                onClick={() => go(t.threadKey)}
                 className={cn(
-                  'flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left transition',
+                  'flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left',
                   i === active ? 'bg-surface-2' : '',
                 )}
               >
-                <StatusDot status={t.status} size={7} />
+                <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: orgColor(t.org.id) }} />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-text">{t.title}</span>
-                <span className="font-mono text-[10px] text-faint">
-                  {STATUS_META[t.status].label.toLowerCase()}
+                <span className="shrink-0 font-mono text-[10px] text-faint">
+                  {t.org.name} · {t.repo.name}
                 </span>
-              </button>
+              </div>
             ))
           )}
+        </div>
+        <div className="border-t border-border px-4 py-2 font-mono text-[9.5px] text-faint">
+          Read-only — opening a thread is coming with the multi-org workspace.
         </div>
       </div>
     </div>

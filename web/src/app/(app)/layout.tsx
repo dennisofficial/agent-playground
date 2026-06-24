@@ -1,14 +1,14 @@
 import type { ReactNode } from 'react';
 import { PrivateGuard } from '@/features/auth/components/guards';
 import { ConnectivityGate } from '@/components/error/connectivity-gate';
-import { ChannelProvider } from '@/components/providers/channel-provider';
+import { OrgsProvider } from '@/components/providers/orgs-provider';
 import { AppChrome } from '@/features/shell/components/app-chrome';
 
 /**
- * Protected app shell. `PrivateGuard` gates on auth; `ChannelProvider` holds the active channel and
- * owns the single SSE subscription; `ConnectivityGate` surfaces a mid-session backend outage (banner →
- * full ServerUnreachable) without unmounting the SSE; `AppChrome` renders the persistent TopBar +
- * Sidebar + palette and the `@dialog` parallel slot (the create-thread modal).
+ * Protected app shell. `PrivateGuard` gates on auth; `OrgsProvider` holds the session orgs + the org-rail
+ * filter (a label, not a switch); `ConnectivityGate` surfaces a mid-session backend outage (banner → full
+ * ServerUnreachable) — it reads a standalone connectivity store, so it needs no SSE provider; `AppChrome`
+ * renders the persistent TopBar + OrgRail + Sidebar + palette and the `@dialog` parallel slot.
  */
 export default function AppLayout({
   children,
@@ -19,11 +19,11 @@ export default function AppLayout({
 }) {
   return (
     <PrivateGuard>
-      <ChannelProvider>
+      <OrgsProvider>
         <ConnectivityGate>
           <AppChrome dialog={dialog}>{children}</AppChrome>
         </ConnectivityGate>
-      </ChannelProvider>
+      </OrgsProvider>
     </PrivateGuard>
   );
 }

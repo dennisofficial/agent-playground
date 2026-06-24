@@ -8,15 +8,15 @@
     "tsConfigPath": "tsconfig.build.json"
   },
   "monorepo": true,
-  "root": "src/atlas",
+  "root": "src/app",
   "projects": {
-    "atlas": {
+    "app": {
       "type": "application",
-      "root": "src/atlas",
-      "entryFile": "atlas-main",
+      "root": "src/app",
+      "entryFile": "main",
       "sourceRoot": "src",
       "compilerOptions": {
-        "tsConfigPath": "src/atlas/tsconfig.json"
+        "tsConfigPath": "src/app/tsconfig.json"
       }
     }
   }

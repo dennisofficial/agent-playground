@@ -18,7 +18,7 @@ let inflight: Promise<boolean> | null = null;
 export function refreshSession(): Promise<boolean> {
   inflight ??= (async (): Promise<boolean> => {
     try {
-      const res = await fetch(`${env.NEXT_PUBLIC_ATLAS_HTTP_URL}/auth/refresh`, {
+      const res = await fetch(`${env.NEXT_PUBLIC_HTTP_URL}/auth/refresh`, {
         method: 'POST',
         credentials: 'include',
       });

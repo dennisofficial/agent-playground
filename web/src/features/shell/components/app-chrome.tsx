@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { TopBar } from './top-bar';
+import { OrgRail } from './org-rail';
 import { Sidebar } from './sidebar';
 import { CommandPalette } from './command-palette';
 
@@ -32,6 +33,7 @@ export function AppChrome({ children, dialog }: { children: ReactNode; dialog: R
     <div className="flex h-dvh flex-col">
       <TopBar onOpenPalette={() => setPaletteOpen(true)} />
       <div className="flex min-h-0 flex-1">
+        <OrgRail />
         <Sidebar />
         <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
       </div>

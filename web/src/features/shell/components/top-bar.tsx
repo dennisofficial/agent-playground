@@ -5,7 +5,7 @@ import { Search } from 'lucide-react';
 import { BrandLockup } from '@/components/ui/brand';
 import { ThemeToggle } from '@/components/theme/theme-toggle';
 import { ROUTES } from '@/lib/routes';
-import { RepoPicker } from './repo-picker';
+import { OrgFilter } from './org-filter';
 import { AccountMenu } from './account-menu';
 
 /** Top bar (52px): lockup → Coordinator · repo picker · ⌘K palette trigger · theme · key pill · avatar. */
@@ -18,7 +18,8 @@ export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
       <Link href={ROUTES.workspace()} className="shrink-0" aria-label="Coordinator overview">
         <BrandLockup size="sm" />
       </Link>
-      <RepoPicker />
+      <span className="h-[18px] w-px" style={{ background: 'var(--border-2)' }} />
+      <OrgFilter />
 
       <button
         type="button"

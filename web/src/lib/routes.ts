@@ -39,7 +39,12 @@ export const ROUTES = {
   threadPhase: (threadKey: string, phaseId: string, tab: PhaseTab = 'transcript') =>
     `/workspace/${threadKey}/phase/${encodeURIComponent(phaseId)}/${tab}`,
   newThread: () => '/new',
+  /** Org settings (General / Credentials / Members). `section` deep-links a tab. */
+  orgSettings: (orgId: string, section?: SettingsSection) =>
+    section ? `/orgs/${orgId}/settings?section=${section}` : `/orgs/${orgId}/settings`,
 } as const;
+
+export type SettingsSection = 'general' | 'credentials' | 'members';
 
 /** Only honor a same-origin relative `?next=` target (no open-redirect). */
 export function safeNext(next: string | null | undefined, fallback = ROUTES.workspace()): string {

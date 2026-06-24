@@ -6,6 +6,6 @@
     "rootDir": ".",
     "noEmit": false
   },
-  "include": ["cli/**/*", "migrations/**/*", "migrations-atlas/**/*"],
+  "include": ["cli/**/*", "migrations/**/*"],
   "exclude": ["node_modules", "dist"]
 }

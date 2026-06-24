@@ -44,8 +44,8 @@ export default async function globalSetup(): Promise<void> {
     await admin.end();
   }
 
-  // Atlas v2 owns its datasource ('atlas') with its own `atlas_*` tables + migration history
-  // (`migrations-atlas/`, bookkept in `atlas_migrations`). Stand it up so the Atlas boot int test
+  // Atlas v2 owns its datasource ('atlas') with its own `app` tables + migration history
+  // (`migrations/`, bookkept in `atlas_migrations`). Stand it up so the Atlas boot int test
   // — which boots the full Atlas DI graph and reconciles in-flight jobs on bootstrap — runs against the
   // real schema, not a missing-table error. The migrations run via the same CLI path as
   // `pnpm db:atlas:migrate`, minus env:inject (which would load the DEV env — this child inherits
@@ -54,7 +54,7 @@ export default async function globalSetup(): Promise<void> {
   // atlas migrations run.
   execFileSync(
     'pnpm',
-    ['exec', 'typeorm-ts-node-commonjs', 'migration:run', '-d', 'cli/atlas-data-source.ts'],
+    ['exec', 'typeorm-ts-node-commonjs', 'migration:run', '-d', 'cli/data-source.ts'],
     {
       cwd: __dirname,
       stdio: 'inherit',
