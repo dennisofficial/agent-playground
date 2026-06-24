@@ -44,7 +44,7 @@ export function OrgRail() {
         sub="one board · no switching"
         badge={attnTotal}
       >
-        <span className="flex items-center justify-center text-dim">
+        <span className="flex h-full w-full items-center justify-center text-dim">
           <LayoutGrid size={17} />
         </span>
       </RailButton>
