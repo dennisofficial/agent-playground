@@ -176,23 +176,23 @@ export class FakeLocalGitService {
   }
 
   async ensureRepo(input: {
-    projectId: string;
+    repoId: string;
     gitUrl: string;
     defaultBranch?: string;
     token?: string;
   }): Promise<ProjectRepo> {
     return {
-      projectId: input.projectId,
+      repoId: input.repoId,
       gitUrl: input.gitUrl,
       defaultBranch: input.defaultBranch ?? 'main',
-      repoPath: `${this.reposRoot()}/${input.projectId}`,
+      repoPath: `${this.reposRoot()}/${input.repoId}`,
       ...(input.token ? { token: input.token } : {}),
     };
   }
 
   async createFeatureSandbox(repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
     return {
-      projectId: repo.projectId,
+      repoId: repo.repoId,
       branch,
       worktreePath: `${repo.repoPath}/.worktrees/${branch.replace(/[^a-z0-9_-]/gi, '-')}`,
       gitUrl: repo.gitUrl,

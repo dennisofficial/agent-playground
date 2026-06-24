@@ -13,7 +13,7 @@ function makeFilter(overrides: Record<string, unknown> = {}): EventFilterService
   return new EventFilterService(env);
 }
 
-const KEY = { teamId: 'T1', projectId: 'web', source: 'github', dedupeKey: 'run:1' };
+const KEY = { orgId: 'T1', repoId: 'web', source: 'github', dedupeKey: 'run:1' };
 
 describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
   it('admits the first event for a key', () => {
@@ -46,13 +46,13 @@ describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
   it('keeps DISTINCT projects independent (same dedupeKey)', () => {
     const f = makeFilter();
     expect(f.admit(KEY, 0).pass).toBe(true);
-    expect(f.admit({ ...KEY, projectId: 'api' }, 1000).pass).toBe(true);
+    expect(f.admit({ ...KEY, repoId: 'api' }, 1000).pass).toBe(true);
   });
 
   it('rate-limits a key whose dedupeKey keeps mutating within the rate window', () => {
     // Short dedup window so dedup doesn't mask the rate-limit; 3 admissions / 60s.
     const f = makeFilter({ ATLAS_EVENT_DEDUP_WINDOW_S: 1, ATLAS_EVENT_RATE_LIMIT: 3, ATLAS_EVENT_RATE_WINDOW_S: 60 });
-    const base = { teamId: 'T1', projectId: 'web', source: 'github' };
+    const base = { orgId: 'T1', repoId: 'web', source: 'github' };
     expect(f.admit({ ...base, dedupeKey: 'a' }, 0).pass).toBe(true);
     expect(f.admit({ ...base, dedupeKey: 'b' }, 2_000).pass).toBe(true);
     expect(f.admit({ ...base, dedupeKey: 'c' }, 4_000).pass).toBe(true);

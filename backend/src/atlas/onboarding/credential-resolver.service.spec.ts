@@ -10,15 +10,15 @@ function fakeEnv(map: Record<string, string | undefined> = {}): EnvService {
 /** A store stubbed to return one team's creds (or null for any other / no row). */
 function fakeStore(rows: Record<string, TenantCredentials | null>): TenantCredentialStore {
   return {
-    async read(teamId: string) {
-      return rows[teamId] ?? null;
+    async read(orgId: string) {
+      return rows[orgId] ?? null;
     },
   } as unknown as TenantCredentialStore;
 }
 
 describe('CredentialResolver — env-fallback contract', () => {
   describe('anthropicKey', () => {
-    it('falls back to env when teamId is undefined', async () => {
+    it('falls back to env when orgId is undefined', async () => {
       const r = new CredentialResolver(fakeStore({}), fakeEnv({ ANTHROPIC_API_KEY: 'env-key' }));
       expect(await r.anthropicKey(undefined)).toBe('env-key');
     });

@@ -4,28 +4,22 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GithubPrService, parseGithubRepoUrl } from '../git';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasChannel, AtlasProject, AtlasTeam } from '../persistence/entities';
+import { AtlasOrgCredentials, AtlasRepo, Organization } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
 
-/** A tenant's lifecycle, stored on `atlas_teams.status`. */
-export type TeamLifecycle = 'pending' | 'onboarding' | 'active' | 'suspended';
+/** An org's lifecycle, stored on `atlas_organizations.status`. */
+export type OrgLifecycle = 'onboarding' | 'active' | 'suspended';
 
 /** The ordered onboarding checklist steps (first-unmet is the next thing to do). */
-export type OnboardingStep =
-  | 'install'
-  | 'bind_channel'
-  | 'llm_key'
-  | 'engine_auth'
-  | 'github_pat';
+export type OnboardingStep = 'repo' | 'llm_key' | 'engine_auth' | 'github_pat';
 
-/** The derived onboarding state for a tenant — computed from rows, never a separate source of truth. */
+/** The derived onboarding state for an org — computed from rows, never a separate source of truth. */
 export interface OnboardingStatus {
-  teamId: string;
-  lifecycle: TeamLifecycle;
+  orgId: string;
+  lifecycle: OrgLifecycle;
   steps: {
-    installed: boolean;
-    channelBound: boolean;
+    repoConnected: boolean;
     llmKey: boolean;
     engineAuth: boolean;
     githubPat: boolean;
@@ -39,149 +33,148 @@ export interface ValidationResult {
   reason?: string;
 }
 
-/** Bind a Slack channel to a project/repo (the thing that makes inbound messages route). */
-export interface BindChannelArgs {
-  teamId: string;
-  projectId: string;
-  /** The surface-native channel id (e.g. Slack 'C042'). */
-  channelRef: string;
-  /** HTTPS GitHub URL for the project (required — a channel binds to a repo). */
+/** Connect a GitHub repo to an org (the thing that makes a repo available for threads). */
+export interface ConnectRepoArgs {
+  orgId: string;
+  /** HTTPS GitHub URL for the repo. */
   repoUrl: string;
   baseBranch?: string;
+  /** Display name; defaults to the GitHub repo name. */
   displayName?: string;
-  /** Mark the tenant `active` immediately (the test-bridge / admin path); else preserve/`onboarding`. */
-  activate?: boolean;
+}
+
+export interface ConnectedRepo {
+  repoId: string;
+  name: string;
+  gitUrl: string;
+  defaultBranch: string;
+  accessOk: boolean;
+  reason?: string;
+}
+
+/** Slugify a repo name into a URL-safe, org-unique handle. */
+export function slugifyRepo(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64) || 'repo'
+  );
 }
 
 /**
- * The onboarding state machine + channel binding — the orthogonal layer that gets a tenant from
- * installed → fully-configured → active, and (the fix for "unregistered channel ignored") binds a Slack
- * channel to a GitHub repo so `ChatStimulusBridge` routes its messages. Checklist state is DERIVED from
- * the existing rows (credentials presence + channel/project + `atlas_teams.status`), not a new table.
+ * The onboarding state machine + repo connection — the layer that gets an org from created → fully
+ * configured → active, and connects a GitHub repo so threads can be opened against it. Checklist state
+ * is DERIVED from the existing rows (credentials presence + connected/validated repo + the org's
+ * `atlas_organizations.status` lifecycle), never a new table.
  */
 @Injectable()
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
 
   constructor(
-    @InjectRepository(AtlasTeam, ATLAS_CONNECTION)
-    private readonly teams: Repository<AtlasTeam>,
-    @InjectRepository(AtlasProject, ATLAS_CONNECTION)
-    private readonly projects: Repository<AtlasProject>,
-    @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
-    private readonly channels: Repository<AtlasChannel>,
+    @InjectRepository(Organization, ATLAS_CONNECTION)
+    private readonly orgs: Repository<Organization>,
+    @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
+    private readonly repos: Repository<AtlasRepo>,
+    @InjectRepository(AtlasOrgCredentials, ATLAS_CONNECTION)
+    private readonly orgCreds: Repository<AtlasOrgCredentials>,
     private readonly creds: CredentialResolver,
     private readonly store: TenantCredentialStore,
     private readonly pr: GithubPrService,
   ) {}
 
   /**
-   * Idempotently bind a channel to a project/repo: upsert `atlas_teams` + `atlas_projects` (repo + base)
-   * + find-or-create the 1:1 `atlas_channels` row and point its `surface_channel_ref` at the channel.
-   * THIS fixes the original symptom — `ChatStimulusBridge` keys on `(team_id, surface_channel_ref)`.
-   * Preserves an existing team's status on re-bind (a repo re-point doesn't reset `active`→`onboarding`).
+   * Idempotently connect a GitHub repo to an org: derive the slug, upsert the `atlas_repos` row, then
+   * probe access with the org's GitHub token and persist the validated state (`access_ok`). A repo is
+   * only counted toward onboarding once `access_ok` is true.
    */
-  async bindChannel(args: BindChannelArgs): Promise<{ channelId: string }> {
-    const { teamId, projectId, channelRef, repoUrl } = args;
+  async connectRepo(args: ConnectRepoArgs): Promise<ConnectedRepo> {
+    const { orgId, repoUrl } = args;
+    const parsed = parseGithubRepoUrl(repoUrl);
+    if (!parsed) {
+      return {
+        repoId: '',
+        name: '',
+        gitUrl: repoUrl,
+        defaultBranch: args.baseBranch ?? 'main',
+        accessOk: false,
+        reason: `not an HTTPS GitHub URL: ${repoUrl}`,
+      };
+    }
+    const repoId = slugifyRepo(parsed.repo);
+    const name = args.displayName ?? parsed.repo;
     const baseBranch = args.baseBranch ?? 'main';
 
-    const existingTeam = await this.teams.findOne({ where: { team_id: teamId } });
-    const status: TeamLifecycle = args.activate
-      ? 'active'
-      : ((existingTeam?.status as TeamLifecycle | undefined) ?? 'onboarding');
-    await this.teams.upsert(
-      { team_id: teamId, team_name: existingTeam?.team_name ?? teamId, status },
-      ['team_id'],
-    );
-
-    await this.projects.upsert(
+    await this.repos.upsert(
       {
-        team_id: teamId,
-        project_id: projectId,
-        display_name: args.displayName ?? projectId,
-        description: null,
+        org_id: orgId,
+        repo_id: repoId,
+        name,
         git_url: repoUrl,
         default_branch: baseBranch,
         token_name: null,
       },
-      ['team_id', 'project_id'],
+      ['org_id', 'repo_id'],
     );
 
-    // Channel is 1:1 with the project via UNIQUE(team_id, project_id), but its PK is a generated uuid —
-    // so find-or-create (we can't upsert on the unique pair), then point the surface ref.
-    let channel = await this.channels.findOne({
-      where: { team_id: teamId, project_id: projectId },
-    });
-    if (channel) {
-      channel.surface_channel_ref = channelRef;
-      channel.display_name = args.displayName ?? channelRef;
-      channel = await this.channels.save(channel);
-    } else {
-      channel = await this.channels.save(
-        this.channels.create({
-          team_id: teamId,
-          project_id: projectId,
-          surface_channel_ref: channelRef,
-          display_name: args.displayName ?? channelRef,
-        }),
-      );
-    }
-    this.logger.log(`bound channel ${channelRef} → ${teamId}/${projectId} (channel ${channel.id})`);
-    return { channelId: channel.id };
+    const validation = await this.validateRepo(orgId, repoId);
+    await this.repos.update(
+      { org_id: orgId, repo_id: repoId },
+      { access_ok: validation.ok, access_checked_at: new Date() },
+    );
+    this.logger.log(`connected repo ${repoId} → org ${orgId} (access_ok=${validation.ok})`);
+
+    return {
+      repoId,
+      name,
+      gitUrl: repoUrl,
+      defaultBranch: baseBranch,
+      accessOk: validation.ok,
+      ...(validation.reason ? { reason: validation.reason } : {}),
+    };
   }
 
-  /** The derived onboarding checklist for a tenant. */
-  async status(teamId: string): Promise<OnboardingStatus> {
-    const team = await this.teams.findOne({ where: { team_id: teamId } });
-    const installed = !!team;
-    const lifecycle = (team?.status as TeamLifecycle | undefined) ?? 'pending';
+  /** The derived onboarding checklist for an org. */
+  async status(orgId: string): Promise<OnboardingStatus> {
+    const org = await this.orgs.findOne({ where: { id: orgId } });
+    const lifecycle = (org?.status as OrgLifecycle | undefined) ?? 'onboarding';
 
-    // channelBound = at least one channel with a surface ref whose project has a repo.
-    const channels = await this.channels.find({ where: { team_id: teamId } });
-    let channelBound = false;
-    for (const ch of channels) {
-      if (!ch.surface_channel_ref) continue;
-      const proj = await this.projects.findOne({
-        where: { team_id: teamId, project_id: ch.project_id },
-      });
-      if (proj?.git_url) {
-        channelBound = true;
-        break;
-      }
-    }
+    const repoConnected = !!(await this.repos.findOne({
+      where: { org_id: orgId, access_ok: true },
+    }));
 
-    const presence = await this.store.presence(teamId);
+    const presence = await this.store.presence(orgId);
+    const credRow = await this.orgCreds.findOne({ where: { org_id: orgId, scope: '*' } });
     const steps = {
-      installed,
-      channelBound,
-      llmKey: presence.hasAnthropic,
+      repoConnected,
+      // The Anthropic key must be PRESENT and validated (1-token probe) to count.
+      llmKey: presence.hasAnthropic && !!credRow?.llm_validated_at,
       engineAuth: presence.engineAuthSet,
       githubPat: presence.hasGithub,
     };
     const missing: OnboardingStep[] = [];
-    if (!steps.installed) missing.push('install');
-    if (!steps.channelBound) missing.push('bind_channel');
+    if (!steps.repoConnected) missing.push('repo');
     if (!steps.llmKey) missing.push('llm_key');
     if (!steps.engineAuth) missing.push('engine_auth');
     if (!steps.githubPat) missing.push('github_pat');
-    return { teamId, lifecycle, steps, missing };
+    return { orgId, lifecycle, steps, missing };
   }
 
   /** The first unmet step (what the onboarding UX should ask for next), or null when complete. */
-  async nextStep(teamId: string): Promise<OnboardingStep | null> {
-    const { missing } = await this.status(teamId);
+  async nextStep(orgId: string): Promise<OnboardingStep | null> {
+    const { missing } = await this.status(orgId);
     return missing[0] ?? null;
   }
 
-  /** Probe that the project's repo is reachable with the tenant's token (fails fast on a bad PAT/url). */
-  async validateRepo(teamId: string, projectId: string): Promise<ValidationResult> {
-    const project = await this.projects.findOne({
-      where: { team_id: teamId, project_id: projectId },
-    });
-    if (!project?.git_url) return { ok: false, reason: 'no repo configured for this project' };
-    const parsed = parseGithubRepoUrl(project.git_url);
-    if (!parsed) return { ok: false, reason: `not an HTTPS GitHub URL: ${project.git_url}` };
-    const token = await this.creds.githubToken(teamId);
+  /** Probe that the repo is reachable with the org's token (fails fast on a bad PAT/url). */
+  async validateRepo(orgId: string, repoId: string): Promise<ValidationResult> {
+    const repo = await this.repos.findOne({ where: { org_id: orgId, repo_id: repoId } });
+    if (!repo?.git_url) return { ok: false, reason: 'no repo configured' };
+    const parsed = parseGithubRepoUrl(repo.git_url);
+    if (!parsed) return { ok: false, reason: `not an HTTPS GitHub URL: ${repo.git_url}` };
+    const token = await this.creds.githubToken(orgId);
     if (!token) return { ok: false, reason: 'no GitHub token set' };
     const info = await this.pr.getRepo(token, parsed.owner, parsed.repo).catch(() => null);
     if (!info) {
@@ -190,9 +183,12 @@ export class OnboardingService {
     return { ok: true };
   }
 
-  /** Probe the tenant's Anthropic key with a 1-token call so a bad key surfaces at onboarding, not mid-build. */
-  async validateLlmKey(teamId: string): Promise<ValidationResult> {
-    const key = await this.creds.anthropicKey(teamId);
+  /**
+   * Probe the org's Anthropic key with a 1-token call so a bad key surfaces at onboarding, not mid-build.
+   * On success, stamps `llm_validated_at` so the checklist counts the key as validated.
+   */
+  async validateLlmKey(orgId: string): Promise<ValidationResult> {
+    const key = await this.creds.anthropicKey(orgId);
     if (!key) return { ok: false, reason: 'no Anthropic API key set' };
     try {
       const probe = new ChatAnthropic({
@@ -202,6 +198,7 @@ export class OnboardingService {
         temperature: 0,
       });
       await probe.invoke([{ role: 'user', content: 'ping' }]);
+      await this.orgCreds.update({ org_id: orgId, scope: '*' }, { llm_validated_at: new Date() });
       return { ok: true };
     } catch (err) {
       return {
@@ -211,12 +208,12 @@ export class OnboardingService {
     }
   }
 
-  /** Flip the tenant to `active` once every checklist step is met (no-op otherwise). Returns the status. */
-  async tryActivate(teamId: string): Promise<OnboardingStatus> {
-    const status = await this.status(teamId);
+  /** Flip the org to `active` once every checklist step is met (no-op otherwise). Returns the status. */
+  async tryActivate(orgId: string): Promise<OnboardingStatus> {
+    const status = await this.status(orgId);
     if (status.missing.length === 0 && status.lifecycle !== 'active') {
-      await this.teams.update({ team_id: teamId }, { status: 'active' });
-      this.logger.log(`tenant ${teamId} fully configured → active`);
+      await this.orgs.update({ id: orgId }, { status: 'active' });
+      this.logger.log(`org ${orgId} fully configured → active`);
       return { ...status, lifecycle: 'active' };
     }
     return status;

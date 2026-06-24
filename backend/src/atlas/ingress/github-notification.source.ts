@@ -68,7 +68,7 @@ export class GithubNotificationSource implements NotificationSource {
     }
 
     // A GitHub payload carries no Slack team id — the repo IS the tenant key. Route across all
-    // registered projects; the matched project carries its own team_id (multi-tenant-ready, no
+    // registered projects; the matched project carries its own org_id (multi-tenant-ready, no
     // per-payload team). Unknown repo → unroutable (Atlas never works a repo it doesn't own).
     const route = await this.routing.routeGithubRepo(repo);
     if (!route) {
@@ -82,8 +82,8 @@ export class GithubNotificationSource implements NotificationSource {
     }
 
     const event: ParsedEvent = {
-      teamId: route.teamId,
-      projectId: route.projectId,
+      orgId: route.orgId,
+      repoId: route.repoId,
       source: this.source,
       dedupeKey: deriveDedupeKey(eventType, body, raw.headers['x-github-delivery']),
       severity: summary.severity,

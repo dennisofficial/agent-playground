@@ -108,7 +108,7 @@ export interface AutoFixContext {
   worktreePath: string;
   /**
    * Stable per-feature key namespacing the engine's isolated home + Codex client cache. Use the same
-   * `<projectId>--<branch>` key the turn-runner uses so the auto-fix turns share the feature's home.
+   * `<repoId>--<branch>` key the turn-runner uses so the auto-fix turns share the feature's home.
    */
   sandboxKey: string;
   /**

@@ -8,19 +8,19 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
  * alongside v1's live `channels` table.
  */
 @Entity({ name: 'atlas_channels' })
-@Index(['team_id'])
-@Unique(['team_id', 'project_id']) // 1:1 with the project
+@Index(['org_id'])
+@Unique(['org_id', 'repo_id']) // 1:1 with the project
 export class AtlasChannel extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   /** The tenant (Slack team id) that owns this channel (FK → atlas_teams). */
   @Column({ type: 'text' })
-  team_id!: string;
+  org_id!: string;
 
-  /** The project this channel is 1:1 with (FK → atlas_projects(team_id, project_id)). */
+  /** The project this channel is 1:1 with (FK → atlas_projects(org_id, repo_id)). */
   @Column({ type: 'text' })
-  project_id!: string;
+  repo_id!: string;
 
   /** The surface-native channel coordinate (e.g. a Slack channel id 'C042'); null until bound. */
   @Column({ type: 'text', nullable: true })

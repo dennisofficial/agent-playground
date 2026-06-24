@@ -36,7 +36,7 @@ export interface PlanSectionInput {
   /** The prior section's handoff note (null for the first section). */
   handoffIn: string | null;
   /** The tenant whose Anthropic key backs this call (omit → env fallback). */
-  teamId?: string;
+  orgId?: string;
 }
 
 /** A decision the planner surfaced from its own plan for the gate to classify. */
@@ -72,7 +72,7 @@ export interface PlannerLlm {
     brief: string;
     phases: PlannedPhase[];
     reports: string[];
-    teamId?: string;
+    orgId?: string;
   }): Promise<string | undefined>;
 }
 
@@ -150,12 +150,12 @@ export class AnthropicPlannerLlm implements PlannerLlm {
   private readonly clients = new Map<string, ChatAnthropic>();
 
   constructor(
-    private readonly apiKey: (teamId?: string) => Promise<string | undefined>,
+    private readonly apiKey: (orgId?: string) => Promise<string | undefined>,
     private readonly model: () => string | undefined,
   ) {}
 
-  private async client(teamId?: string): Promise<ChatAnthropic | undefined> {
-    const key = await this.apiKey(teamId);
+  private async client(orgId?: string): Promise<ChatAnthropic | undefined> {
+    const key = await this.apiKey(orgId);
     if (!key) return undefined;
     let c = this.clients.get(key);
     if (!c) {
@@ -171,7 +171,7 @@ export class AnthropicPlannerLlm implements PlannerLlm {
   }
 
   async planSection(input: PlanSectionInput): Promise<PlannedPhase[] | undefined> {
-    const model = await this.client(input.teamId);
+    const model = await this.client(input.orgId);
     if (!model) return undefined;
     const bound = model.bindTools(
       [{ name: 'emit_phases', description: 'Emit the section\'s ordered phase list.', schema: PHASES_SCHEMA }],
@@ -187,7 +187,7 @@ export class AnthropicPlannerLlm implements PlannerLlm {
   async reviewPlan(
     input: PlanSectionInput & { draft: PlannedPhase[] },
   ): Promise<PlannedPhase[] | undefined> {
-    const model = await this.client(input.teamId);
+    const model = await this.client(input.orgId);
     if (!model) return undefined;
     const bound = model.bindTools(
       [{ name: 'emit_phases', description: 'Emit the revised phase list.', schema: PHASES_SCHEMA }],
@@ -204,7 +204,7 @@ export class AnthropicPlannerLlm implements PlannerLlm {
   async extractDecisions(
     input: PlanSectionInput & { phases: PlannedPhase[] },
   ): Promise<PlannedDecision[] | undefined> {
-    const model = await this.client(input.teamId);
+    const model = await this.client(input.orgId);
     if (!model) return undefined;
     const bound = model.bindTools(
       [
@@ -251,9 +251,9 @@ export class AnthropicPlannerLlm implements PlannerLlm {
     brief: string;
     phases: PlannedPhase[];
     reports: string[];
-    teamId?: string;
+    orgId?: string;
   }): Promise<string | undefined> {
-    const model = await this.client(input.teamId);
+    const model = await this.client(input.orgId);
     if (!model) return undefined;
     const phases = input.phases.map((p) => `- ${p.title}`).join('\n');
     const reports = input.reports.map((r, i) => `Phase ${i + 1} report: ${r}`).join('\n\n');

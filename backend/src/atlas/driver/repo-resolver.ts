@@ -5,7 +5,7 @@ import type { Job } from '../domain';
 import { LocalGitService, parseGithubRepoUrl, type ProjectRepo } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasProject } from '../persistence/entities';
+import { AtlasRepo } from '../persistence/entities';
 
 /** The DI token for the repo resolver — a seam so the driver test can bind a fake (no real git/clone). */
 export const ATLAS_DRIVER_REPO = Symbol('ATLAS_DRIVER_REPO');
@@ -40,24 +40,24 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
   constructor(
     private readonly creds: CredentialResolver,
     private readonly git: LocalGitService,
-    @InjectRepository(AtlasProject, ATLAS_CONNECTION)
-    private readonly projects: Repository<AtlasProject>,
+    @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
+    private readonly projects: Repository<AtlasRepo>,
   ) {}
 
   async resolve(job: Job): Promise<ResolvedRepo> {
     const project = await this.projects.findOne({
-      where: { team_id: job.teamId, project_id: job.projectId },
+      where: { org_id: job.orgId, repo_id: job.repoId },
     });
     if (!project) {
-      throw new Error(`No atlas_projects row for team=${job.teamId} project=${job.projectId}`);
+      throw new Error(`No atlas_projects row for team=${job.orgId} project=${job.repoId}`);
     }
     const parsed = parseGithubRepoUrl(project.git_url);
     if (!parsed) {
-      throw new Error(`Project ${job.projectId} git_url is not an HTTPS GitHub URL: ${project.git_url}`);
+      throw new Error(`Project ${job.repoId} git_url is not an HTTPS GitHub URL: ${project.git_url}`);
     }
-    const token = await this.creds.githubToken(job.teamId);
+    const token = await this.creds.githubToken(job.orgId);
     const projectRepo = await this.git.ensureRepo({
-      projectId: job.projectId,
+      repoId: job.repoId,
       gitUrl: project.git_url,
       defaultBranch: project.default_branch,
       ...(token ? { token } : {}),

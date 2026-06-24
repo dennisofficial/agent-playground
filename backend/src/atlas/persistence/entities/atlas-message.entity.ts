@@ -30,4 +30,20 @@ export class AtlasMessage extends TimestampedEntity {
 
   @Column({ type: 'text' })
   text!: string;
+
+  /** Surface ordering handle (the synthetic ts the surface minted); also the SSE/edit key. */
+  @Column({ type: 'text', nullable: true })
+  ts!: string | null;
+
+  /** What this row is: 'chat' (conversational, fed to the grill) | 'card' | 'build_event'. */
+  @Column({ type: 'text', default: 'chat' })
+  kind!: string;
+
+  /** Approval/verdict card payload (when kind='card'); null otherwise. */
+  @Column({ type: 'jsonb', nullable: true })
+  card!: Record<string, unknown> | null;
+
+  /** Opaque metadata (e.g. build-phase event context) when kind='build_event'; null otherwise. */
+  @Column({ type: 'jsonb', nullable: true })
+  meta!: Record<string, unknown> | null;
 }

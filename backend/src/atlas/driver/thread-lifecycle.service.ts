@@ -6,9 +6,8 @@ import { IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver } from '../onboarding';
-import { OnboardingService, type BindChannelArgs } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasProject, AtlasThread, AtlasThreadSandbox } from '../persistence/entities';
+import { AtlasRepo, AtlasThread, AtlasThreadSandbox } from '../persistence/entities';
 import { hostExecUser, SANDBOX_PROVIDER, SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { ATLAS_DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 
@@ -22,8 +21,8 @@ export type ThreadSandboxLifecycle = 'provisioning' | 'attached' | 'detached' | 
 
 /** Input to `createThread` — everything needed to open a new workspace thread. */
 export interface CreateThreadInput {
-  teamId: string;
-  projectId: string;
+  orgId: string;
+  repoId: string;
   /** HTTPS GitHub URL for the project (required on first use; omit if the project is already registered). */
   repoUrl?: string;
   /** The base branch the operator picked (default = repo's default branch). */
@@ -66,9 +65,8 @@ export class ThreadLifecycleService {
     private readonly threads: Repository<AtlasThread>,
     @InjectRepository(AtlasThreadSandbox, ATLAS_CONNECTION)
     private readonly sandboxes: Repository<AtlasThreadSandbox>,
-    @InjectRepository(AtlasProject, ATLAS_CONNECTION)
-    private readonly projects: Repository<AtlasProject>,
-    private readonly onboarding: OnboardingService,
+    @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
+    private readonly projects: Repository<AtlasRepo>,
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
     private readonly creds: CredentialResolver,
@@ -84,40 +82,27 @@ export class ThreadLifecycleService {
    * `attached` (docker DinD wait included in `SandboxProvider.attach`).
    */
   async createThread(input: CreateThreadInput): Promise<CreatedThread> {
-    const { teamId, projectId, displayName } = input;
+    const { orgId, repoId, displayName } = input;
 
-    // 1. Ensure the project exists (upsert via onboarding, no-op if already registered).
-    if (input.repoUrl) {
-      const bindArgs: BindChannelArgs = {
-        teamId,
-        projectId,
-        channelRef: projectId, // placeholder — threads don't need a surface channel ref
-        repoUrl: input.repoUrl,
-        ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
-        displayName: displayName ?? projectId,
-      };
-      await this.onboarding.bindChannel(bindArgs);
-    }
-
-    // Resolve the project's registered base branch (falls back to the project row's default_branch).
-    const project = await this.projects.findOne({ where: { team_id: teamId, project_id: projectId } });
+    // The repo must already be connected (onboarding's connectRepo). Resolve it for its base branch.
+    const project = await this.projects.findOne({ where: { org_id: orgId, repo_id: repoId } });
     if (!project) {
-      throw new Error(`No atlas_projects row for team=${teamId} project=${projectId} — pass repoUrl to register it`);
+      throw new Error(`No connected repo for org=${orgId} repo=${repoId} — connect it first`);
     }
     const baseBranch = input.baseBranch ?? project.default_branch ?? 'main';
 
     // 2. Persist the atlas_threads row (origin='control', base_branch set).
     const thread = await this.threads.save(
       this.threads.create({
-        team_id: teamId,
-        project_id: projectId,
+        org_id: orgId,
+        repo_id: repoId,
         origin: 'control',
         surface_thread_ref: null,
         title: displayName ?? null,
         base_branch: baseBranch,
       }),
     );
-    this.logger.log(`created thread ${thread.id} for ${teamId}/${projectId} on ${baseBranch}`);
+    this.logger.log(`created thread ${thread.id} for ${orgId}/${repoId} on ${baseBranch}`);
 
     // 3. Provision the sandbox on the base branch.
     const sandboxRow = await this.provisionSandbox(thread, project, baseBranch);
@@ -135,8 +120,8 @@ export class ThreadLifecycleService {
    * exists). Read-only (no attach) — used where a live container isn't required (e.g. plan-review). Turn
    * paths use {@link ensureContainer} instead, which (re-)attaches.
    */
-  async findSandbox(threadId: string, teamId: string): Promise<FeatureSandbox | null> {
-    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, team_id: teamId } });
+  async findSandbox(threadId: string, orgId: string): Promise<FeatureSandbox | null> {
+    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
     if (!row) return null;
     return this.rowToSandbox(row);
   }
@@ -154,9 +139,9 @@ export class ThreadLifecycleService {
    */
   async ensureContainer(
     threadId: string,
-    teamId: string,
+    orgId: string,
   ): Promise<{ sandbox: FeatureSandbox; wasReset: boolean } | null> {
-    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, team_id: teamId } });
+    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return null;
 
     // Common path: the durable worktree is present → skip the repo resolve (a git fetch) entirely. Only
@@ -171,7 +156,7 @@ export class ThreadLifecycleService {
 
     const attached = await this.sandboxProvider.attach({
       sandbox: this.rowToSandbox(row),
-      teamId,
+      orgId,
       threadId,
     });
 
@@ -191,8 +176,8 @@ export class ThreadLifecycleService {
    * on PR merge / explicit thread close / abandon. Idempotent: a `closed` row is a no-op. Leaves the
    * branch ref (the PR/merge owns it). Best-effort on each side so a half-gone sandbox still closes.
    */
-  async closeThread(threadId: string, teamId: string): Promise<void> {
-    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, team_id: teamId } });
+  async closeThread(threadId: string, orgId: string): Promise<void> {
+    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return;
 
     if (row.container_id) {
@@ -216,9 +201,9 @@ export class ThreadLifecycleService {
   }
 
   /** Record the thread's PR (url + number) when the build opens it, so the cleanup poll can watch it. */
-  async recordPr(threadId: string, teamId: string, prUrl: string, prNumber: number): Promise<void> {
+  async recordPr(threadId: string, orgId: string, prUrl: string, prNumber: number): Promise<void> {
     await this.sandboxes.update(
-      { thread_id: threadId, team_id: teamId },
+      { thread_id: threadId, org_id: orgId },
       { pr_url: prUrl, pr_number: prNumber },
     );
   }
@@ -238,10 +223,10 @@ export class ThreadLifecycleService {
     for (const row of rows) {
       try {
         const project = await this.projects.findOne({
-          where: { team_id: row.team_id, project_id: row.project_id },
+          where: { org_id: row.org_id, repo_id: row.repo_id },
         });
         const parsed = project ? parseGithubRepoUrl(project.git_url) : null;
-        const token = await this.creds.githubToken(row.team_id);
+        const token = await this.creds.githubToken(row.org_id);
         if (!parsed || !token || row.pr_number == null) continue;
         const state = await this.pr.getPullState(token, {
           owner: parsed.owner,
@@ -250,7 +235,7 @@ export class ThreadLifecycleService {
         });
         if (state !== 'open') {
           this.logger.log(`thread ${row.thread_id} PR #${row.pr_number} is ${state} — closing thread`);
-          await this.closeThread(row.thread_id, row.team_id);
+          await this.closeThread(row.thread_id, row.org_id);
           closed++;
         }
       } catch (err) {
@@ -331,16 +316,16 @@ export class ThreadLifecycleService {
 
   private async provisionSandbox(
     thread: AtlasThread,
-    project: AtlasProject,
+    project: AtlasRepo,
     baseBranch: string,
   ): Promise<AtlasThreadSandbox> {
     // Persist the row in `provisioning` state first (crash-safe: if we fail after this we can detect
     // the orphaned row on recovery).
     const row = await this.sandboxes.save(
       this.sandboxes.create({
-        team_id: thread.team_id,
+        org_id: thread.org_id,
         thread_id: thread.id,
-        project_id: project.project_id,
+        repo_id: project.repo_id,
         base_branch: baseBranch,
         feature_branch: null,
         worktree_path: '', // filled in below
@@ -350,9 +335,9 @@ export class ThreadLifecycleService {
     );
 
     try {
-      const token = await this.creds.githubToken(thread.team_id);
+      const token = await this.creds.githubToken(thread.org_id);
       const projectRepo = await this.git.ensureRepo({
-        projectId: project.project_id,
+        repoId: project.repo_id,
         gitUrl: project.git_url,
         defaultBranch: baseBranch,
         ...(token ? { token } : {}),
@@ -368,7 +353,7 @@ export class ThreadLifecycleService {
       // Attach the execution environment (thread-keyed container).
       const attached = await this.sandboxProvider.attach({
         sandbox: branched,
-        teamId: thread.team_id,
+        orgId: thread.org_id,
         threadId: thread.id,
       });
 
@@ -396,12 +381,12 @@ export class ThreadLifecycleService {
   /** Resolve the `ProjectRepo` (clone path + token) for a sandbox row. */
   private async repoForRow(row: AtlasThreadSandbox): Promise<ProjectRepo> {
     const project = await this.projects.findOne({
-      where: { team_id: row.team_id, project_id: row.project_id },
+      where: { org_id: row.org_id, repo_id: row.repo_id },
     });
-    if (!project) throw new Error(`No atlas_projects row for team=${row.team_id} project=${row.project_id}`);
-    const token = await this.creds.githubToken(row.team_id);
+    if (!project) throw new Error(`No atlas_projects row for team=${row.org_id} project=${row.repo_id}`);
+    const token = await this.creds.githubToken(row.org_id);
     return this.git.ensureRepo({
-      projectId: row.project_id,
+      repoId: row.repo_id,
       gitUrl: project.git_url,
       defaultBranch: project.default_branch,
       ...(token ? { token } : {}),
@@ -428,7 +413,7 @@ export class ThreadLifecycleService {
   private rowToSandbox(row: AtlasThreadSandbox): FeatureSandbox {
     const execUser = row.container_id ? hostExecUser() : undefined;
     return {
-      projectId: row.project_id,
+      repoId: row.repo_id,
       branch: row.feature_branch ?? row.base_branch,
       worktreePath: row.worktree_path,
       gitUrl: '', // Not stored on the row — resolved lazily when needed (push/PR is repo-level)

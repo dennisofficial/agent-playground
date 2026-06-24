@@ -96,10 +96,10 @@ export class BrainStoreService {
   }
 
   /** Resolve where to post into a thread: the project's channel coordinate + the thread's root ts. */
-  async route(thread: { teamId: string; projectId: string; threadId: string }): Promise<ThreadRoute> {
+  async route(thread: { orgId: string; repoId: string; threadId: string }): Promise<ThreadRoute> {
     const [channel, row] = await Promise.all([
       this.channels.findOne({
-        where: { team_id: thread.teamId, project_id: thread.projectId },
+        where: { org_id: thread.orgId, repo_id: thread.repoId },
       }),
       this.threads.findOne({ where: { id: thread.threadId } }),
     ]);
@@ -122,16 +122,16 @@ export class BrainStoreService {
 
   /** Open a fresh `scoping` job on a thread (the upfront grill's anchor). */
   async openJob(input: {
-    teamId: string;
-    projectId: string;
+    orgId: string;
+    repoId: string;
     threadId: string;
     title: string;
     kind: JobKind;
   }): Promise<string> {
     const row = await this.jobs.save(
       this.jobs.create({
-        team_id: input.teamId,
-        project_id: input.projectId,
+        org_id: input.orgId,
+        repo_id: input.repoId,
         thread_id: input.threadId,
         kind: input.kind,
         status: 'scoping',
@@ -150,8 +150,8 @@ export class BrainStoreService {
    * fills the detailed phase plan). Returns the job (domain shape) + the decision record id.
    */
   async persistPlan(input: {
-    teamId: string;
-    projectId: string;
+    orgId: string;
+    repoId: string;
     jobId: string;
     title: string;
     kind: JobKind;
@@ -172,8 +172,8 @@ export class BrainStoreService {
 
     const record = await this.records.save(
       this.records.create({
-        team_id: input.teamId,
-        project_id: input.projectId,
+        org_id: input.orgId,
+        repo_id: input.repoId,
         job_id: input.jobId,
         status: 'draft',
         overview: input.overview,
@@ -188,7 +188,7 @@ export class BrainStoreService {
       input.sectionBriefs.map((brief, i) =>
         this.sections.create({
           job_id: input.jobId,
-          team_id: input.teamId,
+          org_id: input.orgId,
           ordinal: (i + 1) * ORDINAL_GAP,
           brief,
           plan: null,
@@ -245,8 +245,8 @@ export class BrainStoreService {
 function toJob(row: AtlasJob): Job {
   return {
     id: row.id,
-    teamId: row.team_id,
-    projectId: row.project_id,
+    orgId: row.org_id,
+    repoId: row.repo_id,
     threadId: row.thread_id,
     kind: row.kind as JobKind,
     status: row.status as Job['status'],

@@ -30,7 +30,7 @@ export interface RawNotification {
 
 /**
  * What verification + parsing yields BEFORE the intake mints the stimulus id / persists rows. The
- * adapter has already done routing (`teamId`/`projectId`), dedupe-key derivation, and severity
+ * adapter has already done routing (`orgId`/`repoId`), dedupe-key derivation, and severity
  * mapping; the intake seam adds the id, `receivedAt`, and `kind`/`trust`/`source` invariants.
  */
 export type ParsedEvent = Omit<EventStimulus, 'id' | 'receivedAt' | 'kind' | 'trust'>;

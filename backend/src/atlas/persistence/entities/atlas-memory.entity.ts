@@ -11,7 +11,7 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
  */
 @Entity({ name: 'atlas_memory' })
 @Index(['scope'])
-@Index(['team_id', 'scope'])
+@Index(['org_id', 'scope'])
 export class AtlasMemory extends TimestampedEntity {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -27,7 +27,7 @@ export class AtlasMemory extends TimestampedEntity {
 
   /** The tenant (Slack team id). NULL = the shared/global tier (recalled in every workspace). */
   @Column({ type: 'text', nullable: true })
-  team_id!: string | null;
+  org_id!: string | null;
 
   /** Access tier: team:<id> | project:<id>. */
   @Column({ type: 'text' })

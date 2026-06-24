@@ -20,7 +20,7 @@ export interface TriageInput {
   source?: string;
   severity?: string;
   /** The tenant whose Anthropic key backs this call (omit → env fallback). */
-  teamId?: string;
+  orgId?: string;
 }
 
 export interface BrainLlm {
@@ -71,12 +71,12 @@ export class AnthropicBrainLlm implements BrainLlm {
    * @param model  the chat model id (e.g. () => env.get('CHAT_MODEL')); falls back to Sonnet.
    */
   constructor(
-    private readonly apiKey: (teamId?: string) => Promise<string | undefined>,
+    private readonly apiKey: (orgId?: string) => Promise<string | undefined>,
     private readonly model: () => string | undefined,
   ) {}
 
-  private async client(teamId?: string): Promise<ChatAnthropic | undefined> {
-    const key = await this.apiKey(teamId);
+  private async client(orgId?: string): Promise<ChatAnthropic | undefined> {
+    const key = await this.apiKey(orgId);
     if (!key) return undefined;
     let c = this.clients.get(key);
     if (!c) {
@@ -92,7 +92,7 @@ export class AnthropicBrainLlm implements BrainLlm {
   }
 
   async triage(input: TriageInput): Promise<TriageAction | undefined> {
-    const model = await this.client(input.teamId);
+    const model = await this.client(input.orgId);
     if (!model) return undefined;
 
     const bound = model.bindTools(

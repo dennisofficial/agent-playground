@@ -79,18 +79,18 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
   /** Resolve channel→project + thread, build the `ChatStimulus`, hand it to intake. */
   async onInbound(msg: InboundChatMessage): Promise<void> {
     const channel = await this.channels.findOne({
-      where: { team_id: msg.teamId, surface_channel_ref: msg.channel },
+      where: { org_id: msg.orgId, surface_channel_ref: msg.channel },
     });
     if (!channel) {
-      this.logger.debug(`inbound in unregistered channel ${msg.channel} (team ${msg.teamId}) — ignored`);
+      this.logger.debug(`inbound in unregistered channel ${msg.channel} (team ${msg.orgId}) — ignored`);
       return;
     }
 
     const thread = await this.resolveThread(channel, msg);
     const stimulus: ChatStimulus = {
       id: '', // minted by the store on persist
-      teamId: msg.teamId,
-      projectId: channel.project_id,
+      orgId: msg.orgId,
+      repoId: channel.repo_id,
       kind: 'chat',
       trust: 'trusted',
       body: msg.text,
@@ -117,8 +117,8 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
     const surfaceThreadRef = msg.threadTs ?? msg.id;
     const existing = await this.threads.findOne({
       where: {
-        team_id: channel.team_id,
-        project_id: channel.project_id,
+        org_id: channel.org_id,
+        repo_id: channel.repo_id,
         surface_thread_ref: surfaceThreadRef,
       },
     });
@@ -126,8 +126,8 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
 
     return this.threads.save(
       this.threads.create({
-        team_id: channel.team_id,
-        project_id: channel.project_id,
+        org_id: channel.org_id,
+        repo_id: channel.repo_id,
         origin: 'chat',
         surface_thread_ref: surfaceThreadRef,
         title: null,

@@ -30,9 +30,9 @@ export interface Job {
   /** Stable job id (`atlas_jobs.id`). */
   id: string;
   /** The tenant (Slack team id). */
-  teamId: string;
+  orgId: string;
   /** The project this job builds against. */
-  projectId: string;
+  repoId: string;
   /** The thread the job's chatter lives in. */
   threadId: string;
   kind: JobKind;

@@ -6,11 +6,13 @@ export { OnboardingModule } from './onboarding.module';
 export { CredentialResolver } from './credential-resolver.service';
 export {
   OnboardingService,
+  slugifyRepo,
   type OnboardingStatus,
   type OnboardingStep,
-  type TeamLifecycle,
+  type OrgLifecycle,
   type ValidationResult,
-  type BindChannelArgs,
+  type ConnectRepoArgs,
+  type ConnectedRepo,
 } from './onboarding.service';
 export {
   TenantCredentialStore,

@@ -9,10 +9,10 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
  *    an Atlas turn per duplicate.
  */
 @Entity({ name: 'atlas_stimuli' })
-@Index(['team_id', 'project_id'])
+@Index(['org_id', 'repo_id'])
 // Event dedup: at most one live event row per (team, project, source, dedupe_key). Partial — chat
 // stimuli carry no dedupe_key and are exempt.
-@Index(['team_id', 'project_id', 'source', 'dedupe_key'], {
+@Index(['org_id', 'repo_id', 'source', 'dedupe_key'], {
   unique: true,
   where: `"kind" = 'event'`,
 })
@@ -22,11 +22,11 @@ export class AtlasStimulus extends TimestampedEntity {
 
   /** The tenant (Slack team id). */
   @Column({ type: 'text' })
-  team_id!: string;
+  org_id!: string;
 
   /** The project (and thus channel) this stimulus routes to. */
   @Column({ type: 'text' })
-  project_id!: string;
+  repo_id!: string;
 
   /** Subtype discriminator: 'chat' | 'event'. */
   @Column({ type: 'text' })

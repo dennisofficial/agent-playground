@@ -29,7 +29,7 @@ export interface WebSayRequest {
   threadTs?: string;
   authorId?: string;
   authorName?: string;
-  teamId?: string;
+  orgId?: string;
 }
 
 /** Body for `POST /web/approve`. */
@@ -55,7 +55,7 @@ export interface WebCloseThreadRequest {
   /** The thread to close — tears down its sandbox container + worktree. */
   threadId: string;
   /** The owning tenant. */
-  teamId: string;
+  orgId: string;
 }
 
 const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
@@ -119,7 +119,7 @@ export class WebSurfaceController {
    */
   @Post('say')
   say(@Body() body: WebSayRequest): { ts: string } {
-    const { channel, text, threadTs, authorId, authorName, teamId } = body;
+    const { channel, text, threadTs, authorId, authorName, orgId } = body;
     if (!channel || !text) {
       throw new BadRequestException('channel and text are required');
     }
@@ -127,7 +127,7 @@ export class WebSurfaceController {
       ...(threadTs ? { threadTs } : {}),
       ...(authorId ? { authorId } : {}),
       ...(authorName ? { authorName } : {}),
-      ...(teamId ? { teamId } : {}),
+      ...(orgId ? { orgId } : {}),
     });
     return { ts };
   }
@@ -174,7 +174,7 @@ export class WebSurfaceController {
   }
 
   /**
-   * `GET /web/pipeline?threadId=<id>&teamId=<id>` — current pipeline state for a thread. Returns the
+   * `GET /web/pipeline?threadId=<id>&orgId=<id>` — current pipeline state for a thread. Returns the
    * job + section statuses + pr_url so the web UI can render the pipeline view. Delegates to
    * `DriverStoreService.getPipelineState` (same source the in-sandbox `get_pipeline_state` tool reads).
    *
@@ -184,12 +184,12 @@ export class WebSurfaceController {
   @Get('pipeline')
   async pipeline(
     @Query('threadId') threadId: string,
-    @Query('teamId') teamId: string,
+    @Query('orgId') orgId: string,
   ): Promise<unknown> {
-    if (!threadId || !teamId) {
-      throw new BadRequestException('threadId and teamId query params are required');
+    if (!threadId || !orgId) {
+      throw new BadRequestException('threadId and orgId query params are required');
     }
-    return this.driverStore.getPipelineState(threadId, teamId);
+    return this.driverStore.getPipelineState(threadId, orgId);
   }
 
   /**
@@ -215,10 +215,10 @@ export class WebSurfaceController {
    */
   @Post('close-thread')
   async closeThread(@Body() body: WebCloseThreadRequest): Promise<{ ok: boolean }> {
-    if (!body?.threadId || !body?.teamId) {
-      throw new BadRequestException('threadId and teamId are required');
+    if (!body?.threadId || !body?.orgId) {
+      throw new BadRequestException('threadId and orgId are required');
     }
-    await this.threadLifecycle.closeThread(body.threadId, body.teamId);
+    await this.threadLifecycle.closeThread(body.threadId, body.orgId);
     this.logger.log(`web close-thread thread=${body.threadId}`);
     return { ok: true };
   }

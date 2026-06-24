@@ -101,10 +101,10 @@ export class AgentSessionManager {
   async handleChatTurn(stimulus: ChatStimulus): Promise<void> {
     // (Re-)attach a live container against the thread's durable worktree. Returns null only if the
     // thread has no sandbox row (never created) or is closed.
-    const ensured = await this.lifecycle.ensureContainer(stimulus.threadId, stimulus.teamId);
+    const ensured = await this.lifecycle.ensureContainer(stimulus.threadId, stimulus.orgId);
     if (!ensured) {
       this.logger.warn(
-        `No sandbox for thread=${stimulus.threadId} team=${stimulus.teamId} — cannot run in-sandbox turn`,
+        `No sandbox for thread=${stimulus.threadId} team=${stimulus.orgId} — cannot run in-sandbox turn`,
       );
       await this.say(stimulus, 'Please create a thread via the web app to start a scoping session.');
       return;
@@ -113,7 +113,7 @@ export class AgentSessionManager {
 
     // Resolve the current session_id for this thread (resume across turns).
     const sandboxRow = await this.sandboxRows.findOne({
-      where: { thread_id: stimulus.threadId, team_id: stimulus.teamId },
+      where: { thread_id: stimulus.threadId, org_id: stimulus.orgId },
     });
     const sessionId = sandboxRow?.session_id ?? undefined;
 
@@ -127,7 +127,7 @@ export class AgentSessionManager {
     // All turns run inside the Docker sandbox container.
     const runner: EngineRunnerPort = this.dockerRunner;
 
-    const sandboxKey = `brain-${stimulus.teamId}-${stimulus.projectId}-${stimulus.threadId}`;
+    const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.threadId}`;
     const runArgs: RunEngineArgs = {
       engine: 'claude',
       task,
@@ -178,7 +178,7 @@ export class AgentSessionManager {
   buildTools(stimulus: ChatStimulus): Record<string, ToolImpl> {
     return {
       get_pipeline_state: async (_args) => {
-        return this.driverStore.getPipelineState(stimulus.threadId, stimulus.teamId);
+        return this.driverStore.getPipelineState(stimulus.threadId, stimulus.orgId);
       },
 
       get_decision_record: async (_args) => {
@@ -189,8 +189,8 @@ export class AgentSessionManager {
         const query = String(args['query'] ?? stimulus.body);
         try {
           const facts = await this.memory.recall(query, {
-            scopes: [`project:${stimulus.projectId}`, `team:${stimulus.teamId}`],
-            teamId: stimulus.teamId,
+            scopes: [`project:${stimulus.repoId}`, `team:${stimulus.orgId}`],
+            orgId: stimulus.orgId,
             limit: 8,
           });
           return facts.map((f) => ({ fact: f.fact, scope: f.scope }));
@@ -203,12 +203,12 @@ export class AgentSessionManager {
       remember: async (args) => {
         const fact = String(args['fact'] ?? '').trim();
         if (!fact) return { stored: false, reason: 'empty fact' };
-        const scope = String(args['scope'] ?? `project:${stimulus.projectId}`);
+        const scope = String(args['scope'] ?? `project:${stimulus.repoId}`);
         try {
           await this.memory.remember({
             fact,
             scope,
-            teamId: stimulus.teamId,
+            orgId: stimulus.orgId,
             assertedBy: stimulus.author.id,
           });
           return { stored: true };
@@ -252,8 +252,8 @@ export class AgentSessionManager {
         const jobId = await this.ensureJob(stimulus, overview, 'feature');
 
         const { job, decisionRecordId } = await this.store.persistPlan({
-          teamId: stimulus.teamId,
-          projectId: stimulus.projectId,
+          orgId: stimulus.orgId,
+          repoId: stimulus.repoId,
           jobId,
           title: jobTitle(overview),
           kind: 'feature',
@@ -265,11 +265,11 @@ export class AgentSessionManager {
         // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
         // First call: run a Codex review turn in the thread's sandbox → return findings to the
         // session for ONE revision.  Second call (same job): skip review → straight to approval.
-        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.teamId);
+        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
         if (sandbox) {
           const reviewResult = await this.planReview.review({
             jobId: job.id,
-            teamId: stimulus.teamId,
+            orgId: stimulus.orgId,
             worktreePath: sandbox.worktreePath,
             ...(sandbox.containerId ? { containerId: sandbox.containerId } : {}),
             overview,
@@ -353,15 +353,15 @@ export class AgentSessionManager {
     card: DecisionApprovalCard,
   ): Promise<void> {
     const route = await this.store.route({
-      teamId: stimulus.teamId,
-      projectId: stimulus.projectId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       threadId: stimulus.threadId,
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
 
     const handle = await this.approvals.request(
-      { channel, threadTs, teamId: stimulus.teamId },
+      { channel, threadTs, orgId: stimulus.orgId },
       card,
     );
 
@@ -402,13 +402,13 @@ export class AgentSessionManager {
   private async streamEvent(stimulus: ChatStimulus, e: EngineEvent): Promise<void> {
     if (e.kind === 'text' && e.text.trim()) {
       const route = await this.store.route({
-        teamId: stimulus.teamId,
-        projectId: stimulus.projectId,
+        orgId: stimulus.orgId,
+        repoId: stimulus.repoId,
         threadId: stimulus.threadId,
       }).catch(() => ({ channel: null, threadTs: null }));
       const channel = route.channel ?? stimulus.replyRoute.threadRef;
       const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
-      await this.surface.post(channel, e.text, { threadTs, teamId: stimulus.teamId })
+      await this.surface.post(channel, e.text, { threadTs, orgId: stimulus.orgId })
         .catch((err) => this.logger.debug(`stream event post failed: ${err}`));
     }
   }
@@ -416,14 +416,14 @@ export class AgentSessionManager {
   /** Post a reply in-thread AND append it to the durable transcript. */
   private async say(stimulus: ChatStimulus, text: string): Promise<void> {
     const route = await this.store.route({
-      teamId: stimulus.teamId,
-      projectId: stimulus.projectId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       threadId: stimulus.threadId,
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
     try {
-      await this.surface.post(channel, text, { threadTs, teamId: stimulus.teamId });
+      await this.surface.post(channel, text, { threadTs, orgId: stimulus.orgId });
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
@@ -439,8 +439,8 @@ export class AgentSessionManager {
     const existing = await this.store.openJobOnThread(stimulus.threadId);
     if (existing) return existing;
     return this.store.openJob({
-      teamId: stimulus.teamId,
-      projectId: stimulus.projectId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       threadId: stimulus.threadId,
       title: jobTitle(title),
       kind,

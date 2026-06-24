@@ -55,7 +55,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     // A LINKED worktree (the real Atlas shape: .git is a file → external gitdir).
     worktree = join(repoRoot, '.worktrees', 'feat');
     git(['worktree', 'add', '-q', worktree, '-b', 'atlas/feat'], repoRoot);
-    sandbox = { projectId: 'proj', branch: 'atlas/feat', worktreePath: worktree, gitUrl: '' };
+    sandbox = { repoId: 'proj', branch: 'atlas/feat', worktreePath: worktree, gitUrl: '' };
     manager = new SandboxManager(engine, builder, env({ ATLAS_AGENT_HOME_ROOT: homeRoot }));
   });
 
@@ -76,7 +76,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     }
     await builder.ensureImage();
 
-    const attached = await manager.attach({ sandbox, teamId: 'team1' });
+    const attached = await manager.attach({ sandbox, orgId: 'team1' });
     containerId = attached.containerId;
     expect(attached.containerId).toBeTruthy();
     expect(attached.execUser).toMatch(/^\d+:\d+$/);
@@ -99,7 +99,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     expect(readFileSync(join(worktree, 'MARKER.txt'), 'utf8').trim()).toBe(marker);
 
     // idempotent: a second attach reuses the same container.
-    const again = await manager.attach({ sandbox, teamId: 'team1' });
+    const again = await manager.attach({ sandbox, orgId: 'team1' });
     expect(again.containerId).toBe(attached.containerId);
 
     // the per-sandbox network + DinD volume exist while the sandbox is up (named off the container).
@@ -139,7 +139,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     await builder.ensureImage();
 
     // A distinct team → a distinct container name, independent of the first test.
-    const attached = await manager.attach({ sandbox, teamId: 'team2' });
+    const attached = await manager.attach({ sandbox, orgId: 'team2' });
     containerId = attached.containerId;
     const docker = new Docker();
     const containerName = (await engine.inspect(attached.containerId!))!.name;

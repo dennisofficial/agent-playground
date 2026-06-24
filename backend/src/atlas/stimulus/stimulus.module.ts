@@ -4,7 +4,7 @@ import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
   AtlasMessage,
-  AtlasProject,
+  AtlasRepo,
   AtlasStimulus,
   AtlasThread,
 } from '../persistence/entities';
@@ -41,7 +41,7 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [AtlasProject, AtlasChannel, AtlasThread, AtlasMessage, AtlasStimulus],
+      [AtlasRepo, AtlasChannel, AtlasThread, AtlasMessage, AtlasStimulus],
       ATLAS_CONNECTION,
     ),
   ],

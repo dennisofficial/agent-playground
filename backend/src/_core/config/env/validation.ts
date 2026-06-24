@@ -191,31 +191,6 @@ export interface IEnvConfig {
   ADMIN_SEED_EMAIL?: string;
   ADMIN_SEED_PASSWORD?: string;
 
-  // Slack surface (slack-app only; optional so api/tui boot without them — slack-app/main.ts
-  // asserts both at boot)
-  SLACK_BOT_TOKEN?: string; // xoxb- — Web API (chat.postMessage, reactions.add, users.info)
-  SLACK_APP_TOKEN?: string; // xapp- — Socket Mode connection (connections:write)
-  // Inbound transport: 'socket' (default — own Socket Mode connection, single-workspace dev) or
-  // 'gateway' (tenant stacks — an HTTP listener fed by the gateway's team_id routing).
-  SLACK_INBOUND?: string;
-  SLACK_INBOUND_PORT?: number; // gateway mode's private listen port (per tenant)
-
-  // Gateway (gateway app only; optional so the other apps boot without them — gateway/main.ts
-  // asserts its required subset at boot). ONE OAuth-distributed Slack app, N workspaces.
-  SLACK_CLIENT_ID?: string;
-  SLACK_CLIENT_SECRET?: string;
-  SLACK_SIGNING_SECRET?: string; // request-signature verification on /slack/events + /slack/interactivity
-  GATEWAY_SHARED_SECRET?: string; // bearer between gateway → tenant stacks' /slack/inbound
-  GATEWAY_PUBLIC_URL?: string; // public base (OAuth redirect = <base>/slack/oauth)
-  GATEWAY_PORT?: number; // default 4100
-  // Dev-only (CLI seed, not the app): the dev workspace's tenant row (ears token + installer),
-  // re-seeded on `db:seed` — socket-mode dev never OAuth-installs, so without it there's no
-  // tenant row (boss check falls back to APPROVAL_BOSS_USER_ID). JSON:
-  // {"teamId":"T0…","botToken":"xoxb-…","installedBy":"U0…"}. Lives in .env.personal.
-  SLACK_TENANT_SEED?: string;
-  CONTROL_POSTGRES_DB?: string; // control-plane DB name (default 'agent_control'; server coords from POSTGRES_*)
-  TENANT_ENV_ROOT?: string; // where per-tenant env overlays are written (provisioner)
-  TENANT_PORT_BASE?: number; // first inbound port allocated to tenant stacks (default 4200)
   // Public base URL of the employee avatar tree (web/public/avatars — e.g. the repo's
   // raw.githubusercontent URL, later the hosted web app). Unset → messages post without icons.
   // Convention: <base>/<style>/<botId>.png
@@ -452,23 +427,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   ADMIN_SEED_EMAIL: Joi.string().email().optional(),
   ADMIN_SEED_PASSWORD: Joi.string().optional(),
 
-  // Slack surface
-  SLACK_BOT_TOKEN: Joi.string().optional(),
-  SLACK_APP_TOKEN: Joi.string().optional(),
-  SLACK_INBOUND: Joi.string().valid('socket', 'gateway').optional(),
-  SLACK_INBOUND_PORT: Joi.number().port().optional(),
-
-  // Gateway
-  SLACK_CLIENT_ID: Joi.string().optional(),
-  SLACK_CLIENT_SECRET: Joi.string().optional(),
-  SLACK_SIGNING_SECRET: Joi.string().optional(),
-  SLACK_TENANT_SEED: Joi.string().optional(),
-  GATEWAY_SHARED_SECRET: Joi.string().optional(),
-  GATEWAY_PUBLIC_URL: Joi.string().uri().optional(),
-  GATEWAY_PORT: Joi.number().port().optional(),
-  CONTROL_POSTGRES_DB: Joi.string().optional(),
-  TENANT_ENV_ROOT: Joi.string().optional(),
-  TENANT_PORT_BASE: Joi.number().port().optional(),
   AVATAR_BASE_URL: Joi.string().uri().optional(),
   AVATAR_STYLE: Joi.string().valid('illustrated', 'realistic').optional(),
 

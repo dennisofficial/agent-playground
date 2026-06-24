@@ -14,9 +14,9 @@ export interface Thread {
   /** Stable thread id (`atlas_threads.id`). */
   id: string;
   /** The tenant (Slack team id). */
-  teamId: string;
+  orgId: string;
   /** The project (and thus channel) this thread lives in. */
-  projectId: string;
+  repoId: string;
   /** What opened the thread. */
   origin: ThreadOrigin;
   /** The surface-native thread coordinate (e.g. the Slack root message ts); null until posted. */

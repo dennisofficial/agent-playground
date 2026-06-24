@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { Repository } from 'typeorm';
-import type { AtlasTenantCredentials } from '../persistence/entities';
+import type { AtlasOrgCredentials } from '../persistence/entities';
 import { TenantCredentialStore } from './tenant-credential.store';
 
 const KEY = Buffer.alloc(32, 9).toString('base64');
@@ -10,22 +10,22 @@ function fakeEnv(map: Record<string, string | undefined>): EnvService {
   return { get: (k: string) => map[k] } as unknown as EnvService;
 }
 
-/** A minimal in-memory Repository<AtlasTenantCredentials> keyed by (team_id, scope). */
-function fakeRepo(): Repository<AtlasTenantCredentials> {
-  const rows = new Map<string, AtlasTenantCredentials>();
+/** A minimal in-memory Repository<AtlasOrgCredentials> keyed by (org_id, scope). */
+function fakeRepo(): Repository<AtlasOrgCredentials> {
+  const rows = new Map<string, AtlasOrgCredentials>();
   const k = (t: string, s: string): string => `${t} ${s}`;
   return {
-    async findOne({ where }: { where: { team_id: string; scope: string } }) {
-      return rows.get(k(where.team_id, where.scope)) ?? null;
+    async findOne({ where }: { where: { org_id: string; scope: string } }) {
+      return rows.get(k(where.org_id, where.scope)) ?? null;
     },
-    create(partial: Partial<AtlasTenantCredentials>) {
-      return { ...partial } as AtlasTenantCredentials;
+    create(partial: Partial<AtlasOrgCredentials>) {
+      return { ...partial } as AtlasOrgCredentials;
     },
-    async save(row: AtlasTenantCredentials) {
-      rows.set(k(row.team_id, row.scope ?? '*'), row);
+    async save(row: AtlasOrgCredentials) {
+      rows.set(k(row.org_id, row.scope ?? '*'), row);
       return row;
     },
-  } as unknown as Repository<AtlasTenantCredentials>;
+  } as unknown as Repository<AtlasOrgCredentials>;
 }
 
 function makeStore(env: Record<string, string | undefined> = { SECRETS_ENCRYPTION_KEY: KEY }) {

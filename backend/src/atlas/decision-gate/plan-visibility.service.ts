@@ -9,7 +9,7 @@ export interface SectionPlanPost {
   /** The thread the plan is posted into (the job's thread). Omit to post top-level. */
   threadTs?: string;
   /** The tenant to post as (selects the workspace credentials). */
-  teamId?: string;
+  orgId?: string;
   /** A short section title ("Backend — persistence layer"). */
   title: string;
   /** The detailed plan prose / phase list. */
@@ -44,7 +44,7 @@ export class PlanVisibilityService {
     try {
       return await this.surface.post(post.channel, text, {
         ...(post.threadTs ? { threadTs: post.threadTs } : {}),
-        ...(post.teamId ? { teamId: post.teamId } : {}),
+        ...(post.orgId ? { orgId: post.orgId } : {}),
       });
     } catch (err) {
       // Visibility must never break the pipeline — log and move on.

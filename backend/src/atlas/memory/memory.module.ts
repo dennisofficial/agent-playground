@@ -23,7 +23,7 @@ import {
       provide: ATLAS_EMBEDDING_PROVIDER,
       inject: [CredentialResolver],
       useFactory: (creds: CredentialResolver) =>
-        new OpenAIEmbeddingProvider((teamId) => creds.openaiKey(teamId)),
+        new OpenAIEmbeddingProvider((orgId) => creds.openaiKey(orgId)),
     },
     AtlasMemoryStore,
   ],

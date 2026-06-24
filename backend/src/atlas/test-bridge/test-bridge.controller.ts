@@ -18,9 +18,14 @@ import {
 } from '../agent-surface';
 import { DecisionApprovalService } from '../brain';
 import { SectionDriver } from '../driver';
-import { OnboardingService } from '../onboarding';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasChannel, AtlasJob, AtlasMessage } from '../persistence/entities';
+import {
+  AtlasChannel,
+  AtlasJob,
+  AtlasMessage,
+  AtlasRepo,
+  Organization,
+} from '../persistence/entities';
 import type {
   ApproveRequest,
   JobView,
@@ -62,7 +67,10 @@ export class TestBridgeController {
     private readonly surface: AgentChatSurface,
     private readonly approvals: DecisionApprovalService,
     private readonly driver: SectionDriver,
-    private readonly onboarding: OnboardingService,
+    @InjectRepository(Organization, ATLAS_CONNECTION)
+    private readonly orgs: Repository<Organization>,
+    @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
+    private readonly repos: Repository<AtlasRepo>,
     @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
     private readonly channels: Repository<AtlasChannel>,
     @InjectRepository(AtlasJob, ATLAS_CONNECTION)
@@ -81,27 +89,48 @@ export class TestBridgeController {
   /**
    * `POST /test/seed` — idempotently upsert an `atlas_teams` + `atlas_projects` (git_url=repoUrl, base) +
    * `atlas_channels` (1:1, `surface_channel_ref`=channel) so an injected message routes to a real repo.
-   * Re-seeding the same (teamId, projectId) updates the repo/branch/channel in place. Returns the
+   * Re-seeding the same (orgId, repoId) updates the repo/branch/channel in place. Returns the
    * channel id.
    */
   @Post('seed')
   async seed(@Body() body: SeedRequest): Promise<SeedResponse> {
     this.assertEnabled();
-    const { teamId, projectId, repoUrl, channel } = body;
-    // Delegate to the ONE channel-binding implementation (shared with production onboarding). `activate`
-    // keeps the test-bridge's old behavior of a ready-to-use (`active`) tenant after a seed.
-    const { channelId } = await this.onboarding.bindChannel({
-      teamId,
-      projectId,
-      channelRef: channel,
-      repoUrl,
-      ...(body.baseBranch ? { baseBranch: body.baseBranch } : {}),
-      activate: true,
-    });
-    this.logger.log(
-      `seed team=${teamId} project=${projectId} repo=${repoUrl} channel=${channel} → channel ${channelId}`,
+    const { orgId, repoId, repoUrl, channel } = body;
+    // Directly seed a ready-to-use (`active`) org + connected repo + bound channel so an injected message
+    // routes to a real repo. Re-seeding the same (orgId, repoId) updates the rows in place.
+    await this.orgs.upsert({ id: orgId, name: orgId, slug: orgId, status: 'active' }, ['id']);
+    await this.repos.upsert(
+      {
+        org_id: orgId,
+        repo_id: repoId,
+        name: repoId,
+        git_url: repoUrl,
+        default_branch: body.baseBranch ?? 'main',
+        token_name: null,
+        access_ok: true,
+        access_checked_at: new Date(),
+      },
+      ['org_id', 'repo_id'],
     );
-    return { channelId, teamId, projectId };
+    let channelRow = await this.channels.findOne({ where: { org_id: orgId, repo_id: repoId } });
+    if (channelRow) {
+      channelRow.surface_channel_ref = channel;
+      channelRow.display_name = channel;
+      channelRow = await this.channels.save(channelRow);
+    } else {
+      channelRow = await this.channels.save(
+        this.channels.create({
+          org_id: orgId,
+          repo_id: repoId,
+          surface_channel_ref: channel,
+          display_name: channel,
+        }),
+      );
+    }
+    this.logger.log(
+      `seed org=${orgId} repo=${repoId} url=${repoUrl} channel=${channel} → channel ${channelRow.id}`,
+    );
+    return { channelId: channelRow.id, orgId, repoId };
   }
 
   /**
@@ -116,7 +145,7 @@ export class TestBridgeController {
     const { channel, text } = body;
 
     // Resolve the channel's tenant so the injected message routes (the chat bridge keys on
-    // (team_id, surface_channel_ref)). The bridge is self-sufficient from just the channel ref.
+    // (org_id, surface_channel_ref)). The bridge is self-sufficient from just the channel ref.
     const channelRow = await this.channels.findOne({
       where: { surface_channel_ref: channel },
     });
@@ -129,7 +158,7 @@ export class TestBridgeController {
     // Snapshot the outbox cursor BEFORE sending so we only collect posts triggered by this message.
     const cursor = this.surface.outbox.length;
     const inboundTs = this.surface.sendFromHuman(channel, text, {
-      teamId: channelRow.team_id,
+      orgId: channelRow.org_id,
       authorId: TESTER_ID,
       authorName: 'Tester',
       ...(body.threadTs ? { threadTs: body.threadTs } : {}),

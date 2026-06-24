@@ -1,7 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import {
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   OnApplicationBootstrap,
@@ -22,15 +21,11 @@ const REFRESH_PATH = '/auth/refresh';
 const ACCESS_MAX_AGE_MS = 15 * 60 * 1000; // mirrors JwtModule's default 15m access TTL
 const REFRESH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // mirrors the default 7d refresh TTL
 
-/** The pending-approval message surfaced to the signup banner (unwrapped client-side from the 403). */
-const PENDING_MESSAGE =
-  "Account created — pending approval. You'll be able to sign in once it's been invited/approved.";
-
 /**
  * Email/password auth for the Atlas web console. Argon2id hashing, JWT access+refresh in httpOnly
- * cookies (the `@workspace/auth` web client is cookie-mode). Registration is OPEN but every new account
- * is created UNAPPROVED (`is_approved: false`) and cannot log in until the flag is flipped — the
- * "invite". The seeded admin (`ADMIN_SEED_*`) is provisioned approved on boot so Dennis can log in.
+ * cookies (the `@workspace/auth` web client is cookie-mode). Registration is OPEN and immediately
+ * usable — a fresh account signs in and then creates or joins an organization. No approval gate. The
+ * seeded admin (`ADMIN_SEED_*`) is provisioned on boot so there's always a way in.
  */
 @Injectable()
 export class AuthService implements OnApplicationBootstrap {
@@ -43,65 +38,57 @@ export class AuthService implements OnApplicationBootstrap {
     private readonly env: EnvService,
   ) {}
 
-  /** Seed the approved admin from env on boot (idempotent), so there's always a way in. */
+  /** Seed the admin from env on boot (idempotent), so there's always a way in. */
   async onApplicationBootstrap(): Promise<void> {
     const email = this.env.get('ADMIN_SEED_EMAIL');
     const password = this.env.get('ADMIN_SEED_PASSWORD');
     if (!email || !password) return;
 
     const existing = await this.users.findOne({ where: { email } });
-    if (existing) {
-      if (!existing.is_approved) {
-        existing.is_approved = true;
-        await this.users.save(existing);
-        this.logger.log(`Seed admin ${email} re-approved.`);
-      }
-      return;
-    }
+    if (existing) return;
 
     await this.users.save(
       this.users.create({
         email,
+        name: 'Admin',
         password_hash: await hash(password),
         role: 'admin',
-        is_approved: true,
       }),
     );
-    this.logger.log(`Seed admin ${email} provisioned (approved).`);
+    this.logger.log(`Seed admin ${email} provisioned.`);
   }
 
-  /**
-   * Create an account in the UNAPPROVED state and ALWAYS reject with the pending message — open
-   * registration, blocked by flag. The row IS persisted; only the session is withheld until approval.
-   */
-  async register(email: string, password: string): Promise<never> {
+  /** Create an account and immediately issue a session (open registration, no approval gate). */
+  async register(
+    email: string,
+    password: string,
+    name: string | undefined,
+    res: Response,
+  ): Promise<AtlasSession> {
     const existing = await this.users.findOne({ where: { email } });
     if (existing) throw new ConflictException('Email already in use');
 
-    await this.users.save(
+    const user = await this.users.save(
       this.users.create({
         email,
+        name: name ?? null,
         password_hash: await hash(password),
         role: 'operator',
-        is_approved: false,
       }),
     );
-    // 403 → unwrapped to the signup banner by the RealAuth adapter (web/src/lib/auth.ts).
-    throw new ForbiddenException(PENDING_MESSAGE);
+    await this.issueTokens(user, res);
+    return this.toSession(user);
   }
 
-  /** Verify credentials + approval, then set cookies. Returns the session object. */
+  /** Verify credentials, then set cookies. Returns the session object. */
   async login(email: string, password: string, res: Response): Promise<AtlasSession> {
     const user = await this.users.findOne({ where: { email } });
     // Same error for missing user vs bad password (no account enumeration).
     if (!user || !(await verify(user.password_hash, password))) {
       throw new UnauthorizedException('Invalid email or password.');
     }
-    if (!user.is_approved) {
-      throw new ForbiddenException('Account pending approval.');
-    }
     await this.issueTokens(user, res);
-    return { id: user.id, email: user.email };
+    return this.toSession(user);
   }
 
   /** Re-issue tokens from a valid refresh cookie (the access token is expired by design). */
@@ -116,7 +103,7 @@ export class AuthService implements OnApplicationBootstrap {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
     const user = sub ? await this.users.findOne({ where: { id: sub } }) : null;
-    if (!user || !user.is_approved) throw new UnauthorizedException('Session no longer valid');
+    if (!user) throw new UnauthorizedException('Session no longer valid');
 
     await this.issueTokens(user, res);
   }
@@ -126,6 +113,10 @@ export class AuthService implements OnApplicationBootstrap {
     const base = this.cookieBase();
     res.clearCookie(ACCESS_COOKIE, { ...base, path: '/' });
     res.clearCookie(REFRESH_COOKIE, { ...base, path: REFRESH_PATH });
+  }
+
+  private toSession(user: AtlasUser): AtlasSession {
+    return { id: user.id, email: user.email, name: user.name };
   }
 
   private async issueTokens(user: AtlasUser, res: Response): Promise<void> {

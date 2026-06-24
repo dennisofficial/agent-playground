@@ -36,12 +36,12 @@ export class DecisionClassifier {
    * Classify ONE proposed decision against the record.
    * @param proposed the decision the section planner wants to make.
    * @param record   the locked decision record (the `decisions` slice is all that's read).
-   * @param teamId   the tenant whose Anthropic key backs the ambiguous-tail LLM call (omit → env).
+   * @param orgId   the tenant whose Anthropic key backs the ambiguous-tail LLM call (omit → env).
    */
   async classify(
     proposed: ProposedDecision,
     record: ClassifierRecord,
-    teamId?: string,
+    orgId?: string,
   ): Promise<DecisionClassification> {
     const text = `${proposed.description}\n${proposed.context ?? ''}`.toLowerCase();
 
@@ -88,7 +88,7 @@ export class DecisionClassifier {
         description: proposed.description,
         ...(proposed.context ? { context: proposed.context } : {}),
         recordSummary,
-        ...(teamId ? { teamId } : {}),
+        ...(orgId ? { orgId } : {}),
       });
       if (verdict) {
         const cls = normalizeClass(verdict.decisionClass);

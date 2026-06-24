@@ -10,7 +10,7 @@ import { ATLAS_EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding';
  * Atlas v2 semantic memory — the pgvector read/write primitives ONLY (a clean-room rewrite of v1's
  * `SemanticMemory` with the board/pipeline/identity-tier machinery DROPPED). It is the only channel
  * for cross-thread coherence: threads never share transcripts. Scopes are plain strings
- * (`team:<id>` | `project:<id>`); `team_id` NULL = the shared/global tier (recalled everywhere).
+ * (`team:<id>` | `project:<id>`); `org_id` NULL = the shared/global tier (recalled everywhere).
  *
  * Stored against the `atlas_memory` table on Atlas's OWN datasource. Vector ops use the pgvector text
  * literal (`[0.1,0.2,…]`) and rank with `embedding <=> :qv`. Zero v1 imports.
@@ -20,7 +20,7 @@ export interface StoredFact {
   id: number;
   fact: string;
   scope: string;
-  team_id: string | null;
+  org_id: string | null;
   confidence: number;
   created_at: string;
   updated_at: string;
@@ -45,7 +45,7 @@ function toStored(f: AtlasMemory): StoredFact {
     id: f.id,
     fact: f.fact,
     scope: f.scope,
-    team_id: f.team_id,
+    org_id: f.org_id,
     confidence: f.confidence,
     created_at: f.created_at.toISOString(),
     updated_at: f.updated_at.toISOString(),
@@ -57,7 +57,7 @@ export interface RememberInput {
   /** Access tier scope, e.g. 'team:T04' | 'project:acme'. */
   scope: string;
   /** The tenant (Slack team id); null for the shared/global tier. */
-  teamId: string | null;
+  orgId: string | null;
   assertedBy?: string;
 }
 
@@ -70,9 +70,9 @@ export class AtlasMemoryStore {
     private readonly embedder: EmbeddingProvider,
   ) {}
 
-  /** Embed text to the pgvector SQL literal the queries use (`teamId` selects the tenant's OpenAI key). */
-  async embed(text: string, teamId?: string): Promise<string> {
-    return vecSql(await this.embedder.embed(text, teamId));
+  /** Embed text to the pgvector SQL literal the queries use (`orgId` selects the tenant's OpenAI key). */
+  async embed(text: string, orgId?: string): Promise<string> {
+    return vecSql(await this.embedder.embed(text, orgId));
   }
 
   /**
@@ -80,7 +80,7 @@ export class AtlasMemoryStore {
    * same scope/team. Strict team equality — a tenant fact never merges into the global tier.
    */
   async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: number }> {
-    const qv = vecSql(await this.embedder.embed(input.fact, input.teamId ?? undefined));
+    const qv = vecSql(await this.embedder.embed(input.fact, input.orgId ?? undefined));
 
     const qb = this.facts
       .createQueryBuilder('f')
@@ -90,8 +90,8 @@ export class AtlasMemoryStore {
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .setParameter('qv', qv)
       .limit(1);
-    qb.andWhere(input.teamId === null ? 'f.team_id IS NULL' : 'f.team_id = :team', {
-      team: input.teamId,
+    qb.andWhere(input.orgId === null ? 'f.org_id IS NULL' : 'f.org_id = :team', {
+      team: input.orgId,
     });
     const { entities } = await qb.getRawAndEntities();
     const dup = entities[0];
@@ -114,7 +114,7 @@ export class AtlasMemoryStore {
         fact: input.fact,
         embedding: () => ':qv::vector',
         scope: input.scope,
-        team_id: input.teamId,
+        org_id: input.orgId,
         asserted_by: input.assertedBy ?? null,
         confidence: 1.0,
         embed_model: this.embedder.model,
@@ -130,18 +130,18 @@ export class AtlasMemoryStore {
    */
   async recall(
     query: string,
-    opts: { scopes: string[]; teamId: string | null; limit?: number; floor?: number },
+    opts: { scopes: string[]; orgId: string | null; limit?: number; floor?: number },
   ): Promise<RecalledFact[]> {
     if (opts.scopes.length === 0) return [];
     const limit = opts.limit ?? 5;
     const floor = opts.floor ?? MIN_RECALL_SIM;
-    const qv = await this.embed(query, opts.teamId ?? undefined);
+    const qv = await this.embed(query, opts.orgId ?? undefined);
 
     const { entities, raw } = await this.facts
       .createQueryBuilder('f')
       .addSelect('1 - (f.embedding <=> :qv::vector)', 'sim')
       .where('f.scope = ANY(:scopes)', { scopes: opts.scopes })
-      .andWhere('(f.team_id = :team OR f.team_id IS NULL)', { team: opts.teamId })
+      .andWhere('(f.org_id = :team OR f.org_id IS NULL)', { team: opts.orgId })
       .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', { floor })
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .limit(limit)

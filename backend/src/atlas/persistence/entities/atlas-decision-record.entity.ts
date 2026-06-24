@@ -9,7 +9,7 @@ import type { Decision } from '../../domain/decision-record';
  * planner parks only on an always-ask class NOT already settled here). Approved once, then immutable.
  */
 @Entity({ name: 'atlas_decision_records' })
-@Index(['team_id', 'project_id'])
+@Index(['org_id', 'repo_id'])
 @Index(['job_id'])
 export class AtlasDecisionRecord extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -17,11 +17,11 @@ export class AtlasDecisionRecord extends TimestampedEntity {
 
   /** The tenant (Slack team id). */
   @Column({ type: 'text' })
-  team_id!: string;
+  org_id!: string;
 
   /** The project this record scopes to. */
   @Column({ type: 'text' })
-  project_id!: string;
+  repo_id!: string;
 
   /** The job this record was produced for (FK → atlas_jobs). */
   @Column({ type: 'uuid' })

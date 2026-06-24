@@ -334,7 +334,7 @@ export class SectionDriver implements JobDispatcher {
 
     // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
     //    (The locked phase ROWS are the source of truth; review only reshapes a fresh plan's prose.)
-    if (planned) await this.reviewPlan(record, section, handoffIn, planned, job.teamId);
+    if (planned) await this.reviewPlan(record, section, handoffIn, planned, job.orgId);
 
     // The plan view the gate + visibility read — derived from the locked phase rows (resume-safe).
     const planView = phases.map(asPlannedPhase);
@@ -352,7 +352,7 @@ export class SectionDriver implements JobDispatcher {
     await this.visibility.postSectionPlan({
       channel: route.channel ?? '',
       ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-      ...(route.teamId ? { teamId: route.teamId } : {}),
+      ...(route.orgId ? { orgId: route.orgId } : {}),
       title: section.brief,
       plan: renderPlan(planView),
       decisions: classifications,
@@ -392,7 +392,7 @@ export class SectionDriver implements JobDispatcher {
       );
 
     // g. HANDOFF — summarize what this section produced for the next.
-    const handoffOut = await this.summarizeHandoff(section, phases, reports, job.teamId);
+    const handoffOut = await this.summarizeHandoff(section, phases, reports, job.orgId);
     await this.store.setSectionHandoffOut(section.id, handoffOut);
     await this.store.setSectionStatus(section.id, 'done');
     this.logger.log(`section ${section.ordinal} done`);
@@ -432,7 +432,7 @@ export class SectionDriver implements JobDispatcher {
       decisions: record?.decisions ?? [],
       brief: section.brief,
       handoffIn,
-      teamId: job.teamId,
+      orgId: job.orgId,
     };
     // Bound the plan turn too (issue #3): exploring a large repo read-only can run away just like an
     // execute turn. Hard-bounded so the driver gives up even if the SDK won't yield; on breach it falls
@@ -445,7 +445,7 @@ export class SectionDriver implements JobDispatcher {
         mode: 'plan',
         systemPrompt: SECTION_PLAN_SYSTEM,
         task: renderPlanTask(planInput),
-        auth: await this.creds.engineAuth(job.teamId, 'claude'),
+        auth: await this.creds.engineAuth(job.orgId, 'claude'),
       },
       `section ${section.ordinal} plan turn`,
     ).catch((err) => {
@@ -476,7 +476,7 @@ export class SectionDriver implements JobDispatcher {
     section: DriverSection,
     handoffIn: string | null,
     draft: PlannedPhase[],
-    teamId?: string,
+    orgId?: string,
   ): Promise<void> {
     await this.store.setSectionStatus(section.id, 'reviewing');
     const revised = await this.planner
@@ -486,7 +486,7 @@ export class SectionDriver implements JobDispatcher {
         brief: section.brief,
         handoffIn,
         draft,
-        ...(teamId ? { teamId } : {}),
+        ...(orgId ? { orgId } : {}),
       })
       .catch(() => undefined);
     if (revised)
@@ -518,7 +518,7 @@ export class SectionDriver implements JobDispatcher {
           brief: section.brief,
           handoffIn: section.handoffIn,
           phases: planned,
-          teamId: job.teamId,
+          orgId: job.orgId,
         })
         .catch(() => undefined)) ?? [];
 
@@ -527,7 +527,7 @@ export class SectionDriver implements JobDispatcher {
       const c = await this.classifier.classify(
         proposed,
         { decisions: record?.decisions ?? [] },
-        job.teamId,
+        job.orgId,
       );
       if (c.verdict === 'ask') {
         await this.store.setSectionStatus(section.id, 'awaiting_approval');
@@ -538,7 +538,7 @@ export class SectionDriver implements JobDispatcher {
           {
             channel: route.channel ?? '',
             ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-            ...(route.teamId ? { teamId: route.teamId } : {}),
+            ...(route.orgId ? { orgId: route.orgId } : {}),
           },
           parkQuestion(section.brief, proposed.description, c.reason),
         );
@@ -669,7 +669,7 @@ export class SectionDriver implements JobDispatcher {
         mode: 'execute',
         systemPrompt: PHASE_EXECUTE_SYSTEM,
         task: renderPhaseTask(record, section, phase),
-        auth: await this.creds.engineAuth(job.teamId, 'claude'),
+        auth: await this.creds.engineAuth(job.orgId, 'claude'),
         onEvent: (e) => {
           if (e.kind === 'tool') {
             this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
@@ -788,7 +788,7 @@ export class SectionDriver implements JobDispatcher {
     // Record the PR on the thread sandbox so the merge poll can watch it and reclaim the sandbox once
     // the PR merges/closes (best-effort — no-op for legacy threads with no sandbox row).
     await this.threadLifecycle
-      .recordPr(job.threadId, job.teamId, opened.url, opened.number)
+      .recordPr(job.threadId, job.orgId, opened.url, opened.number)
       .catch((err) => this.logger.debug(`recordPr failed for job=${job.id}: ${err}`));
     this.logger.log(
       `job=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`,
@@ -818,7 +818,7 @@ export class SectionDriver implements JobDispatcher {
     repo: ResolvedRepo,
   ): Promise<FeatureSandbox> {
     // ── R2: per-thread sandbox path ──────────────────────────────────────────────────────────────
-    const ensured = await this.threadLifecycle.ensureContainer(job.threadId, job.teamId);
+    const ensured = await this.threadLifecycle.ensureContainer(job.threadId, job.orgId);
     if (ensured) {
       const branch = ensured.sandbox.branch; // the thread's feature branch is the source of truth
       if (job.featureBranch !== branch) await this.store.setFeatureBranch(job.id, branch);
@@ -832,7 +832,7 @@ export class SectionDriver implements JobDispatcher {
     const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
     const sandbox = await this.git.createFeatureSandbox(repo.projectRepo, branch);
     if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
-    return this.sandboxes.attach({ sandbox, teamId: job.teamId });
+    return this.sandboxes.attach({ sandbox, orgId: job.orgId });
   }
 
   /** Summarize a section's handoff (LLM, with a terse rule-based fallback). */
@@ -840,11 +840,11 @@ export class SectionDriver implements JobDispatcher {
     section: DriverSection,
     phases: Phase[],
     reports: string[],
-    teamId?: string,
+    orgId?: string,
   ): Promise<string> {
     const planned = phases.map(asPlannedPhase);
     const llm = await this.planner
-      .handoff({ brief: section.brief, phases: planned, reports, ...(teamId ? { teamId } : {}) })
+      .handoff({ brief: section.brief, phases: planned, reports, ...(orgId ? { orgId } : {}) })
       .catch(() => undefined);
     if (llm) return llm;
     const built = phases.map((p) => p.title ?? p.brief).join('; ');
@@ -857,7 +857,7 @@ export class SectionDriver implements JobDispatcher {
     try {
       await this.surface.post(route.channel, text, {
         ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-        ...(route.teamId ? { teamId: route.teamId } : {}),
+        ...(route.orgId ? { orgId: route.orgId } : {}),
       });
     } catch (err) {
       this.logger.warn(`post failed (continuing): ${err}`);
@@ -891,7 +891,7 @@ export class SectionDriver implements JobDispatcher {
     try {
       await this.surface.post(route.channel, text, {
         ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-        ...(route.teamId ? { teamId: route.teamId } : {}),
+        ...(route.orgId ? { orgId: route.orgId } : {}),
         meta: {
           kind: 'build_event',
           phaseId,
@@ -1014,7 +1014,7 @@ function prBody(job: Job, record: DecisionRecord | null): string {
 }
 
 function sandboxKey(sandbox: FeatureSandbox): string {
-  return `${sandbox.projectId}--${sandbox.branch}`;
+  return `${sandbox.repoId}--${sandbox.branch}`;
 }
 
 /** Pull the engine's flagged off-spec deviations out of a phase report ('DEVIATION:' lines, #7). */

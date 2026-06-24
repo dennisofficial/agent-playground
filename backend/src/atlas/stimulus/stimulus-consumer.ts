@@ -31,13 +31,13 @@ export class LoggingStimulusConsumer implements StimulusConsumer {
     if (stimulus.kind === 'event') {
       this.logger.log(
         `[no-op consume] EVENT ${stimulus.id} source=${stimulus.source} ` +
-          `severity=${stimulus.severity} project=${stimulus.projectId} ` +
+          `severity=${stimulus.severity} project=${stimulus.repoId} ` +
           `dedupeKey=${stimulus.dedupeKey} (untrusted) — W3 triage will handle this`,
       );
     } else {
       this.logger.log(
         `[no-op consume] CHAT ${stimulus.id} thread=${stimulus.threadId} ` +
-          `author=${stimulus.author.displayName} project=${stimulus.projectId} — W3 triage will handle this`,
+          `author=${stimulus.author.displayName} project=${stimulus.repoId} — W3 triage will handle this`,
       );
     }
   }

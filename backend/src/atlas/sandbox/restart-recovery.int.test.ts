@@ -84,7 +84,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
     git(['worktree', 'add', '-q', worktree, '-b', 'atlas/restart-feat'], repoRoot);
 
     sandbox = {
-      projectId: 'restart-proj',
+      repoId: 'restart-proj',
       branch: 'atlas/restart-feat',
       worktreePath: worktree,
       gitUrl: '',
@@ -122,7 +122,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       });
 
       // ── Pre-restart: Instance 1 ───────────────────────────────────────────────────────────
-      const s1 = await manager1.attach({ sandbox, teamId: 'team-restart' });
+      const s1 = await manager1.attach({ sandbox, orgId: 'team-restart' });
       attachedContainerId = s1.containerId;
 
       expect(s1.containerId).toBeTruthy();
@@ -163,7 +163,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       const builder2 = new SandboxImageBuilder(env(), engine2);
       const manager2 = new SandboxManager(engine2, builder2, env({ ATLAS_AGENT_HOME_ROOT: homeRoot }));
 
-      const s2 = await manager2.attach({ sandbox, teamId: 'team-restart' });
+      const s2 = await manager2.attach({ sandbox, orgId: 'team-restart' });
 
       // Must re-adopt the EXACT same container — same id, same exec user.
       expect(s2.containerId).toBe(s1.containerId);

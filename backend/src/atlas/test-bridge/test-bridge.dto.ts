@@ -8,9 +8,9 @@
 /** `POST /test/seed` body — register a team/project/channel so a conversation routes to a real repo. */
 export interface SeedRequest {
   /** The tenant (Slack team id) everything is keyed to. */
-  teamId: string;
+  orgId: string;
   /** The project slug. */
-  projectId: string;
+  repoId: string;
   /** The HTTPS GitHub URL the per-feature worktree sandbox clones. */
   repoUrl: string;
   /** The PR base branch (default 'main'). */
@@ -23,8 +23,8 @@ export interface SeedRequest {
 export interface SeedResponse {
   /** The upserted `atlas_channels.id`. */
   channelId: string;
-  teamId: string;
-  projectId: string;
+  orgId: string;
+  repoId: string;
 }
 
 /** `POST /test/say` body — inject a human message and wait for Atlas's reply. */

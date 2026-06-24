@@ -31,7 +31,7 @@ import { PlanVisibilityService } from './plan-visibility.service';
       inject: [EnvService, CredentialResolver],
       useFactory: (env: EnvService, creds: CredentialResolver) =>
         new AnthropicClassifierLlm(
-          (teamId) => creds.anthropicKey(teamId),
+          (orgId) => creds.anthropicKey(orgId),
           () => env.get('GATE_MODEL'),
         ),
     },

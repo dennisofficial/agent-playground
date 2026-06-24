@@ -17,9 +17,9 @@ import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
   AtlasJob,
-  AtlasProject,
-  AtlasTeam,
+  AtlasRepo,
   AtlasThread,
+  Organization,
 } from '../persistence/entities';
 import type { ChatStimulus } from '../domain';
 import {
@@ -187,29 +187,30 @@ export class E2eHarness {
     // children → parents; the harness owns this synthetic tenant exclusively, so this is safe.
     await this.purgePriorRun();
 
-    const teams = this.repo(AtlasTeam);
-    const projects = this.repo(AtlasProject);
+    const orgs = this.repo(Organization);
+    const projects = this.repo(AtlasRepo);
     const channels = this.repo(AtlasChannel);
     const threads = this.repo(AtlasThread);
 
-    await teams.save(
-      teams.create({ team_id: TEAM_ID, team_name: 'Atlas E2E', status: 'active' }),
+    await orgs.save(
+      orgs.create({ id: TEAM_ID, name: 'Atlas E2E', slug: TEAM_ID, status: 'active' }),
     );
     await projects.save(
       projects.create({
-        team_id: TEAM_ID,
-        project_id: PROJECT_ID,
-        display_name: 'Atlas E2E Project',
-        description: 'Ephemeral project row for the atlas:e2e harness.',
+        org_id: TEAM_ID,
+        repo_id: PROJECT_ID,
+        name: 'Atlas E2E Project',
         git_url: gitUrl,
         default_branch: baseBranch,
         token_name: null,
+        access_ok: true,
+        access_checked_at: new Date(),
       }),
     );
     await channels.save(
       channels.create({
-        team_id: TEAM_ID,
-        project_id: PROJECT_ID,
+        org_id: TEAM_ID,
+        repo_id: PROJECT_ID,
         surface_channel_ref: CHANNEL_REF,
         display_name: 'e2e-channel',
       }),
@@ -221,8 +222,8 @@ export class E2eHarness {
     await threads.save(
       threads.create({
         id: FEATURE_THREAD_ID,
-        team_id: TEAM_ID,
-        project_id: PROJECT_ID,
+        org_id: TEAM_ID,
+        repo_id: PROJECT_ID,
         origin: 'control',
         surface_thread_ref: CHANNEL_REF,
         title: 'e2e-feature-thread',
@@ -241,21 +242,21 @@ export class E2eHarness {
   private async purgePriorRun(): Promise<void> {
     const q = (sql: string, params: unknown[]) => this.dataSource.query(sql, params);
     // Threads/messages/stimuli/jobs/sections/phases/decision-records hang off team/project.
-    await q(`DELETE FROM atlas_phases WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_sections WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_decision_records WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_jobs WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_phases WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_sections WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_decision_records WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_jobs WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(
       `DELETE FROM atlas_messages WHERE thread_id IN (
-         SELECT id FROM atlas_threads WHERE team_id = $1)`,
+         SELECT id FROM atlas_threads WHERE org_id = $1)`,
       [TEAM_ID],
     ).catch(() => undefined);
-    await q(`DELETE FROM atlas_stimuli WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_thread_sandboxes WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_threads WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_channels WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_projects WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM atlas_teams WHERE team_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_stimuli WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_thread_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_threads WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_channels WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_projects WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM atlas_teams WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
   }
 
   // ── scenario 1: feature (chat-initiated) ───────────────────────────────────────────────────────
@@ -337,8 +338,8 @@ export class E2eHarness {
       id: 'e2e-stimulus-feature',
       kind: 'chat',
       trust: 'trusted',
-      teamId: TEAM_ID,
-      projectId: PROJECT_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
       threadId: FEATURE_THREAD_ID,
       body: 'Please add a short note to the README about the project.',
       author: { id: DEFAULT_HUMAN_ID, displayName: 'Dennis (e2e)' },

@@ -27,7 +27,7 @@ function fakePhases(priorSessionId: string | null = null) {
 }
 
 const sandbox: FeatureSandbox = {
-  projectId: 'proj',
+  repoId: 'proj',
   branch: 'atlas/feat',
   worktreePath: '/wt/feat',
   gitUrl: 'https://github.com/acme/widget',

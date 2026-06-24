@@ -9,10 +9,10 @@ import type { ChatStimulus } from '../domain';
 
 function fakeChannels(rows: AtlasChannel[]): Repository<AtlasChannel> {
   return {
-    findOne: async (opts: { where: { team_id: string; surface_channel_ref: string } }) =>
+    findOne: async (opts: { where: { org_id: string; surface_channel_ref: string } }) =>
       rows.find(
         (c) =>
-          c.team_id === opts.where.team_id &&
+          c.org_id === opts.where.org_id &&
           c.surface_channel_ref === opts.where.surface_channel_ref,
       ) ?? null,
   } as unknown as Repository<AtlasChannel>;
@@ -26,12 +26,12 @@ function fakeThreads(initial: AtlasThread[]): {
   let seq = initial.length;
   const repo = {
     findOne: async (opts: {
-      where: { team_id: string; project_id: string; surface_thread_ref: string };
+      where: { org_id: string; repo_id: string; surface_thread_ref: string };
     }) =>
       rows.find(
         (t) =>
-          t.team_id === opts.where.team_id &&
-          t.project_id === opts.where.project_id &&
+          t.org_id === opts.where.org_id &&
+          t.repo_id === opts.where.repo_id &&
           t.surface_thread_ref === opts.where.surface_thread_ref,
       ) ?? null,
     create: (data: Partial<AtlasThread>) => ({ ...data }) as AtlasThread,
@@ -47,8 +47,8 @@ function fakeThreads(initial: AtlasThread[]): {
 const channel = (over: Partial<AtlasChannel> = {}): AtlasChannel =>
   ({
     id: 'c1',
-    team_id: 'T1',
-    project_id: 'web',
+    org_id: 'T1',
+    repo_id: 'web',
     surface_channel_ref: 'C042',
     display_name: 'web',
     ...over,
@@ -86,7 +86,7 @@ const msg = (over: Partial<InboundChatMessage> = {}): InboundChatMessage => ({
   authorId: 'U1',
   authorName: 'Dennis',
   text: 'hey atlas',
-  teamId: 'T1',
+  orgId: 'T1',
   channel: 'C042',
   ts: new Date(),
   ...over,
@@ -103,11 +103,11 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
     const { bridge, intaken, threadRows } = makeBridge({ channels: [channel()], threads: [] });
     await bridge.onInbound(msg({ id: '100.1' })); // no threadTs
     expect(threadRows).toHaveLength(1);
-    expect(threadRows[0]).toMatchObject({ origin: 'chat', surface_thread_ref: '100.1', project_id: 'web' });
+    expect(threadRows[0]).toMatchObject({ origin: 'chat', surface_thread_ref: '100.1', repo_id: 'web' });
     expect(intaken[0]).toMatchObject({
       kind: 'chat',
       trust: 'trusted',
-      projectId: 'web',
+      repoId: 'web',
       author: { id: 'U1', displayName: 'Dennis' },
     });
     expect(intaken[0].replyRoute).toEqual({ surfaceId: 'slack', threadRef: '100.1' });
@@ -116,8 +116,8 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
   it('a reply CONTINUES the existing thread (matched by surface_thread_ref) — no new thread', async () => {
     const existing = {
       id: 'thread-7',
-      team_id: 'T1',
-      project_id: 'web',
+      org_id: 'T1',
+      repo_id: 'web',
       origin: 'event',
       surface_thread_ref: '50.0',
       title: 'CI failure',

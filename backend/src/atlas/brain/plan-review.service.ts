@@ -29,7 +29,7 @@ export interface PlanReviewInput {
   /** Job the plan belongs to (used for the one-pass guard). */
   jobId: string;
   /** Team id (for credential resolution — threaded through from the stimulus). */
-  teamId: string;
+  orgId: string;
   /** Worktree path the Codex review turn runs inside (read-only). */
   worktreePath: string;
   /** Container id when running in docker mode (absent → in-process local). */
@@ -146,7 +146,7 @@ export class PlanReviewService {
     this.reviewed.add(input.jobId);
 
     // ── Codex review turn ────────────────────────────────────────────────────────────────────────
-    const sandboxKey = `plan-review-${input.teamId}-${input.jobId}`;
+    const sandboxKey = `plan-review-${input.orgId}-${input.jobId}`;
     const task = renderPlanForReview(input);
 
     this.logger.log(`plan-review: running Codex review turn for job=${input.jobId}`);

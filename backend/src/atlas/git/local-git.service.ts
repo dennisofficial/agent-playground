@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 /** A located project repo on disk + the auth context for its remote. */
 export interface ProjectRepo {
   /** Stable id used for the on-disk clone dir + the worktree sandbox key. */
-  projectId: string;
+  repoId: string;
   /** The HTTPS clone URL (the `origin` remote). */
   gitUrl: string;
   /** The PR base / default branch. */
@@ -26,7 +26,7 @@ export interface ProjectRepo {
 
 /** A cut per-feature sandbox = a git worktree on a feature branch. */
 export interface FeatureSandbox {
-  projectId: string;
+  repoId: string;
   /** The feature branch all the job's phases stack on. */
   branch: string;
   /** Absolute path to the worktree checkout (the engine's cwd, bind-mounted at /work in docker mode). */
@@ -141,12 +141,12 @@ export class LocalGitService {
    * clone/fetch but is NOT persisted to the clone's config.
    */
   async ensureRepo(input: {
-    projectId: string;
+    repoId: string;
     gitUrl: string;
     defaultBranch?: string;
     token?: string;
   }): Promise<ProjectRepo> {
-    const safeId = input.projectId.replace(/[^a-z0-9_-]/gi, '_') || 'project';
+    const safeId = input.repoId.replace(/[^a-z0-9_-]/gi, '_') || 'project';
     const repoPath = join(this.reposRoot(), safeId);
     const token = input.token;
     const gitUrl = input.gitUrl;
@@ -161,7 +161,7 @@ export class LocalGitService {
         await this.git(['fetch', 'origin', '--prune'], { cwd: repoPath, gitUrl, token });
       }
       const defaultBranch = input.defaultBranch ?? (await this.detectDefaultBranch(repoPath));
-      return { projectId: input.projectId, gitUrl, defaultBranch, repoPath, token };
+      return { repoId: input.repoId, gitUrl, defaultBranch, repoPath, token };
     });
   }
 
@@ -207,7 +207,7 @@ export class LocalGitService {
     });
 
     return {
-      projectId: repo.projectId,
+      repoId: repo.repoId,
       branch,
       worktreePath,
       gitUrl: repo.gitUrl,
@@ -304,7 +304,7 @@ export class LocalGitService {
     });
 
     return {
-      projectId: repo.projectId,
+      repoId: repo.repoId,
       branch: repo.defaultBranch, // still on the base; updated by switchBranch
       worktreePath,
       gitUrl: repo.gitUrl,

@@ -73,7 +73,7 @@ export class TurnRunnerService {
 
     // The sandbox key namespaces the engine's isolated home + Codex client cache, so two concurrent
     // features never share engine state. The feature branch is unique per job/feature.
-    const sandboxKey = `${sandbox.projectId}--${sandbox.branch}`;
+    const sandboxKey = `${sandbox.repoId}--${sandbox.branch}`;
 
     // Cold re-attach + resume: the container was created/restarted fresh (warm === false) but we're
     // resuming a session that remembers prior in-container state — tell it the box was reset. Flip warm

@@ -50,8 +50,8 @@ export class StimulusIntake {
    */
   async intakeEvent(event: ParsedEvent): Promise<IntakeOutcome> {
     const verdict = this.filter.admit({
-      teamId: event.teamId,
-      projectId: event.projectId,
+      orgId: event.orgId,
+      repoId: event.repoId,
       source: event.source,
       dedupeKey: event.dedupeKey,
     });
@@ -65,8 +65,8 @@ export class StimulusIntake {
     try {
       const title = deriveTitle(event);
       const seeded = await this.store.seedEventThread({
-        teamId: event.teamId,
-        projectId: event.projectId,
+        orgId: event.orgId,
+        repoId: event.repoId,
         source: event.source,
         dedupeKey: event.dedupeKey,
         severity: event.severity,
@@ -80,8 +80,8 @@ export class StimulusIntake {
       // Best-effort: a failed/no-op announcement leaves the ref null (downstream falls back to top-level).
       await this.orchestration
         .announceEvent({
-          teamId: event.teamId,
-          projectId: event.projectId,
+          orgId: event.orgId,
+          repoId: event.repoId,
           threadId: seeded.thread.id,
           source: event.source,
           severity: event.severity,
@@ -102,7 +102,7 @@ export class StimulusIntake {
 
       this.logger.log(
         `event admitted: ${seeded.stimulus.id} seeded thread ${seeded.thread.id} ` +
-          `(project ${event.projectId}, severity ${event.severity})`,
+          `(project ${event.repoId}, severity ${event.severity})`,
       );
       return { admitted: true, stimulusId: seeded.stimulus.id, threadId: seeded.thread.id };
     } catch (err) {
@@ -124,8 +124,8 @@ export class StimulusIntake {
    */
   async intakeChat(stimulus: ChatStimulus): Promise<void> {
     const recorded = await this.store.recordChatStimulus({
-      teamId: stimulus.teamId,
-      projectId: stimulus.projectId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       threadId: stimulus.threadId,
       author: stimulus.author,
       replyRoute: stimulus.replyRoute,

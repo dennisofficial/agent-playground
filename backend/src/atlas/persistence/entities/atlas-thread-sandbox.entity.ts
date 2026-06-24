@@ -16,14 +16,14 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
  *  - `closed`       — terminal: worktree removed + container gone (PR merged / thread closed)
  */
 @Entity({ name: 'atlas_thread_sandboxes' })
-@Index(['team_id', 'thread_id'], { unique: true })
+@Index(['org_id', 'thread_id'], { unique: true })
 export class AtlasThreadSandbox extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   /** The tenant (Slack team id). */
   @Column({ type: 'text' })
-  team_id!: string;
+  org_id!: string;
 
   /** FK → atlas_threads.id */
   @Column({ type: 'uuid' })
@@ -31,7 +31,7 @@ export class AtlasThreadSandbox extends TimestampedEntity {
 
   /** The project this sandbox is for (FK → atlas_projects). */
   @Column({ type: 'text' })
-  project_id!: string;
+  repo_id!: string;
 
   /** The base branch the sandbox was provisioned on (origin HEAD at thread creation). */
   @Column({ type: 'text' })

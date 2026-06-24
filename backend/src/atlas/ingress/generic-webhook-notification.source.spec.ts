@@ -15,8 +15,8 @@ function fakeEnv(overrides: Record<string, unknown> = {}): EnvService {
 }
 
 const ROUTE: ProjectRoute = {
-  teamId: 'T1',
-  projectId: 'web',
+  orgId: 'T1',
+  repoId: 'web',
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   channel: { id: 'chan-1' } as any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,8 +25,8 @@ const ROUTE: ProjectRoute = {
 
 function fakeRouting(route: ProjectRoute | null): ProjectRoutingService {
   return {
-    routeProjectId: async (teamId: string, projectId: string) =>
-      route && route.teamId === teamId && route.projectId === projectId ? route : null,
+    routeProjectId: async (orgId: string, repoId: string) =>
+      route && route.orgId === orgId && route.repoId === repoId ? route : null,
   } as unknown as ProjectRoutingService;
 }
 
@@ -43,7 +43,7 @@ describe('constantTimeEqual', () => {
 });
 
 describe('GenericWebhookNotificationSource.handle', () => {
-  const body = { teamId: 'T1', projectId: 'web', title: 'DB down', body: 'connection refused', severity: 'critical' };
+  const body = { orgId: 'T1', repoId: 'web', title: 'DB down', body: 'connection refused', severity: 'critical' };
 
   it('rejects when no secret configured (unverifiable)', async () => {
     const src = new GenericWebhookNotificationSource(fakeEnv({ ATLAS_WEBHOOK_SECRET: undefined }), fakeRouting(ROUTE));
@@ -65,7 +65,7 @@ describe('GenericWebhookNotificationSource.handle', () => {
 
   it('rejects a payload missing required fields (malformed)', async () => {
     const src = new GenericWebhookNotificationSource(fakeEnv(), fakeRouting(ROUTE));
-    const res = await src.handle(raw({ teamId: 'T1' }, { 'x-atlas-webhook-secret': SECRET }));
+    const res = await src.handle(raw({ orgId: 'T1' }, { 'x-atlas-webhook-secret': SECRET }));
     expect(res).toMatchObject({ outcome: 'rejected', reason: 'malformed' });
   });
 
@@ -80,7 +80,7 @@ describe('GenericWebhookNotificationSource.handle', () => {
     const res = await src.handle(raw(body, { 'x-atlas-webhook-secret': SECRET }));
     expect(res.outcome).toBe('accepted');
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
-    expect(res.event).toMatchObject({ teamId: 'T1', projectId: 'web', source: 'webhook', severity: 'critical' });
+    expect(res.event).toMatchObject({ orgId: 'T1', repoId: 'web', source: 'webhook', severity: 'critical' });
     expect(res.event.body).toContain('DB down');
     expect(res.event.body).toContain('connection refused');
     expect(res.event.dedupeKey).toBeTruthy();

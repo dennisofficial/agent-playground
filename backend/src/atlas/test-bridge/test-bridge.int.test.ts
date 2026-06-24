@@ -82,18 +82,18 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
 
   it('seed is idempotent and returns a channel id', async () => {
     const first = await controller.seed({
-      teamId: TEAM_ID,
-      projectId: PROJECT_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
       repoUrl: 'https://github.com/acme/testbridge.git',
       channel: CHANNEL_REF,
     });
     expect(first.channelId).toBeTruthy();
-    expect(first.teamId).toBe(TEAM_ID);
+    expect(first.orgId).toBe(TEAM_ID);
 
     // Re-seed (different repo) → same channel row, updated in place (idempotent).
     const second = await controller.seed({
-      teamId: TEAM_ID,
-      projectId: PROJECT_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
       repoUrl: 'https://github.com/acme/testbridge-renamed.git',
       baseBranch: 'develop',
       channel: CHANNEL_REF,
@@ -140,16 +140,16 @@ async function jobOnThread(ds: DataSource, threadTs: string): Promise<string | n
 /** Delete every row this test's synthetic tenant owns (fixed ids → a re-run would PK-collide). */
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
-  await q(`DELETE FROM atlas_phases WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_sections WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_decision_records WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_jobs WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_phases WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_sections WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_decision_records WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_jobs WHERE org_id = $1`);
   await q(
-    `DELETE FROM atlas_messages WHERE thread_id IN (SELECT id FROM atlas_threads WHERE team_id = $1)`,
+    `DELETE FROM atlas_messages WHERE thread_id IN (SELECT id FROM atlas_threads WHERE org_id = $1)`,
   );
-  await q(`DELETE FROM atlas_stimuli WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_threads WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_channels WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_projects WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_teams WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_stimuli WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_threads WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_channels WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_projects WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_teams WHERE org_id = $1`);
 }

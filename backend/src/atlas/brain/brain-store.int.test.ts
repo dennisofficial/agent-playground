@@ -77,14 +77,14 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
   it('a re-propose on the same scoping job clears the prior draft instead of colliding', async () => {
     // atlas_jobs.thread_id FK → atlas_threads.id, so anchor a real thread first.
     const [thread]: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO atlas_threads (team_id, project_id, origin, title)
+      `INSERT INTO atlas_threads (org_id, repo_id, origin, title)
          VALUES ($1, $2, 'chat', 'rate limiting') RETURNING id`,
       [TEAM_ID, PROJECT_ID],
     );
     const threadId = thread.id;
     const jobId = await store.openJob({
-      teamId: TEAM_ID,
-      projectId: PROJECT_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
       threadId,
       title: 'rate limiting',
       kind: 'feature',
@@ -92,8 +92,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // First proposal — two sections at ordinals 10, 20.
     const first = await store.persistPlan({
-      teamId: TEAM_ID,
-      projectId: PROJECT_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
       jobId,
       title: 'rate limiting v1',
       kind: 'feature',
@@ -112,8 +112,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // Second proposal on the SAME job — fewer sections, re-using ordinal 10. Must NOT throw.
     const second = await store.persistPlan({
-      teamId: TEAM_ID,
-      projectId: PROJECT_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
       jobId,
       title: 'rate limiting v2',
       kind: 'feature',
@@ -163,10 +163,10 @@ async function draftCount(ds: DataSource, jobId: string): Promise<number> {
 /** Delete every row this test's synthetic tenant owns. */
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
-  await q(`DELETE FROM atlas_phases WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_sections WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_decision_records WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_jobs WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_threads WHERE team_id = $1`);
-  await q(`DELETE FROM atlas_teams WHERE team_id = $1`);
+  await q(`DELETE FROM atlas_phases WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_sections WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_decision_records WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_jobs WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_threads WHERE org_id = $1`);
+  await q(`DELETE FROM atlas_teams WHERE org_id = $1`);
 }

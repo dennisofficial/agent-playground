@@ -8,19 +8,19 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
  * the section/phase rows. No board/backlog tables — a job stands on its own.
  */
 @Entity({ name: 'atlas_jobs' })
-@Index(['team_id', 'project_id'])
-@Index(['team_id', 'status'])
+@Index(['org_id', 'repo_id'])
+@Index(['org_id', 'status'])
 export class AtlasJob extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   /** The tenant (Slack team id). */
   @Column({ type: 'text' })
-  team_id!: string;
+  org_id!: string;
 
   /** The project this job builds against. */
   @Column({ type: 'text' })
-  project_id!: string;
+  repo_id!: string;
 
   /** The thread the job's chatter lives in (FK → atlas_threads). */
   @Column({ type: 'uuid' })

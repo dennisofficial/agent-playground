@@ -113,7 +113,7 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
 // ── the rest of the mocked collaborators ─────────────────────────────────────────────────────────
 
 const REPO: ProjectRepo = {
-  projectId: 'proj',
+  repoId: 'proj',
   gitUrl: 'https://github.com/acme/widget',
   defaultBranch: 'main',
   repoPath: '/repos/proj',
@@ -137,7 +137,7 @@ function makeGit(): { git: LocalGitService; pushed: string[]; commits: string[] 
   const git = {
     createFeatureSandbox: vi.fn(
       async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
-        projectId: 'proj',
+        repoId: 'proj',
         branch,
         worktreePath: `/wt/${branch}`,
         gitUrl: REPO.gitUrl,
@@ -271,8 +271,8 @@ function makeSurface(): { surface: ChatSurface; posts: string[] } {
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
     id: 'job-abcdef12',
-    teamId: 'T1',
-    projectId: 'proj',
+    orgId: 'T1',
+    repoId: 'proj',
     threadId: 'thread-1',
     kind: 'feature',
     status: 'running',
@@ -289,8 +289,8 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 function makeRecord(): DecisionRecord {
   return {
     id: 'dr-1',
-    teamId: 'T1',
-    projectId: 'proj',
+    orgId: 'T1',
+    repoId: 'proj',
     jobId: 'job-abcdef12',
     status: 'approved',
     overview: 'Build the widget feature.',
@@ -312,7 +312,7 @@ function section(id: string, ordinal: number, brief: string, status: SectionStat
   return {
     id,
     jobId: 'job-abcdef12',
-    teamId: 'T1',
+    orgId: 'T1',
     ordinal,
     brief,
     plan: null,
@@ -642,7 +642,7 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     const h = assemble(state, { env: { ATLAS_VERIFY_CMD: 'exit 1' } });
     // The verify command runs in the worktree cwd — point it at a real existing dir so exec can spawn.
     (h.git.createFeatureSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
-      projectId: 'proj',
+      repoId: 'proj',
       branch: 'atlas/feature-job-abcd',
       worktreePath: tmpdir(),
       gitUrl: REPO.gitUrl,

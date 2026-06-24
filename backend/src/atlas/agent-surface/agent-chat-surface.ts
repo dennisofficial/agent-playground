@@ -29,8 +29,8 @@ export interface SendOptions {
   authorId?: string;
   /** The simulated author display name (default 'Dennis'). */
   authorName?: string;
-  /** The tenant id the message belongs to (default the surface's configured `teamId`). */
-  teamId?: string;
+  /** The tenant id the message belongs to (default the surface's configured `orgId`). */
+  orgId?: string;
 }
 
 /** A captured approval card + the ids needed to resolve it (parsed from the card's button value). */
@@ -80,7 +80,7 @@ export class AgentChatSurface implements ChatSurface {
 
   private seq = 0;
   /** The default tenant id stamped on injected human messages (overridable per `sendFromHuman`). */
-  private readonly teamId = DEFAULT_TEAM_ID;
+  private readonly orgId = DEFAULT_TEAM_ID;
 
   /** Inbound human messages — what the chat bridge subscribes to (same contract as the Slack adapter). */
   get inbound$(): Observable<InboundChatMessage> {
@@ -106,7 +106,7 @@ export class AgentChatSurface implements ChatSurface {
       authorId: opts.authorId ?? DEFAULT_AUTHOR_ID,
       authorName: opts.authorName ?? DEFAULT_AUTHOR_NAME,
       text,
-      teamId: opts.teamId ?? this.teamId,
+      orgId: opts.orgId ?? this.orgId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
       ts: new Date(),

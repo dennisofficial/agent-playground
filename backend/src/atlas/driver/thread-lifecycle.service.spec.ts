@@ -10,7 +10,7 @@
 import type { EnvService } from '@core/config/env/env.service';
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { AtlasProject, AtlasThread, AtlasThreadSandbox } from '../persistence/entities';
+import type { AtlasRepo, AtlasThread, AtlasThreadSandbox } from '../persistence/entities';
 import type { GithubPrService, LocalGitService } from '../git';
 import type { CredentialResolver, OnboardingService } from '../onboarding';
 import type { DriverRepoResolver } from './repo-resolver';
@@ -23,9 +23,9 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
 function makeRow(overrides: Partial<AtlasThreadSandbox> = {}): AtlasThreadSandbox {
   return {
     id: 'sandbox-1',
-    team_id: 'T1',
+    org_id: 'T1',
     thread_id: 'thread-1',
-    project_id: 'proj',
+    repo_id: 'proj',
     base_branch: 'main',
     feature_branch: null,
     worktree_path: '/repos/proj/.worktrees/thread-1',
@@ -53,7 +53,7 @@ function makeService(): ThreadLifecycleService {
   return new ThreadLifecycleService(
     stubRepo() as unknown as Repository<AtlasThread>,
     stubRepo() as unknown as Repository<AtlasThreadSandbox>,
-    stubRepo() as unknown as Repository<AtlasProject>,
+    stubRepo() as unknown as Repository<AtlasRepo>,
     { bindChannel: vi.fn() } as unknown as OnboardingService,
     {} as unknown as LocalGitService,
     { getPullState: vi.fn() } as unknown as GithubPrService,

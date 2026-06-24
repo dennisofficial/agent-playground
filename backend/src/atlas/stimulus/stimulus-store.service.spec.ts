@@ -36,8 +36,8 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo);
 
     const seeded = await store.seedEventThread({
-      teamId: 'T1',
-      projectId: 'web',
+      orgId: 'T1',
+      repoId: 'web',
       source: 'github',
       dedupeKey: 'run:1',
       severity: 'critical',
@@ -45,7 +45,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       title: '[github] CI failed',
     });
 
-    expect(seeded.thread).toMatchObject({ origin: 'event', team_id: 'T1', project_id: 'web', surface_thread_ref: null });
+    expect(seeded.thread).toMatchObject({ origin: 'event', org_id: 'T1', repo_id: 'web', surface_thread_ref: null });
     expect(seeded.message).toMatchObject({ thread_id: seeded.thread.id, text: 'CI failed', author: 'github' });
     expect(seeded.stimulus).toMatchObject({
       kind: 'event',
@@ -53,8 +53,8 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       source: 'github',
       dedupeKey: 'run:1',
       severity: 'critical',
-      teamId: 'T1',
-      projectId: 'web',
+      orgId: 'T1',
+      repoId: 'web',
     });
     expect(seeded.stimulus.id).toBeTruthy();
   });
@@ -73,8 +73,8 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo);
     await expect(
       store.seedEventThread({
-        teamId: 'T1',
-        projectId: 'web',
+        orgId: 'T1',
+        repoId: 'web',
         source: 'github',
         dedupeKey: 'run:1',
         severity: 'info',
@@ -95,8 +95,8 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo);
 
     const chat = await store.recordChatStimulus({
-      teamId: 'T1',
-      projectId: 'web',
+      orgId: 'T1',
+      repoId: 'web',
       threadId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
       replyRoute: { surfaceId: 'slack', threadRef: '100.1' },

@@ -26,11 +26,11 @@ import type { PlannedPhase } from './planner-llm';
 const ORDINAL_GAP = 10;
 
 /**
- * The section shape the driver works with — the domain `Section` plus the denormalized `teamId` the
- * phase rows need (phases carry `team_id`). The driver never reaches a repository, so the store carries
+ * The section shape the driver works with — the domain `Section` plus the denormalized `orgId` the
+ * phase rows need (phases carry `org_id`). The driver never reaches a repository, so the store carries
  * the one extra field rather than the driver re-querying the job for it.
  */
-export type DriverSection = Section & { teamId: string };
+export type DriverSection = Section & { orgId: string };
 
 /** Where to post a job's chatter — the project's channel coordinate + the thread root ts. */
 export interface JobRoute {
@@ -38,7 +38,7 @@ export interface JobRoute {
   threadTs: string | null;
   /** The tenant to post as (selects the workspace credentials). Always set by `route()`; optional only
    *  so in-memory test fixtures (fake surface ignores it) can omit it. */
-  teamId?: string;
+  orgId?: string;
 }
 
 /**
@@ -155,7 +155,7 @@ export class DriverStoreService {
       this.phases.create({
         section_id: section.id,
         job_id: section.jobId,
-        team_id: section.teamId,
+        org_id: section.orgId,
         ordinal: (i + 1) * ORDINAL_GAP,
         title: p.title,
         brief: p.brief,
@@ -178,9 +178,9 @@ export class DriverStoreService {
    * R3 — `get_pipeline_state` tool impl. Returns the current job + section state for a thread, or
    * null if no job is on this thread. Used by the in-sandbox AgentSessionManager brain session.
    */
-  async getPipelineState(threadId: string, teamId: string): Promise<unknown> {
+  async getPipelineState(threadId: string, orgId: string): Promise<unknown> {
     const job = await this.jobs.findOne({
-      where: { thread_id: threadId, team_id: teamId },
+      where: { thread_id: threadId, org_id: orgId },
       order: { created_at: 'DESC' },
     });
     if (!job) return { status: 'no_job' };
@@ -229,13 +229,13 @@ export class DriverStoreService {
   /** Resolve where to post a job's chatter: the project's channel + the thread root ts. */
   async route(job: Job): Promise<JobRoute> {
     const [channel, thread] = await Promise.all([
-      this.channels.findOne({ where: { team_id: job.teamId, project_id: job.projectId } }),
+      this.channels.findOne({ where: { org_id: job.orgId, repo_id: job.repoId } }),
       this.threads.findOne({ where: { id: job.threadId } }),
     ]);
     return {
       channel: channel?.surface_channel_ref ?? null,
       threadTs: thread?.surface_thread_ref ?? null,
-      teamId: job.teamId,
+      orgId: job.orgId,
     };
   }
 }
@@ -245,8 +245,8 @@ export class DriverStoreService {
 function toJob(row: AtlasJob): Job {
   return {
     id: row.id,
-    teamId: row.team_id,
-    projectId: row.project_id,
+    orgId: row.org_id,
+    repoId: row.repo_id,
     threadId: row.thread_id,
     kind: row.kind as Job['kind'],
     status: row.status as JobStatus,
@@ -263,7 +263,7 @@ function toSection(row: AtlasSection): DriverSection {
   return {
     id: row.id,
     jobId: row.job_id,
-    teamId: row.team_id,
+    orgId: row.org_id,
     ordinal: row.ordinal,
     brief: row.brief,
     plan: row.plan,
@@ -290,8 +290,8 @@ function toPhase(row: AtlasPhase): Phase {
 function toRecord(row: AtlasDecisionRecord): DecisionRecord {
   return {
     id: row.id,
-    teamId: row.team_id,
-    projectId: row.project_id,
+    orgId: row.org_id,
+    repoId: row.repo_id,
     jobId: row.job_id,
     status: row.status as DecisionRecord['status'],
     overview: row.overview,

@@ -18,7 +18,7 @@ import {
   AtlasDecisionRecord,
   AtlasJob,
   AtlasPhase,
-  AtlasProject,
+  AtlasRepo,
   AtlasSection,
   AtlasThread,
   AtlasThreadSandbox,
@@ -66,7 +66,7 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
         AtlasDecisionRecord,
         AtlasThread,
         AtlasChannel,
-        AtlasProject,
+        AtlasRepo,
         AtlasThreadSandbox,
       ],
       ATLAS_CONNECTION,
@@ -80,7 +80,7 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
       inject: [EnvService, CredentialResolver],
       useFactory: (env: EnvService, creds: CredentialResolver) =>
         new AnthropicPlannerLlm(
-          (teamId) => creds.anthropicKey(teamId),
+          (orgId) => creds.anthropicKey(orgId),
           () => env.get('CHAT_MODEL'),
         ),
     },

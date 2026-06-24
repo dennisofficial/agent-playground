@@ -34,9 +34,9 @@ import { GithubPrService } from '../git';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import {
   AtlasChannel,
-  AtlasProject,
+  AtlasRepo,
   AtlasTeam,
-  AtlasTenantCredentials,
+  AtlasOrgCredentials,
   AtlasThread,
   AtlasThreadSandbox,
 } from '../persistence/entities';
@@ -75,19 +75,19 @@ class FakeGitService {
   readonly branches: string[] = [];
   readonly removedWorktrees: string[] = [];
 
-  async ensureRepo(input: { projectId: string; gitUrl: string; defaultBranch?: string; token?: string }): Promise<ProjectRepo> {
+  async ensureRepo(input: { repoId: string; gitUrl: string; defaultBranch?: string; token?: string }): Promise<ProjectRepo> {
     return {
-      projectId: input.projectId,
+      repoId: input.repoId,
       gitUrl: input.gitUrl,
       defaultBranch: input.defaultBranch ?? 'main',
-      repoPath: `/tmp/r2-gate-fake-repos/${input.projectId}`,
+      repoPath: `/tmp/r2-gate-fake-repos/${input.repoId}`,
     };
   }
 
   async createBaseWorktree(repo: ProjectRepo, threadId: string): Promise<FeatureSandbox> {
     const path = `${repo.repoPath}/.worktrees/thread-${threadId}`;
     this.worktreesByThreadId.set(threadId, path);
-    return { projectId: repo.projectId, branch: FAKE_BASE_BRANCH, worktreePath: path, gitUrl: repo.gitUrl };
+    return { repoId: repo.repoId, branch: FAKE_BASE_BRANCH, worktreePath: path, gitUrl: repo.gitUrl };
   }
 
   async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, featureBranch: string): Promise<FeatureSandbox> {
@@ -100,7 +100,7 @@ class FakeGitService {
   }
 
   async createFeatureSandbox(repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
-    return { projectId: repo.projectId, branch, worktreePath: `${repo.repoPath}/.worktrees/${branch}`, gitUrl: repo.gitUrl };
+    return { repoId: repo.repoId, branch, worktreePath: `${repo.repoPath}/.worktrees/${branch}`, gitUrl: repo.gitUrl };
   }
 }
 
@@ -108,7 +108,7 @@ class FakeGitService {
 class FakeSandboxProvider {
   warm = true;
   readonly tornDown: string[] = [];
-  async attach({ sandbox, threadId }: { sandbox: FeatureSandbox; teamId: string; threadId?: string }): Promise<FeatureSandbox> {
+  async attach({ sandbox, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }): Promise<FeatureSandbox> {
     return { ...sandbox, containerId: `fake-c-${threadId ?? sandbox.branch}`, warm: this.warm };
   }
   async teardown(sandbox: FeatureSandbox): Promise<void> {
@@ -133,7 +133,7 @@ beforeEach(async () => {
     imports: [
       TypeOrmModule.forRoot(dbOpts()),
       TypeOrmModule.forFeature(
-        [AtlasTeam, AtlasProject, AtlasChannel, AtlasThread, AtlasThreadSandbox, AtlasTenantCredentials],
+        [AtlasTeam, AtlasRepo, AtlasChannel, AtlasThread, AtlasThreadSandbox, AtlasOrgCredentials],
         ATLAS_CONNECTION,
       ),
     ],
@@ -176,23 +176,23 @@ beforeEach(async () => {
   ds = mod.get<DataSource>(getDataSourceToken(ATLAS_CONNECTION));
 
   await ds.query(`
-    INSERT INTO atlas_teams (team_id, team_name, status)
+    INSERT INTO atlas_teams (org_id, team_name, status)
     VALUES ($1, $2, 'active')
-    ON CONFLICT (team_id) DO UPDATE SET team_name = EXCLUDED.team_name
+    ON CONFLICT (org_id) DO UPDATE SET team_name = EXCLUDED.team_name
   `, [FAKE_TEAM_ID, 'R2 Gate Team']);
 
   await ds.query(`
-    INSERT INTO atlas_projects (team_id, project_id, display_name, description, git_url, default_branch, token_name)
+    INSERT INTO atlas_projects (org_id, repo_id, display_name, description, git_url, default_branch, token_name)
     VALUES ($1, $2, $3, NULL, $4, $5, NULL)
-    ON CONFLICT (team_id, project_id) DO UPDATE
+    ON CONFLICT (org_id, repo_id) DO UPDATE
       SET git_url = EXCLUDED.git_url, default_branch = EXCLUDED.default_branch
   `, [FAKE_TEAM_ID, FAKE_PROJECT_ID, 'R2 Gate Project', FAKE_REPO_URL, FAKE_BASE_BRANCH]);
 });
 
 async function create(displayName = 'Gate thread') {
   return threadLifecycle.createThread({
-    teamId: FAKE_TEAM_ID,
-    projectId: FAKE_PROJECT_ID,
+    orgId: FAKE_TEAM_ID,
+    repoId: FAKE_PROJECT_ID,
     baseBranch: FAKE_BASE_BRANCH,
     displayName,
   });

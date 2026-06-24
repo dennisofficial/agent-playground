@@ -2,12 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { GitModule } from '../git';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import {
-  AtlasChannel,
-  AtlasProject,
-  AtlasTeam,
-  AtlasTenantCredentials,
-} from '../persistence/entities';
+import { AtlasOrgCredentials, AtlasRepo, Organization } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { OnboardingService } from './onboarding.service';
 import { TenantCredentialStore } from './tenant-credential.store';
@@ -26,7 +21,7 @@ import { TenantCredentialStore } from './tenant-credential.store';
   imports: [
     GitModule,
     TypeOrmModule.forFeature(
-      [AtlasTenantCredentials, AtlasTeam, AtlasProject, AtlasChannel],
+      [AtlasOrgCredentials, Organization, AtlasRepo],
       ATLAS_CONNECTION,
     ),
   ],

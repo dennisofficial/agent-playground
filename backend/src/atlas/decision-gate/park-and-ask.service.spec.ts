@@ -28,7 +28,7 @@ class FakeSurface implements ChatSurface {
       authorId,
       authorName: 'Human',
       text,
-      teamId: 'T1',
+      orgId: 'T1',
       channel,
       threadTs,
       ts: new Date(),
@@ -94,7 +94,7 @@ describe('ParkAndAskService', () => {
       authorId: 'U',
       authorName: 'n',
       text: 'unrelated',
-      teamId: 'T1',
+      orgId: 'T1',
       channel: 'C1',
       ts: new Date(),
     });

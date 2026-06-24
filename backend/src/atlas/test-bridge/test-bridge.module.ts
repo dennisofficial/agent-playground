@@ -5,8 +5,8 @@ import {
   AtlasChannel,
   AtlasJob,
   AtlasMessage,
-  AtlasProject,
-  AtlasTeam,
+  AtlasRepo,
+  Organization,
 } from '../persistence/entities';
 import { TestBridgeController } from './test-bridge.controller';
 
@@ -23,7 +23,7 @@ import { TestBridgeController } from './test-bridge.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [AtlasTeam, AtlasProject, AtlasChannel, AtlasJob, AtlasMessage],
+      [Organization, AtlasRepo, AtlasChannel, AtlasJob, AtlasMessage],
       ATLAS_CONNECTION,
     ),
   ],

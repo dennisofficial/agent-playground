@@ -31,10 +31,10 @@ export class SandboxRefsService {
   }
 
   /** The per-tenant dir mounted at /refs (mirrors SandboxManager's mapping). */
-  teamRefsDir(teamId: string): string | undefined {
+  teamRefsDir(orgId: string): string | undefined {
     const root = this.refsRoot();
     if (!root) return undefined;
-    return join(root, this.safe(teamId));
+    return join(root, this.safe(orgId));
   }
 
   /**
@@ -43,17 +43,17 @@ export class SandboxRefsService {
    * The token authenticates the clone/fetch only (via GIT_CONFIG_* env) — never persisted to config.
    */
   async ensureReference(input: {
-    teamId: string;
-    projectId: string;
+    orgId: string;
+    repoId: string;
     gitUrl: string;
     token?: string;
   }): Promise<string | undefined> {
-    const dir = this.teamRefsDir(input.teamId);
+    const dir = this.teamRefsDir(input.orgId);
     if (!dir) {
       this.logger.warn('ensureReference called but no ATLAS_REFS_ROOT/REFS_ROOT configured — skipping');
       return undefined;
     }
-    const slug = this.safe(input.projectId);
+    const slug = this.safe(input.repoId);
     const dest = join(dir, slug);
     await mkdir(dir, { recursive: true });
 

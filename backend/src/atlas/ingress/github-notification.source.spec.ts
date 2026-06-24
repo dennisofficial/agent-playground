@@ -19,12 +19,12 @@ function fakeEnv(overrides: Record<string, unknown> = {}): EnvService {
 }
 
 const ROUTE: ProjectRoute = {
-  teamId: 'T1',
-  projectId: 'web',
+  orgId: 'T1',
+  repoId: 'web',
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   channel: { id: 'chan-1' } as any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  project: { team_id: 'T1', project_id: 'web', git_url: 'https://github.com/acme/web.git' } as any,
+  project: { org_id: 'T1', repo_id: 'web', git_url: 'https://github.com/acme/web.git' } as any,
 };
 
 function fakeRouting(route: ProjectRoute | null): ProjectRoutingService {
@@ -114,8 +114,8 @@ describe('GithubNotificationSource.handle', () => {
     expect(res.outcome).toBe('accepted');
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
     expect(res.event).toMatchObject({
-      teamId: 'T1',
-      projectId: 'web',
+      orgId: 'T1',
+      repoId: 'web',
       source: 'github',
       severity: 'critical',
       dedupeKey: 'workflow_run:99',

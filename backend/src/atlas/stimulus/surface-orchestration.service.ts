@@ -8,8 +8,8 @@ import { CHAT_SURFACE, type ChatSurface } from '../surface';
 
 /** Inputs to announce a freshly-seeded notification thread in the channel timeline. */
 export interface AnnounceEventInput {
-  teamId: string;
-  projectId: string;
+  orgId: string;
+  repoId: string;
   /** The `atlas_threads` row id the event seeded. */
   threadId: string;
   /** The gateway that produced the event (for the headline). */
@@ -67,17 +67,17 @@ export class SurfaceOrchestration {
     if (thread?.surface_thread_ref) return thread.surface_thread_ref; // already announced
 
     const channel = await this.channels.findOne({
-      where: { team_id: input.teamId, project_id: input.projectId },
+      where: { org_id: input.orgId, repo_id: input.repoId },
     });
     if (!channel?.surface_channel_ref) {
-      this.logger.debug(`no channel for ${input.teamId}/${input.projectId} — skipping announcement`);
+      this.logger.debug(`no channel for ${input.orgId}/${input.repoId} — skipping announcement`);
       return undefined;
     }
 
     const headline = `${SEVERITY_EMOJI[input.severity]} *[${input.source}]* ${input.title}`;
     let ts: string | undefined;
     try {
-      ts = await this.surface.post(channel.surface_channel_ref, headline, { teamId: channel.team_id });
+      ts = await this.surface.post(channel.surface_channel_ref, headline, { orgId: channel.org_id });
     } catch (err) {
       this.logger.warn(`announcement post failed (continuing top-level): ${err}`);
       return undefined;

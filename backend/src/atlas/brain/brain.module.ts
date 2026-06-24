@@ -10,7 +10,7 @@ import {
   AtlasDecisionRecord,
   AtlasJob,
   AtlasMessage,
-  AtlasProject,
+  AtlasRepo,
   AtlasSection,
   AtlasStimulus,
   AtlasThread,
@@ -68,7 +68,7 @@ import { PlanReviewService } from './plan-review.service';
         AtlasDecisionRecord,
         AtlasSection,
         AtlasStimulus,
-        AtlasProject,
+        AtlasRepo,
         AtlasThreadSandbox,
       ],
       ATLAS_CONNECTION,
@@ -80,7 +80,7 @@ import { PlanReviewService } from './plan-review.service';
       inject: [EnvService, CredentialResolver],
       useFactory: (env: EnvService, creds: CredentialResolver) =>
         new AnthropicBrainLlm(
-          (teamId) => creds.anthropicKey(teamId),
+          (orgId) => creds.anthropicKey(orgId),
           () => env.get('CHAT_MODEL'),
         ),
     },

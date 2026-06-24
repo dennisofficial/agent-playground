@@ -94,8 +94,8 @@ const ASK: DecisionClassification = { verdict: 'ask', reason: 'touches schema', 
 function event(body: string): EventStimulus {
   return {
     id: 's-evt',
-    teamId: 'T1',
-    projectId: 'proj',
+    orgId: 'T1',
+    repoId: 'proj',
     kind: 'event',
     trust: 'untrusted',
     body,

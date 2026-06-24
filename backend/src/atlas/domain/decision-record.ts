@@ -38,9 +38,9 @@ export interface DecisionRecord {
   /** Stable id (`atlas_decision_records.id`). */
   id: string;
   /** The tenant (Slack team id). */
-  teamId: string;
+  orgId: string;
   /** The project this record scopes to. */
-  projectId: string;
+  repoId: string;
   /** The job this record was produced for. */
   jobId: string;
   status: DecisionRecordStatus;

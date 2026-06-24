@@ -42,15 +42,19 @@ export class AuthController {
 
   @Public()
   @Post('register')
-  async register(@Body() body: RegisterDto): Promise<never> {
-    // Always rejects with the pending-approval message (open registration, blocked by flag).
-    return this.auth.register(body.email, body.password);
+  @HttpCode(HttpStatus.OK)
+  async register(
+    @Body() body: RegisterDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ user: AtlasSession }> {
+    const user = await this.auth.register(body.email, body.password, body.name, res);
+    return { user };
   }
 
   /** Guarded — 401 when no/invalid cookie, which the web client reads as "signed out". */
   @Get('session')
   session(@CurrentUser() user: AtlasUser): AtlasSession {
-    return { id: user.id, email: user.email };
+    return { id: user.id, email: user.email, name: user.name };
   }
 
   @Public()

@@ -31,8 +31,8 @@ function repos(opts: {
 }
 
 const INPUT = {
-  teamId: 'T1',
-  projectId: 'web',
+  orgId: 'T1',
+  repoId: 'web',
   threadId: 'thread-1',
   source: 'github',
   severity: 'critical' as const,

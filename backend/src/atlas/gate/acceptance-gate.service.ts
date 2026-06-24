@@ -77,7 +77,7 @@ export class AcceptanceGateService {
     try {
       // ── 1. Clone/locate + cut a fresh worktree ────────────────────────────────────────────────
       const repo = await this.git.ensureRepo({
-        projectId: `${parsed.owner}-${parsed.repo}`,
+        repoId: `${parsed.owner}-${parsed.repo}`,
         gitUrl: config.gitUrl,
         ...(config.baseBranch ? { defaultBranch: config.baseBranch } : {}),
         ...(token ? { token } : {}),
@@ -86,7 +86,7 @@ export class AcceptanceGateService {
       record('clone', true, `repo at ${repo.repoPath} (base ${repo.defaultBranch})`);
       sandbox = await this.git.createFeatureSandbox(repo, branch);
       // Attach the execution environment (no-op in local mode; a container in docker mode).
-      sandbox = await this.sandboxes.attach({ sandbox, teamId: 'gate' });
+      sandbox = await this.sandboxes.attach({ sandbox, orgId: 'gate' });
       record('worktree', true, `${sandbox.worktreePath} on ${branch}${sandbox.containerId ? ' (sandboxed)' : ''}`);
 
       // ── 2. Run one ENGINE turn in the worktree (execute mode → it makes the trivial change) ────
@@ -95,7 +95,7 @@ export class AcceptanceGateService {
         engine,
         mode: 'execute',
         cwd: sandbox.worktreePath,
-        sandboxKey: `${repo.projectId}--${branch}`,
+        sandboxKey: `${repo.repoId}--${branch}`,
         ...(sandbox.containerId
           ? {
               target: {
@@ -177,7 +177,7 @@ export class AcceptanceGateService {
         await this.git
           .removeSandbox(
             {
-              projectId: `${parsed.owner}-${parsed.repo}`,
+              repoId: `${parsed.owner}-${parsed.repo}`,
               gitUrl: config.gitUrl,
               defaultBranch: config.baseBranch ?? 'main',
               repoPath,

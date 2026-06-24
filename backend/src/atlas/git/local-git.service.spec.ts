@@ -44,7 +44,7 @@ describe('LocalGitService (host git, daemon-free)', () => {
   });
 
   async function repo(): Promise<ProjectRepo> {
-    return svc.ensureRepo({ projectId: 'acme-app', gitUrl: originUrl, defaultBranch: 'main' });
+    return svc.ensureRepo({ repoId: 'acme-app', gitUrl: originUrl, defaultBranch: 'main' });
   }
 
   it('clones a repo on first use and reuses it on the second', async () => {

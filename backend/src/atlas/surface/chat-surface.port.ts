@@ -26,7 +26,7 @@ export interface InboundChatMessage {
   authorName: string;
   text: string;
   /** The tenant (team id). */
-  teamId: string;
+  orgId: string;
   /** Surface-native channel coordinate. */
   channel: string;
   /**
@@ -49,7 +49,7 @@ export interface PostOptions {
   /**
    * The tenant (team id) to post AS — selects that tenant's credentials. Omit → the default tenant.
    */
-  teamId?: string;
+  orgId?: string;
   /**
    * Optional opaque metadata carried by this post — the web surface attaches it to
    * `WebOutboundMessage.meta` so SSE subscribers can distinguish build-phase engine events from
@@ -82,7 +82,7 @@ export interface ChatSurface {
     channel: string,
     ts: string,
     args: { text?: string; blocks?: Array<Record<string, unknown>> },
-    teamId?: string,
+    orgId?: string,
   ): Promise<void> | void;
   /**
    * OPTIONAL — operator "resume" requests for a job PAUSED on a credential/401 error. The web adapter

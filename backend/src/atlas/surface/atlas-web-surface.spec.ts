@@ -56,7 +56,7 @@ describe('AtlasWebSurface — inbound + outbound', () => {
     const ts = surface.receiveFromClient('C-web', 'Hello Atlas', {
       authorId: 'U-op',
       authorName: 'Operator',
-      teamId: 'T-acme',
+      orgId: 'T-acme',
       threadTs: 'root-ts',
     });
 
@@ -66,15 +66,15 @@ describe('AtlasWebSurface — inbound + outbound', () => {
     expect(msg.text).toBe('Hello Atlas');
     expect(msg.authorId).toBe('U-op');
     expect(msg.authorName).toBe('Operator');
-    expect(msg.teamId).toBe('T-acme');
+    expect(msg.orgId).toBe('T-acme');
     expect(msg.threadTs).toBe('root-ts');
   });
 
-  it('receiveFromClient defaults teamId/author when not supplied', async () => {
+  it('receiveFromClient defaults orgId/author when not supplied', async () => {
     const received = firstValueFrom(surface.inbound$.pipe(take(1)));
     surface.receiveFromClient('C-web', 'Hi');
     const msg = await received;
-    expect(msg.teamId).toBe('T-WEB');
+    expect(msg.orgId).toBe('T-WEB');
     expect(msg.authorId).toBe('U-OPERATOR');
     expect(msg.threadTs).toBeUndefined();
   });

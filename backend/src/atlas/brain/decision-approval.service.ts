@@ -17,7 +17,7 @@ export interface ApprovalTarget {
   /** The thread the card is posted into (the job's thread root ts). */
   threadTs?: string;
   /** The tenant to post as (selects the workspace credentials). */
-  teamId?: string;
+  orgId?: string;
 }
 
 /** The resolved approval — the verdict + who ruled + any free-text the human added. */
@@ -97,7 +97,7 @@ export class DecisionApprovalService implements OnModuleDestroy {
     const blocks = decisionApprovalBlocks(card);
     const cardTs = await this.surface.post(target.channel, `Plan proposal — ${card.title}`, {
       ...(target.threadTs ? { threadTs: target.threadTs } : {}),
-      ...(target.teamId ? { teamId: target.teamId } : {}),
+      ...(target.orgId ? { orgId: target.orgId } : {}),
       blocks,
     });
 

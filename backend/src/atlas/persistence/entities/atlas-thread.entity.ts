@@ -8,18 +8,18 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
  * `atlas_messages` partition by `thread_id`.
  */
 @Entity({ name: 'atlas_threads' })
-@Index(['team_id', 'project_id'])
+@Index(['org_id', 'repo_id'])
 export class AtlasThread extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   /** The tenant (Slack team id). */
   @Column({ type: 'text' })
-  team_id!: string;
+  org_id!: string;
 
   /** The project (and thus channel) this thread lives in. */
   @Column({ type: 'text' })
-  project_id!: string;
+  repo_id!: string;
 
   /** What opened the thread: 'chat' (human-started) | 'event' (notification-seeded). */
   @Column({ type: 'text' })

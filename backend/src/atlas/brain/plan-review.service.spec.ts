@@ -57,7 +57,7 @@ function failingEngine(): EngineRunnerPort {
 }
 
 const FAKE_SANDBOX = {
-  projectId: 'test-proj',
+  repoId: 'test-proj',
   branch: 'main',
   worktreePath: '/wt/test',
   gitUrl: '',
@@ -65,7 +65,7 @@ const FAKE_SANDBOX = {
 
 const BASE_INPUT = {
   jobId: 'job-r4-001',
-  teamId: 'T-R4',
+  orgId: 'T-R4',
   worktreePath: '/wt/test',
   overview: 'Add OAuth2 login to the API.',
   decisions: [
@@ -250,8 +250,8 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
     trust: 'trusted',
     id: 'stim-r4gate-001',
     receivedAt: new Date('2026-06-21T00:00:00Z'),
-    teamId: TEAM_ID,
-    projectId: PROJECT_ID,
+    orgId: TEAM_ID,
+    repoId: PROJECT_ID,
     threadId: THREAD_ID,
     body: 'Add OAuth2 login',
     author: { id: 'U-OP', displayName: 'Operator' },
@@ -301,8 +301,8 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
         status: 'awaiting_approval',
         title: 'Add OAuth2 login to the API.',
         kind: 'feature',
-        team_id: TEAM_ID,
-        project_id: PROJECT_ID,
+        org_id: TEAM_ID,
+        repo_id: PROJECT_ID,
         thread_id: THREAD_ID,
         decision_record_id: FAKE_RECORD_ID,
         created_at: new Date(),

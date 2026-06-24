@@ -19,7 +19,7 @@ export class AtlasSection extends TimestampedEntity {
 
   /** The tenant (Slack team id) — denormalized for team-scoped queries. */
   @Column({ type: 'text' })
-  team_id!: string;
+  org_id!: string;
 
   /** Execution order within the job, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   @Column({ type: 'int' })

@@ -90,8 +90,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     trust: 'trusted',
     id: 'stim-r3gate-001',
     receivedAt: new Date('2026-06-21T00:00:00Z'),
-    teamId: TEAM_ID,
-    projectId: PROJECT_ID,
+    orgId: TEAM_ID,
+    repoId: PROJECT_ID,
     threadId: THREAD_ID,
     body: 'Add rate limiting to the API',
     author: { id: 'U-OP', displayName: 'Operator' },
@@ -115,8 +115,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         status: 'awaiting_approval',
         title: 'Add rate limiting to the API',
         kind: 'feature',
-        team_id: TEAM_ID,
-        project_id: PROJECT_ID,
+        org_id: TEAM_ID,
+        repo_id: PROJECT_ID,
         thread_id: THREAD_ID,
         decision_record_id: FAKE_RECORD_ID,
         created_at: new Date(),
@@ -205,8 +205,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.sectionBriefs[1]).toContain('integration tests');
 
     // The job/team/project binding is correct.
-    expect(persistArgs.teamId).toBe(TEAM_ID);
-    expect(persistArgs.projectId).toBe(PROJECT_ID);
+    expect(persistArgs.orgId).toBe(TEAM_ID);
+    expect(persistArgs.repoId).toBe(PROJECT_ID);
     expect(persistArgs.jobId).toBe(FAKE_JOB_ID);
 
     // 2. The tool returns ok=true + the job and record ids.
@@ -268,8 +268,8 @@ describe('R3 gate: StimulusRouter — (b) event lane still parks/dispatches via 
       trust: 'untrusted',
       id: 'stim-router-evt-001',
       receivedAt: new Date('2026-06-21T00:00:00Z'),
-      teamId: 'T-ROUTER',
-      projectId: 'router-proj',
+      orgId: 'T-ROUTER',
+      repoId: 'router-proj',
       body: 'CI job #42 failed on the main branch.',
       source: 'github',
       dedupeKey: 'ci-run-42',
@@ -304,8 +304,8 @@ describe('R3 gate: StimulusRouter — (b) event lane still parks/dispatches via 
       trust: 'trusted',
       id: 'stim-router-chat-001',
       receivedAt: new Date('2026-06-21T00:00:00Z'),
-      teamId: 'T-ROUTER',
-      projectId: 'router-proj',
+      orgId: 'T-ROUTER',
+      repoId: 'router-proj',
       threadId: 'th-router-001',
       body: 'Add a README section',
       author: { id: 'U-OP', displayName: 'Op' },

@@ -7,8 +7,8 @@ export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');
 export interface SandboxAttachInput {
   /** The per-feature worktree the driver already cut (LocalGitService.createFeatureSandbox). */
   sandbox: FeatureSandbox;
-  /** The tenant (Slack workspace / team_id) — scopes the container name, network, and labels. */
-  teamId: string;
+  /** The tenant (Slack workspace / org_id) — scopes the container name, network, and labels. */
+  orgId: string;
   /**
    * The owning thread (R2 per-thread sandboxes). When set, the container is keyed by thread so it is
    * STABLE across the thread's branch and across re-attach. Omit for the legacy per-feature path and

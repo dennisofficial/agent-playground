@@ -47,7 +47,7 @@ export class EventTriageService {
       body: stimulus.body,
       source: stimulus.source,
       severity: stimulus.severity,
-      teamId: stimulus.teamId,
+      orgId: stimulus.orgId,
     });
 
     // No usable verdict → conservative: PARK and ask a human (never auto-dispatch unverified events).
@@ -70,7 +70,7 @@ export class EventTriageService {
     const verdict = await this.classifier.classify(
       { description: summary, context: `Notification from ${stimulus.source} (${stimulus.severity}).` },
       emptyRecord,
-      stimulus.teamId,
+      stimulus.orgId,
     );
 
     if (action.verb === 'ask' || verdict.verdict === 'ask') {
@@ -93,8 +93,8 @@ export class EventTriageService {
     question: string,
   ): Promise<void> {
     const route = await this.store.route({
-      teamId: stimulus.teamId,
-      projectId: stimulus.projectId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       threadId,
     });
     if (!route.channel) {
@@ -118,16 +118,16 @@ export class EventTriageService {
     summary: string,
   ): Promise<void> {
     const jobId = await this.store.openJob({
-      teamId: stimulus.teamId,
-      projectId: stimulus.projectId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       threadId,
       title: jobTitle(summary),
       kind: 'bugfix',
     });
     // A bugfix has one section and no upfront decision record (the gate already cleared it).
     const { job } = await this.store.persistPlan({
-      teamId: stimulus.teamId,
-      projectId: stimulus.projectId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       jobId,
       title: jobTitle(summary),
       kind: 'bugfix',

@@ -45,8 +45,8 @@ export class SandboxManager implements SandboxProvider {
   ) {}
 
   async attach(input: SandboxAttachInput): Promise<FeatureSandbox> {
-    const { sandbox, teamId, threadId } = input;
-    const name = this.containerName(teamId, sandbox.projectId, sandbox.branch, threadId);
+    const { sandbox, orgId, threadId } = input;
+    const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, threadId);
 
     const existing = await this.engine.inspect(name);
     if (existing) {
@@ -79,7 +79,7 @@ export class SandboxManager implements SandboxProvider {
       binds.push(`${gitDir}:${gitDir}`);
     }
     // The host-maintained, READ-ONLY cross-repo reference library (per-tenant) at /refs.
-    const refsDir = this.teamRefsDir(teamId);
+    const refsDir = this.teamRefsDir(orgId);
     if (refsDir) {
       mkdirSync(refsDir, { recursive: true });
       binds.push(`${refsDir}:/refs:ro`);
@@ -95,8 +95,8 @@ export class SandboxManager implements SandboxProvider {
       volumes: [{ name: `${name}-dind`, path: '/var/lib/docker' }],
       labels: {
         [L_MANAGED]: '1',
-        [L_TEAM]: teamId,
-        [L_PROJECT]: sandbox.projectId,
+        [L_TEAM]: orgId,
+        [L_PROJECT]: sandbox.repoId,
         [L_BRANCH]: sandbox.branch,
         ...(threadId ? { [L_THREAD]: threadId } : {}),
       },
@@ -210,10 +210,10 @@ export class SandboxManager implements SandboxProvider {
   }
 
   /** The per-tenant reference-library dir mounted read-only at /refs (undefined → no /refs). */
-  private teamRefsDir(teamId: string): string | undefined {
+  private teamRefsDir(orgId: string): string | undefined {
     const root = this.env.get('ATLAS_REFS_ROOT') ?? this.env.get('REFS_ROOT');
     if (!root) return undefined;
-    return join(root, teamId.replace(/[^a-z0-9_-]/gi, '_') || 'team');
+    return join(root, orgId.replace(/[^a-z0-9_-]/gi, '_') || 'team');
   }
 
   /** Poll the inner dockerd until it reports ready (or give up after the window, non-fatal). */
@@ -260,9 +260,9 @@ export class SandboxManager implements SandboxProvider {
    * per-feature path + gate sandboxes (no `threadId`), the key is the branch — one container per branch,
    * unchanged.
    */
-  private containerName(teamId: string, projectId: string, branch: string, threadId?: string): string {
+  private containerName(orgId: string, repoId: string, branch: string, threadId?: string): string {
     const part = (s: string) => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 40);
     const key = threadId ? `thread-${part(threadId)}` : part(branch);
-    return `atlas-sbx-${part(teamId)}-${part(projectId)}-${key}`.slice(0, 120);
+    return `atlas-sbx-${part(orgId)}-${part(repoId)}-${key}`.slice(0, 120);
   }
 }

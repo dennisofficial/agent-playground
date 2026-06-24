@@ -29,7 +29,7 @@ export interface WebInboundOptions {
   threadTs?: string;
   authorId?: string;
   authorName?: string;
-  teamId?: string;
+  orgId?: string;
 }
 
 const DEFAULT_TEAM_ID = 'T-WEB';
@@ -57,8 +57,8 @@ const DEFAULT_AUTHOR_NAME = 'Operator';
  * Threading is honored: `threadTs` in `receiveFromClient` is forwarded exactly as the Slack adapter
  * does it, so the chat bridge's `resolveThread` path is unchanged.
  *
- * The default teamId is `T-WEB` — enough to route messages through the chat bridge. Each REST call can
- * override it via `teamId` in the body when multi-tenant scenarios are needed.
+ * The default orgId is `T-WEB` — enough to route messages through the chat bridge. Each REST call can
+ * override it via `orgId` in the body when multi-tenant scenarios are needed.
  *
  * Zero v1 imports.
  */
@@ -131,7 +131,7 @@ export class AtlasWebSurface implements ChatSurface {
       authorId: opts.authorId ?? DEFAULT_AUTHOR_ID,
       authorName: opts.authorName ?? DEFAULT_AUTHOR_NAME,
       text,
-      teamId: opts.teamId ?? this.defaultTeamId,
+      orgId: opts.orgId ?? this.defaultTeamId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
       ts: new Date(),

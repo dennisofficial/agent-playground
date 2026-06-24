@@ -45,7 +45,7 @@ export class LoggingJobDispatcher implements JobDispatcher {
   async dispatch(job: Job): Promise<void> {
     this.logger.log(
       `[no-op dispatch] JOB ${job.id} kind=${job.kind} title="${job.title}" ` +
-        `project=${job.projectId} thread=${job.threadId} ` +
+        `project=${job.repoId} thread=${job.threadId} ` +
         `decisionRecord=${job.decisionRecordId ?? '(none)'} — W4 SectionDriver will run this`,
     );
   }

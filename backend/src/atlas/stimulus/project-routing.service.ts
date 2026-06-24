@@ -2,25 +2,25 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasChannel, AtlasProject } from '../persistence/entities';
+import { AtlasChannel, AtlasRepo } from '../persistence/entities';
 
 /** A resolved route: the project a notification belongs to + its 1:1 channel. */
 export interface ProjectRoute {
-  teamId: string;
-  projectId: string;
+  orgId: string;
+  repoId: string;
   /** The 1:1 channel row for the project (where the seeded thread lives). */
   channel: AtlasChannel;
-  project: AtlasProject;
+  project: AtlasRepo;
 }
 
 /**
  * Notification PROJECT ROUTING — the shared step every `NotificationSource` adapter funnels through
  * after it has extracted a gateway-native identifier (a GitHub `owner/repo`, a generic webhook's
- * `projectId`). Maps that identifier → an `atlas_projects` row → its 1:1 `atlas_channels` row, the
+ * `repoId`). Maps that identifier → an `atlas_projects` row → its 1:1 `atlas_channels` row, the
  * channel the seeded thread opens in.
  *
- * Tenancy: `team_id` ⊃ `projects` ⊃ one `channel` per project. An MVP single-tenant deploy has one
- * `atlas_team`; the adapter still passes `teamId` so multi-tenant routing needs no rework. A repo that
+ * Tenancy: `org_id` ⊃ `projects` ⊃ one `channel` per project. An MVP single-tenant deploy has one
+ * `atlas_team`; the adapter still passes `orgId` so multi-tenant routing needs no rework. A repo that
  * maps to no registered project is `unroutable` (the controller answers 404) — Atlas never works a
  * repo it doesn't own.
  *
@@ -33,8 +33,8 @@ export class ProjectRoutingService {
   private readonly logger = new Logger(ProjectRoutingService.name);
 
   constructor(
-    @InjectRepository(AtlasProject, ATLAS_CONNECTION)
-    private readonly projects: Repository<AtlasProject>,
+    @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
+    private readonly projects: Repository<AtlasRepo>,
     @InjectRepository(AtlasChannel, ATLAS_CONNECTION)
     private readonly channels: Repository<AtlasChannel>,
   ) {}
@@ -43,8 +43,8 @@ export class ProjectRoutingService {
    * Resolve a GitHub `owner/repo` (case-insensitive) to a project route. A GitHub webhook carries NO
    * Slack team id, so the repo IS the tenant key: we match across ALL registered projects (every team)
    * by normalized `git_url`. This keeps GitHub multi-tenant-ready with no per-payload team — a repo is
-   * registered to exactly one project, which carries its `team_id`. Returns null when no project's
-   * `git_url` matches (→ `unroutable`). The matched project's `team_id` is the resolved tenant.
+   * registered to exactly one project, which carries its `org_id`. Returns null when no project's
+   * `git_url` matches (→ `unroutable`). The matched project's `org_id` is the resolved tenant.
    */
   async routeGithubRepo(ownerRepo: string): Promise<ProjectRoute | null> {
     const target = normalizeRepoSlug(ownerRepo);
@@ -61,35 +61,35 @@ export class ProjectRoutingService {
   }
 
   /**
-   * Resolve a caller-supplied `projectId` (the generic webhook's routing key) to a project route.
+   * Resolve a caller-supplied `repoId` (the generic webhook's routing key) to a project route.
    * Returns null when the project isn't registered for the tenant.
    */
-  async routeProjectId(teamId: string, projectId: string): Promise<ProjectRoute | null> {
+  async routeProjectId(orgId: string, repoId: string): Promise<ProjectRoute | null> {
     const match = await this.projects.findOne({
-      where: { team_id: teamId, project_id: projectId },
+      where: { org_id: orgId, repo_id: repoId },
     });
     if (!match) {
-      this.logger.debug(`No atlas_project ${teamId}/${projectId}`);
+      this.logger.debug(`No atlas_project ${orgId}/${repoId}`);
       return null;
     }
     return this.attachChannel(match);
   }
 
-  private async attachChannel(project: AtlasProject): Promise<ProjectRoute | null> {
+  private async attachChannel(project: AtlasRepo): Promise<ProjectRoute | null> {
     const channel = await this.channels.findOne({
-      where: { team_id: project.team_id, project_id: project.project_id },
+      where: { org_id: project.org_id, repo_id: project.repo_id },
     });
     if (!channel) {
       // A project with no channel is a misconfiguration — log loudly and treat as unroutable rather
       // than seeding a thread into a channel that doesn't exist.
       this.logger.warn(
-        `atlas_project ${project.team_id}/${project.project_id} has no 1:1 atlas_channel — unroutable`,
+        `atlas_project ${project.org_id}/${project.repo_id} has no 1:1 atlas_channel — unroutable`,
       );
       return null;
     }
     return {
-      teamId: project.team_id,
-      projectId: project.project_id,
+      orgId: project.org_id,
+      repoId: project.repo_id,
       project,
       channel,
     };

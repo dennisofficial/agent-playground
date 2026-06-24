@@ -67,8 +67,8 @@ export class StimulusStoreService {
    * as `DuplicateStimulusError` (the caller drops the duplicate without seeding a thread).
    */
   async seedEventThread(input: {
-    teamId: string;
-    projectId: string;
+    orgId: string;
+    repoId: string;
     source: string;
     dedupeKey: string;
     severity: EventStimulus['severity'];
@@ -77,8 +77,8 @@ export class StimulusStoreService {
   }): Promise<SeededEvent> {
     const thread = await this.threads.save(
       this.threads.create({
-        team_id: input.teamId,
-        project_id: input.projectId,
+        org_id: input.orgId,
+        repo_id: input.repoId,
         origin: 'event',
         surface_thread_ref: null, // set when the announcement is posted (W6)
         title: input.title,
@@ -99,8 +99,8 @@ export class StimulusStoreService {
     try {
       row = await this.stimuli.save(
         this.stimuli.create({
-          team_id: input.teamId,
-          project_id: input.projectId,
+          org_id: input.orgId,
+          repo_id: input.repoId,
           kind: 'event',
           trust: 'untrusted',
           body: input.body,
@@ -125,8 +125,8 @@ export class StimulusStoreService {
 
     const stimulus: EventStimulus = {
       id: row.id,
-      teamId: input.teamId,
-      projectId: input.projectId,
+      orgId: input.orgId,
+      repoId: input.repoId,
       kind: 'event',
       trust: 'untrusted',
       body: input.body,
@@ -143,8 +143,8 @@ export class StimulusStoreService {
    * `ChatStimulus` with its minted id. No new thread, no dedupe (chat bypasses the filter).
    */
   async recordChatStimulus(input: {
-    teamId: string;
-    projectId: string;
+    orgId: string;
+    repoId: string;
     threadId: string;
     author: { id: string; displayName: string };
     replyRoute: { surfaceId: string; threadRef: string };
@@ -162,8 +162,8 @@ export class StimulusStoreService {
 
     const row = await this.stimuli.save(
       this.stimuli.create({
-        team_id: input.teamId,
-        project_id: input.projectId,
+        org_id: input.orgId,
+        repo_id: input.repoId,
         kind: 'chat',
         trust: 'trusted',
         body: input.body,
@@ -178,8 +178,8 @@ export class StimulusStoreService {
 
     return {
       id: row.id,
-      teamId: input.teamId,
-      projectId: input.projectId,
+      orgId: input.orgId,
+      repoId: input.repoId,
       kind: 'chat',
       trust: 'trusted',
       body: input.body,

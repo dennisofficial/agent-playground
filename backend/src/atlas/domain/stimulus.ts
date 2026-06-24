@@ -29,9 +29,9 @@ interface BaseStimulus {
   /** Stable id minted at intake (the `atlas_stimuli` PK once persisted). */
   id: string;
   /** The tenant (Slack team id) this stimulus belongs to. */
-  teamId: string;
+  orgId: string;
   /** The project (and thus channel) this stimulus routes to. */
-  projectId: string;
+  repoId: string;
   /** The raw text/body Atlas triages. */
   body: string;
   /** When the stimulus was received. */

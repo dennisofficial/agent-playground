@@ -9,7 +9,7 @@ import { TenantCredentialStore } from './tenant-credential.store';
  * token sites) resolves through here instead of reading env directly. Each method returns the TENANT's
  * value when a credential row exists, else falls back to EXACTLY what the old env-only code returned —
  * the load-bearing contract that keeps single-tenant dev (and the whole existing test suite) byte-
- * identical. A `teamId` of `undefined` (or a missing row / null column) always takes the env path.
+ * identical. A `orgId` of `undefined` (or a missing row / null column) always takes the env path.
  */
 @Injectable()
 export class CredentialResolver {
@@ -19,36 +19,36 @@ export class CredentialResolver {
   ) {}
 
   /** Anthropic key for LLM calls: tenant → `ANTHROPIC_API_KEY`. */
-  async anthropicKey(teamId?: string): Promise<string | undefined> {
-    if (teamId) {
-      const creds = await this.store.read(teamId);
+  async anthropicKey(orgId?: string): Promise<string | undefined> {
+    if (orgId) {
+      const creds = await this.store.read(orgId);
       if (creds?.anthropicApiKey) return creds.anthropicApiKey;
     }
     return this.env.get('ANTHROPIC_API_KEY');
   }
 
   /** OpenAI key for embeddings: tenant → `OPENAI_API_KEY`. */
-  async openaiKey(teamId?: string): Promise<string | undefined> {
-    if (teamId) {
-      const creds = await this.store.read(teamId);
+  async openaiKey(orgId?: string): Promise<string | undefined> {
+    if (orgId) {
+      const creds = await this.store.read(orgId);
       if (creds?.openaiApiKey) return creds.openaiApiKey;
     }
     return this.env.get('OPENAI_API_KEY');
   }
 
   /** GitHub token for clone/push/PR: tenant PAT → `ATLAS_GITHUB_TOKEN` → `GITHUB_TOKEN`. */
-  async githubToken(teamId?: string): Promise<string | undefined> {
-    if (teamId) {
-      const creds = await this.store.read(teamId);
+  async githubToken(orgId?: string): Promise<string | undefined> {
+    if (orgId) {
+      const creds = await this.store.read(orgId);
       if (creds?.githubPat) return creds.githubPat;
     }
     return this.env.get('ATLAS_GITHUB_TOKEN') ?? this.env.get('GITHUB_TOKEN');
   }
 
   /** Engine auth (the EngineAuth union): tenant posture → the env-derived fallback (byte-identical). */
-  async engineAuth(teamId: string | undefined, engine: 'claude' | 'codex'): Promise<EngineAuth> {
-    if (teamId) {
-      const creds = await this.store.read(teamId);
+  async engineAuth(orgId: string | undefined, engine: 'claude' | 'codex'): Promise<EngineAuth> {
+    if (orgId) {
+      const creds = await this.store.read(orgId);
       if (creds) {
         if (creds.engineAuthMode === 'subscription' && creds.engineAuthSecret) {
           return { mode: 'subscription', secret: creds.engineAuthSecret };

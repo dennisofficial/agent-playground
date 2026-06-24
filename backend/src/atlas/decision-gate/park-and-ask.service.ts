@@ -17,7 +17,7 @@ export interface ParkTarget {
   /** The thread root ts the question is posted into. Omit to post top-level (and seed a new thread). */
   threadTs?: string;
   /** The tenant to post as (selects the workspace credentials). */
-  teamId?: string;
+  orgId?: string;
 }
 
 /** A live park — the question is posted, the section is suspended awaiting a human reply. */
@@ -111,7 +111,7 @@ export class ParkAndAskService implements OnModuleDestroy {
     const id = randomUUID();
     const questionTs = await this.surface.post(target.channel, question, {
       ...(target.threadTs ? { threadTs: target.threadTs } : {}),
-      ...(target.teamId ? { teamId: target.teamId } : {}),
+      ...(target.orgId ? { orgId: target.orgId } : {}),
     });
     // Bind the park to the thread root: the provided root, else the seeded post's own ts.
     const threadTs = target.threadTs ?? questionTs;
