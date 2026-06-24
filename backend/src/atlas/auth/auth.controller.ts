@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import type { Request, Response } from 'express';
+import { OrganizationService, type OrgSummary } from '../org';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto, type AtlasSession } from './dto/auth.dto';
 import type { AtlasUser } from '../persistence/entities';
@@ -27,7 +28,10 @@ import type { AtlasUser } from '../persistence/entities';
 @Controller('auth')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly orgs: OrganizationService,
+  ) {}
 
   @Public()
   @Post('login')
@@ -51,10 +55,14 @@ export class AuthController {
     return { user };
   }
 
-  /** Guarded — 401 when no/invalid cookie, which the web client reads as "signed out". */
+  /** Guarded — 401 when no/invalid cookie, which the web client reads as "signed out". Carries the
+   *  caller's orgs so the web app can route (no org → onboarding). */
   @Get('session')
-  session(@CurrentUser() user: AtlasUser): AtlasSession {
-    return { id: user.id, email: user.email, name: user.name };
+  async session(
+    @CurrentUser() user: AtlasUser,
+  ): Promise<AtlasSession & { orgs: OrgSummary[] }> {
+    const orgs = await this.orgs.listForUser(user.id);
+    return { id: user.id, email: user.email, name: user.name, orgs };
   }
 
   @Public()

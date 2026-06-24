@@ -11,6 +11,7 @@ import { StimulusModule } from '../stimulus';
 import { SurfaceModule } from '../surface';
 import { MemoryModule } from '../memory';
 import { OnboardingModule } from '../onboarding';
+import { OrgModule } from '../org';
 import { TestBridgeModule } from '../test-bridge';
 
 /**
@@ -41,6 +42,7 @@ import { TestBridgeModule } from '../test-bridge';
   imports: [
     AuthModule,
     OnboardingModule,
+    OrgModule,
     SandboxModule,
     SurfaceModule,
     RunnerModule,
