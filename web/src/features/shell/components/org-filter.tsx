@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Check } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ChevronDown, Check, Settings } from 'lucide-react';
 import { useOrgFilter } from '@/components/providers/orgs-provider';
 import { orgColor, roleLabel } from '@/lib/org-display';
+import { ROUTES } from '@/lib/routes';
 
 /**
  * Top-bar org filter — a chip showing the current rail selection ("All organizations · N orgs" or one
@@ -12,8 +14,16 @@ import { orgColor, roleLabel } from '@/lib/org-display';
  */
 export function OrgFilter() {
   const { filter, setFilter, orgs } = useOrgFilter();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  // The dropdown is the sole org switcher (the rail is going away), so each org row also routes to that
+  // org's settings via a trailing gear — independent of the filter selection on the row body.
+  function openSettings(orgId: string) {
+    setOpen(false);
+    router.push(ROUTES.orgSettings(orgId));
+  }
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -63,6 +73,7 @@ export function OrgFilter() {
               dot={orgColor(o.id)}
               active={filter === o.id}
               onClick={() => pick(o.id)}
+              onSettings={() => openSettings(o.id)}
             />
           ))}
         </div>
@@ -71,31 +82,55 @@ export function OrgFilter() {
   );
 }
 
+/**
+ * One dropdown row. The body button sets the filter (the check marks the active org). When `onSettings`
+ * is provided (every org row, but NOT the "All organizations" row), a trailing gear is a SECOND hit
+ * target that routes to that org's settings — faint at rest, strengthening on row hover, split from the
+ * filter area by a hairline divider.
+ */
 function FilterRow({
   label,
   sub,
   dot,
   active,
   onClick,
+  onSettings,
 }: {
   label: string;
   sub: string;
   dot: string;
   active: boolean;
   onClick: () => void;
+  onSettings?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition hover:bg-surface-2"
-    >
-      <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: dot }} />
-      <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="truncate text-[12.5px] font-medium text-text">{label}</span>
-        <span className="font-mono text-[9px] text-faint">{sub}</span>
-      </span>
-      {active ? <Check size={13} className="shrink-0 text-accent" /> : null}
-    </button>
+    <div className="group flex w-full items-center transition hover:bg-surface-2">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-1.5 text-left"
+      >
+        <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: dot }} />
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className="truncate text-[12.5px] font-medium text-text">{label}</span>
+          <span className="font-mono text-[9px] text-faint">{sub}</span>
+        </span>
+        {active ? <Check size={13} className="shrink-0 text-accent" /> : null}
+      </button>
+      {onSettings ? (
+        <>
+          <span className="h-[18px] w-px shrink-0 bg-border opacity-0 transition group-hover:opacity-100" />
+          <button
+            type="button"
+            onClick={onSettings}
+            aria-label={`${label} settings`}
+            title={`${label} settings`}
+            className="mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] text-faint opacity-[0.28] transition hover:bg-[var(--accent-soft)] group-hover:text-accent group-hover:opacity-100"
+          >
+            <Settings size={14} />
+          </button>
+        </>
+      ) : null}
+    </div>
   );
 }

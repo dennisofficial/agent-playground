@@ -154,3 +154,97 @@ export function useDeleteOrg(orgId: string) {
     },
   });
 }
+
+// ── Repos (the settings Repos tab — connect / re-validate / edit / disconnect) ─────────────────────
+// The list itself (`GET /web/orgs/:orgId/repos`) is read via `useOrgRepos` (`./thread-queries`), which
+// also feeds the create-thread picker; it returns the enriched `RepoView` (with `threadCount` +
+// `accessCheckedAt`). These mutations all invalidate `qk.orgRepos(orgId)` so that enriched list refetches
+// — their own responses (`ConnectedRepo`) deliberately do NOT carry those derived fields. Connect /
+// disconnect / re-validate can also flip the org `onboarding`↔`active`, so they invalidate `qk.session()`.
+
+/** The repo as connect / re-validate / update return it — note: no `threadCount` / `accessCheckedAt`. */
+export interface ConnectedRepo {
+  id: string;
+  slug: string;
+  name: string;
+  gitUrl: string;
+  defaultBranch: string;
+  accessOk: boolean;
+  /** Present on a failed access probe (connect / re-validate); the real GitHub reason. */
+  reason?: string;
+}
+
+/** Body for `POST /web/orgs/:orgId/repos` — connect a GitHub repo (owner only). */
+export interface ConnectRepoBody {
+  repoUrl: string;
+  displayName?: string;
+  baseBranch?: string;
+}
+
+/** Connect a GitHub repo to the org. */
+export function useConnectRepo(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ConnectRepoBody) =>
+      webJson<ConnectedRepo>(`/orgs/${orgId}/repos`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/** Re-probe a repo's GitHub access with the org's current token (owner only). */
+export function useRevalidateRepo(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (repoId: string) =>
+      webJson<ConnectedRepo>(`/orgs/${orgId}/repos/${repoId}/revalidate`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/** Body for `PATCH /web/orgs/:orgId/repos/:repoId` — metadata only (no GitHub call). */
+export interface UpdateRepoBody {
+  name?: string;
+  defaultBranch?: string;
+}
+
+/** Update a repo's display name / base branch (owner only). */
+export function useUpdateRepo(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ repoId, body }: { repoId: string; body: UpdateRepoBody }) =>
+      webJson<ConnectedRepo>(`/orgs/${orgId}/repos/${repoId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
+    },
+  });
+}
+
+/**
+ * Disconnect a repo (owner only). CASCADE-deletes the repo's threads (and their sandboxes / feature
+ * branches / messages) server-side, returning how many were torn down — the UI warns first. Invalidates
+ * the repo list, the cross-org thread inbox (threads were deleted → `useAllThreads` feeds the sidebar /
+ * rail badges / command palette), and the session (disconnect can flip the org `active`↔`onboarding`).
+ */
+export function useDisconnectRepo(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (repoId: string) =>
+      webJson<{ ok: boolean; threadsDeleted: number }>(`/orgs/${orgId}/repos/${repoId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.allThreads() });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}

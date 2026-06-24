@@ -146,7 +146,7 @@ export function deleteThread(ref: ThreadRef): Promise<{ ok: boolean }> {
   return webJson(threadPath(ref), { method: 'DELETE' });
 }
 
-// ── Repos (create-thread picker) ─────────────────────────────────────────────────────────────────
+// ── Repos (create-thread picker + the settings Repos tab) ────────────────────────────────────────
 export interface RepoView {
   id: string;
   slug: string;
@@ -154,6 +154,10 @@ export interface RepoView {
   gitUrl: string;
   defaultBranch: string;
   accessOk: boolean;
+  /** When access was last validated (ISO), or null if never checked. Absent on older cache shapes. */
+  accessCheckedAt?: string | null;
+  /** Threads living on this repo — gates whether it can be disconnected. Absent → treat as 0. */
+  threadCount?: number;
 }
 
 export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import type { ModuleRef } from '@nestjs/core';
 import type { Repository } from 'typeorm';
 import type { GithubPrService, RepoInfo } from '../git';
-import type { OrgCredentialsEntity, RepoEntity, OrganizationEntity } from '../persistence/entities';
+import type {
+  DecisionRecordEntity,
+  OrganizationEntity,
+  OrgCredentialsEntity,
+  RepoEntity,
+  StimulusEntity,
+  ThreadEntity,
+  ThreadSandboxEntity,
+} from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { OnboardingService } from './onboarding.service';
 import type { CredentialPresence, TenantCredentialStore } from './tenant-credential.store';
@@ -30,7 +39,10 @@ function makeRepos() {
   const repo = {
     async findOne({ where }: { where: { id?: string; org_id?: string; slug?: string; access_ok?: boolean } }) {
       if (where.id !== undefined) {
-        for (const v of map.values()) if (v.id === where.id) return v;
+        for (const v of map.values()) {
+          // Honor the org scope when both are given (so cross-tenant ids resolve to null → 404).
+          if (v.id === where.id && (where.org_id === undefined || v.org_id === where.org_id)) return v;
+        }
         return null;
       }
       if (where.access_ok !== undefined) {
@@ -41,8 +53,12 @@ function makeRepos() {
       }
       return map.get(k(where.org_id as string, where.slug as string)) ?? null;
     },
-    async findOneOrFail({ where }: { where: { org_id: string; slug: string } }) {
-      const found = map.get(k(where.org_id, where.slug));
+    async findOneOrFail({ where }: { where: { id?: string; org_id?: string; slug?: string } }) {
+      if (where.id !== undefined) {
+        for (const v of map.values()) if (v.id === where.id) return v;
+        throw new Error('repo not found');
+      }
+      const found = map.get(k(where.org_id as string, where.slug as string));
       if (!found) throw new Error('repo not found');
       return found;
     },
@@ -62,8 +78,43 @@ function makeRepos() {
       const key = k(where.org_id as string, where.slug as string);
       if (map.has(key)) map.set(key, { ...map.get(key)!, ...patch });
     },
+    async delete(where: { id?: string; org_id?: string }) {
+      for (const [key, v] of map) {
+        if (
+          where.id !== undefined &&
+          v.id === where.id &&
+          (where.org_id === undefined || v.org_id === where.org_id)
+        ) {
+          map.delete(key);
+        }
+      }
+    },
   } as unknown as Repository<RepoEntity>;
   return { repo, map };
+}
+
+/**
+ * A minimal in-memory table fake for the child entities `OnboardingService` only counts/deletes
+ * (`threads`, `stimuli`, `decision_records`, `thread_sandboxes`). `count` takes `{ where }`; `delete`
+ * takes the criteria directly — matching TypeORM's repository surface used in the service.
+ */
+function makeTable<T extends Record<string, unknown>>(seed: T[] = []) {
+  const rows: T[] = [...seed];
+  const matches = (r: T, w: Record<string, unknown>) =>
+    Object.entries(w).every(([key, val]) => r[key] === val);
+  const repo = {
+    async count({ where }: { where: Record<string, unknown> }) {
+      return rows.filter((r) => matches(r, where)).length;
+    },
+    async find({ where }: { where: Record<string, unknown>; select?: unknown }) {
+      return rows.filter((r) => matches(r, where)).map((r) => ({ ...r }));
+    },
+    async delete(where: Record<string, unknown>) {
+      for (let i = rows.length - 1; i >= 0; i--) if (matches(rows[i], where)) rows.splice(i, 1);
+      return { affected: 0 };
+    },
+  } as unknown as Repository<T>;
+  return { repo, rows };
 }
 
 function makeOrgCreds(llmValidated = false) {
@@ -121,15 +172,36 @@ function assemble(
   const orgs = makeOrgs();
   const repos = makeRepos();
   const orgCreds = makeOrgCreds(opts.llmValidated);
+  const threads = makeTable<{ id: string; repo_id: string; org_id: string }>();
+  const stimuli = makeTable<{ repo_id: string; org_id: string }>();
+  const decisionRecords = makeTable<{ repo_id: string; org_id: string }>();
+  const sandboxes = makeTable<{ repo_id: string; org_id: string }>();
+
+  // `disconnectRepo` resolves `ThreadLifecycleService` lazily via `moduleRef.get(...)`. The fake records
+  // each deep-delete AND removes the thread row (mirroring the real teardown) so the drain loop converges.
+  const deepDeleted: Array<{ threadId: string; orgId: string }> = [];
+  const threadLifecycle = {
+    deleteThreadDeep: async (threadId: string, orgId: string) => {
+      deepDeleted.push({ threadId, orgId });
+      await threads.repo.delete({ id: threadId, org_id: orgId });
+    },
+  };
+  const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
+
   const svc = new OnboardingService(
     orgs.repo,
     repos.repo,
     orgCreds.repo,
+    threads.repo as unknown as Repository<ThreadEntity>,
+    stimuli.repo as unknown as Repository<StimulusEntity>,
+    decisionRecords.repo as unknown as Repository<DecisionRecordEntity>,
+    sandboxes.repo as unknown as Repository<ThreadSandboxEntity>,
     fakeCreds(opts.creds),
     fakeStore(opts.presence),
     fakePr(opts.repoInfo ?? null),
+    moduleRef,
   );
-  return { svc, orgs, repos, orgCreds };
+  return { svc, orgs, repos, orgCreds, threads, stimuli, decisionRecords, sandboxes, threadLifecycle, deepDeleted };
 }
 
 const REPO = 'https://github.com/acme/web';
@@ -196,6 +268,111 @@ describe('OnboardingService', () => {
       const status = await svc.status('T1');
       expect(status.missing).toEqual([]);
       expect(await svc.nextStep('T1')).toBeNull();
+    });
+  });
+
+  describe('revalidateRepo', () => {
+    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+
+    it('re-probes access and persists access_ok + a fresh checked time', async () => {
+      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      // Simulate access having gone stale, then prove revalidate restores it.
+      await repos.repo.update({ id: connected.id }, { access_ok: false, access_checked_at: null });
+
+      const res = await svc.revalidateRepo('T1', connected.id);
+      expect(res.accessOk).toBe(true);
+      expect(repos.map.get('T1:web')?.access_ok).toBe(true);
+      expect(repos.map.get('T1:web')?.access_checked_at).toBeInstanceOf(Date);
+    });
+
+    it("404s on a repo id from another org (cross-tenant)", async () => {
+      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      await expect(svc.revalidateRepo('OTHER', connected.id)).rejects.toThrow(/not found/i);
+    });
+  });
+
+  describe('updateRepo', () => {
+    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+
+    it('updates display name + default branch (metadata only)', async () => {
+      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+
+      const res = await svc.updateRepo('T1', connected.id, { name: 'Web App', defaultBranch: 'develop' });
+      expect(res.name).toBe('Web App');
+      expect(res.defaultBranch).toBe('develop');
+      expect(repos.map.get('T1:web')?.default_branch).toBe('develop');
+    });
+
+    it("404s on a repo id from another org (cross-tenant)", async () => {
+      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      await expect(svc.updateRepo('OTHER', connected.id, { name: 'x' })).rejects.toThrow(/not found/i);
+    });
+  });
+
+  describe('disconnectRepo', () => {
+    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+
+    it('cascade-deletes the repo’s threads, then disconnects', async () => {
+      const { svc, repos, threads, deepDeleted } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      threads.rows.push({ id: 't1', repo_id: connected.id, org_id: 'T1' });
+      threads.rows.push({ id: 't2', repo_id: connected.id, org_id: 'T1' });
+
+      const res = await svc.disconnectRepo('T1', connected.id);
+      expect(res).toEqual({ ok: true, threadsDeleted: 2 });
+      expect(deepDeleted.map((d) => d.threadId).sort()).toEqual(['t1', 't2']);
+      expect(deepDeleted.every((d) => d.orgId === 'T1')).toBe(true);
+      expect(threads.rows).toHaveLength(0);
+      expect(repos.map.get('T1:web')).toBeUndefined();
+    });
+
+    it('drains a thread created mid-cascade (no orphan left behind)', async () => {
+      const { svc, threads, threadLifecycle } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      threads.rows.push({ id: 't1', repo_id: connected.id, org_id: 'T1' });
+
+      // Simulate a concurrent create: the first deep-delete inserts one more thread row mid-cascade.
+      const original = threadLifecycle.deleteThreadDeep;
+      let injected = false;
+      threadLifecycle.deleteThreadDeep = async (threadId, orgId) => {
+        await original(threadId, orgId);
+        if (!injected) {
+          injected = true;
+          threads.rows.push({ id: 't2', repo_id: connected.id, org_id: 'T1' });
+        }
+      };
+
+      const res = await svc.disconnectRepo('T1', connected.id);
+      expect(res.threadsDeleted).toBe(2);
+      expect(threads.rows).toHaveLength(0); // the straggler was drained too
+    });
+
+    it('disconnects an empty repo and sweeps its repo-scoped rows', async () => {
+      const { svc, repos, stimuli, decisionRecords, sandboxes } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      stimuli.rows.push({ repo_id: connected.id, org_id: 'T1' });
+      decisionRecords.rows.push({ repo_id: connected.id, org_id: 'T1' });
+      sandboxes.rows.push({ repo_id: connected.id, org_id: 'T1' });
+
+      const res = await svc.disconnectRepo('T1', connected.id);
+      expect(res).toEqual({ ok: true, threadsDeleted: 0 });
+      expect(repos.map.get('T1:web')).toBeUndefined();
+      expect(stimuli.rows).toHaveLength(0);
+      expect(decisionRecords.rows).toHaveLength(0);
+      expect(sandboxes.rows).toHaveLength(0);
+    });
+
+    it("404s on a repo id from another org (cross-tenant)", async () => {
+      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      await expect(svc.disconnectRepo('OTHER', connected.id)).rejects.toThrow(/not found/i);
     });
   });
 

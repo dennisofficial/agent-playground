@@ -283,13 +283,11 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('threadId') threadId: string,
   ): Promise<{ ok: boolean }> {
-    // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable
-    // (the FK cascade would otherwise wipe another tenant's thread + all its children).
+    // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
     await this.requireThread(threadId, org.id);
-    await this.threadLifecycle.closeThread(threadId, org.id);
-    // One scoped delete — the FK ON DELETE CASCADE removes messages/sections/phases/decision_records/
-    // stimuli/sandbox for this thread.
-    await this.threads.delete({ id: threadId, org_id: org.id });
+    // Full cascade in app code: tear down the sandbox AND sweep messages/sections/phases/
+    // decision_records/stimuli/sandbox before the thread row (the live schema has no FK cascades).
+    await this.threadLifecycle.deleteThreadDeep(threadId, org.id);
     this.logger.log(`web deleted thread ${threadId} (org ${org.id})`);
     return { ok: true };
   }

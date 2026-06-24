@@ -5,6 +5,7 @@
 export const DEV_SEED_IDS = {
   users: {
     dennis: '1e512337-cd7e-41bb-8485-565eed283139',
+    nadia: '7c4d2a91-3e6b-4f08-9a1d-2b5c8e0f4a63',
   },
   orgs: {
     hannibal: 'e9af869c-309a-466e-ba1b-51b870106b3f',

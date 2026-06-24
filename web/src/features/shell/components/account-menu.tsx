@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { LogOut, Settings } from 'lucide-react';
 import { useCurrentUser, useOrgs } from '@/lib/api/me';
+import { useOrgFilter } from '@/components/providers/orgs-provider';
+import { orgColor } from '@/lib/org-display';
 import { auth } from '@/lib/auth';
 import { ROUTES } from '@/lib/routes';
 
@@ -26,10 +28,15 @@ export function AccountMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { data: me } = useCurrentUser();
-  const { owned, joined } = useOrgs();
+  const { orgs, owned, joined } = useOrgs();
+  const { filter } = useOrgFilter();
   const identity = identityFromEmail(me?.email);
-  // Settings is per-org; target the operator's primary org (an owned one first, else any joined).
-  const settingsOrgId = owned[0]?.id ?? joined[0]?.id;
+  // Settings is per-org, and this is the ONLY entry point — so it must follow the active rail/filter
+  // selection, not be pinned to the first org. When the filter is "All" (no single org) fall back to the
+  // operator's primary org (owned first, else joined). `selectedOrg` is set only on a real selection, so
+  // the sub-label can mark it "· current" vs. a silent fallback.
+  const selectedOrg = filter !== 'all' ? orgs.find((o) => o.id === filter) : undefined;
+  const targetOrg = selectedOrg ?? owned[0] ?? joined[0];
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -71,13 +78,26 @@ export function AccountMenu() {
             ) : null}
           </div>
           <div className="my-1 h-px" style={{ background: 'var(--hair)' }} />
-          {settingsOrgId ? (
+          {targetOrg ? (
             <Link
-              href={ROUTES.orgSettings(settingsOrgId)}
+              href={ROUTES.orgSettings(targetOrg.id)}
               onClick={() => setOpen(false)}
               className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12.5px] text-dim transition hover:bg-surface-2 hover:text-text"
             >
-              <Settings size={14} /> Organization settings
+              <Settings size={14} className="mt-0.5 shrink-0 self-start" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">Organization settings</span>
+                <span className="mt-0.5 flex items-center gap-1.5">
+                  <span
+                    className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
+                    style={{ background: orgColor(targetOrg.id) }}
+                  />
+                  <span className="truncate font-mono text-[9px] text-faint">
+                    {targetOrg.name}
+                    {selectedOrg ? ' · current' : ''}
+                  </span>
+                </span>
+              </span>
             </Link>
           ) : null}
           <div className="my-1 h-px" style={{ background: 'var(--hair)' }} />

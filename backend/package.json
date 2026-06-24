@@ -8,7 +8,7 @@
     "env:inject": "dotenvx run -f .env.local.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict",
     "dev:env": "cross-env NODE_ENV=development NODE_OPTIONS=--enable-source-maps pnpm env:inject",
     "build": "nest build app",
-    "dev": "pnpm dev:env -- nest start app",
+    "dev": "pnpm dev:env -- nest start app --watch",
     "start:prod": "node dist/main",
     "gate": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.gate.json node -r tsconfig-paths/register -r ts-node/register src/app/gate/gate-main.ts",
     "e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.e2e.json node -r tsconfig-paths/register -r ts-node/register src/app/e2e/e2e-main.ts",
@@ -24,10 +24,12 @@
     "test:ai": "vitest run --mode ai --reporter=verbose --passWithNoTests",
     "test:cov": "vitest run --coverage",
     "db:migrate": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:run -d cli/data-source.ts",
+    "db:migrate:deploy": "cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:run -d cli/data-source.ts",
     "db:migrate:revert": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:revert -d cli/data-source.ts",
     "db:migration:generate": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/migration-generate.ts",
     "db:schema:drop": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs schema:drop -d cli/data-source.ts",
-    "db:seed": "pnpm env:inject -- cross-env NODE_ENV=development ts-node --project tsconfig.cli.json cli/seed-runner.ts"
+    "db:seed": "pnpm env:inject -- cross-env NODE_ENV=development ts-node --project tsconfig.cli.json cli/seed-runner.ts",
+    "db:recreate": "pnpm db:schema:drop && pnpm db:migrate && pnpm db:seed"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.168",

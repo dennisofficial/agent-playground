@@ -302,12 +302,12 @@ function NoRepos({ orgId, onDone }: { orgId: string; onDone?: () => void }) {
         This organization has no connected repository yet. Connect one in settings, then start a thread.
       </p>
       <Link
-        href={ROUTES.orgSettings(orgId, 'credentials')}
+        href={ROUTES.orgSettings(orgId, 'repos')}
         onClick={onDone}
         className="mt-3 rounded-md border px-3 py-1.5 text-[12px] font-medium text-accent"
         style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
       >
-        Open settings
+        Open Repos settings
       </Link>
     </div>
   );

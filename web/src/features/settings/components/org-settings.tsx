@@ -1,22 +1,25 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { KeyRound, Settings as SettingsIcon, Users } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Check, ChevronDown, GitBranch, KeyRound, Settings as SettingsIcon, Users } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ROUTES, type SettingsSection } from '@/lib/routes';
 import { BrandLockup } from '@/components/ui/brand';
 import { AccountMenu } from '@/features/shell/components/account-menu';
-import { useOrg, useOrgs } from '@/lib/api/me';
-import { orgColor, orgInitials } from '@/lib/org-display';
+import { useOrg, useOrgs, type OrgSummary } from '@/lib/api/me';
+import { orgColor, orgInitials, roleLabel } from '@/lib/org-display';
 import { GeneralSection } from './general-section';
 import { CredentialsSection } from './credentials-section';
 import { MembersSection } from './members-section';
+import { ReposSection } from './repos-section';
 
 const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] = [
   { id: 'general', label: 'General', icon: SettingsIcon },
   { id: 'credentials', label: 'Credentials', icon: KeyRound },
   { id: 'members', label: 'Members', icon: Users },
+  { id: 'repos', label: 'Repos', icon: GitBranch },
 ];
 
 /** The Org & Settings screen — own top bar + a section nav (General / Credentials / Members). */
@@ -27,8 +30,9 @@ export function OrgSettings({
   orgId: string;
   initialSection: SettingsSection;
 }) {
-  const { isLoading } = useOrgs();
+  const { orgs, isLoading } = useOrgs();
   const org = useOrg(orgId);
+  const router = useRouter();
   const [section, setSection] = useState<SettingsSection>(initialSection);
 
   return (
@@ -43,11 +47,23 @@ export function OrgSettings({
         </Link>
         <span className="h-[18px] w-px" style={{ background: 'var(--border-2)' }} />
         <div className="flex items-center gap-2 font-mono text-[11px] text-dim">
-          <span className="text-faint">{org?.name ?? 'Organization'}</span>
+          <OrgSwitcher
+            orgs={orgs}
+            currentId={orgId}
+            currentName={org?.name}
+            onSwitch={(id) => {
+              if (id !== orgId) router.push(ROUTES.orgSettings(id, section));
+            }}
+          />
           <span className="text-border-2">/</span>
           <span className="text-text">Settings</span>
         </div>
         <div className="flex-1" />
+        {org?.role === 'member' ? (
+          <span className="rounded-full border border-border-2 bg-surface-2 px-2.5 py-[3px] font-mono text-[9px] text-dim">
+            member
+          </span>
+        ) : null}
         <AccountMenu />
       </header>
 
@@ -114,6 +130,13 @@ export function OrgSettings({
               <GeneralSection org={org} />
             ) : section === 'credentials' ? (
               <CredentialsSection orgId={org.id} />
+            ) : section === 'repos' ? (
+              <ReposSection
+                orgId={org.id}
+                orgName={org.name}
+                role={org.role}
+                onNavigate={setSection}
+              />
             ) : (
               <MembersSection orgId={org.id} orgName={org.name} />
             )}
@@ -121,5 +144,99 @@ export function OrgSettings({
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Breadcrumb org switcher — turns the `OrgName / Settings` crumb into a dropdown so the operator can hop
+ * between their orgs' settings without going back to the shell. Selecting an org navigates to that org's
+ * settings route preserving the active `?section`; the page is keyed by orgId so it remounts onto the new
+ * org (its left-nav header + tab content follow). Lists every org the operator belongs to, current checked.
+ */
+function OrgSwitcher({
+  orgs,
+  currentId,
+  currentName,
+  onSwitch,
+}: {
+  orgs: OrgSummary[];
+  currentId: string;
+  currentName: string | undefined;
+  onSwitch: (orgId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 rounded-[5px] border px-1.5 py-[3px] transition"
+        style={
+          open
+            ? { background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }
+            : { background: 'var(--surface)', borderColor: 'var(--border)' }
+        }
+      >
+        <span
+          className="h-2 w-2 shrink-0 rounded-[2px]"
+          style={{ background: currentName ? orgColor(currentId) : 'var(--faint)' }}
+        />
+        <span className="text-text">{currentName ?? 'Organization'}</span>
+        <ChevronDown
+          size={11}
+          className={cn('shrink-0 transition', open ? 'text-accent' : 'text-faint')}
+          style={open ? { transform: 'rotate(180deg)' } : undefined}
+        />
+      </button>
+
+      {open ? (
+        <div
+          className="absolute left-0 top-[calc(100%+6px)] z-50 w-[236px] overflow-hidden rounded-md border border-border bg-panel py-1"
+          style={{ boxShadow: 'var(--shadow-menu)' }}
+        >
+          <div className="px-3 pb-1 pt-1.5 font-mono text-[8.5px] tracking-[0.12em] text-faint">
+            SWITCH ORG SETTINGS
+          </div>
+          {orgs.map((o) => {
+            const on = o.id === currentId;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onSwitch(o.id);
+                }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition',
+                  on ? 'bg-surface-2' : 'hover:bg-surface-2',
+                )}
+              >
+                <span className="h-[9px] w-[9px] shrink-0 rounded-[2px]" style={{ background: orgColor(o.id) }} />
+                <span className="flex min-w-0 flex-1 flex-col leading-tight">
+                  <span className={cn('truncate text-[12px] text-text', on ? 'font-semibold' : 'font-medium')}>
+                    {o.name}
+                  </span>
+                  <span className="font-mono text-[9px] text-faint">
+                    {roleLabel(o.role)} · {o.status}
+                  </span>
+                </span>
+                {on ? <Check size={13} className="shrink-0 text-accent" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }

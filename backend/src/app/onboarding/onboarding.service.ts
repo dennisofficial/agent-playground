@@ -1,10 +1,19 @@
 import { ChatAnthropic } from '@langchain/anthropic';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GithubPrService, parseGithubRepoUrl } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { OrgCredentialsEntity, RepoEntity, OrganizationEntity } from '../persistence/entities';
+import {
+  DecisionRecordEntity,
+  OrganizationEntity,
+  OrgCredentialsEntity,
+  RepoEntity,
+  StimulusEntity,
+  ThreadEntity,
+  ThreadSandboxEntity,
+} from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
 
@@ -83,9 +92,23 @@ export class OnboardingService {
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(OrgCredentialsEntity, DB_CONNECTION)
     private readonly orgCreds: Repository<OrgCredentialsEntity>,
+    @InjectRepository(ThreadEntity, DB_CONNECTION)
+    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(StimulusEntity, DB_CONNECTION)
+    private readonly stimuli: Repository<StimulusEntity>,
+    @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
+    private readonly decisionRecords: Repository<DecisionRecordEntity>,
+    @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
+    private readonly sandboxes: Repository<ThreadSandboxEntity>,
     private readonly creds: CredentialResolver,
     private readonly store: TenantCredentialStore,
     private readonly pr: GithubPrService,
+    // `ThreadLifecycleService` is resolved LAZILY in `disconnectRepo` via this ref + a dynamic
+    // `import()`. A STATIC import of the driver service would close an ES module cycle
+    // (onboarding.service → driver/thread-lifecycle → onboarding barrel → onboarding.service). `ModuleRef`
+    // is core (no module dependency) and the dynamic import is evaluated after boot — same pattern as
+    // `OrganizationService.deleteOrg`.
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
@@ -141,6 +164,105 @@ export class OnboardingService {
       accessOk: validation.ok,
       ...(validation.reason ? { reason: validation.reason } : {}),
     };
+  }
+
+  /**
+   * Re-probe a connected repo's GitHub access with the org's current token and persist the result
+   * (`access_ok` + `access_checked_at`). Surfaces a rotated/expired PAT without a full reconnect; tries
+   * to activate the org in case access just came good. Scoped to the org (404 on a cross-tenant id).
+   */
+  async revalidateRepo(orgId: string, repoId: string): Promise<ConnectedRepo> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo) throw new NotFoundException('repo not found');
+    const validation = await this.validateRepo(orgId, repo.slug);
+    await this.repos.update(
+      { id: repo.id },
+      { access_ok: validation.ok, access_checked_at: new Date() },
+    );
+    await this.tryActivate(orgId);
+    this.logger.log(`revalidated repo ${repo.slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`);
+    return {
+      id: repo.id,
+      slug: repo.slug,
+      name: repo.name,
+      gitUrl: repo.git_url,
+      defaultBranch: repo.default_branch,
+      accessOk: validation.ok,
+      ...(validation.reason ? { reason: validation.reason } : {}),
+    };
+  }
+
+  /**
+   * Update a connected repo's metadata — display name and/or base branch. Pure metadata, no GitHub call
+   * (use `revalidateRepo` to re-check access). Scoped to the org (404 on a cross-tenant id).
+   */
+  async updateRepo(
+    orgId: string,
+    repoId: string,
+    patch: { name?: string; defaultBranch?: string },
+  ): Promise<ConnectedRepo> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo) throw new NotFoundException('repo not found');
+    const next: Partial<RepoEntity> = {};
+    if (patch.name !== undefined && patch.name.trim()) next.name = patch.name.trim();
+    if (patch.defaultBranch !== undefined && patch.defaultBranch.trim()) {
+      next.default_branch = patch.defaultBranch.trim();
+    }
+    if (Object.keys(next).length) await this.repos.update({ id: repo.id }, next);
+    const fresh = await this.repos.findOneOrFail({ where: { id: repo.id } });
+    return {
+      id: fresh.id,
+      slug: fresh.slug,
+      name: fresh.name,
+      gitUrl: fresh.git_url,
+      defaultBranch: fresh.default_branch,
+      accessOk: fresh.access_ok,
+    };
+  }
+
+  /**
+   * Disconnect a repo from the org, CASCADE-deleting everything under it — mirroring
+   * `OrganizationService.deleteOrg` (and consistent with single-thread `deleteThreadDeep`). The operator
+   * is warned in the UI before this runs; here we just tear it all down. Scoped to the org.
+   *
+   * The repo's threads are deep-deleted in a DRAIN loop (re-query until none remain) rather than a single
+   * snapshot: threads can be created from several paths, and the live schema has NO foreign keys, so a
+   * thread inserted mid-cascade would otherwise orphan. Each create path inserts one row between awaits,
+   * so the loop converges immediately. The repo row stays present through the drain so each
+   * `deleteThreadDeep` can still resolve repo metadata for worktree/container teardown.
+   */
+  async disconnectRepo(orgId: string, repoId: string): Promise<{ ok: true; threadsDeleted: number }> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo) throw new NotFoundException('repo not found');
+
+    // Resolve the driver service lazily (see the constructor note on the module cycle). `strict: false`
+    // searches the whole app; the `.js` extension is required for a relative dynamic `import()` under
+    // `moduleResolution: nodenext`.
+    const { ThreadLifecycleService } = await import('../driver/thread-lifecycle.service.js');
+    const lifecycle = this.moduleRef.get(ThreadLifecycleService, { strict: false });
+    let threadsDeleted = 0;
+    for (;;) {
+      const batch = await this.threads.find({
+        where: { repo_id: repoId, org_id: orgId },
+        select: { id: true },
+      });
+      if (batch.length === 0) break;
+      for (const { id } of batch) {
+        await lifecycle.deleteThreadDeep(id, orgId);
+        threadsDeleted++;
+      }
+    }
+
+    // Sweep repo-scoped rows not tied to a thread (parked event stimuli / decision records), any leftover
+    // sandboxes, then the repo row itself.
+    await this.stimuli.delete({ repo_id: repoId, org_id: orgId });
+    await this.decisionRecords.delete({ repo_id: repoId, org_id: orgId });
+    await this.sandboxes.delete({ repo_id: repoId, org_id: orgId });
+    await this.repos.delete({ id: repoId, org_id: orgId });
+    this.logger.log(
+      `disconnected repo ${repo.slug} (${repoId}) from org ${orgId} — ${threadsDeleted} thread(s) cascaded`,
+    );
+    return { ok: true, threadsDeleted };
   }
 
   /** The derived onboarding checklist for an org. */

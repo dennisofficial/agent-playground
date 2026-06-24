@@ -83,12 +83,12 @@ function makeSvc(
   const users = {} as unknown as Repository<UserEntity>;
   const env = { get: () => 'http://host' } as never;
 
-  // Records the teardown side effects so the deleteOrg test can assert on them. `ThreadLifecycleService`
+  // Records the per-thread deep deletes so the deleteOrg test can assert on them. `ThreadLifecycleService`
   // is pulled lazily via `ModuleRef.get(...)` in `deleteOrg`, so the mock ref just hands back this fake.
-  const closed: Array<{ threadId: string; orgId: string }> = [];
+  const deepDeleted: Array<{ threadId: string; orgId: string }> = [];
   const threadLifecycle = {
-    closeThread: async (threadId: string, orgId: string) => {
-      closed.push({ threadId, orgId });
+    deleteThreadDeep: async (threadId: string, orgId: string) => {
+      deepDeleted.push({ threadId, orgId });
     },
   };
   const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
@@ -117,7 +117,7 @@ function makeSvc(
     moduleRef,
     env,
   );
-  return { svc, inviteRows, memberRows, orgRows, closed, deletes, orgDeletes };
+  return { svc, inviteRows, memberRows, orgRows, deepDeleted, deletes, orgDeletes };
 }
 
 describe('OrganizationService invites', () => {
@@ -176,24 +176,38 @@ describe('OrganizationService rename', () => {
 });
 
 describe('OrganizationService deleteOrg', () => {
-  it('closes every thread (container + worktree) then deletes the org — FK cascade sweeps the rest', async () => {
-    const { svc, closed, orgDeletes } = makeSvc({ threadIds: ['T1', 'T2'] });
+  // The live schema has NO FK cascade, so deleteOrg must sweep every org-scoped table explicitly:
+  // deep-delete each thread (container/worktree teardown + child rows), then the org-direct rows.
+  const ORG_SWEEP = [
+    { entity: 'StimulusEntity', criteria: { org_id: 'O1' } },
+    { entity: 'DecisionRecordEntity', criteria: { org_id: 'O1' } },
+    { entity: 'RepoEntity', criteria: { org_id: 'O1' } },
+    { entity: 'OrgCredentialsEntity', criteria: { org_id: 'O1' } },
+    { entity: 'OrgInviteEntity', criteria: { org_id: 'O1' } },
+    { entity: 'OrganizationMemberEntity', criteria: { org_id: 'O1' } },
+    { entity: 'MemoryEntity', criteria: { org_id: 'O1' } },
+    { entity: 'OrganizationEntity', criteria: { id: 'O1' } },
+  ];
+
+  it('deep-deletes every thread, then sweeps every org-scoped table ending with the org row', async () => {
+    const { svc, deepDeleted, deletes } = makeSvc({ threadIds: ['T1', 'T2'] });
     await svc.deleteOrg('O1');
 
-    // Threads are torn down (container + worktree) before the DB row goes.
-    expect(closed).toEqual([
+    // Each thread is deep-deleted (container + worktree teardown + its child rows) before the org rows.
+    expect(deepDeleted).toEqual([
       { threadId: 'T1', orgId: 'O1' },
       { threadId: 'T2', orgId: 'O1' },
     ]);
 
-    // A single scoped org delete — the DB's ON DELETE CASCADE removes every dependent row.
-    expect(orgDeletes).toEqual([{ id: 'O1' }]);
+    // Every org-scoped table is swept explicitly, the org row last; `users` is NEVER touched.
+    expect(deletes).toEqual(ORG_SWEEP);
+    expect(deletes.map((d) => d.entity)).not.toContain('UserEntity');
   });
 
-  it('deletes the org directly when it has no threads (nothing to tear down)', async () => {
-    const { svc, closed, orgDeletes } = makeSvc({ threadIds: [] });
+  it('still sweeps the org-scoped tables when the org has no threads', async () => {
+    const { svc, deepDeleted, deletes } = makeSvc({ threadIds: [] });
     await svc.deleteOrg('O1');
-    expect(closed).toHaveLength(0);
-    expect(orgDeletes).toEqual([{ id: 'O1' }]);
+    expect(deepDeleted).toHaveLength(0);
+    expect(deletes).toEqual(ORG_SWEEP);
   });
 });

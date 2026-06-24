@@ -32,11 +32,16 @@ import { TenantCredentialStore } from '../onboarding';
 import { GithubPrService } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
+  DecisionRecordEntity,
+  MessageEntity,
   OrgCredentialsEntity,
+  OrganizationEntity,
+  PhaseEntity,
   RepoEntity,
+  SectionEntity,
+  StimulusEntity,
   ThreadEntity,
   ThreadSandboxEntity,
-  OrganizationEntity,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, type ResolvedRepo } from '.';
@@ -134,7 +139,18 @@ beforeEach(async () => {
     imports: [
       TypeOrmModule.forRoot(dbOpts()),
       TypeOrmModule.forFeature(
-        [OrganizationEntity, RepoEntity, ThreadEntity, ThreadSandboxEntity, OrgCredentialsEntity],
+        [
+          OrganizationEntity,
+          RepoEntity,
+          ThreadEntity,
+          ThreadSandboxEntity,
+          OrgCredentialsEntity,
+          MessageEntity,
+          SectionEntity,
+          PhaseEntity,
+          DecisionRecordEntity,
+          StimulusEntity,
+        ],
         DB_CONNECTION,
       ),
     ],
@@ -273,6 +289,42 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
     // Idempotent: a second close is a no-op and ensureContainer returns null for a closed thread.
     await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
     expect(await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID)).toBeNull();
+  });
+
+  it('deleteThreadDeep tears down the sandbox AND sweeps every child row (no orphans)', async () => {
+    const { threadId } = await create();
+
+    // Seed one child row in every table that references the thread (the live schema has NO FK cascade,
+    // so a parent-only delete would orphan all of these).
+    await ds.query(`INSERT INTO messages (thread_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
+    const [section] = await ds.query(
+      `INSERT INTO sections (thread_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
+      [threadId, FAKE_TEAM_ID],
+    );
+    await ds.query(
+      `INSERT INTO phases (section_id, thread_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`,
+      [section.id, threadId, FAKE_TEAM_ID],
+    );
+    await ds.query(
+      `INSERT INTO decision_records (org_id, repo_id, thread_id, overview) VALUES ($1, $2, $3, 'o')`,
+      [FAKE_TEAM_ID, repoId, threadId],
+    );
+    await ds.query(
+      `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, thread_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
+      [FAKE_TEAM_ID, repoId, threadId],
+    );
+
+    await threadLifecycle.deleteThreadDeep(threadId, FAKE_TEAM_ID);
+
+    const count = async (table: string, col = 'thread_id') =>
+      Number((await ds.query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${col} = $1`, [threadId]))[0].count);
+    expect(await count('threads', 'id')).toBe(0);
+    expect(await count('messages')).toBe(0);
+    expect(await count('sections')).toBe(0);
+    expect(await count('phases')).toBe(0);
+    expect(await count('decision_records')).toBe(0);
+    expect(await count('stimuli')).toBe(0);
+    expect(await count('thread_sandboxes')).toBe(0);
   });
 
   it('reconcileOnBoot marks non-closed rows detached', async () => {

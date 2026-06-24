@@ -2,7 +2,15 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { GitModule } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { OrgCredentialsEntity, RepoEntity, OrganizationEntity } from '../persistence/entities';
+import {
+  DecisionRecordEntity,
+  OrganizationEntity,
+  OrgCredentialsEntity,
+  RepoEntity,
+  StimulusEntity,
+  ThreadEntity,
+  ThreadSandboxEntity,
+} from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
 import { OnboardingController } from './onboarding.controller';
@@ -24,7 +32,15 @@ import { TenantCredentialStore } from './tenant-credential.store';
   imports: [
     GitModule,
     TypeOrmModule.forFeature(
-      [OrgCredentialsEntity, OrganizationEntity, RepoEntity],
+      [
+        OrgCredentialsEntity,
+        OrganizationEntity,
+        RepoEntity,
+        ThreadEntity,
+        StimulusEntity,
+        DecisionRecordEntity,
+        ThreadSandboxEntity,
+      ],
       DB_CONNECTION,
     ),
   ],

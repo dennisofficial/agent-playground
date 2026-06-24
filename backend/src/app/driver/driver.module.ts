@@ -15,9 +15,11 @@ import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
+  MessageEntity,
   PhaseEntity,
   RepoEntity,
   SectionEntity,
+  StimulusEntity,
   ThreadEntity,
   ThreadSandboxEntity,
 } from '../persistence/entities';
@@ -64,6 +66,8 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
         ThreadEntity,
         RepoEntity,
         ThreadSandboxEntity,
+        MessageEntity,
+        StimulusEntity,
       ],
       DB_CONNECTION,
     ),

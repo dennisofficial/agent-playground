@@ -7,7 +7,16 @@ import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { RepoEntity, ThreadEntity, ThreadSandboxEntity } from '../persistence/entities';
+import {
+  DecisionRecordEntity,
+  MessageEntity,
+  PhaseEntity,
+  RepoEntity,
+  SectionEntity,
+  StimulusEntity,
+  ThreadEntity,
+  ThreadSandboxEntity,
+} from '../persistence/entities';
 import { hostExecUser, SANDBOX_PROVIDER, SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 
@@ -64,6 +73,16 @@ export class ThreadLifecycleService {
     private readonly sandboxes: Repository<ThreadSandboxEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly projects: Repository<RepoEntity>,
+    @InjectRepository(MessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(SectionEntity, DB_CONNECTION)
+    private readonly sections: Repository<SectionEntity>,
+    @InjectRepository(PhaseEntity, DB_CONNECTION)
+    private readonly phases: Repository<PhaseEntity>,
+    @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
+    private readonly decisionRecords: Repository<DecisionRecordEntity>,
+    @InjectRepository(StimulusEntity, DB_CONNECTION)
+    private readonly stimuli: Repository<StimulusEntity>,
     private readonly git: LocalGitService,
     private readonly pr: GithubPrService,
     private readonly creds: CredentialResolver,
@@ -191,6 +210,34 @@ export class ThreadLifecycleService {
     row.lifecycle = 'closed';
     await this.sandboxes.save(row);
     this.logger.log(`closed thread ${threadId} (container + worktree torn down)`);
+  }
+
+  /**
+   * Terminal DELETE of a thread and EVERYTHING it owns. First `closeThread` (tears down the container +
+   * worktree), then explicitly removes every child row — messages, sections, phases, decision_records,
+   * stimuli, and the `thread_sandboxes` row — and finally the `threads` row itself.
+   *
+   * The children are deleted EXPLICITLY because the live schema declares NO foreign keys (so there is no
+   * `ON DELETE CASCADE`): a parent-only `threads.delete()` would orphan all of the above. Every delete is
+   * org-scoped where the row carries `org_id` (defense-in-depth beyond the caller's membership check).
+   * Idempotent and safe to call on a partially-gone thread.
+   */
+  async deleteThreadDeep(threadId: string, orgId: string): Promise<void> {
+    // 1. Reclaim the container + worktree (flips the sandbox row to `closed`; no-op if already closed).
+    await this.closeThread(threadId, orgId);
+
+    // 2. Sweep the thread's children — explicit, because there is no DB cascade. (`messages` has no
+    //    `org_id`; `thread_id` already uniquely scopes it to this org's thread.)
+    await this.messages.delete({ thread_id: threadId });
+    await this.sections.delete({ thread_id: threadId, org_id: orgId });
+    await this.phases.delete({ thread_id: threadId, org_id: orgId });
+    await this.decisionRecords.delete({ thread_id: threadId, org_id: orgId });
+    await this.stimuli.delete({ thread_id: threadId, org_id: orgId });
+    await this.sandboxes.delete({ thread_id: threadId, org_id: orgId });
+
+    // 3. Finally the thread row itself.
+    const res = await this.threads.delete({ id: threadId, org_id: orgId });
+    this.logger.log(`deleted thread ${threadId} (org ${orgId}); thread rows removed=${res.affected ?? 0}, children swept`);
   }
 
   // ── reaping / reconciliation (driven by DriverModule's boot hook + interval) ────────────────────
