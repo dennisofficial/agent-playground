@@ -4,48 +4,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo layout
 
-Two implementations of the same autonomous-AI-employee system coexist:
+**Atlas v2 is the sole system.** The v1 harness, the `slack-app`/`api`/`daemon` apps, and the `playground/` TUI POC were all deleted (06-20). One backend app remains.
 
-- **`backend/` — the NestJS harness (CURRENT, actively developed).** The playground's logic recreated as per-domain Nest modules under `backend/src/harness/`, with Postgres durability. Two apps compose it: **`slack-app`** (`pnpm slack:dev`) is THE server — the harness headless with the Slack surface + ingress bound, single-process multi-tenant (the Slack adapter has SHIPPED — `slack-app/slack-chat-surface.ts`, incl. message + reaction support); **`api`** is the standalone admin REST (projects/tokens/skill grants), composable WITHOUT the harness.
-- **`playground/` — the original terminal POC (WORKING, kept intact).** Single-process Ink TUI, in-memory channel, SQLite memory. **Do not modify or delete** — it's the reference implementation until the backend reaches feel-parity. Run with `pnpm dev` in `playground/`.
+- **`backend/` — the Atlas v2 NestJS app (the whole system).** A single HTTP app: `src/atlas-main.ts` boots `AtlasModule` on `:4002` over its OWN named Postgres connection (`atlas`, `atlas_*` schema, `atlas_migrations` table). Run `pnpm atlas:dev` (ts) or `pnpm build && node dist/atlas-main` (built). All domain code is under `backend/src/atlas/`.
+- **`web/` — the Next.js operator console.** Talks to the backend DIRECTLY (no proxy) at `NEXT_PUBLIC_ATLAS_HTTP_URL` (`:4002`) with credentialed CORS: `/auth/*` + `/web/*`. (NOTE: as of the org/repo/thread rebuild the web app still calls some removed endpoints — it needs rewiring to the `/web/orgs/:orgId/...` API; see `atlas-org-repo-thread-rebuild` memory.)
+- `shared/` (`@workspace/shared` — base TypeORM entities like `TimestampedEntity` under `./schemas`), `packages/*`, `docs/`, `prompts/`, `skills/`, `assets/`.
 
-Also: `shared/` (`@workspace/shared` — TypeORM entities under `./schemas` subpath), `web/` (Next.js admin skeleton), `packages/nestjs-core-essentials` (house Nest conventions: `@CreateModule`, `BaseEnvService`).
+**Canonical design doc:** `backend/src/atlas/ATLAS_V2.md` — read it first when resuming Atlas work. (Its §2 tenancy section predates the org rebuild: `Tenant/team_id ⊃ Projects ⊃ Channel` is **superseded** by `Organization/org_id ⊃ Repos ⊃ Threads`, channels removed — see below.)
 
-**Submodule prerequisite:** `packages/nestjs-ai-essentials` (`@workspace/langfuse`) and `packages/jwt-auth` (`@workspace/auth`) are git submodules — run `pnpm run setup` from repo root (submodule init + install + package builds), otherwise TS2307 "Cannot find module '@workspace/langfuse'" / '@workspace/auth' at test/typecheck time.
+**Submodule prerequisite:** `packages/jwt-auth` (`@workspace/auth`), `packages/nestjs-ai-essentials` (`@workspace/langfuse`), and `packages/nestjs-core-essentials` (`@workspace/nestjs-core` — `@CreateModule`, `BaseEnvService`) are git submodules — run `pnpm run setup` from repo root (submodule init + install + package builds), otherwise TS2307 "Cannot find module '@workspace/…'" at test/typecheck time.
 
-## Backend harness (`backend/src/harness/`)
+## The product model — Organization → Users → Repos → Threads
 
-One Nest module per domain, all composed by `harness.module.ts` (import that one module to host the harness). **Only ONE process may compose it at a time** (no multi-conductor locking).
+- An **Organization** (`atlas_organizations`) is the tenant; the `org_id` dimension scopes every `atlas_*` table.
+- **Users** (`atlas_users`, email/password via `@workspace/auth`) join orgs through **`atlas_organization_members`** (owner/admin/member). Registration is OPEN and immediately usable (no approval gate).
+- A **Repo** (`atlas_repos`, composite PK `(org_id, repo_id-slug)`) is a connected GitHub repo — the conversation container (the old 1:1 `atlas_channels` is gone).
+- A **Thread** (`atlas_threads`, real uuid id) is a conversation/work unit on a repo; `atlas_messages` is its durable log.
+- **Onboarding:** create org → set per-org credentials (Anthropic key + engine auth + GitHub PAT, validated) → connect a repo (GitHub access validated → `access_ok`) → org flips to `active` → threads can be created.
+- **Web API:** `/auth/*` (login/register/session-with-orgs) + `/web/orgs/:orgId/...` gated by the global `AtlasAuthGuard` (cookie) AND `OrgMembershipGuard` (`@CurrentOrg`). Thread CRUD lives under `/web/orgs/:orgId/repos/:repoId/threads…` (create/list/say/SSE events/messages/approve/pipeline/DELETE).
+
+## Atlas modules (`backend/src/atlas/`)
+
+Composed by `app/app.module.ts` (inside `AtlasModule`). One Nest module per domain.
 
 | Module | Role |
 |---|---|
-| `conductor/` | Event loop (`ConductorService`, lifecycle-hooked), per-bot LangGraph turn graphs (`BotGraphFactory`), RxJS event/status bus (`ConductorEventsBus`) — the presentation seam |
-| `channel/` | The conversation log. **Synchronous in-memory face, write-behind Postgres durability** (`channel_messages` + `bot_cursors`); hydrates on boot. The sync `append`/`since` contract is load-bearing (mid-thought collaboration) |
-| `employees/` | `@AIEmployee()` decorator + DiscoveryService auto-discovery. One class per teammate in `roster/` (persona, engine, tool allowlist); `EmployeeRegistry` validates at boot; `PersonaService` assembles prompts |
-| `tools/` | `@HarnessTool()` decorator classes → `ToolRegistry`. Employee allowlists are **class references** (the class is the DI token), never name strings. No tool ends the turn directly — every tool batch loops back to the model, and a turn ends only when the bot's next step makes no tool call |
-| `engines/` | `claude`/`codex`/`langgraph` behind the `WorkerEngine` port. ESM-only SDKs arrive via `_lib/esm` DI tokens |
-| `sessions/` | Employee-managed background sessions (long-lived interactive engine conversations — the bots' "Claude Code"). In-memory `SessionRegistry` behind `SESSION_REGISTRY`; `SessionRunnerService` runs one turn at a time inside the session's worktree; every turn-end relays to the owner, who replies (`reply_session`, mode-switchable per turn — 'plan' = engine-native read-only, 'execute' = writes) or closes (`close_session` → worklog) |
-| `worktrees/` | Employee-managed git worktrees (`WorktreeService`), PER PROJECT: registered projects get their GitHub repo cloned on first use to `<REPOS_ROOT>/<projectId>`, unregistered fall back to a local-only clone root. Checkouts at `<repoRoot>/.worktrees/<id>-<slug>`; git is the durable store (re-adopted on boot from every known repo; shared association in `branch.<b>.agent-shared` config), mutating git ops mutex-serialized. Multi-employee features converge on a `shared/<slug>` integration branch (never checked out): personal branches cut from it, `publish`/`pull` merge through it (conflicts left in-progress for a session to resolve), and publish also pushes shared→origin behind a repo-identity guard. `open_pr` opens/finds the GitHub PR Dennis reviews |
-| `projects/` | SLIM registry module (composable by the api app WITHOUT the harness): `projects` table (project id → GitHub repo/base branch/token ref) + `github_tokens` (named tokens, AES-256-GCM at rest via `SECRETS_ENCRYPTION_KEY`, write-only — `resolve()` is the single decrypt path), `GithubApiService` (fetch-based PR client), git auth via per-invocation `GIT_CONFIG_*` env (token never in argv/.git/config). Configured via the api app's admin REST (`/projects`, `/tokens`), gated by `ADMIN_API_TOKEN` bearer (disabled when unset) |
-| `memory/` | Postgres semantic memory (pgvector facts + dedup judge), reminders (`TaskStore`), the shared **team board** (`BoardStore` — claimable tasks with assignees + dependencies; atomic claim via conditional UPDATE), worklog, fetch/reconcile passes, and the LangGraph **Postgres checkpointer** (`CHECKPOINTER` token) |
-| `gate/` | Respond/acknowledge/ignore: hard addressing rules + soft Haiku classifier |
-| `surface/` | `CHAT_SURFACE` port (group-chat semantics: post/react/inbound$). Hosting app binds an adapter via a `@Global` module — `slack-app/slack-surface.module.ts` (the shipped Slack adapter: real `chat.postMessage` + `reactions.add/remove`, unicode→shortcode mapped in `slack-app/slack-text.ts`). `SurfaceBridge` wires it to the conductor. No binding → headless |
-| `skills/` | Skills + MCP loader/booter. `SkillLoaderService` resolves `SkillSource` (git clone/cache + local, repo-root-relative) → SKILL.md; `EngineHomeProvisioner` materializes each employee's per-engine home as an EXACT MIRROR (Claude: symlinks + `skills`/`mcpServers` options; Codex: `config.toml` + `AGENTS.md` preamble; LangGraph: prompt listing + `@langchain/mcp-adapters` tools). Sources = code-declared (`employee.skills`/`mcpServers`) ∪ DB grants (`employee_skills`/`employee_mcp_servers`, via `employee-skills/` stores), deduped by name; a DB trigger `NOTIFY`s and `GrantChangeListener` reactively reconciles the affected employee (no restart, no poll). Control via admin REST (`/admin/employees/:id/skills|mcp`) or the `db:seed` seeder |
-| `llm/` | `ChatModelFactory` (chat/gate/extract model builders, env-driven) + cost helpers |
+| `persistence/` | The `atlas` datasource (`ATLAS_CONNECTION`) + every `atlas_*` entity (`entities/index.ts` → `ATLAS_ENTITIES`). `synchronize: false`. |
+| `auth/` | Email/password `/auth/*` (`@workspace/auth`, argon2, httpOnly JWT cookies). Global `AtlasAuthGuard`. |
+| `org/` | `Organization` + membership; `OrgMembershipGuard` + `@CurrentOrg` (cross-tenant isolation); `OrgController`. `@Global`. |
+| `onboarding/` | Per-org encrypted credentials (`AtlasOrgCredentials`, AES-256-GCM via `secret-cipher`), `CredentialResolver` (env-fallback), `connectRepo` + validated checklist + `tryActivate`; credentials/repo/onboarding controllers. `@Global`. |
+| `surface/` | The web `CHAT_SURFACE` (`AtlasWebSurface`, SSE+REST) + `WebSurfaceController` (the org/repo/thread API). `agent-surface/` is the in-process test surface. `ATLAS_SURFACE=agent` swaps it. |
+| `stimulus/` | Intake seam: the chat bridge (`CHAT_SURFACE.inbound$` → `ChatStimulus`, resolves the thread by real id) + notification routing (`ProjectRoutingService`, repo-addressed). |
+| `ingress/` | HTTP edge for notifications: `POST /ingress/github` + `/ingress/webhook` (`NotificationSource` adapters → seed a thread). |
+| `brain/` | Triage (respond/ask/dispatch) + conversational grill → locked decision record; the in-sandbox `AgentSessionManager`; the approval gate (`DecisionApprovalService`). |
+| `driver/` | The deterministic, resumable section/phase build driver (legible loop, NOT an implicit FSM) + `ThreadLifecycleService` (durable worktree/branch/session + disposable container; `createThread`/`closeThread`). |
+| `decision-gate/` | Always-ask decision classification + park-and-ask (doubles as a security control for untrusted events). |
+| `sandbox/` | Engine turns run `local` (git worktree) or `docker` (per-thread container) behind `SANDBOX_PROVIDER`/`ENGINE_RUNNER` (`ATLAS_SANDBOX_MODE`). |
+| `engine/` · `runner/` · `git/` | Claude/Codex invocation (plan/review/execute, isolated agent home), the turn runner, host-side git/PR. |
+| `memory/` | Postgres pgvector semantic memory. |
+| `autofix/` | The post-build auto-fix stage. |
+| `test-bridge/` | DEV/TEST-only `POST /test/*` (404 unless `ATLAS_TEST_BRIDGE=on`) for driving Atlas headless. |
 
-Deliberately NOT ported (playground-only): `/standup`-style commands. The playground's ticket board is SUPERSEDED by the team board (`BoardStore` + `*_board_task` tools — Atlas, the team lead, owns it), and its plan→approve→execute flow by per-turn session modes (the employee approves a plan by replying with mode 'execute').
+## Conventions that matter here
 
-### Conventions that matter here
-
-- Decorated classes (employees, tools) must be **plain class providers** — discovery can't see `useFactory` providers. Registries fail boot loudly on misconfiguration.
-- `roleContext`/`personality` must be **byte-stable string constants** (prompt-cache `cache_control` breakpoints — no interpolation or getters).
-- ESM-only deps (`@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`) load via preserved dynamic `import()` (`module: nodenext`); everything LangChain is dual-published and statically imported.
-- Tests: `*.spec.ts` unit, `*.int.test.ts` integration (Postgres via `docker compose up -d postgres`, but a DEDICATED `agent_playground_test` database — auto-created + migrated by `vitest.global-setup.ts`; `vitest.setup.ts` hard-refuses any non-`*_test` `POSTGRES_DB` because int tests TRUNCATE tables, and `.env.test.enc` is authoritative over `.env.personal` in test runs), `*.ai.test.ts` real-LLM (only `pnpm test:ai`). Migrations: NEVER hand-write — rebuild `shared/` first (the CLI loads entities from `dist/`), then `pnpm db:migration:generate <Name>` against the live Postgres, prune generator noise (it tries to drop the pgvector HNSW index and recreate partial indexes), then `pnpm db:migrate`.
-
-## Playground (`playground/src/`) — reference implementation
-
-- **Chat layer** (`src/bot-graph.ts`) — LangGraph state machine: gate → fetch context → LLM ⇄ tools → reconcile memory. Dispatches jobs but never blocks on them.
-- **Job runner** (`src/jobs.ts` + `src/worker.ts`) — fire-and-forget background async; in-memory registry.
-- **Worker engines** (`src/engines/`) — same three engines, selected per employee.
-- **Memory** (`src/memory/`) — SQLite (`./.data/zero.db` + `checkpoints.db`); fetch pre-LLM, reconcile post-LLM on every gate path.
-- Thread IDs: `${bot.id}:{project}:root`; current Slack/TUI surface architecture is documented in `playground/ARCHITECTURE.md`.
+- **Migrations — NEVER hand-write.** The Atlas datasource has its OWN CLI (`cli/atlas-data-source.ts`, `atlas_migrations` table). Reshape entities, then `pnpm db:atlas:migration:generate <Name>` against live Postgres, prune generator noise, then `pnpm db:atlas:migrate`. The CLI loads entities from `src` via ts-node (no `shared/` rebuild needed). The generator does NOT emit `CREATE EXTENSION` (uuid-ossp, vector) or the pgvector HNSW index — hand-add those to the generated `up()` (see the current `InitAtlasSchema`). For a greenfield reset: `DROP SCHEMA public CASCADE; CREATE SCHEMA public`, delete `migrations-atlas/*`, regenerate, re-add the extensions+HNSW, migrate.
+- **Tests:** `*.spec.ts` unit, `*.int.test.ts` integration (Postgres via `docker compose up -d postgres`, a DEDICATED `agent_playground_test` DB auto-created + migrated by `vitest.global-setup.ts`; `vitest.setup.ts` hard-refuses any non-`*_test` `POSTGRES_DB` because int tests TRUNCATE; `.env.test.enc` is authoritative in test runs), `*.ai.test.ts` real-LLM (`pnpm test:ai`). `pnpm test` runs unit + integration; `pnpm test:unit` is unit-only. Tests are excluded from the build tsconfig (`src/atlas/tsconfig.json`).
+- **Env:** dotenvx — `.env.local.enc` (committed, encrypted, shared dev config) overlaid by `.env.personal` (personal, gitignored, `-o` wins). The `env:inject` script decrypts both for any command; `@nestjs/config` allows unknown keys (validation skipped entirely in test).
+- **ESM-only deps** (`@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`) load via preserved dynamic `import()` (`module: nodenext`); LangChain is statically imported.
+- Decorated discovery classes must be **plain class providers** (DiscoveryService can't see `useFactory`); registries fail boot loudly on misconfiguration.
