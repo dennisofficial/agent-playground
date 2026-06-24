@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { LogOut, Settings, Users } from 'lucide-react';
-import { useCurrentUser } from '@/lib/api/me';
+import Link from 'next/link';
+import { LogOut, Settings } from 'lucide-react';
+import { useCurrentUser, useOrgs } from '@/lib/api/me';
 import { auth } from '@/lib/auth';
 import { ROUTES } from '@/lib/routes';
 
@@ -25,7 +26,10 @@ export function AccountMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { data: me } = useCurrentUser();
+  const { owned, joined } = useOrgs();
   const identity = identityFromEmail(me?.email);
+  // Settings is per-org; target the operator's primary org (an owned one first, else any joined).
+  const settingsOrgId = owned[0]?.id ?? joined[0]?.id;
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -67,8 +71,15 @@ export function AccountMenu() {
             ) : null}
           </div>
           <div className="my-1 h-px" style={{ background: 'var(--hair)' }} />
-          <MenuItem icon={<Settings size={14} />} label="Workspace settings" />
-          <MenuItem icon={<Users size={14} />} label="Switch account" />
+          {settingsOrgId ? (
+            <Link
+              href={ROUTES.orgSettings(settingsOrgId)}
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12.5px] text-dim transition hover:bg-surface-2 hover:text-text"
+            >
+              <Settings size={14} /> Organization settings
+            </Link>
+          ) : null}
           <div className="my-1 h-px" style={{ background: 'var(--hair)' }} />
           <button
             type="button"
@@ -80,17 +91,5 @@ export function AccountMenu() {
         </div>
       ) : null}
     </div>
-  );
-}
-
-function MenuItem({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <button
-      type="button"
-      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12.5px] text-dim transition hover:bg-surface-2 hover:text-text"
-    >
-      {icon}
-      {label}
-    </button>
   );
 }

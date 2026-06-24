@@ -1,21 +1,8 @@
-'use client';
-
-import { useRouter } from 'next/navigation';
-import { Modal } from '@/features/create/components/modal';
-import { CreateThread } from '@/features/create/components/create-thread';
-
 /**
- * Intercepted `/new` — opens the create-thread form as a modal over the current view (soft nav). A
- * hard load of `/new` falls through to the full-page `(app)/new/page.tsx` (same `<CreateThread/>`).
+ * Intercepted `/new` — DEFERRED. The create-thread modal posted to the removed channel API. Nothing
+ * routes to `/new` anymore (the sidebar CTA is disabled), so this intercept renders nothing; a hard load
+ * of `/new` falls through to the full-page placeholder. Returns with the rebuilt create-thread flow.
  */
 export default function NewThreadModal() {
-  const router = useRouter();
-  return (
-    <Modal
-      title="Start a thread"
-      subtitle="A thread is one piece of work — its own isolated workspace, branch, and PR."
-    >
-      <CreateThread onDone={() => router.back()} />
-    </Modal>
-  );
+  return null;
 }

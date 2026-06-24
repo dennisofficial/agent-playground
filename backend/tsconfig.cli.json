@@ -6,6 +6,6 @@
     "rootDir": ".",
     "noEmit": false
   },
-  "include": ["cli/**/*", "migrations/**/*"],
+  "include": ["cli/**/*", "migrations/**/*", "seeds/**/*"],
   "exclude": ["node_modules", "dist"]
 }

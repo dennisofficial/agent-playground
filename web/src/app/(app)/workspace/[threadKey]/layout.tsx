@@ -1,34 +1,11 @@
-'use client';
-
-import { use, useEffect, type ReactNode } from 'react';
-import { decodeThreadKey } from '@/lib/routes';
-import { Navigator } from '@/features/thread-nav/components/navigator';
-import { useChannel } from '@/components/providers/channel-provider';
+import { DeferredWorkspace } from '@/components/deferred-workspace';
 
 /**
- * Thread shell (DRY): the Navigator column + the work-column frame. The Navigator persists across the
- * work-column sub-routes (conversation / plan / doc / phase). Re-points the active channel to the
- * thread's channel so the SSE subscription + sidebar follow a deep link.
+ * Thread workspace — DEFERRED. The channel-based conversation/plan/phase views are dead against the new
+ * org/repo/thread backend, so this layout no longer mounts them (it intentionally drops `children`, which
+ * keeps the nested channel pages — and their removed `ChannelProvider` dependency — from rendering). The
+ * rewire onto `/web/orgs/:orgId/repos/:repoId/threads/:threadId` is the next phase.
  */
-export default function ThreadLayout({
-  children,
-  params,
-}: {
-  children: ReactNode;
-  params: Promise<{ threadKey: string }>;
-}) {
-  const { threadKey } = use(params);
-  const { channel, threadTs } = decodeThreadKey(threadKey);
-  const { activeChannel, setActiveChannel } = useChannel();
-
-  useEffect(() => {
-    if (channel && channel !== activeChannel) setActiveChannel(channel);
-  }, [channel, activeChannel, setActiveChannel]);
-
-  return (
-    <div className="flex h-full min-h-0">
-      <Navigator threadKey={threadKey} channel={channel} threadTs={threadTs} />
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</section>
-    </div>
-  );
+export default function ThreadLayout() {
+  return <DeferredWorkspace />;
 }
