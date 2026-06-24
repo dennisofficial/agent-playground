@@ -13,12 +13,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type {
-  DecisionRecordEntity,
-  MessageEntity,
-  PhaseEntity,
   RepoEntity,
-  SectionEntity,
-  StimulusEntity,
   ThreadEntity,
   ThreadSandboxEntity,
 } from '../persistence/entities';
@@ -62,17 +57,10 @@ function makeService(
   const projects = { findOne: vi.fn().mockResolvedValue(repoRow) } as unknown as Repository<RepoEntity>;
   const sandboxes = { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<ThreadSandboxEntity>;
 
-  // Child-row repos are only touched by deleteThreadDeep (not under test here) — minimal stubs.
-  const childRepo = { delete: vi.fn() };
   return new ThreadLifecycleService(
     threads,
     sandboxes,
     projects,
-    childRepo as unknown as Repository<MessageEntity>,
-    childRepo as unknown as Repository<SectionEntity>,
-    childRepo as unknown as Repository<PhaseEntity>,
-    childRepo as unknown as Repository<DecisionRecordEntity>,
-    childRepo as unknown as Repository<StimulusEntity>,
     {} as unknown as LocalGitService,
     { getPullState: vi.fn() } as unknown as GithubPrService,
     { githubToken: vi.fn() } as unknown as CredentialResolver,

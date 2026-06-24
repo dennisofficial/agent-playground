@@ -4,6 +4,10 @@ export class Init1782329141582 implements MigrationInterface {
     name = 'Init1782329141582'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
+        // Hand-added (the generator omits these): the schema below depends on uuid_generate_v4() and the
+        // vector(1536) type, so the extensions must exist before any table DDL runs on a fresh database.
+        await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+        await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS vector`);
         await queryRunner.query(`CREATE TABLE "organizations" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "name" text NOT NULL, "slug" text NOT NULL, "status" text NOT NULL DEFAULT 'onboarding', CONSTRAINT "pk_organizations" PRIMARY KEY ("id"))`);
         await queryRunner.query(`CREATE UNIQUE INDEX "idx_organizations_slug" ON "organizations" ("slug") `);
         await queryRunner.query(`CREATE TABLE "organization_members" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "org_id" uuid NOT NULL, "user_id" uuid NOT NULL, "role" text NOT NULL DEFAULT 'member', CONSTRAINT "pk_organization_members" PRIMARY KEY ("org_id", "user_id"))`);

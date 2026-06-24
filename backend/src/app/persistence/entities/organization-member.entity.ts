@@ -1,5 +1,7 @@
-import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
+import { UserEntity } from './user.entity';
 
 /**
  * Membership of a user in an organization — the spine linking `users` to `organizations`.
@@ -14,9 +16,17 @@ export class OrganizationMemberEntity extends TimestampedEntity {
   @PrimaryColumn({ type: 'uuid' })
   org_id!: string;
 
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
+
   /** FK → users.id */
   @PrimaryColumn({ type: 'uuid' })
   user_id!: string;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_id' })
+  user?: UserEntity;
 
   /** 'owner' (the creator) | 'member'. */
   @Column({ type: 'text', default: 'member' })

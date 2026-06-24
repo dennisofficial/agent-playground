@@ -67,6 +67,76 @@ export function KindBadge({ kind, className }: { kind: ThreadKind; className?: s
   );
 }
 
+/**
+ * Status "pie" — a ring whose fill encodes the thread's stage (ported from the design's `pie()`):
+ * raw (scoping/triaging) = dashed ring, open (approval/paused/failed) = solid ring, progress
+ * (running) = ring + half arc, done = filled accent disc. `status` undefined → a neutral hollow ring
+ * (the cross-org inbox carries no status for most rows yet — see `inbox.ts`).
+ */
+const STATUS_STAGE: Record<ThreadStatus, 'raw' | 'open' | 'progress' | 'done'> = {
+  scoping: 'raw',
+  triaging: 'raw',
+  awaiting_approval: 'open',
+  paused: 'open',
+  failed: 'open',
+  running: 'progress',
+  done: 'done',
+};
+
+export function StatusPie({ status, size = 14 }: { status?: ThreadStatus; size?: number }) {
+  const stage = status ? STATUS_STAGE[status] : 'open';
+  const r = 8;
+  const circ = 2 * Math.PI * r;
+  const ring = (color: string, dashed = false) => (
+    <circle
+      cx={10}
+      cy={10}
+      r={r}
+      fill="none"
+      stroke={color}
+      strokeWidth={2.4}
+      strokeDasharray={dashed ? '2.2 3' : undefined}
+      strokeLinecap={dashed ? 'round' : undefined}
+    />
+  );
+  let kids: React.ReactNode;
+  if (stage === 'raw') {
+    kids = ring('var(--border-2)', true);
+  } else if (stage === 'progress') {
+    kids = (
+      <>
+        {ring('var(--border-2)')}
+        <circle
+          cx={10}
+          cy={10}
+          r={r}
+          fill="none"
+          stroke="var(--text)"
+          strokeWidth={2.4}
+          strokeDasharray={circ}
+          strokeDashoffset={circ * 0.5}
+          strokeLinecap="round"
+          transform="rotate(-90 10 10)"
+        />
+      </>
+    );
+  } else if (stage === 'done') {
+    kids = (
+      <>
+        {ring('var(--accent)')}
+        <circle cx={10} cy={10} r={5.4} fill="var(--accent)" />
+      </>
+    );
+  } else {
+    kids = ring('var(--border-2)');
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className="block shrink-0" aria-hidden>
+      {kids}
+    </svg>
+  );
+}
+
 /** Status pill: a dot + label, tinted by status. */
 export function StatusPill({ status, className }: { status: ThreadStatus; className?: string }) {
   const meta = STATUS_META[status];

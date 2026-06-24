@@ -1,5 +1,7 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
+import { ThreadEntity } from './thread.entity';
 
 /**
  * One SECTION of a thread's build — a coherent slice (e.g. backend) that becomes a just-in-time phased
@@ -18,9 +20,17 @@ export class SectionEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   thread_id!: string;
 
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_id' })
+  thread?: ThreadEntity;
+
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
   @Column({ type: 'uuid' })
   org_id!: string;
+
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
 
   /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   @Column({ type: 'int' })

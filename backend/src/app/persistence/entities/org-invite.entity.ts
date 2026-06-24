@@ -1,5 +1,7 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
+import { UserEntity } from './user.entity';
 
 /**
  * A pending invitation to join an org. The `token` is the capability in the copy-paste invite link
@@ -23,6 +25,10 @@ export class OrgInviteEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   org_id!: string;
 
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
+
   /** The intended recipient's email. */
   @Column({ type: 'text' })
   email!: string;
@@ -35,6 +41,10 @@ export class OrgInviteEntity extends TimestampedEntity {
   @Column({ type: 'uuid', nullable: true })
   invited_by!: string | null;
 
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'invited_by' })
+  invitedByUser?: UserEntity | null;
+
   /** Set once redeemed; a non-null value means the invite is spent. */
   @Column({ type: 'timestamptz', nullable: true })
   accepted_at!: Date | null;
@@ -42,4 +52,8 @@ export class OrgInviteEntity extends TimestampedEntity {
   /** The user who accepted (FK → users.id); null until redeemed. */
   @Column({ type: 'uuid', nullable: true })
   accepted_by!: string | null;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'accepted_by' })
+  acceptedByUser?: UserEntity | null;
 }

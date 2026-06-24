@@ -1,5 +1,6 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
 
 /**
  * A connected GitHub repo — what Atlas works against. Org ⊃ repos; threads/memory scope to a repo via
@@ -19,6 +20,10 @@ export class RepoEntity extends TimestampedEntity {
   /** The owning org (FK → organizations.id). */
   @Column({ type: 'uuid' })
   org_id!: string;
+
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
 
   /** URL-safe slug, unique within the org (derived from the repo name). The clone/worktree/UX identity. */
   @Column({ type: 'text' })

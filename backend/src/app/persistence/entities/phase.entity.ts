@@ -1,5 +1,8 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
+import { SectionEntity } from './section.entity';
+import { ThreadEntity } from './thread.entity';
 
 /**
  * One PHASE of a section's locked plan — runs as a FRESH session on the feature branch (fresh context
@@ -20,13 +23,25 @@ export class PhaseEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   section_id!: string;
 
+  @ManyToOne(() => SectionEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'section_id' })
+  section?: SectionEntity;
+
   /** The owning thread (denormalized for thread-scoped boot recovery; FK → threads.id). */
   @Column({ type: 'uuid' })
   thread_id!: string;
 
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_id' })
+  thread?: ThreadEntity;
+
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
   @Column({ type: 'uuid' })
   org_id!: string;
+
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
 
   /** Execution order within the section, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   @Column({ type: 'int' })

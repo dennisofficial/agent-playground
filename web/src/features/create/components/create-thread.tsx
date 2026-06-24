@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Check, ChevronDown, GitBranch, Plug } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
-import { useOrgFilter } from '@/components/providers/orgs-provider';
+import { useOrgs } from '@/lib/api/me';
 import { useOrgRepos, useCreateThread } from '@/lib/api/thread-queries';
 import { orgColor, orgInitials } from '@/lib/org-display';
 import { ROUTES, threadHref } from '@/lib/routes';
@@ -19,7 +19,7 @@ import { ROUTES, threadHref } from '@/lib/routes';
  */
 export function CreateThread({ onDone }: { onDone?: () => void }) {
   const router = useRouter();
-  const { filter, orgs, isLoading: orgsLoading } = useOrgFilter();
+  const { orgs, isLoading: orgsLoading } = useOrgs();
 
   const [orgId, setOrgId] = useState<string>('');
   const [repoId, setRepoId] = useState<string>('');
@@ -27,12 +27,11 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Default the org to the current rail filter (if a single org is selected), else the first org.
+  // Default the org to the operator's first org (owned first, from the session order).
   useEffect(() => {
     if (orgId || orgs.length === 0) return;
-    const initial = filter !== 'all' && orgs.some((o) => o.id === filter) ? filter : orgs[0].id;
-    setOrgId(initial);
-  }, [orgs, filter, orgId]);
+    setOrgId(orgs[0].id);
+  }, [orgs, orgId]);
 
   const { data: repos = [], isLoading: reposLoading } = useOrgRepos(orgId);
   const create = useCreateThread(orgId, repoId);

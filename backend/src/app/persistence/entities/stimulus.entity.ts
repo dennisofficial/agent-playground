@@ -1,5 +1,8 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
+import { RepoEntity } from './repo.entity';
+import { ThreadEntity } from './thread.entity';
 
 /**
  * The durable record of an intake stimulus — both subtypes in one table, discriminated by `kind`:
@@ -24,9 +27,17 @@ export class StimulusEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   org_id!: string;
 
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
+
   /** The repo this stimulus routes to (FK → repos.id). */
   @Column({ type: 'uuid' })
   repo_id!: string;
+
+  @ManyToOne(() => RepoEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'repo_id' })
+  repo?: RepoEntity;
 
   /** Subtype discriminator: 'chat' | 'event'. */
   @Column({ type: 'text' })
@@ -44,6 +55,10 @@ export class StimulusEntity extends TimestampedEntity {
   /** The thread a chat stimulus continues (null for events, which OPEN a thread). */
   @Column({ type: 'uuid', nullable: true })
   thread_id!: string | null;
+
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'thread_id' })
+  thread?: ThreadEntity | null;
 
   /** Chat author scope id; null for events. */
   @Column({ type: 'text', nullable: true })

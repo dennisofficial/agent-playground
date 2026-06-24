@@ -20,11 +20,11 @@ import type { CredentialResolver } from '../onboarding';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
   DecisionRecord,
-  Job,
   Phase,
   PhaseStatus,
   Section,
   SectionStatus,
+  Thread,
 } from '../domain';
 
 /**
@@ -40,7 +40,7 @@ import type {
 // ── an in-memory DriverStore the tests can introspect + survive a "restart" ──────────────────────
 
 interface StoreState {
-  job: Job;
+  job: Thread;
   record: DecisionRecord | null;
   sections: DriverSection[];
   phases: Phase[];
@@ -51,7 +51,7 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
     runningJobs: vi.fn(async () => (state.job.status === 'running' ? [{ ...state.job }] : [])),
-    setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
+    setJobStatus: vi.fn(async (_id: string, status: Thread['status']) => {
       state.job.status = status;
     }),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
@@ -87,7 +87,7 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
       const rows: Phase[] = planned.map((p, i) => ({
         id: `${section.id}-ph${i}`,
         sectionId: section.id,
-        jobId: section.jobId,
+        threadId: section.threadId,
         ordinal: (i + 1) * 10,
         title: p.title,
         brief: p.brief,
@@ -268,18 +268,21 @@ function makeSurface(): { surface: ChatSurface; posts: string[] } {
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────────────
 
-function makeJob(overrides: Partial<Job> = {}): Job {
+function makeJob(overrides: Partial<Thread> = {}): Thread {
   return {
     id: 'job-abcdef12',
     orgId: 'T1',
     repoId: 'proj',
-    threadId: 'thread-1',
+    origin: 'chat',
+    surfaceThreadRef: null,
+    title: 'Add widgets',
+    baseBranch: null,
     kind: 'feature',
     status: 'running',
-    title: 'Add widgets',
     decisionRecordId: 'dr-1',
     featureBranch: null,
     prUrl: null,
+    prNumber: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -291,7 +294,7 @@ function makeRecord(): DecisionRecord {
     id: 'dr-1',
     orgId: 'T1',
     repoId: 'proj',
-    jobId: 'job-abcdef12',
+    threadId: 'job-abcdef12',
     status: 'approved',
     overview: 'Build the widget feature.',
     decisions: [],
@@ -311,7 +314,7 @@ function makeSections(): DriverSection[] {
 function section(id: string, ordinal: number, brief: string, status: SectionStatus = 'pending'): DriverSection {
   return {
     id,
-    jobId: 'job-abcdef12',
+    threadId: 'job-abcdef12',
     orgId: 'T1',
     ordinal,
     brief,
@@ -498,8 +501,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
       record: makeRecord(),
       sections: [doneBackend, section('sec-fe', 20, 'Frontend')],
       phases: [
-        { id: 'sec-be-ph0', sectionId: 'sec-be', jobId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's' },
-        { id: 'sec-be-ph1', sectionId: 'sec-be', jobId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'done', status: 'done', sessionId: 's' },
+        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's' },
+        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'done', status: 'done', sessionId: 's' },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -526,8 +529,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
       record: makeRecord(),
       sections: [section('sec-be', 10, 'Backend', 'executing')],
       phases: [
-        { id: 'sec-be-ph0', sectionId: 'sec-be', jobId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's' },
-        { id: 'sec-be-ph1', sectionId: 'sec-be', jobId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'build', status: 'building', sessionId: 's2' },
+        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's' },
+        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'build', status: 'building', sessionId: 's2' },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };

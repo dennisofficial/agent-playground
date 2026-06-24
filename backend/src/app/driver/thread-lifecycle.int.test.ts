@@ -294,8 +294,8 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
   it('deleteThreadDeep tears down the sandbox AND sweeps every child row (no orphans)', async () => {
     const { threadId } = await create();
 
-    // Seed one child row in every table that references the thread (the live schema has NO FK cascade,
-    // so a parent-only delete would orphan all of these).
+    // Seed one child row in every table that references the thread; deleting the thread must remove all
+    // of them via the FK ON DELETE CASCADE (RestoreReferentialIntegrity migration) — zero orphans.
     await ds.query(`INSERT INTO messages (thread_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
     const [section] = await ds.query(
       `INSERT INTO sections (thread_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,

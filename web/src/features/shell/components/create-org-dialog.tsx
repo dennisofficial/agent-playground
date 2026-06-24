@@ -4,18 +4,16 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Building2 } from 'lucide-react';
 import { inputCls } from '@/components/ui/field';
-import { useOrgFilter } from '@/components/providers/orgs-provider';
 import { useCreateOrg } from '@/lib/api/orgs';
 import { ROUTES } from '@/lib/routes';
 
 /**
- * Create-organization modal (opened from the org rail's ＋). Names a new org — the caller becomes its
- * owner and it starts in `onboarding`. On success we select it in the rail and route to its settings so
- * the operator can set credentials + connect a repo (the onboarding it needs before threads can run).
+ * Create-organization modal (opened from the sidebar account menu). Names a new org — the caller becomes
+ * its owner and it starts in `onboarding`. On success we route to its settings so the operator can set
+ * credentials + connect a repo (the onboarding it needs before threads can run).
  */
 export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const { setFilter } = useOrgFilter();
   const create = useCreateOrg();
   const [name, setName] = useState('');
   const trimmed = name.trim();
@@ -25,7 +23,6 @@ export function CreateOrgDialog({ onClose }: { onClose: () => void }) {
     if (!valid || create.isPending) return;
     create.mutate(trimmed, {
       onSuccess: (org) => {
-        setFilter(org.id);
         onClose();
         router.push(ROUTES.orgSettings(org.id));
       },

@@ -1,11 +1,15 @@
 /**
- * deleteOrg cascade GATE — `OrganizationService.deleteOrg` must remove EVERY org-scoped row.
+ * deleteOrg cascade GATE — deleting an org must leave ZERO org-scoped rows behind.
  *
- * The live schema declares NO foreign keys (so there is no `ON DELETE CASCADE`): a parent-only
- * `organizations.delete()` would orphan all of repos/threads/messages/sections/phases/
+ * The schema now carries real FK constraints (the `RestoreReferentialIntegrity` migration): deleting the
+ * `organizations` row cascades `ON DELETE CASCADE` down repos/threads/messages/sections/phases/
  * decision_records/stimuli/thread_sandboxes plus the org-direct org_credentials/org_invites/
- * organization_members/memory. This proves `deleteOrg` sweeps every one of them — and ONLY this org's
- * rows (a sibling org and the shared `users` rows survive).
+ * organization_members/memory. `deleteOrg` runs the physical per-thread teardown (container + worktree)
+ * then deletes the org row; this proves the combination removes every one of those rows — and ONLY this
+ * org's (a sibling org and the shared `users` rows survive; only the membership join cascades).
+ *
+ * It also guards against a future FK regression: if the cascade chain is ever broken (or a new child
+ * table is added without an FK), the orphan assertions below fail.
  *
  * Integration: real Postgres (the dedicated `*_test` DB), an in-memory fake git (no actual clone) and a
  * fake docker-ish sandbox provider (no Docker). The real `ThreadLifecycleService` runs `deleteThreadDeep`

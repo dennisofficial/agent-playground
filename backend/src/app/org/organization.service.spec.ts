@@ -176,38 +176,29 @@ describe('OrganizationService rename', () => {
 });
 
 describe('OrganizationService deleteOrg', () => {
-  // The live schema has NO FK cascade, so deleteOrg must sweep every org-scoped table explicitly:
-  // deep-delete each thread (container/worktree teardown + child rows), then the org-direct rows.
-  const ORG_SWEEP = [
-    { entity: 'StimulusEntity', criteria: { org_id: 'O1' } },
-    { entity: 'DecisionRecordEntity', criteria: { org_id: 'O1' } },
-    { entity: 'RepoEntity', criteria: { org_id: 'O1' } },
-    { entity: 'OrgCredentialsEntity', criteria: { org_id: 'O1' } },
-    { entity: 'OrgInviteEntity', criteria: { org_id: 'O1' } },
-    { entity: 'OrganizationMemberEntity', criteria: { org_id: 'O1' } },
-    { entity: 'MemoryEntity', criteria: { org_id: 'O1' } },
-    { entity: 'OrganizationEntity', criteria: { id: 'O1' } },
-  ];
-
-  it('deep-deletes every thread, then sweeps every org-scoped table ending with the org row', async () => {
-    const { svc, deepDeleted, deletes } = makeSvc({ threadIds: ['T1', 'T2'] });
+  // The schema now carries FK ON DELETE CASCADE, so deleteOrg does the physical per-thread teardown then
+  // deletes the org ROW — the database cascades every remaining org-scoped row. There is no explicit
+  // per-table app-side sweep anymore.
+  it('tears down every thread, then deletes the org row (FK cascade sweeps the rest)', async () => {
+    const { svc, deepDeleted, deletes, orgDeletes } = makeSvc({ threadIds: ['T1', 'T2'] });
     await svc.deleteOrg('O1');
 
-    // Each thread is deep-deleted (container + worktree teardown + its child rows) before the org rows.
+    // Each thread is deep-deleted (container + worktree teardown; its rows cascade) before the org row.
     expect(deepDeleted).toEqual([
       { threadId: 'T1', orgId: 'O1' },
       { threadId: 'T2', orgId: 'O1' },
     ]);
 
-    // Every org-scoped table is swept explicitly, the org row last; `users` is NEVER touched.
-    expect(deletes).toEqual(ORG_SWEEP);
-    expect(deletes.map((d) => d.entity)).not.toContain('UserEntity');
+    // The org row is deleted exactly once; FK cascade removes the rest. No explicit per-table sweep runs,
+    // and `users` is never touched (no FK from users → org).
+    expect(orgDeletes).toEqual([{ id: 'O1' }]);
+    expect(deletes).toHaveLength(0);
   });
 
-  it('still sweeps the org-scoped tables when the org has no threads', async () => {
-    const { svc, deepDeleted, deletes } = makeSvc({ threadIds: [] });
+  it('still deletes the org row when the org has no threads', async () => {
+    const { svc, deepDeleted, orgDeletes } = makeSvc({ threadIds: [] });
     await svc.deleteOrg('O1');
     expect(deepDeleted).toHaveLength(0);
-    expect(deletes).toEqual(ORG_SWEEP);
+    expect(orgDeletes).toEqual([{ id: 'O1' }]);
   });
 });

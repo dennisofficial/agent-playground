@@ -1,5 +1,8 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
+import { RepoEntity } from './repo.entity';
+import { ThreadEntity } from './thread.entity';
 
 /**
  * The per-thread sandbox — one row per thread (the disposable INFRA for the thread's build). The
@@ -24,13 +27,25 @@ export class ThreadSandboxEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   org_id!: string;
 
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
+
   /** The thread this sandbox serves (FK → threads.id; 1:1). */
   @Column({ type: 'uuid' })
   thread_id!: string;
 
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_id' })
+  thread?: ThreadEntity;
+
   /** The repo this sandbox is for (FK → repos.id). */
   @Column({ type: 'uuid' })
   repo_id!: string;
+
+  @ManyToOne(() => RepoEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'repo_id' })
+  repo?: RepoEntity;
 
   /** Absolute path to the worktree checkout (the engine's cwd, also bind-mounted in docker mode). */
   @Column({ type: 'text' })

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { StatusDot } from '@/components/ui/badges';
+import { StatusPie } from '@/components/ui/badges';
 import { orgColor } from '@/lib/org-display';
 import { threadHref } from '@/lib/routes';
 import { STATUS_META } from '@/lib/api/status';
@@ -43,7 +43,7 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
               <div className="mb-2 flex items-center gap-2">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-sm" style={{ background: orgColor(t.org.id) }} />
                 <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-faint">{t.org.name}</span>
-                <StatusDot status={status.status} size={7} />
+                <StatusPie status={status.status} size={14} />
               </div>
               <div className="text-[13px] font-semibold leading-tight text-text">{t.title}</div>
               <div className="mt-2 font-mono text-[9px] text-accent">{STATUS_META[status.status].label} ↗</div>

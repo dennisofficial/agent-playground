@@ -1,5 +1,8 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { DecisionRecordEntity } from './decision-record.entity';
+import { OrganizationEntity } from './organization.entity';
+import { RepoEntity } from './repo.entity';
 
 /**
  * A THREAD — the unit of work. One intent (a feature or a bugfix) = one sandbox = one worktree = one
@@ -22,9 +25,17 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   org_id!: string;
 
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
+
   /** The repo this thread builds against (FK → repos.id). */
   @Column({ type: 'uuid' })
   repo_id!: string;
+
+  @ManyToOne(() => RepoEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'repo_id' })
+  repo?: RepoEntity;
 
   /** What opened the thread: 'chat' | 'event' | 'control' (operator-created). */
   @Column({ type: 'text' })
@@ -54,6 +65,10 @@ export class ThreadEntity extends TimestampedEntity {
   /** The locked decision record (FK → decision_records.id); null until the upfront grill produces one. */
   @Column({ type: 'uuid', nullable: true })
   decision_record_id!: string | null;
+
+  @ManyToOne(() => DecisionRecordEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'decision_record_id' })
+  decisionRecord?: DecisionRecordEntity | null;
 
   /** The feature branch all sections stack on; null until the branch is cut. */
   @Column({ type: 'text', nullable: true })

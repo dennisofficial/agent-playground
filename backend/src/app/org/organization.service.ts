@@ -6,12 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  DecisionRecordEntity,
-  MemoryEntity,
-  OrgCredentialsEntity,
   OrgInviteEntity,
-  RepoEntity,
-  StimulusEntity,
   ThreadEntity,
   UserEntity,
   OrganizationEntity,
@@ -129,53 +124,38 @@ export class OrganizationService {
   }
 
   /**
-   * Delete an org and EVERYTHING under it. The live schema declares NO foreign keys, so there is no
-   * `ON DELETE CASCADE` — a parent-only `organizations.delete()` would ORPHAN every child row. So the
-   * sweep is EXPLICIT, mirroring `ThreadLifecycleService.deleteThreadDeep` (which sweeps a thread's
-   * children for the same reason):
+   * Delete an org and EVERYTHING under it. Two layers, matching `ThreadLifecycleService.deleteThreadDeep`:
    *
-   *   1. `deleteThreadDeep` each of the org's threads — tears down the per-thread container + git
-   *      worktree (side-effecting, not a DB delete) AND sweeps that thread's children (messages,
-   *      sections, phases, decision_records, stimuli, thread_sandboxes) + the thread row.
-   *   2. In one transaction, delete the remaining org-DIRECT rows — repos, org_credentials, org_invites,
-   *      organization_members, org-scoped memory, and any stimuli/decision_records NOT tied to a thread
-   *      (e.g. events parked on the org/repo before any thread existed) — then the org row itself.
+   *   1. PHYSICAL teardown per thread — `deleteThreadDeep` reclaims each thread's container + git worktree
+   *      (side effects no DB cascade can do) and deletes the thread row, which cascades that thread's
+   *      children. Resolve the driver service lazily (see the constructor note on the module cycle);
+   *      `strict: false` searches the whole app. The `.js` extension: a relative dynamic `import()` carries
+   *      ESM semantics under `moduleResolution: nodenext`, which requires the explicit extension.
+   *   2. Delete the org row — the `ON DELETE CASCADE` FKs (RestoreReferentialIntegrity migration) sweep
+   *      every remaining org-scoped row: repos, org_credentials, org_invites, organization_members,
+   *      org-scoped memory, and any stimuli/decision_records NEVER tied to a thread (events parked on the
+   *      org/repo before any thread existed).
    *
-   * Only the org's OWN rows go: `users` are shared across orgs, so just the `organization_members` join
-   * is removed (never the `users` rows). Idempotent: a missing org finds no threads and deletes nothing.
+   * Only the org's OWN rows go: `users` are shared across orgs (no FK from users → org), so just the
+   * `organization_members` join cascades, never the `users` rows. Idempotent: a missing org finds no
+   * threads and deletes nothing.
    */
   async deleteOrg(orgId: string): Promise<void> {
     const threads = await this.dataSource
       .getRepository(ThreadEntity)
       .find({ where: { org_id: orgId }, select: { id: true } });
 
-    // 1. Deep-delete each thread: side-effecting container/worktree teardown + the thread's child-row
-    //    sweep (there is no DB cascade). Resolve the driver service lazily (see the constructor note on
-    //    the module cycle); `strict: false` searches the whole app. The `.js` extension: a relative
-    //    dynamic `import()` carries ESM semantics under `moduleResolution: nodenext`, which requires the
-    //    explicit extension (static CJS imports don't).
     const { ThreadLifecycleService } = await import('../driver/thread-lifecycle.service.js');
     const threadLifecycle = this.moduleRef.get(ThreadLifecycleService, { strict: false });
     for (const { id } of threads) {
       await threadLifecycle.deleteThreadDeep(id, orgId);
     }
 
-    // 2. Sweep the org-direct rows + the org itself, atomically. Each table is explicit (no cascade).
-    //    `stimuli`/`decision_records` are deleted by `org_id` — a superset that also reclaims any rows
-    //    never tied to a thread; the thread-tied ones were already removed in step 1.
-    await this.dataSource.transaction(async (manager) => {
-      await manager.delete(StimulusEntity, { org_id: orgId });
-      await manager.delete(DecisionRecordEntity, { org_id: orgId });
-      await manager.delete(RepoEntity, { org_id: orgId });
-      await manager.delete(OrgCredentialsEntity, { org_id: orgId });
-      await manager.delete(OrgInviteEntity, { org_id: orgId });
-      await manager.delete(OrganizationMemberEntity, { org_id: orgId });
-      await manager.delete(MemoryEntity, { org_id: orgId });
-      await manager.delete(OrganizationEntity, { id: orgId });
-    });
+    // The org row delete cascades all remaining org-scoped rows via FK ON DELETE CASCADE.
+    await this.orgs.delete({ id: orgId });
 
     this.logger.log(
-      `deleted org ${orgId} (${threads.length} thread(s) torn down, org-scoped rows swept)`,
+      `deleted org ${orgId} (${threads.length} thread(s) torn down, org-scoped rows cascaded)`,
     );
   }
 

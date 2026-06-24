@@ -1,5 +1,6 @@
-import { Column, DeleteDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, DeleteDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
 
 /**
  * Atlas v2 semantic memory — a distilled fact + its embedding, the ONLY channel for cross-thread
@@ -28,6 +29,10 @@ export class MemoryEntity extends TimestampedEntity {
   /** The tenant (org id). NULL = the shared/global tier (recalled in every workspace). */
   @Column({ type: 'uuid', nullable: true })
   org_id!: string | null;
+
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity | null;
 
   /** Access tier: team:<id> | project:<id>. */
   @Column({ type: 'text' })

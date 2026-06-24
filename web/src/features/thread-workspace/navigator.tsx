@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
-import { KindBadge, StatusDot } from '@/components/ui/badges';
+import { KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { PipelineTree } from './pipeline-tree';
@@ -58,7 +58,7 @@ export function Navigator({
         <div className="mb-2 flex items-center gap-2">
           <KindBadge kind={meta.kind} />
           <span className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] text-accent">
-            <StatusDot status={meta.status} size={6} />
+            <StatusPie status={meta.status} size={13} />
             {STATUS_META[meta.status].label}
           </span>
           <div className="flex-1" />

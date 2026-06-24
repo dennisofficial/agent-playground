@@ -4,14 +4,13 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { inputCls } from '@/components/ui/field';
-import { useOrgFilter } from '@/components/providers/orgs-provider';
 import { useDeleteOrg } from '@/lib/api/orgs';
 import { ROUTES } from '@/lib/routes';
 
 /**
  * Type-the-slug-to-confirm delete dialog. Confirming hits `DELETE /web/orgs/:orgId` (owner-only), which
- * tears down the org's repos, threads, and live agent sessions. On success we drop the rail filter back to
- * "All" and route to the workspace (the deleted org's settings page no longer resolves).
+ * tears down the org's repos, threads, and live agent sessions. On success we route to the workspace (the
+ * deleted org's settings page no longer resolves).
  */
 export function DeleteOrgDialog({
   orgId,
@@ -25,7 +24,6 @@ export function DeleteOrgDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const { setFilter } = useOrgFilter();
   const del = useDeleteOrg(orgId);
   const [text, setText] = useState('');
   const armed = text.trim() === slug;
@@ -34,7 +32,6 @@ export function DeleteOrgDialog({
     if (!armed || del.isPending) return;
     del.mutate(undefined, {
       onSuccess: () => {
-        setFilter('all');
         onClose();
         router.push(ROUTES.workspace());
       },

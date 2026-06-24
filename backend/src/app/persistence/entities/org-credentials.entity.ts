@@ -1,5 +1,6 @@
-import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import { OrganizationEntity } from './organization.entity';
 
 /**
  * Per-org credentials Atlas resolves at point-of-use. Every secret column stores AES-256-GCM ciphertext
@@ -17,6 +18,10 @@ export class OrgCredentialsEntity extends TimestampedEntity {
   /** The owning org (FK → organizations). */
   @PrimaryColumn({ type: 'uuid' })
   org_id!: string;
+
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
 
   /** Credential scope: '*' = org default; otherwise a repo / token_name override. */
   @PrimaryColumn({ type: 'text', default: '*' })

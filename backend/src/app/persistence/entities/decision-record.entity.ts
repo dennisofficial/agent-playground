@@ -1,6 +1,10 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
+import { OrganizationEntity } from './organization.entity';
+import { RepoEntity } from './repo.entity';
+import { ThreadEntity } from './thread.entity';
+import { UserEntity } from './user.entity';
 
 /**
  * The locked DECISION RECORD — the upfront grill's durable output: the agreed overview, the
@@ -20,13 +24,25 @@ export class DecisionRecordEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   org_id!: string;
 
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'org_id' })
+  org?: OrganizationEntity;
+
   /** The project this record scopes to (FK → repos.id). */
   @Column({ type: 'uuid' })
   repo_id!: string;
 
+  @ManyToOne(() => RepoEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'repo_id' })
+  repo?: RepoEntity;
+
   /** The thread this record was produced for (FK → threads.id). */
   @Column({ type: 'uuid' })
   thread_id!: string;
+
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_id' })
+  thread?: ThreadEntity;
 
   // 'draft' | 'approved' | 'superseded'
   @Column({ type: 'text', default: 'draft' })
@@ -47,6 +63,10 @@ export class DecisionRecordEntity extends TimestampedEntity {
   /** Who approved it (a user id); null until approved. */
   @Column({ type: 'uuid', nullable: true })
   approved_by!: string | null;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'approved_by' })
+  approvedByUser?: UserEntity | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   approved_at!: Date | null;

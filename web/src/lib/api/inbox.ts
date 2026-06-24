@@ -1,6 +1,5 @@
 'use client';
 
-import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { env } from '@/lib/env';
 import { fetchWithRefresh } from './refresh';
@@ -67,41 +66,55 @@ export function useAllThreads() {
   });
 }
 
-export interface OrgThreadGroup {
-  orgId: string;
-  orgName: string;
+/** A repo subgroup: the in-flight threads on one repo. */
+export interface RepoThreadGroup {
+  repoId: string;
+  repoName: string;
   threads: InboxThread[];
 }
 
-/**
- * Group threads by org, ordered to match a provided org order (the rail order: owned then joined). Orgs
- * absent from `orgOrder` fall to the end. Empty orgs are omitted unless `keepEmpty` lists them.
- */
-export function groupThreadsByOrg(
-  threads: InboxThread[],
-  orgOrder: { id: string; name: string }[],
-): OrgThreadGroup[] {
-  const byId = new Map<string, OrgThreadGroup>();
-  // Seed in the rail order so groups render owned-first even when a later org's thread is newer.
-  for (const o of orgOrder) byId.set(o.id, { orgId: o.id, orgName: o.name, threads: [] });
-  for (const t of threads) {
-    let g = byId.get(t.org.id);
-    if (!g) {
-      g = { orgId: t.org.id, orgName: t.org.name, threads: [] };
-      byId.set(t.org.id, g);
-    }
-    g.threads.push(t);
-  }
-  return [...byId.values()].filter((g) => g.threads.length > 0);
+/** An org with its repos that have threads (the sidebar's org → repo → thread tree). */
+export interface OrgRepoGroup {
+  orgId: string;
+  orgName: string;
+  repos: RepoThreadGroup[];
 }
 
-/** Convenience hook: the grouped inbox + flat list, filtered to one org or 'all'. */
-export function useInbox(filter: 'all' | string, orgOrder: { id: string; name: string }[]) {
-  const { data, isLoading, isError } = useAllThreads();
-  const threads = useMemo(
-    () => (data ?? []).filter((t) => filter === 'all' || t.org.id === filter),
-    [data, filter],
-  );
-  const groups = useMemo(() => groupThreadsByOrg(threads, orgOrder), [threads, orgOrder]);
-  return { threads, groups, isLoading, isError };
+/**
+ * Group threads into an org → repo → thread tree, ordered to match `orgOrder` (owned then joined) so
+ * owned orgs sort first even when a later org's thread is newer; repos sort by first-seen. Only orgs and
+ * repos that actually have threads are returned — the sidebar overlays empty-org cards from `useOrgs()`.
+ */
+export function groupThreadsByOrgAndRepo(
+  threads: InboxThread[],
+  orgOrder: { id: string; name: string }[],
+): OrgRepoGroup[] {
+  interface OrgAcc {
+    orgId: string;
+    orgName: string;
+    repos: Map<string, RepoThreadGroup>;
+  }
+  const byOrg = new Map<string, OrgAcc>();
+  const ensureOrg = (id: string, name: string): OrgAcc => {
+    let o = byOrg.get(id);
+    if (!o) {
+      o = { orgId: id, orgName: name, repos: new Map() };
+      byOrg.set(id, o);
+    }
+    return o;
+  };
+  // Seed in the rail order so orgs render owned-first regardless of thread recency.
+  for (const o of orgOrder) ensureOrg(o.id, o.name);
+  for (const t of threads) {
+    const o = ensureOrg(t.org.id, t.org.name);
+    let r = o.repos.get(t.repo.id);
+    if (!r) {
+      r = { repoId: t.repo.id, repoName: t.repo.name, threads: [] };
+      o.repos.set(t.repo.id, r);
+    }
+    r.threads.push(t);
+  }
+  return [...byOrg.values()]
+    .map((o) => ({ orgId: o.orgId, orgName: o.orgName, repos: [...o.repos.values()] }))
+    .filter((o) => o.repos.length > 0);
 }
