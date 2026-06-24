@@ -4,7 +4,10 @@ import { GitModule } from '../git';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
 import { AtlasOrgCredentials, AtlasRepo, Organization } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
+import { OrgCredentialsController } from './credentials.controller';
+import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
+import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
 
 /**
@@ -25,6 +28,7 @@ import { TenantCredentialStore } from './tenant-credential.store';
       ATLAS_CONNECTION,
     ),
   ],
+  controllers: [OrgCredentialsController, RepoController, OnboardingController],
   providers: [TenantCredentialStore, CredentialResolver, OnboardingService],
   exports: [TenantCredentialStore, CredentialResolver, OnboardingService],
 })
