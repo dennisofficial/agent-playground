@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasMessage, AtlasThread } from '../persistence/entities';
+import { AtlasMessage, AtlasRepo, AtlasThread } from '../persistence/entities';
 import { AtlasWebSurface } from './atlas-web-surface';
 import {
   APPROVE_ACTION_ID,
@@ -32,7 +32,7 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
  * Zero v1 imports.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([AtlasThread, AtlasMessage], ATLAS_CONNECTION)],
+  imports: [TypeOrmModule.forFeature([AtlasThread, AtlasMessage, AtlasRepo], ATLAS_CONNECTION)],
   providers: [AtlasWebSurface],
   controllers: [WebSurfaceController],
   exports: [AtlasWebSurface],

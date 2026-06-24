@@ -12,9 +12,9 @@ import {
 } from '@nestjs/common';
 import { Observable, filter, map } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
-import { Public } from '@workspace/auth/server';
+import { CurrentUser, Public } from '@workspace/auth/server';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
@@ -27,8 +27,9 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
+import { OrganizationService } from '../org/organization.service';
 import { ATLAS_CONNECTION } from '../persistence/atlas-database.module';
-import { AtlasMessage, AtlasThread } from '../persistence/entities';
+import { AtlasMessage, AtlasRepo, AtlasThread, AtlasUser } from '../persistence/entities';
 
 const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
 const OPERATOR = { authorId: 'U-OPERATOR', authorName: 'Operator' };
@@ -64,10 +65,13 @@ export class WebSurfaceController {
     private readonly surface: AtlasWebSurface,
     private readonly driverStore: DriverStoreService,
     private readonly threadLifecycle: ThreadLifecycleService,
+    private readonly orgService: OrganizationService,
     @InjectRepository(AtlasThread, ATLAS_CONNECTION)
     private readonly threads: Repository<AtlasThread>,
     @InjectRepository(AtlasMessage, ATLAS_CONNECTION)
     private readonly messages: Repository<AtlasMessage>,
+    @InjectRepository(AtlasRepo, ATLAS_CONNECTION)
+    private readonly repos: Repository<AtlasRepo>,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -75,6 +79,37 @@ export class WebSurfaceController {
   @Get('ping')
   ping(): { ok: boolean; surface: string } {
     return { ok: true, surface: this.surface.name };
+  }
+
+  // ── cross-org inbox ──────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * `GET /web/threads` — every thread across ALL the caller's orgs, newest first. Powers the unified
+   * "All threads" inbox (no org switching). Login-gated only (inherently scoped to the user's
+   * memberships); each thread carries its org + repo so the UI can label it.
+   */
+  @Get('threads')
+  async allThreads(@CurrentUser() user: AtlasUser): Promise<unknown[]> {
+    const orgs = await this.orgService.listForUser(user.id);
+    if (orgs.length === 0) return [];
+    const orgIds = orgs.map((o) => o.id);
+    const [threads, repos] = await Promise.all([
+      this.threads.find({ where: { org_id: In(orgIds) }, order: { created_at: 'DESC' } }),
+      this.repos.find({ where: { org_id: In(orgIds) } }),
+    ]);
+    const orgById = new Map(orgs.map((o) => [o.id, o]));
+    const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.repo_id}`, r.name]));
+    return threads.map((t) => {
+      const org = orgById.get(t.org_id);
+      return {
+        threadId: t.id,
+        title: t.title,
+        origin: t.origin,
+        createdAt: t.created_at,
+        org: { id: t.org_id, slug: org?.slug, name: org?.name },
+        repo: { id: t.repo_id, name: repoName.get(`${t.org_id}:${t.repo_id}`) ?? t.repo_id },
+      };
+    });
   }
 
   // ── threads ────────────────────────────────────────────────────────────────────────────────────
