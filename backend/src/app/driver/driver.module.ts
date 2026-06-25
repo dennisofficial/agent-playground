@@ -39,8 +39,8 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
  *     auto-fix → handoff → one PR), bound as the REAL `JOB_DISPATCHER`.
  *   - `DriverStoreService` — the section/phase row reads/writes (explicit, resumable `status`/`step`).
  *   - `GitDriverRepoResolver` (behind `DRIVER_REPO`) — a job's project → a ready-to-use repo.
- *   - `PLANNER_LLM` — the section planner's chat-model port (Sonnet off `ANTHROPIC_API_KEY` /
- *     `CHAT_MODEL`, no new env var; key-less → the driver falls back to a single-phase plan).
+ *   - `PLANNER_LLM` — the section planner's chat-model port (a declarative chain on a hardcoded Sonnet,
+ *     keyed off `ANTHROPIC_API_KEY`; key-less → the driver falls back to a single-phase plan).
  *
  * THE DISPATCH SEAM OVERRIDE: `BrainModule` no longer binds the `JOB_DISPATCHER` no-op (it kept
  * `LoggingJobDispatcher` only as an exported fallback) — exactly the precedent W3 set when it removed
@@ -77,12 +77,9 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
     {
       provide: PLANNER_LLM,
-      inject: [EnvService, CredentialResolver],
-      useFactory: (env: EnvService, creds: CredentialResolver) =>
-        new AnthropicPlannerLlm(
-          (orgId) => creds.anthropicKey(orgId),
-          () => env.get('CHAT_MODEL'),
-        ),
+      inject: [CredentialResolver],
+      useFactory: (creds: CredentialResolver) =>
+        new AnthropicPlannerLlm((orgId) => creds.anthropicKey(orgId)),
     },
     SectionDriver,
     ThreadLifecycleService,

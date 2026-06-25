@@ -84,6 +84,8 @@ export interface ThreadMessage {
   postedAt: string;
   /** Client-only: an optimistic post not yet echoed by history. */
   local?: boolean;
+  /** Client-only: sent while a turn was streaming → queued behind it (rendered distinctly). */
+  queued?: boolean;
 }
 
 export function normalizeMessage(r: RawThreadMessage): ThreadMessage {

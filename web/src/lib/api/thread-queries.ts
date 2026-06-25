@@ -16,6 +16,8 @@ import {
   type ThreadMessage,
   type ThreadRef,
 } from './thread-api';
+import { addQueuedSend } from './queued-sends';
+import { isLiveTurnActive } from './thread-stream';
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -68,6 +70,10 @@ export function useSay(ref: ThreadRef) {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<ThreadMessage[]>(key);
+      // A message sent while a turn is still streaming is QUEUED behind it (the brain serializes turns
+      // per thread). Flag it so the UI relays the queued state instead of pretending it was handled.
+      const queued = isLiveTurnActive(ref.threadId);
+      if (queued) addQueuedSend(ref.threadId, text);
       const optimistic: ThreadMessage = {
         ts: `local-${Date.now()}`,
         author: 'user',
@@ -77,6 +83,7 @@ export function useSay(ref: ThreadRef) {
         kind: 'chat',
         postedAt: new Date().toISOString(),
         local: true,
+        queued,
       };
       qc.setQueryData<ThreadMessage[]>(key, [...(prev ?? []), optimistic]);
       return { prev };

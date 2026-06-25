@@ -12,19 +12,13 @@ describe('brain-llm (triage only after R3)', () => {
   });
 
   it('AnthropicBrainLlm constructs without a real key (lazy)', () => {
-    const llm = new AnthropicBrainLlm(
-      async () => undefined,
-      () => undefined,
-    );
+    const llm = new AnthropicBrainLlm(async () => undefined);
     expect(llm).toBeDefined();
     expect(typeof llm.triage).toBe('function');
   });
 
   it('triage returns undefined when no API key is configured', async () => {
-    const llm = new AnthropicBrainLlm(
-      async () => undefined, // no key
-      () => undefined,
-    );
+    const llm = new AnthropicBrainLlm(async () => undefined); // no key
     const result = await llm.triage({ kind: 'event', body: 'test' });
     expect(result).toBeUndefined();
   });

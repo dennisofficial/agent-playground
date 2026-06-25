@@ -231,6 +231,41 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-from-env');
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
+
+  it('tool bridge: server registered under options.mcpServers (not a stray top-level key); names auto-approved', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const mcpServers = { 'atlas-host-bridge': { __fake: 'server' } };
+    const names = ['mcp__atlas-host-bridge__submit_plan', 'mcp__atlas-host-bridge__get_pipeline_state'];
+    await core.runWithExtras(
+      { engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute' },
+      { mcpServers },
+      names,
+    );
+    const opts = captured.options!;
+    // The bridge server reaches the SDK under the `mcpServers` option — the bug spread the raw map so
+    // it landed as a stray top-level `Options['atlas-host-bridge']` and never registered.
+    expect(opts.mcpServers).toBe(mcpServers);
+    expect(opts).not.toHaveProperty('atlas-host-bridge');
+    // Qualified MCP tool names are auto-approved alongside the read tools.
+    expect(opts.allowedTools).toEqual(expect.arrayContaining(['Read', 'Glob', 'Grep', ...names]));
+  });
+
+  it('no bridge: allowedTools stays the read set and no mcpServers leak (worker invariant)', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    await core.run({
+      engine: 'claude',
+      task: 'x',
+      cwd: '/tmp/wt',
+      systemPrompt: 'p',
+      sandboxKey: 'k',
+      mode: 'execute',
+    });
+    const opts = captured.options!;
+    expect(opts.allowedTools).toEqual(['Read', 'Glob', 'Grep']);
+    expect(opts.mcpServers).toBeUndefined();
+  });
 });
 
 describe('EngineCore — Codex mode/home/credential wiring', () => {

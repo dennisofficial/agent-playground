@@ -1,4 +1,3 @@
-import { EnvService } from '@core/config/env/env.service';
 import { Module } from '@nestjs/common';
 import { CredentialResolver } from '../onboarding';
 import {
@@ -16,8 +15,8 @@ import { PlanVisibilityService } from './plan-visibility.service';
  *   - `ParkAndAskService` — park a section & ask in-thread, resolve on the human's reply;
  *   - `PlanVisibilityService` — post a section's plan for non-blocking visibility.
  *
- * The classifier's ambiguous-case LLM is bound behind `CLASSIFIER_LLM` (a cheap Haiku call off
- * `ANTHROPIC_API_KEY` / `GATE_MODEL`, no new env var; key-less → returns undefined → gate defaults to
+ * The classifier's ambiguous-case LLM is bound behind `CLASSIFIER_LLM` (a declarative chain on a cheap
+ * hardcoded Haiku, keyed off `ANTHROPIC_API_KEY`; key-less → returns undefined → gate defaults to
  * ask). `CHAT_SURFACE` is provided @Global by `SurfaceModule` (which the composing root imports), so it
  * resolves without importing it here.
  *
@@ -28,12 +27,9 @@ import { PlanVisibilityService } from './plan-visibility.service';
   providers: [
     {
       provide: CLASSIFIER_LLM,
-      inject: [EnvService, CredentialResolver],
-      useFactory: (env: EnvService, creds: CredentialResolver) =>
-        new AnthropicClassifierLlm(
-          (orgId) => creds.anthropicKey(orgId),
-          () => env.get('GATE_MODEL'),
-        ),
+      inject: [CredentialResolver],
+      useFactory: (creds: CredentialResolver) =>
+        new AnthropicClassifierLlm((orgId) => creds.anthropicKey(orgId)),
     },
     DecisionClassifier,
     ParkAndAskService,

@@ -1,7 +1,9 @@
+import { ChatAnthropic } from '@langchain/anthropic';
 import { Module, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
+import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity, RepoEntity, ThreadEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
@@ -12,6 +14,12 @@ import {
 } from './approval-blocks';
 import { parseWebApprovalMeta } from './web-approval-card';
 import { WebSurfaceController } from './web-surface.controller';
+import {
+  THREAD_TITLE_CHAIN,
+  ThreadTitleChain,
+  type ThreadTitleChainFactory,
+} from './thread-title.chain';
+import { ThreadTitleService } from './thread-title.service';
 import type { ApprovalVerdict } from '../brain/decision-approval.service';
 
 /**
@@ -33,7 +41,36 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
  */
 @Module({
   imports: [TypeOrmModule.forFeature([ThreadEntity, MessageEntity, RepoEntity], DB_CONNECTION)],
-  providers: [WebSurface],
+  providers: [
+    WebSurface,
+    ThreadTitleService,
+    {
+      // The per-org thread-title chain factory: resolve the tenant's Anthropic key (env fallback) and
+      // cache one declarative chain per key. Key-less → `undefined` (the service keeps the placeholder).
+      provide: THREAD_TITLE_CHAIN,
+      inject: [CredentialResolver],
+      useFactory: (creds: CredentialResolver): ThreadTitleChainFactory => {
+        const cache = new Map<string, ReturnType<typeof ThreadTitleChain.build>>();
+        return async (orgId) => {
+          const key = await creds.anthropicKey(orgId);
+          if (!key) return undefined;
+          let chain = cache.get(key);
+          if (!chain) {
+            chain = ThreadTitleChain.build(
+              new ChatAnthropic({
+                apiKey: key,
+                model: ThreadTitleChain.MODEL,
+                maxTokens: 32,
+                temperature: 0.3,
+              }),
+            );
+            cache.set(key, chain);
+          }
+          return chain;
+        };
+      },
+    },
+  ],
   controllers: [WebSurfaceController],
   exports: [WebSurface],
 })

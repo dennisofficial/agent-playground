@@ -1,34 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parsePhases, renderPlanContext } from './planner-llm';
+import { renderPlanContext } from './planner-llm';
 
 /**
- * W4 — the section planner's PURE helpers. The LLM adapter itself is faked in the driver tests; here we
- * pin the parsing + context-rendering that turn raw tool args / a plan input into the driver's shapes.
+ * W4 — the section planner's PURE helper. The LLM chains themselves are faked in the driver tests (the
+ * adapter is bound behind `PLANNER_LLM`); here we pin the context-rendering that turns a plan input into
+ * the prompt text. (Phase parsing is now the declarative chain's `withStructuredOutput`, no hand parser.)
  */
-describe('parsePhases', () => {
-  it('keeps only well-formed phases (title + brief both present)', () => {
-    const parsed = parsePhases({
-      phases: [
-        { title: 'A', brief: 'do a' },
-        { title: 'B' }, // missing brief — dropped
-        { brief: 'c' }, // missing title — dropped
-        { title: 'D', brief: 'do d' },
-      ],
-    });
-    expect(parsed).toEqual([
-      { title: 'A', brief: 'do a' },
-      { title: 'D', brief: 'do d' },
-    ]);
-  });
-
-  it('returns undefined for empty / malformed args (driver falls back to a single phase)', () => {
-    expect(parsePhases({ phases: [] })).toBeUndefined();
-    expect(parsePhases({})).toBeUndefined();
-    expect(parsePhases(undefined)).toBeUndefined();
-    expect(parsePhases({ phases: [{ title: 'x' }] })).toBeUndefined();
-  });
-});
-
 describe('renderPlanContext', () => {
   it('includes the overview, locked decisions, brief, and prior handoff', () => {
     const text = renderPlanContext({

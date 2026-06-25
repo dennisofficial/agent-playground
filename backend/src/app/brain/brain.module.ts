@@ -1,4 +1,3 @@
-import { EnvService } from '@core/config/env/env.service';
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DecisionGateModule } from '../decision-gate';
@@ -73,12 +72,9 @@ import { PlanReviewService } from './plan-review.service';
   providers: [
     {
       provide: BRAIN_LLM,
-      inject: [EnvService, CredentialResolver],
-      useFactory: (env: EnvService, creds: CredentialResolver) =>
-        new AnthropicBrainLlm(
-          (orgId) => creds.anthropicKey(orgId),
-          () => env.get('CHAT_MODEL'),
-        ),
+      inject: [CredentialResolver],
+      useFactory: (creds: CredentialResolver) =>
+        new AnthropicBrainLlm((orgId) => creds.anthropicKey(orgId)),
     },
     BrainStoreService,
     DecisionApprovalService,

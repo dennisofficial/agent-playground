@@ -95,10 +95,17 @@ export class BrainStoreService {
    * Append a typed transcript BLOCK from a brain turn — the durable record of the in-sandbox session.
    * `kind` is `'chat'` (assistant text), `'thinking'` (a thinking block), or `'tool'` (a tool call;
    * `meta` carries `{ name, input, result, isError }`). Authored by Atlas so it renders on the agent side.
+   *
+   * `createdAt` overrides the row's timestamp with the block's EMISSION time. This matters because the
+   * turn's blocks are persisted in a batch at turn END, while a follow-up the operator sends mid-turn is
+   * persisted immediately (real send time). `messages` is ordered by `created_at`, so without the override
+   * the batched blocks would all sort AFTER an interleaved user message that actually came after them — the
+   * message would jump to the top of the turn. Stamping each block with when it streamed restores true
+   * chronological order. (TypeORM honors an explicit `@CreateDateColumn` value on insert.)
    */
   async appendBlock(
     threadId: string,
-    block: { kind: string; text?: string; meta?: Record<string, unknown> | null },
+    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
@@ -109,6 +116,7 @@ export class BrainStoreService {
         text: block.text ?? '',
         kind: block.kind,
         meta: block.meta ?? null,
+        ...(block.createdAt ? { created_at: block.createdAt } : {}),
       }),
     );
   }

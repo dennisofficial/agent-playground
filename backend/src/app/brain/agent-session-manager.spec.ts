@@ -356,6 +356,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(toolBlock?.meta).toMatchObject({ name: 'Read', result: 'file contents', isError: false });
     expect(toolBlock?.meta?.input).toMatchObject({ path: 'README.md' });
 
+    // Each block is stamped with its strictly-increasing EMISSION time (not the turn-end time) so a
+    // follow-up the operator sends mid-turn orders chronologically instead of jumping above the turn.
+    const stamps = blocks.map((b) => (b.createdAt as Date).getTime());
+    expect(stamps.every((t) => typeof t === 'number')).toBe(true);
+    for (let i = 1; i < stamps.length; i++) expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
+
     // The final reply is NOT also persisted as a separate say() — only the "setting up…" line is.
     expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');

@@ -78,6 +78,8 @@ export class WebSurface implements ChatSurface {
   }>();
   /** Control channel: operator resume requests (POST /web/resume) — the driver subscribes via the port. */
   private readonly resumeSubject = new Subject<{ jobId: string }>();
+  /** Thread metadata updates (e.g. an auto-generated title) — the SSE controller fans these to clients. */
+  private readonly threadMetaSubject = new Subject<{ channel: string; threadId: string; title: string }>();
 
   /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
   readonly outbox: WebOutboundMessage[] = [];
@@ -106,6 +108,16 @@ export class WebSurface implements ChatSurface {
   /** Operator resume requests — the driver (which injects this port) subscribes and re-drives the job. */
   get resumeRequests$(): Observable<{ jobId: string }> {
     return this.resumeSubject.asObservable();
+  }
+
+  /** Thread metadata updates (title) — the SSE controller maps these to `{ type: 'thread_meta' }` frames. */
+  get threadMeta$(): Observable<{ channel: string; threadId: string; title: string }> {
+    return this.threadMetaSubject.asObservable();
+  }
+
+  /** Broadcast a thread metadata change (the channel is the repo id the SSE stream is keyed by). */
+  emitThreadMeta(channel: string, threadId: string, title: string): void {
+    this.threadMetaSubject.next({ channel, threadId, title });
   }
 
   /** Emit a resume request (called by the controller on `POST /web/resume`). */

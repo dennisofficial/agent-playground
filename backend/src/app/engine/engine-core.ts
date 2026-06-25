@@ -38,11 +38,16 @@ export interface EngineCoreConfig {
   claudeOauthToken?: string;
   /** Fallback Anthropic API key (ANTHROPIC_API_KEY). */
   anthropicApiKey?: string;
-  /** Default Claude model (WORKER_MODEL ?? WORKER_MODEL). */
-  workerModel?: string;
-  /** Default Codex model (CODEX_MODEL ?? CODEX_MODEL). */
-  codexModel?: string;
 }
+
+/**
+ * The agentic-engine model ids — CODE CONSTANTS, never env-configured (env vars are for per-environment
+ * config; the model choice doesn't change across local/dev/staging/prod). A per-turn `args.model` still
+ * overrides (e.g. the thread brain pins its own). The Claude id is the `'opus'` alias (auto-tracks latest
+ * Opus, like the brain); the Codex id is the Codex SDK's coding model.
+ */
+const DEFAULT_WORKER_MODEL = 'opus';
+const DEFAULT_CODEX_MODEL = 'gpt-5-codex';
 
 /** A minimal logger so the core stays Nest-free. */
 export interface CoreLogger {
@@ -123,17 +128,22 @@ export class EngineCore {
   }
 
   /**
-   * Like `run`, but passes extra Claude SDK options (e.g. `mcpServers` for the tool bridge).
-   * Used by the in-container entrypoint when the tool-bridge is active; the host `EngineRunner`
-   * calls the plain `run` path (the bridge is wired host-side there).
+   * Like `run`, but passes extra Claude SDK options (e.g. `mcpServers` for the tool bridge) plus the
+   * bridge's MCP tool names. Used by the in-container entrypoint when the tool-bridge is active; the
+   * host `EngineRunner` calls the plain `run` path (the bridge is wired host-side there).
+   *
+   * `extraClaudeOptions` is spread verbatim into the SDK `Options` — pass `{ mcpServers }`, NOT the
+   * raw server map, or the server lands as a stray top-level key and never registers.
+   * `bridgeToolNames` are the qualified `mcp__<server>__<tool>` names to auto-approve.
    */
   async runWithExtras(
     args: RunEngineArgs,
     extraClaudeOptions?: Record<string, unknown>,
+    bridgeToolNames?: string[],
   ): Promise<EngineRunResult> {
     return args.engine === 'codex'
       ? this.runCodex(args)
-      : this.runClaude(args, extraClaudeOptions);
+      : this.runClaude(args, extraClaudeOptions, bridgeToolNames);
   }
 
   // ── Claude ────────────────────────────────────────────────────────────────────────────────────
@@ -141,6 +151,7 @@ export class EngineCore {
   private async runClaude(
     args: RunEngineArgs,
     extraClaudeOptions?: Record<string, unknown>,
+    bridgeToolNames?: string[],
   ): Promise<EngineRunResult> {
     const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream } = args;
 
@@ -151,7 +162,7 @@ export class EngineCore {
     }
 
     const auth = this.resolveAuth('claude', args.auth);
-    const model = args.model ?? this.cfg.workerModel;
+    const model = args.model ?? DEFAULT_WORKER_MODEL;
 
     // Pin the SDK subprocess to Atlas's ISOLATED config/state home — never ~/.claude.
     const claudeConfigDir = atlasEngineHomeDir(this.homeRoot(), 'claude', sandboxKey);
@@ -171,7 +182,10 @@ export class EngineCore {
       // No skills: settingSources [] means NO on-disk config files are read (full isolation).
       settingSources: [],
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
-      allowedTools: AUTO_APPROVE,
+      // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
+      // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
+      // they're host-controlled, never a human prompt. Empty for non-bridge turns (workers).
+      allowedTools: [...AUTO_APPROVE, ...(bridgeToolNames ?? [])],
       canUseTool: makeCanUseTool(readOnly, cwd, (plan) => {
         capturedPlan = plan;
       }),
@@ -328,7 +342,7 @@ export class EngineCore {
   private async runCodex(args: RunEngineArgs): Promise<EngineRunResult> {
     const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal } = args;
     const auth = this.resolveAuth('codex', args.auth);
-    const model = args.model ?? this.cfg.codexModel;
+    const model = args.model ?? DEFAULT_CODEX_MODEL;
     const readOnly = mode !== 'execute';
 
     const client = this.getCodex(sandboxKey, auth);

@@ -6,15 +6,19 @@ import { env } from '@/lib/env';
 import { connectivity } from './connectivity';
 import { qk } from './query-keys';
 import { refreshSession } from './refresh';
+import type { InboxThread } from './inbox';
 import type { ThreadRef } from './thread-api';
 import { applyStreamFrame, endLiveTurn } from './thread-stream';
+import { clearQueuedSends } from './queued-sends';
 
-/** A frame off the repo SSE: a durable-post change-signal, or a live engine-stream frame. */
+/** A frame off the repo SSE: a durable-post change-signal, a live engine-stream frame, or a meta update. */
 interface SseFrame {
   type?: string;
   threadId?: string;
   seq?: number;
   event?: { kind?: string };
+  /** `thread_meta` frame: the new thread title (e.g. an auto-generated one). */
+  title?: string;
 }
 
 /**
@@ -70,12 +74,28 @@ export function useThreadEvents(ref: ThreadRef): void {
       if (frame?.type === 'stream') {
         if (frame.threadId !== threadId) return; // only the open thread's live turn
         if (frame.event?.kind === 'turn_end') {
-          // Reconcile: refetch durable messages, THEN clear the live buffer (so no gap/flicker).
-          void reconcileNow().then(() => endLiveTurn(threadId));
+          // Reconcile: refetch durable messages, THEN clear the live buffer (so no gap/flicker). The
+          // blocking turn is done, so any messages queued behind it are no longer waiting — drop the
+          // queued tags; their durable rows now settle into chronological order.
+          void reconcileNow().then(() => {
+            endLiveTurn(threadId);
+            clearQueuedSends(threadId);
+          });
         } else {
           // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store.
           applyStreamFrame(threadId, frame.seq ?? 0, frame.event);
         }
+        return;
+      }
+      if (frame?.type === 'thread_meta' && frame.threadId && frame.title) {
+        // A thread title changed (e.g. the auto-generated one). Patch the inbox cache in place — the
+        // sidebar AND the navigator header both read the title from `allThreads` — then invalidate as a
+        // backstop. (The navigator/sidebar update live; no message frame is involved in titling.)
+        const { threadId: id, title } = frame;
+        qc.setQueryData<InboxThread[]>(qk.allThreads(), (prev) =>
+          prev?.map((t) => (t.id === id ? { ...t, title } : t)),
+        );
+        void qc.invalidateQueries({ queryKey: qk.allThreads() });
         return;
       }
       // `{ type: 'message' }` (or any non-stream frame) — a durable post landed → change-signal refetch.
@@ -90,6 +110,9 @@ export function useThreadEvents(ref: ThreadRef): void {
       es.onopen = () => {
         refreshedOnce = false;
         connectivity.reportReachable();
+        // Catch a title generated before this stream subscribed: pull the durable title from `allThreads`
+        // (a `thread_meta` frame could have fired during the connect gap).
+        void qc.invalidateQueries({ queryKey: qk.allThreads() });
       };
       es.onmessage = (e: MessageEvent) => {
         connectivity.reportReachable();

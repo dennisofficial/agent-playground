@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Brain, ChevronRight, ExternalLink, Lock, MessageSquare, Wrench } from 'lucide-react';
+import { Brain, ChevronRight, Clock, ExternalLink, Lock, MessageSquare, Wrench } from 'lucide-react';
 import type { SystemTone } from './classify';
 import type { ThreadMessage } from '@/lib/api/thread-api';
 import type { LiveTurn } from '@/lib/api/thread-stream';
@@ -28,15 +28,25 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
   );
 }
 
-export function UserBubble({ message }: { message: ThreadMessage }) {
+export function UserBubble({ message, queued = false }: { message: ThreadMessage; queued?: boolean }) {
   return (
-    <div className="anim-fadeUp flex justify-end">
+    <div className="anim-fadeUp flex flex-col items-end gap-1">
       <div
         className="max-w-[74%] whitespace-pre-wrap rounded-[13px] rounded-tr-sm px-3.5 py-2.5 text-[13px] leading-relaxed text-text"
-        style={{ background: 'var(--accent-soft)', border: '1px solid var(--accent-line)' }}
+        style={{
+          background: 'var(--accent-soft)',
+          border: '1px solid var(--accent-line)',
+          opacity: queued ? 0.72 : 1,
+        }}
       >
         {message.text}
       </div>
+      {queued ? (
+        <span className="flex items-center gap-1 pr-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
+          <Clock size={10} className="shrink-0" />
+          queued · sends when the current turn finishes
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
 } from './approval-blocks';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
+import { ThreadTitleService } from './thread-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
@@ -79,6 +80,7 @@ export class WebSurfaceController {
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
+    private readonly threadTitle: ThreadTitleService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -154,13 +156,16 @@ export class WebSurfaceController {
     // Resolve the repo WITHIN the caller's org — the thread's org_id/repo_id derive from this resolved
     // row, never from raw input (so the denormalized tenant keys can't be pointed at another org's repo).
     const repo = await this.requireRepo(repoId, org.id);
+    // The frontend-derived first line seeds the row as an INSTANT placeholder; the mini-model upgrades it
+    // below (compare-and-set keyed off this exact placeholder, so a fast rename is never clobbered).
+    const placeholder = body.title ?? null;
     const thread = await this.threads.save(
       this.threads.create({
         org_id: org.id,
         repo_id: repo.id,
         origin: 'control',
         surface_thread_ref: null,
-        title: body.title ?? null,
+        title: placeholder,
         base_branch: body.baseBranch ?? null,
       }),
     );
@@ -170,6 +175,10 @@ export class WebSurfaceController {
       threadTs: thread.id,
       ...OPERATOR,
     });
+    // Fire-and-forget: generate a concise title from the first message and push it live (see service).
+    void this.threadTitle
+      .generateAndApply(thread.id, org.id, repo.id, text, placeholder)
+      .catch((err) => this.logger.warn(`title gen dispatch failed for ${thread.id}: ${err}`));
     this.logger.log(`web created thread ${thread.id} on ${org.id}/${repo.id}`);
     return { threadId: thread.id };
   }
@@ -262,7 +271,16 @@ export class WebSurfaceController {
         }),
       ),
     );
-    return merge(snapshot$, live$, messages$);
+    // Thread metadata (e.g. an auto-generated title) → a targeted live update the client applies in place.
+    const meta$ = this.surface.threadMeta$.pipe(
+      filter((m) => m.channel === repoId),
+      map(
+        (m): MessageEvent => ({
+          data: { type: 'thread_meta', threadId: m.threadId, title: m.title },
+        }),
+      ),
+    );
+    return merge(snapshot$, live$, messages$, meta$);
   }
 
   /** `POST …/threads/:threadId/approve` — submit a plan verdict. */

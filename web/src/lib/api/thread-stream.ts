@@ -172,6 +172,15 @@ export function endLiveTurn(threadId: string): void {
   store.end(threadId);
 }
 
+/**
+ * Is a turn currently streaming for this thread? Read OUTSIDE React (e.g. in a mutation's `onMutate`) to
+ * decide whether a just-sent message is QUEUED behind a running turn — the brain serializes turns per
+ * thread, so a follow-up sent mid-turn waits for the current one to finish.
+ */
+export function isLiveTurnActive(threadId: string): boolean {
+  return store.getSnapshot().get(threadId)?.active ?? false;
+}
+
 /** Subscribe to one thread's in-flight live turn (the conversation renders it below durable messages). */
 export function useLiveTurn(threadId: string): LiveTurn | undefined {
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot).get(threadId);

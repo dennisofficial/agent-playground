@@ -57,12 +57,8 @@ export interface IEnvConfig {
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
 
-  // LLM knobs (harness reads these; defaults applied in code, so all optional)
-  CHAT_MODEL?: string;
-  CHAT_TEMPERATURE?: number;
-  WORKER_ENGINE?: string;
-  WORKER_MODEL?: string;
-  CODEX_MODEL?: string;
+  // NOTE: model ids (chat chains AND agentic engine/Codex/brain sessions) are hardcoded code constants,
+  // NOT env-configurable — env vars are for per-environment config, and the model choice isn't that.
 
   // Board / data selectors
   BOARD?: string;
@@ -73,9 +69,6 @@ export interface IEnvConfig {
   HARNESS_TEAM_ID?: string; // team tier for memory scoping (default 'local')
   CHANNEL_HYDRATE_LIMIT?: number; // channel messages re-loaded into memory at boot (default 500)
   HARNESS_TIMESTAMP_GAP_MS?: number; // time gap (ms) triggering a divider in LLM history (default 3600000 = 1h)
-  GATE_MODEL?: string; // soft-gate model (default in code: Haiku)
-  EXTRACT_MODEL?: string; // reconcile extraction model (default in code: Haiku)
-  GUARD_MODEL?: string; // recursion-guard model (default in code: Haiku)
   RECURSION_GUARD_ENABLED?: boolean; // false → disable the loop-detection guard (default: true)
   RECURSION_GUARD_WINDOW?: number; // rolling-window size for the guard (default: 12)
   TOOL_LOOP_GUARD_ENABLED?: boolean; // false → disable the tool-call loop guard (default: true)
@@ -218,7 +211,6 @@ export interface IEnvConfig {
   // CLAUDE_OAUTH_TOKEN: a `CLAUDE_CODE_OAUTH_TOKEN` for subscription-mode Claude turns (used
   // only when ENGINE_AUTH_MODE='subscription'). Strips ambient ANTHROPIC_API_KEY at the seam.
   CLAUDE_OAUTH_TOKEN?: string;
-  // WORKER_MODEL / CODEX_MODEL (declared above): model overrides for engine turns, else SDK defaults.
   // GITHUB_TOKEN: the GitHub token Atlas's PR client + authenticated git ops use. Rides in
   // GIT_CONFIG_* / an Authorization header per invocation — never in argv / .git/config.
   // Unset → public-repo / no-PR flows only.
@@ -348,12 +340,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   ANTHROPIC_API_KEY: Joi.string().optional(),
   OPENAI_API_KEY: Joi.string().optional(),
 
-  // LLM knobs
-  CHAT_MODEL: Joi.string().optional(),
-  CHAT_TEMPERATURE: Joi.number().optional(),
-  WORKER_ENGINE: Joi.string().optional(),
-  WORKER_MODEL: Joi.string().optional(),
-  CODEX_MODEL: Joi.string().optional(),
+  // (Model ids are hardcoded code constants, not env-configurable — see the interface note.)
 
   // Board / data selectors
   BOARD: Joi.string().optional(),
@@ -364,9 +351,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   HARNESS_TEAM_ID: Joi.string().optional(),
   CHANNEL_HYDRATE_LIMIT: Joi.number().integer().min(1).optional(),
   HARNESS_TIMESTAMP_GAP_MS: Joi.number().integer().min(1).optional(),
-  GATE_MODEL: Joi.string().optional(),
-  EXTRACT_MODEL: Joi.string().optional(),
-  GUARD_MODEL: Joi.string().optional(),
   RECURSION_GUARD_ENABLED: Joi.boolean().optional(),
   RECURSION_GUARD_WINDOW: Joi.number().integer().min(1).optional(),
   TOOL_LOOP_GUARD_ENABLED: Joi.boolean().optional(),
@@ -427,7 +411,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   LANGFUSE_TRACING_ENVIRONMENT: Joi.string().optional(),
 
   // Atlas v2 (host-only local substrate; reuses v1 values where they exist — REPOS_ROOT,
-  // AGENT_HOME_ROOT, WORKER_MODEL, CODEX_MODEL declared above)
+  // AGENT_HOME_ROOT declared above)
   ENGINE_AUTH_MODE: Joi.string()
     .valid('api_key', 'subscription')
     .optional(),

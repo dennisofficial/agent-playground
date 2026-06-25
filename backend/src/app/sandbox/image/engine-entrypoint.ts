@@ -26,6 +26,7 @@
 import { randomUUID } from 'node:crypto';
 import { EngineCore, type EngineCoreConfig } from '../../engine/engine-core';
 import type { EngineEvent, EngineRunResult, RunEngineArgs } from '../../engine/engine.types';
+import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
 
 /** The serialized turn — everything `RunEngineArgs` carries except host-only, non-serializable bits. */
 type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge'> & {
@@ -131,8 +132,6 @@ async function main(): Promise<void> {
     authMode: process.env.ENGINE_AUTH_MODE as EngineCoreConfig['authMode'],
     claudeOauthToken: process.env.CLAUDE_OAUTH_TOKEN,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    workerModel: process.env.WORKER_MODEL,
-    codexModel: process.env.CODEX_MODEL,
   };
 
   const core = new EngineCore(claudeSdk, codexSdk, cfg, {
@@ -140,7 +139,7 @@ async function main(): Promise<void> {
   });
 
   // ── Build extra Claude options for the tool bridge ─────────────────────────────────────────
-  let mcpServers: Record<string, unknown> | undefined;
+  let bridge: BridgeClaudeOptions | undefined;
 
   if (spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
     // A shared map: tool_request id → { resolve, reject }.  Populated by each tool call handler,
@@ -178,28 +177,29 @@ async function main(): Promise<void> {
     );
 
     const server = claudeSdk.createSdkMcpServer({
-      name: 'atlas-host-bridge',
+      name: BRIDGE_SERVER_NAME,
       version: '1.0.0',
       instructions: 'Atlas host tools. Call these to interact with the host harness.',
       tools,
       alwaysLoad: true,
     });
 
-    mcpServers = { 'atlas-host-bridge': server };
+    // Assemble the SDK option shape (`{ mcpServers }`) + the qualified tool names to auto-approve.
+    bridge = buildBridgeClaudeOptions(server, spec.toolBridgeTools);
   }
 
   // ── Build the RunEngineArgs for EngineCore ────────────────────────────────────────────────
-  const runArgs: RunEngineArgs & { _extraClaudeOptions?: Record<string, unknown> } = {
+  const runArgs: RunEngineArgs = {
     ...spec,
     onEvent: (e: EngineEvent) => emit({ t: 'event', e }),
-    // Pass the MCP servers through as extra options (EngineCore's runClaude merges them in below).
-    ...(mcpServers ? { _extraClaudeOptions: { mcpServers } } : {}),
   };
 
-  // EngineCore.run doesn't accept _extraClaudeOptions — we need to pass mcpServers through the
-  // SDK's Options.  Patch EngineCore to accept an optional extraOptions param for the bridge.
-  // Since we control EngineCore and it's bundled, we call it directly with the extended contract.
-  const result: EngineRunResult = await core.runWithExtras(runArgs, mcpServers as Record<string, unknown> | undefined);
+  // Register the bridge MCP server under the SDK's `mcpServers` option and auto-approve its tools.
+  const result: EngineRunResult = await core.runWithExtras(
+    runArgs,
+    bridge?.extraClaudeOptions,
+    bridge?.bridgeToolNames,
+  );
   emit({ t: 'final', r: result });
 }
 

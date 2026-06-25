@@ -16,7 +16,7 @@ export {
 export {
   PLANNER_LLM,
   AnthropicPlannerLlm,
-  parsePhases,
+  PlannerChains,
   renderPlanContext,
   type PlannerLlm,
   type PlannedPhase,

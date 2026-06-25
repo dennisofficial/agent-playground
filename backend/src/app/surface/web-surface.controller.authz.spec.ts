@@ -32,6 +32,7 @@ function makeController(threadOrgId: string) {
     threads as never,
     messages as never,
     {} as never, // repos
+    {} as never, // threadTitle
   );
   return { controller, deleteThreadDeep, threads, messages };
 }

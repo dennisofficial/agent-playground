@@ -1,4 +1,10 @@
 import { ChatAnthropic } from '@langchain/anthropic';
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
+import { SystemMessage } from '@langchain/core/messages';
+import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
+import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
+import { StringOutputParser } from '@langchain/core/output_parsers';
+import { z } from 'zod';
 import type { Decision, DecisionRecord } from '../domain';
 
 /**
@@ -12,9 +18,10 @@ import type { Decision, DecisionRecord } from '../domain';
  * one-shot `extractDecisions` call mines the plan for the notable always-ask-shaped calls the gate then
  * classifies, and a one-shot `handoff` call summarizes what a finished section produced for the next.
  *
- * Clean-room: a tiny direct `ChatAnthropic` use (LangChain is dual-published / statically importable),
- * NOT v1's `ChatModelFactory`. Zero v1 imports. Key-less → every method returns `undefined`, and the
- * driver falls back to a single-phase plan / the brief itself (degrades, never throws).
+ * The LLM mechanics are declarative LangChain chains (`prompt → llm.withStructuredOutput(zod)`, and a
+ * plain `StringOutputParser` for the text handoff) — the house style, NOT hand-rolled `bindTools` +
+ * `tool_calls` digging. Model is a code constant (Sonnet). Key-less → every method returns `undefined`,
+ * and the driver falls back to a single-phase plan / the brief itself (degrades, never throws).
  */
 
 /** One phase of a section's locked plan, as the planner emits it (pre-persistence). */
@@ -78,173 +85,190 @@ export interface PlannerLlm {
 
 export const PLANNER_LLM = Symbol('PLANNER_LLM');
 
-const PLAN_SYSTEM = [
-  'You are Atlas\'s section planner. You turn ONE section of an approved feature into a concrete, ordered',
-  'list of PHASES. A phase is a single focused unit of work an engineer completes in one sitting (one',
-  'fresh engine session). Keep phases coherent and sequential — later phases build on earlier ones.',
-  '',
-  'You are bound by the LOCKED decision record: respect its architecture/system calls, do NOT re-litigate',
-  'them. Plan only HOW to implement this section within those calls. Prefer 1–4 phases; a small section',
-  'is ONE phase. Each phase needs a short title and a concrete brief (what to build, which files/areas).',
-  '',
-  'ALWAYS make the LAST phase a VERIFICATION phase: run the repo\'s own typecheck/build/tests and confirm',
-  'the section\'s change actually works (not a guess). If the section DELETES or removes code, an early',
-  'phase must first PROVE the target is unused — find every importer, intra-file caller, and dynamic/string',
-  'reference — before a later phase removes it. Do not plan a standalone "investigate the codebase" phase',
-  '(the repo is already investigated upstream). Reply with ONLY the tool call.',
-].join('\n');
+/**
+ * The section-planner chains. One namespace, four declarative chains — all sharing the rendered plan
+ * context as a single `{input}` template variable (so arbitrary content can't break templating).
+ */
+export namespace PlannerChains {
+  export const MODEL = 'claude-sonnet-4-5-20250929';
 
-const REVIEW_SYSTEM = [
-  'You are a senior reviewer doing ONE pass over a draft section plan (the Codex review loop). Tighten it:',
-  'merge redundant phases, split an overloaded one, fix ordering, surface a missing step. Make the SMALLEST',
-  'set of changes that materially improves it — if it is already sound, return it unchanged. Stay within the',
-  'locked decision record. Reply with ONLY the tool call (the full revised phase list).',
-].join('\n');
+  const PHASES_SCHEMA = z.object({
+    phases: z.array(z.object({ title: z.string(), brief: z.string() })),
+  });
+  const DECISIONS_SCHEMA = z.object({
+    decisions: z.array(z.object({ description: z.string(), context: z.string().optional() })),
+  });
 
-const EXTRACT_SYSTEM = [
-  'You read a section\'s phased plan and list the NOTABLE engineering decisions it makes that a human might',
-  'want to weigh in on — schema/data-model changes, public/cross-service API contracts, new dependencies or',
-  'services, infrastructure/topology, cross-cutting patterns (auth/caching/state/concurrency/error-handling),',
-  'and one-way doors. Skip pure internal mechanics (naming, file placement, refactors). Each item is one line.',
-  '',
-  'Be EXHAUSTIVE about SECURITY & AUTH-MECHANISM decisions — surface each as its OWN item, never bundled:',
-  'the password-hashing algorithm, the JWT/token library choice, the token strategy (signing algo, expiry,',
-  'refresh/rotation, storage location), OAuth/SSO/SAML, session/cookie strategy, encryption/crypto, secret',
-  'storage. A plan that "adds JWT auth" makes SEVERAL such decisions — list them all.',
-  '',
-  'If the plan makes none, return an empty list. Reply with ONLY the tool call.',
-].join('\n');
+  const PLAN_SYSTEM = [
+    "You are Atlas's section planner. You turn ONE section of an approved feature into a concrete, ordered",
+    'list of PHASES. A phase is a single focused unit of work an engineer completes in one sitting (one',
+    'fresh engine session). Keep phases coherent and sequential — later phases build on earlier ones.',
+    '',
+    'You are bound by the LOCKED decision record: respect its architecture/system calls, do NOT re-litigate',
+    'them. Plan only HOW to implement this section within those calls. Prefer 1–4 phases; a small section',
+    'is ONE phase. Each phase needs a short title and a concrete brief (what to build, which files/areas).',
+    '',
+    "ALWAYS make the LAST phase a VERIFICATION phase: run the repo's own typecheck/build/tests and confirm",
+    "the section's change actually works (not a guess). If the section DELETES or removes code, an early",
+    'phase must first PROVE the target is unused — find every importer, intra-file caller, and dynamic/string',
+    'reference — before a later phase removes it. Do not plan a standalone "investigate the codebase" phase',
+    '(the repo is already investigated upstream).',
+  ].join('\n');
 
-const HANDOFF_SYSTEM = [
-  'You summarize what a just-finished section produced so the NEXT section can build on it. Two or three',
-  'sentences: what now exists (modules/contracts/endpoints), and anything the next section must know. Be',
-  'concrete and terse. Reply with plain text (no tool call).',
-].join('\n');
+  const REVIEW_SYSTEM = [
+    'You are a senior reviewer doing ONE pass over a draft section plan (the Codex review loop). Tighten it:',
+    'merge redundant phases, split an overloaded one, fix ordering, surface a missing step. Make the SMALLEST',
+    'set of changes that materially improves it — if it is already sound, return it unchanged. Stay within the',
+    'locked decision record (return the full revised phase list).',
+  ].join('\n');
 
-const PHASES_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    phases: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          title: { type: 'string' },
-          brief: { type: 'string' },
-        },
-        required: ['title', 'brief'],
-      },
-    },
-  },
-  required: ['phases'],
-} as const;
+  const EXTRACT_SYSTEM = [
+    "You read a section's phased plan and list the NOTABLE engineering decisions it makes that a human might",
+    'want to weigh in on — schema/data-model changes, public/cross-service API contracts, new dependencies or',
+    'services, infrastructure/topology, cross-cutting patterns (auth/caching/state/concurrency/error-handling),',
+    'and one-way doors. Skip pure internal mechanics (naming, file placement, refactors). Each item is one line.',
+    '',
+    'Be EXHAUSTIVE about SECURITY & AUTH-MECHANISM decisions — surface each as its OWN item, never bundled:',
+    'the password-hashing algorithm, the JWT/token library choice, the token strategy (signing algo, expiry,',
+    'refresh/rotation, storage location), OAuth/SSO/SAML, session/cookie strategy, encryption/crypto, secret',
+    'storage. A plan that "adds JWT auth" makes SEVERAL such decisions — list them all.',
+    '',
+    'If the plan makes none, return an empty list.',
+  ].join('\n');
+
+  const HANDOFF_SYSTEM = [
+    'You summarize what a just-finished section produced so the NEXT section can build on it. Two or three',
+    'sentences: what now exists (modules/contracts/endpoints), and anything the next section must know. Be',
+    'concrete and terse. Reply with plain text.',
+  ].join('\n');
+
+  /** Compose `system + {input}` → structured/typed phases, for an input rendered by `renderUser`. */
+  const phasesChain = <I>(
+    llm: BaseChatModel,
+    system: string,
+    renderUser: (i: I) => string,
+  ): Runnable<I, PlannedPhase[]> =>
+    RunnableSequence.from<I, PlannedPhase[]>([
+      RunnableLambda.from((i: I) => ({ input: renderUser(i) })),
+      ChatPromptTemplate.fromMessages([
+        new SystemMessage(system),
+        HumanMessagePromptTemplate.fromTemplate('{input}'),
+      ]),
+      llm.withStructuredOutput(PHASES_SCHEMA, { name: 'emit_phases' }),
+      RunnableLambda.from((o: z.infer<typeof PHASES_SCHEMA>) => o.phases),
+    ]);
+
+  export const planSection = (llm: BaseChatModel): Runnable<PlanSectionInput, PlannedPhase[]> =>
+    phasesChain<PlanSectionInput>(llm, PLAN_SYSTEM, (i) => renderPlanContext(i)).withConfig({
+      runName: 'Plan Section',
+    });
+
+  export const reviewPlan = (
+    llm: BaseChatModel,
+  ): Runnable<PlanSectionInput & { draft: PlannedPhase[] }, PlannedPhase[]> =>
+    phasesChain<PlanSectionInput & { draft: PlannedPhase[] }>(llm, REVIEW_SYSTEM, (i) => {
+      const draft = i.draft.map((p, n) => `${n + 1}. ${p.title}: ${p.brief}`).join('\n');
+      return `${renderPlanContext(i)}\n\nDraft plan:\n${draft}`;
+    }).withConfig({ runName: 'Review Plan' });
+
+  export const extractDecisions = (
+    llm: BaseChatModel,
+  ): Runnable<{ brief: string; phases: PlannedPhase[] }, PlannedDecision[]> =>
+    RunnableSequence.from<{ brief: string; phases: PlannedPhase[] }, PlannedDecision[]>([
+      RunnableLambda.from((i: { brief: string; phases: PlannedPhase[] }) => {
+        const phases = i.phases.map((p, n) => `${n + 1}. ${p.title}: ${p.brief}`).join('\n');
+        return { input: `Section: ${i.brief}\n\nPlan:\n${phases}` };
+      }),
+      ChatPromptTemplate.fromMessages([
+        new SystemMessage(EXTRACT_SYSTEM),
+        HumanMessagePromptTemplate.fromTemplate('{input}'),
+      ]),
+      llm.withStructuredOutput(DECISIONS_SCHEMA, { name: 'emit_decisions' }),
+      RunnableLambda.from((o: z.infer<typeof DECISIONS_SCHEMA>) =>
+        o.decisions
+          .filter((d) => Boolean(d.description))
+          .map((d) => ({ description: d.description, ...(d.context ? { context: d.context } : {}) })),
+      ),
+    ]).withConfig({ runName: 'Extract Decisions' });
+
+  export const handoff = (
+    llm: BaseChatModel,
+  ): Runnable<{ brief: string; phases: PlannedPhase[]; reports: string[] }, string> =>
+    RunnableSequence.from<{ brief: string; phases: PlannedPhase[]; reports: string[] }, string>([
+      RunnableLambda.from((i: { brief: string; phases: PlannedPhase[]; reports: string[] }) => {
+        const phases = i.phases.map((p) => `- ${p.title}`).join('\n');
+        const reports = i.reports.map((r, n) => `Phase ${n + 1} report: ${r}`).join('\n\n');
+        return { input: `Section: ${i.brief}\n\nPhases:\n${phases}\n\n${reports}`.slice(0, 16000) };
+      }),
+      ChatPromptTemplate.fromMessages([
+        new SystemMessage(HANDOFF_SYSTEM),
+        HumanMessagePromptTemplate.fromTemplate('{input}'),
+      ]),
+      llm,
+      new StringOutputParser(),
+    ]).withConfig({ runName: 'Section Handoff' });
+}
 
 /**
- * The real adapter. Lazy by construction — no client until the first call; a missing key returns
- * `undefined` everywhere (the driver falls back). Reuses the chat-model env (`ANTHROPIC_API_KEY` +
- * `CHAT_MODEL`), cheap structured tool calls, clients cached per key string. Zero v1 imports.
+ * The real adapter. Lazy by construction — no chain until the first call; a missing key returns
+ * `undefined` everywhere (the driver falls back). Cheap structured calls; one ChatAnthropic cached per
+ * key string (the chains are rebuilt per call — composition is cheap).
  */
 export class AnthropicPlannerLlm implements PlannerLlm {
-  private readonly clients = new Map<string, ChatAnthropic>();
+  private readonly models = new Map<string, ChatAnthropic>();
 
-  constructor(
-    private readonly apiKey: (orgId?: string) => Promise<string | undefined>,
-    private readonly model: () => string | undefined,
-  ) {}
+  constructor(private readonly apiKey: (orgId?: string) => Promise<string | undefined>) {}
 
-  private async client(orgId?: string): Promise<ChatAnthropic | undefined> {
+  private async model(orgId?: string): Promise<ChatAnthropic | undefined> {
     const key = await this.apiKey(orgId);
     if (!key) return undefined;
-    let c = this.clients.get(key);
-    if (!c) {
-      c = new ChatAnthropic({
+    let m = this.models.get(key);
+    if (!m) {
+      m = new ChatAnthropic({
         apiKey: key,
-        model: this.model() ?? 'claude-sonnet-4-5-20250929',
+        model: PlannerChains.MODEL,
         maxTokens: 4096,
         temperature: 0,
       });
-      this.clients.set(key, c);
+      this.models.set(key, m);
     }
-    return c;
+    return m;
   }
 
   async planSection(input: PlanSectionInput): Promise<PlannedPhase[] | undefined> {
-    const model = await this.client(input.orgId);
-    if (!model) return undefined;
-    const bound = model.bindTools(
-      [{ name: 'emit_phases', description: 'Emit the section\'s ordered phase list.', schema: PHASES_SCHEMA }],
-      { tool_choice: 'emit_phases' },
-    );
-    const res = await bound.invoke([
-      { role: 'system', content: PLAN_SYSTEM },
-      { role: 'user', content: renderPlanContext(input) },
-    ]);
-    return parsePhases(res.tool_calls?.[0]?.args);
+    const llm = await this.model(input.orgId);
+    if (!llm) return undefined;
+    try {
+      const phases = await PlannerChains.planSection(llm).invoke(input);
+      return phases.length ? phases : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async reviewPlan(
     input: PlanSectionInput & { draft: PlannedPhase[] },
   ): Promise<PlannedPhase[] | undefined> {
-    const model = await this.client(input.orgId);
-    if (!model) return undefined;
-    const bound = model.bindTools(
-      [{ name: 'emit_phases', description: 'Emit the revised phase list.', schema: PHASES_SCHEMA }],
-      { tool_choice: 'emit_phases' },
-    );
-    const draft = input.draft.map((p, i) => `${i + 1}. ${p.title}: ${p.brief}`).join('\n');
-    const res = await bound.invoke([
-      { role: 'system', content: REVIEW_SYSTEM },
-      { role: 'user', content: `${renderPlanContext(input)}\n\nDraft plan:\n${draft}` },
-    ]);
-    return parsePhases(res.tool_calls?.[0]?.args);
+    const llm = await this.model(input.orgId);
+    if (!llm) return undefined;
+    try {
+      const phases = await PlannerChains.reviewPlan(llm).invoke(input);
+      return phases.length ? phases : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async extractDecisions(
     input: PlanSectionInput & { phases: PlannedPhase[] },
   ): Promise<PlannedDecision[] | undefined> {
-    const model = await this.client(input.orgId);
-    if (!model) return undefined;
-    const bound = model.bindTools(
-      [
-        {
-          name: 'emit_decisions',
-          description: 'List the notable decisions the plan makes.',
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              decisions: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    description: { type: 'string' },
-                    context: { type: 'string' },
-                  },
-                  required: ['description'],
-                },
-              },
-            },
-            required: ['decisions'],
-          },
-        },
-      ],
-      { tool_choice: 'emit_decisions' },
-    );
-    const phases = input.phases.map((p, i) => `${i + 1}. ${p.title}: ${p.brief}`).join('\n');
-    const res = await bound.invoke([
-      { role: 'system', content: EXTRACT_SYSTEM },
-      { role: 'user', content: `Section: ${input.brief}\n\nPlan:\n${phases}` },
-    ]);
-    const raw = (res.tool_calls?.[0]?.args ?? {}) as {
-      decisions?: Array<{ description?: string; context?: string }>;
-    };
-    return (raw.decisions ?? [])
-      .filter((d): d is { description: string; context?: string } => Boolean(d.description))
-      .map((d) => ({ description: d.description, ...(d.context ? { context: d.context } : {}) }));
+    const llm = await this.model(input.orgId);
+    if (!llm) return undefined;
+    try {
+      return await PlannerChains.extractDecisions(llm).invoke({ brief: input.brief, phases: input.phases });
+    } catch {
+      return undefined;
+    }
   }
 
   async handoff(input: {
@@ -253,19 +277,18 @@ export class AnthropicPlannerLlm implements PlannerLlm {
     reports: string[];
     orgId?: string;
   }): Promise<string | undefined> {
-    const model = await this.client(input.orgId);
-    if (!model) return undefined;
-    const phases = input.phases.map((p) => `- ${p.title}`).join('\n');
-    const reports = input.reports.map((r, i) => `Phase ${i + 1} report: ${r}`).join('\n\n');
-    const res = await model.invoke([
-      { role: 'system', content: HANDOFF_SYSTEM },
-      {
-        role: 'user',
-        content: `Section: ${input.brief}\n\nPhases:\n${phases}\n\n${reports}`.slice(0, 16000),
-      },
-    ]);
-    const text = typeof res.content === 'string' ? res.content : JSON.stringify(res.content);
-    return text.trim() || undefined;
+    const llm = await this.model(input.orgId);
+    if (!llm) return undefined;
+    try {
+      const text = await PlannerChains.handoff(llm).invoke({
+        brief: input.brief,
+        phases: input.phases,
+        reports: input.reports,
+      });
+      return text.trim() || undefined;
+    } catch {
+      return undefined;
+    }
   }
 }
 
@@ -280,15 +303,6 @@ export function renderPlanContext(input: PlanSectionInput): string {
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nThis section's brief:\n${input.brief}${handoff}`,
   ].join('\n');
-}
-
-/** Coerce raw tool args into a `PlannedPhase[]`, or undefined if malformed/empty. Exported for tests. */
-export function parsePhases(raw: unknown): PlannedPhase[] | undefined {
-  const args = (raw ?? {}) as { phases?: Array<{ title?: string; brief?: string }> };
-  const phases = (args.phases ?? [])
-    .filter((p): p is { title: string; brief: string } => Boolean(p.title && p.brief))
-    .map((p) => ({ title: p.title, brief: p.brief }));
-  return phases.length ? phases : undefined;
 }
 
 /** The slim record slice the planner reads (overview + decisions). */

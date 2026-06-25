@@ -37,10 +37,11 @@ export class AgentSessionManager {
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
-   * proposes plans. Pinned to Opus (the SDK accepts the `'opus'` alias → latest Opus). Phase workers keep
-   * the engine's default `workerModel`. Override via `BRAIN_MODEL` env if needed.
+   * proposes plans. Pinned to Opus (the SDK accepts the `'opus'` alias → latest Opus). A code constant,
+   * NOT an env var — model choice doesn't vary by environment. (Phase workers default to Opus too, in
+   * `engine-core`'s `DEFAULT_WORKER_MODEL`.)
    */
-  private static readonly BRAIN_MODEL = process.env.BRAIN_MODEL || 'opus';
+  private static readonly BRAIN_MODEL = 'opus';
 
   /**
    * Per-thread turn queue — serializes chat turns for ONE thread so a follow-up sent WHILE a turn is
@@ -258,8 +259,25 @@ export class AgentSessionManager {
     // what prevents a double-render on reconnect: if completed blocks were persisted mid-turn, a
     // reconnecting client would see them BOTH from `/messages` AND from the live snapshot (which holds the
     // whole cumulative turn). DB-on-completion-only mirrors the rs-crm-app email-summary pattern.
-    type DurableBlock = { kind: string; text?: string; meta?: Record<string, unknown>; toolId?: string; done?: boolean };
+    //
+    // Each block carries `emittedAt` — the wall-clock moment it streamed. Persisting at turn end would
+    // otherwise stamp the whole batch with the turn-END time, sorting it AFTER a follow-up the operator
+    // sent mid-turn (persisted at its real send time) — the bug where a later question jumps to the top of
+    // the turn. Stamps are forced strictly-monotonic so blocks never tie within a turn (ms granularity).
+    type DurableBlock = {
+      kind: string;
+      text?: string;
+      meta?: Record<string, unknown>;
+      toolId?: string;
+      done?: boolean;
+      emittedAt: Date;
+    };
     const blocks: DurableBlock[] = [];
+    let lastEmitMs = 0;
+    const stamp = (): Date => {
+      lastEmitMs = Math.max(Date.now(), lastEmitMs + 1);
+      return new Date(lastEmitMs);
+    };
 
     return {
       onEvent: (e: EngineEvent) => {
@@ -267,10 +285,10 @@ export class AgentSessionManager {
         this.liveTurns.push(channel, threadId, e);
         switch (e.kind) {
           case 'text':
-            if (e.text.trim()) blocks.push({ kind: 'chat', text: e.text });
+            if (e.text.trim()) blocks.push({ kind: 'chat', text: e.text, emittedAt: stamp() });
             break;
           case 'thinking':
-            if (e.text.trim()) blocks.push({ kind: 'thinking', text: e.text });
+            if (e.text.trim()) blocks.push({ kind: 'thinking', text: e.text, emittedAt: stamp() });
             break;
           case 'tool_use':
             blocks.push({
@@ -278,6 +296,7 @@ export class AgentSessionManager {
               toolId: e.id || `tool-${blocks.length}`,
               done: false,
               meta: { name: e.name, input: e.input ?? null, result: null, isError: false },
+              emittedAt: stamp(),
             });
             break;
           case 'tool_result': {
@@ -299,14 +318,16 @@ export class AgentSessionManager {
       finish: async (finalText?: string) => {
         // Fallback: a turn that emitted NO text block — keep the final summary so the reply isn't lost.
         if (!blocks.some((b) => b.kind === 'chat') && finalText && finalText.trim()) {
-          blocks.push({ kind: 'chat', text: finalText.trim() });
+          blocks.push({ kind: 'chat', text: finalText.trim(), emittedAt: stamp() });
         }
-        // Persist the whole transcript in order, THEN signal turn end (so the client's refetch sees it
-        // before the live buffer is cleared — no gap, no double-render).
+        // Persist the whole transcript in order (each row stamped with its emission time so an
+        // interleaved mid-turn user message sorts correctly), THEN signal turn end (so the client's
+        // refetch sees it before the live buffer is cleared — no gap, no double-render).
         for (const b of blocks) {
           await this.store
             .appendBlock(threadId, {
               kind: b.kind,
+              createdAt: b.emittedAt,
               ...(b.text != null ? { text: b.text } : {}),
               ...(b.meta ? { meta: b.meta } : {}),
             })

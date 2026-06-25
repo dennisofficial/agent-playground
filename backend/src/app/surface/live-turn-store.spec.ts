@@ -48,9 +48,12 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
 
 describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via snapshot, then streams live', () => {
   function makeController(liveTurns: LiveTurnStore) {
-    const surface = { outbound$: new Subject<WebOutboundMessage>() };
+    const surface = {
+      outbound$: new Subject<WebOutboundMessage>(),
+      threadMeta$: new Subject<{ channel: string; threadId: string; title: string }>(),
+    };
     return new WebSurfaceController(
-      surface as never, // surface (outbound$ only)
+      surface as never, // surface (outbound$ + threadMeta$)
       liveTurns,
       {} as never, // driverStore
       {} as never, // threadLifecycle
@@ -58,6 +61,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // threads
       {} as never, // messages
       {} as never, // repos
+      {} as never, // threadTitle
     );
   }
 

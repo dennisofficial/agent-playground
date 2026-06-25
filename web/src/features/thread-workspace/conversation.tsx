@@ -18,6 +18,7 @@ import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { Composer } from './composer';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
 import { useLiveTurn } from '@/lib/api/thread-stream';
+import { useQueuedSends } from '@/lib/api/queued-sends';
 
 /**
  * Conversation mode — the thread's brain. One continuous session: intent, planning, and steering all
@@ -43,9 +44,18 @@ export function Conversation({
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
   const turnActive = liveTurn?.active ?? false;
 
+  // Messages sent while a turn is streaming are QUEUED behind it (the brain serializes turns per thread).
+  // Pull them out of the main log and render them below the live response with a "queued" treatment — so
+  // a follow-up reads as "waiting its turn", not as an already-answered message in the wrong spot.
+  const queuedTexts = useQueuedSends(threadRef.threadId);
+  const isQueued = (m: ThreadMessage): boolean =>
+    m.author === 'user' && turnActive && (m.queued === true || queuedTexts.has(m.text));
+  const log = messages.filter((m) => !isQueued(m));
+  const queued = messages.filter(isQueued);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length, live, liveBlockCount, turnActive]);
+  }, [messages.length, live, liveBlockCount, turnActive, queued.length]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -64,7 +74,7 @@ export function Conversation({
               No messages yet — say something to Atlas below.
             </p>
           ) : (
-            messages.map((message) => {
+            log.map((message) => {
               const c = classifyMessage(message);
               switch (c.kind) {
                 case 'user':
@@ -105,6 +115,9 @@ export function Conversation({
           )}
           {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} /> : null}
           {live || turnActive ? <LiveIndicator /> : null}
+          {queued.map((message) => (
+            <UserBubble key={message.ts} message={message} queued />
+          ))}
           <div ref={endRef} />
         </div>
       </div>

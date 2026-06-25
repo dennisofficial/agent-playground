@@ -213,10 +213,7 @@ export class DockerEngineRunner implements EngineRunnerPort {
     put('ANTHROPIC_API_KEY', this.env.get('ANTHROPIC_API_KEY'));
     put('ENGINE_AUTH_MODE', this.env.get('ENGINE_AUTH_MODE'));
     put('CLAUDE_OAUTH_TOKEN', this.env.get('CLAUDE_OAUTH_TOKEN'));
-    put('WORKER_MODEL', this.env.get('WORKER_MODEL'));
-    put('WORKER_MODEL', this.env.get('WORKER_MODEL'));
-    put('CODEX_MODEL', this.env.get('CODEX_MODEL'));
-    put('CODEX_MODEL', this.env.get('CODEX_MODEL'));
+    // (Engine model ids are hardcoded constants in engine-core — not passed via env.)
     // The agent home is INSIDE the container (long-lived container → resume across turns).
     e.AGENT_HOME_ROOT = CONTAINER_AGENT_HOME;
     return e;

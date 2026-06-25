@@ -149,7 +149,71 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await recordStatus(dataSource, second.decisionRecordId)).toBe('draft');
     expect(await draftCount(dataSource, threadId)).toBe(1);
   }, 30_000);
+
+  it('stamps appended blocks with their emission time so a mid-turn user message keeps chronological order', async () => {
+    // Regression for the "a question I asked later jumped to the top of the turn" bug. The turn's blocks
+    // are persisted in a batch at turn END, but the operator's follow-up is persisted immediately. Without
+    // an emission-time stamp the whole batch would sort AFTER the follow-up (later INSERT time), pushing it
+    // above the turn. `appendBlock(createdAt)` stamps each block with when it streamed, restoring order.
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+         ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-order-it', 'Order Repo', 'https://github.com/acme/order.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+      [TEAM_ID],
+    );
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO threads (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'ordering') RETURNING id`,
+      [TEAM_ID, repoRow.id],
+    );
+    const threadId = thread.id;
+    const at = (sec: number) => new Date(Date.UTC(2026, 5, 24, 0, 0, sec));
+
+    // The turn-1 question (persisted first).
+    await insertUserMessage(dataSource, threadId, 'first question', at(0));
+    // The turn streams two blocks — captured at emission times 1s and 2s into the turn…
+    await store.appendBlock(threadId, { kind: 'chat', text: 'investigating', createdAt: at(1) });
+    await store.appendBlock(threadId, { kind: 'chat', text: 'here is the answer', createdAt: at(2) });
+    // …but the operator's follow-up landed (real send time, 3s in) BEFORE the blocks were written at turn
+    // end. Inserted AFTER the blocks here on purpose, to mirror the real INSERT order that caused the bug.
+    await insertUserMessage(dataSource, threadId, 'later question', at(3));
+
+    expect(await messageTexts(dataSource, threadId)).toEqual([
+      'first question',
+      'investigating',
+      'here is the answer',
+      'later question',
+    ]);
+  }, 30_000);
 });
+
+async function insertUserMessage(
+  ds: DataSource,
+  threadId: string,
+  text: string,
+  createdAt: Date,
+): Promise<void> {
+  await ds.query(
+    `INSERT INTO messages (thread_id, author, author_id, text, kind, created_at, updated_at)
+       VALUES ($1, 'Operator', 'op', $2, 'chat', $3, $3)`,
+    [threadId, text, createdAt.toISOString()],
+  );
+}
+
+async function messageTexts(ds: DataSource, threadId: string): Promise<string[]> {
+  const rows: Array<{ text: string }> = await ds.query(
+    `SELECT text FROM messages WHERE thread_id = $1 ORDER BY created_at ASC`,
+    [threadId],
+  );
+  return rows.map((r) => r.text);
+}
 
 async function sectionBriefs(ds: DataSource, threadId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
