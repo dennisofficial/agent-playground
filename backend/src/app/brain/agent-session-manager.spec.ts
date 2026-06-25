@@ -361,6 +361,34 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');
   });
 
+  it('serializes concurrent turns for one thread — a follow-up queues, never two engine turns at once', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let active = 0;
+    let maxActive = 0;
+    const run = vi.fn(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await gate;
+      active--;
+      return { result: 'ok', sessionId: 's' };
+    });
+    const { manager, dockerRunner } = makeManager({ findSandbox: { worktreePath: '/wt' }, run });
+
+    const p1 = manager.handleChatTurn(stimulus); // turn 1 starts, blocks on the gate
+    const p2 = manager.handleChatTurn(stimulus); // turn 2 sent while turn 1 is "thinking"
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Turn 2 is queued — the engine has only been entered ONCE.
+    expect((dockerRunner.run as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+
+    release();
+    await Promise.all([p1, p2]);
+
+    expect((dockerRunner.run as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+    expect(maxActive).toBe(1); // never two concurrent engine turns resuming the same session
+  });
+
   it('posts an actionable message and does NOT run a turn when the repo is not connected', async () => {
     const ensureProvisioned = vi
       .fn()

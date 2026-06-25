@@ -19,7 +19,11 @@ of work is a **thread**. A thread is meant to be its own git branch, its own san
 *continuous* Claude Code session — **the thread brain** — which scopes, grills, locks decisions, proposes
 a plan, and steers. Once a plan is approved, a deterministic **driver** ("the harness takes the wheel")
 walks the plan section-by-section, running each phase as a **separate, fresh, throwaway** Claude session
-you can watch live. **There is no central "Atlas" persona** — a thread's own brain is the only
+you can watch live. **There is no central "Atlas" persona.** "Atlas" *is* the thread brain, and the thread brain *is*
+the **main Claude Code session running inside that thread's sandbox** — when you open a thread and type,
+you are talking directly to that session (its system prompt literally opens with *"You are Atlas"* —
+`brain/agent-session-manager.service.ts:56`). Everything else — the driver, the intake guards, the web
+surface — is host-side plumbing wrapped around that one session; a thread's own brain is the only
 conversational agent it has. An automated event doesn't talk to a central brain either; it **spawns a new
 thread** and (intended) becomes that thread brain's opening message.
 
@@ -46,15 +50,18 @@ A thread **is the build unit** — the former separate `jobs` layer was collapse
 The code that realizes all of this is `ThreadLifecycleService.createThread` → `provisionSandbox`
 (`driver/thread-lifecycle.service.ts:80`, `:105`; branch cut at `:331`, recorded on the thread at `:349`).
 
-🟡 **As wired today this is not uniform** — the live thread-creation paths skip provisioning, so most
-threads are bare rows with no branch/sandbox. See **§8 (provisioning gap)**; it's the biggest single piece
-of debt and it undercuts most of this section in practice.
+🟡 **Provisioning is now lazy, not eager.** The live create/seed paths still insert bare rows, but the
+thread brain **provisions on the thread's first turn** (`ensureProvisioned`), so a thread gets its branch +
+sandbox + session the moment you talk to it. See **§8**. (An event-seeded thread that reaches the driver
+*without* ever taking a brain turn is the remaining edge — §8.)
 
 ## 4. The two session types — the heart of the model
 
 There are **two completely different kinds of Claude Code session**. Conflating them is the #1 source of
 wrong mental models in this codebase (and in the UI mockups, which label the phase view *"not the thread's
-brain"* for exactly this reason).
+brain"* for exactly this reason). The **thread brain is the thread's main, continuous Claude Code session** —
+the one the operator talks to (§1). The phase workers are short-lived sub-sessions the *driver* runs to
+build the approved plan; they are not the thing you converse with.
 
 | | **Thread brain** | **Phase worker** |
 |---|---|---|
@@ -96,7 +103,7 @@ How a thread is driven, and what is actually wired:
 
 | Input | Route | Target | Status |
 |---|---|---|---|
-| Operator message | `POST …/threads/:id/say` | thread brain (`handleChatTurn`) | ✅ (needs a provisioned sandbox — §8) |
+| Operator message | `POST …/threads/:id/say` | thread brain (`handleChatTurn`) | ✅ (provisions the sandbox lazily on first turn — §8) |
 | Plan verdict | `POST …/threads/:id/approve` | approval gate → dispatch on approve | ✅ |
 | Live observability | `GET …/repos/:id/events` (SSE) | outbound stream (chat + cards + phase events) | ✅ |
 | Automated event | `POST /ingress/github`, `/ingress/webhook` | event intake → **spawns a thread** (§7) | ✅ |
@@ -140,25 +147,21 @@ Until that's settled, the triage lane stays.
 
 ## 8. Known divergences & tech debt
 
-### Provisioning gap — the headline (likely a real bug)
+### Provisioning — ✅ closed on the brain path (06-24; live-browser validation pending)
 
-The intended "thread = branch = sandbox = session" (§3) is implemented **only** by
-`ThreadLifecycleService.createThread`/`provisionSandbox` — and **no live code calls it** (the only caller is
-`driver/thread-lifecycle.int.test.ts:197`). The live creation paths insert **bare thread rows** with no
-sandbox/branch:
+The live creation paths still insert **bare thread rows** with no sandbox/branch —
+web `WebSurfaceController.createThread` (`surface/web-surface.controller.ts:155`) and
+event `StimulusStoreService.seedEventThread` (`stimulus/stimulus-store.service.ts:69`). The fix landed on the
+**first-turn brain path**: `handleChatTurn` now **lazily provisions** the thread's branch + sandbox +
+session via `lifecycle.ensureProvisioned` before the turn runs (posting *"Setting up an isolated workspace…"*
+so the first turn isn't a silent ~30s wait) — `brain/agent-session-manager.service.ts:102-138`. So chatting a
+freshly web-created thread now spins everything up on demand; the brain no longer dead-ends with *"Please
+create a thread via the web app…"* (that line is now only an unexpected-state fallback). Code-complete, full
+suite green; **not yet live-browser validated**.
 
-- web `WebSurfaceController.createThread` (`surface/web-surface.controller.ts:155`)
-- event `StimulusStoreService.seedEventThread` (`stimulus/stimulus-store.service.ts:69`)
-
-Consequences:
-
-1. **The thread brain bails** on a thread with no sandbox: `handleChatTurn` → `ensureContainer` returns
-   null → it posts *"Please create a thread via the web app…"* and stops
-   (`brain/agent-session-manager.service.ts:104-110`). So chatting a freshly web-created thread can't run a
-   brain turn until provisioning is wired in.
-2. If such a thread reaches the driver, `ensureSandbox` takes the **legacy fallback** and cuts
-   `atlas/${kind}-${id}` (e.g. `atlas/feature-1a2b3c4d`), **not** `atlas/thread-<id>`
-   (`driver/section-driver.service.ts:828`).
+**Still open:** an **event-seeded** thread that reaches the driver *without* ever taking a brain turn skips
+the lazy provision — `ensureSandbox` then takes the **legacy fallback** and cuts `atlas/${kind}-${id}`
+(e.g. `atlas/feature-1a2b3c4d`), **not** `atlas/thread-<id>` (`driver/section-driver.service.ts:828`).
 
 **Fix (not done here):** route the live create/seed paths through `ThreadLifecycleService`, or provision
 lazily on the thread's first turn.

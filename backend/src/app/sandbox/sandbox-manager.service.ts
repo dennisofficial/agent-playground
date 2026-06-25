@@ -1,11 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { FeatureSandbox } from '../git';
+import { engineBundlePath } from './bundle-engine';
 import { CONTAINER_AGENT_HOME } from './docker-engine-runner';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
@@ -14,12 +15,27 @@ import type { SandboxAttachInput, SandboxProvider } from './sandbox-provider.por
 
 const execFileAsync = promisify(execFile);
 
+/** The in-container path of the engine entrypoint baked by the Dockerfile — bind-mounted live over it. */
+const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
+
+/**
+ * Container-provisioning revision — bump when the container's CREATE config changes in a way that an
+ * existing container must be recreated to pick up (new mounts, volumes, labels, privileges…). Combined
+ * with the image id into the `atlas.cfg` fingerprint so a stale container is auto-recreated on its next
+ * attach (the thread/worktree survive — only the disposable container is replaced). Engine-CODE changes
+ * do NOT bump this: the engine bundle is bind-mounted live, so they're served on the next turn with no
+ * recreate. (rev 2 = added the live engine-bundle mount.)
+ */
+const CONFIG_REV = 2;
+
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
 const L_TEAM = 'atlas.team';
 const L_PROJECT = 'atlas.project';
 const L_BRANCH = 'atlas.branch';
 const L_THREAD = 'atlas.thread';
+/** Fingerprint label: `<imageId>|cfg<rev>` — mismatch on attach ⇒ recreate the container. */
+const L_CFG = 'atlas.cfg';
 
 /**
  * The `docker` SANDBOX_PROVIDER binding — owns the lifecycle of per-feature sandbox containers. One
@@ -48,24 +64,35 @@ export class SandboxManager implements SandboxProvider {
     const { sandbox, orgId, threadId } = input;
     const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, threadId);
 
+    const image = await this.images.ensureImage();
+    const fingerprint = `${(await this.engine.imageId(image)) ?? 'noimg'}|cfg${CONFIG_REV}`;
+
     const existing = await this.engine.inspect(name);
     if (existing) {
-      // Warm only when the container is already running: a stopped container we restart has lost its
-      // background processes, so it is a COLD (reset) attach just like a freshly created one.
-      const warm = existing.state === 'running';
-      if (!warm) {
-        this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
-        await this.engine.start(existing.id);
-        await this.waitReady(existing.id);
+      // STALE container — built from an older image or an older create-config (e.g. before the live
+      // engine mount). Recreate it so the update lands; the thread/worktree are durable, so only the
+      // disposable container is replaced (cold). Engine-CODE updates never reach here — the bind-mounted
+      // bundle serves those live without a recreate.
+      if (existing.labels[L_CFG] !== fingerprint) {
+        this.logger.log(`recreating sandbox ${name} — stale (${existing.labels[L_CFG] ?? 'unstamped'} → ${fingerprint})`);
+        await this.teardown(this.augment(sandbox, existing.id, false));
       } else {
-        this.logger.log(`reusing running sandbox ${name}`);
+        // Warm only when the container is already running: a stopped container we restart has lost its
+        // background processes, so it is a COLD (reset) attach just like a freshly created one.
+        const warm = existing.state === 'running';
+        if (!warm) {
+          this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
+          await this.engine.start(existing.id);
+          await this.waitReady(existing.id);
+        } else {
+          this.logger.log(`reusing running sandbox ${name}`);
+        }
+        return this.augment(sandbox, existing.id, warm);
       }
-      return this.augment(sandbox, existing.id, warm);
     }
 
     await this.softCapCheck();
 
-    const image = await this.images.ensureImage();
     const network = `${name}-net`;
     await this.engine.ensureNetwork(network);
 
@@ -77,6 +104,13 @@ export class SandboxManager implements SandboxProvider {
     if (gitDir && !gitDir.startsWith(`${sandbox.worktreePath}/`)) {
       // Linked worktree: its .git lives outside cwd — mount it at the same path so git resolves.
       binds.push(`${gitDir}:${gitDir}`);
+    }
+    // HOT-RELOAD: bind-mount the host engine bundle (read-only) over the baked-in one, so an engine
+    // update (the API rebundles on boot) is picked up by the next `docker exec` in this container —
+    // no recreate, no image rebuild. Falls back to the baked engine if the host bundle is absent.
+    const bundle = engineBundlePath();
+    if (existsSync(bundle)) {
+      binds.push(`${bundle}:${CONTAINER_ENGINE_BUNDLE}:ro`);
     }
     // The host-maintained, READ-ONLY cross-repo reference library (per-tenant) at /refs.
     const refsDir = this.teamRefsDir(orgId);
@@ -98,6 +132,7 @@ export class SandboxManager implements SandboxProvider {
         [L_TEAM]: orgId,
         [L_PROJECT]: sandbox.repoId,
         [L_BRANCH]: sandbox.branch,
+        [L_CFG]: fingerprint,
         ...(threadId ? { [L_THREAD]: threadId } : {}),
       },
     });

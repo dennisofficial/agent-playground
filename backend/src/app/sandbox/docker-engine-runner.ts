@@ -63,6 +63,9 @@ export class DockerEngineRunner implements EngineRunnerPort {
       ...(args.sessionId ? { sessionId: args.sessionId } : {}),
       ...(args.auth ? { auth: args.auth } : {}),
       ...(args.model ? { model: args.model } : {}),
+      // Rich token-level streaming (deltas + thinking + tool_use/tool_result) — the thread brain sets it;
+      // it MUST be forwarded across the container boundary or the in-container engine stays coarse.
+      ...(args.richStream ? { richStream: args.richStream } : {}),
       // Signal to the entrypoint that the tool bridge is active (tool names list).
       ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
     };
@@ -182,8 +185,12 @@ export class DockerEngineRunner implements EngineRunnerPort {
     });
 
     host.flush();
-    // Wait until the in-container turn signals it's done.
-    await host.closed;
+    // The exec has already EXITED (awaited above), so all stdout has been fed to the host. Normally a
+    // closing `final`/`error` frame has already resolved `host.closed`. But a crashed engine (e.g. a
+    // module-load error) exits WITHOUT emitting any frame — then `host.closed` would never resolve and
+    // this `await` would hang the turn (and the thread's serialized turn queue) forever. Bound the wait:
+    // on timeout we fall through to the `!result` check below and surface the exit + stderr as an error.
+    await Promise.race([host.closed, new Promise((resolve) => setTimeout(resolve, 2000))]);
 
     if (errorMsg) {
       if (errorAuth) throw new EngineAuthError(errorMsg, errorSession);

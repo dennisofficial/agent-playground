@@ -157,6 +157,12 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     expect(snap!.active).toBe(true);
     expect(snap!.blocks.find((b) => b.kind === 'text')).toMatchObject({ text: 'Hello', done: false });
 
+    // (1b) NO double-render: the in-flight content is NOT yet in the durable log (it's persisted only at
+    // turn end). If it were persisted mid-turn, a reconnecting client would see it twice — once from
+    // `/messages` and once from the live snapshot.
+    const midRows = await ds.query(`SELECT count(*)::int AS n FROM messages WHERE thread_id = $1 AND text LIKE '%Hello world%'`, [threadId]);
+    expect(midRows[0].n).toBe(0);
+
     // (2) A client that connects NOW (e.g. after a refresh) replays that snapshot the instant it subscribes.
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller

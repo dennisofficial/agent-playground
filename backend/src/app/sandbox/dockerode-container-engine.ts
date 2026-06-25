@@ -52,6 +52,15 @@ export class DockerodeContainerEngine implements ContainerEngine {
     }
   }
 
+  async imageId(tag: string): Promise<string | null> {
+    try {
+      const info = await this.docker.getImage(tag).inspect();
+      return info.Id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async buildImage(spec: BuildImageSpec): Promise<void> {
     const src = readdirSync(spec.contextDir);
     const stream = await this.docker.buildImage(

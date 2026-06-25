@@ -35,6 +35,21 @@ import { PlanReviewService, buildRevisionInstruction } from './plan-review.servi
 export class AgentSessionManager {
   private readonly logger = new Logger(AgentSessionManager.name);
 
+  /**
+   * The thread brain's model — the conversational/planning session that grills, locks decisions, and
+   * proposes plans. Pinned to Opus (the SDK accepts the `'opus'` alias → latest Opus). Phase workers keep
+   * the engine's default `workerModel`. Override via `BRAIN_MODEL` env if needed.
+   */
+  private static readonly BRAIN_MODEL = process.env.BRAIN_MODEL || 'opus';
+
+  /**
+   * Per-thread turn queue — serializes chat turns for ONE thread so a follow-up sent WHILE a turn is
+   * still running waits for it instead of starting a second engine turn that resumes the SAME session id
+   * concurrently (which corrupts the session). One thread = one in-flight turn at a time; the next turn
+   * resumes the session with the queued message once the current one finishes. Keyed `orgId:threadId`.
+   */
+  private readonly turnQueues = new Map<string, Promise<void>>();
+
   constructor(
     private readonly store: BrainStoreService,
     private readonly driverStore: DriverStoreService,
@@ -96,10 +111,29 @@ export class AgentSessionManager {
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Handle one chat stimulus in a scoping thread. Runs an in-sandbox engine turn with the 6 host-side
-   * tools. Session is resumed if a session_id is persisted for this thread.
+   * Handle one chat stimulus in a scoping thread. SERIALIZED per thread: if a turn is already running for
+   * this thread (the operator sent a follow-up while it was thinking), this one queues behind it and runs
+   * after — never two concurrent engine turns resuming the same session id. Runs an in-sandbox engine
+   * turn with the 6 host-side tools; the session is resumed across turns.
    */
   async handleChatTurn(stimulus: ChatStimulus): Promise<void> {
+    const key = `${stimulus.orgId}:${stimulus.threadId}`;
+    const prev = this.turnQueues.get(key) ?? Promise.resolve();
+    // Chain after any in-flight turn (swallow its error so a failed turn doesn't break the queue).
+    const next = prev.catch(() => undefined).then(() => this.runChatTurn(stimulus));
+    // Track this as the tail; clear the map entry once it settles IF nothing newer queued behind it.
+    this.turnQueues.set(
+      key,
+      next.finally(() => {
+        if (this.turnQueues.get(key) === next) this.turnQueues.delete(key);
+      }),
+    );
+    return next;
+  }
+
+  /** One chat turn (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
+   *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
+  private async runChatTurn(stimulus: ChatStimulus): Promise<void> {
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
     // we're setting up so the first turn isn't a silent ~30s wait while we clone + start a container.
@@ -172,6 +206,7 @@ export class AgentSessionManager {
       systemPrompt: AgentSessionManager.SYSTEM_PROMPT,
       sandboxKey,
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
+      model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       ...(sessionId ? { sessionId } : {}),
       ...(sandbox.containerId
@@ -218,67 +253,65 @@ export class AgentSessionManager {
     channel: string,
   ): { onEvent: (e: EngineEvent) => void; finish: (finalText?: string) => Promise<void> } {
     const threadId = stimulus.threadId;
-    const pendingTools = new Map<string, { name: string; input: unknown }>();
-    let chain: Promise<void> = Promise.resolve();
-    let persistedText = false;
-
-    const persist = (block: { kind: string; text?: string; meta?: Record<string, unknown> }) => {
-      chain = chain
-        .then(() => this.store.appendBlock(threadId, block))
-        .catch((err) => this.logger.warn(`appendBlock failed for thread=${threadId}: ${err}`));
-    };
+    // The durable transcript, accumulated in event order. Persisted to `messages` ONLY at turn end — so
+    // DURING the turn the resumable `LiveTurnStore` is the SOLE source of the in-flight blocks. This is
+    // what prevents a double-render on reconnect: if completed blocks were persisted mid-turn, a
+    // reconnecting client would see them BOTH from `/messages` AND from the live snapshot (which holds the
+    // whole cumulative turn). DB-on-completion-only mirrors the rs-crm-app email-summary pattern.
+    type DurableBlock = { kind: string; text?: string; meta?: Record<string, unknown>; toolId?: string; done?: boolean };
+    const blocks: DurableBlock[] = [];
 
     return {
       onEvent: (e: EngineEvent) => {
-        // LIVE + RESUMABLE: the store accumulates the cumulative turn AND fans the frame; a client that
-        // (re)connects mid-turn replays the snapshot, so a long response keeps streaming across reloads.
+        // LIVE + RESUMABLE: the store fans the frame AND holds the cumulative turn for snapshot-on-connect.
         this.liveTurns.push(channel, threadId, e);
         switch (e.kind) {
           case 'text':
-            if (e.text.trim()) {
-              persistedText = true;
-              persist({ kind: 'chat', text: e.text });
-            }
+            if (e.text.trim()) blocks.push({ kind: 'chat', text: e.text });
             break;
           case 'thinking':
-            if (e.text.trim()) persist({ kind: 'thinking', text: e.text });
+            if (e.text.trim()) blocks.push({ kind: 'thinking', text: e.text });
             break;
           case 'tool_use':
-            pendingTools.set(e.id || `tool-${pendingTools.size}`, { name: e.name, input: e.input });
+            blocks.push({
+              kind: 'tool',
+              toolId: e.id || `tool-${blocks.length}`,
+              done: false,
+              meta: { name: e.name, input: e.input ?? null, result: null, isError: false },
+            });
             break;
           case 'tool_result': {
-            const key = e.id && pendingTools.has(e.id) ? e.id : [...pendingTools.keys()][0];
-            const tu = key ? pendingTools.get(key) : undefined;
-            if (key) pendingTools.delete(key);
-            persist({
-              kind: 'tool',
-              meta: {
-                name: tu?.name ?? 'tool',
-                input: tu?.input ?? null,
-                result: e.result ?? null,
-                isError: e.isError ?? false,
-              },
-            });
+            // Pair with the newest still-open tool block (preserving interleaved order with text/thinking).
+            for (let i = blocks.length - 1; i >= 0; i--) {
+              const b = blocks[i];
+              if (b.kind === 'tool' && !b.done && (b.toolId === e.id || !e.id)) {
+                b.done = true;
+                b.meta = { ...b.meta, result: e.result ?? null, isError: e.isError ?? false };
+                break;
+              }
+            }
             break;
           }
           default:
-            break; // session / result / *_delta — live only, not persisted
+            break; // session / result / *_delta — not part of the durable transcript
         }
       },
       finish: async (finalText?: string) => {
-        // Unpaired tool calls (no result arrived) — persist with a null result so they still show.
-        for (const tu of pendingTools.values()) {
-          persist({
-            kind: 'tool',
-            meta: { name: tu.name, input: tu.input ?? null, result: null, isError: false },
-          });
+        // Fallback: a turn that emitted NO text block — keep the final summary so the reply isn't lost.
+        if (!blocks.some((b) => b.kind === 'chat') && finalText && finalText.trim()) {
+          blocks.push({ kind: 'chat', text: finalText.trim() });
         }
-        pendingTools.clear();
-        // Fallback: a turn that emitted NO text block — persist the final summary so the reply isn't lost.
-        if (!persistedText && finalText && finalText.trim()) {
-          persist({ kind: 'chat', text: finalText.trim() });
+        // Persist the whole transcript in order, THEN signal turn end (so the client's refetch sees it
+        // before the live buffer is cleared — no gap, no double-render).
+        for (const b of blocks) {
+          await this.store
+            .appendBlock(threadId, {
+              kind: b.kind,
+              ...(b.text != null ? { text: b.text } : {}),
+              ...(b.meta ? { meta: b.meta } : {}),
+            })
+            .catch((err) => this.logger.warn(`appendBlock failed for thread=${threadId}: ${err}`));
         }
-        await chain; // rows must be durable BEFORE the client refetches on turn_end
         this.liveTurns.end(channel, threadId); // fans turn_end + drops the in-flight buffer
       },
     };

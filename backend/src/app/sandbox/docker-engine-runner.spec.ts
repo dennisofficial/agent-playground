@@ -17,6 +17,7 @@ function fakeEngine(chunks: string[], exitCode = 0) {
   const engine: ContainerEngine = {
     ensureNetwork: vi.fn(),
     imageExists: vi.fn(),
+    imageId: vi.fn(),
     buildImage: vi.fn(),
     createContainer: vi.fn(),
     start: vi.fn(),

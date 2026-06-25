@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FeatureSandbox } from '../git';
+import { bundleEngine } from './bundle-engine';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';
@@ -74,6 +75,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
       console.warn('Docker not reachable — skipping SandboxManager integration test');
       return;
     }
+    await bundleEngine(); // the engine bundle is generated, not committed — produce it (as the API does on boot)
     await builder.ensureImage();
 
     const attached = await manager.attach({ sandbox, orgId: 'team1' });
@@ -98,7 +100,14 @@ describe('SandboxManager (integration, needs Docker)', () => {
     expect(w.exitCode).toBe(0);
     expect(readFileSync(join(worktree, 'MARKER.txt'), 'utf8').trim()).toBe(marker);
 
-    // idempotent: a second attach reuses the same container.
+    // HOT-RELOAD: the host engine bundle is bind-mounted (read-only) over the baked-in one, so engine
+    // updates land on the next turn with no recreate; the container carries the config fingerprint label.
+    const raw = await new Docker().getContainer(attached.containerId!).inspect();
+    const mounts = (raw.Mounts ?? []) as Array<{ Destination?: string }>;
+    expect(mounts.some((m) => m.Destination === '/usr/local/lib/atlas/engine-entrypoint.mjs')).toBe(true);
+    expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(/\|cfg\d+$/);
+
+    // idempotent: a second attach reuses the same container (fingerprint matches → not stale).
     const again = await manager.attach({ sandbox, orgId: 'team1' });
     expect(again.containerId).toBe(attached.containerId);
 

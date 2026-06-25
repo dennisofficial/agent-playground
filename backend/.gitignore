@@ -4,6 +4,9 @@
 *.tsbuildinfo
 /coverage
 
+# generated engine bundle (the API rebundles it on boot into dist; the CLI can regenerate it in src)
+engine-entrypoint.mjs
+
 # logs
 *.log
 

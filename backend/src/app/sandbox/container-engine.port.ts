@@ -135,6 +135,10 @@ export interface ContainerEngine {
   /** True if an image with this tag exists locally. */
   imageExists(tag: string): Promise<boolean>;
 
+  /** The local image's content id (digest) for this tag, or null if absent. Changes on every rebuild —
+   *  the signal a sandbox container is on a STALE image and should be recreated. */
+  imageId(tag: string): Promise<string | null>;
+
   /** Build an image from a context dir. */
   buildImage(spec: BuildImageSpec): Promise<void>;
 

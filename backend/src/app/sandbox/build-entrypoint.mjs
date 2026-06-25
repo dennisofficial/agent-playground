@@ -22,6 +22,9 @@ await build({
   target: 'node22',
   // The engine SDKs ship native CLIs per platform — install them in the image, don't bundle them.
   external: ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'],
+  // Keep in sync with bundle-engine.ts: a real `require` so dynamic requires of Node builtins resolve in
+  // ESM output (needed when bundling the compiled CommonJS entry).
+  banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
   logLevel: 'info',
 });
 
