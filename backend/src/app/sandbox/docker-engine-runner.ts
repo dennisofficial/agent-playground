@@ -15,6 +15,16 @@ import { SandboxActivityRegistry } from './sandbox-activity.registry';
 export const CONTAINER_AGENT_HOME = '/atlas-home';
 
 /**
+ * The worktree's mount path INSIDE the sandbox — a NEUTRAL container path, NOT the host path. The host
+ * worktree is bind-mounted here so the engine never sees host-shaped paths (and can tell it is boxed);
+ * `cwd` is translated host→container at the runner boundary ({@link DockerEngineRunner.toContainerCwd}).
+ */
+export const CONTAINER_WORKTREE = '/workspace';
+
+/** The repo's SHARED git common dir mount path INSIDE the sandbox (linked-worktree case only). */
+export const CONTAINER_GIT_COMMON = '/repo.git';
+
+/**
  * One NDJSON frame the in-container entrypoint emits (one-shot mode).
  * In bidirectional (tool-bridge) mode the additional `tool_request` frame is handled by
  * `ToolBridgeHost`; these are the remaining frame types.
@@ -32,9 +42,9 @@ type Frame =
  * EngineCore} runs on both sides, so behavior matches the in-process runner exactly.
  *
  * Requires `args.target.containerId` (the sandbox to exec into) — the explicit execution target the
- * driver/auto-fix/gate thread through. The worktree (and its git common dir) are bind-mounted into the
- * sandbox at their SAME absolute host paths, so `cwd` passes through unchanged and in-container git
- * resolves correctly for linked worktrees.
+ * driver/auto-fix/gate thread through. The worktree is bind-mounted at a NEUTRAL container path
+ * (`/workspace`), so `cwd` is rewritten host→container here (see `toContainerCwd`); the git common dir
+ * is mounted at `/repo.git` with a generated `.git` pointer so in-container git resolves linked worktrees.
  */
 @Injectable()
 export class DockerEngineRunner implements EngineRunnerPort {
@@ -52,11 +62,12 @@ export class DockerEngineRunner implements EngineRunnerPort {
       throw new Error('DockerEngineRunner requires args.target.containerId (docker sandbox mode)');
     }
 
-    // The serializable turn spec — `cwd` passes through (the worktree is mounted at its same host path).
+    // The serializable turn spec — `cwd` is rewritten from the host worktree path onto the worktree's
+    // NEUTRAL in-container mount (`/workspace`), so the in-container engine never sees a host-shaped path.
     const spec = {
       engine: args.engine,
       task: args.task,
-      cwd: args.cwd,
+      cwd: this.toContainerCwd(args.cwd, target),
       systemPrompt: args.systemPrompt,
       sandboxKey: args.sandboxKey,
       mode: args.mode,
@@ -202,6 +213,20 @@ export class DockerEngineRunner implements EngineRunnerPort {
       );
     }
     return result;
+  }
+
+  /**
+   * Map a HOST `cwd` to its path INSIDE the sandbox. The worktree is bind-mounted at
+   * {@link CONTAINER_WORKTREE} (NOT same-path), so the host worktree root — and any subpath under it —
+   * is rebased onto that mount. `target.worktreeHost` carries the host root; absent (a caller that
+   * didn't thread it), we fall back to the worktree root, since every docker turn runs in the worktree.
+   */
+  private toContainerCwd(hostCwd: string, target: NonNullable<RunEngineArgs['target']>): string {
+    const root = target.worktreeHost;
+    if (root && (hostCwd === root || hostCwd.startsWith(`${root}/`))) {
+      return `${CONTAINER_WORKTREE}${hostCwd.slice(root.length)}`;
+    }
+    return CONTAINER_WORKTREE;
   }
 
   /** Credentials + engine config the in-container EngineCore reads from process.env (per-exec, ephemeral). */

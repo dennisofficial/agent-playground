@@ -38,7 +38,7 @@ export interface CreateContainerSpec {
   image: string;
   /** Network to attach (created via `ensureNetwork` first). Omit → Docker default bridge. */
   network?: string;
-  /** Bind mounts as `host:container[:ro]` strings (the worktree at /work, the agent-home, /refs:ro). */
+  /** Bind mounts as `host:container[:ro]` strings (the worktree at /workspace, the agent-home, /refs:ro). */
   binds?: string[];
   /** Named-volume mounts (the inner /var/lib/docker storage). */
   volumes?: VolumeMount[];

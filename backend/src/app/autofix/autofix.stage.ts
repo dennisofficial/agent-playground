@@ -61,7 +61,11 @@ export class AutoFixStage {
   /** The execution target for a turn — the sandbox container when the driver ran in docker mode. */
   private targetFor(ctx: AutoFixContext): ExecutionTarget | undefined {
     if (!ctx.containerId) return undefined;
-    return { containerId: ctx.containerId, ...(ctx.execUser ? { user: ctx.execUser } : {}) };
+    return {
+      containerId: ctx.containerId,
+      worktreeHost: ctx.worktreePath,
+      ...(ctx.execUser ? { user: ctx.execUser } : {}),
+    };
   }
 
   /**

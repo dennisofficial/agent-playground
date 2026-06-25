@@ -7,15 +7,17 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FeatureSandbox } from '../git';
 import { bundleEngine } from './bundle-engine';
+import { CONTAINER_WORKTREE } from './docker-engine-runner';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';
 
 /**
  * Integration test for the docker SANDBOX_PROVIDER (D2/D3). Proves the manager's substrate without an
- * LLM: it ensures a privileged per-feature container with the LINKED worktree + its git common dir
- * bind-mounted at their same host paths (so in-container git resolves), an inner dockerd (DinD), and a
- * host-uid exec that can write the worktree. Needs Docker; a no-op when Docker is unreachable.
+ * LLM: it ensures a privileged per-feature container with the LINKED worktree mounted at /workspace + its
+ * git common dir at /repo.git (a generated `.git` pointer shadows the host one so in-container git resolves),
+ * an inner dockerd (DinD), and a host-uid exec that can write the worktree. Needs Docker; a no-op when
+ * Docker is unreachable.
  */
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
@@ -83,18 +85,19 @@ describe('SandboxManager (integration, needs Docker)', () => {
     expect(attached.containerId).toBeTruthy();
     expect(attached.execUser).toMatch(/^\d+:\d+$/);
 
-    // in-container git resolves the LINKED worktree (gitdir mounted at its same host path).
-    const branch = await engine.exec(attached.containerId!, ['git', '-C', worktree, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+    // in-container git resolves the LINKED worktree at its NEUTRAL /workspace mount (the generated `.git`
+    // pointer rebases the gitdir onto /repo.git → no host paths needed inside the box).
+    const branch = await engine.exec(attached.containerId!, ['git', '-C', CONTAINER_WORKTREE, 'rev-parse', '--abbrev-ref', 'HEAD'], {
       user: attached.execUser,
     });
     expect(branch.exitCode).toBe(0);
     expect(branch.stdout.trim()).toBe('atlas/feat');
 
-    // host-uid exec can write the worktree; the file round-trips to the host bind mount.
+    // host-uid exec can write the worktree (at /workspace); the file round-trips to the host bind mount.
     const marker = `sbxmgr-${Date.now().toString(36)}`;
     const w = await engine.exec(
       attached.containerId!,
-      ['bash', '-c', `echo ${marker} > ${worktree}/MARKER.txt`],
+      ['bash', '-c', `echo ${marker} > ${CONTAINER_WORKTREE}/MARKER.txt`],
       { user: attached.execUser },
     );
     expect(w.exitCode).toBe(0);

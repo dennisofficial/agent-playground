@@ -41,7 +41,7 @@ function fakeEngine(chunks: string[], exitCode = 0) {
 const baseArgs = {
   engine: 'claude' as const,
   task: 'do it',
-  cwd: '/host/worktrees/feat', // same-path mounted in the sandbox → passes through unchanged
+  cwd: '/host/worktrees/feat', // a HOST path → rewritten onto the worktree's /workspace mount in the sandbox
   systemPrompt: 'persona',
   sandboxKey: 'acme--feat',
   mode: 'execute' as const,
@@ -54,7 +54,7 @@ describe('DockerEngineRunner', () => {
     await expect(runner.run(baseArgs)).rejects.toThrow(/containerId/);
   });
 
-  it('execs the entrypoint, rewrites cwd to /work, passes creds as exec env, returns the final frame', async () => {
+  it('execs the entrypoint, rewrites cwd to /workspace, passes creds as exec env, returns the final frame', async () => {
     const { engine, calls } = fakeEngine([
       JSON.stringify({ t: 'event', e: { kind: 'tool', name: 'Write' } }) + '\n',
       JSON.stringify({ t: 'final', r: { result: 'done', sessionId: 'sess-9' } }) + '\n',
@@ -64,7 +64,7 @@ describe('DockerEngineRunner', () => {
 
     const res = await runner.run({
       ...baseArgs,
-      target: { containerId: 'cId', user: '1000:1000' },
+      target: { containerId: 'cId', user: '1000:1000', worktreeHost: '/host/worktrees/feat' },
       onEvent: (e) => events.push(e),
     });
 
@@ -78,11 +78,32 @@ describe('DockerEngineRunner', () => {
     // creds + in-container home on the exec env
     expect(call.opts.env?.ANTHROPIC_API_KEY).toBe('k-123');
     expect(call.opts.env?.AGENT_HOME_ROOT).toBe(CONTAINER_AGENT_HOME);
-    // spec on stdin with cwd passed through (worktree is same-path mounted in the sandbox)
+    // spec on stdin with cwd rewritten from the host worktree root onto the /workspace mount
     const spec = JSON.parse(call.opts.stdin!);
-    expect(spec.cwd).toBe('/host/worktrees/feat');
+    expect(spec.cwd).toBe('/workspace');
     expect(spec.task).toBe('do it');
     expect(spec.sandboxKey).toBe('acme--feat');
+  });
+
+  it('rewrites a host SUBPATH cwd onto /workspace, and falls back to /workspace without worktreeHost', async () => {
+    const final = JSON.stringify({ t: 'final', r: { result: 'ok' } }) + '\n';
+
+    // subpath under the worktree root → preserved beneath /workspace
+    const sub = fakeEngine([final]);
+    await new DockerEngineRunner(sub.engine, env(), new SandboxActivityRegistry()).run({
+      ...baseArgs,
+      cwd: '/host/worktrees/feat/packages/api',
+      target: { containerId: 'c', worktreeHost: '/host/worktrees/feat' },
+    });
+    expect(JSON.parse(sub.calls[0]!.opts.stdin!).cwd).toBe('/workspace/packages/api');
+
+    // no worktreeHost threaded → fall back to the worktree root
+    const fb = fakeEngine([final]);
+    await new DockerEngineRunner(fb.engine, env(), new SandboxActivityRegistry()).run({
+      ...baseArgs,
+      target: { containerId: 'c' },
+    });
+    expect(JSON.parse(fb.calls[0]!.opts.stdin!).cwd).toBe('/workspace');
   });
 
   it('buffers NDJSON across arbitrary chunk boundaries', async () => {

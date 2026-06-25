@@ -1,13 +1,13 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { FeatureSandbox } from '../git';
 import { engineBundlePath } from './bundle-engine';
-import { CONTAINER_AGENT_HOME } from './docker-engine-runner';
+import { CONTAINER_AGENT_HOME, CONTAINER_GIT_COMMON, CONTAINER_WORKTREE } from './docker-engine-runner';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
 import { SandboxImageBuilder } from './sandbox-image.builder';
@@ -24,9 +24,10 @@ const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
  * with the image id into the `atlas.cfg` fingerprint so a stale container is auto-recreated on its next
  * attach (the thread/worktree survive — only the disposable container is replaced). Engine-CODE changes
  * do NOT bump this: the engine bundle is bind-mounted live, so they're served on the next turn with no
- * recreate. (rev 2 = added the live engine-bundle mount.)
+ * recreate. (rev 2 = added the live engine-bundle mount. rev 3 = worktree mounted at /workspace + git common
+ * dir at /repo.git, was same-path host paths.)
  */
-const CONFIG_REV = 2;
+const CONFIG_REV = 3;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -99,11 +100,19 @@ export class SandboxManager implements SandboxProvider {
     const hostHome = join(this.agentHomeRootHost(), 'sandboxes', name);
     mkdirSync(hostHome, { recursive: true });
 
-    const binds = [`${sandbox.worktreePath}:${sandbox.worktreePath}`, `${hostHome}:${CONTAINER_AGENT_HOME}`];
+    // The worktree mounts at a NEUTRAL container path (`/workspace`), not its host path — so the engine never
+    // sees host-shaped paths. `cwd` is rewritten host→`/workspace` by the runner.
+    const binds = [`${sandbox.worktreePath}:${CONTAINER_WORKTREE}`, `${hostHome}:${CONTAINER_AGENT_HOME}`];
     const gitDir = await this.gitCommonDir(sandbox.worktreePath);
     if (gitDir && !gitDir.startsWith(`${sandbox.worktreePath}/`)) {
-      // Linked worktree: its .git lives outside cwd — mount it at the same path so git resolves.
-      binds.push(`${gitDir}:${gitDir}`);
+      // Linked worktree: its `.git` lives OUTSIDE the worktree (the repo's shared common dir). Mount the
+      // common dir at a neutral path too, then SHADOW the worktree's `.git` pointer file — which holds an
+      // absolute HOST path — with a container-local one so in-container git resolves the worktree's gitdir
+      // → objects/refs, without leaking host paths or mutating the host's real `.git` (the host still uses
+      // it). `commondir` is already relative (`../..`), so it resolves to /repo.git unchanged.
+      binds.push(`${gitDir}:${CONTAINER_GIT_COMMON}`);
+      const dotGit = this.containerDotGit(sandbox.worktreePath, gitDir, hostHome);
+      if (dotGit) binds.push(`${dotGit}:${CONTAINER_WORKTREE}/.git`);
     }
     // HOT-RELOAD: bind-mount the host engine bundle (read-only) over the baked-in one, so an engine
     // update (the API rebundles on boot) is picked up by the next `docker exec` in this container —
@@ -149,6 +158,29 @@ export class SandboxManager implements SandboxProvider {
       // The network + DinD volume share the container name stem; drop them so they don't accumulate.
       await this.cleanupArtifacts(info.name);
       this.logger.log(`tore down sandbox ${info.name}`);
+    }
+  }
+
+  /**
+   * Reclaim a thread's container by its DETERMINISTIC NAME — the terminal-cleanup counterpart to
+   * {@link attach}, which resolves the SAME name (`atlas-sbx-<org>-<project>-thread-<id>`) regardless of
+   * whether a `container_id` is currently known. This matters because `ThreadLifecycleService.reconcileOnBoot`
+   * nulls a row's `container_id` on every restart while the real container keeps running; a close/delete
+   * that happened before the thread's next turn would skip the id-gated {@link teardown} and LEAK the
+   * container (and its `-net`/`-dind`) forever. If the container is already gone, its network/volume are
+   * still reclaimed by name (cheap + idempotent). Never throws on a missing artifact.
+   */
+  async teardownByIdentity(input: SandboxAttachInput): Promise<void> {
+    const { sandbox, orgId, threadId } = input;
+    const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, threadId);
+    const existing = await this.engine.inspect(name);
+    if (existing) {
+      await this.engine.remove(existing.id, { force: true });
+      await this.cleanupArtifacts(existing.name);
+      this.logger.log(`tore down sandbox ${existing.name} (resolved by name)`);
+    } else {
+      // Container already gone — reclaim any net/vol that leaked off the same name stem (pre-fix runs).
+      await this.cleanupArtifacts(name);
     }
   }
 
@@ -261,6 +293,28 @@ export class SandboxManager implements SandboxProvider {
       await new Promise((res) => setTimeout(res, 1000));
     }
     this.logger.warn(`sandbox ${containerId.slice(0, 12)} inner dockerd not ready in ${timeoutMs}ms — continuing`);
+  }
+
+  /**
+   * Generate a container-local replacement for a linked worktree's `.git` pointer file. The real file
+   * reads `gitdir: <hostCommon>/worktrees/<name>` — an absolute HOST path that isn't mounted in the box.
+   * This writes the SAME pointer rebased onto {@link CONTAINER_GIT_COMMON} so in-container git resolves
+   * the worktree's gitdir. Returns the host path of the generated file (to bind-mount over the worktree's
+   * `.git`), or undefined if the worktree `.git` can't be read/parsed.
+   */
+  private containerDotGit(worktreePath: string, commonDir: string, hostHome: string): string | undefined {
+    try {
+      const raw = readFileSync(join(worktreePath, '.git'), 'utf8').trim();
+      const m = raw.match(/^gitdir:\s*(.+)$/);
+      if (!m) return undefined;
+      const rel = relative(commonDir, m[1].trim()); // e.g. "worktrees/thread-X"
+      if (!rel || rel.startsWith('..')) return undefined; // gitdir not under the common dir — bail safely
+      const file = join(hostHome, 'worktree.git');
+      writeFileSync(file, `gitdir: ${CONTAINER_GIT_COMMON}/${rel}\n`);
+      return file;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Absolute git common dir for a worktree (so a linked worktree's external .git can be mounted). */

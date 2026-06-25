@@ -67,6 +67,12 @@ export interface ExecutionTarget {
   containerId: string;
   /** Run the exec as this user (uid or uid:gid) — host-uid so worktree files stay host-owned. */
   user?: string;
+  /**
+   * The HOST worktree root for this turn. The worktree is bind-mounted at a NEUTRAL container path
+   * (`/workspace`, not same-path), so the runner rewrites `cwd` from this host root onto that mount. Absent
+   * → the runner assumes the turn runs at the worktree root.
+   */
+  worktreeHost?: string;
 }
 
 // ── Tool-bridge frame protocol ────────────────────────────────────────────────────────────────────

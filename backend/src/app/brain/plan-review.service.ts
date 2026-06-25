@@ -161,7 +161,9 @@ export class PlanReviewService {
         sandboxKey,
         mode: 'review',
         ...(input.auth ? { auth: input.auth } : {}),
-        ...(input.containerId ? { target: { containerId: input.containerId } } : {}),
+        ...(input.containerId
+          ? { target: { containerId: input.containerId, worktreeHost: input.worktreePath } }
+          : {}),
       });
       reviewerOutput = result.result;
     } catch (err) {

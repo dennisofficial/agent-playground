@@ -112,6 +112,7 @@ export class TurnRunnerService {
           ? {
               target: {
                 containerId: sandbox.containerId,
+                worktreeHost: sandbox.worktreePath,
                 ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
               },
             }
