@@ -1,12 +1,27 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  ArrowUpRight,
+  FileText,
+  GitBranch,
+  GitPullRequest,
+  Image as ImageIcon,
+  Lock,
+  MessageSquare,
+  MoreHorizontal,
+  Pause,
+  Pencil,
+  RotateCw,
+  Trash2,
+} from 'lucide-react';
 import { KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { sectionTitle } from '@/lib/section-brief';
 import { pipelineJob } from '@/lib/api/thread-api';
-import { PipelineTree } from './pipeline-tree';
+import { Caret, Divider, PipelineTree, haltSectionIdx } from './pipeline-tree';
 import type { PipelineJob, PipelineState, ThreadKind, ThreadStatus } from '@/lib/api/types';
 
 export interface ThreadMeta {
@@ -14,16 +29,17 @@ export interface ThreadMeta {
   kind: ThreadKind;
   status: ThreadStatus;
   orgName: string;
+  /** Org swatch fill — neutral grey now (handoff). */
   orgColor: string;
   repoName: string;
-  branch?: string;
   tracker?: string;
   footer: string;
 }
 
 /**
- * The 288px thread navigator. A header (kind · status · title · org · branch) over a state-driven body:
- * the live pipeline tree (running / paused) or a state panel (scoping / approval / done / triaging).
+ * The 288px thread navigator — ONE constant skeleton kept for the thread's whole lifecycle: a header
+ * over Conversation → CONTEXT → PIPELINE → ARTIFACTS. The skeleton never restructures; only the signals
+ * inside change (dot color, dimming, the selected row, per-region notes). See the thread-sidebar handoff.
  */
 export function Navigator({
   meta,
@@ -47,20 +63,34 @@ export function Navigator({
   deleting?: boolean;
 }) {
   const job = pipelineJob(pipeline);
+  const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   const [editing, setEditing] = useState(false);
+
+  // Per-folder expand/collapse — explicit user overrides over the status-derived defaults. Keyed by
+  // folder id (sec:<id>, sec:<id>.exec, sec:<id>.rev); stale keys from a previous thread never match.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const isExpanded = (id: string, fallback: boolean) => (id in collapsed ? !collapsed[id] : fallback);
+  const toggle = (id: string, currentlyExpanded: boolean) =>
+    setCollapsed((m) => ({ ...m, [id]: currentlyExpanded }));
+
+  const st = meta.status;
+  const needsYou = st === 'awaiting_approval' || st === 'triaging';
 
   return (
     <div
       className="flex w-72 shrink-0 flex-col overflow-hidden border-r border-border"
       style={{ background: 'color-mix(in srgb, var(--panel) 35%, transparent)' }}
     >
-      {/* header */}
+      {/* ── header ──────────────────────────────────────────────────────────────────────────── */}
       <div className="border-b border-border px-4 py-3.5">
         <div className="mb-2 flex items-center gap-2">
           <KindBadge kind={meta.kind} />
-          <span className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] text-accent">
-            <StatusPie status={meta.status} size={13} />
-            {STATUS_META[meta.status].label}
+          <span
+            className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em]"
+            style={{ color: STATUS_META[st].color }}
+          >
+            <StatusPie status={st} size={13} />
+            {STATUS_META[st].label}
           </span>
           <div className="flex-1" />
           {onDelete || onRename ? (
@@ -94,65 +124,465 @@ export function Navigator({
           </div>
         )}
         <div className="mt-2 flex items-center gap-2">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-sm" style={{ background: meta.orgColor }} />
+          <span className="h-[7px] w-[7px] shrink-0 rounded-sm" style={{ background: meta.orgColor }} />
           <span className="font-mono text-[9.5px] text-dim">{meta.orgName}</span>
+          <span className="text-[9px] text-border-2">/</span>
+          <span className="font-mono text-[9.5px] font-semibold">{meta.repoName}</span>
         </div>
-        <div className="mt-1.5 flex items-center gap-2 font-mono text-[9.5px] text-faint">
-          <span>{meta.repoName}</span>
-          {meta.branch ? (
-            <>
-              <span className="text-border-2">·</span>
-              <span>{meta.branch}</span>
-            </>
-          ) : null}
-          {meta.tracker ? (
-            <>
-              <span className="text-border-2">·</span>
-              <span className="text-blue">{meta.tracker} ↗</span>
-            </>
-          ) : null}
-        </div>
+        {branch || meta.tracker ? (
+          <div className="mt-1.5 flex items-center gap-2 font-mono text-[9.5px] text-faint">
+            {branch ? (
+              <span className="flex items-center gap-1 truncate">
+                <GitBranch size={10} className="shrink-0" />
+                {branch}
+              </span>
+            ) : null}
+            {meta.tracker ? (
+              <>
+                <span className="text-border-2">·</span>
+                <span className="text-blue">{meta.tracker} ↗</span>
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
-      {/* body */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-        {meta.status === 'running' || meta.status === 'paused' ? (
-          job ? (
-            <PipelineTree
-              job={job}
-              selectedNode={selectedNode}
-              convoActive={convoActive}
-              onConversation={onConversation}
-              onSelectNode={onSelectNode}
-            />
-          ) : (
-            <Panel label="PIPELINE" body="The pipeline is spinning up — sections will appear here." />
-          )
-        ) : meta.status === 'scoping' ? (
-          <ScopingPanel />
-        ) : meta.status === 'awaiting_approval' ? (
-          <ApprovalPanel
-            job={job}
-            onConversation={onConversation}
-            convoActive={convoActive}
-            onSelectNode={onSelectNode}
-          />
-        ) : meta.status === 'done' ? (
-          <DonePanel />
-        ) : meta.status === 'triaging' ? (
-          <Panel
-            label="EVENT"
-            body="An untrusted notification seeded this thread. The agent triaged it and parked one decision — answer it in the conversation."
-          />
-        ) : (
-          <Panel label="STATUS" body="Open the conversation to see what's going on." />
-        )}
+      {/* ── scroll body — the constant skeleton ─────────────────────────────────────────────── */}
+      <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 py-3">
+        {/* Conversation — always present */}
+        <NavRow
+          icon={<MessageSquare size={13} className="text-accent" />}
+          active={convoActive}
+          onClick={onConversation}
+        >
+          <span className="flex-1 text-[12px] font-semibold">Conversation</span>
+          {needsYou ? <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: 'var(--slate)' }} /> : null}
+        </NavRow>
+
+        <StateBanner status={st} job={job} onConversation={onConversation} />
+
+        <ContextRegion status={st} selectedNode={selectedNode} onSelectNode={onSelectNode} />
+
+        <PipelineRegion
+          status={st}
+          job={job}
+          selectedNode={selectedNode}
+          onSelectNode={onSelectNode}
+          isExpanded={isExpanded}
+          toggle={toggle}
+        />
+
+        <ArtifactsRegion status={st} job={job} selectedNode={selectedNode} onSelectNode={onSelectNode} />
       </div>
 
       <div className="border-t border-border px-3.5 py-2.5 text-[10px] leading-relaxed text-faint">
         {meta.footer}
       </div>
     </div>
+  );
+}
+
+// ── CONTEXT (inputs) ──────────────────────────────────────────────────────────────────────────────
+
+function ContextRegion({
+  status,
+  selectedNode,
+  onSelectNode,
+}: {
+  status: ThreadStatus;
+  selectedNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  if (status === 'triaging') {
+    return (
+      <>
+        <Divider label="CONTEXT" />
+        <div
+          className="mx-1.5 mb-1 rounded-md border border-l-2 px-3 py-2.5"
+          style={{ borderColor: 'var(--border)', borderLeftColor: 'var(--slate)', background: 'var(--surface-2)' }}
+        >
+          <div className="mb-1.5 flex items-center gap-2">
+            <GitPullRequest size={11} className="text-dim" />
+            <span className="flex-1 font-mono text-[10px] font-semibold">github · workflow_run</span>
+            <span
+              className="rounded border px-1.5 py-px font-mono text-[8px] font-semibold"
+              style={{ color: 'var(--slate)', background: 'var(--slate-soft)', borderColor: 'var(--slate-line)' }}
+            >
+              UNTRUSTED
+            </span>
+          </div>
+          <p className="text-[10.5px] leading-snug text-dim">An untrusted notification seeded this thread.</p>
+        </div>
+        <div className="flex items-center gap-2.5 px-2 py-1.5 opacity-60">
+          <FileText size={12} className="opacity-50" />
+          <span className="flex-1 text-[10.5px] italic text-faint">plan.md forms when you open a thread.</span>
+        </div>
+      </>
+    );
+  }
+
+  const scoping = status === 'scoping';
+  const awaiting = status === 'awaiting_approval';
+  return (
+    <>
+      <Divider label="CONTEXT" />
+      <FileRow
+        icon={<FileText size={12} />}
+        name="plan.md"
+        active={selectedNode === 'plan'}
+        onClick={() => onSelectNode('plan')}
+        note={scoping ? { text: 'drafting', pulse: true } : awaiting ? { text: 'proposed' } : undefined}
+      />
+      {scoping || awaiting ? (
+        <div className="flex items-center gap-2.5 px-2 py-1.5 opacity-50">
+          <Lock size={12} />
+          <span className="flex-1 font-mono text-[11px] text-faint">decision-record.md</span>
+          <span className="font-mono text-[8px] text-faint">empty</span>
+        </div>
+      ) : (
+        <FileRow
+          icon={<Lock size={12} />}
+          name="decision-record.md"
+          dim
+          active={selectedNode === 'decision'}
+          onClick={() => onSelectNode('decision')}
+        />
+      )}
+    </>
+  );
+}
+
+// ── PIPELINE (the work tree) ───────────────────────────────────────────────────────────────────────
+
+function PipelineRegion({
+  status,
+  job,
+  selectedNode,
+  onSelectNode,
+  isExpanded,
+  toggle,
+}: {
+  status: ThreadStatus;
+  job: PipelineJob | null;
+  selectedNode: string | null;
+  onSelectNode: (node: string) => void;
+  isExpanded: (id: string, fallback: boolean) => boolean;
+  toggle: (id: string, currentlyExpanded: boolean) => void;
+}) {
+  // Triaging — the autonomous lane: triage findings, not a build tree.
+  if (status === 'triaging') {
+    return (
+      <>
+        <Divider label="PIPELINE" count="triage only" />
+        <div className="flex items-center gap-2.5 px-2 py-1.5">
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--green)' }} />
+          <span className="flex-1 text-[11.5px] text-dim">Verified &amp; classified</span>
+        </div>
+        <div className="flex items-center gap-2.5 px-2 py-1.5">
+          <span className="pulse-dot h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--slate)' }} />
+          <span className="flex-1 text-[11.5px] text-text">1 decision parked for you</span>
+        </div>
+      </>
+    );
+  }
+
+  // The live build tree (running / paused / done / failed) — real sections + phases.
+  if ((status === 'running' || status === 'paused' || status === 'done' || status === 'failed') && job) {
+    const total = job.sections.length;
+    const activeIdx = job.sections.findIndex(
+      (s) => s.status !== 'done' && s.status !== 'pending' && s.status !== 'failed',
+    );
+    const activeNo = activeIdx === -1 ? total : activeIdx + 1;
+    const count =
+      status === 'done' ? (
+        <span className="text-green">{total} / {total}</span>
+      ) : status === 'failed' ? (
+        <span className="text-red">stopped</span>
+      ) : (
+        `§${Math.min(activeNo, total || 1)} / ${total}`
+      );
+    return (
+      <>
+        <Divider label="PIPELINE" count={count} />
+        <PipelineTree
+          job={job}
+          status={status}
+          selectedNode={selectedNode}
+          onSelectNode={onSelectNode}
+          isExpanded={isExpanded}
+          toggle={toggle}
+        />
+      </>
+    );
+  }
+
+  // Scoping / awaiting — draft sections (locked in on approval).
+  const drafts = job?.sections ?? [];
+  return (
+    <>
+      <Divider label="PIPELINE" count={status === 'awaiting_approval' ? `proposed · ${drafts.length}` : 'forming'} />
+      {drafts.length === 0 ? (
+        <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
+          No sections yet — the plan you approve in the conversation is what creates them.
+        </p>
+      ) : (
+        drafts.map((s, i) => (
+          <div key={s.id} className="flex items-center gap-[7px] px-2 py-1.5 opacity-60">
+            <Caret expanded={false} />
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ border: '1.5px dashed var(--border-2)', background: 'transparent' }}
+            />
+            <span className="flex-1 truncate text-[12px] font-semibold text-dim">
+              §{i + 1} {sectionTitle(s.brief)}
+            </span>
+          </div>
+        ))
+      )}
+      <p className="px-2 pb-1 pt-2 text-[10.5px] italic leading-relaxed text-faint">
+        Drafted in the conversation — these lock in when you approve the plan.
+      </p>
+    </>
+  );
+}
+
+// ── ARTIFACTS (outputs) ────────────────────────────────────────────────────────────────────────────
+
+function ArtifactsRegion({
+  status,
+  job,
+  selectedNode,
+  onSelectNode,
+}: {
+  status: ThreadStatus;
+  job: PipelineJob | null;
+  selectedNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  const hasPr = Boolean(job?.prUrl);
+  const populated = status === 'done' || hasPr;
+
+  return (
+    <>
+      <Divider label="ARTIFACTS" />
+      {populated ? (
+        <>
+          <FileRow
+            icon={<span className="text-[12px] leading-none">±</span>}
+            name="diff"
+            dim
+            active={selectedNode === 'diff'}
+            onClick={() => onSelectNode('diff')}
+          />
+          {hasPr ? (
+            <a
+              href={job!.prUrl!}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2.5 rounded-sm px-2 py-1.5 hover:bg-surface-2"
+            >
+              <GitPullRequest size={12} className="text-green" />
+              <span className="flex-1 truncate font-mono text-[11px] text-green">
+                {job!.prNumber != null ? `PR #${job!.prNumber}` : 'pull request'} · open
+              </span>
+              <ArrowUpRight size={12} className="text-faint" />
+            </a>
+          ) : null}
+          <FileRow icon={<ImageIcon size={12} />} name="screenshots" dim />
+        </>
+      ) : (
+        <div className="flex flex-col items-center gap-1.5 px-2 py-3 text-center">
+          <span className="text-[15px] opacity-40">🗂</span>
+          <span className="text-[10px] leading-relaxed text-faint">
+            Nothing shared yet — the agent drops screenshots &amp; files here as it works.
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── state banners (failed / paused) ──────────────────────────────────────────────────────────────
+
+function StateBanner({
+  status,
+  job,
+  onConversation,
+}: {
+  status: ThreadStatus;
+  job: PipelineJob | null;
+  onConversation: () => void;
+}) {
+  if (status === 'failed') {
+    const haltNo = job ? haltSectionNo(job) : null;
+    return (
+      <div
+        className="mx-1.5 my-1 rounded-md border px-3 py-2.5"
+        style={{ borderColor: 'var(--red-line)', background: 'var(--red-soft)' }}
+      >
+        <div className="mb-1 flex items-center gap-1.5">
+          <AlertTriangle size={11} className="text-red" />
+          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-red">
+            HALTED{haltNo ? ` · §${haltNo}` : ''}
+          </span>
+        </div>
+        <p className="text-[10.5px] leading-snug text-dim">
+          The run stopped — read the conversation for the halt, then steer or retry.
+        </p>
+        <div className="mt-2 flex gap-1.5">
+          <BannerBtn tone="red" icon={<RotateCw size={10} />} label="Retry" onClick={onConversation} />
+          <BannerBtn tone="neutral" label="Revert" onClick={onConversation} />
+        </div>
+      </div>
+    );
+  }
+  if (status === 'paused') {
+    return (
+      <div
+        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
+        style={{ borderColor: 'var(--border)', borderLeftColor: 'var(--faint)', background: 'var(--surface-2)' }}
+      >
+        <div className="mb-1 flex items-center gap-1.5">
+          <Pause size={11} className="text-dim" />
+          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">SESSION SAVED</span>
+        </div>
+        <p className="text-[10.5px] leading-snug text-dim">
+          The live session is held — reply to resume the same session.
+        </p>
+        <div className="mt-2 flex gap-1.5">
+          <BannerBtn tone="accent" icon={<RotateCw size={10} />} label="Re-ping" onClick={onConversation} />
+        </div>
+      </div>
+    );
+  }
+  if (status === 'awaiting_approval') {
+    return (
+      <div
+        className="mx-1.5 my-1 flex items-start gap-2 rounded-md border border-l-2 px-3 py-2.5"
+        style={{ borderColor: 'var(--border)', borderLeftColor: 'var(--slate)', background: 'var(--surface-2)' }}
+      >
+        <Lock size={12} className="mt-px shrink-0" style={{ color: 'var(--slate)' }} />
+        <div>
+          <div className="text-[11px] font-semibold" style={{ color: 'var(--slate)' }}>
+            Approval card is in the conversation
+          </div>
+          <p className="mt-0.5 text-[10.5px] leading-snug text-dim">
+            That card is the gate — approving locks in the plan below.
+          </p>
+          <button
+            type="button"
+            onClick={onConversation}
+            className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold"
+            style={{ color: 'var(--accent)' }}
+          >
+            Open conversation <ArrowRight size={11} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+function haltSectionNo(job: PipelineJob): number | null {
+  const idx = haltSectionIdx(job.sections);
+  return idx === -1 ? null : idx + 1;
+}
+
+function BannerBtn({
+  tone,
+  icon,
+  label,
+  onClick,
+}: {
+  tone: 'red' | 'accent' | 'neutral';
+  icon?: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  const style =
+    tone === 'red'
+      ? { color: 'var(--red)', background: 'var(--red-soft)', borderColor: 'var(--red-line)' }
+      : tone === 'accent'
+        ? { color: 'var(--accent)', background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }
+        : { color: 'var(--dim)', background: 'transparent', borderColor: 'var(--border-2)' };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[10px] font-semibold"
+      style={style}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+// ── small primitives ────────────────────────────────────────────────────────────────────────────
+
+function NavRow({
+  icon,
+  active,
+  onClick,
+  children,
+}: {
+  icon: ReactNode;
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-2.5 rounded-sm px-2 py-[7px] text-left hover:bg-surface-2 ${
+        active ? 'bg-[var(--accent-soft)]' : ''
+      }`}
+      style={active ? { border: '1px solid var(--accent-line)' } : { border: '1px solid transparent' }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function FileRow({
+  icon,
+  name,
+  dim,
+  active,
+  onClick,
+  note,
+}: {
+  icon: ReactNode;
+  name: string;
+  dim?: boolean;
+  active?: boolean;
+  onClick?: () => void;
+  note?: { text: string; pulse?: boolean };
+}) {
+  const body = (
+    <>
+      <span className="shrink-0">{icon}</span>
+      <span className={`flex-1 truncate font-mono text-[11px] ${dim ? 'text-dim' : ''}`}>{name}</span>
+      {note ? (
+        <span className={`font-mono text-[8px] ${note.pulse ? 'pulse-dot text-accent' : 'text-faint'}`}>{note.text}</span>
+      ) : null}
+    </>
+  );
+  return onClick ? (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
+        active ? 'bg-[var(--accent-soft)]' : ''
+      }`}
+    >
+      {body}
+    </button>
+  ) : (
+    <div className="flex items-center gap-2.5 px-2 py-1.5">{body}</div>
   );
 }
 
@@ -229,116 +659,6 @@ function ThreadMenu({
           ) : null}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ConvoLink({ active, onClick, note }: { active: boolean; onClick: () => void; note?: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`mb-1.5 flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
-        active ? 'bg-[var(--accent-soft)]' : ''
-      }`}
-    >
-      <MessageSquare size={13} className="text-accent" />
-      <span className="flex-1 text-[12px] font-semibold">Conversation</span>
-      {note ? <span className="font-mono text-[8px] text-purple">{note}</span> : null}
-    </button>
-  );
-}
-
-function ScopingPanel() {
-  return (
-    <div className="flex flex-col gap-1">
-      <Label>PLANNING — IN THE CONVERSATION</Label>
-      <p className="px-2 pb-3 text-[11.5px] leading-relaxed text-dim">
-        No pipeline yet. A new thread is pure conversation — intent, grilling, then a plan. The plan you
-        approve in the chat is what creates these sections.
-      </p>
-      <Label>FORMING</Label>
-      <Forming icon="📄" name="plan.md" tag="drafting" pulse />
-      <Forming icon="🔒" name="decision-record.md" tag="forming" />
-      <Forming icon="▸" name="sections" tag="draft" />
-    </div>
-  );
-}
-
-function ApprovalPanel({
-  job,
-  onConversation,
-  convoActive,
-  onSelectNode,
-}: {
-  job: PipelineJob | null;
-  onConversation: () => void;
-  convoActive: boolean;
-  onSelectNode: (node: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <ConvoLink active={convoActive} onClick={onConversation} note="approval pending" />
-      <Label>PROPOSED · for review</Label>
-      <p className="px-2 pb-2.5 text-[11.5px] leading-relaxed text-dim">
-        The approval card is inline in the conversation — that&apos;s the gate. These are the sections it
-        will create on approve.
-      </p>
-      {(job?.sections ?? []).map((s, i) => (
-        <button
-          key={s.id}
-          type="button"
-          onClick={() => onSelectNode('plan')}
-          className="flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2"
-        >
-          <span className="font-mono text-[9px] text-faint">{i + 1}</span>
-          <span className="flex-1 truncate text-[11.5px]">{sectionTitle(s.brief)}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function DonePanel() {
-  return (
-    <div className="flex flex-col gap-1">
-      <Label>ARTIFACTS</Label>
-      <Artifact icon="📄" name="plan.md" />
-      <Artifact icon="🔒" name="decision-record.md" dim />
-      <Artifact icon="⑃" name="pull request" dim />
-      <Artifact icon="🐳" name="sandbox" dim />
-    </div>
-  );
-}
-
-function Panel({ label, body }: { label: string; body: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Label>{label}</Label>
-      <p className="px-2 text-[11.5px] leading-relaxed text-dim">{body}</p>
-    </div>
-  );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return <div className="px-2 pb-1.5 pt-0.5 font-mono text-[9px] tracking-[0.16em] text-faint">{children}</div>;
-}
-
-function Forming({ icon, name, tag, pulse }: { icon: string; name: string; tag: string; pulse?: boolean }) {
-  return (
-    <div className="flex items-center gap-2.5 px-2 py-1.5">
-      <span className="text-[12px] opacity-50">{icon}</span>
-      <span className="flex-1 font-mono text-[11px] text-dim">{name}</span>
-      <span className={`font-mono text-[8px] ${pulse ? 'pulse-dot text-accent' : 'text-faint'}`}>{tag}</span>
-    </div>
-  );
-}
-
-function Artifact({ icon, name, dim }: { icon: string; name: string; dim?: boolean }) {
-  return (
-    <div className="flex items-center gap-2.5 px-2 py-1.5">
-      <span className="text-[12px]">{icon}</span>
-      <span className={`flex-1 font-mono text-[11px] ${dim ? 'text-dim' : 'text-text'}`}>{name}</span>
     </div>
   );
 }

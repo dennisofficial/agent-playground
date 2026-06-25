@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { inputCls } from '@/components/ui/field';
-import { orgColor, orgInitials, slugify } from '@/lib/org-display';
+import { orgSwatch, orgInitials, slugify } from '@/lib/org-display';
 import type { OrgSummary } from '@/lib/api/me';
 import { useUpdateOrg } from '@/lib/api/orgs';
 import { DeleteOrgDialog } from './delete-org-dialog';
@@ -41,7 +41,7 @@ export function GeneralSection({ org }: { org: OrgSummary }) {
         <div className="flex shrink-0 flex-col items-center gap-1.5">
           <span
             className="flex h-16 w-16 items-center justify-center rounded-[15px] font-disp text-[26px] font-semibold text-white"
-            style={{ background: orgColor(org.id) }}
+            style={{ background: orgSwatch() }}
           >
             {orgInitials(name || org.name)}
           </span>

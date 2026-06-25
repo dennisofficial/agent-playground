@@ -114,10 +114,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v1',
       decisions: [],
-      sections: [
-        { brief: 'backend middleware', spec: null },
-        { brief: 'frontend banner', spec: null },
-      ],
+      sectionBriefs: ['backend middleware', 'frontend banner'],
     });
     expect(first.thread.status).toBe('awaiting_approval');
     expect(await sectionBriefs(dataSource, threadId)).toEqual([
@@ -137,7 +134,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v2',
       decisions: [],
-      sections: [{ brief: 'backend middleware only', spec: null }],
+      sectionBriefs: ['backend middleware only'],
     });
 
     expect(second.thread.status).toBe('awaiting_approval');

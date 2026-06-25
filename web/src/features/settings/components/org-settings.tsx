@@ -9,7 +9,7 @@ import { ROUTES, type SettingsSection } from '@/lib/routes';
 import { BrandLockup } from '@/components/ui/brand';
 import { AccountMenu } from '@/features/shell/components/account-menu';
 import { useOrg, useOrgs, type OrgSummary } from '@/lib/api/me';
-import { orgColor, orgInitials, roleLabel } from '@/lib/org-display';
+import { orgSwatch, orgInitials, roleLabel } from '@/lib/org-display';
 import { GeneralSection } from './general-section';
 import { CredentialsSection } from './credentials-section';
 import { MembersSection } from './members-section';
@@ -76,7 +76,7 @@ export function OrgSettings({
           <div className="flex items-center gap-2.5 px-2 pb-3 pt-1.5">
             <span
               className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg font-disp text-[14px] font-semibold text-white"
-              style={{ background: org ? orgColor(org.id) : 'var(--border-2)' }}
+              style={{ background: org ? orgSwatch() : 'var(--border-2)' }}
             >
               {org ? orgInitials(org.name) : '·'}
             </span>
@@ -189,7 +189,7 @@ function OrgSwitcher({
       >
         <span
           className="h-2 w-2 shrink-0 rounded-[2px]"
-          style={{ background: currentName ? orgColor(currentId) : 'var(--faint)' }}
+          style={{ background: currentName ? orgSwatch() : 'var(--faint)' }}
         />
         <span className="text-text">{currentName ?? 'Organization'}</span>
         <ChevronDown
@@ -222,7 +222,7 @@ function OrgSwitcher({
                   on ? 'bg-surface-2' : 'hover:bg-surface-2',
                 )}
               >
-                <span className="h-[9px] w-[9px] shrink-0 rounded-[2px]" style={{ background: orgColor(o.id) }} />
+                <span className="h-[9px] w-[9px] shrink-0 rounded-[2px]" style={{ background: orgSwatch() }} />
                 <span className="flex min-w-0 flex-1 flex-col leading-tight">
                   <span className={cn('truncate text-[12px] text-text', on ? 'font-semibold' : 'font-medium')}>
                     {o.name}

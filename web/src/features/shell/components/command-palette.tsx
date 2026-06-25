@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAllThreads, type InboxThread } from '@/lib/api/inbox';
-import { orgColor } from '@/lib/org-display';
+import { orgSwatch } from '@/lib/org-display';
 import { threadHref } from '@/lib/routes';
 
 /**
@@ -104,7 +104,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                   i === active ? 'bg-surface-2' : '',
                 )}
               >
-                <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: orgColor(t.org.id) }} />
+                <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: orgSwatch() }} />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-text">{t.title}</span>
                 <span className="shrink-0 font-mono text-[10px] text-faint">
                   {t.org.name} · {t.repo.name}

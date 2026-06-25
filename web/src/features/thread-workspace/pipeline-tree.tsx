@@ -1,283 +1,400 @@
 'use client';
 
-import { ChevronDown, ChevronRight, FileText, Link2, Lock, MessageSquare } from 'lucide-react';
+import type { MouseEvent, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { Dot } from '@/components/ui/badges';
-import { sectionColor } from '@/lib/api/status';
+import { phaseColor, sectionColor } from '@/lib/api/status';
 import { sectionTitle } from '@/lib/section-brief';
-import type { PipelineJob, SectionStatus } from '@/lib/api/types';
+import type { PipelineJob, PipelinePhase, PipelineSection, SectionStatus, ThreadStatus } from '@/lib/api/types';
 
-const SECTION_LABEL: Record<SectionStatus, string> = {
-  pending: 'pending',
-  planning: 'planning',
-  reviewing: 'reviewing',
-  awaiting_approval: 'awaiting',
-  executing: 'running',
-  auto_fixing: 'auto-fix',
-  done: 'done',
-  failed: 'failed',
-};
+// ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
 
-/** A sub-stage's progress within a section. */
-type Stage = 'done' | 'active' | 'pending' | 'failed';
+/** A 12px disclosure caret — chevron that rotates 0°→90° on expand (handoff §Caret). */
+export function Caret({ expanded, onClick }: { expanded: boolean; onClick?: (e: MouseEvent) => void }) {
+  return (
+    <span
+      onClick={onClick}
+      className="inline-flex w-3 shrink-0 items-center justify-center text-faint group-hover:text-text"
+      style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .12s' }}
+      aria-hidden
+    >
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 6l6 6-6 6" />
+      </svg>
+    </span>
+  );
+}
 
-const STAGE_DOT: Record<Stage, { color: string; pulse: boolean }> = {
-  done: { color: 'var(--green)', pulse: false },
-  active: { color: 'var(--accent)', pulse: true },
-  pending: { color: 'var(--border-2)', pulse: false },
-  failed: { color: 'var(--red)', pulse: false },
-};
+/** An empty 12px slot so leaf rows align under their caret-bearing siblings. */
+export function CaretSpacer() {
+  return <span className="inline-block w-3 shrink-0" aria-hidden />;
+}
 
-/**
- * Derive each section's plan → review → execute → auto-fix sub-stage states from its single `status`. The
- * `/pipeline` API exposes sections (id, ordinal, brief, status) but NOT phases, so the four sub-stages are
- * deterministic scaffolding and individual phase rows (e.g. "phase-1 · model") are intentionally omitted.
- */
-function subStages(status: SectionStatus): { plan: Stage; review: Stage; execute: Stage; autofix: Stage } {
-  switch (status) {
-    case 'planning':
-      return { plan: 'active', review: 'pending', execute: 'pending', autofix: 'pending' };
-    case 'reviewing':
-    case 'awaiting_approval':
-      return { plan: 'done', review: 'active', execute: 'pending', autofix: 'pending' };
-    case 'executing':
-      return { plan: 'done', review: 'done', execute: 'active', autofix: 'pending' };
-    case 'auto_fixing':
-      return { plan: 'done', review: 'done', execute: 'done', autofix: 'active' };
-    case 'done':
-      return { plan: 'done', review: 'done', execute: 'done', autofix: 'done' };
-    case 'failed':
-      return { plan: 'done', review: 'done', execute: 'failed', autofix: 'pending' };
-    default:
-      return { plan: 'pending', review: 'pending', execute: 'pending', autofix: 'pending' };
+/** A divider header (CONTEXT / PIPELINE / ARTIFACTS) — mono label, hairline rule, optional right count. */
+export function Divider({ label, count }: { label: string; count?: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 px-2 pb-1.5 pt-3">
+      <span className="font-mono text-[9px] tracking-[0.16em] text-faint">{label}</span>
+      <div className="h-px flex-1" style={{ background: 'var(--border)' }} />
+      {count != null ? <span className="font-mono text-[9px] text-faint">{count}</span> : null}
+    </div>
+  );
+}
+
+/** The hollow strikethrough dot for a skipped session (handoff §Dots). */
+function SkippedDot() {
+  return (
+    <span
+      className="inline-block shrink-0 rounded-full"
+      style={{ width: 5, height: 5, border: '1.5px solid var(--faint)', background: 'transparent' }}
+      aria-hidden
+    />
+  );
+}
+
+// ── status helpers ───────────────────────────────────────────────────────────────────────────────
+
+const ACTIVE_SECTION: SectionStatus[] = ['planning', 'reviewing', 'awaiting_approval', 'executing', 'auto_fixing'];
+const isActiveSection = (s: SectionStatus) => ACTIVE_SECTION.includes(s);
+
+/** The halt section for a failed thread: the furthest in-flight (non-done, non-pending) section, else the
+ *  last non-done one. Exported so the navigator's halt banner derives the same index. */
+export function haltSectionIdx(sections: { status: SectionStatus }[]): number {
+  for (let i = sections.length - 1; i >= 0; i -= 1) {
+    const st = sections[i].status;
+    if (st !== 'done' && st !== 'pending') return i;
   }
+  for (let i = sections.length - 1; i >= 0; i -= 1) {
+    if (sections[i].status !== 'done') return i;
+  }
+  return -1;
+}
+
+// ── the pipeline folder tree ─────────────────────────────────────────────────────────────────────
+
+export interface TreeProps {
+  job: PipelineJob;
+  status: ThreadStatus;
+  selectedNode: string | null;
+  onSelectNode: (node: string) => void;
+  /** Resolve a folder's expanded state — explicit user override, else the status-derived default. */
+  isExpanded: (folderId: string, fallback: boolean) => boolean;
+  /** Toggle a folder, passing its current expanded value so the override flips it. */
+  toggle: (folderId: string, currentlyExpanded: boolean) => void;
 }
 
 /**
- * The navigator pipeline tree (running / paused). Conversation + the CONTEXT docs + the real sections from
- * `/pipeline`, each expanded into its plan / review / execute / auto-fix sub-stages (derived — see
- * `subStages`). The running section is highlighted and its execute stage shows a live progress bar.
- * Clicking a node opens it in the work column (Phase mode).
+ * The PIPELINE folder tree (running / paused / done / failed). Four nesting levels —
+ * section → plan(optional)/execute/review → phase leaves (under execute) + review-agent leaves (under
+ * review). Folders collapse via the `collapsed` map (owned by the navigator); the active path
+ * auto-expands down to the live phase. Sections/phases are real (`/pipeline`); review lenses are
+ * placeholder (ephemeral, never persisted). Clicking a leaf opens it in the work column.
  */
-export function PipelineTree({
-  job,
-  selectedNode,
-  convoActive,
-  onConversation,
-  onSelectNode,
-}: {
-  job: PipelineJob;
-  selectedNode: string | null;
-  convoActive: boolean;
-  onConversation: () => void;
-  onSelectNode: (node: string) => void;
-}) {
-  const activeIdx = job.sections.findIndex(
-    (s) => s.status !== 'done' && s.status !== 'pending' && s.status !== 'failed',
-  );
-  const activeNo = activeIdx === -1 ? job.sections.length : activeIdx + 1;
+export function PipelineTree({ job, status, selectedNode, onSelectNode, isExpanded, toggle }: TreeProps) {
+  const sections = job.sections;
+  const activeIdx = sections.findIndex((s) => isActiveSection(s.status));
+  // Failed: sections/phases aren't persisted as `failed` (only the thread flips), so derive the halt
+  // point — the in-flight section (the furthest one that's neither `done` nor `pending`) is where the run
+  // stopped; later `pending` sections were never reached. Fall back to the last non-`done` section.
+  const haltIdx = status === 'failed' ? haltSectionIdx(sections) : -1;
+
+  if (sections.length === 0) {
+    return <p className="px-2 py-2 font-mono text-[10.5px] text-faint">No sections yet.</p>;
+  }
 
   return (
     <div className="flex flex-col gap-px">
-      <NavRow icon={<MessageSquare size={13} className="text-accent" />} active={convoActive} onClick={onConversation}>
-        <span className="flex-1 text-[12px] font-semibold">Conversation</span>
-        <span className="font-mono text-[8px] text-faint">main thread</span>
-      </NavRow>
+      {sections.map((s, i) => (
+        <SectionNode
+          key={s.id}
+          section={s}
+          index={i}
+          isHalt={i === haltIdx}
+          isActive={i === activeIdx}
+          notReached={haltIdx !== -1 && i > haltIdx}
+          paused={status === 'paused'}
+          selectedNode={selectedNode}
+          onSelectNode={onSelectNode}
+          isExpanded={isExpanded}
+          toggle={toggle}
+        />
+      ))}
+    </div>
+  );
+}
 
-      <SectionLabel>CONTEXT</SectionLabel>
-      <NavRow icon={<FileText size={12} />} active={selectedNode === 'plan'} onClick={() => onSelectNode('plan')}>
-        <span className="flex-1 font-mono text-[11px]">plan.md</span>
-        <span className="font-mono text-[8px] text-faint">overview</span>
-      </NavRow>
-      <NavRow icon={<Lock size={12} />} active={selectedNode === 'decision'} onClick={() => onSelectNode('decision')}>
-        <span className="flex-1 font-mono text-[11px] text-dim">decision-record.md</span>
-      </NavRow>
-      <div className="flex items-center gap-2.5 px-2 py-1.5 text-dim">
-        <Link2 size={12} />
-        <span className="flex-1 text-[11px] text-dim">tracker ↗</span>
-      </div>
+function SectionNode({
+  section: s,
+  index,
+  isHalt,
+  isActive,
+  notReached,
+  paused,
+  selectedNode,
+  onSelectNode,
+  isExpanded,
+  toggle,
+}: {
+  section: PipelineSection;
+  index: number;
+  isHalt: boolean;
+  isActive: boolean;
+  notReached: boolean;
+  paused: boolean;
+  selectedNode: string | null;
+  onSelectNode: (node: string) => void;
+  isExpanded: TreeProps['isExpanded'];
+  toggle: TreeProps['toggle'];
+}) {
+  const folderId = `sec:${s.id}`;
+  const execId = `${folderId}.exec`;
+  const revId = `${folderId}.rev`;
+  const dot = isHalt ? { color: 'var(--red)', pulse: false } : sectionColor(s.status);
+  const expanded = isExpanded(folderId, isActive || isHalt);
+  // Folders default-open only on the active/halt path; everything else folds.
+  const execOpen = isExpanded(execId, isActive || isHalt);
+  const revOpen = isExpanded(revId, false);
+  const dim = (s.status === 'pending' && !isActive) || notReached;
+  const planExpected = s.status !== 'pending';
 
-      <div className="flex items-center gap-2 px-2 pb-1.5 pt-4">
-        <span className="font-mono text-[9px] tracking-[0.16em] text-faint">PIPELINE</span>
-        <div className="h-px flex-1" style={{ background: 'var(--border)' }} />
-        <span className="font-mono text-[9px] text-dim">
-          §{Math.min(activeNo, job.sections.length || 1)} / {job.sections.length}
+  return (
+    <div className="flex flex-col">
+      {/* §section — a folder row (toggles; does not navigate) */}
+      <button
+        type="button"
+        onClick={() => toggle(folderId, expanded)}
+        className={cn(
+          'group mt-0.5 flex items-center gap-[7px] rounded-sm px-2 py-1.5 text-left hover:bg-surface-2',
+          dim && 'opacity-60',
+        )}
+        style={
+          isHalt
+            ? { background: 'var(--red-soft)', border: '1px solid var(--red-line)' }
+            : isActive
+              ? { background: 'color-mix(in srgb, var(--accent-soft) 55%, transparent)' }
+              : undefined
+        }
+      >
+        <Caret expanded={expanded} />
+        <Dot color={dot.color} pulse={dot.pulse} size={8} />
+        <span className={cn('flex-1 truncate text-[12px] font-semibold', dim && 'text-dim')}>
+          §{index + 1} {sectionTitle(s.brief)}
         </span>
-      </div>
+      </button>
 
-      {job.sections.length === 0 ? (
-        <p className="px-2 py-2 font-mono text-[10.5px] text-faint">No sections yet.</p>
-      ) : (
-        job.sections.map((s, i) => {
-          const head = sectionColor(s.status);
-          const running = s.status === 'executing' || s.status === 'auto_fixing';
-          const expanded = s.status !== 'pending';
-          const st = subStages(s.status);
-          return (
-            <div key={s.id} className="flex flex-col">
-              {/* section header */}
-              <button
-                type="button"
-                onClick={() => onSelectNode(s.id)}
-                className={cn(
-                  'mt-0.5 flex items-center gap-2 rounded-sm px-2 py-1.5 text-left',
-                  running ? '' : 'hover:bg-surface-2',
-                  s.status === 'pending' && 'opacity-60',
-                  selectedNode === s.id && 'bg-[var(--accent-soft)]',
-                )}
-                style={running ? { background: 'color-mix(in srgb, var(--accent-soft) 55%, transparent)' } : undefined}
-              >
-                {expanded ? (
-                  <ChevronDown size={11} className="shrink-0 text-faint" />
-                ) : (
-                  <ChevronRight size={11} className="shrink-0 text-faint" />
-                )}
-                <Dot color={head.color} pulse={head.pulse} size={8} />
-                <span className={cn('flex-1 truncate text-[12px] font-semibold', s.status === 'pending' && 'text-dim')}>
-                  §{i + 1} {sectionTitle(s.brief)}
-                </span>
-                <span className="font-mono text-[9px]" style={{ color: head.color }}>
-                  {SECTION_LABEL[s.status]}
-                </span>
-              </button>
+      {expanded && (
+        <div className={cn('flex flex-col gap-px', paused && 'opacity-70')}>
+          {/* plan — optional leaf */}
+          {s.hasPlan && (
+            <LeafRow
+              level={2}
+              caret="spacer"
+              dotColor={planExpected ? 'var(--green)' : 'var(--border-2)'}
+              label="plan"
+              selected={selectedNode === `secplan:${s.id}`}
+              onClick={() => onSelectNode(`secplan:${s.id}`)}
+              badge="plan.md"
+            />
+          )}
 
-              {expanded && (
-                <>
-                  <SubStage
-                    label="plan"
-                    state={st.plan}
-                    badge={{ text: '📄 plan.md', tone: 'accent' }}
-                    active={selectedNode === `secplan:${s.id}`}
-                    onClick={() => onSelectNode(`secplan:${s.id}`)}
-                  />
-                  <SubStage label="review" state={st.review} />
-                  {st.execute === 'active' ? (
-                    <ExecuteLive active={selectedNode === s.id} onClick={() => onSelectNode(s.id)} />
-                  ) : (
-                    <SubStage label="execute" state={st.execute} />
-                  )}
-                  <SubStage
-                    label="auto-fix"
-                    state={st.autofix}
-                    badge={st.autofix !== 'pending' ? { text: '3 lenses', tone: 'purple' } : undefined}
-                    active={selectedNode === `autofix:${s.id}`}
-                    onClick={() => onSelectNode(`autofix:${s.id}`)}
-                  />
-                </>
-              )}
-            </div>
-          );
-        })
+          {/* execute — folder of phase leaves */}
+          <FolderRow
+            level={2}
+            label="execute"
+            dotColor={dot.color}
+            dotPulse={isActive && !isHalt}
+            expanded={execOpen}
+            onToggle={() => toggle(execId, execOpen)}
+          />
+          {execOpen &&
+            s.phases.map((p, pi) => {
+              const inFlight = p.status === 'building' || p.status === 'reviewing';
+              return (
+                <PhaseLeaf
+                  key={p.id}
+                  phase={p}
+                  index={pi}
+                  live={isActive && !isHalt && !paused && inFlight}
+                  halted={isHalt && inFlight}
+                  selected={selectedNode === p.id}
+                  onClick={() => onSelectNode(p.id)}
+                />
+              );
+            })}
+          {execOpen && s.phases.length === 0 && (
+            <div className="py-1 pl-12 pr-2 font-mono text-[9.5px] text-faint">phases form when this section starts</div>
+          )}
+
+          {/* review — folder of review-agent lenses (placeholder; ephemeral findings) */}
+          <FolderRow
+            level={2}
+            label="review"
+            dotColor={s.status === 'done' ? 'var(--green)' : s.status === 'reviewing' ? 'var(--accent)' : 'var(--border-2)'}
+            dotPulse={s.status === 'reviewing'}
+            expanded={revOpen}
+            onToggle={() => toggle(revId, revOpen)}
+          />
+          {revOpen &&
+            REVIEW_LENSES.map((lens) => (
+              <LeafRow
+                key={lens}
+                level={3}
+                caret="none"
+                dotColor={s.status === 'done' ? 'var(--green)' : s.status === 'reviewing' ? 'var(--accent)' : 'var(--border-2)'}
+                dotPulse={s.status === 'reviewing'}
+                label={lens}
+                selected={selectedNode === `rev:${s.id}:${lens}`}
+                onClick={() => onSelectNode(`rev:${s.id}:${lens}`)}
+              />
+            ))}
+        </div>
       )}
     </div>
   );
 }
 
-/** One indented sub-stage row (plan / review / execute / auto-fix), dot-colored by its state. */
-function SubStage({
+const REVIEW_LENSES = ['best-practices', 'correctness', 'consistency'] as const;
+
+/** A sub-stage / leaf row. `level` drives the indent (2 → 26px, 3 → 48px); `caret` reserves the slot. */
+function LeafRow({
+  level,
+  caret,
+  dotColor,
+  dotPulse,
   label,
-  state,
   badge,
-  active,
+  selected,
   onClick,
 }: {
+  level: 2 | 3;
+  caret: 'spacer' | 'none';
+  dotColor: string;
+  dotPulse?: boolean;
   label: string;
-  state: Stage;
-  badge?: { text: string; tone: 'accent' | 'purple' };
-  active?: boolean;
+  badge?: string;
+  selected?: boolean;
   onClick?: () => void;
 }) {
-  const dot = STAGE_DOT[state];
-  const cls = cn(
-    'flex items-center gap-2 rounded-sm py-1 pl-7 pr-2',
-    state === 'pending' && 'opacity-60',
-    active && 'bg-[var(--accent-soft)]',
-    onClick && 'text-left hover:bg-surface-2',
-  );
-  const body = (
-    <>
-      <Dot color={dot.color} pulse={dot.pulse} size={5} />
-      <span className={cn('font-mono text-[10.5px]', state === 'pending' ? 'text-faint' : 'text-dim')}>{label}</span>
-      <div className="flex-1" />
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-[7px] rounded-sm py-1 pr-2 text-left hover:bg-surface-2',
+        level === 2 ? 'pl-[26px]' : 'pl-12',
+        selected && 'bg-[var(--accent-soft)]',
+      )}
+    >
+      {caret === 'spacer' ? <CaretSpacer /> : null}
+      <Dot color={dotColor} pulse={dotPulse} size={5} />
+      <span className="flex-1 truncate font-mono text-[10.5px] text-dim">{label}</span>
       {badge ? (
         <span
           className="rounded border px-1.5 py-px font-mono text-[8px]"
-          style={
-            badge.tone === 'accent'
-              ? { color: 'var(--accent)', background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }
-              : { color: 'var(--purple)', borderColor: 'transparent' }
-          }
+          style={{ color: 'var(--accent)', background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
         >
-          {badge.text}
+          📄 {badge}
         </span>
       ) : null}
-    </>
-  );
-  return onClick ? (
-    <button type="button" onClick={onClick} className={cls}>
-      {body}
-    </button>
-  ) : (
-    <div className={cls}>{body}</div>
-  );
-}
-
-/** The running section's execute stage — a live card with a sweeping progress bar (opens the build view). */
-function ExecuteLive({ active, onClick }: { active: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'ml-7 mb-0.5 mr-2 flex flex-col rounded-sm border px-2.5 py-1.5 text-left transition',
-        active ? 'bg-[var(--accent-soft)]' : 'bg-surface hover:bg-surface-2',
-      )}
-      style={{ borderColor: 'var(--border)' }}
-    >
-      <div className="flex items-center gap-2">
-        <Dot color="var(--accent)" pulse size={5} />
-        <span className="font-mono text-[10px] font-semibold text-accent">execute · live</span>
-        <div className="flex-1" />
-        <span className="font-mono text-[8px] text-dim">live</span>
-      </div>
-      <div className="mt-1.5 h-[3px] overflow-hidden rounded-full" style={{ background: 'var(--surface-3)' }}>
-        <div
-          className="prog-sweep h-full w-2/5 rounded-full"
-          style={{ background: 'linear-gradient(90deg, var(--accent), var(--accent-2))' }}
-        />
-      </div>
     </button>
   );
 }
 
-function NavRow({
-  icon,
-  active,
-  onClick,
-  children,
+/** A collapsible folder row (execute / review) at level 2. Toggles only — never navigates. */
+function FolderRow({
+  level,
+  label,
+  dotColor,
+  dotPulse,
+  expanded,
+  onToggle,
 }: {
-  icon: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
+  level: 2;
+  label: string;
+  dotColor: string;
+  dotPulse?: boolean;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
-      className={cn(
-        'flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2',
-        active && 'bg-[var(--accent-soft)]',
-      )}
+      onClick={onToggle}
+      className={cn('group flex items-center gap-[7px] rounded-sm py-1 pr-2 text-left hover:bg-surface-2', 'pl-[26px]')}
     >
-      {icon}
-      {children}
+      <Caret expanded={expanded} />
+      <Dot color={dotColor} pulse={dotPulse} size={5} />
+      <span className="flex-1 truncate font-mono text-[10.5px] text-dim">{label}</span>
     </button>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+/** A phase (Claude Code session) leaf at level 3 — or the live session card when it's the running one. */
+function PhaseLeaf({
+  phase: p,
+  index,
+  live,
+  halted,
+  selected,
+  onClick,
+}: {
+  phase: PipelinePhase;
+  index: number;
+  live: boolean;
+  /** The in-flight phase of a failed thread's halt section — render red, not a live card. */
+  halted?: boolean;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const name = `phase ${index + 1}${p.title ? ` · ${p.title}` : ''}`;
+
+  if (live) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          'ml-12 mb-0.5 mr-2 flex flex-col rounded-sm border px-2.5 py-1.5 text-left transition',
+          selected ? 'bg-[var(--accent-soft)]' : 'bg-surface hover:bg-surface-2',
+        )}
+        style={{ borderColor: 'var(--accent-line)' }}
+      >
+        <div className="flex items-center gap-2">
+          <Dot color="var(--accent)" pulse size={5} />
+          <span className="flex-1 truncate font-mono text-[10px] font-semibold text-accent">{name}</span>
+          <span className="font-mono text-[8px] text-dim">live</span>
+        </div>
+        {p.brief ? <span className="mt-0.5 truncate font-mono text-[8.5px] text-faint">{p.brief}</span> : null}
+        <div className="mt-1.5 h-[3px] overflow-hidden rounded-full" style={{ background: 'var(--surface-3)' }}>
+          <div
+            className="prog-sweep h-full w-2/5 rounded-full"
+            style={{ background: 'linear-gradient(90deg, var(--accent), var(--accent-2))' }}
+          />
+        </div>
+      </button>
+    );
+  }
+
+  const dot = halted ? { color: 'var(--red)', pulse: false } : phaseColor(p.status);
   return (
-    <div className="px-2 pb-1.5 pt-2 font-mono text-[9px] tracking-[0.16em] text-faint">{children}</div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-[7px] rounded-sm py-[3px] pl-12 pr-2 text-left hover:bg-surface-2',
+        p.status === 'pending' && !halted && 'opacity-60',
+        selected && 'bg-[var(--accent-soft)]',
+      )}
+    >
+      {p.status === 'skipped' ? <SkippedDot /> : <Dot color={dot.color} pulse={dot.pulse} size={5} />}
+      <span
+        className={cn(
+          'flex-1 truncate font-mono text-[10px]',
+          p.status === 'skipped' ? 'text-faint line-through' : halted ? 'font-semibold text-red' : 'text-dim',
+        )}
+      >
+        {name}
+      </span>
+    </button>
   );
 }

@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { useOrgs } from '@/lib/api/me';
 import { useOrgRepos, useCreateThread } from '@/lib/api/thread-queries';
-import { orgColor, orgInitials } from '@/lib/org-display';
+import { orgSwatch, orgInitials } from '@/lib/org-display';
 import { ROUTES, threadHref } from '@/lib/routes';
 
 /**
@@ -174,7 +174,7 @@ function OrgPicker({
           {selected ? (
             <span
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded font-disp text-[8px] font-semibold text-white"
-              style={{ background: orgColor(selected.id) }}
+              style={{ background: orgSwatch() }}
             >
               {orgInitials(selected.name)}
             </span>
@@ -199,7 +199,7 @@ function OrgPicker({
           >
             <span
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded font-disp text-[8px] font-semibold text-white"
-              style={{ background: orgColor(o.id) }}
+              style={{ background: orgSwatch() }}
             >
               {orgInitials(o.name)}
             </span>

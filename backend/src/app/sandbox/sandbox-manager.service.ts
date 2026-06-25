@@ -134,8 +134,10 @@ export class SandboxManager implements SandboxProvider {
     }
     // The thread's durable SHARED CONTEXT folder at /context — read/write, lives OUTSIDE the worktree
     // (keyed by threadId so it survives container recreate; the host reads it via contextDirHost()).
+    // Two buckets: specs/ (the plan) + artifacts/ (outputs) — pre-created so both always list cleanly.
     const contextDir = this.contextDirHost(orgId, threadId, name);
-    mkdirSync(contextDir, { recursive: true });
+    mkdirSync(join(contextDir, 'specs'), { recursive: true });
+    mkdirSync(join(contextDir, 'artifacts'), { recursive: true });
     binds.push(`${contextDir}:${CONTAINER_CONTEXT}`);
 
     this.logger.log(`creating sandbox ${name} (image ${image}, net ${network})`);

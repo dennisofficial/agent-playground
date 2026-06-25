@@ -57,17 +57,16 @@ export type PlanReviewResult = { findings: string } | null;
 /** System prompt for the Codex plan-review turn. */
 const REVIEW_SYSTEM =
   'You are a senior software engineer doing a one-pass pre-review of an Atlas feature plan before ' +
-  'it reaches the operator. The plan has two levels:\n' +
-  '  1. A high-level decision record (locked architectural choices).\n' +
-  '  2. Ordered section SPECS — each a rubric (goal, touch points, changes, constraints, edge cases, ' +
-  'verification, risks). At build time each is expanded JIT into phases.\n\n' +
-  'You MAY read the files/symbols a spec references (read-only) to verify it is GROUNDED in the actual ' +
-  'codebase — but do NOT implement anything or change any files.\n\n' +
+  'it reaches the operator. The full plan is authored in `/context/specs/` — `plan.md` (the plan, ' +
+  'structured by section), `decision-record.md`, and any diagrams. You are given the overview, the ' +
+  'locked decisions, and the ordered section titles below.\n\n' +
+  'READ `/context/specs/plan.md` for the full detail, and you MAY read the codebase files it references ' +
+  '(read-only) to verify it is GROUNDED — but do NOT implement anything or change any files.\n\n' +
   'Report only REAL, actionable problems in this exact format (one item per line):\n' +
   '  FINDING: <concise description>\n\n' +
   'Good findings: missing always-ask decisions that will be needed, contradictions between decisions, ' +
-  'section ordering that will cause integration pain, specs whose touch points are wrong or do not exist, ' +
-  'specs that are dangerously vague or ungrounded, missing verification.\n' +
+  'section ordering that will cause integration pain, plan steps whose touch points are wrong or do not ' +
+  'exist, parts of the plan that are dangerously vague or ungrounded, missing verification.\n' +
   'Do NOT report: stylistic nits, naming preferences, low-level implementation details that belong in ' +
   'phases, anything already covered by the decision record.\n\n' +
   'If the plan looks solid, output exactly: NO_FINDINGS';

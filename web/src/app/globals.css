@@ -23,10 +23,18 @@
   --accent-2: #a85d06;
   --accent-soft: rgba(201, 112, 10, 0.1);
   --accent-line: rgba(201, 112, 10, 0.34);
-  --green: #16915a;
-  --green-soft: rgba(22, 145, 90, 0.1);
-  --blue: #2563eb;
-  --red: #d4493f;
+  /* Restrained palette (handoff): desaturated green/blue/red; one muted slate for every "needs you" gate. */
+  --green: #4a8567;
+  --green-soft: rgba(74, 133, 103, 0.1);
+  --blue: #5d75a2;
+  --red: #b65b51;
+  --red-soft: rgba(182, 91, 81, 0.08);
+  --red-line: rgba(182, 91, 81, 0.26);
+  --slate: #5d75a2;
+  --slate-soft: rgba(93, 117, 162, 0.1);
+  --slate-line: rgba(93, 117, 162, 0.3);
+  /* Legacy hues — kept defined for the member-avatar palette (org-display ORG_COLORS); no longer used
+     for status/kind signals (now slate/neutral). */
   --purple: #7c52d6;
   --rose: #d6336c;
   --glow: rgba(201, 112, 10, 0.08);
@@ -68,6 +76,7 @@
   --color-green-soft: var(--green-soft);
   --color-blue: var(--blue);
   --color-red: var(--red);
+  --color-slate: var(--slate);
   --color-purple: var(--purple);
   --color-rose: var(--rose);
   --color-glow: var(--glow);

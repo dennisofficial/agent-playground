@@ -48,19 +48,15 @@ export function Dot({
   );
 }
 
-/** FEAT / FIX / EVENT mono badge. */
+/** FEAT / FIX / EVENT mono badge — NEUTRAL grey + hairline border (handoff: no per-kind color). */
 export function KindBadge({ kind, className }: { kind: ThreadKind; className?: string }) {
   const meta = KIND_META[kind];
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em]',
+        'inline-flex items-center rounded-[3px] border border-border-2 px-[5px] py-0.5 font-mono text-[8px] font-semibold uppercase tracking-[0.06em] text-dim',
         className,
       )}
-      style={{
-        color: meta.color,
-        background: `color-mix(in srgb, ${meta.color} 12%, transparent)`,
-      }}
     >
       {meta.label}
     </span>

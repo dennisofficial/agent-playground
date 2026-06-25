@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Building2, LogOut, Settings } from 'lucide-react';
 import { useCurrentUser, useOrgs, type CurrentUser } from '@/lib/api/me';
-import { orgColor } from '@/lib/org-display';
+import { orgSwatch } from '@/lib/org-display';
 import { auth } from '@/lib/auth';
 import { ROUTES } from '@/lib/routes';
 import { CreateOrgDialog } from './create-org-dialog';
@@ -112,7 +112,7 @@ export function AccountMenu({ variant = 'avatar' }: { variant?: 'avatar' | 'side
                 <span className="mt-0.5 flex items-center gap-1.5">
                   <span
                     className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
-                    style={{ background: orgColor(targetOrg.id) }}
+                    style={{ background: orgSwatch() }}
                   />
                   <span className="truncate font-mono text-[9px] text-faint">{targetOrg.name}</span>
                 </span>

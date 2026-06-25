@@ -429,12 +429,11 @@ export class SectionDriver implements JobDispatcher {
     await this.store.setSectionStatus(section.id, 'planning');
 
     // An engine PLAN turn explores the worktree read-only; its plan text grounds the structured planner.
-    // Feed the FULL file-backed spec (the rubric the brain authored) — falling back to the one-line brief
-    // on legacy/lightweight plans that never wrote a spec.
+    // The full plan (plan.md, decisions, diagrams) lives in /context/specs — the plan turn reads it there.
     const planInput = {
       overview: record?.overview ?? '',
       decisions: record?.decisions ?? [],
-      brief: section.spec ?? section.brief,
+      brief: section.brief,
       handoffIn,
       orgId: job.orgId,
     };
@@ -919,6 +918,7 @@ function renderPlanTask(input: {
     `Feature overview:\n${input.overview}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nPlan THIS section:\n${input.brief}${handoff}`,
+    '\nThe full plan (plan.md, decisions, diagrams) is in /context/specs — read it before planning phases.',
     '\nProduce an ordered list of phases. Do not write files.',
   ].join('\n');
 }
@@ -936,7 +936,8 @@ function renderPhaseTask(
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
-    `\nSection spec:\n${section.spec ?? section.brief}`,
+    `\nSection: ${section.brief}`,
+    `\nThe full plan (plan.md, decisions, diagrams) is in /context/specs — read it for grounding.`,
     `\nImplement this phase:\n**${phase.title ?? `Phase ${phase.ordinal}`}** — ${phase.brief}`,
   ].join('\n');
 }

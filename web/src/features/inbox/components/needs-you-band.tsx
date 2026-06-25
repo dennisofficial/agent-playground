@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { StatusPie } from '@/components/ui/badges';
-import { orgColor } from '@/lib/org-display';
+import { orgSwatch } from '@/lib/org-display';
 import { threadHref } from '@/lib/routes';
 import { STATUS_META } from '@/lib/api/status';
 import { useThreadStatuses } from '@/lib/api/thread-status';
@@ -41,7 +41,7 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
               className="rounded-md border border-border bg-surface p-3 transition hover:border-border-2"
             >
               <div className="mb-2 flex items-center gap-2">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-sm" style={{ background: orgColor(t.org.id) }} />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-sm" style={{ background: orgSwatch() }} />
                 <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-faint">{t.org.name}</span>
                 <StatusPie status={status.status} size={14} />
               </div>

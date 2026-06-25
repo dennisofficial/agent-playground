@@ -1,7 +1,4 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { PlanReviewService, parsePlanFindings, buildRevisionInstruction } from './plan-review.service';
 import type { EngineRunnerPort, RunEngineArgs } from '../engine/engine.types';
 import type { ChatStimulus } from '../domain';
@@ -19,21 +16,6 @@ import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import type { JobDispatcher } from './job-dispatcher';
 import { AgentSessionManager } from './agent-session-manager.service';
-
-/** A rubric-satisfying section spec (Goal + Verification markers, >150 chars) for file-backed tests. */
-function specMarkdown(goal: string): string {
-  return [
-    `# ${goal}`,
-    '## Goal',
-    goal,
-    '## Touch points',
-    '- backend/src/auth/example.ts',
-    '## Changes',
-    '- implement the behavior',
-    '## Verification',
-    'Run `pnpm test` and confirm green.',
-  ].join('\n');
-}
 
 /**
  * R4 GATE TESTS — two assertions:
@@ -242,7 +224,6 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
 
   const mockLifecycle = {
     findSandbox: vi.fn(),
-    contextDirHost: vi.fn(),
   } as unknown as ThreadLifecycleService;
 
   const mockDockerRunner = {} as unknown as DockerEngineRunner;
@@ -250,9 +231,6 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
   const mockDispatcher = {
     dispatch: vi.fn(),
   } as unknown as JobDispatcher;
-
-  /** A temp dir standing in for the thread's `/context` host dir. */
-  let contextDir: string;
 
   const mockSurface = {
     post: vi.fn(),
@@ -292,10 +270,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
         ruling: 'Use Auth0 via the existing AuthModule.',
       },
     ],
-    sections: [
-      { title: 'OAuth2 callback handler', specPath: 'oauth.md' },
-      { title: 'JWT validation middleware', specPath: 'jwt.md' },
-    ],
+    sections: ['OAuth2 callback handler', 'JWT validation middleware'],
   };
 
   function makeManager(review: PlanReviewService) {
@@ -319,12 +294,6 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
 
   beforeEach(() => {
     vi.resetAllMocks();
-
-    // /context spec files the brain "authored" — referenced by planArgs.sections specPaths.
-    contextDir = mkdtempSync(join(tmpdir(), 'atlas-r4-ctx-'));
-    (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue(contextDir);
-    writeFileSync(join(contextDir, 'oauth.md'), specMarkdown('Implement the OAuth2 callback handler'));
-    writeFileSync(join(contextDir, 'jwt.md'), specMarkdown('Add JWT validation middleware'));
 
     // No existing open job on the thread.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);

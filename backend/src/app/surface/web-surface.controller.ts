@@ -12,6 +12,8 @@ import {
   Sse,
   UseGuards,
 } from '@nestjs/common';
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { Observable, defer, filter, from, map, merge } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
@@ -37,6 +39,35 @@ import { MessageEntity, RepoEntity, ThreadEntity, UserEntity } from '../persiste
 
 const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
 const OPERATOR = { authorId: 'U-OPERATOR', authorName: 'Operator' };
+
+/** One file in a `/context` bucket (specs or artifacts). */
+export interface ContextFile {
+  name: string;
+  size: number;
+  /** ISO timestamp of last modification. */
+  mtime: string;
+}
+
+/** List the files in one `/context` bucket dir (missing dir → empty), name-sorted. Files only. */
+function listContextBucket(dir: string): ContextFile[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return []; // bucket not created yet
+  }
+  return names
+    .map((name): ContextFile | null => {
+      try {
+        const st = statSync(join(dir, name));
+        return st.isFile() ? { name, size: st.size, mtime: st.mtime.toISOString() } : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter((f): f is ContextFile => f !== null)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 
 interface CreateThreadDto {
   firstMessage: string;
@@ -314,6 +345,26 @@ export class WebSurfaceController {
   ): Promise<unknown> {
     await this.requireThread(threadId, org.id);
     return this.driverStore.getPipelineState(threadId, org.id);
+  }
+
+  /**
+   * `GET …/threads/:threadId/context` — list the thread's `/context` files, grouped into `specs` (the
+   * plan: plan.md, decision-record.md, diagrams) and `artifacts` (outputs: preview HTML, screenshots).
+   * V1 MVP: just names + size + mtime. The UI's Artifacts panel composes this with the diff/PR (which
+   * are not files — they come from `pipeline`/the thread row).
+   */
+  @Get('orgs/:orgId/repos/:repoId/threads/:threadId/context')
+  @UseGuards(OrgMembershipGuard)
+  async context(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('threadId') threadId: string,
+  ): Promise<{ specs: ContextFile[]; artifacts: ContextFile[] }> {
+    await this.requireThread(threadId, org.id);
+    const root = this.threadLifecycle.contextDirHost(threadId, org.id);
+    return {
+      specs: listContextBucket(join(root, 'specs')),
+      artifacts: listContextBucket(join(root, 'artifacts')),
+    };
   }
 
   /** `PATCH …/threads/:threadId` — rename a thread (the only thread Update op). Org-scoped. */

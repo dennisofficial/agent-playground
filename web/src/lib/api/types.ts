@@ -1,7 +1,8 @@
 /**
  * Contracts for the Atlas web surface (`/web/*`). These MIRROR the backend shapes verbatim:
  *  - `WebApprovalCard` / `WebVerdictCard` — the approval-card payload carried on a message's `card`.
- *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + sections; NO pr_url / branch / diff).
+ *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + sections + per-section phases; carries
+ *    the thread's PR url/number + feature/base branch — the navigator's ARTIFACTS + header read them).
  *
  * The live message + request shapes are owned by `thread-api.ts` (the org → repo → thread client).
  */
@@ -27,6 +28,15 @@ export type SectionStatus =
   | 'auto_fixing'
   | 'done'
   | 'failed';
+
+/** Per-phase status (the execute folder's leaves). Mirrors backend `PhaseStatus` in `domain/thread.ts`. */
+export type PhaseStatus =
+  | 'pending'
+  | 'building'
+  | 'reviewing'
+  | 'done'
+  | 'failed'
+  | 'skipped';
 
 // ── Approval / verdict cards ───────────────────────────────────────────────────────────────────
 export const APPROVE_ACTION_ID = 'atlas_approval:approve';
@@ -80,19 +90,41 @@ export interface WebVerdictCard {
 export type WebCard = WebApprovalCard | WebVerdictCard;
 
 // ── Pipeline (`…/threads/:threadId/pipeline`) ────────────────────────────────────────────────────
+/** One phase of a section's locked plan — the execute folder's leaf (a Claude Code session). */
+export interface PipelinePhase {
+  id: string;
+  ordinal: number;
+  title: string | null;
+  brief: string;
+  /** The resumable cursor within the phase ('build' | 'review' | 'fix'). */
+  step: string;
+  status: PhaseStatus;
+}
+
 export interface PipelineSection {
   id: string;
   ordinal: number;
   brief: string;
   status: SectionStatus;
+  /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
+  hasPlan: boolean;
+  /** The section's phases (execute folder leaves), ordinal-sorted. */
+  phases: PipelinePhase[];
 }
 
 export interface PipelineJob {
-  jobId: string;
+  /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
+  threadId: string;
   title: string;
   kind: JobKind;
   status: JobStatus;
   decisionRecordId: string | null;
+  /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
+  prUrl: string | null;
+  prNumber: number | null;
+  /** The feature branch all sections stack on (header), or null before the sandbox is cut. */
+  featureBranch: string | null;
+  baseBranch: string | null;
   sections: PipelineSection[];
 }
 

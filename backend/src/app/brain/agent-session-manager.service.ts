@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -110,32 +108,29 @@ export class AgentSessionManager {
     'mechanism as its OWN decision. Ask ONE focused question at a time. Do NOT ask about never-ask details',
     '(naming, file placement, test layout).',
     '',
-    'THE /context SHARED FOLDER: `/context` is a durable, per-thread scratch space OUTSIDE the repo. Author',
-    'your plan/section specs there (e.g. `/context/specs/01-*.md`) and any working notes. It persists across',
-    'turns and is shared with the build sessions. Treat the repo (`/workspace`) as READ-ONLY until a build',
-    'is approved — never modify `/workspace` while planning; write to `/context` instead.',
+    'THE /context SHARED FOLDER: `/context` is a durable, per-thread space OUTSIDE the repo, shared with the',
+    'build sessions. Two buckets:',
+    '  • `/context/specs/` — THE PLAN: write `plan.md` (the full plan), `decision-record.md`, and any',
+    '    diagrams/mermaid here. This folder IS the plan; the build phases read it for grounding.',
+    '  • `/context/artifacts/` — OUTPUTS for the human: preview HTML, screenshots, reports (never the repo).',
+    'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
+    'write to `/context` instead.',
     '',
     'TWO PATHS — choose based on size/risk:',
     '',
     'FULL PATH — submit_plan (multi-section build run by the deterministic driver). Use for anything beyond',
-    'a small, localized change. For EACH section, FIRST write a spec FILE under `/context/specs/` covering:',
-    '  • Goal — the behavioral outcome this section delivers',
-    '  • Touch points — exact files/symbols, grounded in what you actually read',
-    '  • Change per site — what to do at each',
-    '  • Constraints honored — global constraints applied to THIS section (not just stated once)',
-    '  • Edge cases / failure modes',
-    '  • Verification — how to confirm it is correct (and where it is staging-only, say so)',
-    '  • Out of scope / risks',
-    'Then call submit_plan with:',
+    'a small, localized change. FIRST author the plan in `/context/specs/plan.md` (+ `decision-record.md`,',
+    'diagrams) — structured by section, each section covering: goal, touch points (exact files/symbols you',
+    'actually read), changes per site, constraints honored, edge cases, verification, risks. THEN call',
+    'submit_plan with:',
     '  - overview: intent + stack + constraints',
     '  - decisions: locked decisions, each { decisionClass, title, ruling }',
     '    (decisionClass: data_model | api_contract | dependency | infrastructure | cross_cutting | one_way_door)',
-    '  - sections: ordered array of { title, specPath } where specPath is the `/context`-relative path of',
-    '    the spec file you wrote (e.g. "specs/01-capture.md"). A missing/empty/under-spec\'d file is rejected.',
+    '  - sections: the ordered section TITLES (e.g. ["Toggle", "Tokens", "Docs"]) — just the labels; the',
+    '    detail lives in `/context/specs/plan.md`, which the build reads. Do NOT attach files here.',
     'SELF-CHECK before submit_plan: every applicable always-ask decision locked? could a fresh engineer build',
-    'each section with ZERO further questions to you? is each section grounded in files you actually opened?',
-    'are global constraints enforced per-section? Do NOT propose an "investigate the codebase" section —',
-    'sections are real build work.',
+    'from `plan.md` with ZERO further questions to you? is it grounded in files you actually opened? Do NOT',
+    'add an "investigate the codebase" section — sections are real build work.',
     '',
     'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no sections/phases).',
     'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
@@ -428,28 +423,14 @@ export class AgentSessionManager {
 
       submit_plan: async (args) => {
         const overview = String(args['overview'] ?? '').trim();
-        const rawSections = Array.isArray(args['sections']) ? args['sections'] : [];
         const decisions = normalizeDecisions(args['decisions']);
+        // The full plan (plan.md, decisions, diagrams) lives in the thread's `/context/specs` folder —
+        // `submit_plan` carries only the ordered section TITLES (the pipeline §1/§2/§3); no files attached.
+        const sectionBriefs = normalizeSectionTitles(args['sections']);
 
-        // Resolve the FILE-BACKED section specs the brain authored in `/context` (each section names a
-        // `specPath`; the rubric markdown is read from the host-side context dir and snapshotted into
-        // Postgres). A missing / empty / under-spec'd file is bounced back so the session fixes the file
-        // and re-submits — the spec, not a one-line brief, is what the build consumes.
-        const contextDir = this.lifecycle.contextDirHost(stimulus.threadId, stimulus.orgId);
-        const { sections: resolvedSections, problems } = resolveSectionSpecs(contextDir, rawSections);
-
-        if (!overview) problems.unshift('overview is required');
-        if (resolvedSections.length === 0) {
-          problems.push('at least one valid section spec is required');
+        if (!overview || sectionBriefs.length === 0) {
+          return { ok: false, reason: 'overview and at least one section title are required' };
         }
-        if (problems.length > 0) {
-          return {
-            ok: false,
-            reason: 'Plan not submitted — fix these and call submit_plan again:\n- ' + problems.join('\n- '),
-          };
-        }
-
-        const sectionBriefs = resolvedSections.map((s) => s.brief);
 
         // Ensure there's an open scoping job on this thread.
         const jobId = await this.ensureJob(stimulus, overview, 'feature');
@@ -462,7 +443,7 @@ export class AgentSessionManager {
           kind: 'feature',
           overview,
           decisions,
-          sections: resolvedSections.map((s) => ({ brief: s.brief, spec: s.spec })),
+          sectionBriefs,
         });
 
         // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
@@ -477,8 +458,7 @@ export class AgentSessionManager {
             ...(sandbox.containerId ? { containerId: sandbox.containerId } : {}),
             overview,
             decisions,
-            // The reviewer sees the FULL section specs (title + rubric markdown), not just one-liners.
-            sectionBriefs: resolvedSections.map((s) => `## ${s.brief}\n${s.spec}`),
+            sectionBriefs,
           });
 
           if (reviewResult !== null) {
@@ -582,7 +562,7 @@ export class AgentSessionManager {
           kind: 'feature',
           overview: summary,
           decisions,
-          sections: [],
+          sectionBriefs: [],
         });
 
         void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
@@ -854,88 +834,20 @@ function jobTitle(summary: string): string {
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }
 
-/** One resolved section: the one-line `brief` (display label) + the FULL rubric `spec` markdown. */
-interface ResolvedSection {
-  brief: string;
-  spec: string;
-}
-
 /**
- * The rubric the brain's section specs must satisfy — checked by PRESENCE, leniently (so good plans
- * aren't bounced on heading-format nits). A spec must at least state a goal, say how it's verified, and
- * carry real detail (not a one-liner).
+ * Normalize the `submit_plan` `sections` arg into ordered section TITLES (the pipeline §1/§2/§3). Accepts
+ * plain strings or `{ title }` objects; the full plan detail lives in `/context/specs`, not here.
  */
-const RUBRIC_MARKERS: { label: string; re: RegExp }[] = [
-  { label: 'a Goal', re: /\bgoals?\b/i },
-  { label: 'Verification (how it’s checked)', re: /\bverif(y|ies|ication)\b/i },
-];
-const SPEC_MIN_CHARS = 150;
-
-/** Which rubric requirements a spec is missing (empty → it passes). */
-function rubricGaps(spec: string): string[] {
-  const gaps = RUBRIC_MARKERS.filter((m) => !m.re.test(spec)).map((m) => m.label);
-  if (spec.length < SPEC_MIN_CHARS) gaps.push(`more detail (under ${SPEC_MIN_CHARS} chars)`);
-  return gaps;
-}
-
-/**
- * Resolve the brain's `submit_plan` `sections` into snapshot-ready specs. Each section names a
- * `specPath` (relative to the thread's `/context` dir) whose rubric markdown is READ from the host-side
- * `contextDir` — or, tolerantly, an inline `spec`/`details` string. Returns the resolved sections plus a
- * list of `problems` (missing file, escaping path, empty/under-spec'd content) the caller relays back to
- * the session for a re-submit. Path traversal outside `/context` is rejected.
- */
-function resolveSectionSpecs(
-  contextDir: string,
-  rawSections: unknown[],
-): { sections: ResolvedSection[]; problems: string[] } {
-  const sections: ResolvedSection[] = [];
-  const problems: string[] = [];
-
-  rawSections.forEach((s, i) => {
-    if (typeof s !== 'object' || s === null) {
-      problems.push(`section ${i + 1}: expected an object { title, specPath }`);
-      return;
-    }
-    const o = s as { title?: string; specPath?: string; spec?: string; details?: string };
-    const title = (o.title ?? '').trim();
-    if (!title) {
-      problems.push(`section ${i + 1}: missing a title`);
-      return;
-    }
-
-    let spec = '';
-    const specPath = (o.specPath ?? '').trim();
-    if (specPath) {
-      const abs = resolve(contextDir, specPath);
-      if (abs !== contextDir && !abs.startsWith(contextDir + sep)) {
-        problems.push(`section "${title}": specPath "${specPath}" escapes /context`);
-        return;
+function normalizeSectionTitles(raw: unknown): string[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  return arr
+    .map((s) => {
+      if (typeof s === 'string') return s.trim();
+      if (typeof s === 'object' && s !== null) {
+        const o = s as { title?: string; brief?: string };
+        return (o.title ?? o.brief ?? '').trim();
       }
-      try {
-        spec = readFileSync(abs, 'utf8').trim();
-      } catch {
-        problems.push(
-          `section "${title}": could not read /context/${specPath} — write the spec file there first`,
-        );
-        return;
-      }
-    } else {
-      // Tolerate an inline spec (a brain that didn't file-back it) — still held to the rubric.
-      spec = (o.spec ?? o.details ?? '').trim();
-      if (!spec) {
-        problems.push(`section "${title}": give a specPath (a /context spec file) or an inline spec`);
-        return;
-      }
-    }
-
-    const gaps = rubricGaps(spec);
-    if (gaps.length > 0) {
-      problems.push(`section "${title}": spec needs ${gaps.join(', ')}`);
-      return;
-    }
-    sections.push({ brief: title, spec });
-  });
-
-  return { sections, problems };
+      return '';
+    })
+    .filter(Boolean);
 }

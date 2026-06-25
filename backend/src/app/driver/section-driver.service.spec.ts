@@ -319,7 +319,6 @@ function section(id: string, ordinal: number, brief: string, status: SectionStat
     orgId: 'T1',
     ordinal,
     brief,
-    spec: null,
     plan: null,
     handoffIn: null,
     handoffOut: null,

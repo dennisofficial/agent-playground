@@ -7,7 +7,7 @@ import { useThreadMessages, usePipeline, useDeleteThread, useRenameThread } from
 import { useThreadEvents } from '@/lib/api/thread-events';
 import { setThreadStatus } from '@/lib/api/thread-status';
 import { toThreadStatus } from '@/lib/api/status';
-import { orgColor } from '@/lib/org-display';
+import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
 import { pipelineJob, type ThreadRef } from '@/lib/api/thread-api';
 import type { ThreadKind, ThreadStatus, WebApprovalCard } from '@/lib/api/types';
@@ -81,7 +81,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     kind,
     status,
     orgName: inboxThread?.org.name ?? 'Organization',
-    orgColor: orgColor(inboxThread?.org.id ?? orgId),
+    orgColor: orgSwatch(),
     repoName: inboxThread?.repo.name ?? repoId,
     footer: FOOTERS[status],
   };

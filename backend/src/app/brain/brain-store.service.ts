@@ -155,10 +155,9 @@ export class BrainStoreService {
 
   /**
    * Persist a LOCKED plan: the decision record (draft) + the section rows + flip the thread to
-   * `awaiting_approval`. Each section carries a one-line `brief` (the display label / card list) plus the
-   * FULL file-backed `spec` (the rubric markdown the brain authored in `/context`, snapshotted here so
-   * the build reads it from Postgres independent of the sandbox). The JIT phase planner (W4) consumes
-   * `spec` (falling back to `brief`). Returns the thread (domain shape) + the decision record id.
+   * `awaiting_approval`. Writes the high-level section BRIEFS (titles); the full plan (plan.md,
+   * decisions, diagrams) lives in the thread's `/context/specs` folder, which the build sessions read.
+   * Returns the thread (domain shape) + the decision record id.
    */
   async persistPlan(input: {
     orgId: string;
@@ -168,7 +167,7 @@ export class BrainStoreService {
     kind: ThreadKind;
     overview: string;
     decisions: Decision[];
-    sections: { brief: string; spec: string | null }[];
+    sectionBriefs: string[];
   }): Promise<PersistedPlan> {
     // A re-propose (request_changes → reopenScoping → the grill proposes again) reuses the SAME thread,
     // so any prior DRAFT sections/record from the earlier proposal are still here. Clear them first:
@@ -189,20 +188,19 @@ export class BrainStoreService {
         status: 'draft',
         overview: input.overview,
         decisions: input.decisions,
-        section_briefs: input.sections.map((s) => s.brief),
+        section_briefs: input.sectionBriefs,
         approved_by: null,
         approved_at: null,
       }),
     );
 
     await this.sections.save(
-      input.sections.map((s, i) =>
+      input.sectionBriefs.map((brief, i) =>
         this.sections.create({
           thread_id: input.threadId,
           org_id: input.orgId,
           ordinal: (i + 1) * ORDINAL_GAP,
-          brief: s.brief,
-          spec: s.spec,
+          brief,
           plan: null,
           handoff_in: null,
           handoff_out: null,

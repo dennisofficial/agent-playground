@@ -67,7 +67,9 @@ export class DriverStoreService {
 
   /** Load one thread as the domain shape. */
   async loadJob(threadId: string): Promise<Thread> {
-    return toThread(await this.threads.findOneOrFail({ where: { id: threadId } }));
+    return toThread(
+      await this.threads.findOneOrFail({ where: { id: threadId } }),
+    );
   }
 
   /** Every thread currently in `running` — the boot-reconciliation worklist. */
@@ -86,17 +88,27 @@ export class DriverStoreService {
   }
 
   /** Record the opened PR (url + number) + flip the thread to its terminal `done`. */
-  async setPrReady(threadId: string, prUrl: string, prNumber?: number): Promise<void> {
+  async setPrReady(
+    threadId: string,
+    prUrl: string,
+    prNumber?: number,
+  ): Promise<void> {
     await this.threads.update(
       { id: threadId },
-      { pr_url: prUrl, ...(prNumber != null ? { pr_number: prNumber } : {}), status: 'done' },
+      {
+        pr_url: prUrl,
+        ...(prNumber != null ? { pr_number: prNumber } : {}),
+        status: 'done',
+      },
     );
   }
 
   // ── decision record ────────────────────────────────────────────────────────────────────────────
 
   /** The locked decision record for a thread — the planner + gate's grounding. Null if none. */
-  async decisionRecord(decisionRecordId: string | null): Promise<DecisionRecord | null> {
+  async decisionRecord(
+    decisionRecordId: string | null,
+  ): Promise<DecisionRecord | null> {
     if (!decisionRecordId) return null;
     const row = await this.records.findOne({ where: { id: decisionRecordId } });
     return row ? toRecord(row) : null;
@@ -113,17 +125,30 @@ export class DriverStoreService {
     return rows.map(toSection);
   }
 
-  async setSectionStatus(sectionId: string, status: SectionStatus): Promise<void> {
+  async setSectionStatus(
+    sectionId: string,
+    status: SectionStatus,
+  ): Promise<void> {
     await this.sections.update({ id: sectionId }, { status });
   }
 
   /** Persist the just-in-time plan prose + the prior section's handoff onto the section. */
-  async setSectionPlan(sectionId: string, plan: string, handoffIn: string | null): Promise<void> {
-    await this.sections.update({ id: sectionId }, { plan, handoff_in: handoffIn });
+  async setSectionPlan(
+    sectionId: string,
+    plan: string,
+    handoffIn: string | null,
+  ): Promise<void> {
+    await this.sections.update(
+      { id: sectionId },
+      { plan, handoff_in: handoffIn },
+    );
   }
 
   /** Record the section's handoff note for the next section (set when the section is done). */
-  async setSectionHandoffOut(sectionId: string, handoffOut: string): Promise<void> {
+  async setSectionHandoffOut(
+    sectionId: string,
+    handoffOut: string,
+  ): Promise<void> {
     await this.sections.update({ id: sectionId }, { handoff_out: handoffOut });
   }
 
@@ -166,7 +191,11 @@ export class DriverStoreService {
   }
 
   /** Advance a phase's explicit cursor (`step` + `status`) — the resumable transition. */
-  async setPhaseState(phaseId: string, step: string, status: PhaseStatus): Promise<void> {
+  async setPhaseState(
+    phaseId: string,
+    step: string,
+    status: PhaseStatus,
+  ): Promise<void> {
     await this.phases.update({ id: phaseId }, { step, status });
   }
 
@@ -178,23 +207,49 @@ export class DriverStoreService {
    * AgentSessionManager brain session.
    */
   async getPipelineState(threadId: string, orgId: string): Promise<unknown> {
-    const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+    const thread = await this.threads.findOne({
+      where: { id: threadId, org_id: orgId },
+    });
     if (!thread || thread.status === 'open') return { status: 'no_job' };
     const sections = await this.sections.find({
       where: { thread_id: thread.id },
       order: { ordinal: 'ASC' },
     });
+    // All the thread's phases in one query (avoid N+1), grouped by section for the nav folder tree.
+    const phases = await this.phases.find({
+      where: { thread_id: thread.id },
+      order: { ordinal: 'ASC' },
+    });
+    const phasesBySection = new Map<string, PhaseEntity[]>();
+    for (const p of phases) {
+      const list = phasesBySection.get(p.section_id) ?? [];
+      list.push(p);
+      phasesBySection.set(p.section_id, list);
+    }
     return {
       threadId: thread.id,
       title: thread.title,
       kind: thread.kind,
       status: thread.status,
       decisionRecordId: thread.decision_record_id,
+      prUrl: thread.pr_url,
+      prNumber: thread.pr_number,
+      featureBranch: thread.feature_branch,
+      baseBranch: thread.base_branch,
       sections: sections.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,
         brief: s.brief,
         status: s.status,
+        hasPlan: s.plan != null,
+        phases: (phasesBySection.get(s.id) ?? []).map((p) => ({
+          id: p.id,
+          ordinal: p.ordinal,
+          title: p.title,
+          brief: p.brief,
+          step: p.step,
+          status: p.status,
+        })),
       })),
     };
   }
@@ -206,7 +261,9 @@ export class DriverStoreService {
   async getDecisionRecord(threadId: string): Promise<unknown> {
     const thread = await this.threads.findOne({ where: { id: threadId } });
     if (!thread?.decision_record_id) return null;
-    const record = await this.records.findOne({ where: { id: thread.decision_record_id } });
+    const record = await this.records.findOne({
+      where: { id: thread.decision_record_id },
+    });
     if (!record) return null;
     return {
       id: record.id,
@@ -254,7 +311,6 @@ function toSection(row: SectionEntity): DriverSection {
     orgId: row.org_id,
     ordinal: row.ordinal,
     brief: row.brief,
-    spec: row.spec,
     plan: row.plan,
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,

@@ -39,18 +39,29 @@ export function PhaseView({
 }) {
   const job = pipelineJob(pipeline);
   const section = job?.sections.find((s) => s.id === selectedNode) ?? null;
+  // A phase leaf (execute folder) — find which section owns it + its 1-based index, for the label.
+  const owningSection = job?.sections.find((s) => s.phases.some((p) => p.id === selectedNode)) ?? null;
+  const phaseIndex = owningSection ? owningSection.phases.findIndex((p) => p.id === selectedNode) : -1;
+  const phase = owningSection?.phases[phaseIndex] ?? null;
 
   let body: React.ReactNode;
   if (selectedNode === 'plan') {
     body = <PlanDoc card={approvalCard} title={job?.title} sections={job?.sections.map((s) => s.brief)} threadRef={threadRef} />;
   } else if (selectedNode === 'decision') {
     body = <DecisionDoc card={approvalCard} />;
+  } else if (selectedNode === 'diff') {
+    body = <DiffView />;
   } else if (selectedNode.startsWith('secplan:')) {
     const id = selectedNode.slice('secplan:'.length);
     const sec = job?.sections.find((s) => s.id === id) ?? null;
     body = <SectionPlanDoc brief={sec ? sectionTitle(sec.brief) : 'Section plan'} />;
+  } else if (selectedNode.startsWith('rev:')) {
+    body = <ReviewView lens={selectedNode.split(':')[2] ?? 'review'} />;
   } else if (selectedNode.startsWith('autofix:')) {
     body = <AutoFixView />;
+  } else if (phase) {
+    const label = `phase ${phaseIndex + 1}${phase.title ? ` · ${phase.title}` : ''}`;
+    body = <BuildView threadRef={threadRef} label={label} messages={messages} phaseId={phase.id} />;
   } else if (section) {
     body = <BuildView threadRef={threadRef} label={`§ ${sectionTitle(section.brief)}`} messages={messages} />;
   } else {
@@ -78,13 +89,21 @@ function BuildView({
   threadRef,
   label,
   messages,
+  phaseId,
 }: {
   threadRef: ThreadRef;
   label: string;
   messages: ThreadMessage[];
+  /** When set, the transcript is filtered to this phase's relayed events (meta.phaseId). */
+  phaseId?: string;
 }) {
   const [tab, setTab] = useState<PhaseTab>('transcript');
-  const buildEvents = messages.filter((m) => m.kind === 'build_event').map((m) => m.text);
+  const buildEvents = messages
+    .filter(
+      (m) =>
+        m.kind === 'build_event' && (phaseId ? (m.meta?.phaseId as string | undefined) === phaseId : true),
+    )
+    .map((m) => m.text);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -115,7 +134,7 @@ function BuildView({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {tab === 'transcript' ? (
-          <Transcript lines={buildEvents} />
+          <Transcript lines={buildEvents} scoped={Boolean(phaseId)} />
         ) : (
           <Placeholder
             title={tab === 'diff' ? 'Diff' : 'Logs'}
@@ -129,10 +148,16 @@ function BuildView({
   );
 }
 
-function Transcript({ lines }: { lines: string[] }) {
+function Transcript({ lines, scoped }: { lines: string[]; scoped?: boolean }) {
   return (
     <div className="flex max-w-[780px] flex-col gap-2 font-mono text-[12px]">
-      <Banner text="Showing live build-event relays from the thread (per-phase transcript pending a backend endpoint)." />
+      <Banner
+        text={
+          scoped
+            ? "This phase's build-event relays (filtered by phase). Diff & logs streams are still pending a backend endpoint."
+            : 'Showing live build-event relays from the thread.'
+        }
+      />
       {lines.length === 0 ? (
         <p className="text-faint">No build activity relayed yet.</p>
       ) : (
@@ -344,6 +369,37 @@ function AutoFixView() {
             <p className="mt-1.5 font-mono text-[10.5px] text-dim">{l.note}</p>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function DiffView() {
+  return (
+    <div className="h-full overflow-y-auto px-8 py-7">
+      <div className="max-w-[720px]">
+        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">Diff</div>
+        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">the accumulated change across all sections</div>
+        <Placeholder
+          title="Diff"
+          body="The accumulated diff isn't exposed by the web surface yet — it lives in the feature branch and lands in the PR. Open the pull request from ARTIFACTS to review the change on GitHub."
+        />
+      </div>
+    </div>
+  );
+}
+
+/** One review-agent lens (a self-review pass over the section diff). Findings are ephemeral (relayed to chat). */
+function ReviewView({ lens }: { lens: string }) {
+  return (
+    <div className="h-full overflow-y-auto px-8 py-7">
+      <div className="max-w-[720px]">
+        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">{lens}</div>
+        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">review lens · over the section diff</div>
+        <Placeholder
+          title={`${lens} review`}
+          body="Review lenses run as parallel self-review passes over the section's diff; their findings are relayed into the conversation rather than persisted, so they aren't browsable here yet."
+        />
       </div>
     </div>
   );

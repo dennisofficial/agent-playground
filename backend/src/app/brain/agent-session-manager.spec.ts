@@ -1,7 +1,4 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type { ChatStimulus } from '../domain';
 import type { JobDispatcher } from './job-dispatcher';
 import type { BrainStoreService } from './brain-store.service';
@@ -17,25 +14,6 @@ import type { ChatSurface, LiveTurnStore } from '../surface';
 import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import { AgentSessionManager } from './agent-session-manager.service';
-
-/** A rubric-satisfying section spec (Goal + Verification markers, >150 chars) for file-backed tests. */
-function specMarkdown(goal: string): string {
-  return [
-    `# ${goal}`,
-    '',
-    '## Goal',
-    goal,
-    '',
-    '## Touch points',
-    '- backend/src/app/example.ts — the thing',
-    '',
-    '## Changes',
-    '- implement the behavior at the call site',
-    '',
-    '## Verification',
-    'Run `pnpm test` and confirm the new spec is green.',
-  ].join('\n');
-}
 import { ProvisioningNotReadyError } from '../driver/thread-lifecycle.service';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventTriageService } from './event-triage.service';
@@ -99,9 +77,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     resolve: vi.fn().mockResolvedValue({ owner: 'o', repo: 'r', defaultBranch: 'main', token: 't' }),
   } as unknown as DriverRepoResolver;
 
-  /** A temp dir standing in for the thread's `/context` host dir, recreated per test. */
-  let contextDir: string;
-
   /**
    * R4: mock PlanReviewService that immediately returns null (guard already fired) — so the R3 spec's
    * assertions on persistPlan + approval card still hold.  The R4 spec separately exercises the review
@@ -155,10 +130,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   beforeEach(() => {
     vi.resetAllMocks();
 
-    // A fresh temp dir per test stands in for the thread's `/context` host dir; the brain reads spec
-    // files from here via lifecycle.contextDirHost().
-    contextDir = mkdtempSync(join(tmpdir(), 'atlas-ctx-'));
-    (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue(contextDir);
     // Default classifier verdict: proceed (fast path allowed unless a test overrides it).
     (mockClassifier.classify as ReturnType<typeof vi.fn>).mockResolvedValue({
       verdict: 'proceed',
@@ -220,12 +191,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  it('(a) submit_plan: reads file-backed specs from /context and snapshots them via persistPlan', async () => {
+  it('(a) submit_plan: persists overview + decisions + ordered section titles (the plan lives in /context/specs)', async () => {
     const tools = manager.buildTools(fakeStimulus);
-
-    // The brain authored two rubric specs under /context/specs.
-    writeFileSync(join(contextDir, 'guard.md'), specMarkdown('Implement the RateLimiter guard'));
-    writeFileSync(join(contextDir, 'tests.md'), specMarkdown('Add rate-limit integration tests'));
 
     const overview = 'Add token-bucket rate limiting to the public API endpoints.';
     const decisions = [
@@ -240,27 +207,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         ruling: "Return { error: 'rate_limited', retryAfterSeconds: N } with a Retry-After header.",
       },
     ];
-    const sections = [
-      { title: 'RateLimiter guard', specPath: 'guard.md' },
-      { title: 'Integration tests', specPath: 'tests.md' },
-    ];
+    // Sections are just ordered titles (the §1/§2/§3 pipeline); the detail is in /context/specs/plan.md.
+    const sections = ['RateLimiter guard', 'Integration tests'];
 
     const result = await tools['submit_plan']({ overview, decisions, sections });
 
-    // 1. persistPlan is called with the structured data.
+    // 1. persistPlan is called with the structured data + the section titles.
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.overview).toBe(overview);
     expect(persistArgs.decisions).toHaveLength(2);
-
-    // Sections carry the one-line brief (title) AND the full file-backed spec markdown.
-    expect(persistArgs.sections).toHaveLength(2);
-    expect(persistArgs.sections[0].brief).toBe('RateLimiter guard');
-    expect(persistArgs.sections[0].spec).toContain('## Goal');
-    expect(persistArgs.sections[0].spec).toContain('Implement the RateLimiter guard');
-    expect(persistArgs.sections[1].brief).toBe('Integration tests');
-    expect(persistArgs.sections[1].spec).toContain('## Verification');
-
+    expect(persistArgs.sectionBriefs).toEqual(['RateLimiter guard', 'Integration tests']);
     expect(persistArgs.orgId).toBe(TEAM_ID);
     expect(persistArgs.repoId).toBe(PROJECT_ID);
     expect(persistArgs.threadId).toBe(FAKE_JOB_ID);
@@ -268,7 +225,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // 2. The tool returns ok=true + the job and record ids.
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID });
 
-    // 3. The approval card fires async — the section LIST is the titles (not the full specs).
+    // 3. The approval card fires async — sections are the titles.
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
@@ -277,47 +234,22 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(approvalArgs.sections).toEqual(['RateLimiter guard', 'Integration tests']);
   });
 
-  it('(a) submit_plan: rejects a missing spec file (does NOT persist)', async () => {
+  it('(a) submit_plan: accepts `{ title }` section objects too', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['submit_plan']({
-      overview: 'something',
+    await tools['submit_plan']({
+      overview: 'x',
       decisions: [],
-      sections: [{ title: 'No file', specPath: 'does-not-exist.md' }],
+      sections: [{ title: 'Toggle' }, { title: 'Docs' }],
     });
-    expect(result).toMatchObject({ ok: false });
-    expect((result as { reason: string }).reason).toContain('does-not-exist.md');
-    expect(mockStore.persistPlan).not.toHaveBeenCalled();
-  });
-
-  it('(a) submit_plan: rejects an under-spec\'d file (rubric gaps)', async () => {
-    const tools = manager.buildTools(fakeStimulus);
-    writeFileSync(join(contextDir, 'thin.md'), 'just do it'); // no Goal/Verification, too short
-    const result = await tools['submit_plan']({
-      overview: 'something',
-      decisions: [],
-      sections: [{ title: 'Thin', specPath: 'thin.md' }],
-    });
-    expect(result).toMatchObject({ ok: false });
-    expect(mockStore.persistPlan).not.toHaveBeenCalled();
-  });
-
-  it('(a) submit_plan: rejects a specPath that escapes /context', async () => {
-    const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['submit_plan']({
-      overview: 'something',
-      decisions: [],
-      sections: [{ title: 'Escape', specPath: '../../etc/passwd' }],
-    });
-    expect(result).toMatchObject({ ok: false });
-    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.sectionBriefs).toEqual(['Toggle', 'Docs']);
   });
 
   it('(a) submit_plan: returns error if overview is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    writeFileSync(join(contextDir, 's.md'), specMarkdown('a real section'));
     const result = await tools['submit_plan']({
       decisions: [],
-      sections: [{ title: 'S', specPath: 's.md' }],
+      sections: ['a section'],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
@@ -344,7 +276,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     // Minimal record: no sections.
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(persistArgs.sections).toEqual([]);
+    expect(persistArgs.sectionBriefs).toEqual([]);
     expect(persistArgs.overview).toContain('off-by-one');
 
     // The card is the lightweight 'direct' variant carrying the change outline.

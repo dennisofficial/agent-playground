@@ -4,14 +4,23 @@
  * names (theme-aware): the swatch recolors for free on a theme swap.
  */
 
-/** The org swatch palette (theme tokens). Owners and joined orgs both draw from it; assignment is by id. */
+/** The avatar palette (theme tokens). Used for member/user avatars (keyed by user id). */
 const ORG_COLORS = ['var(--accent)', 'var(--blue)', 'var(--purple)', 'var(--green)', 'var(--rose)'] as const;
 
-/** Stable hash → palette index, so an org id always maps to the same color. */
+/**
+ * Stable hash → palette index. Used for USER/member avatars (keyed by user id) where a per-identity hue
+ * is the point. Org SWATCHES are neutral grey now (`orgSwatch()`) — the handoff's restrained palette
+ * drops per-org color.
+ */
 export function orgColor(orgId: string): string {
   let h = 0;
   for (let i = 0; i < orgId.length; i++) h = (h * 31 + orgId.charCodeAt(i)) | 0;
   return ORG_COLORS[Math.abs(h) % ORG_COLORS.length];
+}
+
+/** Org swatch fill — NEUTRAL grey (handoff: do not reintroduce per-org color). */
+export function orgSwatch(): string {
+  return 'var(--faint)';
 }
 
 /** 1–2 letter avatar initials from an org name (first letters of the first two words, else first two chars). */
