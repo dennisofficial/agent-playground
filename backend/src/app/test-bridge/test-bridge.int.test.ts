@@ -102,18 +102,24 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
   });
 
   it('say routes a human message to the AgentSessionManager and captures its reply on the thread', async () => {
+    // The brain now LAZILY provisions a sandbox on the first turn. To keep this controller-seam test
+    // fully hermetic (no Docker / git clone), force the fail-fast not-ready path: an unconnected repo →
+    // the brain posts an actionable message instead of attempting a clone. What we're proving is the
+    // WIRING: say → AgentSessionManager → a reply captured on the thread + persisted in the transcript.
+    await dataSource.query(`UPDATE repos SET access_ok = false WHERE org_id = $1 AND slug = $2`, [
+      TEAM_ID,
+      PROJECT_ID,
+    ]);
+
     const said = await controller.say({
-      channel: PROJECT_ID, // the surface addresses by repo id (channel-free model)
+      channel: PROJECT_ID, // the surface addresses by repo slug (test-bridge convention)
       text: 'Add a short note to the README explaining the build step.',
     });
 
-    // R3: AgentSessionManager receives the chat. With no thread sandbox provisioned (inbound-derived
-    // threads don't auto-provision sandboxes), the brain replies with the "create a thread" fallback.
-    // The wiring is what we're testing: the reply IS captured on the thread, the surface works.
     expect(said.threadTs).toBeTruthy();
     expect(said.replies.length).toBeGreaterThan(0);
-    // The fallback message tells the operator to create a thread via the web app.
-    expect(said.replies[0].text.toLowerCase()).toContain('create a thread');
+    // The brain's reply is the actionable "finish connecting this repo" message (not-ready provisioning).
+    expect(said.replies.some((r) => r.text.toLowerCase().includes('connect'))).toBe(true);
     // No approval card (no plan was proposed).
     expect(said.approvalCard).toBeUndefined();
 

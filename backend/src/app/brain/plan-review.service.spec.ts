@@ -285,6 +285,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
       mockDispatcher,
       mockSurface,
       mockSandboxRows,
+      { push: () => undefined, end: () => undefined } as never,
     );
   }
 

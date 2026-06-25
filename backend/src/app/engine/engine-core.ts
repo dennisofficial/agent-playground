@@ -142,7 +142,7 @@ export class EngineCore {
     args: RunEngineArgs,
     extraClaudeOptions?: Record<string, unknown>,
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal } = args;
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream } = args;
 
     const abortController = new AbortController();
     if (signal) {
@@ -182,6 +182,9 @@ export class EngineCore {
       env: subprocessEnv,
       ...(sessionId ? { resume: sessionId } : {}),
       ...(model ? { model } : {}),
+      // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
+      // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.
+      ...(richStream ? { includePartialMessages: true, thinking: { type: 'adaptive' as const } } : {}),
       // R1 tool-bridge: optional extra options (e.g. mcpServers) from the in-container entrypoint.
       ...(extraClaudeOptions ?? {}),
     } as Options;
@@ -195,15 +198,56 @@ export class EngineCore {
           resolvedSession = message.session_id;
           // Surface the resume handle the instant the session exists, so a mid-turn halt is recoverable.
           if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
+        } else if (richStream && message.type === 'stream_event') {
+          // LIVE token-by-token deltas (partial-message stream). Authoritative full blocks still arrive
+          // on the `assistant` message below — these are for live rendering only, not persistence.
+          const ev = (message as { event?: { type?: string; delta?: { type?: string; text?: string; thinking?: string } } }).event;
+          if (ev?.type === 'content_block_delta') {
+            if (ev.delta?.type === 'text_delta' && ev.delta.text)
+              onEvent?.({ kind: 'text_delta', text: ev.delta.text });
+            else if (ev.delta?.type === 'thinking_delta' && ev.delta.thinking)
+              onEvent?.({ kind: 'thinking_delta', text: ev.delta.thinking });
+          }
         } else if (message.type === 'assistant') {
           for (const block of message.message.content as Array<{
             type: string;
+            id?: string;
             text?: string;
             name?: string;
+            input?: unknown;
+            thinking?: string;
           }>) {
-            if (block.type === 'text' && block.text) onEvent?.({ kind: 'text', text: block.text });
-            else if (block.type === 'tool_use' && block.name)
-              onEvent?.({ kind: 'tool', name: block.name });
+            if (block.type === 'text' && block.text) {
+              onEvent?.({ kind: 'text', text: block.text });
+            } else if (block.type === 'thinking' && block.thinking) {
+              if (richStream) onEvent?.({ kind: 'thinking', text: block.thinking });
+            } else if (block.type === 'tool_use' && block.name) {
+              // Rich turns get the full tool call (id + input) so the UI can render it; coarse turns keep
+              // the legacy name-only `tool` event.
+              if (richStream)
+                onEvent?.({ kind: 'tool_use', id: block.id ?? '', name: block.name, input: block.input });
+              else onEvent?.({ kind: 'tool', name: block.name });
+            }
+          }
+        } else if (richStream && message.type === 'user') {
+          // Tool results are fed back to the model as a `user` message — surface them so the UI can pair
+          // each result with its `tool_use` by id.
+          const content = (message as { message?: { content?: unknown } }).message?.content;
+          if (Array.isArray(content)) {
+            for (const block of content as Array<{
+              type: string;
+              tool_use_id?: string;
+              content?: unknown;
+              is_error?: boolean;
+            }>) {
+              if (block.type === 'tool_result')
+                onEvent?.({
+                  kind: 'tool_result',
+                  id: block.tool_use_id ?? '',
+                  result: block.content,
+                  isError: block.is_error,
+                });
+            }
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;

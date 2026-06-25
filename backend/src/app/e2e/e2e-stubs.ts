@@ -200,6 +200,22 @@ export class FakeLocalGitService {
     };
   }
 
+  /** Per-thread base worktree (what `ThreadLifecycleService.provisionSandbox` cuts at thread create). */
+  async createBaseWorktree(repo: ProjectRepo, threadId: string): Promise<FeatureSandbox> {
+    return {
+      repoId: repo.repoId,
+      branch: repo.defaultBranch,
+      worktreePath: `${repo.repoPath}/.worktrees/thread-${threadId}`,
+      gitUrl: repo.gitUrl,
+      ...(repo.token ? { token: repo.token } : {}),
+    };
+  }
+
+  /** Switch the worktree to the thread's feature branch (no real git — just relabels the handle). */
+  async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, branch: string): Promise<FeatureSandbox> {
+    return { ...sandbox, branch };
+  }
+
   async hasChanges(): Promise<boolean> {
     return true;
   }

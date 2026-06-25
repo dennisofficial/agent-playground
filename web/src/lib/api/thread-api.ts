@@ -56,12 +56,14 @@ function threadPath(ref: ThreadRef, suffix = ''): string {
 // ── Messages ───────────────────────────────────────────────────────────────────────────────────
 /** The durable message row as the backend returns it (`…/threads/:threadId/messages`). */
 export interface RawThreadMessage {
+  /** The row's uuid — a stable React key (transcript blocks have no surface `ts`). */
+  id?: string;
   ts: string | null;
   author: string;
   authorId: string;
   isAtlas: boolean;
   text: string;
-  kind: string; // 'chat' | 'card' | 'build_event'
+  kind: string; // 'chat' | 'thinking' | 'tool' | 'card' | 'build_event'
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -86,7 +88,7 @@ export interface ThreadMessage {
 
 export function normalizeMessage(r: RawThreadMessage): ThreadMessage {
   return {
-    ts: r.ts ?? `srv-${r.postedAt}`,
+    ts: r.ts ?? r.id ?? `srv-${r.postedAt}`,
     author: r.isAtlas ? 'atlas' : 'user',
     authorId: r.authorId,
     authorName: r.author,

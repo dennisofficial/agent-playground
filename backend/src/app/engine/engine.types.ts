@@ -27,7 +27,20 @@ export type EngineEvent =
    * the caller persist the resume handle immediately, so a mid-turn halt (process crash, container/host
    * restart, kill) recovers by CONTINUING this same session instead of spawning a fresh one.
    */
-  | { kind: 'session'; sessionId: string };
+  | { kind: 'session'; sessionId: string }
+  // ── Rich streaming (emitted only when `RunEngineArgs.richStream` is set — the thread BRAIN turn). The
+  //    `*_delta` kinds are LIVE-only (token-by-token); the full-block kinds (`text`/`thinking`/`tool_use`/
+  //    `tool_result`) are AUTHORITATIVE — the caller persists those as the durable transcript. ──
+  /** A live assistant-text token chunk (not persisted; reconciled by the final `text` block). */
+  | { kind: 'text_delta'; text: string }
+  /** A complete thinking block (authoritative — persisted). */
+  | { kind: 'thinking'; text: string }
+  /** A live thinking token chunk (not persisted). */
+  | { kind: 'thinking_delta'; text: string }
+  /** A tool call with its input (authoritative). Pairs with `tool_result` by `id`. */
+  | { kind: 'tool_use'; id: string; name: string; input?: unknown }
+  /** A tool result (authoritative). `id` correlates to the `tool_use`. */
+  | { kind: 'tool_result'; id: string; result?: unknown; isError?: boolean };
 
 /** Vendor-neutral token-usage counts (all optional — engines populate what their SDK reports). */
 export interface EngineUsage {
@@ -162,6 +175,13 @@ export interface RunEngineArgs {
   model?: string;
   /** Called for each progress event as the run streams. */
   onEvent?: (e: EngineEvent) => void;
+  /**
+   * Opt into RICH token-level streaming (the thread brain): enables the SDK's partial-message stream +
+   * extended thinking, so `runClaude` emits `text_delta`/`thinking`/`thinking_delta`/`tool_use`/
+   * `tool_result` events in addition to the coarse `text`/`tool`/`result`. Omit (build/phase turns) for
+   * the existing block-level behavior.
+   */
+  richStream?: boolean;
   /** Aborts the run when signalled — wired to the SDK's native cancellation. */
   signal?: AbortSignal;
   /**

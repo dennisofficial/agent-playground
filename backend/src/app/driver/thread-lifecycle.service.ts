@@ -41,6 +41,18 @@ export interface CreatedThread {
 }
 
 /**
+ * Thrown by `ensureProvisioned` when a thread's repo isn't connected/validated yet (no repo row, or
+ * `access_ok` is false) — so provisioning can't proceed. The brain surfaces the message to the operator
+ * (finish onboarding) instead of attempting a doomed clone.
+ */
+export class ProvisioningNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProvisioningNotReadyError';
+  }
+}
+
+/**
  * R2 — the EXPLICIT CREATE-THREAD control path + per-thread sandbox lifecycle. A thread owns a DURABLE
  * worktree + feature branch + engine session; its container is a DISPOSABLE cache attached on demand.
  * The THREAD row owns the branch (`base_branch`/`feature_branch`) and PR (`pr_url`/`pr_number`); the
@@ -56,6 +68,9 @@ export interface CreatedThread {
 @Injectable()
 export class ThreadLifecycleService {
   private readonly logger = new Logger(ThreadLifecycleService.name);
+
+  /** In-flight lazy provisions, keyed `orgId:threadId` — serializes concurrent first turns (single-process). */
+  private readonly provisioning = new Map<string, Promise<ThreadSandboxEntity | null>>();
 
   constructor(
     @InjectRepository(ThreadEntity, DB_CONNECTION)
@@ -110,6 +125,72 @@ export class ThreadLifecycleService {
       worktreePath: sandboxRow.worktree_path,
       baseBranch,
     };
+  }
+
+  /**
+   * Idempotently ensure a thread has a COMPLETE sandbox (durable worktree + feature branch + the
+   * `thread_sandboxes` row). The live create/seed paths insert BARE thread rows (no sandbox), so the
+   * brain's first chat turn calls this to provision lazily. Uniform recovery semantics:
+   *
+   *   - no row                      → provision.
+   *   - row `closed`                → return null (a closed thread isn't revived by a stray message).
+   *   - row complete (worktree_path set AND the thread has a feature_branch) → return it (no-op). A
+   *     healthy post-restart row (`reconcileOnBoot` → `detached`, container null, worktree+branch kept)
+   *     IS complete; `ensureContainer` re-attaches it on the turn.
+   *   - row INCOMPLETE (a failed provision: `detached`, empty worktree_path / no feature_branch) →
+   *     reclaim any container, drop the stale row, provision fresh.
+   *
+   * Throws `ProvisioningNotReadyError` if the repo isn't connected/validated (`access_ok`) — fail fast,
+   * no clone. Concurrent first turns for the same thread share ONE provision (no double row).
+   */
+  async ensureProvisioned(threadId: string, orgId: string): Promise<ThreadSandboxEntity | null> {
+    const key = `${orgId}:${threadId}`;
+    const inflight = this.provisioning.get(key);
+    if (inflight) return inflight;
+    // Set the promise SYNCHRONOUSLY (before any await) so racing callers share it.
+    const p = this.doEnsureProvisioned(threadId, orgId).finally(() => this.provisioning.delete(key));
+    this.provisioning.set(key, p);
+    return p;
+  }
+
+  private async doEnsureProvisioned(
+    threadId: string,
+    orgId: string,
+  ): Promise<ThreadSandboxEntity | null> {
+    const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+    if (!thread) return null;
+
+    const existing = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
+    if (existing) {
+      if (existing.lifecycle === 'closed') return null;
+      // Complete iff BOTH the worktree path and the thread's feature branch are set. A failed
+      // provisionSandbox leaves a `detached` row with neither (and rowToSandbox would otherwise fall
+      // back to the base/default branch) — treat that as incomplete and re-provision.
+      if (existing.worktree_path && thread.feature_branch) return existing;
+      if (existing.container_id) {
+        await this.sandboxProvider
+          .teardown(await this.rowToSandbox(existing))
+          .catch((err) =>
+            this.logger.warn(`ensureProvisioned: teardown of stale sandbox failed for ${threadId}: ${err}`),
+          );
+      }
+      await this.sandboxes.delete({ id: existing.id });
+      this.logger.log(`ensureProvisioned: replaced incomplete sandbox row for thread ${threadId}`);
+    }
+
+    const project = await this.projects.findOne({ where: { id: thread.repo_id, org_id: orgId } });
+    if (!project) {
+      throw new ProvisioningNotReadyError(
+        'This thread’s repo could not be found — reconnect it in settings.',
+      );
+    }
+    if (!project.access_ok) {
+      throw new ProvisioningNotReadyError(
+        'This repo isn’t fully connected yet — finish connecting it (validate GitHub access) in settings before starting a thread.',
+      );
+    }
+    const baseBranch = thread.base_branch ?? project.default_branch ?? 'main';
+    return this.provisionSandbox(thread, project, baseBranch);
   }
 
   /**

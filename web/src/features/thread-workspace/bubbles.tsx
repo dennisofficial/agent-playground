@@ -1,8 +1,10 @@
 'use client';
 
-import { ExternalLink, Lock, MessageSquare } from 'lucide-react';
+import { useState } from 'react';
+import { Brain, ChevronRight, ExternalLink, Lock, MessageSquare, Wrench } from 'lucide-react';
 import type { SystemTone } from './classify';
 import type { ThreadMessage } from '@/lib/api/thread-api';
+import type { LiveTurn } from '@/lib/api/thread-stream';
 
 /** Small Atlas/Claude avatar — the brand mark, mini (the rotated rounded square). */
 export function ClaudeAvatar({ size = 24 }: { size?: number }) {
@@ -40,13 +42,139 @@ export function UserBubble({ message }: { message: ThreadMessage }) {
 }
 
 export function ClaudeBubble({ message }: { message: ThreadMessage }) {
+  return <StreamTextBubble text={message.text} />;
+}
+
+/** An assistant text bubble — `streaming` adds a blinking cursor for the live (token-by-token) turn. */
+export function StreamTextBubble({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
     <div className="anim-fadeUp flex gap-2.5">
       <ClaudeAvatar />
       <div className="max-w-[86%] whitespace-pre-wrap rounded-[13px] rounded-tl-sm border border-border bg-surface-2 px-3.5 py-2.5 text-[13px] leading-relaxed text-text">
-        {message.text}
+        {text}
+        {streaming ? (
+          <span
+            className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
+            style={{ background: 'var(--accent)' }}
+            aria-hidden
+          />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** Truncate + pretty-print a tool input/result payload (object → JSON, string → as-is) for display. */
+function formatPayload(value: unknown): string {
+  if (value == null) return '';
+  let out: string;
+  if (typeof value === 'string') out = value;
+  else {
+    try {
+      out = JSON.stringify(value, null, 2);
+    } catch {
+      out = String(value);
+    }
+  }
+  return out.length > 4000 ? `${out.slice(0, 4000)}\n… (truncated)` : out;
+}
+
+/** A collapsible thinking block (the model's reasoning) — dimmed + italic, like Claude Code. */
+export function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="anim-fadeUp ml-[34px] max-w-[86%]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-left text-faint hover:text-dim"
+      >
+        <Brain size={13} className="shrink-0" />
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em]">
+          thinking{streaming ? '…' : ''}
+        </span>
+        <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open ? (
+        <p className="mt-1 whitespace-pre-wrap rounded-md border border-dashed border-border bg-surface px-3 py-2 text-[12px] italic leading-relaxed text-dim">
+          {text}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** A collapsible tool-call card (name + input + result), `running` while awaiting its result. */
+export function ToolCallCard({
+  name,
+  input,
+  result,
+  isError = false,
+  running = false,
+}: {
+  name: string;
+  input?: unknown;
+  result?: unknown;
+  isError?: boolean;
+  running?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const inputStr = formatPayload(input);
+  const resultStr = formatPayload(result);
+  return (
+    <div className="anim-fadeUp ml-[34px] max-w-[86%]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-left"
+      >
+        <Wrench size={13} className="shrink-0" style={{ color: isError ? 'var(--red)' : 'var(--dim)' }} />
+        <span className="font-mono text-[11.5px] text-text">{name}</span>
+        {running ? (
+          <span className="pulse-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--accent)' }} />
+        ) : null}
+        <ChevronRight size={13} className={`ml-auto shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (inputStr || resultStr) ? (
+        <div className="mt-1 space-y-1.5 rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed text-dim">
+          {inputStr ? (
+            <div>
+              <span className="text-faint">input</span>
+              <pre className="mt-0.5 whitespace-pre-wrap break-words">{inputStr}</pre>
+            </div>
+          ) : null}
+          {resultStr ? (
+            <div>
+              <span className="text-faint">{isError ? 'error' : 'result'}</span>
+              <pre className="mt-0.5 whitespace-pre-wrap break-words">{resultStr}</pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Render a thread's in-flight LIVE turn (token-streamed text, thinking, and tool calls). */
+export function LiveTurnView({ turn }: { turn: LiveTurn }) {
+  return (
+    <>
+      {turn.blocks.map((b) => {
+        if (b.kind === 'text') return <StreamTextBubble key={b.key} text={b.text} streaming={!b.done && turn.active} />;
+        if (b.kind === 'thinking')
+          return <ThinkingBlock key={b.key} text={b.text} streaming={!b.done && turn.active} />;
+        return (
+          <ToolCallCard
+            key={b.key}
+            name={b.name}
+            input={b.input}
+            result={b.result}
+            isError={b.isError}
+            running={!b.done}
+          />
+        );
+      })}
+    </>
   );
 }
 

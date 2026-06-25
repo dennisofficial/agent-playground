@@ -6,14 +6,18 @@ import {
   ClaudeBubble,
   DecisionChip,
   LiveIndicator,
+  LiveTurnView,
   ParkAndAsk,
   PrCard,
   SystemEventPill,
+  ThinkingBlock,
+  ToolCallCard,
   UserBubble,
 } from './bubbles';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { Composer } from './composer';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
+import { useLiveTurn } from '@/lib/api/thread-stream';
 
 /**
  * Conversation mode — the thread's brain. One continuous session: intent, planning, and steering all
@@ -35,10 +39,13 @@ export function Conversation({
   onOpenPlan?: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const liveTurn = useLiveTurn(threadRef.threadId);
+  const liveBlockCount = liveTurn?.blocks.length ?? 0;
+  const turnActive = liveTurn?.active ?? false;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length, live]);
+  }, [messages.length, live, liveBlockCount, turnActive]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -52,7 +59,7 @@ export function Conversation({
 
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
-          ) : messages.length === 0 ? (
+          ) : messages.length === 0 && liveBlockCount === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
               No messages yet — say something to Atlas below.
             </p>
@@ -62,6 +69,20 @@ export function Conversation({
               switch (c.kind) {
                 case 'user':
                   return <UserBubble key={message.ts} message={message} />;
+                case 'thinking':
+                  return <ThinkingBlock key={message.ts} text={message.text} />;
+                case 'tool': {
+                  const m = message.meta ?? {};
+                  return (
+                    <ToolCallCard
+                      key={message.ts}
+                      name={String(m.name ?? 'tool')}
+                      input={m.input}
+                      result={m.result}
+                      isError={Boolean(m.isError)}
+                    />
+                  );
+                }
                 case 'approval':
                   return (
                     <ApprovalCardView key={message.ts} card={c.card} threadRef={threadRef} onOpenPlan={onOpenPlan} />
@@ -82,7 +103,8 @@ export function Conversation({
               }
             })
           )}
-          {live ? <LiveIndicator /> : null}
+          {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} /> : null}
+          {live || turnActive ? <LiveIndicator /> : null}
           <div ref={endRef} />
         </div>
       </div>

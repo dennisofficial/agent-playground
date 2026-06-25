@@ -45,6 +45,7 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, type ResolvedRepo } from '.';
+import { ProvisioningNotReadyError } from './thread-lifecycle.service';
 
 import { ENTITIES } from '../persistence/entities';
 
@@ -110,8 +111,10 @@ class FakeGitService {
 /** A fake docker-ish SANDBOX_PROVIDER: attaches a stable container id + a configurable `warm` flag. */
 class FakeSandboxProvider {
   warm = true;
+  attachCount = 0;
   readonly tornDown: string[] = [];
   async attach({ sandbox, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }): Promise<FeatureSandbox> {
+    this.attachCount++;
     return { ...sandbox, containerId: `fake-c-${threadId ?? sandbox.branch}`, warm: this.warm };
   }
   async teardown(sandbox: FeatureSandbox): Promise<void> {
@@ -216,6 +219,21 @@ async function create(displayName = 'Gate thread') {
     baseBranch: FAKE_BASE_BRANCH,
     displayName,
   });
+}
+
+/** Insert a BARE thread row (no sandbox) — the live web/event create paths' shape, before first turn. */
+async function createBareThread(): Promise<string> {
+  const row = await threads.save(
+    threads.create({
+      org_id: FAKE_TEAM_ID,
+      repo_id: repoId,
+      origin: 'control',
+      surface_thread_ref: null,
+      title: 'bare',
+      base_branch: FAKE_BASE_BRANCH,
+    }),
+  );
+  return row.id;
 }
 
 // ── GATE tests ───────────────────────────────────────────────────────────────────────────────────
@@ -342,5 +360,77 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
     expect(found!.branch).toBe(`atlas/thread-${threadId.slice(0, 8)}`);
 
     expect(await threadLifecycle.findSandbox(randomUUID(), FAKE_TEAM_ID)).toBeNull();
+  });
+
+  // ── ensureProvisioned — lazy first-turn provisioning (the conversation prerequisite) ───────────────
+
+  it('ensureProvisioned provisions a complete sandbox for a BARE thread row', async () => {
+    const threadId = await createBareThread();
+    const row = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    expect(row).not.toBeNull();
+    expect(row!.lifecycle).toBe('attached');
+    expect(row!.worktree_path).toBeTruthy();
+    const thread = await threads.findOneOrFail({ where: { id: threadId } });
+    expect(thread.feature_branch).toBe(`atlas/thread-${threadId.slice(0, 8)}`);
+  });
+
+  it('ensureProvisioned is idempotent — a second call returns the same row, no re-provision', async () => {
+    const threadId = await createBareThread();
+    const first = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    const attaches = provider.attachCount;
+    const second = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    expect(second!.id).toBe(first!.id);
+    expect(provider.attachCount).toBe(attaches);
+  });
+
+  it('ensureProvisioned serializes concurrent first turns into ONE provision (no double row)', async () => {
+    const threadId = await createBareThread();
+    provider.attachCount = 0;
+    const [a, b] = await Promise.all([
+      threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID),
+      threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID),
+    ]);
+    expect(a!.id).toBe(b!.id);
+    expect(provider.attachCount).toBe(1);
+    expect(await sandboxes.find({ where: { thread_id: threadId } })).toHaveLength(1);
+  });
+
+  it('ensureProvisioned RECOVERS an incomplete row (failed provision: empty worktree / no branch)', async () => {
+    const threadId = await createBareThread();
+    // Simulate a failed provision: a detached row with empty worktree + no feature branch on the thread.
+    await sandboxes.save(
+      sandboxes.create({
+        org_id: FAKE_TEAM_ID,
+        thread_id: threadId,
+        repo_id: repoId,
+        worktree_path: '',
+        container_id: null,
+        lifecycle: 'detached',
+      }),
+    );
+    const row = await threadLifecycle.ensureProvisioned(threadId, FAKE_TEAM_ID);
+    expect(row!.lifecycle).toBe('attached');
+    expect(row!.worktree_path).toBeTruthy();
+    const thread = await threads.findOneOrFail({ where: { id: threadId } });
+    expect(thread.feature_branch).toBeTruthy();
+    // The stale row was replaced — exactly one sandbox row remains.
+    expect(await sandboxes.find({ where: { thread_id: threadId } })).toHaveLength(1);
+  });
+
+  it('ensureProvisioned throws ProvisioningNotReadyError when the repo is not access_ok (no provider call)', async () => {
+    const [nr] = await ds.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, token_name, access_ok)
+       VALUES ($1, 'not-ready-repo', 'NR', 'https://github.com/x/nr.git', 'main', NULL, false)
+       ON CONFLICT (org_id, slug) DO UPDATE SET access_ok = false RETURNING id`,
+      [FAKE_TEAM_ID],
+    );
+    const thread = await threads.save(
+      threads.create({ org_id: FAKE_TEAM_ID, repo_id: nr.id, origin: 'control', surface_thread_ref: null, base_branch: 'main' }),
+    );
+    const before = provider.attachCount;
+    await expect(threadLifecycle.ensureProvisioned(thread.id, FAKE_TEAM_ID)).rejects.toBeInstanceOf(
+      ProvisioningNotReadyError,
+    );
+    expect(provider.attachCount).toBe(before);
   });
 });

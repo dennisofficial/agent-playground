@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
+import type { EngineEvent } from './engine.types';
 
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -24,6 +25,37 @@ function fakeClaudeSdk() {
           usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 2 },
           total_cost_usd: 0.01,
         };
+      })();
+    },
+  } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+  return { sdk, captured };
+}
+
+/** A fake Claude SDK that yields the FULL rich stream: token deltas + thinking + tool_use/tool_result. */
+function fakeRichClaudeSdk() {
+  const captured: { options?: Record<string, unknown> } = {};
+  const sdk = {
+    query: ({ options }: { prompt: string; options: Record<string, unknown> }) => {
+      captured.options = options;
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hel' } } };
+        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } };
+        yield {
+          type: 'assistant',
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'full thought' },
+              { type: 'text', text: 'Hello' },
+              { type: 'tool_use', id: 'tu1', name: 'Read', input: { path: 'README.md' } },
+            ],
+          },
+        };
+        yield {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'file contents', is_error: false }] },
+        };
+        yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'Hello', usage: { input_tokens: 1, output_tokens: 1 } };
       })();
     },
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
@@ -125,6 +157,58 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(opts.tools).not.toContain('Write');
     expect(opts.tools).not.toContain('Edit');
     expect(opts.tools).toContain('Read');
+  });
+
+  it('richStream: enables partial stream + thinking, emits token deltas, thinking, tool_use(input) + tool_result', async () => {
+    const { sdk, captured } = fakeRichClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const events: EngineEvent[] = [];
+    await core.run({
+      engine: 'claude',
+      task: 'x',
+      cwd: '/tmp/wt',
+      systemPrompt: 'p',
+      sandboxKey: 'k',
+      mode: 'execute',
+      richStream: true,
+      onEvent: (e) => events.push(e),
+    });
+    const opts = captured.options!;
+    expect(opts.includePartialMessages).toBe(true);
+    expect(opts.thinking).toMatchObject({ type: 'adaptive' });
+
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toEqual(
+      expect.arrayContaining(['text_delta', 'thinking_delta', 'thinking', 'text', 'tool_use', 'tool_result']),
+    );
+    const toolUse = events.find((e) => e.kind === 'tool_use') as Extract<EngineEvent, { kind: 'tool_use' }>;
+    expect(toolUse).toMatchObject({ id: 'tu1', name: 'Read' });
+    expect(toolUse.input).toMatchObject({ path: 'README.md' });
+    const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
+    expect(toolResult).toMatchObject({ id: 'tu1', result: 'file contents', isError: false });
+  });
+
+  it('without richStream: no partial stream; tool stays name-only; no thinking/tool_result', async () => {
+    const { sdk, captured } = fakeRichClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const events: EngineEvent[] = [];
+    await core.run({
+      engine: 'claude',
+      task: 'x',
+      cwd: '/tmp/wt',
+      systemPrompt: 'p',
+      sandboxKey: 'k',
+      mode: 'execute',
+      onEvent: (e) => events.push(e),
+    });
+    expect(captured.options!.includePartialMessages).toBeUndefined();
+    expect(captured.options!.thinking).toBeUndefined();
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain('text');
+    expect(kinds).toContain('tool'); // legacy name-only tool event
+    expect(kinds).not.toContain('tool_use');
+    expect(kinds).not.toContain('thinking');
+    expect(kinds).not.toContain('tool_result');
   });
 
   it('subscription auth from env strips the API key and sets the OAuth token', async () => {

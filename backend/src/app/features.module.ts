@@ -8,7 +8,7 @@ import { IngressModule } from './ingress';
 import { RunnerModule } from './runner';
 import { SandboxModule } from './sandbox';
 import { StimulusModule } from './stimulus';
-import { SurfaceModule } from './surface';
+import { LiveTurnModule, SurfaceModule } from './surface';
 import { MemoryModule } from './memory';
 import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
@@ -44,6 +44,7 @@ import { TestBridgeModule } from './test-bridge';
     OnboardingModule,
     OrgModule,
     SandboxModule,
+    LiveTurnModule,
     SurfaceModule,
     RunnerModule,
     MemoryModule,

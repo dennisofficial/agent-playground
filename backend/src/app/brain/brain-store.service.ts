@@ -91,6 +91,28 @@ export class BrainStoreService {
     );
   }
 
+  /**
+   * Append a typed transcript BLOCK from a brain turn — the durable record of the in-sandbox session.
+   * `kind` is `'chat'` (assistant text), `'thinking'` (a thinking block), or `'tool'` (a tool call;
+   * `meta` carries `{ name, input, result, isError }`). Authored by Atlas so it renders on the agent side.
+   */
+  async appendBlock(
+    threadId: string,
+    block: { kind: string; text?: string; meta?: Record<string, unknown> | null },
+  ): Promise<void> {
+    await this.messages.save(
+      this.messages.create({
+        thread_id: threadId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: block.text ?? '',
+        kind: block.kind,
+        meta: block.meta ?? null,
+      }),
+    );
+  }
+
   /** Resolve where to post into a thread: the repo coordinate + the real thread id. The web/agent
    *  surface keys its conversation by these directly — no channel/surface-ref indirection. */
   async route(thread: { orgId: string; repoId: string; threadId: string }): Promise<ThreadRoute> {

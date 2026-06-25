@@ -25,6 +25,7 @@ function makeController(threadOrgId: string) {
 
   const controller = new WebSurfaceController(
     {} as never, // surface
+    {} as never, // liveTurns
     {} as never, // driverStore
     { deleteThreadDeep } as never, // threadLifecycle
     {} as never, // orgService

@@ -11,6 +11,8 @@ export type SystemTone = 'ok' | 'warn' | 'accent' | 'neutral';
 export type ClassifiedMessage =
   | { kind: 'user'; message: ThreadMessage }
   | { kind: 'claude'; message: ThreadMessage }
+  | { kind: 'thinking'; message: ThreadMessage }
+  | { kind: 'tool'; message: ThreadMessage }
   | { kind: 'approval'; message: ThreadMessage; card: WebApprovalCard }
   | { kind: 'verdict'; message: ThreadMessage; card: WebVerdictCard }
   | { kind: 'decision'; message: ThreadMessage }
@@ -29,6 +31,10 @@ export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
   if (message.author === 'user' || message.local) {
     return { kind: 'user', message };
   }
+
+  // Structured transcript blocks (from the in-sandbox session) — classified by `kind`, not by regex.
+  if (message.kind === 'thinking') return { kind: 'thinking', message };
+  if (message.kind === 'tool') return { kind: 'tool', message };
 
   if (message.card?.type === 'approval_card') {
     return { kind: 'approval', message, card: message.card };

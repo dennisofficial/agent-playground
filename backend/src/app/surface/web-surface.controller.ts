@@ -12,7 +12,7 @@ import {
   Sse,
   UseGuards,
 } from '@nestjs/common';
-import { Observable, filter, map } from 'rxjs';
+import { Observable, defer, filter, from, map, merge } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -23,6 +23,7 @@ import {
   REQUEST_CHANGES_ACTION_ID,
 } from './approval-blocks';
 import { WebSurface } from './web-surface';
+import { LiveTurnStore } from './live-turn-store';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
@@ -68,6 +69,7 @@ export class WebSurfaceController {
 
   constructor(
     private readonly surface: WebSurface,
+    private readonly liveTurns: LiveTurnStore,
     private readonly driverStore: DriverStoreService,
     private readonly threadLifecycle: ThreadLifecycleService,
     private readonly orgService: OrganizationService,
@@ -185,6 +187,7 @@ export class WebSurfaceController {
       order: { created_at: 'ASC' },
     });
     return rows.map((m) => ({
+      id: m.id,
       ts: m.ts,
       author: m.author,
       authorId: m.author_id,
@@ -216,14 +219,50 @@ export class WebSurfaceController {
     return { ts };
   }
 
-  /** `GET …/repos/:repoId/events` — SSE stream of outbound posts for the repo. */
+  /**
+   * `GET …/repos/:repoId/events` — SSE for the repo, carrying frame types discriminated by `type`:
+   *  - `{ type: 'message', … }` — a durable post landed (chat / approval card / PR card / status). The
+   *    client refetches the authoritative `/messages` + pipeline.
+   *  - `{ type: 'stream', threadId, seq, event }` — the live in-sandbox session. `event` is either a
+   *    `{ kind: 'snapshot', blocks, active }` (the RESUMABLE catch-up replayed the moment THIS client
+   *    connects, for every in-flight turn in the repo), a token/thinking/tool delta, or `{kind:'turn_end'}`.
+   *    The client filters by `threadId`, applies the snapshot, then deltas (deduped by `seq`), and
+   *    reconciles against `/messages` on `turn_end`.
+   *
+   * The snapshot-on-connect is what makes a long response keep streaming across refresh / navigate-away /
+   * network blips: the producing turn runs independent of this connection (driven by chat intake), so a
+   * reconnecting client catches up to the current state instead of seeing nothing until the turn ends.
+   */
   @Sse('orgs/:orgId/repos/:repoId/events')
   @UseGuards(OrgMembershipGuard)
   events(@Param('repoId') repoId: string): Observable<MessageEvent> {
-    return this.surface.outbound$.pipe(
+    const messages$ = this.surface.outbound$.pipe(
       filter((msg: WebOutboundMessage) => msg.channel === repoId),
-      map((msg): MessageEvent => ({ data: msg })),
+      map((msg): MessageEvent => ({ data: { type: 'message', ...msg } })),
     );
+    // Replayed once per connection (deferred → read at subscribe time): the current state of every
+    // in-flight turn, so a (re)connecting client resumes mid-stream.
+    const snapshot$ = defer(() => from(this.liveTurns.snapshotsForRepo(repoId))).pipe(
+      map(
+        (s): MessageEvent => ({
+          data: {
+            type: 'stream',
+            threadId: s.threadId,
+            seq: s.seq,
+            event: { kind: 'snapshot', blocks: s.blocks, active: s.active },
+          },
+        }),
+      ),
+    );
+    const live$ = this.liveTurns.stream$.pipe(
+      filter((f) => f.channel === repoId),
+      map(
+        (f): MessageEvent => ({
+          data: { type: 'stream', threadId: f.threadId, seq: f.seq, event: f.event },
+        }),
+      ),
+    );
+    return merge(snapshot$, live$, messages$);
   }
 
   /** `POST …/threads/:threadId/approve` — submit a plan verdict. */

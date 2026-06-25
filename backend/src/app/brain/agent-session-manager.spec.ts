@@ -7,10 +7,12 @@ import type { DriverStoreService } from '../driver/driver-store.service';
 import type { MemoryStore } from '../memory';
 import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
-import type { ChatSurface } from '../surface';
+import type { ChatSurface, LiveTurnStore } from '../surface';
 import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import { AgentSessionManager } from './agent-session-manager.service';
+import { ProvisioningNotReadyError } from '../driver/thread-lifecycle.service';
+import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventTriageService } from './event-triage.service';
 import type { EventStimulus } from '../domain';
 import { StimulusRouter } from './stimulus-router.service';
@@ -80,6 +82,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     findOne: vi.fn(),
     save: vi.fn(),
   } as unknown as Repository<ThreadSandboxEntity>;
+
+  const mockLiveTurns = {
+    push: vi.fn(),
+    end: vi.fn(),
+    snapshot: vi.fn(),
+    snapshotsForRepo: vi.fn(),
+  } as unknown as LiveTurnStore;
 
   const TEAM_ID = 'T-R3GATE';
   const PROJECT_ID = 'r3gate-proj';
@@ -151,6 +160,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockDispatcher,
       mockSurface,
       mockSandboxRows,
+      mockLiveTurns,
     );
   });
 
@@ -246,6 +256,124 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {
+  const TEAM_ID = 'T-STREAM';
+  const PROJECT_ID = 'stream-proj';
+  const THREAD_ID = 'th-stream-001';
+
+  const stimulus: ChatStimulus = {
+    kind: 'chat',
+    trust: 'trusted',
+    id: 'stim-stream-001',
+    receivedAt: new Date('2026-06-24T00:00:00Z'),
+    orgId: TEAM_ID,
+    repoId: PROJECT_ID,
+    threadId: THREAD_ID,
+    body: 'Explain the build step',
+    author: { id: 'U-OP', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', threadRef: 'ts-stream-001' },
+  };
+
+  function makeManager(opts: {
+    findSandbox?: unknown;
+    ensureProvisioned?: ReturnType<typeof vi.fn>;
+    run?: ReturnType<typeof vi.fn>;
+  }) {
+    const store = {
+      route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
+      appendBlock: vi.fn().mockResolvedValue(undefined),
+      appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+    } as unknown as BrainStoreService;
+    const lifecycle = {
+      findSandbox: vi.fn().mockResolvedValue(opts.findSandbox ?? null),
+      ensureProvisioned:
+        opts.ensureProvisioned ?? vi.fn().mockResolvedValue({ id: 'sb-1', lifecycle: 'attached' }),
+      ensureContainer: vi
+        .fn()
+        .mockResolvedValue({ sandbox: { worktreePath: '/wt', containerId: 'c1' }, wasReset: false }),
+    } as unknown as ThreadLifecycleService;
+    const surface = {
+      post: vi.fn().mockResolvedValue('ts'),
+      name: 'web',
+    } as unknown as ChatSurface;
+    const sandboxRows = {
+      findOne: vi.fn().mockResolvedValue({ thread_id: THREAD_ID, org_id: TEAM_ID, session_id: null }),
+      save: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Repository<ThreadSandboxEntity>;
+    const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as DockerEngineRunner;
+    const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+
+    const manager = new AgentSessionManager(
+      store,
+      {} as unknown as DriverStoreService,
+      {} as unknown as MemoryStore,
+      {} as unknown as DecisionApprovalService,
+      lifecycle,
+      dockerRunner,
+      {} as unknown as PlanReviewService,
+      {} as unknown as JobDispatcher,
+      surface,
+      sandboxRows,
+      liveTurns,
+    );
+    return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns };
+  }
+
+  it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
+    const run = vi.fn(async (args: RunEngineArgs) => {
+      args.onEvent?.({ kind: 'session', sessionId: 'sess-1' });
+      args.onEvent?.({ kind: 'thinking', text: 'reasoning…' });
+      args.onEvent?.({ kind: 'text', text: 'Hello' });
+      args.onEvent?.({ kind: 'tool_use', id: 'tu1', name: 'Read', input: { path: 'README.md' } });
+      args.onEvent?.({ kind: 'tool_result', id: 'tu1', result: 'file contents', isError: false });
+      args.onEvent?.({ kind: 'text', text: 'Done.' });
+      args.onEvent?.({ kind: 'result', text: 'Done.' });
+      return { result: 'Done.', sessionId: 'sess-1' };
+    });
+    const { manager, store, surface, liveTurns, dockerRunner } = makeManager({ run });
+
+    await manager.handleChatTurn(stimulus);
+
+    // richStream is requested for the brain turn.
+    const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
+    expect(runArgs.richStream).toBe(true);
+
+    // Every engine event was pushed LIVE into the resumable store, then the turn was ended (turn_end).
+    const pushed = (liveTurns.push as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => (c[2] as EngineEvent).kind,
+    );
+    expect(pushed).toEqual(['session', 'thinking', 'text', 'tool_use', 'tool_result', 'text', 'result']);
+    expect(liveTurns.end as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+
+    // The authoritative blocks were persisted: thinking, two text (chat) blocks, and one paired tool call.
+    const blocks = (store.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    expect(blocks).toContainEqual(expect.objectContaining({ kind: 'thinking', text: 'reasoning…' }));
+    expect(blocks.filter((b) => b.kind === 'chat').map((b) => b.text)).toEqual(['Hello', 'Done.']);
+    const toolBlock = blocks.find((b) => b.kind === 'tool');
+    expect(toolBlock?.meta).toMatchObject({ name: 'Read', result: 'file contents', isError: false });
+    expect(toolBlock?.meta?.input).toMatchObject({ path: 'README.md' });
+
+    // The final reply is NOT also persisted as a separate say() — only the "setting up…" line is.
+    expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');
+  });
+
+  it('posts an actionable message and does NOT run a turn when the repo is not connected', async () => {
+    const ensureProvisioned = vi
+      .fn()
+      .mockRejectedValue(new ProvisioningNotReadyError('finish connecting this repo in settings'));
+    const { manager, surface, dockerRunner } = makeManager({
+      findSandbox: { worktreePath: '/wt' }, // already-provisioned → skip the "setting up" line
+      ensureProvisioned,
+    });
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(dockerRunner.run).not.toHaveBeenCalled();
+    expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('finish connecting this repo');
   });
 });
 

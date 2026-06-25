@@ -3,10 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { ChatStimulus, Thread, ThreadKind } from '../domain';
 import { MemoryStore } from '../memory';
-import { CHAT_SURFACE, type ChatSurface, type DecisionApprovalCard } from '../surface';
+import { CHAT_SURFACE, type ChatSurface, type DecisionApprovalCard, LiveTurnStore } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadSandboxEntity } from '../persistence/entities';
-import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
+import { ProvisioningNotReadyError, ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { SANDBOX_RESET_NOTICE } from '../engine/engine.types';
@@ -47,6 +47,7 @@ export class AgentSessionManager {
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
     private readonly sandboxRows: Repository<ThreadSandboxEntity>,
+    private readonly liveTurns: LiveTurnStore,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -99,8 +100,34 @@ export class AgentSessionManager {
    * tools. Session is resumed if a session_id is persisted for this thread.
    */
   async handleChatTurn(stimulus: ChatStimulus): Promise<void> {
+    // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
+    // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
+    // we're setting up so the first turn isn't a silent ~30s wait while we clone + start a container.
+    const alreadyProvisioned = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
+    if (!alreadyProvisioned) {
+      await this.say(stimulus, 'Setting up an isolated workspace for this thread — one moment…');
+    }
+    try {
+      const provisioned = await this.lifecycle.ensureProvisioned(stimulus.threadId, stimulus.orgId);
+      if (!provisioned) {
+        await this.say(stimulus, 'This thread is closed — start a new one to keep working.');
+        return;
+      }
+    } catch (err) {
+      if (err instanceof ProvisioningNotReadyError) {
+        await this.say(stimulus, err.message);
+      } else {
+        this.logger.error(`provisioning failed for thread=${stimulus.threadId}: ${err}`);
+        await this.say(
+          stimulus,
+          `I couldn't set up a workspace for this thread. (${String(err).slice(0, 200)})`,
+        );
+      }
+      return;
+    }
+
     // (Re-)attach a live container against the thread's durable worktree. Returns null only if the
-    // thread has no sandbox row (never created) or is closed.
+    // thread has no sandbox row (just provisioned above, so unexpected) or is closed.
     const ensured = await this.lifecycle.ensureContainer(stimulus.threadId, stimulus.orgId);
     if (!ensured) {
       this.logger.warn(
@@ -127,6 +154,16 @@ export class AgentSessionManager {
     // All turns run inside the Docker sandbox container.
     const runner: EngineRunnerPort = this.dockerRunner;
 
+    // The thread is a live web wrapper over this in-sandbox session: stream every engine event to the web
+    // AND persist the authoritative blocks (text/thinking/tool) as the durable transcript.
+    const route = await this.store.route({
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      threadId: stimulus.threadId,
+    });
+    const channel = route.channel ?? stimulus.replyRoute.threadRef;
+    const streamer = this.makeTurnStreamer(stimulus, channel);
+
     const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.threadId}`;
     const runArgs: RunEngineArgs = {
       engine: 'claude',
@@ -135,6 +172,7 @@ export class AgentSessionManager {
       systemPrompt: AgentSessionManager.SYSTEM_PROMPT,
       sandboxKey,
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
+      richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       ...(sessionId ? { sessionId } : {}),
       ...(sandbox.containerId
         ? { target: { containerId: sandbox.containerId } }
@@ -143,10 +181,7 @@ export class AgentSessionManager {
         threadId: stimulus.threadId,
         tools,
       },
-      onEvent: (e) => {
-        // Stream engine events to the web surface so the UI can render them.
-        void this.streamEvent(stimulus, e);
-      },
+      onEvent: (e) => streamer.onEvent(e),
     };
 
     let result;
@@ -154,6 +189,7 @@ export class AgentSessionManager {
       result = await runner.run(runArgs);
     } catch (err) {
       this.logger.error(`in-sandbox turn failed for thread=${stimulus.threadId}: ${err}`);
+      await streamer.finish();
       await this.say(stimulus, `I ran into an error — please try again. (${String(err).slice(0, 200)})`);
       return;
     }
@@ -164,10 +200,88 @@ export class AgentSessionManager {
       await this.sandboxRows.save(sandboxRow);
     }
 
-    // The session's final result text (if any) is the brain's reply.
-    if (result.result?.trim()) {
-      await this.say(stimulus, result.result.trim());
-    }
+    // Flush the durable transcript (persists any unpaired tool call + a text fallback if the turn emitted
+    // no text block), then signal turn end so the client reconciles its live buffer against /messages.
+    await streamer.finish(result.result);
+  }
+
+  /**
+   * A per-turn streamer — the bridge between the in-sandbox session and the web. For each engine event it
+   * (a) emits a LIVE frame to the surface (token deltas, thinking, tool calls/results) and (b) records the
+   * AUTHORITATIVE blocks into the durable transcript: assistant text (`chat`), thinking (`thinking`), and
+   * tool calls paired with their results by id (`tool`, with `{name,input,result,isError}` in `meta`).
+   * Persists are serialized (a promise chain) to preserve transcript order; `finish` flushes any unpaired
+   * tool call + a text fallback, awaits the chain so rows are durable, then emits the `turn_end` marker.
+   */
+  private makeTurnStreamer(
+    stimulus: ChatStimulus,
+    channel: string,
+  ): { onEvent: (e: EngineEvent) => void; finish: (finalText?: string) => Promise<void> } {
+    const threadId = stimulus.threadId;
+    const pendingTools = new Map<string, { name: string; input: unknown }>();
+    let chain: Promise<void> = Promise.resolve();
+    let persistedText = false;
+
+    const persist = (block: { kind: string; text?: string; meta?: Record<string, unknown> }) => {
+      chain = chain
+        .then(() => this.store.appendBlock(threadId, block))
+        .catch((err) => this.logger.warn(`appendBlock failed for thread=${threadId}: ${err}`));
+    };
+
+    return {
+      onEvent: (e: EngineEvent) => {
+        // LIVE + RESUMABLE: the store accumulates the cumulative turn AND fans the frame; a client that
+        // (re)connects mid-turn replays the snapshot, so a long response keeps streaming across reloads.
+        this.liveTurns.push(channel, threadId, e);
+        switch (e.kind) {
+          case 'text':
+            if (e.text.trim()) {
+              persistedText = true;
+              persist({ kind: 'chat', text: e.text });
+            }
+            break;
+          case 'thinking':
+            if (e.text.trim()) persist({ kind: 'thinking', text: e.text });
+            break;
+          case 'tool_use':
+            pendingTools.set(e.id || `tool-${pendingTools.size}`, { name: e.name, input: e.input });
+            break;
+          case 'tool_result': {
+            const key = e.id && pendingTools.has(e.id) ? e.id : [...pendingTools.keys()][0];
+            const tu = key ? pendingTools.get(key) : undefined;
+            if (key) pendingTools.delete(key);
+            persist({
+              kind: 'tool',
+              meta: {
+                name: tu?.name ?? 'tool',
+                input: tu?.input ?? null,
+                result: e.result ?? null,
+                isError: e.isError ?? false,
+              },
+            });
+            break;
+          }
+          default:
+            break; // session / result / *_delta — live only, not persisted
+        }
+      },
+      finish: async (finalText?: string) => {
+        // Unpaired tool calls (no result arrived) — persist with a null result so they still show.
+        for (const tu of pendingTools.values()) {
+          persist({
+            kind: 'tool',
+            meta: { name: tu.name, input: tu.input ?? null, result: null, isError: false },
+          });
+        }
+        pendingTools.clear();
+        // Fallback: a turn that emitted NO text block — persist the final summary so the reply isn't lost.
+        if (!persistedText && finalText && finalText.trim()) {
+          persist({ kind: 'chat', text: finalText.trim() });
+        }
+        await chain; // rows must be durable BEFORE the client refetches on turn_end
+        this.liveTurns.end(channel, threadId); // fans turn_end + drops the in-flight buffer
+      },
+    };
   }
 
   // ── Host-side tool impls ───────────────────────────────────────────────────────────────────────
@@ -396,22 +510,6 @@ export class AgentSessionManager {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────
-
-
-  /** Stream an engine event to the web surface for the UI. */
-  private async streamEvent(stimulus: ChatStimulus, e: EngineEvent): Promise<void> {
-    if (e.kind === 'text' && e.text.trim()) {
-      const route = await this.store.route({
-        orgId: stimulus.orgId,
-        repoId: stimulus.repoId,
-        threadId: stimulus.threadId,
-      }).catch(() => ({ channel: null, threadTs: null }));
-      const channel = route.channel ?? stimulus.replyRoute.threadRef;
-      const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
-      await this.surface.post(channel, e.text, { threadTs, orgId: stimulus.orgId })
-        .catch((err) => this.logger.debug(`stream event post failed: ${err}`));
-    }
-  }
 
   /** Post a reply in-thread AND append it to the durable transcript. */
   private async say(stimulus: ChatStimulus, text: string): Promise<void> {
