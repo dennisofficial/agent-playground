@@ -128,6 +128,9 @@ class FakeSandboxProvider {
   async teardownByIdentity({ sandbox, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }): Promise<void> {
     this.tornDown.push(`fake-c-${threadId ?? sandbox.branch}`);
   }
+  contextDirHost(orgId: string, threadId: string): string {
+    return `/fake/contexts/${orgId}/${threadId}`;
+  }
 }
 
 // ── Module bootstrap ──────────────────────────────────────────────────────────────────────────────

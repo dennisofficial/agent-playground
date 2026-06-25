@@ -103,8 +103,14 @@ export interface Section {
   threadId: string;
   /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   ordinal: number;
-  /** The one-line brief from the upfront section list. */
+  /** The one-line brief from the upfront section list (display label + plan/handoff fallback). */
   brief: string;
+  /**
+   * The FULL file-backed section spec the brain authored in `/context` (rubric markdown), snapshotted
+   * into Postgres at submit time. What the JIT phase planner consumes; null on legacy/lightweight paths
+   * (consumers fall back to `brief`).
+   */
+  spec: string | null;
   /** The detailed just-in-time plan once generated (null while pending). */
   plan: string | null;
   /** The prior section's handoff note threaded into this section's plan prompt. */

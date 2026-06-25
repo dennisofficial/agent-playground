@@ -36,9 +36,18 @@ export class SectionEntity extends TimestampedEntity {
   @Column({ type: 'int' })
   ordinal!: number;
 
-  /** The one-line brief from the upfront section list. */
+  /** The one-line brief from the upfront section list (display label + handoff/plan fallback). */
   @Column({ type: 'text' })
   brief!: string;
+
+  /**
+   * The FULL file-backed section spec the brain authored in `/context` (rubric markdown: goal, touch
+   * points, changes, constraints, edge cases, verification, risks), snapshotted into Postgres at
+   * `submit_plan` time. This — not the one-line `brief` — is what the JIT phase planner consumes.
+   * Null on legacy/lightweight paths; consumers fall back to `brief`.
+   */
+  @Column({ type: 'text', nullable: true })
+  spec!: string | null;
 
   /** The detailed just-in-time plan once generated; null while pending. Phases LOCK once planned. */
   @Column({ type: 'text', nullable: true })

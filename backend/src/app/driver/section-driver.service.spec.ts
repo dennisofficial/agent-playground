@@ -2,6 +2,7 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import { EngineAuthError } from '../engine';
 import { SectionDriver } from './section-driver.service';
+import { BuildShipService } from './build-ship.service';
 import type { DriverStoreService, DriverSection, JobRoute } from './driver-store.service';
 import type { PlannerLlm, PlannedPhase } from './planner-llm';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
@@ -283,8 +284,6 @@ function makeJob(overrides: Partial<Thread> = {}): Thread {
     featureBranch: null,
     prUrl: null,
     prNumber: null,
-    blockedByThreadId: null,
-    seedMessage: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -320,6 +319,7 @@ function section(id: string, ordinal: number, brief: string, status: SectionStat
     orgId: 'T1',
     ordinal,
     brief,
+    spec: null,
     plan: null,
     handoffIn: null,
     handoffOut: null,
@@ -358,7 +358,7 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     surface,
     env,
     // local SANDBOX_PROVIDER: a no-op attach (host-local execution; no containerId).
-    { attach: async ({ sandbox }) => sandbox, teardown: async () => undefined, teardownByIdentity: async () => undefined },
+    { attach: async ({ sandbox }) => sandbox, teardown: async () => undefined, teardownByIdentity: async () => undefined, contextDirHost: () => '/ctx' },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
       anthropicKey: async () => undefined,
@@ -372,6 +372,9 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
       findSandbox: async () => null,
       recordPr: async () => undefined,
     } as unknown as import('./thread-lifecycle.service').ThreadLifecycleService,
+    // BuildShipService: the real terminal "ship" over the same git/pr/autofix/store fakes, so the
+    // PR-tail assertions (pushed/opened/setPrReady) hold exactly as before the extraction.
+    new BuildShipService(autofix.autofix, git, pr, store),
   );
   return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts };
 }

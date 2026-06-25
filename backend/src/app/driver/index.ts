@@ -7,6 +7,7 @@ export * from './driver.module';
 export * from './section-driver.service';
 export * from './driver-store.service';
 export * from './thread-lifecycle.service';
+export { BuildShipService, type ShipInput, type ShipResult } from './build-ship.service';
 export {
   DRIVER_REPO,
   GitDriverRepoResolver,

@@ -89,6 +89,15 @@ export class ThreadLifecycleService {
   ) {}
 
   /**
+   * The HOST path of the thread's durable `/context` shared folder (mounted into the sandbox at
+   * `/context`). The brain reads spec files it authored in-sandbox via this path. Pure path derivation —
+   * no I/O, safe to call before the sandbox exists (the dir is created when the container is attached).
+   */
+  contextDirHost(threadId: string, orgId: string): string {
+    return this.sandboxProvider.contextDirHost(orgId, threadId);
+  }
+
+  /**
    * Create a new thread: persist the thread + provision the sandbox (worktree + feature branch cut at
    * create, container attached). Returns immediately after the sandbox is marked `attached`.
    */

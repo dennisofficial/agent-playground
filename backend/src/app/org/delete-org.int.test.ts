@@ -88,6 +88,9 @@ class FakeSandboxProvider {
   }
   async teardown(): Promise<void> {}
   async teardownByIdentity(): Promise<void> {}
+  contextDirHost(orgId: string, threadId: string): string {
+    return `/fake/contexts/${orgId}/${threadId}`;
+  }
 }
 
 // ── Sentinel ids — kept distinct from every other int test's tenant so the assertions are isolated. ──

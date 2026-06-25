@@ -17,6 +17,7 @@ import { CredentialResolver } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
+import { BuildShipService } from './build-ship.service';
 import {
   DriverStoreService,
   type DriverSection,
@@ -68,6 +69,7 @@ export class SectionDriver implements JobDispatcher {
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
     private readonly threadLifecycle: ThreadLifecycleService,
+    private readonly ship: BuildShipService,
   ) {}
 
   /** Sanity ceiling on a job's sections — a malformed plan can't drive an unbounded build. */
@@ -427,10 +429,12 @@ export class SectionDriver implements JobDispatcher {
     await this.store.setSectionStatus(section.id, 'planning');
 
     // An engine PLAN turn explores the worktree read-only; its plan text grounds the structured planner.
+    // Feed the FULL file-backed spec (the rubric the brain authored) — falling back to the one-line brief
+    // on legacy/lightweight plans that never wrote a spec.
     const planInput = {
       overview: record?.overview ?? '',
       decisions: record?.decisions ?? [],
-      brief: section.brief,
+      brief: section.spec ?? section.brief,
       handoffIn,
       orgId: job.orgId,
     };
@@ -743,53 +747,14 @@ export class SectionDriver implements JobDispatcher {
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
   ): Promise<void> {
-    this.logger.log(`job=${job.id} all sections done — PR-tail auto-fix`);
-    await this.autofix
-      .autofixPullRequest({
-        worktreePath: sandbox.worktreePath,
-        sandboxKey: sandboxKey(sandbox),
-        gitRange: `origin/${repo.defaultBranch}...HEAD`,
-        intent: record?.overview ?? job.title ?? '',
-        label: 'PR-tail',
-        ...(sandbox.containerId
-          ? {
-              containerId: sandbox.containerId,
-              ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
-            }
-          : {}),
-      })
-      .catch((err) =>
-        this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`),
-      );
-
-    if (!repo.token) {
-      this.logger.warn(
-        `job=${job.id}: no GitHub token — cannot push / open PR. Leaving as running.`,
-      );
-      await this.post(
-        route,
-        ':warning: Build complete but no GitHub token is configured — PR not opened.',
-      );
-      return;
-    }
-
-    await this.git.push(sandbox);
-    const opened = await this.pr.openPullRequest(repo.token, {
-      owner: repo.owner,
-      repo: repo.repo,
-      head: sandbox.branch,
-      base: repo.defaultBranch,
-      title: job.title ?? 'Atlas build',
-      body: prBody(job, record),
-      draft: false,
+    this.logger.log(`job=${job.id} all sections done — shipping`);
+    await this.ship.ship({
+      job,
+      record,
+      repo,
+      sandbox,
+      notify: (m) => this.post(route, m),
     });
-
-    // The PR (url + number) lives on the THREAD now — one owner — so the merge poll watches it there.
-    await this.store.setPrReady(job.id, opened.url, opened.number);
-    this.logger.log(
-      `thread=${job.id} PR ${opened.existing ? 'existing' : 'ready'}: ${opened.url}`,
-    );
-    await this.post(route, `:tada: PR ready for review: ${opened.url}`);
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
@@ -971,7 +936,7 @@ function renderPhaseTask(
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
-    `\nSection: ${section.brief}`,
+    `\nSection spec:\n${section.spec ?? section.brief}`,
     `\nImplement this phase:\n**${phase.title ?? `Phase ${phase.ordinal}`}** — ${phase.brief}`,
   ].join('\n');
 }
@@ -996,17 +961,6 @@ function parkQuestion(
     `_${reason}_`,
     "How would you like me to proceed? (Reply in this thread and I'll continue.)",
   ].join('\n');
-}
-
-function prBody(job: Thread, record: DecisionRecord | null): string {
-  const lines = [`Automated by Atlas v2 for **${job.title}**.`, ''];
-  if (record?.overview) lines.push(record.overview, '');
-  if (record?.decisions.length) {
-    lines.push('### Decisions');
-    for (const d of record.decisions)
-      lines.push(`- **${d.title}** (${d.decisionClass}): ${d.ruling}`);
-  }
-  return lines.join('\n');
 }
 
 function sandboxKey(sandbox: FeatureSandbox): string {

@@ -31,6 +31,12 @@ export interface SandboxProvider {
   attach(input: SandboxAttachInput): Promise<FeatureSandbox>;
   teardown(sandbox: FeatureSandbox): Promise<void>;
   /**
+   * The HOST path of a thread's durable `/context` shared folder (the same dir bind-mounted into the
+   * container at `/context`). Outside the worktree, keyed by `threadId`, durable across container
+   * recreate. The brain authors plan/section specs here and reads them back via this path.
+   */
+  contextDirHost(orgId: string, threadId: string): string;
+  /**
    * Reclaim a container by its DETERMINISTIC identity (the same `orgId · repo · thread/branch` key
    * `attach` uses to name it) even when its concrete id isn't known. This is the terminal-cleanup
    * counterpart to `attach`: terminal cleanup can't rely on a persisted `container_id` because a process

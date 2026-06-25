@@ -7,7 +7,12 @@ import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { FeatureSandbox } from '../git';
 import { engineBundlePath } from './bundle-engine';
-import { CONTAINER_AGENT_HOME, CONTAINER_GIT_COMMON, CONTAINER_WORKTREE } from './docker-engine-runner';
+import {
+  CONTAINER_AGENT_HOME,
+  CONTAINER_CONTEXT,
+  CONTAINER_GIT_COMMON,
+  CONTAINER_WORKTREE,
+} from './docker-engine-runner';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
 import { SandboxImageBuilder } from './sandbox-image.builder';
@@ -25,9 +30,9 @@ const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
  * attach (the thread/worktree survive — only the disposable container is replaced). Engine-CODE changes
  * do NOT bump this: the engine bundle is bind-mounted live, so they're served on the next turn with no
  * recreate. (rev 2 = added the live engine-bundle mount. rev 3 = worktree mounted at /workspace + git common
- * dir at /repo.git, was same-path host paths.)
+ * dir at /repo.git, was same-path host paths. rev 4 = added the durable per-thread /context shared mount.)
  */
-const CONFIG_REV = 3;
+const CONFIG_REV = 4;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -127,6 +132,11 @@ export class SandboxManager implements SandboxProvider {
       mkdirSync(refsDir, { recursive: true });
       binds.push(`${refsDir}:/refs:ro`);
     }
+    // The thread's durable SHARED CONTEXT folder at /context — read/write, lives OUTSIDE the worktree
+    // (keyed by threadId so it survives container recreate; the host reads it via contextDirHost()).
+    const contextDir = this.contextDirHost(orgId, threadId, name);
+    mkdirSync(contextDir, { recursive: true });
+    binds.push(`${contextDir}:${CONTAINER_CONTEXT}`);
 
     this.logger.log(`creating sandbox ${name} (image ${image}, net ${network})`);
     const id = await this.engine.createContainer({
@@ -273,6 +283,20 @@ export class SandboxManager implements SandboxProvider {
       this.env.get('AGENT_HOME_ROOT') ??
       join(homedir(), '.agent-playground', 'atlas-agent-home')
     );
+  }
+
+  /**
+   * The HOST path of a thread's durable `/context` shared folder — the same dir bind-mounted into the
+   * container at {@link CONTAINER_CONTEXT}. Keyed by `threadId` so it is STABLE across the container's
+   * lifecycle (recreate, idle-reap, cold re-attach) and never deleted by container teardown (only by a
+   * deep thread delete). The brain authors plan/section specs here and reads them back via this path;
+   * the build sessions read it as shared context. Sandboxes WITHOUT a thread (legacy per-feature + gate
+   * runs) fall back to a name-keyed dir — never resolved by the brain, just keeps the mount uniform.
+   */
+  contextDirHost(orgId: string, threadId?: string, name?: string): string {
+    const root = join(this.agentHomeRootHost(), 'contexts');
+    if (threadId) return join(root, orgId, threadId);
+    return join(root, '_sandbox', name ?? 'unkeyed');
   }
 
   /** The per-tenant reference-library dir mounted read-only at /refs (undefined → no /refs). */

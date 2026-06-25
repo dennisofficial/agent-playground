@@ -1,4 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ChatStimulus } from '../domain';
 import type { JobDispatcher } from './job-dispatcher';
 import type { BrainStoreService } from './brain-store.service';
@@ -7,10 +10,32 @@ import type { DriverStoreService } from '../driver/driver-store.service';
 import type { MemoryStore } from '../memory';
 import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
+import type { BuildShipService } from '../driver/build-ship.service';
+import type { DriverRepoResolver } from '../driver/repo-resolver';
+import type { DecisionClassifier } from '../decision-gate';
 import type { ChatSurface, LiveTurnStore } from '../surface';
 import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import { AgentSessionManager } from './agent-session-manager.service';
+
+/** A rubric-satisfying section spec (Goal + Verification markers, >150 chars) for file-backed tests. */
+function specMarkdown(goal: string): string {
+  return [
+    `# ${goal}`,
+    '',
+    '## Goal',
+    goal,
+    '',
+    '## Touch points',
+    '- backend/src/app/example.ts — the thing',
+    '',
+    '## Changes',
+    '- implement the behavior at the call site',
+    '',
+    '## Verification',
+    'Run `pnpm test` and confirm the new spec is green.',
+  ].join('\n');
+}
 import { ProvisioningNotReadyError } from '../driver/thread-lifecycle.service';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventTriageService } from './event-triage.service';
@@ -56,9 +81,26 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
   const mockLifecycle = {
     findSandbox: vi.fn(),
+    contextDirHost: vi.fn(),
   } as unknown as ThreadLifecycleService;
 
   const mockDockerRunner = {} as unknown as DockerEngineRunner;
+
+  // Fast-path deps: classify (default → proceed), ship, repo resolve.
+  const mockClassifier = {
+    classify: vi.fn().mockResolvedValue({ verdict: 'proceed', reason: '', via: 'rule' }),
+  } as unknown as DecisionClassifier;
+
+  const mockShip = {
+    ship: vi.fn().mockResolvedValue({ url: 'https://gh/pr/1', number: 1, existing: false }),
+  } as unknown as BuildShipService;
+
+  const mockRepos = {
+    resolve: vi.fn().mockResolvedValue({ owner: 'o', repo: 'r', defaultBranch: 'main', token: 't' }),
+  } as unknown as DriverRepoResolver;
+
+  /** A temp dir standing in for the thread's `/context` host dir, recreated per test. */
+  let contextDir: string;
 
   /**
    * R4: mock PlanReviewService that immediately returns null (guard already fired) — so the R3 spec's
@@ -113,6 +155,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   beforeEach(() => {
     vi.resetAllMocks();
 
+    // A fresh temp dir per test stands in for the thread's `/context` host dir; the brain reads spec
+    // files from here via lifecycle.contextDirHost().
+    contextDir = mkdtempSync(join(tmpdir(), 'atlas-ctx-'));
+    (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue(contextDir);
+    // Default classifier verdict: proceed (fast path allowed unless a test overrides it).
+    (mockClassifier.classify as ReturnType<typeof vi.fn>).mockResolvedValue({
+      verdict: 'proceed',
+      reason: '',
+      via: 'rule',
+    });
+
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
@@ -161,11 +214,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockSurface,
       mockSandboxRows,
       mockLiveTurns,
+      mockClassifier,
+      mockShip,
+      mockRepos,
     );
   });
 
-  it('(a) submit_plan: persists overview + locked decisions + sections via BrainStoreService.persistPlan', async () => {
+  it('(a) submit_plan: reads file-backed specs from /context and snapshots them via persistPlan', async () => {
     const tools = manager.buildTools(fakeStimulus);
+
+    // The brain authored two rubric specs under /context/specs.
+    writeFileSync(join(contextDir, 'guard.md'), specMarkdown('Implement the RateLimiter guard'));
+    writeFileSync(join(contextDir, 'tests.md'), specMarkdown('Add rate-limit integration tests'));
 
     const overview = 'Add token-bucket rate limiting to the public API endpoints.';
     const decisions = [
@@ -181,91 +241,83 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       },
     ];
     const sections = [
-      'Implement the RateLimiter guard in backend/src/common/guards/rate-limit.guard.ts ' +
-        'using RedisService.incr + EXPIRE pattern; attach it to the ApiController.',
-      'Add integration tests in backend/src/common/guards/rate-limit.guard.spec.ts ' +
-        'covering the 429 path and Retry-After header; run pnpm test to confirm green.',
+      { title: 'RateLimiter guard', specPath: 'guard.md' },
+      { title: 'Integration tests', specPath: 'tests.md' },
     ];
 
     const result = await tools['submit_plan']({ overview, decisions, sections });
 
-    // 1. persistPlan is called with all the structured data.
+    // 1. persistPlan is called with the structured data.
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-
-    // Overview is preserved verbatim.
     expect(persistArgs.overview).toBe(overview);
-
-    // Decisions are normalized and passed through — both locked decisions present with correct shape.
     expect(persistArgs.decisions).toHaveLength(2);
-    expect(persistArgs.decisions[0]).toMatchObject({
-      decisionClass: 'infrastructure',
-      title: 'Rate-limit backend',
-      ruling: expect.stringContaining('Redis'),
-    });
-    expect(persistArgs.decisions[1]).toMatchObject({
-      decisionClass: 'api_contract',
-      title: '429 response shape',
-      ruling: expect.stringContaining('rate_limited'),
-    });
 
-    // Sections are normalized and passed through — both section briefs present, detailed.
-    expect(persistArgs.sectionBriefs).toHaveLength(2);
-    expect(persistArgs.sectionBriefs[0]).toContain('RateLimiter guard');
-    expect(persistArgs.sectionBriefs[1]).toContain('integration tests');
+    // Sections carry the one-line brief (title) AND the full file-backed spec markdown.
+    expect(persistArgs.sections).toHaveLength(2);
+    expect(persistArgs.sections[0].brief).toBe('RateLimiter guard');
+    expect(persistArgs.sections[0].spec).toContain('## Goal');
+    expect(persistArgs.sections[0].spec).toContain('Implement the RateLimiter guard');
+    expect(persistArgs.sections[1].brief).toBe('Integration tests');
+    expect(persistArgs.sections[1].spec).toContain('## Verification');
 
-    // The job/team/project binding is correct.
     expect(persistArgs.orgId).toBe(TEAM_ID);
     expect(persistArgs.repoId).toBe(PROJECT_ID);
     expect(persistArgs.threadId).toBe(FAKE_JOB_ID);
 
     // 2. The tool returns ok=true + the job and record ids.
-    expect(result).toMatchObject({
-      ok: true,
-      jobId: FAKE_JOB_ID,
-      decisionRecordId: FAKE_RECORD_ID,
-    });
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID });
 
-    // 3. The approval card fires async — approvals.request is called with the card.
-    // Give the microtask queue one tick to process the fire-and-forget.
+    // 3. The approval card fires async — the section LIST is the titles (not the full specs).
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(approvalArgs.jobId).toBe(FAKE_JOB_ID);
-    expect(approvalArgs.decisionRecordId).toBe(FAKE_RECORD_ID);
     expect(approvalArgs.decisions).toHaveLength(2);
-    expect(approvalArgs.sections).toHaveLength(2);
+    expect(approvalArgs.sections).toEqual(['RateLimiter guard', 'Integration tests']);
   });
 
-  it('(a) submit_plan: normalizes `{ title, details }` sections into "title — detail" briefs (not raw JSON)', async () => {
+  it('(a) submit_plan: rejects a missing spec file (does NOT persist)', async () => {
     const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['submit_plan']({
+      overview: 'something',
+      decisions: [],
+      sections: [{ title: 'No file', specPath: 'does-not-exist.md' }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('does-not-exist.md');
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+  });
 
-    // The shape the thread brain actually sends per the SUBMIT_PLAN prompt: `{ title, details }`.
-    // Regression: the old normalizer read `detail` (singular) + ignored `title`, so it fell through to
-    // JSON.stringify and persisted `{"title":…,"details":…}` as the brief (displayed as raw JSON).
-    const sections = [
-      { title: 'New root ARCHITECTURE.md', details: 'Create /ARCHITECTURE.md as the top-level system doc.' },
-      { title: 'Rewrite root README.md', details: 'Replace the placeholder README with real docs.' },
-    ];
+  it('(a) submit_plan: rejects an under-spec\'d file (rubric gaps)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    writeFileSync(join(contextDir, 'thin.md'), 'just do it'); // no Goal/Verification, too short
+    const result = await tools['submit_plan']({
+      overview: 'something',
+      decisions: [],
+      sections: [{ title: 'Thin', specPath: 'thin.md' }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+  });
 
-    await tools['submit_plan']({ overview: 'Doc-only refresh.', decisions: [], sections });
-
-    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(persistArgs.sectionBriefs).toEqual([
-      'New root ARCHITECTURE.md — Create /ARCHITECTURE.md as the top-level system doc.',
-      'Rewrite root README.md — Replace the placeholder README with real docs.',
-    ]);
-    // Crucially: no brief is a serialized JSON object.
-    for (const brief of persistArgs.sectionBriefs) {
-      expect(brief.startsWith('{')).toBe(false);
-    }
+  it('(a) submit_plan: rejects a specPath that escapes /context', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['submit_plan']({
+      overview: 'something',
+      decisions: [],
+      sections: [{ title: 'Escape', specPath: '../../etc/passwd' }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
   it('(a) submit_plan: returns error if overview is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
+    writeFileSync(join(contextDir, 's.md'), specMarkdown('a real section'));
     const result = await tools['submit_plan']({
       decisions: [],
-      sections: ['do the thing'],
+      sections: [{ title: 'S', specPath: 's.md' }],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
@@ -280,6 +332,42 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
+  });
+
+  it('(c) start_direct_build: classifier proceed → minimal record + lightweight (direct) approval card', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['start_direct_build']({
+      summary: 'Fix the off-by-one in the pagination cursor',
+      changeOutline: ['adjust the slice bound in paginate()'],
+    });
+
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
+    // Minimal record: no sections.
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.sections).toEqual([]);
+    expect(persistArgs.overview).toContain('off-by-one');
+
+    // The card is the lightweight 'direct' variant carrying the change outline.
+    await new Promise((r) => setTimeout(r, 0));
+    const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(approvalArgs.kind).toBe('direct');
+    expect(approvalArgs.sections).toEqual(['adjust the slice bound in paginate()']);
+  });
+
+  it('(c) start_direct_build: classifier ASK (uncovered always-ask) → refused, no persist', async () => {
+    (mockClassifier.classify as ReturnType<typeof vi.fn>).mockResolvedValue({
+      verdict: 'ask',
+      decisionClass: 'data_model',
+      reason: 'adds a column',
+      via: 'rule',
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['start_direct_build']({ summary: 'Add a deleted_at column to users' });
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('always-ask');
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+    expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 });
 
@@ -310,7 +398,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
-      loadJob: vi.fn().mockResolvedValue({ status: 'open' }), // freeze guard reads thread status each turn
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox: vi.fn().mockResolvedValue(opts.findSandbox ?? null),
@@ -343,6 +430,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       surface,
       sandboxRows,
       liveTurns,
+      {} as unknown as DecisionClassifier,
+      {} as unknown as BuildShipService,
+      {} as unknown as DriverRepoResolver,
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns };
   }
@@ -436,15 +526,15 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 });
 
-describe('AgentSessionManager — create_thread tool + inter-thread dependencies', () => {
-  const ORG = 'org-dep';
-  const REPO = 'repo-dep';
+describe('AgentSessionManager — create_thread tool (independent follow-up)', () => {
+  const ORG = 'org-ct';
+  const REPO = 'repo-ct';
   const THREAD = 'th-parent';
 
   const stimulus: ChatStimulus = {
     kind: 'chat',
     trust: 'trusted',
-    id: 'stim-dep-1',
+    id: 'stim-ct-1',
     receivedAt: new Date('2026-06-25T00:00:00Z'),
     orgId: ORG,
     repoId: REPO,
@@ -456,14 +546,9 @@ describe('AgentSessionManager — create_thread tool + inter-thread dependencies
 
   function makeManager(storeOverrides: Record<string, unknown> = {}) {
     const store = {
-      loadJob: vi.fn(),
-      repoDefaultBranch: vi.fn().mockResolvedValue('main'),
+      loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
       createFollowUpThread: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
-      clearSeedMessage: vi.fn().mockResolvedValue(undefined),
-      findDependents: vi.fn().mockResolvedValue([]),
-      unblockDependent: vi.fn().mockResolvedValue(undefined),
-      pendingSeedThreads: vi.fn().mockResolvedValue([]),
       ...storeOverrides,
     } as unknown as BrainStoreService;
     const manager = new AgentSessionManager(
@@ -478,68 +563,32 @@ describe('AgentSessionManager — create_thread tool + inter-thread dependencies
       { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
       { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<ThreadSandboxEntity>,
       { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore,
+      {} as unknown as DecisionClassifier,
+      {} as unknown as BuildShipService,
+      {} as unknown as DriverRepoResolver,
     );
     return { manager, store };
   }
 
   const mock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
-  it('create_thread (dependsOnThisThread) creates a BLOCKED follow-up off the default branch, no turn', async () => {
-    const { manager, store } = makeManager({
-      loadJob: vi.fn().mockResolvedValue({ baseBranch: null }), // parent on default branch
-    });
-    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
-
-    const result = await manager.buildTools(stimulus)['create_thread']({
-      title: 'Thing B',
-      firstMessage: 'Build thing B on top of thing A',
-      dependsOnThisThread: true,
-    });
-
-    expect(result).toMatchObject({ ok: true, threadId: 'th-followup', blocked: true });
-    expect(mock(store.createFollowUpThread)).toHaveBeenCalledWith({
-      orgId: ORG,
-      repoId: REPO,
-      title: 'Thing B',
-      seedMessage: 'Build thing B on top of thing A',
-      baseBranch: null, // dependents cut from the repo default (the merge target)
-      blockedByThreadId: THREAD,
-    });
-    expect(startSpy).not.toHaveBeenCalled(); // blocked → not started yet
-  });
-
-  it('create_thread REJECTS a dependency when the parent builds on a custom base branch', async () => {
-    const { manager, store } = makeManager({
-      loadJob: vi.fn().mockResolvedValue({ baseBranch: 'develop' }),
-      repoDefaultBranch: vi.fn().mockResolvedValue('main'),
-    });
-
-    const result = await manager.buildTools(stimulus)['create_thread']({
-      title: 'B',
-      firstMessage: 'do B',
-      dependsOnThisThread: true,
-    });
-
-    expect(result).toMatchObject({ ok: false });
-    expect(mock(store.createFollowUpThread)).not.toHaveBeenCalled();
-  });
-
-  it('create_thread (independent) creates an OPEN follow-up and starts it immediately', async () => {
-    const { manager, store } = makeManager({
-      loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
-    });
-    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
+  it('create_thread creates an independent follow-up (inheriting the base branch) and starts it', async () => {
+    const { manager, store } = makeManager();
+    const startSpy = vi.spyOn(manager, 'startFollowUpThread').mockResolvedValue(undefined);
 
     const result = await manager.buildTools(stimulus)['create_thread']({
       title: 'Side task',
       firstMessage: 'do the side task',
     });
 
-    expect(result).toMatchObject({ ok: true, threadId: 'th-followup', blocked: false });
-    expect(mock(store.createFollowUpThread)).toHaveBeenCalledWith(
-      expect.objectContaining({ blockedByThreadId: null, baseBranch: 'main' }),
-    );
-    expect(startSpy).toHaveBeenCalledWith('th-followup', ORG);
+    expect(result).toMatchObject({ ok: true, threadId: 'th-followup' });
+    expect(mock(store.createFollowUpThread)).toHaveBeenCalledWith({
+      orgId: ORG,
+      repoId: REPO,
+      title: 'Side task',
+      baseBranch: 'main', // inherits the parent thread's base
+    });
+    expect(startSpy).toHaveBeenCalledWith('th-followup', ORG, REPO, 'do the side task');
   });
 
   it('create_thread requires a firstMessage', async () => {
@@ -549,73 +598,19 @@ describe('AgentSessionManager — create_thread tool + inter-thread dependencies
     expect(mock(store.createFollowUpThread)).not.toHaveBeenCalled();
   });
 
-  it('startSeededThread clears the seed ONLY after the turn succeeds (crash-safe marker)', async () => {
-    const { manager, store } = makeManager({
-      loadJob: vi.fn().mockResolvedValue({ repoId: REPO, seedMessage: 'kick off the follow-up' }),
-    });
+  it('startFollowUpThread records the opening intent, then runs one chat turn', async () => {
+    const { manager, store } = makeManager();
     const turn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
 
-    await manager.startSeededThread('th-followup', ORG);
+    await manager.startFollowUpThread('th-followup', ORG, REPO, 'kick off the follow-up');
 
-    expect(turn).toHaveBeenCalledOnce();
     expect(mock(store.appendAtlasMessage)).toHaveBeenCalledWith(
       'th-followup',
       expect.stringContaining('kick off the follow-up'),
     );
-    expect(mock(store.clearSeedMessage)).toHaveBeenCalledWith('th-followup'); // success → marker dropped
-  });
-
-  it('startSeededThread leaves the seed set when the turn fails (so the retry sweep re-attempts)', async () => {
-    const { manager, store } = makeManager({
-      loadJob: vi.fn().mockResolvedValue({ repoId: REPO, seedMessage: 'kick off' }),
-    });
-    vi.spyOn(manager, 'handleChatTurn').mockRejectedValue(new Error('provisioning blew up'));
-
-    await expect(manager.startSeededThread('th-followup', ORG)).rejects.toThrow('provisioning blew up');
-    expect(mock(store.clearSeedMessage)).not.toHaveBeenCalled(); // seed preserved for retry
-  });
-
-  it('startSeededThread is a no-op when the seed is already delivered', async () => {
-    const { manager, store } = makeManager({
-      loadJob: vi.fn().mockResolvedValue({ repoId: REPO, seedMessage: null }),
-    });
-    const turn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
-    await manager.startSeededThread('th-followup', ORG);
-    expect(turn).not.toHaveBeenCalled();
-    expect(mock(store.clearSeedMessage)).not.toHaveBeenCalled();
-  });
-
-  it('onDependencyResolved(merged) unblocks + auto-starts every dependent', async () => {
-    const { manager, store } = makeManager({
-      findDependents: vi.fn().mockResolvedValue([
-        { id: 'dep-1', orgId: ORG },
-        { id: 'dep-2', orgId: ORG },
-      ]),
-    });
-    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
-
-    await manager.onDependencyResolved(THREAD, 'merged');
-
-    expect(mock(store.unblockDependent)).toHaveBeenCalledWith('dep-1');
-    expect(mock(store.unblockDependent)).toHaveBeenCalledWith('dep-2');
-    expect(startSpy).toHaveBeenCalledWith('dep-1', ORG);
-    expect(startSpy).toHaveBeenCalledWith('dep-2', ORG);
-  });
-
-  it('onDependencyResolved(abandoned) unblocks + notifies but does NOT auto-start', async () => {
-    const { manager, store } = makeManager({
-      findDependents: vi.fn().mockResolvedValue([{ id: 'dep-1', orgId: ORG }]),
-    });
-    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
-
-    await manager.onDependencyResolved(THREAD, 'abandoned');
-
-    expect(mock(store.unblockDependent)).toHaveBeenCalledWith('dep-1');
-    expect(mock(store.appendAtlasMessage)).toHaveBeenCalledWith(
-      'dep-1',
-      expect.stringContaining('closed without merging'),
-    );
-    expect(startSpy).not.toHaveBeenCalled();
+    expect(turn).toHaveBeenCalledOnce();
+    const ran = (turn.mock.calls[0][0] as ChatStimulus);
+    expect(ran).toMatchObject({ threadId: 'th-followup', orgId: ORG, repoId: REPO, body: 'kick off the follow-up' });
   });
 });
 

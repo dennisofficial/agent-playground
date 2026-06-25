@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -9,6 +11,10 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadSandboxEntity } from '../persistence/entities';
 import { ProvisioningNotReadyError, ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
+import { BuildShipService } from '../driver/build-ship.service';
+import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
+import { DecisionClassifier } from '../decision-gate';
+import type { Decision } from '../domain';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { SANDBOX_RESET_NOTICE } from '../engine/engine.types';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../engine/engine.types';
@@ -65,21 +71,27 @@ export class AgentSessionManager {
     @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
     private readonly sandboxRows: Repository<ThreadSandboxEntity>,
     private readonly liveTurns: LiveTurnStore,
+    // Fast (direct-build) path: classify always-ask decisions, resolve the repo, and ship the result.
+    private readonly classifier: DecisionClassifier,
+    private readonly ship: BuildShipService,
+    @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
 
   private static readonly SYSTEM_PROMPT = [
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
-    'to shape ONE feature or bug fix into a DETAILED, LOCKED PLAN.',
+    'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
-    'You have 7 tools:',
+    'You have 9 tools:',
     '  - get_pipeline_state   — read the current job/pipeline state for this thread',
     '  - get_decision_record  — read the current locked decision record for this thread',
     '  - recall               — retrieve relevant memory facts (semantic search)',
     '  - remember             — store a new memory fact',
-    '  - submit_plan          — propose the detailed locked plan for operator approval (see below)',
-    '  - dispatch_build       — (gated: only usable AFTER operator approval) dispatch the approved build',
+    '  - submit_plan          — propose the full multi-section plan for approval (FULL PATH; see below)',
+    '  - start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)',
+    '  - finalize_build       — (gated) ship an approved direct build: commit → review → open PR',
+    '  - dispatch_build       — (gated) dispatch an already-approved full build',
     '  - create_thread        — spin off a NEW thread on this same repo (see CREATE_THREAD below)',
     '',
     'CREATE_THREAD — when the work splits into a separate unit of its own, create a follow-up thread',
@@ -88,29 +100,50 @@ export class AgentSessionManager {
     'immediately and independently. Only do this when the operator asked for a follow-up or the split is',
     'clearly warranted — one tightly-scoped follow-up per call, not a backlog.',
     '',
-    'PLANNING POSTURE — CUSTOM PLAN MODE:',
-    'Do NOT use the SDK\'s native ExitPlanMode. Instead, call `submit_plan` when you have a complete plan.',
-    'Before proposing, INVESTIGATE THE REPO: use your Read/Glob/Grep tools to ground the plan in the',
-    'actual codebase (stack, structure, conventions). Never ask the operator anything the repo already',
-    'answers (tech stack, file existence, tooling, how the codebase does something).',
+    'INVESTIGATE FIRST: before proposing anything, ground yourself in the repo with Read/Glob/Grep (stack,',
+    'structure, conventions, the exact files you will touch). Never ask the operator anything the repo',
+    'already answers (tech stack, file existence, tooling, how the codebase does something).',
     '',
-    'GRILLING PROTOCOL:',
-    'Lock the always-ask decisions before proposing: data model/schema, public API contracts, new',
-    'dependencies, infrastructure/topology, cross-cutting patterns (auth, caching, state, concurrency,',
-    'error-handling), one-way doors. For security/auth: surface EACH mechanism as its OWN decision.',
-    'Ask ONE focused question at a time. Do NOT ask about never-ask details (naming, file placement,',
-    'test layout).',
+    'GRILLING PROTOCOL (applies to BOTH paths): lock the always-ask decisions before proposing — data',
+    'model/schema, public API contracts, new dependencies, infrastructure/topology, cross-cutting patterns',
+    '(auth, caching, state, concurrency, error-handling), one-way doors. For security/auth: surface EACH',
+    'mechanism as its OWN decision. Ask ONE focused question at a time. Do NOT ask about never-ask details',
+    '(naming, file placement, test layout).',
     '',
-    'SUBMIT_PLAN — call this when the applicable always-ask decisions are settled:',
-    '  - overview: concise intent + stack + constraints',
-    '  - decisions: array of locked decisions, each { decisionClass, title, ruling }',
+    'THE /context SHARED FOLDER: `/context` is a durable, per-thread scratch space OUTSIDE the repo. Author',
+    'your plan/section specs there (e.g. `/context/specs/01-*.md`) and any working notes. It persists across',
+    'turns and is shared with the build sessions. Treat the repo (`/workspace`) as READ-ONLY until a build',
+    'is approved — never modify `/workspace` while planning; write to `/context` instead.',
+    '',
+    'TWO PATHS — choose based on size/risk:',
+    '',
+    'FULL PATH — submit_plan (multi-section build run by the deterministic driver). Use for anything beyond',
+    'a small, localized change. For EACH section, FIRST write a spec FILE under `/context/specs/` covering:',
+    '  • Goal — the behavioral outcome this section delivers',
+    '  • Touch points — exact files/symbols, grounded in what you actually read',
+    '  • Change per site — what to do at each',
+    '  • Constraints honored — global constraints applied to THIS section (not just stated once)',
+    '  • Edge cases / failure modes',
+    '  • Verification — how to confirm it is correct (and where it is staging-only, say so)',
+    '  • Out of scope / risks',
+    'Then call submit_plan with:',
+    '  - overview: intent + stack + constraints',
+    '  - decisions: locked decisions, each { decisionClass, title, ruling }',
     '    (decisionClass: data_model | api_contract | dependency | infrastructure | cross_cutting | one_way_door)',
-    '  - sections: ordered array of DETAILED section specs (not just one-liners — each section has enough',
-    '    context for the build phase to execute without re-asking you; include the files/patterns to follow)',
+    '  - sections: ordered array of { title, specPath } where specPath is the `/context`-relative path of',
+    '    the spec file you wrote (e.g. "specs/01-capture.md"). A missing/empty/under-spec\'d file is rejected.',
+    'SELF-CHECK before submit_plan: every applicable always-ask decision locked? could a fresh engineer build',
+    'each section with ZERO further questions to you? is each section grounded in files you actually opened?',
+    'are global constraints enforced per-section? Do NOT propose an "investigate the codebase" section —',
+    'sections are real build work.',
     '',
-    'The repo is checked out in your current working directory — investigate it freely (read-only until',
-    'the plan is approved). Do not propose a plan with an "investigate the codebase" section — sections',
-    'are real build work, not scoping work.',
+    'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no sections/phases).',
+    'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
+    'Args: { summary, changeOutline?: string[], decisions? }. summary = what you will change and why;',
+    'changeOutline = a few bullet lines of the concrete edits. This posts a lightweight approval card. If it',
+    'trips an uncovered always-ask decision it is refused — lock that decision first or use submit_plan.',
+    'AFTER the operator approves, you will be asked (autonomously) to implement it: make the edits in',
+    '`/workspace`, verify them, then call `finalize_build` to commit, review, and open the PR.',
     '',
     'SANDBOX RUNTIME: your sandbox can be restarted between turns (idle reaps, crashes, restarts). Never',
     'assume a server or background process you started in a previous turn is still running — verify it is',
@@ -395,46 +428,28 @@ export class AgentSessionManager {
 
       submit_plan: async (args) => {
         const overview = String(args['overview'] ?? '').trim();
-        const rawDecisions = Array.isArray(args['decisions']) ? args['decisions'] : [];
         const rawSections = Array.isArray(args['sections']) ? args['sections'] : [];
+        const decisions = normalizeDecisions(args['decisions']);
 
-        // Normalize decisions.
-        const decisions = rawDecisions
-          .filter(
-            (d): d is { decisionClass: string; title: string; ruling: string } =>
-              typeof d === 'object' && d !== null && 'decisionClass' in d && 'title' in d && 'ruling' in d,
-          )
-          .map((d) => ({
-            decisionClass: d.decisionClass as import('../domain').DecisionClass,
-            title: d.title,
-            ruling: d.ruling,
-          }));
+        // Resolve the FILE-BACKED section specs the brain authored in `/context` (each section names a
+        // `specPath`; the rubric markdown is read from the host-side context dir and snapshotted into
+        // Postgres). A missing / empty / under-spec'd file is bounced back so the session fixes the file
+        // and re-submits — the spec, not a one-line brief, is what the build consumes.
+        const contextDir = this.lifecycle.contextDirHost(stimulus.threadId, stimulus.orgId);
+        const { sections: resolvedSections, problems } = resolveSectionSpecs(contextDir, rawSections);
 
-        // Normalize sections — support string[] and object shapes. The session sends `{ title, details }`
-        // (per the SUBMIT_PLAN prompt); older callers used `{ brief | detail | description }`. Lead the
-        // brief with the title, then the detail (the brief is BOTH the display label and the build
-        // planner's section input, so keep the detail), and only fall back to JSON if neither is present.
-        const sectionBriefs = rawSections.map((s) => {
-          if (typeof s === 'string') return s.trim();
-          if (typeof s === 'object' && s !== null) {
-            const o = s as {
-              title?: string;
-              detail?: string;
-              details?: string;
-              brief?: string;
-              description?: string;
-            };
-            const title = (o.title ?? '').trim();
-            const detail = (o.details ?? o.detail ?? o.brief ?? o.description ?? '').trim();
-            if (title && detail) return `${title} — ${detail}`;
-            return title || detail || JSON.stringify(s);
-          }
-          return String(s);
-        }).filter(Boolean);
-
-        if (!overview || sectionBriefs.length === 0) {
-          return { ok: false, reason: 'overview and at least one section are required' };
+        if (!overview) problems.unshift('overview is required');
+        if (resolvedSections.length === 0) {
+          problems.push('at least one valid section spec is required');
         }
+        if (problems.length > 0) {
+          return {
+            ok: false,
+            reason: 'Plan not submitted — fix these and call submit_plan again:\n- ' + problems.join('\n- '),
+          };
+        }
+
+        const sectionBriefs = resolvedSections.map((s) => s.brief);
 
         // Ensure there's an open scoping job on this thread.
         const jobId = await this.ensureJob(stimulus, overview, 'feature');
@@ -447,7 +462,7 @@ export class AgentSessionManager {
           kind: 'feature',
           overview,
           decisions,
-          sectionBriefs,
+          sections: resolvedSections.map((s) => ({ brief: s.brief, spec: s.spec })),
         });
 
         // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
@@ -462,7 +477,8 @@ export class AgentSessionManager {
             ...(sandbox.containerId ? { containerId: sandbox.containerId } : {}),
             overview,
             decisions,
-            sectionBriefs,
+            // The reviewer sees the FULL section specs (title + rubric markdown), not just one-liners.
+            sectionBriefs: resolvedSections.map((s) => `## ${s.brief}\n${s.spec}`),
           });
 
           if (reviewResult !== null) {
@@ -524,6 +540,104 @@ export class AgentSessionManager {
         }
         await this.dispatcher.dispatch(job);
         return { ok: true, jobId, message: 'Build dispatched.' };
+      },
+
+      start_direct_build: async (args) => {
+        // FAST PATH — a small, localized change the brain implements ITSELF (no sections/phases). Still
+        // gated by a lightweight approval; on approval an autonomous implementation turn runs.
+        const summary = String(args['summary'] ?? '').trim();
+        if (!summary) {
+          return { ok: false, reason: 'summary is required (what you will change, directly)' };
+        }
+        const changeOutline = Array.isArray(args['changeOutline'])
+          ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
+          : [];
+        const decisions = normalizeDecisions(args['decisions']);
+
+        // SAFETY GATE: "small" must NOT mean skipping an always-ask decision. Classify the change against
+        // the locked decisions; an UNCOVERED always-ask class → refuse the fast path.
+        const classification = await this.classifier.classify(
+          { description: summary, ...(changeOutline.length ? { context: changeOutline.join('\n') } : {}) },
+          { decisions },
+          stimulus.orgId,
+        );
+        if (classification.verdict === 'ask') {
+          return {
+            ok: false,
+            reason:
+              `Not fast-path-safe — this touches an always-ask decision ` +
+              `(${classification.decisionClass}): ${classification.reason} ` +
+              `Lock it with the operator first, or use submit_plan for the full ceremony.`,
+          };
+        }
+
+        // Persist a MINIMAL record (overview = summary, any locked decisions, NO sections) and post the
+        // lightweight approval card. The build runs only after approval (kind: 'direct').
+        const jobId = await this.ensureJob(stimulus, summary, 'feature');
+        const { thread: job, decisionRecordId } = await this.store.persistPlan({
+          orgId: stimulus.orgId,
+          repoId: stimulus.repoId,
+          threadId: jobId,
+          title: jobTitle(summary),
+          kind: 'feature',
+          overview: summary,
+          decisions,
+          sections: [],
+        });
+
+        void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
+          jobId: job.id,
+          decisionRecordId,
+          kind: 'direct',
+          title: jobTitle(summary),
+          summary,
+          decisions,
+          sections: changeOutline,
+        });
+
+        return {
+          ok: true,
+          jobId: job.id,
+          decisionRecordId,
+          message:
+            'Direct-build approval sent to the operator. On approval I will implement the change ' +
+            'directly, then open a PR. You can keep talking; if denied you will be told.',
+        };
+      },
+
+      finalize_build: async (_args) => {
+        // GATED — callable only inside the autonomous implementation turn of an APPROVED direct build
+        // (status 'running'). Commits whatever was written, then runs the shared terminal ship.
+        const jobId = await this.store.openJobOnThread(stimulus.threadId);
+        if (!jobId) return { ok: false, reason: 'No open job on this thread — nothing to finalize' };
+        const job = await this.store.loadJob(jobId);
+        if (job.status !== 'running') {
+          return {
+            ok: false,
+            reason: `Job ${jobId} is '${job.status}' — only an approved (running) build can be finalized`,
+          };
+        }
+        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
+        if (!sandbox) return { ok: false, reason: 'No sandbox for this thread — cannot finalize' };
+
+        const rec = (await this.driverStore
+          .getDecisionRecord(stimulus.threadId)
+          .catch(() => null)) as { overview: string; decisions: Decision[] } | null;
+        const repo = await this.repos.resolve(job);
+
+        const result = await this.ship.ship({
+          job,
+          record: rec,
+          repo,
+          sandbox,
+          commitMessage: `Atlas direct build — ${job.title ?? 'change'}`,
+          notify: (m) => this.say(stimulus, m),
+        });
+
+        if (!result) {
+          return { ok: true, jobId, message: 'Committed, but no GitHub token is configured — PR not opened.' };
+        }
+        return { ok: true, jobId, prUrl: result.url, prNumber: result.number, message: `PR opened: ${result.url}` };
       },
 
       create_thread: async (args) => {
@@ -593,8 +707,17 @@ export class AgentSessionManager {
 
     if (resolution.verdict === 'approve') {
       const running = await this.store.approve(job.id, decisionRecordId, resolution.ruledBy);
-      await this.dispatcher.dispatch(running);
-      await this.store.appendAtlasMessage(stimulus.threadId, 'Plan approved — dispatching the build.');
+      if (card.kind === 'direct') {
+        // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
+        await this.store.appendAtlasMessage(
+          stimulus.threadId,
+          'Approved — implementing the change directly.',
+        );
+        void this.runDirectBuild(stimulus, running);
+      } else {
+        await this.dispatcher.dispatch(running);
+        await this.store.appendAtlasMessage(stimulus.threadId, 'Plan approved — dispatching the build.');
+      }
       return;
     }
 
@@ -611,6 +734,37 @@ export class AgentSessionManager {
     // deny
     await this.store.cancel(job.id);
     await this.say(stimulus, "Understood — I'll drop this one.");
+  }
+
+  // ── Direct-build (fast path) ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Run the AUTONOMOUS implementation turn for an approved direct build. The brain wrote the change's
+   * spec to `/context` during the sitting; now (post-approval, no operator present) it implements it
+   * ITSELF in the worktree and calls `finalize_build` to ship. Reuses the normal in-sandbox turn path
+   * via a synthetic, Atlas-authored stimulus (the same pattern `startFollowUpThread` uses) so the work
+   * streams to the thread and the session keeps full context. Fire-and-forget — errors are surfaced by
+   * the turn itself.
+   */
+  private async runDirectBuild(stimulus: ChatStimulus, job: Thread): Promise<void> {
+    const instruction =
+      'The direct-build plan was APPROVED. Implement the change now, directly, in the repo ' +
+      '(`/workspace`) — follow the spec/notes you wrote under `/context`. When the change is complete ' +
+      'and you have verified it, call `finalize_build` to commit, review, and open the PR. Do NOT call ' +
+      'submit_plan or start_direct_build again.';
+    const synthetic: ChatStimulus = {
+      ...stimulus,
+      id: randomUUID(),
+      body: instruction,
+      receivedAt: new Date(),
+      author: { id: 'atlas', displayName: 'Atlas' },
+    };
+    try {
+      await this.handleChatTurn(synthetic);
+    } catch (err) {
+      this.logger.error(`direct build implementation turn failed for thread=${job.id}: ${err}`);
+      await this.say(stimulus, `The direct build hit an error — ${String(err).slice(0, 200)}`);
+    }
   }
 
   // ── create_thread: start the follow-up's brain ──────────────────────────────────────────────────
@@ -679,8 +833,109 @@ export class AgentSessionManager {
   }
 }
 
+/** Normalize a raw `decisions` tool arg into typed locked decisions (drops malformed entries). */
+function normalizeDecisions(raw: unknown): Decision[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  return arr
+    .filter(
+      (d): d is { decisionClass: string; title: string; ruling: string } =>
+        typeof d === 'object' && d !== null && 'decisionClass' in d && 'title' in d && 'ruling' in d,
+    )
+    .map((d) => ({
+      decisionClass: d.decisionClass as Decision['decisionClass'],
+      title: d.title,
+      ruling: d.ruling,
+    }));
+}
+
 /** A short job title from a summary line. */
 function jobTitle(summary: string): string {
   const firstLine = summary.split('\n').map((l) => l.trim()).find(Boolean) ?? summary;
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
+}
+
+/** One resolved section: the one-line `brief` (display label) + the FULL rubric `spec` markdown. */
+interface ResolvedSection {
+  brief: string;
+  spec: string;
+}
+
+/**
+ * The rubric the brain's section specs must satisfy — checked by PRESENCE, leniently (so good plans
+ * aren't bounced on heading-format nits). A spec must at least state a goal, say how it's verified, and
+ * carry real detail (not a one-liner).
+ */
+const RUBRIC_MARKERS: { label: string; re: RegExp }[] = [
+  { label: 'a Goal', re: /\bgoals?\b/i },
+  { label: 'Verification (how it’s checked)', re: /\bverif(y|ies|ication)\b/i },
+];
+const SPEC_MIN_CHARS = 150;
+
+/** Which rubric requirements a spec is missing (empty → it passes). */
+function rubricGaps(spec: string): string[] {
+  const gaps = RUBRIC_MARKERS.filter((m) => !m.re.test(spec)).map((m) => m.label);
+  if (spec.length < SPEC_MIN_CHARS) gaps.push(`more detail (under ${SPEC_MIN_CHARS} chars)`);
+  return gaps;
+}
+
+/**
+ * Resolve the brain's `submit_plan` `sections` into snapshot-ready specs. Each section names a
+ * `specPath` (relative to the thread's `/context` dir) whose rubric markdown is READ from the host-side
+ * `contextDir` — or, tolerantly, an inline `spec`/`details` string. Returns the resolved sections plus a
+ * list of `problems` (missing file, escaping path, empty/under-spec'd content) the caller relays back to
+ * the session for a re-submit. Path traversal outside `/context` is rejected.
+ */
+function resolveSectionSpecs(
+  contextDir: string,
+  rawSections: unknown[],
+): { sections: ResolvedSection[]; problems: string[] } {
+  const sections: ResolvedSection[] = [];
+  const problems: string[] = [];
+
+  rawSections.forEach((s, i) => {
+    if (typeof s !== 'object' || s === null) {
+      problems.push(`section ${i + 1}: expected an object { title, specPath }`);
+      return;
+    }
+    const o = s as { title?: string; specPath?: string; spec?: string; details?: string };
+    const title = (o.title ?? '').trim();
+    if (!title) {
+      problems.push(`section ${i + 1}: missing a title`);
+      return;
+    }
+
+    let spec = '';
+    const specPath = (o.specPath ?? '').trim();
+    if (specPath) {
+      const abs = resolve(contextDir, specPath);
+      if (abs !== contextDir && !abs.startsWith(contextDir + sep)) {
+        problems.push(`section "${title}": specPath "${specPath}" escapes /context`);
+        return;
+      }
+      try {
+        spec = readFileSync(abs, 'utf8').trim();
+      } catch {
+        problems.push(
+          `section "${title}": could not read /context/${specPath} — write the spec file there first`,
+        );
+        return;
+      }
+    } else {
+      // Tolerate an inline spec (a brain that didn't file-back it) — still held to the rubric.
+      spec = (o.spec ?? o.details ?? '').trim();
+      if (!spec) {
+        problems.push(`section "${title}": give a specPath (a /context spec file) or an inline spec`);
+        return;
+      }
+    }
+
+    const gaps = rubricGaps(spec);
+    if (gaps.length > 0) {
+      problems.push(`section "${title}": spec needs ${gaps.join(', ')}`);
+      return;
+    }
+    sections.push({ brief: title, spec });
+  });
+
+  return { sections, problems };
 }

@@ -25,6 +25,14 @@ export const CONTAINER_WORKTREE = '/workspace';
 export const CONTAINER_GIT_COMMON = '/repo.git';
 
 /**
+ * The thread's durable SHARED CONTEXT folder INSIDE the sandbox — a per-thread scratch/working space
+ * that lives OUTSIDE the git worktree (so plan/spec artifacts never pollute the repo diff). Every
+ * in-sandbox session for the thread (the brain AND the plan/phase/review/auto-fix turns) reads & writes
+ * here; the host reads it back via `SandboxManager.contextDirHost()`. Durable across container restarts.
+ */
+export const CONTAINER_CONTEXT = '/context';
+
+/**
  * One NDJSON frame the in-container entrypoint emits (one-shot mode).
  * In bidirectional (tool-bridge) mode the additional `tool_request` frame is handled by
  * `ToolBridgeHost`; these are the remaining frame types.

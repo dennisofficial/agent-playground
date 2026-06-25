@@ -114,7 +114,10 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v1',
       decisions: [],
-      sectionBriefs: ['backend middleware', 'frontend banner'],
+      sections: [
+        { brief: 'backend middleware', spec: null },
+        { brief: 'frontend banner', spec: null },
+      ],
     });
     expect(first.thread.status).toBe('awaiting_approval');
     expect(await sectionBriefs(dataSource, threadId)).toEqual([
@@ -134,7 +137,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v2',
       decisions: [],
-      sectionBriefs: ['backend middleware only'],
+      sections: [{ brief: 'backend middleware only', spec: null }],
     });
 
     expect(second.thread.status).toBe('awaiting_approval');
@@ -193,7 +196,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     ]);
   }, 30_000);
 
-  it('inter-thread dependencies: blocked follow-up, unblock, and FK SET NULL on predecessor delete', async () => {
+  it('createFollowUpThread persists a plain open thread on the repo (the create_thread tool)', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
@@ -202,64 +205,21 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
     const [repoRow]: Array<{ id: string }> = await dataSource.query(
       `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
-         VALUES ($1, 'brainstore-dep-it', 'Dep Repo', 'https://github.com/acme/dep.git', 'main', true)
+         VALUES ($1, 'brainstore-ct-it', 'CT Repo', 'https://github.com/acme/ct.git', 'main', true)
          ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
       [TEAM_ID],
     );
     const repoId = repoRow.id;
-    const [pred]: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title)
-         VALUES ($1, $2, 'control', 'predecessor') RETURNING id`,
-      [TEAM_ID, repoId],
-    );
-    const predId = pred.id;
 
-    // Create a dependent follow-up — it persists BLOCKED, linked, carrying its seed.
-    const depId = await store.createFollowUpThread({
+    const followUpId = await store.createFollowUpThread({
       orgId: TEAM_ID,
       repoId,
-      title: 'dependent',
-      seedMessage: 'do B after A merges',
-      baseBranch: null,
-      blockedByThreadId: predId,
+      title: 'follow-up',
+      baseBranch: 'main',
     });
-    let dep = await loadThreadRow(dataSource, depId);
-    expect(dep).toMatchObject({
-      status: 'blocked',
-      blocked_by_thread_id: predId,
-      seed_message: 'do B after A merges',
-    });
-
-    // findDependents sees it; pendingSeedThreads does NOT (blocked ≠ open).
-    expect((await store.findDependents(predId)).map((t) => t.id)).toContain(depId);
-    expect((await store.pendingSeedThreads()).map((t) => t.id)).not.toContain(depId);
-
-    // Unblock → open + link cleared, seed preserved → now a pending seed awaiting delivery.
-    await store.unblockDependent(depId);
-    dep = await loadThreadRow(dataSource, depId);
-    expect(dep).toMatchObject({ status: 'open', blocked_by_thread_id: null, seed_message: 'do B after A merges' });
-    expect((await store.pendingSeedThreads()).map((t) => t.id)).toContain(depId);
-
-    // Delivered → seed marker dropped; no longer pending.
-    await store.clearSeedMessage(depId);
-    dep = await loadThreadRow(dataSource, depId);
-    expect(dep?.seed_message).toBeNull();
-    expect((await store.pendingSeedThreads()).map((t) => t.id)).not.toContain(depId);
-
-    // FK SET NULL: a fresh dependent survives the predecessor's deletion (link nulled, NOT cascade-deleted).
-    const dep2 = await store.createFollowUpThread({
-      orgId: TEAM_ID,
-      repoId,
-      title: 'dep2',
-      seedMessage: 'x',
-      baseBranch: null,
-      blockedByThreadId: predId,
-    });
-    await dataSource.query(`DELETE FROM threads WHERE id = $1`, [predId]);
-    const dep2Row = await loadThreadRow(dataSource, dep2);
-    expect(dep2Row).not.toBeNull(); // the follow-up is still here
-    expect(dep2Row?.blocked_by_thread_id).toBeNull(); // SET NULL fired
+    const row = await loadThreadRow(dataSource, followUpId);
+    expect(row).toMatchObject({ status: 'open', origin: 'control', title: 'follow-up', base_branch: 'main' });
   }, 30_000);
 });
 
@@ -295,12 +255,9 @@ async function sectionBriefs(ds: DataSource, threadId: string): Promise<string[]
 async function loadThreadRow(
   ds: DataSource,
   threadId: string,
-): Promise<{ status: string; blocked_by_thread_id: string | null; seed_message: string | null } | null> {
-  const rows: Array<{ status: string; blocked_by_thread_id: string | null; seed_message: string | null }> =
-    await ds.query(
-      `SELECT status, blocked_by_thread_id, seed_message FROM threads WHERE id = $1`,
-      [threadId],
-    );
+): Promise<{ status: string; origin: string; title: string | null; base_branch: string | null } | null> {
+  const rows: Array<{ status: string; origin: string; title: string | null; base_branch: string | null }> =
+    await ds.query(`SELECT status, origin, title, base_branch FROM threads WHERE id = $1`, [threadId]);
   return rows[0] ?? null;
 }
 

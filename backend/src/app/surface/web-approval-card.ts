@@ -33,6 +33,8 @@ export interface WebApprovalCard {
   type: 'approval_card';
   jobId: string;
   decisionRecordId?: string;
+  /** `plan` (full ceremony) or `direct` (fast path) — the web labels the list "Sections" vs "Changes". */
+  kind?: 'plan' | 'direct';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -98,6 +100,7 @@ export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
     type: 'approval_card',
     jobId: card.jobId,
     ...(card.decisionRecordId ? { decisionRecordId: card.decisionRecordId } : {}),
+    ...(card.kind ? { kind: card.kind } : {}),
     title: card.title,
     summary: card.summary,
     decisions: card.decisions ?? [],

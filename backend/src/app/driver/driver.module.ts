@@ -27,6 +27,7 @@ import { RunnerModule } from '../runner';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { PLANNER_LLM, AnthropicPlannerLlm } from './planner-llm';
+import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { SectionDriver } from './section-driver.service';
@@ -74,6 +75,7 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
   ],
   providers: [
     DriverStoreService,
+    BuildShipService,
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
     {
       provide: PLANNER_LLM,
@@ -86,7 +88,14 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
     { provide: JOB_DISPATCHER, useExisting: SectionDriver },
   ],
-  exports: [SectionDriver, JOB_DISPATCHER, ThreadLifecycleService, DriverStoreService],
+  exports: [
+    SectionDriver,
+    JOB_DISPATCHER,
+    ThreadLifecycleService,
+    DriverStoreService,
+    BuildShipService,
+    DRIVER_REPO,
+  ],
 })
 export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
   private resumeSub?: Subscription;

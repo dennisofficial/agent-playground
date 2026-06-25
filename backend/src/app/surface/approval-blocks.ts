@@ -29,11 +29,18 @@ export interface DecisionApprovalCard {
   jobId: string;
   decisionRecordId?: string;
   title: string;
+  /**
+   * Which build path this approval gates:
+   * - `plan` (default) — the full ceremony: a multi-section build runs after approval.
+   * - `direct` — the fast path: the brain implements the change itself in-sandbox after approval.
+   *   `sections` then carries a short CHANGE OUTLINE rather than a section list.
+   */
+  kind?: 'plan' | 'direct';
   /** The decision record summary (the architecture/system calls). */
   summary: string;
   /** The locked decisions (class + title + ruling) — the real calls being approved, not just a title. */
   decisions?: ApprovalDecision[];
-  /** The high-level section list (one brief per section), in order. */
+  /** The high-level section list (plan), or the change outline (direct), in order. */
   sections: string[];
   /** Optional deep link to a full plan view. */
   planUrl?: string;
@@ -56,9 +63,18 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
     ...(card.decisionRecordId ? { decisionRecordId: card.decisionRecordId } : {}),
   } satisfies ApprovalActionMeta);
 
+  const isDirect = card.kind === 'direct';
+  const headline = isDirect ? `*Direct build — ${card.title}*` : `*Plan proposal — ${card.title}*`;
+  const listLabel = isDirect ? 'Changes' : 'Sections';
+  const contextLine = isDirect
+    ? 'Approve to let Atlas implement this change directly. The verdict is Dennis’s call.'
+    : 'Approve once — sections then auto-run. The verdict is Dennis’s call.';
+
   const sectionList = card.sections.length
     ? card.sections.map((s, i) => `${i + 1}. ${s}`).join('\n')
-    : '_(no sections)_';
+    : isDirect
+      ? '_(see summary)_'
+      : '_(no sections)_';
 
   const decisionList = (card.decisions ?? [])
     .map((d) => `• *${d.title}* _(${d.decisionClass})_ — ${d.ruling}`)
@@ -100,7 +116,7 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
   return [
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Plan proposal — ${card.title}*` },
+      text: { type: 'mrkdwn', text: headline },
     },
     {
       type: 'section',
@@ -116,14 +132,14 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
       : []),
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Sections*\n${truncate(sectionList, SUMMARY_MAX)}` },
+      text: { type: 'mrkdwn', text: `*${listLabel}*\n${truncate(sectionList, SUMMARY_MAX)}` },
     },
     {
       type: 'context',
       elements: [
         {
           type: 'mrkdwn',
-          text: 'Approve once — sections then auto-run. The verdict is Dennis’s call.',
+          text: contextLine,
         },
       ],
     },

@@ -254,6 +254,7 @@ function toSection(row: SectionEntity): DriverSection {
     orgId: row.org_id,
     ordinal: row.ordinal,
     brief: row.brief,
+    spec: row.spec,
     plan: row.plan,
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,

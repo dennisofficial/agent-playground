@@ -59,6 +59,8 @@ export interface WebApprovalCard {
   type: 'approval_card';
   jobId: string;
   decisionRecordId?: string;
+  /** `plan` (full ceremony) or `direct` (fast path) — labels the list "Sections" vs "Changes". */
+  kind?: 'plan' | 'direct';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];

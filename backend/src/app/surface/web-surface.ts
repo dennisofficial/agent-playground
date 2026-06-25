@@ -278,21 +278,25 @@ function detectAndConvertApprovalCard(
   const sections: string[] = [];
   let decisions: ApprovalDecision[] = [];
   let planUrl: string | undefined;
-  let title = text.replace(/^Plan proposal\s*[—-]\s*/, '').trim() || text;
+  // The headline is either "*Plan proposal — <title>*" (full ceremony) or "*Direct build — <title>*"
+  // (fast path); the list block is labelled "*Sections*" or "*Changes*" to match.
+  let kind: 'plan' | 'direct' = 'plan';
+  let title = text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() || text;
 
   for (const block of blocks) {
     if (block.type === 'section') {
       const t = block.text as Record<string, unknown> | undefined;
       const raw = typeof t?.text === 'string' ? (t.text as string) : '';
-      if (raw.startsWith('*Plan proposal')) {
+      if (raw.startsWith('*Plan proposal') || raw.startsWith('*Direct build')) {
+        kind = raw.startsWith('*Direct build') ? 'direct' : 'plan';
         // Extract title from the headline block.
-        const match = /Plan proposal\s*[—-]\s*(.+)\*$/.exec(raw);
+        const match = /(?:Plan proposal|Direct build)\s*[—-]\s*(.+)\*$/.exec(raw);
         if (match) title = match[1].trim();
       } else if (!summary) {
         summary = raw;
-      } else if (raw.startsWith('*Sections*')) {
-        // Parse numbered section list.
-        const lines = raw.split('\n').slice(1); // drop the "*Sections*" header line
+      } else if (raw.startsWith('*Sections*') || raw.startsWith('*Changes*')) {
+        // Parse the numbered section / change-outline list.
+        const lines = raw.split('\n').slice(1); // drop the "*Sections*"/"*Changes*" header line
         for (const line of lines) {
           const m = /^\d+\.\s+(.+)$/.exec(line.trim());
           if (m) sections.push(m[1]);
@@ -317,6 +321,7 @@ function detectAndConvertApprovalCard(
   return webApprovalCard({
     jobId: meta.jobId,
     ...(meta.decisionRecordId ? { decisionRecordId: meta.decisionRecordId } : {}),
+    kind,
     title,
     summary,
     ...(decisions.length ? { decisions } : {}),

@@ -7,7 +7,7 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FeatureSandbox } from '../git';
 import { bundleEngine } from './bundle-engine';
-import { CONTAINER_WORKTREE } from './docker-engine-runner';
+import { CONTAINER_CONTEXT, CONTAINER_WORKTREE } from './docker-engine-runner';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';
@@ -138,6 +138,40 @@ describe('SandboxManager (integration, needs Docker)', () => {
     expect(await engine.inspect(attached.containerId!)).toBeNull();
     expect(await netExists()).toBe(false);
     expect(await volExists()).toBe(false);
+    containerId = undefined;
+    artifacts = undefined;
+  }, 600_000);
+
+  it('mounts a durable per-thread /context that is host-readable and OUTSIDE the worktree', async () => {
+    if (!dockerUp) {
+      // eslint-disable-next-line no-console
+      console.warn('Docker not reachable — skipping SandboxManager /context test');
+      return;
+    }
+    await builder.ensureImage();
+
+    const threadId = 'thread-ctx-1';
+    const attached = await manager.attach({ sandbox, orgId: 'team-ctx', threadId });
+    containerId = attached.containerId;
+    const containerName = (await engine.inspect(attached.containerId!))!.name;
+    artifacts = { net: `${containerName}-net`, vol: `${containerName}-dind` };
+
+    // The brain writes a spec file under /context (NOT the repo).
+    const marker = `ctx-${Date.now().toString(36)}`;
+    const w = await engine.exec(
+      attached.containerId!,
+      ['bash', '-c', `mkdir -p ${CONTAINER_CONTEXT}/specs && echo ${marker} > ${CONTAINER_CONTEXT}/specs/01.md`],
+      { user: attached.execUser },
+    );
+    expect(w.exitCode).toBe(0);
+
+    // The HOST reads it back via the resolver — same dir, outside the worktree.
+    const hostContext = manager.contextDirHost('team-ctx', threadId);
+    expect(readFileSync(join(hostContext, 'specs', '01.md'), 'utf8').trim()).toBe(marker);
+    // It is NOT inside the git worktree (so it never pollutes the repo diff).
+    expect(hostContext.startsWith(worktree)).toBe(false);
+
+    await manager.teardown(attached);
     containerId = undefined;
     artifacts = undefined;
   }, 600_000);

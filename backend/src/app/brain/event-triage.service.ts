@@ -133,7 +133,9 @@ export class EventTriageService {
       kind: 'bugfix',
       overview: summary,
       decisions: [],
-      sectionBriefs: [summary],
+      // Autonomous bugfix: one section, no file-backed spec — the brief IS the work (build falls back
+      // to `brief` when `spec` is null).
+      sections: [{ brief: summary, spec: null }],
     });
     const running = await this.store.approve(thread.id, requireRecordId(thread), 'atlas:autonomous');
     await this.dispatcher.dispatch(running);

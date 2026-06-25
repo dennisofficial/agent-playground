@@ -1,4 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PlanReviewService, parsePlanFindings, buildRevisionInstruction } from './plan-review.service';
 import type { EngineRunnerPort, RunEngineArgs } from '../engine/engine.types';
 import type { ChatStimulus } from '../domain';
@@ -8,11 +11,29 @@ import type { DriverStoreService } from '../driver/driver-store.service';
 import type { MemoryStore } from '../memory';
 import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
+import type { BuildShipService } from '../driver/build-ship.service';
+import type { DriverRepoResolver } from '../driver/repo-resolver';
+import type { DecisionClassifier } from '../decision-gate';
 import type { ChatSurface } from '../surface';
 import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import type { JobDispatcher } from './job-dispatcher';
 import { AgentSessionManager } from './agent-session-manager.service';
+
+/** A rubric-satisfying section spec (Goal + Verification markers, >150 chars) for file-backed tests. */
+function specMarkdown(goal: string): string {
+  return [
+    `# ${goal}`,
+    '## Goal',
+    goal,
+    '## Touch points',
+    '- backend/src/auth/example.ts',
+    '## Changes',
+    '- implement the behavior',
+    '## Verification',
+    'Run `pnpm test` and confirm green.',
+  ].join('\n');
+}
 
 /**
  * R4 GATE TESTS — two assertions:
@@ -221,6 +242,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
 
   const mockLifecycle = {
     findSandbox: vi.fn(),
+    contextDirHost: vi.fn(),
   } as unknown as ThreadLifecycleService;
 
   const mockDockerRunner = {} as unknown as DockerEngineRunner;
@@ -228,6 +250,9 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
   const mockDispatcher = {
     dispatch: vi.fn(),
   } as unknown as JobDispatcher;
+
+  /** A temp dir standing in for the thread's `/context` host dir. */
+  let contextDir: string;
 
   const mockSurface = {
     post: vi.fn(),
@@ -268,8 +293,8 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
       },
     ],
     sections: [
-      'Implement the OAuth2 callback handler in backend/src/auth/oauth.controller.ts.',
-      'Add JWT validation middleware in backend/src/auth/jwt.middleware.ts.',
+      { title: 'OAuth2 callback handler', specPath: 'oauth.md' },
+      { title: 'JWT validation middleware', specPath: 'jwt.md' },
     ],
   };
 
@@ -286,11 +311,20 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
       mockSurface,
       mockSandboxRows,
       { push: () => undefined, end: () => undefined } as never,
+      {} as unknown as DecisionClassifier,
+      {} as unknown as BuildShipService,
+      {} as unknown as DriverRepoResolver,
     );
   }
 
   beforeEach(() => {
     vi.resetAllMocks();
+
+    // /context spec files the brain "authored" — referenced by planArgs.sections specPaths.
+    contextDir = mkdtempSync(join(tmpdir(), 'atlas-r4-ctx-'));
+    (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue(contextDir);
+    writeFileSync(join(contextDir, 'oauth.md'), specMarkdown('Implement the OAuth2 callback handler'));
+    writeFileSync(join(contextDir, 'jwt.md'), specMarkdown('Add JWT validation middleware'));
 
     // No existing open job on the thread.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);

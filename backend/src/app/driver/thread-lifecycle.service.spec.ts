@@ -11,7 +11,6 @@
 
 import type { EnvService } from '@core/config/env/env.service';
 import { describe, expect, it, vi } from 'vitest';
-import type { ModuleRef } from '@nestjs/core';
 import type { Repository } from 'typeorm';
 import type {
   RepoEntity,
@@ -69,7 +68,6 @@ function makeService(
     new SandboxActivityRegistry(),
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
-    { get: vi.fn() } as unknown as ModuleRef,
   );
 }
 
