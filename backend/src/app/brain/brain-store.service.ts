@@ -248,6 +248,28 @@ export class BrainStoreService {
     const row = await this.threads.findOneOrFail({ where: { id: threadId } });
     return toThread(row);
   }
+
+  // ── create_thread tool ───────────────────────────────────────────────────────────────────────────
+
+  /** Create a follow-up thread (the brain's `create_thread` tool) — a plain `open` thread on the repo. */
+  async createFollowUpThread(input: {
+    orgId: string;
+    repoId: string;
+    title: string | null;
+    baseBranch: string | null;
+  }): Promise<string> {
+    const row = await this.threads.save(
+      this.threads.create({
+        org_id: input.orgId,
+        repo_id: input.repoId,
+        origin: 'control',
+        surface_thread_ref: null,
+        title: input.title,
+        base_branch: input.baseBranch,
+      }),
+    );
+    return row.id;
+  }
 }
 
 /** Map a `ThreadEntity` row to the in-memory `Thread` shape. */

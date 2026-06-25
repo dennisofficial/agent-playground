@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ArrowLeft, Info } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useSay } from '@/lib/api/thread-queries';
+import { sectionTitle } from '@/lib/section-brief';
 import { VerdictButtons } from './approval-card';
 import { pipelineJob, type ThreadMessage, type ThreadRef } from '@/lib/api/thread-api';
 import {
@@ -47,11 +48,11 @@ export function PhaseView({
   } else if (selectedNode.startsWith('secplan:')) {
     const id = selectedNode.slice('secplan:'.length);
     const sec = job?.sections.find((s) => s.id === id) ?? null;
-    body = <SectionPlanDoc brief={sec?.brief ?? 'Section plan'} />;
+    body = <SectionPlanDoc brief={sec ? sectionTitle(sec.brief) : 'Section plan'} />;
   } else if (selectedNode.startsWith('autofix:')) {
     body = <AutoFixView />;
   } else if (section) {
-    body = <BuildView threadRef={threadRef} label={`§ ${section.brief}`} messages={messages} />;
+    body = <BuildView threadRef={threadRef} label={`§ ${sectionTitle(section.brief)}`} messages={messages} />;
   } else {
     body = <BuildView threadRef={threadRef} label="Build" messages={messages} />;
   }
@@ -267,7 +268,7 @@ function PlanDoc({
         {sectionList.map((s, i) => (
           <div key={i} className="flex items-baseline gap-3 border-t py-2" style={{ borderColor: 'var(--hair)' }}>
             <span className="w-4 font-mono text-[11px] text-faint">{i + 1}</span>
-            <span className="text-[13.5px] font-medium text-text">{s}</span>
+            <span className="text-[13.5px] font-medium text-text">{sectionTitle(s)}</span>
           </div>
         ))}
 

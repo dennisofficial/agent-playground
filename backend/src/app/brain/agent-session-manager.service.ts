@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -72,13 +73,20 @@ export class AgentSessionManager {
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix into a DETAILED, LOCKED PLAN.',
     '',
-    'You have 6 tools:',
+    'You have 7 tools:',
     '  - get_pipeline_state   — read the current job/pipeline state for this thread',
     '  - get_decision_record  — read the current locked decision record for this thread',
     '  - recall               — retrieve relevant memory facts (semantic search)',
     '  - remember             — store a new memory fact',
     '  - submit_plan          — propose the detailed locked plan for operator approval (see below)',
     '  - dispatch_build       — (gated: only usable AFTER operator approval) dispatch the approved build',
+    '  - create_thread        — spin off a NEW thread on this same repo (see CREATE_THREAD below)',
+    '',
+    'CREATE_THREAD — when the work splits into a separate unit of its own, create a follow-up thread',
+    'rather than overloading this one. Args: { title, firstMessage }. `firstMessage` is the opening intent',
+    'the new thread starts on (write it as you would brief a fresh session); the new thread starts scoping',
+    'immediately and independently. Only do this when the operator asked for a follow-up or the split is',
+    'clearly warranted — one tightly-scoped follow-up per call, not a backlog.',
     '',
     'PLANNING POSTURE — CUSTOM PLAN MODE:',
     'Do NOT use the SDK\'s native ExitPlanMode. Instead, call `submit_plan` when you have a complete plan.',
@@ -211,7 +219,7 @@ export class AgentSessionManager {
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       ...(sessionId ? { sessionId } : {}),
       ...(sandbox.containerId
-        ? { target: { containerId: sandbox.containerId } }
+        ? { target: { containerId: sandbox.containerId, worktreeHost: sandbox.worktreePath } }
         : {}),
       toolBridge: {
         threadId: stimulus.threadId,
@@ -402,12 +410,24 @@ export class AgentSessionManager {
             ruling: d.ruling,
           }));
 
-        // Normalize sections — support both string[] and {brief,detail}[] shapes.
+        // Normalize sections — support string[] and object shapes. The session sends `{ title, details }`
+        // (per the SUBMIT_PLAN prompt); older callers used `{ brief | detail | description }`. Lead the
+        // brief with the title, then the detail (the brief is BOTH the display label and the build
+        // planner's section input, so keep the detail), and only fall back to JSON if neither is present.
         const sectionBriefs = rawSections.map((s) => {
-          if (typeof s === 'string') return s;
+          if (typeof s === 'string') return s.trim();
           if (typeof s === 'object' && s !== null) {
-            const detail = (s as { detail?: string; brief?: string; description?: string });
-            return detail.detail ?? detail.brief ?? detail.description ?? JSON.stringify(s);
+            const o = s as {
+              title?: string;
+              detail?: string;
+              details?: string;
+              brief?: string;
+              description?: string;
+            };
+            const title = (o.title ?? '').trim();
+            const detail = (o.details ?? o.detail ?? o.brief ?? o.description ?? '').trim();
+            if (title && detail) return `${title} — ${detail}`;
+            return title || detail || JSON.stringify(s);
           }
           return String(s);
         }).filter(Boolean);
@@ -505,6 +525,36 @@ export class AgentSessionManager {
         await this.dispatcher.dispatch(job);
         return { ok: true, jobId, message: 'Build dispatched.' };
       },
+
+      create_thread: async (args) => {
+        const firstMessage = String(args['firstMessage'] ?? '').trim();
+        const title = String(args['title'] ?? '').trim() || jobTitle(firstMessage);
+        if (!firstMessage) {
+          return { ok: false, reason: 'firstMessage is required (the new thread\'s opening intent)' };
+        }
+
+        // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
+        // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
+        const current = await this.store.loadJob(stimulus.threadId);
+        const newThreadId = await this.store.createFollowUpThread({
+          orgId: stimulus.orgId,
+          repoId: stimulus.repoId,
+          title,
+          baseBranch: current.baseBranch,
+        });
+
+        // Kick the new thread's brain with its opening intent. Fire-and-forget — the parent's turn doesn't
+        // block on the child's provisioning (~30s); the intent is recorded so it's visible if the start fails.
+        void this.startFollowUpThread(newThreadId, stimulus.orgId, stimulus.repoId, firstMessage).catch((err) =>
+          this.logger.warn(`create_thread: start of ${newThreadId} failed: ${err}`),
+        );
+        this.logger.log(`thread ${stimulus.threadId} created + started follow-up ${newThreadId}`);
+        return {
+          ok: true,
+          threadId: newThreadId,
+          message: `Created follow-up "${title}" and started it.`,
+        };
+      },
     };
   }
 
@@ -561,6 +611,35 @@ export class AgentSessionManager {
     // deny
     await this.store.cancel(job.id);
     await this.say(stimulus, "Understood — I'll drop this one.");
+  }
+
+  // ── create_thread: start the follow-up's brain ──────────────────────────────────────────────────
+
+  /**
+   * Kick a freshly-created follow-up thread's brain with its opening intent. Records the intent into the
+   * transcript first (the brain path doesn't persist the inbound message — intake normally does), then runs
+   * one chat turn (which lazily provisions the new thread's sandbox).
+   */
+  async startFollowUpThread(
+    threadId: string,
+    orgId: string,
+    repoId: string,
+    firstMessage: string,
+  ): Promise<void> {
+    await this.store.appendAtlasMessage(threadId, `🔗 Follow-up started from a prior thread:\n\n${firstMessage}`);
+    const stimulus: ChatStimulus = {
+      id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
+      orgId,
+      repoId,
+      body: firstMessage,
+      receivedAt: new Date(),
+      kind: 'chat',
+      trust: 'trusted',
+      threadId,
+      author: { id: 'atlas', displayName: 'Atlas' },
+      replyRoute: { surfaceId: 'web', threadRef: threadId },
+    };
+    await this.handleChatTurn(stimulus);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────

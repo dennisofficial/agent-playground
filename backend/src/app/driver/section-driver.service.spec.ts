@@ -283,6 +283,8 @@ function makeJob(overrides: Partial<Thread> = {}): Thread {
     featureBranch: null,
     prUrl: null,
     prNumber: null,
+    blockedByThreadId: null,
+    seedMessage: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -356,7 +358,7 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     surface,
     env,
     // local SANDBOX_PROVIDER: a no-op attach (host-local execution; no containerId).
-    { attach: async ({ sandbox }) => sandbox, teardown: async () => undefined },
+    { attach: async ({ sandbox }) => sandbox, teardown: async () => undefined, teardownByIdentity: async () => undefined },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
       anthropicKey: async () => undefined,

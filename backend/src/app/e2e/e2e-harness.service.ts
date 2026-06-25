@@ -129,7 +129,7 @@ export class E2eHarness {
         .overrideProvider(ENGINE_RUNNER)
         .useValue(new FakeEngineRunner())
         .overrideProvider(SANDBOX_PROVIDER)
-        .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {} })
+        .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {}, teardownByIdentity: async () => {} })
         .overrideProvider(LocalGitService)
         .useValue(new FakeLocalGitService())
         .overrideProvider(GithubPrService)

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
+import { sectionTitle } from '@/lib/section-brief';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { PipelineTree } from './pipeline-tree';
 import type { PipelineJob, PipelineState, ThreadKind, ThreadStatus } from '@/lib/api/types';
@@ -130,7 +131,12 @@ export function Navigator({
         ) : meta.status === 'scoping' ? (
           <ScopingPanel />
         ) : meta.status === 'awaiting_approval' ? (
-          <ApprovalPanel job={job} onConversation={onConversation} convoActive={convoActive} />
+          <ApprovalPanel
+            job={job}
+            onConversation={onConversation}
+            convoActive={convoActive}
+            onSelectNode={onSelectNode}
+          />
         ) : meta.status === 'done' ? (
           <DonePanel />
         ) : meta.status === 'triaging' ? (
@@ -263,10 +269,12 @@ function ApprovalPanel({
   job,
   onConversation,
   convoActive,
+  onSelectNode,
 }: {
   job: PipelineJob | null;
   onConversation: () => void;
   convoActive: boolean;
+  onSelectNode: (node: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -277,10 +285,15 @@ function ApprovalPanel({
         will create on approve.
       </p>
       {(job?.sections ?? []).map((s, i) => (
-        <div key={s.id} className="flex items-center gap-2.5 px-2 py-1.5">
+        <button
+          key={s.id}
+          type="button"
+          onClick={() => onSelectNode('plan')}
+          className="flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2"
+        >
           <span className="font-mono text-[9px] text-faint">{i + 1}</span>
-          <span className="flex-1 truncate text-[11.5px]">{s.brief}</span>
-        </div>
+          <span className="flex-1 truncate text-[11.5px]">{sectionTitle(s.brief)}</span>
+        </button>
       ))}
     </div>
   );

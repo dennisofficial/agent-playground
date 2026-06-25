@@ -87,6 +87,7 @@ class FakeSandboxProvider {
     return { ...sandbox, containerId: `fake-c-${threadId ?? sandbox.branch}`, warm: true };
   }
   async teardown(): Promise<void> {}
+  async teardownByIdentity(): Promise<void> {}
 }
 
 // ── Sentinel ids — kept distinct from every other int test's tenant so the assertions are isolated. ──

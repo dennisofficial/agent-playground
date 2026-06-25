@@ -120,6 +120,14 @@ class FakeSandboxProvider {
   async teardown(sandbox: FeatureSandbox): Promise<void> {
     if (sandbox.containerId) this.tornDown.push(sandbox.containerId);
   }
+  /**
+   * Reclaim by deterministic identity — models the docker manager resolving the container by NAME even
+   * when no `container_id` is known (post-restart). Records the stable id `attach` would have used, so
+   * teardown is observable regardless of whether the row still carries a `container_id`.
+   */
+  async teardownByIdentity({ sandbox, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }): Promise<void> {
+    this.tornDown.push(`fake-c-${threadId ?? sandbox.branch}`);
+  }
 }
 
 // ── Module bootstrap ──────────────────────────────────────────────────────────────────────────────
@@ -307,6 +315,27 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
     // Idempotent: a second close is a no-op and ensureContainer returns null for a closed thread.
     await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
     expect(await threadLifecycle.ensureContainer(threadId, FAKE_TEAM_ID)).toBeNull();
+  });
+
+  it('closeThread reclaims the container by NAME even after a boot reconcile nulled container_id (leak fix)', async () => {
+    const { threadId } = await create();
+
+    // Simulate a process restart: reconcileOnBoot nulls container_id while the real container keeps
+    // running. Pre-fix, closeThread's `if (row.container_id)` guard then skipped teardown → permanent leak.
+    await threadLifecycle.reconcileOnBoot();
+    const detached = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
+    expect(detached.lifecycle).toBe('detached');
+    expect(detached.container_id).toBeNull();
+
+    // reconcileOnBoot is a pure DB update (no provider call), so nothing has been torn down yet.
+    expect(provider.tornDown).toHaveLength(0);
+
+    await threadLifecycle.closeThread(threadId, FAKE_TEAM_ID);
+
+    // The container is reclaimed by its deterministic identity DESPITE the null container_id — no orphan.
+    expect(provider.tornDown).toContain(`fake-c-${threadId}`);
+    const row = await sandboxes.findOneOrFail({ where: { thread_id: threadId } });
+    expect(row.lifecycle).toBe('closed');
   });
 
   it('deleteThreadDeep tears down the sandbox AND sweeps every child row (no orphans)', async () => {

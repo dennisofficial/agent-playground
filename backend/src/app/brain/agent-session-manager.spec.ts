@@ -237,6 +237,30 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(approvalArgs.sections).toHaveLength(2);
   });
 
+  it('(a) submit_plan: normalizes `{ title, details }` sections into "title — detail" briefs (not raw JSON)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    // The shape the thread brain actually sends per the SUBMIT_PLAN prompt: `{ title, details }`.
+    // Regression: the old normalizer read `detail` (singular) + ignored `title`, so it fell through to
+    // JSON.stringify and persisted `{"title":…,"details":…}` as the brief (displayed as raw JSON).
+    const sections = [
+      { title: 'New root ARCHITECTURE.md', details: 'Create /ARCHITECTURE.md as the top-level system doc.' },
+      { title: 'Rewrite root README.md', details: 'Replace the placeholder README with real docs.' },
+    ];
+
+    await tools['submit_plan']({ overview: 'Doc-only refresh.', decisions: [], sections });
+
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(persistArgs.sectionBriefs).toEqual([
+      'New root ARCHITECTURE.md — Create /ARCHITECTURE.md as the top-level system doc.',
+      'Rewrite root README.md — Replace the placeholder README with real docs.',
+    ]);
+    // Crucially: no brief is a serialized JSON object.
+    for (const brief of persistArgs.sectionBriefs) {
+      expect(brief.startsWith('{')).toBe(false);
+    }
+  });
+
   it('(a) submit_plan: returns error if overview is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
@@ -286,6 +310,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      loadJob: vi.fn().mockResolvedValue({ status: 'open' }), // freeze guard reads thread status each turn
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox: vi.fn().mockResolvedValue(opts.findSandbox ?? null),
@@ -408,6 +433,189 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     expect(dockerRunner.run).not.toHaveBeenCalled();
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('finish connecting this repo');
+  });
+});
+
+describe('AgentSessionManager — create_thread tool + inter-thread dependencies', () => {
+  const ORG = 'org-dep';
+  const REPO = 'repo-dep';
+  const THREAD = 'th-parent';
+
+  const stimulus: ChatStimulus = {
+    kind: 'chat',
+    trust: 'trusted',
+    id: 'stim-dep-1',
+    receivedAt: new Date('2026-06-25T00:00:00Z'),
+    orgId: ORG,
+    repoId: REPO,
+    threadId: THREAD,
+    body: 'Do thing A, then a follow-up for thing B',
+    author: { id: 'U-OP', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', threadRef: THREAD },
+  };
+
+  function makeManager(storeOverrides: Record<string, unknown> = {}) {
+    const store = {
+      loadJob: vi.fn(),
+      repoDefaultBranch: vi.fn().mockResolvedValue('main'),
+      createFollowUpThread: vi.fn().mockResolvedValue('th-followup'),
+      appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      clearSeedMessage: vi.fn().mockResolvedValue(undefined),
+      findDependents: vi.fn().mockResolvedValue([]),
+      unblockDependent: vi.fn().mockResolvedValue(undefined),
+      pendingSeedThreads: vi.fn().mockResolvedValue([]),
+      ...storeOverrides,
+    } as unknown as BrainStoreService;
+    const manager = new AgentSessionManager(
+      store,
+      {} as unknown as DriverStoreService,
+      {} as unknown as MemoryStore,
+      {} as unknown as DecisionApprovalService,
+      {} as unknown as ThreadLifecycleService,
+      {} as unknown as DockerEngineRunner,
+      {} as unknown as PlanReviewService,
+      {} as unknown as JobDispatcher,
+      { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
+      { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<ThreadSandboxEntity>,
+      { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore,
+    );
+    return { manager, store };
+  }
+
+  const mock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
+
+  it('create_thread (dependsOnThisThread) creates a BLOCKED follow-up off the default branch, no turn', async () => {
+    const { manager, store } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ baseBranch: null }), // parent on default branch
+    });
+    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
+
+    const result = await manager.buildTools(stimulus)['create_thread']({
+      title: 'Thing B',
+      firstMessage: 'Build thing B on top of thing A',
+      dependsOnThisThread: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, threadId: 'th-followup', blocked: true });
+    expect(mock(store.createFollowUpThread)).toHaveBeenCalledWith({
+      orgId: ORG,
+      repoId: REPO,
+      title: 'Thing B',
+      seedMessage: 'Build thing B on top of thing A',
+      baseBranch: null, // dependents cut from the repo default (the merge target)
+      blockedByThreadId: THREAD,
+    });
+    expect(startSpy).not.toHaveBeenCalled(); // blocked → not started yet
+  });
+
+  it('create_thread REJECTS a dependency when the parent builds on a custom base branch', async () => {
+    const { manager, store } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ baseBranch: 'develop' }),
+      repoDefaultBranch: vi.fn().mockResolvedValue('main'),
+    });
+
+    const result = await manager.buildTools(stimulus)['create_thread']({
+      title: 'B',
+      firstMessage: 'do B',
+      dependsOnThisThread: true,
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(mock(store.createFollowUpThread)).not.toHaveBeenCalled();
+  });
+
+  it('create_thread (independent) creates an OPEN follow-up and starts it immediately', async () => {
+    const { manager, store } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
+    });
+    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
+
+    const result = await manager.buildTools(stimulus)['create_thread']({
+      title: 'Side task',
+      firstMessage: 'do the side task',
+    });
+
+    expect(result).toMatchObject({ ok: true, threadId: 'th-followup', blocked: false });
+    expect(mock(store.createFollowUpThread)).toHaveBeenCalledWith(
+      expect.objectContaining({ blockedByThreadId: null, baseBranch: 'main' }),
+    );
+    expect(startSpy).toHaveBeenCalledWith('th-followup', ORG);
+  });
+
+  it('create_thread requires a firstMessage', async () => {
+    const { manager, store } = makeManager();
+    const result = await manager.buildTools(stimulus)['create_thread']({ title: 'x', firstMessage: '  ' });
+    expect(result).toMatchObject({ ok: false });
+    expect(mock(store.createFollowUpThread)).not.toHaveBeenCalled();
+  });
+
+  it('startSeededThread clears the seed ONLY after the turn succeeds (crash-safe marker)', async () => {
+    const { manager, store } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ repoId: REPO, seedMessage: 'kick off the follow-up' }),
+    });
+    const turn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+
+    await manager.startSeededThread('th-followup', ORG);
+
+    expect(turn).toHaveBeenCalledOnce();
+    expect(mock(store.appendAtlasMessage)).toHaveBeenCalledWith(
+      'th-followup',
+      expect.stringContaining('kick off the follow-up'),
+    );
+    expect(mock(store.clearSeedMessage)).toHaveBeenCalledWith('th-followup'); // success → marker dropped
+  });
+
+  it('startSeededThread leaves the seed set when the turn fails (so the retry sweep re-attempts)', async () => {
+    const { manager, store } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ repoId: REPO, seedMessage: 'kick off' }),
+    });
+    vi.spyOn(manager, 'handleChatTurn').mockRejectedValue(new Error('provisioning blew up'));
+
+    await expect(manager.startSeededThread('th-followup', ORG)).rejects.toThrow('provisioning blew up');
+    expect(mock(store.clearSeedMessage)).not.toHaveBeenCalled(); // seed preserved for retry
+  });
+
+  it('startSeededThread is a no-op when the seed is already delivered', async () => {
+    const { manager, store } = makeManager({
+      loadJob: vi.fn().mockResolvedValue({ repoId: REPO, seedMessage: null }),
+    });
+    const turn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+    await manager.startSeededThread('th-followup', ORG);
+    expect(turn).not.toHaveBeenCalled();
+    expect(mock(store.clearSeedMessage)).not.toHaveBeenCalled();
+  });
+
+  it('onDependencyResolved(merged) unblocks + auto-starts every dependent', async () => {
+    const { manager, store } = makeManager({
+      findDependents: vi.fn().mockResolvedValue([
+        { id: 'dep-1', orgId: ORG },
+        { id: 'dep-2', orgId: ORG },
+      ]),
+    });
+    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
+
+    await manager.onDependencyResolved(THREAD, 'merged');
+
+    expect(mock(store.unblockDependent)).toHaveBeenCalledWith('dep-1');
+    expect(mock(store.unblockDependent)).toHaveBeenCalledWith('dep-2');
+    expect(startSpy).toHaveBeenCalledWith('dep-1', ORG);
+    expect(startSpy).toHaveBeenCalledWith('dep-2', ORG);
+  });
+
+  it('onDependencyResolved(abandoned) unblocks + notifies but does NOT auto-start', async () => {
+    const { manager, store } = makeManager({
+      findDependents: vi.fn().mockResolvedValue([{ id: 'dep-1', orgId: ORG }]),
+    });
+    const startSpy = vi.spyOn(manager, 'startSeededThread').mockResolvedValue(undefined);
+
+    await manager.onDependencyResolved(THREAD, 'abandoned');
+
+    expect(mock(store.unblockDependent)).toHaveBeenCalledWith('dep-1');
+    expect(mock(store.appendAtlasMessage)).toHaveBeenCalledWith(
+      'dep-1',
+      expect.stringContaining('closed without merging'),
+    );
+    expect(startSpy).not.toHaveBeenCalled();
   });
 });
 

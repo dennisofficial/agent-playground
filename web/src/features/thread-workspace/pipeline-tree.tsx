@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, FileText, Link2, Lock, MessageSquare } from 
 import { cn } from '@/lib/cn';
 import { Dot } from '@/components/ui/badges';
 import { sectionColor } from '@/lib/api/status';
+import { sectionTitle } from '@/lib/section-brief';
 import type { PipelineJob, SectionStatus } from '@/lib/api/types';
 
 const SECTION_LABEL: Record<SectionStatus, string> = {
@@ -133,7 +134,7 @@ export function PipelineTree({
                 )}
                 <Dot color={head.color} pulse={head.pulse} size={8} />
                 <span className={cn('flex-1 truncate text-[12px] font-semibold', s.status === 'pending' && 'text-dim')}>
-                  §{i + 1} {s.brief}
+                  §{i + 1} {sectionTitle(s.brief)}
                 </span>
                 <span className="font-mono text-[9px]" style={{ color: head.color }}>
                   {SECTION_LABEL[s.status]}

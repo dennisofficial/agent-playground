@@ -92,7 +92,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       .overrideProvider(DockerEngineRunner) // the brain injects this class directly
       .useValue(runner)
       .overrideProvider(SANDBOX_PROVIDER)
-      .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {} })
+      .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {}, teardownByIdentity: async () => {} })
       .overrideProvider(LocalGitService)
       .useValue(new FakeLocalGitService())
       .overrideProvider(GithubPrService)

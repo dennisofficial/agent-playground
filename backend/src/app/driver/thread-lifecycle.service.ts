@@ -254,11 +254,15 @@ export class ThreadLifecycleService {
     const row = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return;
 
-    if (row.container_id) {
-      await this.sandboxProvider.teardown(await this.rowToSandbox(row)).catch((err) => {
+    // Tear down the container by its DETERMINISTIC identity, NOT by `row.container_id`. `reconcileOnBoot`
+    // nulls `container_id` on every restart while the real container keeps running, so a close/delete of a
+    // thread that hasn't had a turn since the last restart would otherwise skip teardown and orphan the
+    // container (+ its network/volume) forever. Resolving by name reclaims it either way.
+    await this.sandboxProvider
+      .teardownByIdentity({ sandbox: await this.rowToSandbox(row), orgId, threadId })
+      .catch((err) => {
         this.logger.warn(`closeThread: teardown failed for thread ${threadId}: ${err}`);
       });
-    }
     if (row.worktree_path) {
       const projectRepo = await this.repoForRow(row).catch(() => null);
       if (projectRepo) {

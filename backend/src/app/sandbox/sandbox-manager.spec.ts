@@ -6,6 +6,7 @@ import type {
   NetworkInfo,
   VolumeInfo,
 } from './container-engine.port';
+import type { FeatureSandbox } from '../git';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';
 
@@ -94,5 +95,73 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
     });
 
     expect(await manager(engine).reapOrphanedArtifacts()).toEqual({ networks: 0, volumes: 0 });
+  });
+});
+
+describe('SandboxManager.teardownByIdentity', () => {
+  // The deterministic name `attach` derives for a thread-keyed sandbox (branch-independent):
+  // `atlas-sbx-<org>-<project>-thread-<id>`. Terminal cleanup must resolve this WITHOUT a container_id,
+  // because a boot reconcile nulls the persisted id while the real container keeps running.
+  const NAME = 'atlas-sbx-team-proj-thread-abc';
+  const sandbox = (): FeatureSandbox => ({
+    repoId: 'proj',
+    branch: 'atlas/thread-abc', // ignored for thread-keyed names; proves the name is keyed by threadId
+    worktreePath: '/w',
+    gitUrl: '',
+  });
+
+  /** A fake engine that knows ONE container by name, recording every container/net/volume removal. */
+  function fake(opts: { containerExists: boolean }) {
+    const removedContainers: string[] = [];
+    const removedNetworks: string[] = [];
+    const removedVolumes: string[] = [];
+    const container: ContainerInfo = { id: 'cid-1', name: NAME, state: 'running', labels: {} };
+    const engine: ContainerEngine = {
+      ensureNetwork: vi.fn(),
+      imageExists: vi.fn(),
+      imageId: vi.fn(),
+      buildImage: vi.fn(),
+      createContainer: vi.fn(),
+      start: vi.fn(),
+      exec: vi.fn(),
+      stop: vi.fn(),
+      remove: vi.fn(async (id: string) => {
+        removedContainers.push(id);
+      }),
+      removeNetwork: vi.fn(async (name: string) => {
+        removedNetworks.push(name);
+      }),
+      removeVolume: vi.fn(async (name: string) => {
+        removedVolumes.push(name);
+      }),
+      list: vi.fn(async (): Promise<ContainerInfo[]> => []),
+      // Resolve ONLY by the deterministic name (a running orphan has no id we still hold).
+      inspect: vi.fn(async (idOrName: string): Promise<ContainerInfo | null> =>
+        opts.containerExists && idOrName === NAME ? container : null,
+      ),
+      listNetworks: vi.fn(async (): Promise<NetworkInfo[]> => []),
+      listVolumes: vi.fn(async (): Promise<VolumeInfo[]> => []),
+    };
+    return { engine, removedContainers, removedNetworks, removedVolumes };
+  }
+
+  it('resolves a running orphan by its deterministic name and removes it + its net/vol (no container_id)', async () => {
+    const { engine, removedContainers, removedNetworks, removedVolumes } = fake({ containerExists: true });
+
+    await manager(engine).teardownByIdentity({ sandbox: sandbox(), orgId: 'team', threadId: 'abc' });
+
+    expect(removedContainers).toEqual(['cid-1']);
+    expect(removedNetworks).toEqual([`${NAME}-net`]);
+    expect(removedVolumes).toEqual([`${NAME}-dind`]);
+  });
+
+  it('still reclaims leaked net/vol by name when the container is already gone', async () => {
+    const { engine, removedContainers, removedNetworks, removedVolumes } = fake({ containerExists: false });
+
+    await manager(engine).teardownByIdentity({ sandbox: sandbox(), orgId: 'team', threadId: 'abc' });
+
+    expect(removedContainers).toEqual([]); // nothing to remove
+    expect(removedNetworks).toEqual([`${NAME}-net`]);
+    expect(removedVolumes).toEqual([`${NAME}-dind`]);
   });
 });

@@ -69,16 +69,27 @@ build the approved plan; they are not the thing you converse with.
 | Session state | Resumes `thread_sandboxes.session_id` **every turn** | `phases.session_id`; resumed **only** on a mid-turn halt |
 | Role | intent → grill → lock decisions → propose plan → **steer** | execute **one phase** of the approved plan |
 | System prompt | **custom plan mode** (NOT the SDK's native `ExitPlanMode`) | standard coding agent |
-| Tools | 6 host-side tools (below) | normal coding tools (Read/Edit/Bash/…) |
+| Tools | 7 host-side tools (below) | normal coding tools (Read/Edit/Bash/…) |
 | You talk to it via | the thread **Conversation** (`say`) | the phase **transcript** (*interject* — ⛔ not built) |
 | Code | `brain/agent-session-manager.service.ts:101` (`handleChatTurn`) | `runner/turn-runner.service.ts:66` (`runTurn`) |
 
-**Thread brain — the 6 host tools** (built in `agent-session-manager.service.ts` `buildTools`):
-`get_pipeline_state`, `get_decision_record`, `recall`, `remember`, `submit_plan`, `dispatch_build`.
-It can **read** pipeline state but does not itself drive the build; `submit_plan` → approval card;
-`dispatch_build` is gated on operator approval. It is genuinely continuous: each turn resumes the same
-`session_id` (`:114`, persisted at `:162`), so it remembers the grilling, the locked decisions, and the
-plan across turns and even host restarts.
+**Thread brain — the 7 host tools** (built in `agent-session-manager.service.ts` `buildTools`):
+`get_pipeline_state`, `get_decision_record`, `recall`, `remember`, `submit_plan`, `dispatch_build`,
+`create_thread`. It can **read** pipeline state but does not itself drive the build; `submit_plan` →
+approval card; `dispatch_build` is gated on operator approval. It is genuinely continuous: each turn resumes
+the same `session_id` (`:114`, persisted at `:162`), so it remembers the grilling, the locked decisions, and
+the plan across turns and even host restarts.
+
+**Inter-thread dependencies (`create_thread`).** ✅ The brain can spin off a follow-up thread on the same
+repo — optionally **dependent** on the current one (`threads.blocked_by_thread_id`, self-FK `SET NULL`). A
+dependent is created `status='blocked'` and *frozen* (no brain turn; `say` returns 409) until the
+predecessor's PR **merges**; the merge poll (`pollPrClosures`) then unblocks it and **auto-starts** its
+brain on the stored `seed_message` (the brain-authored opening intent — also the durable "not yet
+delivered" marker, cleared only on a durable start, retried by `deliverPendingSeeds`). A predecessor that's
+deleted / fails / is denied instead *frees* its follow-ups with a notice (no auto-start). A dependent
+always cuts from the repo **default** branch (= the merge target), so the tool rejects a dependency off a
+custom-base thread. See `brain/agent-session-manager.service.ts` (`create_thread`, `startSeededThread`,
+`onDependencyResolved`) + `driver/thread-lifecycle.service.ts` (`pollPrClosures`, `resolveDependents`).
 
 **Phase workers** — each pipeline phase (plan → review → execute → auto-fix) runs as a *fresh* session so
 context can't rot across phases. They're observable **live** via event streaming to the SSE surface
