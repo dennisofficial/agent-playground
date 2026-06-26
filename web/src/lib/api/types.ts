@@ -130,6 +130,38 @@ export interface PipelineJob {
 
 export type PipelineState = PipelineJob | { status: 'no_job' };
 
+// ── Context files (`…/threads/:threadId/context`) ────────────────────────────────────────────────
+/** One file in a `/context` bucket — mirrors the backend `ContextFile`. */
+export interface ContextFile {
+  name: string;
+  size: number;
+  /** ISO timestamp of last modification. */
+  mtime: string;
+}
+
+/**
+ * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams) and
+ * `artifacts` (outputs — preview HTML, screenshots). A bucket is `[]` before the agent writes anything.
+ */
+export interface ThreadContext {
+  specs: ContextFile[];
+  artifacts: ContextFile[];
+}
+
+/** One `/context` file's content for the viewer (`…/context/file?path=…`). Mirrors the backend shape. */
+export interface ContextFileContent {
+  name: string;
+  /** Path relative to the `/context` root, forward-slashed (e.g. `specs/plan.md`). */
+  path: string;
+  size: number;
+  mtime: string;
+  /** `text` → utf-8 in `content`; `base64` → binary (images) in `content`. */
+  encoding: 'text' | 'base64';
+  /** Best-effort mime by extension (e.g. `text/markdown`, `image/png`). */
+  mime: string;
+  content: string;
+}
+
 // ── UI thread model ────────────────────────────────────────────────────────────────────────────
 /** UI status set from handoff §7 (semantic dot colors). */
 export type ThreadStatus =

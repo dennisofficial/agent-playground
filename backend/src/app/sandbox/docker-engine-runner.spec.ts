@@ -83,6 +83,8 @@ describe('DockerEngineRunner', () => {
     expect(spec.cwd).toBe('/workspace');
     expect(spec.task).toBe('do it');
     expect(spec.sandboxKey).toBe('acme--feat');
+    // The durable `/context` shared mount is granted as a writable root (brain authors plan/spec there).
+    expect(spec.writableRoots).toContain('/context');
   });
 
   it('rewrites a host SUBPATH cwd onto /workspace, and falls back to /workspace without worktreeHost', async () => {

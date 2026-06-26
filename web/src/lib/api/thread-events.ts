@@ -49,11 +49,16 @@ export function useThreadEvents(ref: ThreadRef): void {
     let refreshedOnce = false;
     let debounce: ReturnType<typeof setTimeout> | null = null;
 
+    // The 4-element prefix matches every open `/context` file for this thread (the 5th element is the path).
+    const contextFilesKey = qk.threadContextFile(liveRef, '').slice(0, 4);
+
     const refetch = () => {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
         void qc.invalidateQueries({ queryKey: qk.threadMessages(liveRef) });
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(liveRef) });
+        void qc.invalidateQueries({ queryKey: qk.threadContext(liveRef) });
+        void qc.invalidateQueries({ queryKey: contextFilesKey });
       }, 250);
     };
 
@@ -61,6 +66,8 @@ export function useThreadEvents(ref: ThreadRef): void {
       Promise.all([
         qc.invalidateQueries({ queryKey: qk.threadMessages(liveRef) }),
         qc.invalidateQueries({ queryKey: qk.threadPipeline(liveRef) }),
+        qc.invalidateQueries({ queryKey: qk.threadContext(liveRef) }),
+        qc.invalidateQueries({ queryKey: contextFilesKey }),
       ]);
 
     const onFrame = (data: string) => {

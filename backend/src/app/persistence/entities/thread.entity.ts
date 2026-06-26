@@ -5,6 +5,31 @@ import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
 
 /**
+ * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an
+ * idempotency key — a build stage emits the same id repeatedly (the driver fires many events per phase),
+ * the buffer keeps exactly one. `text` is the passive line shown to the brain; `at` orders the prefix.
+ */
+export interface PipelineMarker {
+  id: string;
+  text: string;
+  /** ISO-8601 emission time. */
+  at: string;
+}
+
+/**
+ * The PASSIVE pipeline-milestone awareness buffer (see `driver/pipeline-awareness.*`). NOT a turn
+ * trigger — milestones append here while the brain is idle and are drained + prepended to the next
+ * OPERATOR turn so the brain passively knows where the build stands.
+ *  - `markerQueue` — transient named milestones not yet conveyed (deduped by `id`, drained atomically).
+ *  - `conveyedStateSig` — signature of the last net-current-state summary already conveyed, so the
+ *    state diff only re-states on a real change (null until the first state is conveyed).
+ */
+export interface ThreadPipelineAwareness {
+  markerQueue: PipelineMarker[];
+  conveyedStateSig: string | null;
+}
+
+/**
  * A THREAD — the unit of work. One intent (a feature or a bugfix) = one sandbox = one worktree = one
  * feature branch = ONE PR. A thread may stay a plain conversation (`status='open'`) or enter the build
  * lifecycle; when it builds, the `sections`/`phases` rows hang directly off it (the former `jobs` layer
@@ -81,4 +106,16 @@ export class ThreadEntity extends TimestampedEntity {
   /** The opened PR number — what the merge poll queries GitHub with; null until opened. */
   @Column({ type: 'int', nullable: true })
   pr_number!: number | null;
+
+  /**
+   * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the
+   * brain hasn't been told about yet + the watermark of the last pipeline state conveyed. Drained and
+   * prepended to the next OPERATOR turn's input (never pushed; never wakes the brain). See the
+   * `ThreadPipelineAwareness` doc + `driver/pipeline-awareness.store.ts`.
+   */
+  @Column({
+    type: 'jsonb',
+    default: () => `'{"markerQueue":[],"conveyedStateSig":null}'::jsonb`,
+  })
+  pipeline_awareness!: ThreadPipelineAwareness;
 }

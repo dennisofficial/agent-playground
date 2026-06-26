@@ -19,10 +19,11 @@ import {
 } from 'lucide-react';
 import { KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
+import { formatBytes } from '@/lib/format';
 import { sectionTitle } from '@/lib/section-brief';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { Caret, Divider, PipelineTree, haltSectionIdx } from './pipeline-tree';
-import type { PipelineJob, PipelineState, ThreadKind, ThreadStatus } from '@/lib/api/types';
+import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
 
 export interface ThreadMeta {
   title: string;
@@ -44,6 +45,8 @@ export interface ThreadMeta {
 export function Navigator({
   meta,
   pipeline,
+  context,
+  contextLoading,
   selectedNode,
   convoActive,
   onConversation,
@@ -54,6 +57,9 @@ export function Navigator({
 }: {
   meta: ThreadMeta;
   pipeline: PipelineState | undefined;
+  /** The thread's `/context` files (specs + artifacts) — feeds the SPECS + ARTIFACTS panels. */
+  context: ThreadContext | undefined;
+  contextLoading?: boolean;
   selectedNode: string | null;
   convoActive: boolean;
   onConversation: () => void;
@@ -161,7 +167,13 @@ export function Navigator({
 
         <StateBanner status={st} job={job} onConversation={onConversation} />
 
-        <ContextRegion status={st} selectedNode={selectedNode} onSelectNode={onSelectNode} />
+        <SpecsRegion
+          status={st}
+          specs={context?.specs}
+          loading={contextLoading}
+          selectedNode={selectedNode}
+          onSelectNode={onSelectNode}
+        />
 
         <PipelineRegion
           status={st}
@@ -172,7 +184,14 @@ export function Navigator({
           toggle={toggle}
         />
 
-        <ArtifactsRegion status={st} job={job} selectedNode={selectedNode} onSelectNode={onSelectNode} />
+        <ArtifactsRegion
+          status={st}
+          job={job}
+          artifacts={context?.artifacts}
+          loading={contextLoading}
+          selectedNode={selectedNode}
+          onSelectNode={onSelectNode}
+        />
       </div>
 
       <div className="border-t border-border px-3.5 py-2.5 text-[10px] leading-relaxed text-faint">
@@ -182,21 +201,27 @@ export function Navigator({
   );
 }
 
-// ── CONTEXT (inputs) ──────────────────────────────────────────────────────────────────────────────
+// ── SPECS (the plan files: plan.md, decision-record.md, diagrams) ──────────────────────────────────
 
-function ContextRegion({
+function SpecsRegion({
   status,
+  specs,
+  loading,
   selectedNode,
   onSelectNode,
 }: {
   status: ThreadStatus;
+  specs: ContextFile[] | undefined;
+  loading?: boolean;
   selectedNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  if (status === 'triaging') {
-    return (
-      <>
-        <Divider label="CONTEXT" />
+  const files = specs ?? [];
+  return (
+    <>
+      <Divider label="SPECS" count={files.length > 0 ? files.length : undefined} />
+      {/* An untrusted-seeded thread keeps its provenance note above the (usually empty) spec list. */}
+      {status === 'triaging' ? (
         <div
           className="mx-1.5 mb-1 rounded-md border border-l-2 px-3 py-2.5"
           style={{ borderColor: 'var(--border)', borderLeftColor: 'var(--slate)', background: 'var(--surface-2)' }}
@@ -213,40 +238,22 @@ function ContextRegion({
           </div>
           <p className="text-[10.5px] leading-snug text-dim">An untrusted notification seeded this thread.</p>
         </div>
-        <div className="flex items-center gap-2.5 px-2 py-1.5 opacity-60">
-          <FileText size={12} className="opacity-50" />
-          <span className="flex-1 text-[10.5px] italic text-faint">plan.md forms when you open a thread.</span>
-        </div>
-      </>
-    );
-  }
-
-  const scoping = status === 'scoping';
-  const awaiting = status === 'awaiting_approval';
-  return (
-    <>
-      <Divider label="CONTEXT" />
-      <FileRow
-        icon={<FileText size={12} />}
-        name="plan.md"
-        active={selectedNode === 'plan'}
-        onClick={() => onSelectNode('plan')}
-        note={scoping ? { text: 'drafting', pulse: true } : awaiting ? { text: 'proposed' } : undefined}
-      />
-      {scoping || awaiting ? (
-        <div className="flex items-center gap-2.5 px-2 py-1.5 opacity-50">
-          <Lock size={12} />
-          <span className="flex-1 font-mono text-[11px] text-faint">decision-record.md</span>
-          <span className="font-mono text-[8px] text-faint">empty</span>
-        </div>
+      ) : null}
+      {files.length > 0 ? (
+        files.map((f) => (
+          <FileRow
+            key={f.name}
+            icon={fileIcon(f.name)}
+            name={f.name}
+            active={selectedNode === `spec:${f.name}`}
+            onClick={() => onSelectNode(`spec:${f.name}`)}
+            note={{ text: formatBytes(f.size) }}
+          />
+        ))
+      ) : loading ? (
+        <LoadingRow label="Loading specs…" />
       ) : (
-        <FileRow
-          icon={<Lock size={12} />}
-          name="decision-record.md"
-          dim
-          active={selectedNode === 'decision'}
-          onClick={() => onSelectNode('decision')}
-        />
+        <EmptyRow text="No spec files yet — plan.md & the decision record appear here as the agent drafts them." />
       )}
     </>
   );
@@ -351,20 +358,26 @@ function PipelineRegion({
 function ArtifactsRegion({
   status,
   job,
+  artifacts,
+  loading,
   selectedNode,
   onSelectNode,
 }: {
   status: ThreadStatus;
   job: PipelineJob | null;
+  artifacts: ContextFile[] | undefined;
+  loading?: boolean;
   selectedNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
   const hasPr = Boolean(job?.prUrl);
+  // The diff + PR are derived from the pipeline / thread row (NOT the files endpoint).
   const populated = status === 'done' || hasPr;
+  const files = artifacts ?? [];
 
   return (
     <>
-      <Divider label="ARTIFACTS" />
+      <Divider label="ARTIFACTS" count={files.length > 0 ? files.length : undefined} />
       {populated ? (
         <>
           <FileRow
@@ -388,16 +401,31 @@ function ArtifactsRegion({
               <ArrowUpRight size={12} className="text-faint" />
             </a>
           ) : null}
-          <FileRow icon={<ImageIcon size={12} />} name="screenshots" dim />
         </>
-      ) : (
-        <div className="flex flex-col items-center gap-1.5 px-2 py-3 text-center">
-          <span className="text-[15px] opacity-40">🗂</span>
-          <span className="text-[10px] leading-relaxed text-faint">
-            Nothing shared yet — the agent drops screenshots &amp; files here as it works.
-          </span>
-        </div>
-      )}
+      ) : null}
+      {/* Real output files dropped into /context/artifacts (preview HTML, screenshots, …). */}
+      {files.map((f) => (
+        <FileRow
+          key={f.name}
+          icon={fileIcon(f.name)}
+          name={f.name}
+          active={selectedNode === `artifact:${f.name}`}
+          onClick={() => onSelectNode(`artifact:${f.name}`)}
+          note={{ text: formatBytes(f.size) }}
+        />
+      ))}
+      {!populated && files.length === 0 ? (
+        loading ? (
+          <LoadingRow label="Loading artifacts…" />
+        ) : (
+          <div className="flex flex-col items-center gap-1.5 px-2 py-3 text-center">
+            <span className="text-[15px] opacity-40">🗂</span>
+            <span className="text-[10px] leading-relaxed text-faint">
+              Nothing shared yet — the agent drops screenshots &amp; files here as it works.
+            </span>
+          </div>
+        )
+      ) : null}
     </>
   );
 }
@@ -584,6 +612,27 @@ function FileRow({
   ) : (
     <div className="flex items-center gap-2.5 px-2 py-1.5">{body}</div>
   );
+}
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|avif)$/i;
+/** Pick a file-row icon from the extension (images get the image glyph; everything else a doc). */
+function fileIcon(name: string): ReactNode {
+  return IMAGE_EXT.test(name) ? <ImageIcon size={12} /> : <FileText size={12} />;
+}
+
+/** A muted "loading" placeholder row for a region whose files are still being fetched. */
+function LoadingRow({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2.5 px-2 py-1.5">
+      <span className="h-[7px] w-[7px] shrink-0 animate-pulse rounded-full" style={{ background: 'var(--border-2)' }} />
+      <span className="flex-1 font-mono text-[10.5px] text-faint">{label}</span>
+    </div>
+  );
+}
+
+/** A region's empty-state note (no files yet). */
+function EmptyRow({ text }: { text: string }) {
+  return <p className="px-2 pb-1 pt-1 text-[10.5px] italic leading-relaxed text-faint">{text}</p>;
 }
 
 /** Kebab → "Rename thread" + a two-click "Delete thread" (real `PATCH` / `DELETE …/threads/:id`). */

@@ -29,6 +29,7 @@ import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { PLANNER_LLM, AnthropicPlannerLlm } from './planner-llm';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
+import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { SectionDriver } from './section-driver.service';
 import { ThreadLifecycleService } from './thread-lifecycle.service';
@@ -75,6 +76,7 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
   ],
   providers: [
     DriverStoreService,
+    PipelineAwarenessStore,
     BuildShipService,
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
     {
@@ -93,6 +95,7 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
     JOB_DISPATCHER,
     ThreadLifecycleService,
     DriverStoreService,
+    PipelineAwarenessStore,
     BuildShipService,
     DRIVER_REPO,
   ],

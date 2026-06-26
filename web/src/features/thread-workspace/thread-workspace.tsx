@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAllThreads } from '@/lib/api/inbox';
-import { useThreadMessages, usePipeline, useDeleteThread, useRenameThread } from '@/lib/api/thread-queries';
+import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread } from '@/lib/api/thread-queries';
 import { useThreadEvents } from '@/lib/api/thread-events';
 import { setThreadStatus } from '@/lib/api/thread-status';
 import { toThreadStatus } from '@/lib/api/status';
@@ -39,6 +39,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   const { data: inbox } = useAllThreads();
   const { data: messages = [], isLoading: messagesLoading } = useThreadMessages(ref);
   const { data: pipeline } = usePipeline(ref);
+  const { data: context, isLoading: contextLoading } = useThreadContext(ref);
   const del = useDeleteThread(ref);
   const rename = useRenameThread(ref);
   useThreadEvents(ref);
@@ -109,6 +110,8 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
       <Navigator
         meta={meta}
         pipeline={pipeline}
+        context={context}
+        contextLoading={contextLoading}
         selectedNode={selectedNode}
         convoActive={workMode === 'conversation'}
         onConversation={onConversation}

@@ -186,7 +186,7 @@ export class EngineCore {
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
       // they're host-controlled, never a human prompt. Empty for non-bridge turns (workers).
       allowedTools: [...AUTO_APPROVE, ...(bridgeToolNames ?? [])],
-      canUseTool: makeCanUseTool(readOnly, cwd, (plan) => {
+      canUseTool: makeCanUseTool(readOnly, [cwd, ...(args.writableRoots ?? [])], (plan) => {
         capturedPlan = plan;
       }),
       permissionMode: planMode ? 'plan' : 'default',
@@ -445,12 +445,16 @@ export class EngineCore {
 /** Re-applies the safety boundary to Claude's built-in tools (programmatic gate — never blocks on a
  * human). A 'plan' turn runs under the SDK's native plan mode (the CLI itself enforces read-only);
  * ExitPlanMode's input carries the plan, which we capture then DENY (approving would flip the live
- * session into execution). The Write/Edit/bash read-only branches are belt-and-braces. */
+ * session into execution). The Write/Edit/bash read-only branches are belt-and-braces.
+ *
+ * `roots` is the set of directories Write/Edit may target (the worktree `cwd` plus any extra writable
+ * mounts like the durable `/context` shared folder). A write is allowed if it lands inside ANY root. */
 export function makeCanUseTool(
   readOnly: boolean,
-  root: string,
+  roots: string | string[],
   onPlan: (plan: string) => void,
 ): CanUseTool {
+  const allowedRoots = (Array.isArray(roots) ? roots : [roots]).filter(Boolean);
   return async (toolName, input): Promise<PermissionResult> => {
     if (toolName === 'ExitPlanMode') {
       if (typeof input.plan === 'string') onPlan(input.plan);
@@ -461,8 +465,11 @@ export function makeCanUseTool(
     }
     if (toolName === 'Write' || toolName === 'Edit') {
       const path = typeof input.file_path === 'string' ? input.file_path : '';
-      if (path && !isInsideRoot(path, root)) {
-        return { behavior: 'deny', message: `Write outside the worktree is not allowed: ${path}` };
+      if (path && !allowedRoots.some((root) => isInsideRoot(path, root))) {
+        return {
+          behavior: 'deny',
+          message: `Write outside the allowed roots (${allowedRoots.join(', ')}) is not allowed: ${path}`,
+        };
       }
     }
     return { behavior: 'allow', updatedInput: input };

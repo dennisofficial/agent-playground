@@ -374,6 +374,8 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     // BuildShipService: the real terminal "ship" over the same git/pr/autofix/store fakes, so the
     // PR-tail assertions (pushed/opened/setPrReady) hold exactly as before the extraction.
     new BuildShipService(autofix.autofix, git, pr, store),
+    // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
+    { appendMarker: async () => undefined, drainAndAdvance: async () => ({ markers: [], stateChanged: false }) } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
   );
   return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts };
 }

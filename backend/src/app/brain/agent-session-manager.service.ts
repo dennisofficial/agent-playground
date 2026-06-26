@@ -10,6 +10,12 @@ import { ThreadSandboxEntity } from '../persistence/entities';
 import { ProvisioningNotReadyError, ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService } from '../driver/build-ship.service';
+import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
+import {
+  pipelineStateSignature,
+  renderAwarenessPrefix,
+  renderPipelineStateSummary,
+} from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import { DecisionClassifier } from '../decision-gate';
 import type { Decision } from '../domain';
@@ -73,6 +79,8 @@ export class AgentSessionManager {
     private readonly classifier: DecisionClassifier,
     private readonly ship: BuildShipService,
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
+    // Passive pipeline-milestone awareness: the durable per-thread buffer drained into each operator turn.
+    private readonly awareness: PipelineAwarenessStore,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -128,9 +136,18 @@ export class AgentSessionManager {
     '    (decisionClass: data_model | api_contract | dependency | infrastructure | cross_cutting | one_way_door)',
     '  - sections: the ordered section TITLES (e.g. ["Toggle", "Tokens", "Docs"]) — just the labels; the',
     '    detail lives in `/context/specs/plan.md`, which the build reads. Do NOT attach files here.',
+    'SECTION GRANULARITY: a section is a BROAD, COHERENT MILESTONE (a slice you could demo or review on its',
+    'own), NOT a single technical component. The fine steps — the data model, a migration, one service, the',
+    'wiring — are PHASES the build planner derives JIT INSIDE a section; do NOT list them as sections. Prefer',
+    'FEW, BROAD sections (≈1–4 for a typical feature). Do NOT split purely by technical layer',
+    '(model / service / worker / API / UI) — that produces narrow, tightly-coupled sections; group related',
+    'work into a milestone instead (e.g. "Scheduling engine (backend)" with the model+service+worker as its',
+    'phases, "Schedules panel" with the API+UI as its phases). Splitting by layer is right ONLY when a layer',
+    'is genuinely large on its own. Broad sections do not bloat context — each phase is a fresh engine turn.',
     'SELF-CHECK before submit_plan: every applicable always-ask decision locked? could a fresh engineer build',
-    'from `plan.md` with ZERO further questions to you? is it grounded in files you actually opened? Do NOT',
-    'add an "investigate the codebase" section — sections are real build work.',
+    'from `plan.md` with ZERO further questions to you? is it grounded in files you actually opened? is each',
+    'section a coherent milestone (not a lone component)? Do NOT add an "investigate the codebase" section —',
+    'sections are real build work.',
     '',
     'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no sections/phases).',
     'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
@@ -217,7 +234,18 @@ export class AgentSessionManager {
 
     // Cold re-attach while resuming a session → the session remembers in-container state that's gone.
     // Prepend the reset notice so it re-establishes its runtime instead of trusting stale beliefs.
-    const task = ensured.wasReset && sessionId ? `${SANDBOX_RESET_NOTICE}\n\n${stimulus.body}` : stimulus.body;
+    let task = ensured.wasReset && sessionId ? `${SANDBOX_RESET_NOTICE}\n\n${stimulus.body}` : stimulus.body;
+
+    // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
+    // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
+    // un-injected — atomically drain any milestones buffered while the brain was idle + the net-state
+    // delta, and PREPEND a clearly-passive summary so the brain knows where the build stands. SYNTHETIC
+    // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpThread must not consume the
+    // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
+    if (isOperatorAuthored(stimulus)) {
+      const awarenessPrefix = await this.buildAwarenessPrefix(stimulus.threadId, stimulus.orgId);
+      if (awarenessPrefix) task = `${awarenessPrefix}\n\n${task}`;
+    }
 
     // Build the host-side tool dispatch table, scoped to this thread.
     const tools = this.buildTools(stimulus);
@@ -693,10 +721,28 @@ export class AgentSessionManager {
           stimulus.threadId,
           'Approved — implementing the change directly.',
         );
+        // Passive milestone (drained into the NEXT operator turn — the synthetic direct-build turn skips
+        // the drain). Recorded AFTER the durable `approve`.
+        await this.recordMilestone(
+          stimulus.threadId,
+          `approved:${decisionRecordId}`,
+          'Your direct-build plan was approved; I am implementing it directly now.',
+        );
         void this.runDirectBuild(stimulus, running);
       } else {
         await this.dispatcher.dispatch(running);
         await this.store.appendAtlasMessage(stimulus.threadId, 'Plan approved — dispatching the build.');
+        // Passive milestones — recorded AFTER the durable `approve` + `dispatch`.
+        await this.recordMilestone(
+          stimulus.threadId,
+          `approved:${decisionRecordId}`,
+          'Your plan was approved by the operator.',
+        );
+        await this.recordMilestone(
+          stimulus.threadId,
+          `dispatched:${decisionRecordId}`,
+          'The build pipeline has started running the approved plan.',
+        );
       }
       return;
     }
@@ -776,6 +822,39 @@ export class AgentSessionManager {
     await this.handleChatTurn(stimulus);
   }
 
+  // ── Passive pipeline-milestone awareness ─────────────────────────────────────────────────────────
+
+  /**
+   * Drain the thread's buffered milestones + the net-current-state delta and render the clearly-passive
+   * prefix to prepend to this OPERATOR turn (null when there's nothing to convey). Atomic drain (a single
+   * locked transaction in the store) so a milestone the driver appends mid-turn isn't read-cleared and
+   * lost. Best-effort: any failure returns null so the turn proceeds — `get_pipeline_state` remains the
+   * authoritative pull.
+   */
+  private async buildAwarenessPrefix(threadId: string, orgId: string): Promise<string | null> {
+    try {
+      const state = await this.driverStore.getPipelineState(threadId, orgId);
+      const sig = pipelineStateSignature(state);
+      const { markers, stateChanged } = await this.awareness.drainAndAdvance(threadId, sig);
+      if (markers.length === 0 && !stateChanged) return null;
+      const prefix = renderAwarenessPrefix(
+        markers,
+        stateChanged ? renderPipelineStateSummary(state) : null,
+      );
+      return prefix || null;
+    } catch (err) {
+      this.logger.debug(`pipeline-awareness prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /** Buffer a passive pipeline milestone for the brain (no turn runs). Best-effort + idempotent by `id`. */
+  private async recordMilestone(threadId: string, id: string, text: string): Promise<void> {
+    await this.awareness
+      .appendMarker(threadId, { id, text, at: new Date().toISOString() })
+      .catch((err) => this.logger.debug(`milestone append failed (continuing): ${err}`));
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────
 
   /** Post a reply in-thread AND append it to the durable transcript. */
@@ -811,6 +890,16 @@ export class AgentSessionManager {
       kind,
     });
   }
+}
+
+/** The synthetic author id Atlas stamps on its own (non-operator) turns — runDirectBuild /
+ *  startFollowUpThread. The passive-awareness flush is gated on this so a background turn never drains
+ *  the buffer before the operator sees it. */
+const ATLAS_AUTHOR_ID = 'atlas';
+
+/** True when a turn was authored by the operator (not a synthetic Atlas-authored turn). */
+function isOperatorAuthored(stimulus: ChatStimulus): boolean {
+  return stimulus.author.id !== ATLAS_AUTHOR_ID;
 }
 
 /** Normalize a raw `decisions` tool arg into typed locked decisions (drops malformed entries). */

@@ -2,7 +2,14 @@
 
 import { env } from '@/lib/env';
 import { fetchWithRefresh } from './refresh';
-import type { ApprovalActionId, PipelineJob, PipelineState, WebCard } from './types';
+import type {
+  ApprovalActionId,
+  ContextFileContent,
+  PipelineJob,
+  PipelineState,
+  ThreadContext,
+  WebCard,
+} from './types';
 
 /**
  * The org → repo → thread web API (`/web/orgs/:orgId/repos/:repoId/threads/:threadId/...`). Every call
@@ -138,6 +145,19 @@ export function fetchPipeline(ref: ThreadRef): Promise<PipelineState> {
 export function pipelineJob(state: PipelineState | undefined): PipelineJob | null {
   if (!state || state.status === 'no_job') return null;
   return state;
+}
+
+// ── Context (specs + artifacts files) ────────────────────────────────────────────────────────────
+/** List the thread's `/context` files, grouped into `specs` (plan) + `artifacts` (outputs). */
+export function fetchThreadContext(ref: ThreadRef): Promise<ThreadContext> {
+  return webJson<ThreadContext>(threadPath(ref, '/context'));
+}
+
+/** Read one `/context` file's content (`path` is bucket-relative, e.g. `specs/plan.md`). */
+export function fetchContextFile(ref: ThreadRef, path: string): Promise<ContextFileContent> {
+  return webJson<ContextFileContent>(
+    threadPath(ref, `/context/file?path=${encodeURIComponent(path)}`),
+  );
 }
 
 // ── Rename (the only thread Update op) ───────────────────────────────────────────────────────────

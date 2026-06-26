@@ -126,6 +126,32 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(res.usage).toMatchObject({ inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
   });
 
+  it('execute mode: canUseTool allows Write inside cwd OR a writableRoot, denies elsewhere', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    await core.run({
+      engine: 'claude',
+      task: 'do it',
+      cwd: '/workspace',
+      systemPrompt: 'persona',
+      sandboxKey: 'acme--feat',
+      mode: 'execute',
+      // The durable `/context` shared mount the docker runner grants so the brain can author the plan.
+      writableRoots: ['/context'],
+    });
+    const canUseTool = captured.options!.canUseTool as (
+      name: string,
+      input: Record<string, unknown>,
+    ) => Promise<{ behavior: string }>;
+    // Inside the worktree → allowed.
+    expect(await canUseTool('Write', { file_path: '/workspace/src/x.ts' })).toMatchObject({ behavior: 'allow' });
+    // Inside the extra writable root (`/context`) → allowed (was the Bash-fallback bug).
+    expect(await canUseTool('Write', { file_path: '/context/specs/plan.md' })).toMatchObject({ behavior: 'allow' });
+    expect(await canUseTool('Edit', { file_path: '/context/artifacts/preview.html' })).toMatchObject({ behavior: 'allow' });
+    // Outside both → denied.
+    expect(await canUseTool('Write', { file_path: '/etc/passwd' })).toMatchObject({ behavior: 'deny' });
+  });
+
   it('plan mode: permissionMode plan, ExitPlanMode tool present, no writes flag in canUseTool', async () => {
     const { sdk, captured } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });

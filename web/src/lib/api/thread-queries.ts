@@ -6,9 +6,11 @@ import {
   approveThread,
   createThread,
   deleteThread,
+  fetchContextFile,
   fetchMessages,
   fetchOrgRepos,
   fetchPipeline,
+  fetchThreadContext,
   renameThread,
   sayMessage,
   type ApproveBody,
@@ -39,6 +41,26 @@ export function usePipeline(ref: ThreadRef) {
     queryKey: qk.threadPipeline(ref),
     queryFn: () => fetchPipeline(ref),
     enabled: hasRef(ref),
+    staleTime: 5_000,
+  });
+}
+
+/** A thread's `/context` files (specs + artifacts). SSE keeps it fresh via `useThreadEvents`. */
+export function useThreadContext(ref: ThreadRef) {
+  return useQuery({
+    queryKey: qk.threadContext(ref),
+    queryFn: () => fetchThreadContext(ref),
+    enabled: hasRef(ref),
+    staleTime: 5_000,
+  });
+}
+
+/** One `/context` file's content (`path` bucket-relative, e.g. `specs/plan.md`). Lazy — only when opened. */
+export function useContextFile(ref: ThreadRef, path: string | null) {
+  return useQuery({
+    queryKey: qk.threadContextFile(ref, path ?? ''),
+    queryFn: () => fetchContextFile(ref, path!),
+    enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
   });
 }

@@ -18,6 +18,7 @@ import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import { BuildShipService } from './build-ship.service';
+import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
   DriverStoreService,
   type DriverSection,
@@ -70,7 +71,19 @@ export class SectionDriver implements JobDispatcher {
     private readonly creds: CredentialResolver,
     private readonly threadLifecycle: ThreadLifecycleService,
     private readonly ship: BuildShipService,
+    private readonly awareness: PipelineAwarenessStore,
   ) {}
+
+  /**
+   * Buffer a PASSIVE pipeline milestone for the thread brain (no turn runs; it's drained into the next
+   * operator turn). Best-effort + idempotent (deduped by `id`): the driver fires the same stage boundary
+   * repeatedly across a resume, so the buffer keeps one. A failed append never breaks the build.
+   */
+  private async recordMilestone(threadId: string, id: string, text: string): Promise<void> {
+    await this.awareness
+      .appendMarker(threadId, { id, text, at: new Date().toISOString() })
+      .catch((err) => this.logger.debug(`milestone append failed (continuing): ${err}`));
+  }
 
   /** Sanity ceiling on a job's sections — a malformed plan can't drive an unbounded build. */
   private get maxSections(): number {
@@ -392,12 +405,24 @@ export class SectionDriver implements JobDispatcher {
       .catch((err) =>
         this.logger.warn(`section auto-fix failed (continuing): ${err}`),
       );
+    // Passive milestone: auto-fix is a transient stage (section status is overwritten to `done` next), so
+    // the net-state snapshot can't reconstruct that it ran — record it explicitly for the brain.
+    await this.recordMilestone(
+      job.id,
+      `section:${section.id}:autofix`,
+      `Auto-fix pass applied over the diff for section "${section.brief}".`,
+    );
 
     // g. HANDOFF — summarize what this section produced for the next.
     const handoffOut = await this.summarizeHandoff(section, phases, reports, job.orgId);
     await this.store.setSectionHandoffOut(section.id, handoffOut);
     await this.store.setSectionStatus(section.id, 'done');
     this.logger.log(`section ${section.ordinal} done`);
+    await this.recordMilestone(
+      job.id,
+      `section:${section.id}:done`,
+      `Section "${section.brief}" finished building.`,
+    );
     await this.post(
       route,
       `:white_check_mark: Section done — *${section.brief}*`,
@@ -554,6 +579,13 @@ export class SectionDriver implements JobDispatcher {
         );
         this.logger.log(
           `section ${section.ordinal} unparked: ${answer.text.slice(0, 80)}`,
+        );
+        // Passive milestone: a guard parked on a decision and the human answered it — a transient moment
+        // the net-state snapshot can't reconstruct (the section status moves on). Deduped by the decision.
+        await this.recordMilestone(
+          job.id,
+          `section:${section.id}:gate:${proposed.description.slice(0, 60)}`,
+          `While planning section "${section.brief}" a decision was raised and the operator answered it: ${proposed.description}`,
         );
         // The human answered → treat the always-ask as now-settled and continue (it was visible + ruled).
       } else {

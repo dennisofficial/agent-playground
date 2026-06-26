@@ -8,12 +8,14 @@ import {
   NotFoundException,
   Param,
   Patch,
+  PayloadTooLargeException,
   Post,
+  Query,
   Sse,
   UseGuards,
 } from '@nestjs/common';
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import { Observable, defer, filter, from, map, merge } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
@@ -46,6 +48,69 @@ export interface ContextFile {
   size: number;
   /** ISO timestamp of last modification. */
   mtime: string;
+}
+
+/** One `/context` file's content for the viewer (`…/context/file?path=…`). */
+export interface ContextFileContent {
+  name: string;
+  /** Path relative to the `/context` root, forward-slashed (e.g. `specs/plan.md`). */
+  path: string;
+  size: number;
+  /** ISO timestamp of last modification. */
+  mtime: string;
+  /** `text` → utf-8 in `content`; `base64` → binary (images) in `content`. */
+  encoding: 'text' | 'base64';
+  /** Best-effort mime by extension (e.g. `text/markdown`, `image/png`). */
+  mime: string;
+  content: string;
+}
+
+/** Preview cap — text is tiny, screenshots a few hundred KB; refuse anything pathological. */
+const MAX_CONTEXT_FILE_BYTES = 2 * 1024 * 1024;
+
+/** Best-effort mime + text/binary split by extension. Unknown → text/plain (we still cap the size). */
+const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
+  '.md': { mime: 'text/markdown', binary: false },
+  '.markdown': { mime: 'text/markdown', binary: false },
+  '.txt': { mime: 'text/plain', binary: false },
+  '.log': { mime: 'text/plain', binary: false },
+  '.json': { mime: 'application/json', binary: false },
+  '.html': { mime: 'text/html', binary: false },
+  '.htm': { mime: 'text/html', binary: false },
+  '.css': { mime: 'text/css', binary: false },
+  '.js': { mime: 'text/javascript', binary: false },
+  '.ts': { mime: 'text/plain', binary: false },
+  '.tsx': { mime: 'text/plain', binary: false },
+  '.yaml': { mime: 'text/plain', binary: false },
+  '.yml': { mime: 'text/plain', binary: false },
+  '.csv': { mime: 'text/csv', binary: false },
+  '.xml': { mime: 'application/xml', binary: false },
+  '.svg': { mime: 'image/svg+xml', binary: false }, // text content, rendered as an image
+  '.png': { mime: 'image/png', binary: true },
+  '.jpg': { mime: 'image/jpeg', binary: true },
+  '.jpeg': { mime: 'image/jpeg', binary: true },
+  '.gif': { mime: 'image/gif', binary: true },
+  '.webp': { mime: 'image/webp', binary: true },
+  '.avif': { mime: 'image/avif', binary: true },
+};
+
+/**
+ * Resolve a caller-supplied relative path WITHIN the thread's `/context` root, restricted to the two
+ * exposed buckets (specs/ + artifacts/). Rejects absolute paths and any `..` traversal that escapes the
+ * root — the only files readable are the ones the listing endpoint already exposes.
+ */
+function resolveContextFilePath(root: string, relPath: string): string {
+  const cleaned = relPath.replace(/^[/\\]+/, '');
+  const abs = resolve(root, cleaned);
+  const rootWithSep = root.endsWith(sep) ? root : root + sep;
+  if (!abs.startsWith(rootWithSep)) {
+    throw new BadRequestException('path escapes the context directory');
+  }
+  const bucket = relative(root, abs).split(sep)[0];
+  if (bucket !== 'specs' && bucket !== 'artifacts') {
+    throw new BadRequestException('path must be inside specs/ or artifacts/');
+  }
+  return abs;
 }
 
 /** List the files in one `/context` bucket dir (missing dir → empty), name-sorted. Files only. */
@@ -364,6 +429,48 @@ export class WebSurfaceController {
     return {
       specs: listContextBucket(join(root, 'specs')),
       artifacts: listContextBucket(join(root, 'artifacts')),
+    };
+  }
+
+  /**
+   * `GET …/threads/:threadId/context/file?path=specs/plan.md` — read ONE `/context` file for the viewer.
+   * Text files (.md, .json, …) come back utf-8; images come back base64. Capped at 2 MB; the path is
+   * guarded to the thread's own specs/ + artifacts/ buckets (no traversal, no cross-thread reads).
+   */
+  @Get('orgs/:orgId/repos/:repoId/threads/:threadId/context/file')
+  @UseGuards(OrgMembershipGuard)
+  async contextFile(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('threadId') threadId: string,
+    @Query('path') relPath: string,
+  ): Promise<ContextFileContent> {
+    await this.requireThread(threadId, org.id);
+    if (!relPath) throw new BadRequestException('path is required');
+    const root = this.threadLifecycle.contextDirHost(threadId, org.id);
+    const abs = resolveContextFilePath(root, relPath);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(abs);
+    } catch {
+      throw new NotFoundException('file not found');
+    }
+    if (!st.isFile()) throw new NotFoundException('not a file');
+    if (st.size > MAX_CONTEXT_FILE_BYTES) {
+      throw new PayloadTooLargeException(
+        `file too large to preview (${st.size} bytes; limit ${MAX_CONTEXT_FILE_BYTES})`,
+      );
+    }
+    const ext = extname(abs).toLowerCase();
+    const { mime, binary } = MIME_BY_EXT[ext] ?? { mime: 'text/plain', binary: false };
+    const buf = readFileSync(abs);
+    return {
+      name: basename(abs),
+      path: relative(root, abs).split(sep).join('/'),
+      size: st.size,
+      mtime: st.mtime.toISOString(),
+      encoding: binary ? 'base64' : 'text',
+      mime,
+      content: binary ? buf.toString('base64') : buf.toString('utf8'),
     };
   }
 

@@ -16,4 +16,10 @@ export const qk = {
   /** One thread's pipeline (job + sections). */
   threadPipeline: (ref: { orgId: string; repoId: string; threadId: string }) =>
     ['thread-pipeline', ref.orgId, ref.repoId, ref.threadId] as const,
+  /** One thread's `/context` file listing (specs + artifacts). */
+  threadContext: (ref: { orgId: string; repoId: string; threadId: string }) =>
+    ['thread-context', ref.orgId, ref.repoId, ref.threadId] as const,
+  /** One `/context` file's content. The 4-element prefix matches every open file for the thread. */
+  threadContextFile: (ref: { orgId: string; repoId: string; threadId: string }, path: string) =>
+    ['thread-context-file', ref.orgId, ref.repoId, ref.threadId, path] as const,
 };

@@ -76,6 +76,10 @@ export class DockerEngineRunner implements EngineRunnerPort {
       engine: args.engine,
       task: args.task,
       cwd: this.toContainerCwd(args.cwd, target),
+      // The durable `/context` shared mount lives OUTSIDE the worktree, so grant it as a writable root
+      // (the brain authors the plan/spec there; the worktree-only boundary would otherwise deny Write
+      // and force a Bash fallback). Already a container path — no host→container rebasing needed.
+      writableRoots: [CONTAINER_CONTEXT, ...(args.writableRoots ?? [])],
       systemPrompt: args.systemPrompt,
       sandboxKey: args.sandboxKey,
       mode: args.mode,

@@ -1,14 +1,18 @@
 'use client';
 
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ArrowLeft, Info } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { useSay } from '@/lib/api/thread-queries';
+import { formatBytes } from '@/lib/format';
+import { useContextFile, useSay } from '@/lib/api/thread-queries';
 import { sectionTitle } from '@/lib/section-brief';
 import { VerdictButtons } from './approval-card';
 import { pipelineJob, type ThreadMessage, type ThreadRef } from '@/lib/api/thread-api';
 import {
   APPROVE_ACTION_ID,
+  type ContextFileContent,
   type PipelineState,
   type WebApprovalCard,
 } from '@/lib/api/types';
@@ -51,6 +55,10 @@ export function PhaseView({
     body = <DecisionDoc card={approvalCard} />;
   } else if (selectedNode === 'diff') {
     body = <DiffView />;
+  } else if (selectedNode.startsWith('spec:')) {
+    body = <FileView threadRef={threadRef} path={`specs/${selectedNode.slice('spec:'.length)}`} />;
+  } else if (selectedNode.startsWith('artifact:')) {
+    body = <FileView threadRef={threadRef} path={`artifacts/${selectedNode.slice('artifact:'.length)}`} />;
   } else if (selectedNode.startsWith('secplan:')) {
     const id = selectedNode.slice('secplan:'.length);
     const sec = job?.sections.find((s) => s.id === id) ?? null;
@@ -404,6 +412,79 @@ function ReviewView({ lens }: { lens: string }) {
     </div>
   );
 }
+
+// ── Context file viewer (specs / artifacts) ───────────────────────────────────────────────────────
+/** Render one real `/context` file: markdown → prose, images → inline, anything else → mono text. */
+function FileView({ threadRef, path }: { threadRef: ThreadRef; path: string }) {
+  const { data, isLoading, error } = useContextFile(threadRef, path);
+  const name = path.split('/').pop() ?? path;
+  return (
+    <div className="h-full overflow-y-auto px-8 py-7">
+      <div className="max-w-[820px]">
+        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">{name}</div>
+        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">
+          {path}
+          {data ? ` · ${formatBytes(data.size)}` : ''}
+        </div>
+        {isLoading ? (
+          <p className="font-mono text-[11.5px] text-faint">Loading…</p>
+        ) : error ? (
+          <Placeholder
+            title="Couldn’t load file"
+            body={error instanceof Error ? error.message : 'Unknown error reading this file.'}
+          />
+        ) : data ? (
+          <FileBody file={data} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FileBody({ file }: { file: ContextFileContent }) {
+  if (file.mime.startsWith('image/')) {
+    const src =
+      file.encoding === 'base64'
+        ? `data:${file.mime};base64,${file.content}`
+        : `data:${file.mime};utf8,${encodeURIComponent(file.content)}`;
+    // eslint-disable-next-line @next/next/no-img-element -- a data: URL, not a remote asset for next/image
+    return <img src={src} alt={file.name} className="max-w-full rounded-md border border-border" />;
+  }
+  if (file.content.trim() === '') {
+    return <p className="font-mono text-[11.5px] italic text-faint">This file is empty.</p>;
+  }
+  if (file.mime === 'text/markdown') {
+    return (
+      <div className="prose prose-sm max-w-none" style={PROSE_THEME}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{file.content}</ReactMarkdown>
+      </div>
+    );
+  }
+  return (
+    <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 px-4 py-3 font-mono text-[12px] leading-relaxed text-dim">
+      {file.content}
+    </pre>
+  );
+}
+
+/** Map the typography plugin's color vars onto the app theme tokens so prose works in any theme. */
+const PROSE_THEME = {
+  '--tw-prose-body': 'var(--text)',
+  '--tw-prose-headings': 'var(--text)',
+  '--tw-prose-bold': 'var(--text)',
+  '--tw-prose-links': 'var(--accent)',
+  '--tw-prose-code': 'var(--text)',
+  '--tw-prose-quotes': 'var(--dim)',
+  '--tw-prose-quote-borders': 'var(--border)',
+  '--tw-prose-bullets': 'var(--border-2)',
+  '--tw-prose-counters': 'var(--faint)',
+  '--tw-prose-hr': 'var(--border)',
+  '--tw-prose-captions': 'var(--faint)',
+  '--tw-prose-pre-bg': 'var(--surface-2)',
+  '--tw-prose-pre-code': 'var(--dim)',
+  '--tw-prose-th-borders': 'var(--border)',
+  '--tw-prose-td-borders': 'var(--hair)',
+} as React.CSSProperties;
 
 // ── shared bits ──────────────────────────────────────────────────────────────────────────────────
 function Placeholder({ title, body }: { title: string; body: string }) {

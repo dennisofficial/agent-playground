@@ -160,6 +160,14 @@ export interface RunEngineArgs {
   task: string;
   /** Working directory the engine is scoped to (the per-feature worktree). */
   cwd: string;
+  /**
+   * Extra absolute roots (beyond `cwd`) that Write/Edit may target on an execute turn. Already
+   * resolved to the engine's filesystem view (container paths in-sandbox) — NOT host paths to rebase.
+   * The docker runner sets this to the durable `/context` shared mount so the brain can author the
+   * plan/spec there (it lives OUTSIDE the worktree, so the worktree-only boundary would otherwise
+   * force a Bash fallback). Empty/omitted → writes are confined to `cwd`.
+   */
+  writableRoots?: string[];
   /** The system prompt / persona for this turn (Codex seeds it as a first-turn preamble). */
   systemPrompt: string;
   /**

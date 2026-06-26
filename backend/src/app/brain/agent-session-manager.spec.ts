@@ -9,6 +9,7 @@ import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service'
 import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
+import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { DecisionClassifier } from '../decision-gate';
 import type { ChatSurface, LiveTurnStore } from '../surface';
 import type { Repository } from 'typeorm';
@@ -77,6 +78,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     resolve: vi.fn().mockResolvedValue({ owner: 'o', repo: 'r', defaultBranch: 'main', token: 't' }),
   } as unknown as DriverRepoResolver;
 
+  // Passive pipeline-awareness buffer — append is a no-op; drain conveys nothing in these unit tests.
+  const mockAwareness = {
+    appendMarker: vi.fn().mockResolvedValue(undefined),
+    drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
+  } as unknown as PipelineAwarenessStore;
+
   /**
    * R4: mock PlanReviewService that immediately returns null (guard already fired) — so the R3 spec's
    * assertions on persistPlan + approval card still hold.  The R4 spec separately exercises the review
@@ -137,6 +144,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       via: 'rule',
     });
 
+    // Passive-awareness defaults (resetAllMocks wiped the resolved values) — append is a no-op promise.
+    (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockAwareness.drainAndAdvance as ReturnType<typeof vi.fn>).mockResolvedValue({
+      markers: [],
+      stateChanged: false,
+    });
+
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
@@ -188,6 +202,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockClassifier,
       mockShip,
       mockRepos,
+      mockAwareness,
     );
   });
 
@@ -301,6 +316,31 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
+
+  it('(d) approve buffers PASSIVE "approved" + "dispatched" milestones (no brain turn) after the durable approve/dispatch', async () => {
+    const runningJob = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting' };
+    (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(runningJob);
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+      jobId: FAKE_JOB_ID,
+      verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'U-OP' }),
+    });
+
+    await manager.requestApprovalAndAct(
+      fakeStimulus,
+      runningJob as never,
+      FAKE_RECORD_ID,
+      { jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, title: 'rate limiting', summary: 'x', decisions: [], sections: [] } as never,
+    );
+
+    // The build was dispatched (the durable action) — and the milestones were buffered AFTER it, not pushed.
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(runningJob);
+    const markerIds = (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => (c[1] as { id: string }).id,
+    );
+    expect(markerIds).toContain(`approved:${FAKE_RECORD_ID}`);
+    expect(markerIds).toContain(`dispatched:${FAKE_RECORD_ID}`);
+  });
 });
 
 describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {
@@ -325,6 +365,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     findSandbox?: unknown;
     ensureProvisioned?: ReturnType<typeof vi.fn>;
     run?: ReturnType<typeof vi.fn>;
+    drainAndAdvance?: ReturnType<typeof vi.fn>;
   }) {
     const store = {
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
@@ -349,10 +390,18 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     } as unknown as Repository<ThreadSandboxEntity>;
     const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as DockerEngineRunner;
     const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+    const driverStore = {
+      getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),
+    } as unknown as DriverStoreService;
+    const awareness = {
+      appendMarker: vi.fn().mockResolvedValue(undefined),
+      drainAndAdvance:
+        opts.drainAndAdvance ?? vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
+    } as unknown as PipelineAwarenessStore;
 
     const manager = new AgentSessionManager(
       store,
-      {} as unknown as DriverStoreService,
+      driverStore,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       lifecycle,
@@ -365,8 +414,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
+      awareness,
     );
-    return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns };
+    return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, awareness };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -456,6 +506,55 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(dockerRunner.run).not.toHaveBeenCalled();
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('finish connecting this repo');
   });
+
+  it('PASSIVE awareness: an OPERATOR turn drains the buffer and PREPENDS the passive summary to the turn input', async () => {
+    const drainAndAdvance = vi.fn().mockResolvedValue({
+      markers: [
+        { id: 'approved:dr-1', text: 'Your plan was approved by the operator.', at: '2026-06-26T00:00:00.000Z' },
+      ],
+      stateChanged: false,
+    });
+    const { manager, dockerRunner, awareness } = makeManager({ drainAndAdvance });
+
+    await manager.handleChatTurn(stimulus); // stimulus.author.id = 'U-OP' → operator
+
+    expect((awareness.drainAndAdvance as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(THREAD_ID);
+    const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
+    expect(runArgs.task).toContain('informational, no action needed unless asked');
+    expect(runArgs.task).toContain('Your plan was approved by the operator.');
+    // The operator's actual message is preserved AFTER the passive prefix.
+    expect(runArgs.task).toContain('Explain the build step');
+  });
+
+  it('PASSIVE awareness: a SYNTHETIC (Atlas-authored) turn does NOT drain the buffer', async () => {
+    const drainAndAdvance = vi.fn().mockResolvedValue({ markers: [], stateChanged: false });
+    const { manager, dockerRunner, awareness } = makeManager({ drainAndAdvance });
+
+    // runDirectBuild / startFollowUpThread stamp author.id = 'atlas' — these must not consume the buffer.
+    const synthetic: ChatStimulus = { ...stimulus, author: { id: 'atlas', displayName: 'Atlas' } };
+    await manager.handleChatTurn(synthetic);
+
+    expect(awareness.drainAndAdvance as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
+    expect(runArgs.task).toBe('Explain the build step'); // no prefix injected
+  });
+
+  it('PASSIVE awareness: a turn that fails the provisioning guard never drains the buffer', async () => {
+    const drainAndAdvance = vi.fn().mockResolvedValue({ markers: [], stateChanged: false });
+    const ensureProvisioned = vi
+      .fn()
+      .mockRejectedValue(new ProvisioningNotReadyError('finish connecting this repo in settings'));
+    const { manager, dockerRunner, awareness } = makeManager({
+      findSandbox: { worktreePath: '/wt' },
+      ensureProvisioned,
+      drainAndAdvance,
+    });
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(dockerRunner.run).not.toHaveBeenCalled();
+    expect(awareness.drainAndAdvance as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
 });
 
 describe('AgentSessionManager — create_thread tool (independent follow-up)', () => {
@@ -498,6 +597,10 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
+      {
+        appendMarker: vi.fn().mockResolvedValue(undefined),
+        drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
+      } as unknown as PipelineAwarenessStore,
     );
     return { manager, store };
   }
