@@ -1,0 +1,220 @@
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Logger,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
+import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
+import { OrgMembershipGuard } from '../org/org-membership.guard';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { RepoEntity, TicketEntity } from '../persistence/entities';
+import { TicketService, type TicketDetail } from './ticket.service';
+
+interface CreateTicketDto {
+  title: string;
+  body?: string | null;
+  status?: TicketStatus;
+  priority?: TicketPriority | null;
+  kind?: TicketKind | null;
+  dependsOn?: string[];
+}
+interface UpdateTicketDto {
+  title?: string;
+  body?: string | null;
+  status?: TicketStatus;
+  priority?: TicketPriority | null;
+  kind?: TicketKind | null;
+  sortOrder?: number;
+}
+interface AddDependencyDto {
+  dependsOnTicketId: string;
+}
+
+/**
+ * TICKETS — the per-repo board/backlog HTTP edge. All routes live under
+ * `/web/orgs/:orgId/repos/:repoId/tickets`, gated by the global `AuthGuard` (cookie) AND
+ * `OrgMembershipGuard` (membership). Mirrors the thread controller's conventions: `@CurrentOrg` for the
+ * tenant, inline DTOs + manual validation, every op scoped to the caller's org+repo. The service does
+ * the field-level allow-list validation (shared with the brain tools).
+ */
+@Controller('web')
+export class TicketController {
+  private readonly logger = new Logger(TicketController.name);
+
+  constructor(
+    private readonly tickets: TicketService,
+    @InjectRepository(RepoEntity, DB_CONNECTION)
+    private readonly repos: Repository<RepoEntity>,
+  ) {}
+
+  /** `GET …/repos/:repoId/tickets?status=&q=` — the repo's board + backlog. */
+  @Get('orgs/:orgId/repos/:repoId/tickets')
+  @UseGuards(OrgMembershipGuard)
+  async list(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Query('status') status?: string,
+    @Query('q') q?: string,
+  ): Promise<unknown[]> {
+    const rows = await this.tickets.list({
+      orgId: org.id,
+      repoId,
+      status: status as TicketStatus | undefined,
+      q,
+    });
+    return rows.map(toTicketDto);
+  }
+
+  /** `POST …/repos/:repoId/tickets` — create a ticket on the repo's board. */
+  @Post('orgs/:orgId/repos/:repoId/tickets')
+  @UseGuards(OrgMembershipGuard)
+  async create(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Body() body: CreateTicketDto,
+  ): Promise<unknown> {
+    if (!body?.title?.trim()) throw new BadRequestException('title is required');
+    // Resolve the repo WITHIN the caller's org — a ticket must never be planted on another org's repo.
+    await this.requireRepo(repoId, org.id);
+    const ticket = await this.tickets.create({
+      orgId: org.id,
+      repoId,
+      title: body.title,
+      body: body.body,
+      status: body.status,
+      priority: body.priority,
+      kind: body.kind,
+      dependsOn: Array.isArray(body.dependsOn) ? body.dependsOn : undefined,
+    });
+    return toTicketDto(ticket);
+  }
+
+  /** `GET …/tickets/:ticketId` — one ticket with its advisory dependencies + derived `blocked`. */
+  @Get('orgs/:orgId/repos/:repoId/tickets/:ticketId')
+  @UseGuards(OrgMembershipGuard)
+  async get(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('ticketId') ticketId: string,
+  ): Promise<unknown> {
+    const detail = await this.tickets.get({ orgId: org.id, repoId, ticketId });
+    return toTicketDetailDto(detail);
+  }
+
+  /** `PATCH …/tickets/:ticketId` — edit fields / move board column. */
+  @Patch('orgs/:orgId/repos/:repoId/tickets/:ticketId')
+  @UseGuards(OrgMembershipGuard)
+  async update(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('ticketId') ticketId: string,
+    @Body() body: UpdateTicketDto,
+  ): Promise<unknown> {
+    const ticket = await this.tickets.update(
+      { orgId: org.id, repoId, ticketId },
+      {
+        title: body.title,
+        body: body.body,
+        status: body.status,
+        priority: body.priority,
+        kind: body.kind,
+        sortOrder: body.sortOrder,
+      },
+    );
+    return toTicketDto(ticket);
+  }
+
+  /** `DELETE …/tickets/:ticketId` — remove a ticket (dependency edges cascade away). */
+  @Delete('orgs/:orgId/repos/:repoId/tickets/:ticketId')
+  @UseGuards(OrgMembershipGuard)
+  async remove(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('ticketId') ticketId: string,
+  ): Promise<{ ok: boolean }> {
+    await this.tickets.remove({ orgId: org.id, repoId, ticketId });
+    return { ok: true };
+  }
+
+  /** `POST …/tickets/:ticketId/dependencies` — add an advisory "blocked by" edge. */
+  @Post('orgs/:orgId/repos/:repoId/tickets/:ticketId/dependencies')
+  @UseGuards(OrgMembershipGuard)
+  async addDependency(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('ticketId') ticketId: string,
+    @Body() body: AddDependencyDto,
+  ): Promise<{ ok: boolean }> {
+    if (!body?.dependsOnTicketId) throw new BadRequestException('dependsOnTicketId is required');
+    await this.tickets.addDependency({
+      orgId: org.id,
+      repoId,
+      ticketId,
+      dependsOnTicketId: body.dependsOnTicketId,
+    });
+    return { ok: true };
+  }
+
+  /** `DELETE …/tickets/:ticketId/dependencies/:depId` — remove a dependency edge. */
+  @Delete('orgs/:orgId/repos/:repoId/tickets/:ticketId/dependencies/:depId')
+  @UseGuards(OrgMembershipGuard)
+  async removeDependency(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('ticketId') ticketId: string,
+    @Param('depId') depId: string,
+  ): Promise<{ ok: boolean }> {
+    await this.tickets.removeDependency({ orgId: org.id, repoId, ticketId, dependencyId: depId });
+    return { ok: true };
+  }
+
+  /** Resolve a repo (by uuid id) scoped to the org, or 404 — so creation never crosses tenants. */
+  private async requireRepo(repoId: string, orgId: string): Promise<RepoEntity> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo) throw new NotFoundException('repo not found');
+    return repo;
+  }
+}
+
+function toTicketDto(t: TicketEntity): Record<string, unknown> {
+  return {
+    id: t.id,
+    number: t.number,
+    title: t.title,
+    body: t.body,
+    status: t.status,
+    priority: t.priority,
+    kind: t.kind,
+    sortOrder: t.sort_order,
+    originThreadId: t.origin_thread_id,
+    originDecisionRecordId: t.origin_decision_record_id,
+    origin: t.origin,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+  };
+}
+
+function toTicketDetailDto(d: TicketDetail): Record<string, unknown> {
+  return {
+    ...toTicketDto(d.ticket),
+    blocked: d.blocked,
+    dependsOn: d.dependsOn.map(toTicketRef),
+    blocks: d.blocks.map(toTicketRef),
+  };
+}
+
+/** A compact reference to a related ticket (for dependency lists). */
+function toTicketRef(t: TicketEntity): Record<string, unknown> {
+  return { id: t.id, number: t.number, title: t.title, status: t.status };
+}

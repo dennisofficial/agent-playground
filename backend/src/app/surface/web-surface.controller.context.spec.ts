@@ -33,6 +33,7 @@ function makeController(threadOrgId: string) {
     {} as never, // messages
     {} as never, // repos
     {} as never, // threadTitle
+    {} as never, // ticketEvents
   );
   return { controller, threads, threadLifecycle };
 }

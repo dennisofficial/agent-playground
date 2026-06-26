@@ -12,6 +12,7 @@ import { LiveTurnModule, SurfaceModule } from './surface';
 import { MemoryModule } from './memory';
 import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
+import { TicketsModule } from './tickets';
 import { TestBridgeModule } from './test-bridge';
 
 /**
@@ -43,6 +44,7 @@ import { TestBridgeModule } from './test-bridge';
     AuthModule,
     OnboardingModule,
     OrgModule,
+    TicketsModule,
     SandboxModule,
     LiveTurnModule,
     SurfaceModule,

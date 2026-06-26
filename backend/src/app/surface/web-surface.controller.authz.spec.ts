@@ -33,6 +33,7 @@ function makeController(threadOrgId: string) {
     messages as never,
     {} as never, // repos
     {} as never, // threadTitle
+    {} as never, // ticketEvents
   );
   return { controller, deleteThreadDeep, threads, messages };
 }

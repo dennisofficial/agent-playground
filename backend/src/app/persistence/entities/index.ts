@@ -18,6 +18,9 @@ export * from './memory.entity';
 export * from './org-credentials.entity';
 export * from './thread-sandbox.entity';
 export * from './user.entity';
+export * from './ticket.entity';
+export * from './ticket-dependency.entity';
+export * from './ticket-counter.entity';
 
 import { OrganizationEntity } from './organization.entity';
 import { OrganizationMemberEntity } from './organization-member.entity';
@@ -33,6 +36,9 @@ import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
 import { ThreadSandboxEntity } from './thread-sandbox.entity';
 import { UserEntity } from './user.entity';
+import { TicketEntity } from './ticket.entity';
+import { TicketDependencyEntity } from './ticket-dependency.entity';
+import { TicketCounterEntity } from './ticket-counter.entity';
 
 /** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ENTITIES = [
@@ -50,4 +56,7 @@ export const ENTITIES = [
   OrgCredentialsEntity,
   ThreadSandboxEntity,
   UserEntity,
+  TicketEntity,
+  TicketDependencyEntity,
+  TicketCounterEntity,
 ];

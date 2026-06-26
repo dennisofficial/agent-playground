@@ -38,6 +38,7 @@ import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrganizationService } from '../org/organization.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity, RepoEntity, ThreadEntity, UserEntity } from '../persistence/entities';
+import { TicketEventBus } from '../tickets';
 
 const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
 const OPERATOR = { authorId: 'U-OPERATOR', authorName: 'Operator' };
@@ -177,6 +178,7 @@ export class WebSurfaceController {
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: ThreadTitleService,
+    private readonly ticketEvents: TicketEventBus,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -376,7 +378,18 @@ export class WebSurfaceController {
         }),
       ),
     );
-    return merge(snapshot$, live$, messages$, meta$);
+    // Board mutations for this repo → a live `ticket_event`; the client invalidates its ticket queries.
+    // Carries no payload beyond the ids (the client refetches the authoritative ticket), matching the
+    // `message`-frame refetch model — and reaches the board even when the brain mutates tickets.
+    const tickets$ = this.ticketEvents.stream$.pipe(
+      filter((e) => e.repoId === repoId),
+      map(
+        (e): MessageEvent => ({
+          data: { type: 'ticket_event', ticketId: e.ticketId, kind: e.kind },
+        }),
+      ),
+    );
+    return merge(snapshot$, live$, messages$, meta$, tickets$);
   }
 
   /** `POST …/threads/:threadId/approve` — submit a plan verdict. */
