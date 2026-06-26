@@ -10,6 +10,7 @@ import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
+import type { TicketService } from '../tickets';
 import type { DecisionClassifier } from '../decision-gate';
 import type { ChatSurface, LiveTurnStore } from '../surface';
 import type { Repository } from 'typeorm';
@@ -203,6 +204,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockShip,
       mockRepos,
       mockAwareness,
+      {} as unknown as TicketService,
     );
   });
 
@@ -415,6 +417,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
       awareness,
+      {} as unknown as TicketService,
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, awareness };
   }
@@ -601,6 +604,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
         appendMarker: vi.fn().mockResolvedValue(undefined),
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
+      {} as unknown as TicketService,
     );
     return { manager, store };
   }

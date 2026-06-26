@@ -293,6 +293,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
         appendMarker: async () => undefined,
         drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
       } as unknown as import('../driver/pipeline-awareness.store').PipelineAwarenessStore,
+      {} as unknown as import('../tickets').TicketService,
     );
   }
 

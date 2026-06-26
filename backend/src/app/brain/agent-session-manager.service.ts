@@ -18,8 +18,12 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import { DecisionClassifier } from '../decision-gate';
+import { TicketService } from '../tickets';
+import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
+import { isTicketKind, isTicketPriority, isTicketStatus } from '../domain/ticket';
 import type { Decision } from '../domain';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
+import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import { SANDBOX_RESET_NOTICE } from '../engine/engine.types';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
@@ -81,6 +85,8 @@ export class AgentSessionManager {
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     // Passive pipeline-milestone awareness: the durable per-thread buffer drained into each operator turn.
     private readonly awareness: PipelineAwarenessStore,
+    // The internal board/backlog — captured out-of-scope work + promotion to follow-up threads.
+    private readonly tickets: TicketService,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -89,22 +95,46 @@ export class AgentSessionManager {
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
-    'You have 9 tools:',
-    '  - get_pipeline_state   — read the current job/pipeline state for this thread',
-    '  - get_decision_record  — read the current locked decision record for this thread',
-    '  - recall               — retrieve relevant memory facts (semantic search)',
-    '  - remember             — store a new memory fact',
-    '  - submit_plan          — propose the full multi-section plan for approval (FULL PATH; see below)',
-    '  - start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)',
-    '  - finalize_build       — (gated) ship an approved direct build: commit → review → open PR',
-    '  - dispatch_build       — (gated) dispatch an already-approved full build',
-    '  - create_thread        — spin off a NEW thread on this same repo (see CREATE_THREAD below)',
+    `You have 14 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
+    `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
+    `ALWAYS call the qualified name (e.g. mcp__${BRIDGE_SERVER_NAME}__submit_plan); the bare name`,
+    '(e.g. submit_plan) is NOT a registered tool and will fail with "No such tool available". The prose',
+    `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
+    'form. The 14 tools:',
+    `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read the current locked decision record for this thread`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — propose the full multi-section plan for approval (FULL PATH; see below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__create_thread        — spin off a NEW thread on this same repo (see CREATE_THREAD below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__create_ticket        — capture work on this repo's board/backlog for later (see TICKETS below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__list_tickets         — list this repo's tickets (optionally by status)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__update_ticket        — edit a ticket / move it between board columns`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__link_ticket_dependency — record an advisory "blocked by" edge between tickets`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__promote_ticket       — turn a backlog ticket into a working follow-up thread`,
     '',
-    'CREATE_THREAD — when the work splits into a separate unit of its own, create a follow-up thread',
-    'rather than overloading this one. Args: { title, firstMessage }. `firstMessage` is the opening intent',
-    'the new thread starts on (write it as you would brief a fresh session); the new thread starts scoping',
-    'immediately and independently. Only do this when the operator asked for a follow-up or the split is',
-    'clearly warranted — one tightly-scoped follow-up per call, not a backlog.',
+    'CREATE_THREAD — when the work splits into a separate unit of its own AND should start NOW, create a',
+    'follow-up thread rather than overloading this one. Args: { title, firstMessage }. `firstMessage` is the',
+    'opening intent the new thread starts on (write it as you would brief a fresh session); the new thread',
+    'starts scoping immediately and independently. Only do this when the operator asked for a follow-up or',
+    'the split is clearly warranted — one tightly-scoped follow-up per call, not a backlog.',
+    '',
+    'TICKETS — the repo\'s internal board/backlog. This is the durable place for work that is OUT OF SCOPE',
+    'for the current thread but worth remembering — the operator should never have to hold it in their head.',
+    'When they say things like "do A now, push B for later" / "add that to the backlog" / "remember to do X',
+    'after this", call create_ticket. Args: { title, body?, priority?, kind?, status?, dependsOn? } —',
+    '  • status defaults to "backlog" (the triage holding pen); the board columns are',
+    '    backlog → todo → in_progress → in_review → done (+ cancelled). priority: low|medium|high|urgent.',
+    '    kind: feature|bug|chore. dependsOn: ids of tickets this one is blocked by (ADVISORY only — it never',
+    '    auto-starts anything; it just records the relationship).',
+    '  • The ticket is auto-stamped with where it came from (this thread, and the locked decision if any), so',
+    '    capture the CONTEXT in body — enough that it is actionable cold, weeks later.',
+    'create_ticket vs create_thread: a TICKET is a note for LATER (no work starts); a THREAD starts work NOW.',
+    'Default to a ticket when deferring. Use promote_ticket later to turn a ticket into a working thread.',
+    'Use list_tickets to check the backlog before proposing new work; update_ticket to re-prioritize or move.',
     '',
     'INVESTIGATE FIRST: before proposing anything, ground yourself in the repo with Read/Glob/Grep (stack,',
     'structure, conventions, the exact files you will touch). Never ask the operator anything the repo',
@@ -685,6 +715,110 @@ export class AgentSessionManager {
           message: `Created follow-up "${title}" and started it.`,
         };
       },
+
+      // ── Tickets (the repo's board/backlog) ─────────────────────────────────────────────────────────
+      // org/repo/thread context comes from the stimulus CLOSURE, never tool args (no cross-tenant escape).
+
+      create_ticket: async (args) => {
+        const title = String(args['title'] ?? '').trim();
+        if (!title) return { ok: false, reason: 'title is required' };
+        const status = optEnum(args['status'], isTicketStatus) as TicketStatus | undefined;
+        if (args['status'] != null && !status) return { ok: false, reason: `invalid status: ${String(args['status'])}` };
+        const priority = optEnum(args['priority'], isTicketPriority) as TicketPriority | undefined;
+        if (args['priority'] != null && !priority) return { ok: false, reason: `invalid priority: ${String(args['priority'])}` };
+        const kind = optEnum(args['kind'], isTicketKind) as TicketKind | undefined;
+        if (args['kind'] != null && !kind) return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
+
+        // Stamp provenance from THIS thread + its locked decision (if any) — closure-derived, not args.
+        const job = await this.store.loadJob(stimulus.threadId).catch(() => null);
+        try {
+          const ticket = await this.tickets.create({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            title,
+            body: optStr(args['body']),
+            status,
+            priority,
+            kind,
+            originThreadId: stimulus.threadId,
+            originDecisionRecordId: job?.decisionRecordId ?? null,
+            dependsOn: strArray(args['dependsOn']),
+          });
+          return { ok: true, ticketId: ticket.id, number: ticket.number, message: `Captured ticket #${ticket.number}: ${title}` };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
+      list_tickets: async (args) => {
+        const status = optEnum(args['status'], isTicketStatus) as TicketStatus | undefined;
+        if (args['status'] != null && !status) return { ok: false, reason: `invalid status: ${String(args['status'])}` };
+        try {
+          const rows = await this.tickets.list({ orgId: stimulus.orgId, repoId: stimulus.repoId, status });
+          return {
+            ok: true,
+            tickets: rows.map((t) => ({ id: t.id, number: t.number, title: t.title, status: t.status, priority: t.priority, kind: t.kind })),
+          };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
+      update_ticket: async (args) => {
+        const ticketId = String(args['ticketId'] ?? '').trim();
+        if (!ticketId) return { ok: false, reason: 'ticketId is required' };
+        const status = optEnum(args['status'], isTicketStatus) as TicketStatus | undefined;
+        if (args['status'] != null && !status) return { ok: false, reason: `invalid status: ${String(args['status'])}` };
+        const priority = optEnum(args['priority'], isTicketPriority) as TicketPriority | undefined;
+        if (args['priority'] != null && !priority) return { ok: false, reason: `invalid priority: ${String(args['priority'])}` };
+        const kind = optEnum(args['kind'], isTicketKind) as TicketKind | undefined;
+        if (args['kind'] != null && !kind) return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
+        try {
+          const t = await this.tickets.update(
+            { orgId: stimulus.orgId, repoId: stimulus.repoId, ticketId },
+            { title: optStr(args['title']) ?? undefined, body: 'body' in args ? optStr(args['body']) : undefined, status, priority, kind },
+          );
+          return { ok: true, ticketId: t.id, number: t.number, status: t.status, message: `Updated ticket #${t.number}` };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
+      link_ticket_dependency: async (args) => {
+        const ticketId = String(args['ticketId'] ?? '').trim();
+        const dependsOnTicketId = String(args['dependsOnTicketId'] ?? '').trim();
+        if (!ticketId || !dependsOnTicketId) return { ok: false, reason: 'ticketId and dependsOnTicketId are required' };
+        try {
+          await this.tickets.addDependency({ orgId: stimulus.orgId, repoId: stimulus.repoId, ticketId, dependsOnTicketId });
+          return { ok: true, message: 'Recorded advisory dependency (blocked-by).' };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
+      promote_ticket: async (args) => {
+        const ticketId = String(args['ticketId'] ?? '').trim();
+        if (!ticketId) return { ok: false, reason: 'ticketId is required' };
+        try {
+          const result = await this.tickets.promote({ orgId: stimulus.orgId, repoId: stimulus.repoId, ticketId });
+          if (result.created && result.seedText) {
+            // Kick the new thread's brain in-process (same as create_thread). Fire-and-forget.
+            void this.startFollowUpThread(result.threadId, stimulus.orgId, stimulus.repoId, result.seedText).catch((err) =>
+              this.logger.warn(`promote_ticket: start of ${result.threadId} failed: ${err}`),
+            );
+          }
+          return {
+            ok: true,
+            threadId: result.threadId,
+            created: result.created,
+            message: result.created
+              ? `Promoted "${result.title}" to a new thread and started it.`
+              : `That ticket is already being worked in an existing thread.`,
+          };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
     };
   }
 
@@ -929,6 +1063,35 @@ function normalizeDecisions(raw: unknown): Decision[] {
 function jobTitle(summary: string): string {
   const firstLine = summary.split('\n').map((l) => l.trim()).find(Boolean) ?? summary;
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
+}
+
+// ── Ticket-tool arg coercion (args are Record<string, unknown> from the bridge) ────────────────────
+
+/** A trimmed non-empty string, or undefined. */
+function optStr(v: unknown): string | undefined {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s.length > 0 ? s : undefined;
+}
+
+/** Return the value only if it passes the allow-list guard; else undefined (caller decides if that's an error). */
+function optEnum<T>(v: unknown, guard: (x: unknown) => x is T): T | undefined {
+  return guard(v) ? v : undefined;
+}
+
+/** Coerce an arg into an array of non-empty strings (the bridge may pass a single string or an array). */
+function strArray(v: unknown): string[] | undefined {
+  if (Array.isArray(v)) {
+    const out = v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim());
+    return out.length > 0 ? out : undefined;
+  }
+  const single = optStr(v);
+  return single ? [single] : undefined;
+}
+
+/** A safe, short error message for a tool's `{ ok:false, reason }` (surfaces validation/404 cleanly). */
+function errText(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message).slice(0, 200);
+  return String(err).slice(0, 200);
 }
 
 /**
