@@ -60,7 +60,11 @@ describe('DockerEngineRunner', () => {
       JSON.stringify({ t: 'final', r: { result: 'done', sessionId: 'sess-9' } }) + '\n',
     ]);
     const events: EngineEvent[] = [];
-    const runner = new DockerEngineRunner(engine, env({ ANTHROPIC_API_KEY: 'k-123' }), new SandboxActivityRegistry());
+    const runner = new DockerEngineRunner(
+      engine,
+      env({ CLAUDE_OAUTH_TOKEN: 'oat-123', CODEX_OAUTH_TOKEN: 'codex-123', ANTHROPIC_API_KEY: 'k-123' }),
+      new SandboxActivityRegistry(),
+    );
 
     const res = await runner.run({
       ...baseArgs,
@@ -75,8 +79,12 @@ describe('DockerEngineRunner', () => {
     expect(call.id).toBe('cId');
     expect(call.argv).toEqual(['atlas-engine-turn']);
     expect(call.opts.user).toBe('1000:1000');
-    // creds + in-container home on the exec env
-    expect(call.opts.env?.ANTHROPIC_API_KEY).toBe('k-123');
+    // subscription secrets + in-container home on the exec env — the harness runs subscription-only,
+    // so an ambient ANTHROPIC_API_KEY is NEVER forwarded (it would outrank the OAuth token).
+    expect(call.opts.env?.CLAUDE_OAUTH_TOKEN).toBe('oat-123');
+    expect(call.opts.env?.CODEX_OAUTH_TOKEN).toBe('codex-123');
+    expect(call.opts.env?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(call.opts.env?.ENGINE_AUTH_MODE).toBeUndefined();
     expect(call.opts.env?.AGENT_HOME_ROOT).toBe(CONTAINER_AGENT_HOME);
     // spec on stdin with cwd rewritten from the host worktree root onto the /workspace mount
     const spec = JSON.parse(call.opts.stdin!);

@@ -186,7 +186,7 @@ beforeEach(async () => {
           anthropicKey: async () => undefined,
           openaiKey: async () => undefined,
           githubToken: async () => undefined,
-          engineAuth: async () => ({ mode: 'api_key', apiKey: undefined }),
+          engineAuth: async () => ({ secret: 'test-secret' }),
         },
       },
       {

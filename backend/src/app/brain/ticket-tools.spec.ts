@@ -40,6 +40,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // repos
     {} as never, // awareness
     tickets as TicketService,
+    { engineAuth: async () => undefined } as never, // creds
   );
   return { manager, store };
 }

@@ -67,7 +67,7 @@ const fakeCreds = {
   anthropicKey: async () => undefined,
   openaiKey: async () => undefined,
   githubToken: async () => 'fake-token',
-  engineAuth: async () => ({ mode: 'api_key' as const, apiKey: undefined }),
+  engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
 // ── Sentinel tenant (fixed ids → kept distinct from every other int test) ────────────────────────────

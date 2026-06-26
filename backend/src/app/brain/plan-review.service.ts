@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
+import { CredentialResolver } from '../onboarding';
 
 /**
  * R4 — PLAN-LEVEL CODEX PRE-REVIEW.
@@ -14,8 +15,8 @@ import type { Decision } from '../domain';
  * approval card.
  *
  * Architecture notes:
- * - Uses the host-side `ENGINE_RUNNER` (EngineRunner, in-process Codex SDK) — NOT a tool-bridge
- *   runner.  The review turn is read-only so it never needs the bidirectional bridge.
+ * - Uses `ENGINE_RUNNER` (the Docker engine runner) — NOT the bidirectional tool bridge. The review
+ *   turn is read-only so it never needs the bridge.
  * - `mode: 'review'` → Codex read-only sandbox; the plan text is its only input (no side-effects).
  * - One-pass guard: the FIRST call for a jobId runs the review and returns findings (or '' if none).
  *   The SECOND call (the revision's re-propose) skips the review and returns `null` → "proceed to
@@ -40,7 +41,8 @@ export interface PlanReviewInput {
   decisions: Decision[];
   /** The high-level section briefs from the plan. */
   sectionBriefs: string[];
-  /** Optional explicit auth for the Codex turn (falls back to env). */
+  /** Optional explicit subscription auth for the Codex turn; when absent it's resolved per-org from
+   * `orgId` (then the env fallback inside the engine). */
   auth?: EngineAuth;
 }
 
@@ -121,6 +123,7 @@ export class PlanReviewService {
 
   constructor(
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
+    private readonly creds: CredentialResolver,
   ) {}
 
   /**
@@ -153,6 +156,10 @@ export class PlanReviewService {
 
     this.logger.log(`plan-review: running Codex review turn for job=${input.jobId}`);
 
+    // Per-org Codex subscription secret (deployed); undefined locally → the in-container engine falls
+    // back to CODEX_OAUTH_TOKEN. With neither set the turn throws and is caught below as "no findings".
+    const auth = input.auth ?? (await this.creds.engineAuth(input.orgId, 'codex'));
+
     let reviewerOutput: string;
     try {
       const result = await this.engine.run({
@@ -162,7 +169,7 @@ export class PlanReviewService {
         systemPrompt: REVIEW_SYSTEM,
         sandboxKey,
         mode: 'review',
-        ...(input.auth ? { auth: input.auth } : {}),
+        ...(auth ? { auth } : {}),
         ...(input.containerId
           ? { target: { containerId: input.containerId, worktreeHost: input.worktreePath } }
           : {}),

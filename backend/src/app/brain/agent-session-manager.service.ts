@@ -18,6 +18,7 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import { DecisionClassifier } from '../decision-gate';
+import { CredentialResolver } from '../onboarding';
 import { TicketService } from '../tickets';
 import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../domain/ticket';
@@ -87,6 +88,8 @@ export class AgentSessionManager {
     private readonly awareness: PipelineAwarenessStore,
     // The internal board/backlog — captured out-of-scope work + promotion to follow-up threads.
     private readonly tickets: TicketService,
+    // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
+    private readonly creds: CredentialResolver,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -302,12 +305,16 @@ export class AgentSessionManager {
     const streamer = this.makeTurnStreamer(stimulus, channel);
 
     const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.threadId}`;
+    // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
+    // back to CLAUDE_OAUTH_TOKEN, and throws if neither is set (never an API-key fallback).
+    const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
     const runArgs: RunEngineArgs = {
       engine: 'claude',
       task,
       cwd: sandbox.worktreePath,
       systemPrompt: AgentSessionManager.SYSTEM_PROMPT,
       sandboxKey,
+      ...(auth ? { auth } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)

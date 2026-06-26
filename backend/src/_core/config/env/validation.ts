@@ -205,12 +205,13 @@ export interface IEnvConfig {
   //
   // REPOS_ROOT / AGENT_HOME_ROOT (declared above) — the root the per-feature worktree sandboxes
   // clone into, and the root for the engines' OWN isolated CLAUDE_CONFIG_DIR/CODEX_HOME.
-  // ENGINE_AUTH_MODE: how Atlas engine turns authenticate — 'api_key' (default, the metered
-  // ANTHROPIC_API_KEY / OPENAI auth) or 'subscription' (drive the run off a Claude Max / ChatGPT plan).
-  ENGINE_AUTH_MODE?: 'api_key' | 'subscription';
-  // CLAUDE_OAUTH_TOKEN: a `CLAUDE_CODE_OAUTH_TOKEN` for subscription-mode Claude turns (used
-  // only when ENGINE_AUTH_MODE='subscription'). Strips ambient ANTHROPIC_API_KEY at the seam.
+  // The SDK harness (coding-session engine) runs SUBSCRIPTION-ONLY — there is no api_key mode and no
+  // ENGINE_AUTH_MODE. These are the local-dev fallback secrets (deployed orgs carry per-org secrets):
+  // CLAUDE_OAUTH_TOKEN: a `CLAUDE_CODE_OAUTH_TOKEN` for Claude turns. Strips ambient ANTHROPIC_API_KEY
+  // at the seam so the OAuth token wins (the metered API would otherwise outrank it).
   CLAUDE_OAUTH_TOKEN?: string;
+  // CODEX_OAUTH_TOKEN: the Codex subscription secret (auth.json / token) for Codex turns.
+  CODEX_OAUTH_TOKEN?: string;
   // GITHUB_TOKEN: the GitHub token Atlas's PR client + authenticated git ops use. Rides in
   // GIT_CONFIG_* / an Authorization header per invocation — never in argv / .git/config.
   // Unset → public-repo / no-PR flows only.
@@ -412,10 +413,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
 
   // Atlas v2 (host-only local substrate; reuses v1 values where they exist — REPOS_ROOT,
   // AGENT_HOME_ROOT declared above)
-  ENGINE_AUTH_MODE: Joi.string()
-    .valid('api_key', 'subscription')
-    .optional(),
   CLAUDE_OAUTH_TOKEN: Joi.string().optional(),
+  CODEX_OAUTH_TOKEN: Joi.string().optional(),
   GITHUB_TOKEN: Joi.string().optional(),
   SURFACE: Joi.string().valid('web', 'agent').optional(),
   // Atlas v2 ingress (W2)

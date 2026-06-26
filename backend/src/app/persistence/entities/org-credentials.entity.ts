@@ -39,13 +39,13 @@ export class OrgCredentialsEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   github_pat_enc!: string | null;
 
-  /** Coding-engine auth posture: 'api_key' (uses the Anthropic key) | 'subscription'. */
-  @Column({ type: 'text', default: 'api_key' })
-  engine_auth_mode!: string;
-
-  /** Subscription secret (Claude OAuth token / Codex auth.json) — ciphertext, subscription mode only. */
+  /** Claude subscription OAuth token for the SDK harness — ciphertext (the harness runs subscription-only). */
   @Column({ type: 'text', nullable: true })
-  engine_auth_secret_enc!: string | null;
+  claude_oauth_token_enc!: string | null;
+
+  /** Codex subscription secret (auth.json / token) for the SDK harness — ciphertext. */
+  @Column({ type: 'text', nullable: true })
+  codex_auth_secret_enc!: string | null;
 
   /** When the Anthropic key was last validated (1-token probe); null until validated. */
   @Column({ type: 'timestamptz', nullable: true })

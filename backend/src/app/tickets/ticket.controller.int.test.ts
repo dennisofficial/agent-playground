@@ -38,7 +38,7 @@ const fakeCreds = {
   anthropicKey: async () => undefined,
   openaiKey: async () => undefined,
   githubToken: async () => 'fake-token',
-  engineAuth: async () => ({ mode: 'api_key' as const, apiKey: undefined }),
+  engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
 // Fixed ids → distinct from every other int test (which purge by their own ids).

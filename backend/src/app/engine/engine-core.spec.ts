@@ -92,9 +92,9 @@ function fakeCodexSdk() {
 }
 
 describe('EngineCore — Claude mode/home/credential wiring', () => {
-  it('execute mode: write tools, default permission, isolated CLAUDE_CONFIG_DIR, api key threaded', async () => {
+  it('execute mode: write tools, default permission, isolated CLAUDE_CONFIG_DIR, subscription token threaded', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     const res = await core.run({
       engine: 'claude',
       task: 'do it',
@@ -102,7 +102,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'execute',
-      auth: { mode: 'api_key', apiKey: 'turn-key' },
+      auth: { secret: 'oauth-tok' },
       model: 'claude-x',
     });
     const opts = captured.options!;
@@ -115,9 +115,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(env.CLAUDE_CONFIG_DIR).toContain(HOME_ROOT);
     expect(env.CLAUDE_CONFIG_DIR).toContain('claude');
     expect(env.CLAUDE_CONFIG_DIR).not.toContain('/.claude');
-    // Credentials threaded into the SUBPROCESS env, not process.env.
-    expect(env.ANTHROPIC_API_KEY).toBe('turn-key');
-    expect(process.env.ANTHROPIC_API_KEY).not.toBe('turn-key');
+    // Subscription token threaded into the SUBPROCESS env (any ambient API key is stripped at the seam).
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-tok');
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     // settingSources [] = full isolation (no on-disk config files read).
     expect(opts.settingSources).toEqual([]);
     // Result + usage surfaced.
@@ -128,7 +128,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('execute mode: canUseTool allows Write inside cwd OR a writableRoot, denies elsewhere', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     await core.run({
       engine: 'claude',
       task: 'do it',
@@ -154,7 +154,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('plan mode: permissionMode plan, ExitPlanMode tool present, no writes flag in canUseTool', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     await core.run({
       engine: 'claude',
       task: 'plan it',
@@ -170,7 +170,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('review mode: read-only tool set, default permission, no Write/Edit', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     await core.run({
       engine: 'claude',
       task: 'review it',
@@ -187,7 +187,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('richStream: enables partial stream + thinking, emits token deltas, thinking, tool_use(input) + tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
@@ -216,7 +216,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('without richStream: no partial stream; tool stays name-only; no thinking/tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
@@ -237,30 +237,52 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(kinds).not.toContain('tool_result');
   });
 
-  it('subscription auth from env strips the API key and sets the OAuth token', async () => {
+  it('falls back to the env subscription token and strips any ambient API key', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
-      homeRoot: HOME_ROOT,
-      authMode: 'subscription',
-      claudeOauthToken: 'oauth-from-env',
-      anthropicApiKey: 'should-be-stripped',
-    });
-    await core.run({
-      engine: 'claude',
-      task: 'x',
-      cwd: '/tmp/wt',
-      systemPrompt: 'p',
-      sandboxKey: 'k',
-      mode: 'execute',
-    });
-    const env = captured.options!.env as Record<string, string>;
-    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-from-env');
-    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    const prior = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'should-be-stripped';
+    try {
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+        homeRoot: HOME_ROOT,
+        claudeOauthToken: 'oauth-from-env',
+      });
+      await core.run({
+        engine: 'claude',
+        task: 'x',
+        cwd: '/tmp/wt',
+        systemPrompt: 'p',
+        sandboxKey: 'k',
+        mode: 'execute',
+        // no explicit auth → falls back to cfg.claudeOauthToken
+      });
+      const env = captured.options!.env as Record<string, string>;
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-from-env');
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    } finally {
+      if (prior === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prior;
+    }
+  });
+
+  it('throws (no API-key fallback) when no subscription secret is available', async () => {
+    const { sdk } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    await expect(
+      core.run({
+        engine: 'claude',
+        task: 'x',
+        cwd: '/tmp/wt',
+        systemPrompt: 'p',
+        sandboxKey: 'k',
+        mode: 'execute',
+        // no explicit auth, no cfg.claudeOauthToken
+      }),
+    ).rejects.toThrow(/subscription secret/);
   });
 
   it('tool bridge: server registered under options.mcpServers (not a stray top-level key); names auto-approved', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     const mcpServers = { 'atlas-host-bridge': { __fake: 'server' } };
     const names = ['mcp__atlas-host-bridge__submit_plan', 'mcp__atlas-host-bridge__get_pipeline_state'];
     await core.runWithExtras(
@@ -279,7 +301,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('no bridge: allowedTools stays the read set and no mcpServers leak (worker invariant)', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     await core.run({
       engine: 'claude',
       task: 'x',
@@ -295,9 +317,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 });
 
 describe('EngineCore — Codex mode/home/credential wiring', () => {
-  it('execute mode: workspace-write sandbox, isolated CODEX_HOME, api key on the client', async () => {
+  it('execute mode: workspace-write sandbox, subscription auth.json home, NO apiKey on the client', async () => {
     const { sdk, ctorCalls, threadCalls } = fakeCodexSdk();
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     const res = await core.run({
       engine: 'codex',
       task: 'do it',
@@ -305,9 +327,10 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'execute',
-      auth: { mode: 'api_key', apiKey: 'codex-key' },
+      auth: { secret: 'codex-oauth' },
     });
-    expect(ctorCalls[0].apiKey).toBe('codex-key');
+    // Subscription-only: the CLI reads auth.json from CODEX_HOME, so NO apiKey is passed to the client.
+    expect(ctorCalls[0].apiKey).toBeUndefined();
     const ctorEnv = ctorCalls[0].env as Record<string, string>;
     expect(ctorEnv.CODEX_HOME).toContain(HOME_ROOT);
     expect(ctorEnv.CODEX_HOME).not.toContain('/.codex/');
@@ -319,7 +342,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
 
   it('plan mode: read-only sandbox', async () => {
     const { sdk, threadCalls } = fakeCodexSdk();
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     await core.run({
       engine: 'codex',
       task: 'plan it',
@@ -327,7 +350,7 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       systemPrompt: 'persona',
       sandboxKey: 'acme--feat',
       mode: 'plan',
-      auth: { mode: 'api_key', apiKey: 'k' },
+      auth: { secret: 'codex-oauth' },
     });
     expect(threadCalls[0].sandboxMode).toBe('read-only');
   });

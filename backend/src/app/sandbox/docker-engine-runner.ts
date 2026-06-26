@@ -247,9 +247,10 @@ export class DockerEngineRunner implements EngineRunnerPort {
     const put = (key: string, value: string | number | boolean | undefined): void => {
       if (value !== undefined && value !== null) e[key] = String(value);
     };
-    put('ANTHROPIC_API_KEY', this.env.get('ANTHROPIC_API_KEY'));
-    put('ENGINE_AUTH_MODE', this.env.get('ENGINE_AUTH_MODE'));
+    // The SDK harness runs subscription-only — forward the per-engine OAuth secrets, NEVER an API key
+    // (an ambient ANTHROPIC_API_KEY would outrank the OAuth token and bill the expensive API).
     put('CLAUDE_OAUTH_TOKEN', this.env.get('CLAUDE_OAUTH_TOKEN'));
+    put('CODEX_OAUTH_TOKEN', this.env.get('CODEX_OAUTH_TOKEN'));
     // (Engine model ids are hardcoded constants in engine-core — not passed via env.)
     // The agent home is INSIDE the container (long-lived container → resume across turns).
     e.AGENT_HOME_ROOT = CONTAINER_AGENT_HOME;

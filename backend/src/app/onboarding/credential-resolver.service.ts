@@ -45,19 +45,20 @@ export class CredentialResolver {
     return this.env.get('GITHUB_TOKEN');
   }
 
-  /** Engine auth (the EngineAuth union): tenant posture → the env-derived fallback (byte-identical). */
-  async engineAuth(orgId: string | undefined, engine: 'claude' | 'codex'): Promise<EngineAuth> {
+  /**
+   * Engine (SDK harness) subscription secret for `engine`: the per-org secret for THAT engine wins,
+   * else the env-derived fallback. Subscription-only — returns `undefined` when neither is set so the
+   * caller omits `auth` and `EngineCore.resolveAuth` throws (never an API-key fallback).
+   */
+  async engineAuth(
+    orgId: string | undefined,
+    engine: 'claude' | 'codex',
+  ): Promise<EngineAuth | undefined> {
     if (orgId) {
       const creds = await this.store.read(orgId);
-      if (creds) {
-        if (creds.engineAuthMode === 'subscription' && creds.engineAuthSecret) {
-          return { mode: 'subscription', secret: creds.engineAuthSecret };
-        }
-        if (creds.engineAuthMode === 'api_key' && creds.anthropicApiKey) {
-          return { mode: 'api_key', apiKey: creds.anthropicApiKey };
-        }
-        // A partial/absent posture falls through to the env-derived default.
-      }
+      const secret = engine === 'claude' ? creds?.claudeOauthToken : creds?.codexAuthSecret;
+      if (secret) return { secret };
+      // A partial/absent posture falls through to the env-derived default.
     }
     return engineAuthFromEnv(this.env, engine);
   }

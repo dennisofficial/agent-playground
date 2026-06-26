@@ -22,6 +22,7 @@ import type { EventTriageService } from './event-triage.service';
 import type { EventStimulus } from '../domain';
 import { StimulusRouter } from './stimulus-router.service';
 import type { PlanReviewService } from './plan-review.service';
+import type { CredentialResolver } from '../onboarding';
 
 /**
  * R3 GATE TESTS — two assertions:
@@ -205,6 +206,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockRepos,
       mockAwareness,
       {} as unknown as TicketService,
+      { engineAuth: async () => undefined } as unknown as CredentialResolver,
     );
   });
 
@@ -418,6 +420,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as DriverRepoResolver,
       awareness,
       {} as unknown as TicketService,
+      { engineAuth: async () => undefined } as unknown as CredentialResolver,
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, awareness };
   }
@@ -605,6 +608,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
       {} as unknown as TicketService,
+      { engineAuth: async () => undefined } as unknown as CredentialResolver,
     );
     return { manager, store };
   }

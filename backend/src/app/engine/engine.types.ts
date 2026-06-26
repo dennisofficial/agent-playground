@@ -7,15 +7,13 @@
 import type { SessionEngine, SessionMode } from '../domain';
 
 /**
- * How an engine turn authenticates.
- * - 'api_key' (default): bills a metered key per token. Claude reads `ANTHROPIC_API_KEY`; Codex takes
- *   `apiKey`. `apiKey` undefined → fall back to the engine's ambient env (dev convenience).
- * - 'subscription': drive the run off a Claude Max / ChatGPT plan instead. For Claude, `secret` is a
- *   `CLAUDE_CODE_OAUTH_TOKEN`; for Codex it's an `auth.json` blob the overlay home is seeded with.
+ * How an engine (SDK harness) turn authenticates — ALWAYS a subscription secret. The api_key mode was
+ * removed: running the harness on a metered API key is ruinously expensive, so there is no key path
+ * and no fallback — a missing secret throws (see `EngineCore.resolveAuth`). For Claude, `secret` is a
+ * `CLAUDE_CODE_OAUTH_TOKEN`; for Codex it's an `auth.json` blob the overlay home is seeded with.
+ * (The non-agentic LangChain chains keep using `ANTHROPIC_API_KEY` — that path is unrelated.)
  */
-export type EngineAuth =
-  | { mode: 'api_key'; apiKey?: string }
-  | { mode: 'subscription'; secret: string };
+export type EngineAuth = { secret: string };
 
 /** A normalized progress event, emitted by both engines regardless of native event shape. */
 export type EngineEvent =

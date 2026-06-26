@@ -148,7 +148,7 @@ async function seedThreadChildren(orgId: string, repoIdArg: string, threadId: st
 
 /** Seed the org-DIRECT rows (no thread): credentials, an invite, a membership, memory, a parked event. */
 async function seedOrgDirect(orgId: string, repoIdArg: string, inviteToken: string, dedupeKey: string): Promise<void> {
-  await ds.query(`INSERT INTO org_credentials (org_id, scope, engine_auth_mode) VALUES ($1, '*', 'api_key')`, [orgId]);
+  await ds.query(`INSERT INTO org_credentials (org_id, scope) VALUES ($1, '*')`, [orgId]);
   await ds.query(`INSERT INTO org_invites (token, org_id, email, role) VALUES ($1, $2, 'x@y.com', 'member')`, [inviteToken, orgId]);
   await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [orgId, SHARED_USER_ID]);
   await ds.query(`INSERT INTO memory (fact, embedding, org_id, scope) VALUES ('f', $1::vector, $2, $3)`, [EMBEDDING, orgId, `team:${orgId}`]);
@@ -193,7 +193,7 @@ beforeEach(async () => {
           anthropicKey: async () => undefined,
           openaiKey: async () => undefined,
           githubToken: async () => undefined,
-          engineAuth: async () => ({ mode: 'api_key', apiKey: undefined }),
+          engineAuth: async () => ({ secret: 'test-secret' }),
         },
       },
       { provide: GithubPrService, useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' } },

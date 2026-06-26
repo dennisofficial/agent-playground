@@ -129,9 +129,8 @@ async function main(): Promise<void> {
 
   const cfg: EngineCoreConfig = {
     homeRoot: process.env.AGENT_HOME_ROOT,
-    authMode: process.env.ENGINE_AUTH_MODE as EngineCoreConfig['authMode'],
     claudeOauthToken: process.env.CLAUDE_OAUTH_TOKEN,
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    codexOauthToken: process.env.CODEX_OAUTH_TOKEN,
   };
 
   const core = new EngineCore(claudeSdk, codexSdk, cfg, {

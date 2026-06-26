@@ -16,6 +16,10 @@ import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import type { JobDispatcher } from './job-dispatcher';
 import { AgentSessionManager } from './agent-session-manager.service';
+import type { CredentialResolver } from '../onboarding';
+
+/** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
+const fakeCreds = { engineAuth: async () => undefined } as unknown as CredentialResolver;
 
 /**
  * R4 GATE TESTS — two assertions:
@@ -114,7 +118,7 @@ describe('PlanReviewService — one-pass guard + Codex turn', () => {
     const { engine, calls } = fakeEngine(
       'FINDING: The section briefs are too vague.\nFINDING: Missing dependency decision.',
     );
-    const service = new PlanReviewService(engine);
+    const service = new PlanReviewService(engine, fakeCreds);
 
     const result = await service.review(BASE_INPUT);
 
@@ -131,7 +135,7 @@ describe('PlanReviewService — one-pass guard + Codex turn', () => {
 
   it('FIRST call with NO_FINDINGS: runs ONE Codex review turn, returns empty findings', async () => {
     const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine);
+    const service = new PlanReviewService(engine, fakeCreds);
 
     const result = await service.review(BASE_INPUT);
 
@@ -142,7 +146,7 @@ describe('PlanReviewService — one-pass guard + Codex turn', () => {
 
   it('SECOND call for same job: guard fires, returns null (no Codex turn, 0 calls on this call)', async () => {
     const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine);
+    const service = new PlanReviewService(engine, fakeCreds);
 
     // First call — runs review.
     await service.review(BASE_INPUT);
@@ -157,7 +161,7 @@ describe('PlanReviewService — one-pass guard + Codex turn', () => {
 
   it('SECOND call for a DIFFERENT job: guard does NOT fire, runs another review', async () => {
     const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine);
+    const service = new PlanReviewService(engine, fakeCreds);
 
     await service.review({ ...BASE_INPUT, jobId: 'job-A' });
     const result = await service.review({ ...BASE_INPUT, jobId: 'job-B' });
@@ -167,7 +171,7 @@ describe('PlanReviewService — one-pass guard + Codex turn', () => {
   });
 
   it('engine failure is best-effort: returns { findings: "" } and does not throw', async () => {
-    const service = new PlanReviewService(failingEngine());
+    const service = new PlanReviewService(failingEngine(), fakeCreds);
 
     // Should NOT throw.
     const result = await service.review(BASE_INPUT);
@@ -178,7 +182,7 @@ describe('PlanReviewService — one-pass guard + Codex turn', () => {
 
   it('containerId is threaded through to the engine target when sandbox is docker', async () => {
     const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine);
+    const service = new PlanReviewService(engine, fakeCreds);
 
     await service.review({ ...BASE_INPUT, containerId: 'container-abc123' });
 
@@ -294,6 +298,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
         drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
       } as unknown as import('../driver/pipeline-awareness.store').PipelineAwarenessStore,
       {} as unknown as import('../tickets').TicketService,
+      fakeCreds,
     );
   }
 
@@ -342,7 +347,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
     );
     reviewEngine = engine;
     reviewEngineCalls = calls;
-    planReview = new PlanReviewService(reviewEngine);
+    planReview = new PlanReviewService(reviewEngine, fakeCreds);
   });
 
   it('FIRST submit_plan: Codex review fires, findings returned in tool response, NO approval card', async () => {
@@ -396,7 +401,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
   it('clean plan (NO_FINDINGS on first call): proceeds directly to approval card WITHOUT revision round', async () => {
     // Replace the review engine with one that returns NO_FINDINGS.
     const { engine: cleanEngine, calls: cleanCalls } = fakeEngine('NO_FINDINGS');
-    const cleanReview = new PlanReviewService(cleanEngine);
+    const cleanReview = new PlanReviewService(cleanEngine, fakeCreds);
     const manager = makeManager(cleanReview);
     const tools = manager.buildTools(fakeStimulus);
 
@@ -415,7 +420,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
   });
 
   it('review engine failure: best-effort — approval card fires on first submit_plan (no blocking)', async () => {
-    const failReview = new PlanReviewService(failingEngine());
+    const failReview = new PlanReviewService(failingEngine(), fakeCreds);
     const manager = makeManager(failReview);
     const tools = manager.buildTools(fakeStimulus);
 

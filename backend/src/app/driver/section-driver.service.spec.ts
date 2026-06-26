@@ -363,7 +363,7 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
       anthropicKey: async () => undefined,
       openaiKey: async () => undefined,
       githubToken: async () => undefined,
-      engineAuth: async () => ({ mode: 'api_key', apiKey: undefined }),
+      engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
     // ThreadLifecycleService: no pre-provisioned sandbox → falls back to legacy per-feature path.
     {

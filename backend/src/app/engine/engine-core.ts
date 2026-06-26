@@ -22,7 +22,7 @@ import {
  *     image and invoked via `docker exec` — so a turn behaves IDENTICALLY on the host and in a sandbox.
  *
  * It does exactly four things: plan/review (read-only) vs execute (writes confined to the worktree);
- * thread credentials (api_key | subscription); pin an ISOLATED agent home (CLAUDE_CONFIG_DIR/CODEX_HOME,
+ * thread the run's subscription secret (always subscription — no api_key path); pin an ISOLATED agent home (CLAUDE_CONFIG_DIR/CODEX_HOME,
  * never the personal one); return { result, sessionId?, planText?, usage? }. Env-derived knobs arrive as
  * an {@link EngineCoreConfig} (read from `EnvService` on the host, from `process.env` in the container),
  * and logging goes through a tiny {@link CoreLogger} (Nest Logger on the host, console in the container).
@@ -32,12 +32,10 @@ import {
 export interface EngineCoreConfig {
   /** Root for the isolated agent home (AGENT_HOME_ROOT ?? AGENT_HOME_ROOT). */
   homeRoot?: string;
-  /** Default auth mode when a run doesn't pass explicit `auth` (ENGINE_AUTH_MODE). */
-  authMode?: 'api_key' | 'subscription';
-  /** Subscription OAuth token for Claude (CLAUDE_OAUTH_TOKEN). */
+  /** Subscription OAuth token for Claude when a run doesn't pass explicit `auth` (CLAUDE_OAUTH_TOKEN). */
   claudeOauthToken?: string;
-  /** Fallback Anthropic API key (ANTHROPIC_API_KEY). */
-  anthropicApiKey?: string;
+  /** Subscription secret (auth.json / token) for Codex when a run doesn't pass explicit `auth` (CODEX_OAUTH_TOKEN). */
+  codexOauthToken?: string;
 }
 
 /**
@@ -106,21 +104,20 @@ export class EngineCore {
     return this.cfg.homeRoot;
   }
 
-  /** Resolve the run's auth: an explicit `args.auth` wins; otherwise derive from config. */
+  /**
+   * Resolve the run's subscription secret: an explicit `args.auth` wins (the host-resolved per-org
+   * secret); otherwise fall back to the env-configured secret for this engine. There is NO api_key
+   * path — a missing secret THROWS so the turn fails loudly instead of silently billing the API.
+   */
   private resolveAuth(engine: 'claude' | 'codex', explicit: EngineAuth | undefined): EngineAuth {
     if (explicit) return explicit;
-    const mode = this.cfg.authMode ?? 'api_key';
-    if (mode === 'subscription') {
-      if (engine === 'claude') {
-        const secret = this.cfg.claudeOauthToken;
-        if (secret) return { mode: 'subscription', secret };
-        this.logger.warn(
-          'ENGINE_AUTH_MODE=subscription but CLAUDE_OAUTH_TOKEN unset — falling back to api_key',
-        );
-      }
-      // Codex subscription needs an auth.json overlay that isn't env-configured here → api_key.
-    }
-    return { mode: 'api_key', ...(this.cfg.anthropicApiKey ? { apiKey: this.cfg.anthropicApiKey } : {}) };
+    const secret = engine === 'claude' ? this.cfg.claudeOauthToken : this.cfg.codexOauthToken;
+    if (secret) return { secret };
+    const envVar = engine === 'claude' ? 'CLAUDE_OAUTH_TOKEN' : 'CODEX_OAUTH_TOKEN';
+    throw new Error(
+      `No ${engine} subscription secret — set a per-org secret or ${envVar}. ` +
+        'The engine runs subscription-only (no API-key fallback).',
+    );
   }
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
@@ -297,22 +294,15 @@ export class EngineCore {
 
   private getCodex(sandboxKey: string, auth: EngineAuth): Codex {
     const root = this.homeRoot();
-    const subscription = auth.mode === 'subscription' ? auth : undefined;
-    const apiKey = auth.mode === 'api_key' ? auth.apiKey : undefined;
-    // SUBSCRIPTION: an overlay home owning its own auth.json (refreshed each turn). API-KEY: the plain
-    // isolated home with the key passed to the SDK. The cache key keeps two auths/sandboxes apart.
-    const codexHome = subscription
-      ? ensureCodexAuthHome(root, sandboxKey, subscription.secret)
-      : atlasEngineHomeDir(root, 'codex', sandboxKey);
-    const cacheKey = subscription ? `sub:${sandboxKey}` : `${apiKey ?? 'ambient'}:${sandboxKey}`;
+    // Subscription-only: an overlay home owning its own auth.json (refreshed each turn). The cache key
+    // keeps separate sandboxes apart. NO apiKey is ever passed — the CLI reads auth.json from CODEX_HOME.
+    const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret);
+    const cacheKey = `sub:${sandboxKey}`;
     let client = this.codexClients.get(cacheKey);
     if (!client) {
       // The SDK's `env` REPLACES inheritance — pass process.env through and override CODEX_HOME.
-      // Subscription mode passes NO apiKey → the CLI reads auth.json from CODEX_HOME instead.
       const env = { ...process.env, CODEX_HOME: codexHome } as Record<string, string>;
-      client = subscription
-        ? new this.codexSdk.Codex({ env })
-        : new this.codexSdk.Codex(apiKey ? { apiKey, env } : { env });
+      client = new this.codexSdk.Codex({ env });
       this.codexClients.set(cacheKey, client);
     }
     return client;

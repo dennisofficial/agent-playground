@@ -35,11 +35,17 @@ function makeStore(env: Record<string, string | undefined> = { SECRETS_ENCRYPTIO
 describe('TenantCredentialStore', () => {
   it('round-trips secrets (encrypt on write, decrypt on read)', async () => {
     const store = makeStore();
-    await store.write('T1', { anthropicApiKey: 'sk-ant-1', githubPat: 'ghp_1' });
+    await store.write('T1', {
+      anthropicApiKey: 'sk-ant-1',
+      githubPat: 'ghp_1',
+      claudeOauthToken: 'sk-ant-oat-1',
+      codexAuthSecret: 'codex-1',
+    });
     const creds = await store.read('T1');
     expect(creds?.anthropicApiKey).toBe('sk-ant-1');
     expect(creds?.githubPat).toBe('ghp_1');
-    expect(creds?.engineAuthMode).toBe('api_key');
+    expect(creds?.claudeOauthToken).toBe('sk-ant-oat-1');
+    expect(creds?.codexAuthSecret).toBe('codex-1');
   });
 
   it('returns null for a team with no row', async () => {
@@ -72,15 +78,15 @@ describe('TenantCredentialStore', () => {
       hasAnthropic: true,
       hasOpenai: false,
       hasGithub: false,
-      engineAuthSet: true, // api_key mode + anthropic key present
+      engineAuthSet: false, // no Claude subscription token → harness auth not satisfied
     });
   });
 
-  it('subscription engineAuthSet requires a subscription secret', async () => {
+  it('engineAuthSet requires a Claude subscription token (the harness runs subscription-only)', async () => {
     const store = makeStore();
-    await store.write('T1', { engineAuthMode: 'subscription' });
+    await store.write('T1', { anthropicApiKey: 'a1' });
     expect((await store.presence('T1')).engineAuthSet).toBe(false);
-    await store.write('T1', { engineAuthSecret: 'oauth' });
+    await store.write('T1', { claudeOauthToken: 'oauth' });
     expect((await store.presence('T1')).engineAuthSet).toBe(true);
   });
 
