@@ -29,14 +29,12 @@ export function Conversation({
   messages,
   isLoading,
   live,
-  branch,
   onOpenPlan,
 }: {
   threadRef: ThreadRef;
   messages: ThreadMessage[];
   isLoading: boolean;
   live: boolean;
-  branch?: string;
   onOpenPlan?: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -59,14 +57,9 @@ export function Conversation({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto flex max-w-[760px] flex-col gap-3.5">
-          <div className="self-center pb-1 text-center font-mono text-[9.5px] leading-relaxed tracking-[0.04em] text-faint">
-            one continuous session{branch ? ` · ${branch}` : ''}
-            <br />
-            this is the thread&apos;s brain — intent, planning, and steering all live here
-          </div>
-
+      <ConversationTopBar />
+      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
+        <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
           ) : messages.length === 0 && liveBlockCount === 0 ? (
@@ -122,10 +115,63 @@ export function Conversation({
         </div>
       </div>
 
-      <Composer
-        threadRef={threadRef}
-        hint={'talking to the thread’s Claude session · "pause", "simplify the rest" run the same ops as the buttons'}
-      />
+      <Composer threadRef={threadRef} />
     </div>
+  );
+}
+
+/**
+ * The conversation top bar — a `CONVERSATION` label plus search / copy-transcript / view-diff / resume
+ * shortcuts. The action buttons are static design-parity placeholders for now (no backend wiring).
+ */
+function ConversationTopBar() {
+  return (
+    <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3.5 py-2">
+      <span className="min-w-0 flex-1 font-mono text-[9px] tracking-[0.16em] text-faint">CONVERSATION</span>
+      <div className="flex items-center gap-0.5">
+        <TopBarButton title="Search this thread">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.35-4.35" />
+          </svg>
+        </TopBarButton>
+        <TopBarButton title="Copy transcript">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </TopBarButton>
+        <button
+          type="button"
+          title="View diff · 4 files"
+          className="flex h-[29px] items-center gap-1.5 rounded-sm px-2.5 text-dim transition hover:bg-surface-2 hover:text-text"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v14" />
+            <path d="M5 10h14" />
+            <path d="M5 21h14" />
+          </svg>
+          <span className="font-mono text-[10px]">4</span>
+        </button>
+        <span className="mx-1 h-4 w-px bg-border" />
+        <TopBarButton title="Resume / step the run">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <path d="M6 4l14 8-14 8z" />
+          </svg>
+        </TopBarButton>
+      </div>
+    </div>
+  );
+}
+
+function TopBarButton({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      className="flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
+    >
+      {children}
+    </button>
   );
 }

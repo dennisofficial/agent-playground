@@ -120,17 +120,10 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
         onDelete={onDelete}
         deleting={del.isPending}
       />
-      <div className="min-w-0 flex-1">
-        {workMode === 'phase' && selectedNode ? (
-          <PhaseView
-            threadRef={ref}
-            pipeline={pipeline}
-            messages={messages}
-            approvalCard={approvalCard}
-            selectedNode={selectedNode}
-            onConversation={onConversation}
-          />
-        ) : (
+      {/* Work column — a horizontal split: the conversation is ALWAYS pinned on the left; selecting a
+          navigator node opens its content as a right split beside it (it no longer replaces the chat). */}
+      <div className="flex min-w-0 flex-1 overflow-hidden bg-surface">
+        <div className="flex min-w-0 flex-col overflow-hidden" style={{ flex: '1 1 0' }}>
           <Conversation
             threadRef={ref}
             messages={messages}
@@ -138,7 +131,22 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
             live={status === 'running'}
             onOpenPlan={onOpenPlan}
           />
-        )}
+        </div>
+        {workMode === 'phase' && selectedNode ? (
+          <div
+            className="flex min-w-0 flex-col overflow-hidden border-l border-border"
+            style={{ flex: '1.4 1 0' }}
+          >
+            <PhaseView
+              threadRef={ref}
+              pipeline={pipeline}
+              messages={messages}
+              approvalCard={approvalCard}
+              selectedNode={selectedNode}
+              onConversation={onConversation}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );

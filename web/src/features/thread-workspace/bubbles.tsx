@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Brain, ChevronRight, Clock, ExternalLink, Lock, MessageSquare, Wrench } from 'lucide-react';
+import { ChevronRight, Clock, ExternalLink, Lock, MessageSquare } from 'lucide-react';
 import type { SystemTone } from './classify';
 import type { ThreadMessage } from '@/lib/api/thread-api';
 import type { LiveTurn } from '@/lib/api/thread-stream';
@@ -32,10 +32,11 @@ export function UserBubble({ message, queued = false }: { message: ThreadMessage
   return (
     <div className="anim-fadeUp flex flex-col items-end gap-1">
       <div
-        className="max-w-[74%] whitespace-pre-wrap rounded-[13px] rounded-tr-sm px-3.5 py-2.5 text-[13px] leading-relaxed text-text"
+        className="max-w-[72%] whitespace-pre-wrap px-[13px] py-2 text-[13.5px] leading-relaxed text-text"
         style={{
           background: 'var(--accent-soft)',
           border: '1px solid var(--accent-line)',
+          borderRadius: '13px 13px 4px 13px',
           opacity: queued ? 0.72 : 1,
         }}
       >
@@ -55,21 +56,21 @@ export function ClaudeBubble({ message }: { message: ThreadMessage }) {
   return <StreamTextBubble text={message.text} />;
 }
 
-/** An assistant text bubble — `streaming` adds a blinking cursor for the live (token-by-token) turn. */
+/**
+ * An assistant message — rendered as plain prose (no avatar, no bubble), per the conversation redesign.
+ * `streaming` adds a blinking cursor for the live (token-by-token) turn.
+ */
 export function StreamTextBubble({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
-    <div className="anim-fadeUp flex gap-2.5">
-      <ClaudeAvatar />
-      <div className="max-w-[86%] whitespace-pre-wrap rounded-[13px] rounded-tl-sm border border-border bg-surface-2 px-3.5 py-2.5 text-[13px] leading-relaxed text-text">
-        {text}
-        {streaming ? (
-          <span
-            className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
-            style={{ background: 'var(--accent)' }}
-            aria-hidden
-          />
-        ) : null}
-      </div>
+    <div className="anim-fadeUp whitespace-pre-wrap text-[14px] leading-[1.6] text-text">
+      {text}
+      {streaming ? (
+        <span
+          className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
+          style={{ background: 'var(--accent)' }}
+          aria-hidden
+        />
+      ) : null}
     </div>
   );
 }
@@ -93,20 +94,20 @@ function formatPayload(value: unknown): string {
 export function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="anim-fadeUp ml-[34px] max-w-[86%]">
+    <div className="anim-fadeUp">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-left text-faint hover:text-dim"
+        className="flex items-center gap-1.5 text-left font-mono text-[11px] italic text-faint hover:text-dim"
       >
-        <Brain size={13} className="shrink-0" />
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em]">
-          thinking{streaming ? '…' : ''}
-        </span>
-        <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+        <ChevronRight size={11} strokeWidth={2.6} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+        {streaming ? 'thinking…' : 'thought'}
       </button>
       {open ? (
-        <p className="mt-1 whitespace-pre-wrap rounded-md border border-dashed border-border bg-surface px-3 py-2 text-[12px] italic leading-relaxed text-dim">
+        <p
+          className="mt-1.5 whitespace-pre-wrap pl-[18px] text-[12.5px] italic leading-relaxed text-dim"
+          style={{ borderLeft: '2px solid var(--border)' }}
+        >
           {text}
         </p>
       ) : null}
@@ -132,21 +133,26 @@ export function ToolCallCard({
   const inputStr = formatPayload(input);
   const resultStr = formatPayload(result);
   return (
-    <div className="anim-fadeUp ml-[34px] max-w-[86%]">
+    <div className="anim-fadeUp">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-left"
+        className="trow flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left"
       >
-        <Wrench size={13} className="shrink-0" style={{ color: isError ? 'var(--red)' : 'var(--dim)' }} />
-        <span className="font-mono text-[11.5px] text-text">{name}</span>
+        <span
+          className="w-[34px] shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.03em]"
+          style={{ color: isError ? 'var(--red)' : 'var(--accent)' }}
+        >
+          tool
+        </span>
+        <span className="flex-1 truncate font-mono text-[11.5px] text-dim">{name}</span>
         {running ? (
-          <span className="pulse-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--accent)' }} />
+          <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
         ) : null}
-        <ChevronRight size={13} className={`ml-auto shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`} />
+        <ChevronRight size={11} strokeWidth={2.4} className={`shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (inputStr || resultStr) ? (
-        <div className="mt-1 space-y-1.5 rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed text-dim">
+        <div className="ml-2 mt-1 space-y-1.5 rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed text-dim">
           {inputStr ? (
             <div>
               <span className="text-faint">input</span>
@@ -206,14 +212,12 @@ const TONE_COLOR: Record<SystemTone, string> = {
 
 export function SystemEventPill({ message, tone }: { message: ThreadMessage; tone: SystemTone }) {
   return (
-    <div className="anim-fadeUp flex justify-center">
-      <span
-        className="inline-flex items-center gap-2 rounded-full border px-3.5 py-1 font-mono text-[10px] text-dim"
-        style={{ borderColor: 'var(--hair)', background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)' }}
-      >
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
-        <span className="max-w-[560px] truncate">{message.text}</span>
-      </span>
+    <div
+      className="anim-fadeUp flex items-center gap-2.5 self-stretch rounded-md border px-3.5 py-1.5 font-mono text-[10px] text-dim"
+      style={{ borderColor: 'var(--hair)', background: 'color-mix(in srgb, var(--surface-2) 70%, transparent)' }}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
+      <span className="truncate">{message.text}</span>
     </div>
   );
 }

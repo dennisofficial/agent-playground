@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowLeft, Info } from 'lucide-react';
+import { Info, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useContextFile, useSay } from '@/lib/api/thread-queries';
@@ -78,14 +78,17 @@ export function PhaseView({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-5 py-2.5">
         <button
           type="button"
           onClick={onConversation}
-          className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-dim hover:text-text"
+          title="Close panel"
+          aria-label="Close panel"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border-2 text-dim transition hover:bg-surface-2 hover:text-text"
         >
-          <ArrowLeft size={12} /> Conversation
+          <X size={13} strokeWidth={2.2} />
         </button>
+        <span className="font-mono text-[9px] tracking-[0.16em] text-faint">NAVIGATOR · DETAIL</span>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
     </div>

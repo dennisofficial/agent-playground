@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
 import { useSay } from '@/lib/api/thread-queries';
 import type { ThreadRef } from '@/lib/api/thread-api';
 
@@ -9,15 +9,16 @@ import type { ThreadRef } from '@/lib/api/thread-api';
  * The conversation composer — talks to the thread's brain. Posts to `…/threads/:threadId/say`. Typed
  * ops ("pause", "approve", "resume", "simplify the rest"…) run the same operations as the buttons; the
  * brain interprets the text, so the composer just sends it. Enter sends; Shift+Enter newlines.
+ *
+ * The `Plan ▾` mode pill, the `＋` attach button, and the model label are visual affordances from the
+ * design and are intentionally static for now (no backend wiring) — see `web/BACKEND_GAPS.md`.
  */
 export function Composer({
   threadRef,
   placeholder = 'Message Atlas — ask, plan, or steer…',
-  hint,
 }: {
   threadRef: ThreadRef;
   placeholder?: string;
-  hint?: string;
 }) {
   const say = useSay(threadRef);
   const [text, setText] = useState('');
@@ -38,30 +39,47 @@ export function Composer({
 
   return (
     <div
-      className="shrink-0 border-t border-border px-6 py-3"
-      style={{ background: 'color-mix(in srgb, var(--panel) 45%, transparent)' }}
+      className="shrink-0 px-[22px] pb-4 pt-3.5"
+      style={{ background: 'linear-gradient(to top, var(--panel) 62%, transparent)' }}
     >
-      <div className="mx-auto flex max-w-[760px] items-end gap-2">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          rows={1}
-          placeholder={placeholder}
-          className="max-h-40 min-h-[42px] flex-1 resize-none rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none transition placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
-        />
-        <button
-          type="button"
-          onClick={send}
-          disabled={!text.trim() || say.isPending}
-          className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-md text-white transition hover:brightness-105 disabled:opacity-45"
-          style={{ background: 'linear-gradient(145deg, var(--accent), var(--accent-2))' }}
-          aria-label="Send"
+      <div className="mx-auto max-w-[880px]">
+        <div
+          className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
+          style={{ boxShadow: '0 8px 30px rgba(20,18,12,.10), 0 2px 8px rgba(20,18,12,.05)' }}
         >
-          <ArrowUp size={17} />
-        </button>
+          <div className="flex items-start gap-2.5">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={onKeyDown}
+              rows={1}
+              placeholder={placeholder}
+              className="max-h-44 min-h-[24px] flex-1 resize-none bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint"
+            />
+            <button
+              type="button"
+              onClick={send}
+              disabled={!text.trim() || say.isPending}
+              className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
+              aria-label="Send"
+            >
+              <ArrowUp size={15} strokeWidth={2.4} />
+            </button>
+          </div>
+
+          {/* Static affordances (design parity — not wired yet) */}
+          <div className="mt-2.5 flex items-center gap-2">
+            <span className="flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text">
+              Plan <ChevronDown size={11} strokeWidth={2.6} />
+            </span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg text-dim">
+              <Plus size={16} strokeWidth={2.2} />
+            </span>
+            <div className="flex-1" />
+            <span className="font-mono text-[11px] text-dim">Opus 4.8 · Fast</span>
+          </div>
+        </div>
       </div>
-      {hint ? <p className="mt-1.5 text-center font-mono text-[9px] text-faint">{hint}</p> : null}
     </div>
   );
 }
