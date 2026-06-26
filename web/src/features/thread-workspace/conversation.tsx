@@ -4,11 +4,8 @@ import { useEffect, useRef } from 'react';
 import { classifyMessage } from './classify';
 import {
   ClaudeBubble,
-  DecisionChip,
   LiveIndicator,
   LiveTurnView,
-  ParkAndAsk,
-  PrCard,
   SystemEventPill,
   ThinkingBlock,
   UserBubble,
@@ -59,7 +56,7 @@ export function Conversation({
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar />
       <div className="relative min-h-0 flex-1">
-        <div className="thin-scroll h-full overflow-y-auto px-7 pt-5">
+        <div className="h-full overflow-y-auto px-7 pt-5">
           <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
@@ -131,15 +128,6 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
         break;
       case 'verdict':
         nodes.push(<VerdictCardView key={message.ts} card={c.card} />);
-        break;
-      case 'decision':
-        nodes.push(<DecisionChip key={message.ts} message={message} />);
-        break;
-      case 'park':
-        nodes.push(<ParkAndAsk key={message.ts} message={message} />);
-        break;
-      case 'pr':
-        nodes.push(<PrCard key={message.ts} message={message} />);
         break;
       case 'event':
         nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);

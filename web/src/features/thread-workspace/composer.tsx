@@ -39,7 +39,7 @@ export function Composer({
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 bottom-0 px-6 pb-5 pt-[22px]"
+      className="pointer-events-none absolute bottom-0 left-0 right-2 px-6 pb-5 pt-[22px]"
       style={{ background: 'linear-gradient(to top, var(--panel) 58%, transparent)' }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">

@@ -15,18 +15,19 @@ export type ClassifiedMessage =
   | { kind: 'tool'; message: ThreadMessage }
   | { kind: 'approval'; message: ThreadMessage; card: WebApprovalCard }
   | { kind: 'verdict'; message: ThreadMessage; card: WebVerdictCard }
-  | { kind: 'decision'; message: ThreadMessage }
-  | { kind: 'park'; message: ThreadMessage }
-  | { kind: 'pr'; message: ThreadMessage }
   | { kind: 'event'; message: ThreadMessage; tone: SystemTone };
 
-const PARK_RE = /decision needed|paused\b.*\bdecision|reply below to answer|always-ask|parked? (it|one)/i;
-const DECISION_RE = /^\s*(🔒|decision[:—-]|locked decision|decision record)/i;
-const PR_RE = /pull request|ready for review|github\.com\/[^\s]+\/pull\/|\bPR #?\d+\b/i;
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
 const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
 
-/** Pick the bubble kind for a message. */
+/**
+ * Pick the bubble kind for a message — STRUCTURED SIGNALS ONLY. Everything is keyed off a real backend
+ * field (`author`, `kind`, `card.type`); there is NO text-regex inference. Anything that isn't one of
+ * those structured kinds falls through to plain `claude` prose (rendered as markdown). This deliberately
+ * dropped the old park / PR / decision / status-line heuristics, which mis-fired on ordinary prose that
+ * merely mentioned those words (e.g. a message discussing "always-ask" decisions rendered as a fake
+ * "Decision needed — paused" card).
+ */
 export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
   if (message.author === 'user' || message.local) {
     return { kind: 'user', message };
@@ -43,26 +44,12 @@ export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
     return { kind: 'verdict', message, card: message.card };
   }
 
-  const text = message.text ?? '';
-  const isBuildEvent = message.kind === 'build_event';
-
-  if (PARK_RE.test(text)) return { kind: 'park', message };
-  if (PR_RE.test(text)) return { kind: 'pr', message };
-  if (DECISION_RE.test(text)) return { kind: 'decision', message };
-
-  if (isBuildEvent || isShortStatusLine(text)) {
-    return { kind: 'event', message, tone: toneOf(text) };
+  // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source.
+  if (message.kind === 'build_event') {
+    return { kind: 'event', message, tone: toneOf(message.text ?? '') };
   }
 
   return { kind: 'claude', message };
-}
-
-/** Heuristic: terse one-liners (tool/status relays) read as system-event pills, not chat bubbles. */
-function isShortStatusLine(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length === 0 || trimmed.length > 140) return false;
-  if (trimmed.startsWith('[tool]')) return true;
-  return !trimmed.includes('\n') && (WARN_RE.test(trimmed) || OK_RE.test(trimmed));
 }
 
 export function toneOf(text: string): SystemTone {

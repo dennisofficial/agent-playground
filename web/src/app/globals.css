@@ -112,27 +112,35 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Thin scrollbar — for scroll surfaces (conversation transcript, etc.). ─────────────────── */
-.thin-scroll {
+/* ── Thin scrollbar — the global default for every scroll surface. ─────────────────────────── */
+/* Standard properties, applied to EVERY element directly: `scrollbar-width` is NOT inherited, so
+   setting it only on the root would never reach the scroll containers (they'd stay native/`auto`). */
+* {
   scrollbar-width: thin;
   scrollbar-color: var(--border-2) transparent;
 }
-.thin-scroll::-webkit-scrollbar {
+/* Legacy fallback for browsers without standard scrollbar-* support (e.g. Safari < 18.2). When the
+   standard props above ARE supported, the engine disables these ::-webkit rules — that's expected. */
+*::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-.thin-scroll::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
-.thin-scroll::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
   background: var(--border-2);
-  border-radius: 6px;
+  border-radius: 8px;
   border: 2px solid transparent;
   background-clip: padding-box;
+  min-height: 36px;
 }
-.thin-scroll::-webkit-scrollbar-thumb:hover {
+*::-webkit-scrollbar-thumb:hover {
   background: var(--faint);
   background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ── Animations — TRANSFORM-ONLY (handoff §5: never opacity-from-0). ───────────────────────── */

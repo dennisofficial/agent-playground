@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, Clock, ExternalLink, Lock, MessageSquare } from 'lucide-react';
+import { ChevronRight, Clock } from 'lucide-react';
 import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
 import { ToolGroup, type ToolItem } from './tool-call';
@@ -137,15 +137,6 @@ export function LiveTurnView({ turn }: { turn: LiveTurn }) {
   );
 }
 
-export function DecisionChip({ message }: { message: ThreadMessage }) {
-  return (
-    <div className="anim-fadeUp flex max-w-[86%] items-start gap-2.5 rounded-md border border-border bg-surface-2 px-3 py-2.5">
-      <Lock size={14} className="mt-0.5 shrink-0 text-dim" />
-      <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-text">{message.text}</p>
-    </div>
-  );
-}
-
 const TONE_COLOR: Record<SystemTone, string> = {
   ok: 'var(--green)',
   warn: 'var(--red)',
@@ -161,54 +152,6 @@ export function SystemEventPill({ message, tone }: { message: ThreadMessage; ton
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
       <span className="truncate">{message.text}</span>
-    </div>
-  );
-}
-
-export function ParkAndAsk({ message }: { message: ThreadMessage }) {
-  return (
-    <div
-      className="anim-pop self-stretch rounded-lg border px-4 py-3.5"
-      style={{
-        background: 'color-mix(in srgb, var(--red) 6%, transparent)',
-        borderColor: 'color-mix(in srgb, var(--red) 40%, transparent)',
-      }}
-    >
-      <div className="flex items-center gap-2">
-        <span className="pulse-dot h-2 w-2 rounded-full" style={{ background: 'var(--red)' }} />
-        <span className="text-[12.5px] font-semibold" style={{ color: 'var(--red)' }}>
-          Decision needed — paused
-        </span>
-      </div>
-      <p className="mt-2 whitespace-pre-wrap text-[12.5px] leading-relaxed text-text">{message.text}</p>
-      <p className="mt-2 flex items-center gap-1.5 font-mono text-[10px] text-faint">
-        <MessageSquare size={12} /> reply below to answer — the build resumes on your reply
-      </p>
-    </div>
-  );
-}
-
-const PR_URL_RE = /https?:\/\/github\.com\/\S+\/pull\/\d+/i;
-
-export function PrCard({ message }: { message: ThreadMessage }) {
-  const url = message.text.match(PR_URL_RE)?.[0];
-  return (
-    <div className="anim-pop self-stretch rounded-lg border border-border bg-surface p-4" style={{ boxShadow: 'var(--shadow-card)' }}>
-      <span className="font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: 'var(--green)' }}>
-        Pull request
-      </span>
-      <p className="mt-1.5 whitespace-pre-wrap text-[13px] text-text">{message.text}</p>
-      {url ? (
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-3 inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium text-white"
-          style={{ background: 'linear-gradient(145deg, var(--accent), var(--accent-2))' }}
-        >
-          Open on GitHub <ExternalLink size={12} />
-        </a>
-      ) : null}
     </div>
   );
 }
