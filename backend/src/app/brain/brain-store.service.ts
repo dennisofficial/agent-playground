@@ -252,12 +252,17 @@ export class BrainStoreService {
 
   // ── create_thread tool ───────────────────────────────────────────────────────────────────────────
 
-  /** Create a follow-up thread (the brain's `create_thread` tool) — a plain `open` thread on the repo. */
+  /**
+   * Create a follow-up thread (the brain's `create_thread` / `promote_ticket` tools) — a plain `open`
+   * thread on the repo that provisions its sandbox lazily on the first turn. Optionally links the ticket
+   * it was promoted from (`ticketId`).
+   */
   async createFollowUpThread(input: {
     orgId: string;
     repoId: string;
     title: string | null;
     baseBranch: string | null;
+    ticketId?: string | null;
   }): Promise<string> {
     const row = await this.threads.save(
       this.threads.create({
@@ -267,6 +272,7 @@ export class BrainStoreService {
         surface_thread_ref: null,
         title: input.title,
         base_branch: input.baseBranch,
+        ticket_id: input.ticketId ?? null,
       }),
     );
     return row.id;

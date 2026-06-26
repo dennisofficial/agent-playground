@@ -4,5 +4,6 @@ export {
   type CreateTicketInput,
   type UpdateTicketPatch,
   type TicketDetail,
+  type PromoteResult,
 } from './ticket.service';
 export { TicketEventBus, type TicketEvent } from './ticket-event-bus';

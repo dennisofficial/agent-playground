@@ -14,6 +14,7 @@ import {
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
+  RepoEntity,
   TicketCounterEntity,
   TicketDependencyEntity,
   TicketEntity,
@@ -50,6 +51,16 @@ export interface UpdateTicketPatch {
   sortOrder?: number;
 }
 
+/** The outcome of promoting a ticket to a thread. `created` is false when an existing link was reused. */
+export interface PromoteResult {
+  threadId: string;
+  /** True if a NEW thread was created; false if the ticket was already linked (idempotent reuse). */
+  created: boolean;
+  /** The opening intent to seed the new thread's brain with (title + body). Empty if not newly created. */
+  seedText: string;
+  title: string;
+}
+
 /** A ticket with its advisory dependency edges resolved + the derived `blocked` flag. */
 export interface TicketDetail {
   ticket: TicketEntity;
@@ -59,6 +70,8 @@ export interface TicketDetail {
   blocks: TicketEntity[];
   /** True if any `dependsOn` ticket is not yet in a terminal (done/cancelled) status. */
   blocked: boolean;
+  /** The thread promoted from / working this ticket (null if none) — the 1:1 link. */
+  linkedThreadId: string | null;
 }
 
 /**
@@ -80,6 +93,8 @@ export class TicketService {
     private readonly threads: Repository<ThreadEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly decisions: Repository<DecisionRecordEntity>,
+    @InjectRepository(RepoEntity, DB_CONNECTION)
+    private readonly repos: Repository<RepoEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly events: TicketEventBus,
@@ -178,12 +193,13 @@ export class TicketService {
     ]);
     const dependsOnIds = outEdges.map((e) => e.depends_on_ticket_id);
     const blocksIds = inEdges.map((e) => e.ticket_id);
-    const [dependsOn, blocks] = await Promise.all([
+    const [dependsOn, blocks, linkedThreadId] = await Promise.all([
       this.byIds(args.orgId, args.repoId, dependsOnIds),
       this.byIds(args.orgId, args.repoId, blocksIds),
+      this.findLinkedThread(args.orgId, ticket.id),
     ]);
     const blocked = dependsOn.some((d) => !TICKET_TERMINAL_STATUSES.has(d.status as TicketStatus));
-    return { ticket, dependsOn, blocks, blocked };
+    return { ticket, dependsOn, blocks, blocked, linkedThreadId };
   }
 
   /** Patch a ticket's editable fields. Only provided keys change. */
@@ -294,6 +310,69 @@ export class TicketService {
     this.events.publish({ type: 'ticket_event', orgId, repoId, ticketId, kind: 'updated' });
   }
 
+  /**
+   * Promote a ticket into a working thread — the DURABLE half (link + status flip), idempotent and
+   * conflict-aware. Caller does the brain-kick (HTTP via the surface inbound; the brain tool in-process)
+   * so this service stays free of a surface/brain dependency.
+   *
+   * Ordering matters: the thread row carries `ticket_id` (the link is written FIRST, in the insert), and
+   * only THEN do we flip the ticket to `in_progress` — so a retry can't leave the ticket "in progress"
+   * with no linked thread. The 1:1 is enforced by the partial unique index on `threads.ticket_id`; a
+   * concurrent promote that loses the race surfaces as a unique violation we catch and resolve to the
+   * winning thread (so promote is safe to call repeatedly).
+   */
+  async promote(args: { orgId: string; repoId: string; ticketId: string }): Promise<PromoteResult> {
+    const { orgId, repoId, ticketId } = args;
+    const ticket = await this.requireTicket(orgId, repoId, ticketId);
+    const seedText = ticket.body ? `${ticket.title}\n\n${ticket.body}` : ticket.title;
+
+    const existing = await this.findLinkedThread(orgId, ticketId);
+    if (existing) {
+      return { threadId: existing, created: false, seedText: '', title: ticket.title };
+    }
+
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    const baseBranch = repo?.default_branch ?? null;
+
+    let threadId: string;
+    try {
+      const row = await this.threads.save(
+        this.threads.create({
+          org_id: orgId,
+          repo_id: repoId,
+          origin: 'control',
+          surface_thread_ref: null,
+          title: ticket.title,
+          base_branch: baseBranch,
+          ticket_id: ticketId, // the link is written FIRST (in the insert)
+        }),
+      );
+      threadId = row.id;
+    } catch (err) {
+      // A concurrent promote won the partial-unique index — resolve to the winning thread, don't error.
+      if (isUniqueViolation(err)) {
+        const won = await this.findLinkedThread(orgId, ticketId);
+        if (won) return { threadId: won, created: false, seedText: '', title: ticket.title };
+      }
+      throw err;
+    }
+
+    // Link persisted → now advance the ticket onto the board (only from a pre-work status).
+    if (ticket.status === 'backlog' || ticket.status === 'todo') {
+      ticket.status = 'in_progress';
+      await this.tickets.save(ticket);
+    }
+    this.events.publish({ type: 'ticket_event', orgId, repoId, ticketId, kind: 'updated' });
+    this.logger.log(`promoted ticket #${ticket.number} (${ticketId}) → thread ${threadId}`);
+    return { threadId, created: true, seedText, title: ticket.title };
+  }
+
+  /** The thread currently linked to a ticket (org-scoped), or null. */
+  async findLinkedThread(orgId: string, ticketId: string): Promise<string | null> {
+    const thread = await this.threads.findOne({ where: { ticket_id: ticketId, org_id: orgId } });
+    return thread?.id ?? null;
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────────────────────────
 
   /** Resolve a ticket scoped to org+repo or 404 — the guard for every ticket-keyed op. */
@@ -400,4 +479,9 @@ function dedupe(ids: string[]): string[] {
 function firstLine(text: string): string {
   const line = text.split('\n', 1)[0].trim();
   return line.length > 240 ? `${line.slice(0, 237)}…` : line;
+}
+
+/** True for a Postgres unique-violation error (SQLSTATE 23505) — e.g. the partial-unique promote race. */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
 }

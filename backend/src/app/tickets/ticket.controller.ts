@@ -19,7 +19,10 @@ import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, TicketEntity } from '../persistence/entities';
+import { WebSurface } from '../surface/web-surface';
 import { TicketService, type TicketDetail } from './ticket.service';
+
+const OPERATOR = { authorId: 'U-OPERATOR', authorName: 'Operator' };
 
 interface CreateTicketDto {
   title: string;
@@ -56,6 +59,7 @@ export class TicketController {
     private readonly tickets: TicketService,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
+    private readonly surface: WebSurface,
   ) {}
 
   /** `GET …/repos/:repoId/tickets?status=&q=` — the repo's board + backlog. */
@@ -147,6 +151,31 @@ export class TicketController {
     return { ok: true };
   }
 
+  /**
+   * `POST …/tickets/:ticketId/promote` — turn a ticket into a working thread (1:1). Idempotent: a second
+   * call returns the already-linked thread. On a NEW thread it seeds the brain via the surface inbound
+   * (same path as thread creation), so the thread starts working the ticket on its first turn.
+   */
+  @Post('orgs/:orgId/repos/:repoId/tickets/:ticketId/promote')
+  @UseGuards(OrgMembershipGuard)
+  async promote(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+    @Param('ticketId') ticketId: string,
+  ): Promise<{ threadId: string; created: boolean }> {
+    const result = await this.tickets.promote({ orgId: org.id, repoId, ticketId });
+    if (result.created && result.seedText) {
+      // Seed the new thread's opening intent — the chat bridge resolves the thread by id and triages it.
+      this.surface.receiveFromClient(repoId, result.seedText, {
+        orgId: org.id,
+        threadTs: result.threadId,
+        ...OPERATOR,
+      });
+    }
+    this.logger.log(`promoted ticket ${ticketId} → thread ${result.threadId} (created=${result.created})`);
+    return { threadId: result.threadId, created: result.created };
+  }
+
   /** `POST …/tickets/:ticketId/dependencies` — add an advisory "blocked by" edge. */
   @Post('orgs/:orgId/repos/:repoId/tickets/:ticketId/dependencies')
   @UseGuards(OrgMembershipGuard)
@@ -209,6 +238,7 @@ function toTicketDetailDto(d: TicketDetail): Record<string, unknown> {
   return {
     ...toTicketDto(d.ticket),
     blocked: d.blocked,
+    linkedThreadId: d.linkedThreadId,
     dependsOn: d.dependsOn.map(toTicketRef),
     blocks: d.blocks.map(toTicketRef),
   };

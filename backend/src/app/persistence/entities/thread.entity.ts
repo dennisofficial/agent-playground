@@ -3,6 +3,7 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
+import { TicketEntity } from './ticket.entity';
 
 /**
  * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an
@@ -77,6 +78,19 @@ export class ThreadEntity extends TimestampedEntity {
   /** The base branch the build cuts from (operator-picked; null → the repo's default_branch). */
   @Column({ type: 'text', nullable: true })
   base_branch!: string | null;
+
+  /**
+   * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
+   * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index
+   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), hand-added in the migration. SET NULL if the
+   * ticket is deleted (the thread/PR outlives the board entry).
+   */
+  @Column({ type: 'uuid', nullable: true })
+  ticket_id!: string | null;
+
+  @ManyToOne(() => TicketEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'ticket_id' })
+  ticket?: TicketEntity | null;
 
   // ── build lifecycle (folded in from the former `jobs` table) ───────────────────────────────────────
   /** Build intent: 'feature' (many sections) | 'bugfix' (one). Null until the thread is scoped. */
