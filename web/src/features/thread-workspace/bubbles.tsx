@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import { ChevronRight, Clock, ExternalLink, Lock, MessageSquare } from 'lucide-react';
 import type { SystemTone } from './classify';
+import { Markdown } from './markdown';
+import { ToolGroup, type ToolItem } from './tool-call';
 import type { ThreadMessage } from '@/lib/api/thread-api';
-import type { LiveTurn } from '@/lib/api/thread-stream';
+import type { LiveBlock, LiveTurn } from '@/lib/api/thread-stream';
 
 /** Small Atlas/Claude avatar — the brand mark, mini (the rotated rounded square). */
 export function ClaudeAvatar({ size = 24 }: { size?: number }) {
@@ -57,13 +59,13 @@ export function ClaudeBubble({ message }: { message: ThreadMessage }) {
 }
 
 /**
- * An assistant message — rendered as plain prose (no avatar, no bubble), per the conversation redesign.
+ * An assistant message — rendered as markdown prose (no avatar, no bubble), per the conversation redesign.
  * `streaming` adds a blinking cursor for the live (token-by-token) turn.
  */
 export function StreamTextBubble({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
-    <div className="anim-fadeUp whitespace-pre-wrap text-[14px] leading-[1.6] text-text">
-      {text}
+    <div className="anim-fadeUp">
+      <Markdown>{text}</Markdown>
       {streaming ? (
         <span
           className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[2px] animate-pulse"
@@ -73,21 +75,6 @@ export function StreamTextBubble({ text, streaming = false }: { text: string; st
       ) : null}
     </div>
   );
-}
-
-/** Truncate + pretty-print a tool input/result payload (object → JSON, string → as-is) for display. */
-function formatPayload(value: unknown): string {
-  if (value == null) return '';
-  let out: string;
-  if (typeof value === 'string') out = value;
-  else {
-    try {
-      out = JSON.stringify(value, null, 2);
-    } catch {
-      out = String(value);
-    }
-  }
-  return out.length > 4000 ? `${out.slice(0, 4000)}\n… (truncated)` : out;
 }
 
 /** A collapsible thinking block (the model's reasoning) — dimmed + italic, like Claude Code. */
@@ -115,81 +102,37 @@ export function ThinkingBlock({ text, streaming = false }: { text: string; strea
   );
 }
 
-/** A collapsible tool-call card (name + input + result), `running` while awaiting its result. */
-export function ToolCallCard({
-  name,
-  input,
-  result,
-  isError = false,
-  running = false,
-}: {
-  name: string;
-  input?: unknown;
-  result?: unknown;
-  isError?: boolean;
-  running?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const inputStr = formatPayload(input);
-  const resultStr = formatPayload(result);
-  return (
-    <div className="anim-fadeUp">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="trow flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left"
-      >
-        <span
-          className="w-[34px] shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.03em]"
-          style={{ color: isError ? 'var(--red)' : 'var(--accent)' }}
-        >
-          tool
-        </span>
-        <span className="flex-1 truncate font-mono text-[11.5px] text-dim">{name}</span>
-        {running ? (
-          <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
-        ) : null}
-        <ChevronRight size={11} strokeWidth={2.4} className={`shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`} />
-      </button>
-      {open && (inputStr || resultStr) ? (
-        <div className="ml-2 mt-1 space-y-1.5 rounded-md border border-border bg-surface px-3 py-2 font-mono text-[11px] leading-relaxed text-dim">
-          {inputStr ? (
-            <div>
-              <span className="text-faint">input</span>
-              <pre className="mt-0.5 whitespace-pre-wrap break-words">{inputStr}</pre>
-            </div>
-          ) : null}
-          {resultStr ? (
-            <div>
-              <span className="text-faint">{isError ? 'error' : 'result'}</span>
-              <pre className="mt-0.5 whitespace-pre-wrap break-words">{resultStr}</pre>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/** Render a thread's in-flight LIVE turn (token-streamed text, thinking, and tool calls). */
+/** Render a thread's in-flight LIVE turn (token-streamed text, thinking, and grouped tool calls). */
 export function LiveTurnView({ turn }: { turn: LiveTurn }) {
+  // Collapse runs of consecutive tool blocks into one group; text/thinking break the run.
+  const items: Array<{ key: string; node: React.ReactNode }> = [];
+  let pending: ToolItem[] = [];
+  const flush = () => {
+    if (pending.length === 0) return;
+    const tools = pending;
+    items.push({ key: `tg-${tools[0].key}`, node: <ToolGroup tools={tools} /> });
+    pending = [];
+  };
+
+  for (const b of turn.blocks as LiveBlock[]) {
+    if (b.kind === 'tool') {
+      pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, running: !b.done });
+      continue;
+    }
+    flush();
+    if (b.kind === 'text') {
+      items.push({ key: b.key, node: <StreamTextBubble text={b.text} streaming={!b.done && turn.active} /> });
+    } else {
+      items.push({ key: b.key, node: <ThinkingBlock text={b.text} streaming={!b.done && turn.active} /> });
+    }
+  }
+  flush();
+
   return (
     <>
-      {turn.blocks.map((b) => {
-        if (b.kind === 'text') return <StreamTextBubble key={b.key} text={b.text} streaming={!b.done && turn.active} />;
-        if (b.kind === 'thinking')
-          return <ThinkingBlock key={b.key} text={b.text} streaming={!b.done && turn.active} />;
-        return (
-          <ToolCallCard
-            key={b.key}
-            name={b.name}
-            input={b.input}
-            result={b.result}
-            isError={b.isError}
-            running={!b.done}
-          />
-        );
-      })}
+      {items.map((it) => (
+        <div key={it.key}>{it.node}</div>
+      ))}
     </>
   );
 }

@@ -11,9 +11,9 @@ import {
   PrCard,
   SystemEventPill,
   ThinkingBlock,
-  ToolCallCard,
   UserBubble,
 } from './bubbles';
+import { ToolGroup, type ToolItem } from './tool-call';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { Composer } from './composer';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
@@ -58,8 +58,9 @@ export function Conversation({
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar />
-      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
-        <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
+      <div className="relative min-h-0 flex-1">
+        <div className="thin-scroll h-full overflow-y-auto px-7 pt-5">
+          <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
           ) : messages.length === 0 && liveBlockCount === 0 ? (
@@ -67,57 +68,91 @@ export function Conversation({
               No messages yet — say something to Atlas below.
             </p>
           ) : (
-            log.map((message) => {
-              const c = classifyMessage(message);
-              switch (c.kind) {
-                case 'user':
-                  return <UserBubble key={message.ts} message={message} />;
-                case 'thinking':
-                  return <ThinkingBlock key={message.ts} text={message.text} />;
-                case 'tool': {
-                  const m = message.meta ?? {};
-                  return (
-                    <ToolCallCard
-                      key={message.ts}
-                      name={String(m.name ?? 'tool')}
-                      input={m.input}
-                      result={m.result}
-                      isError={Boolean(m.isError)}
-                    />
-                  );
-                }
-                case 'approval':
-                  return (
-                    <ApprovalCardView key={message.ts} card={c.card} threadRef={threadRef} onOpenPlan={onOpenPlan} />
-                  );
-                case 'verdict':
-                  return <VerdictCardView key={message.ts} card={c.card} />;
-                case 'decision':
-                  return <DecisionChip key={message.ts} message={message} />;
-                case 'park':
-                  return <ParkAndAsk key={message.ts} message={message} />;
-                case 'pr':
-                  return <PrCard key={message.ts} message={message} />;
-                case 'event':
-                  return <SystemEventPill key={message.ts} message={message} tone={c.tone} />;
-                case 'claude':
-                default:
-                  return <ClaudeBubble key={message.ts} message={message} />;
-              }
-            })
+            renderLog(log, threadRef, onOpenPlan)
           )}
           {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} /> : null}
           {live || turnActive ? <LiveIndicator /> : null}
           {queued.map((message) => (
             <UserBubble key={message.ts} message={message} queued />
           ))}
-          <div ref={endRef} />
+            {/* Spacer so the last line clears the floating composer when scrolled to the bottom. */}
+            <div className="h-[116px] shrink-0" aria-hidden />
+            <div ref={endRef} />
+          </div>
         </div>
+        <Composer threadRef={threadRef} />
       </div>
-
-      <Composer threadRef={threadRef} />
     </div>
   );
+}
+
+/**
+ * Render the durable transcript, collapsing runs of consecutive tool messages into one `ToolGroup`
+ * (matching the conversation design) while every other kind renders as its own typed block.
+ */
+function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () => void): React.ReactNode {
+  const nodes: React.ReactNode[] = [];
+  let pending: Array<{ key: string; tool: ToolItem }> = [];
+
+  const flush = () => {
+    if (pending.length === 0) return;
+    const tools = pending.map((p) => p.tool);
+    nodes.push(<ToolGroup key={`tg-${pending[0].key}`} tools={tools} />);
+    pending = [];
+  };
+
+  for (const message of log) {
+    const c = classifyMessage(message);
+    if (c.kind === 'tool') {
+      const m = message.meta ?? {};
+      pending.push({
+        key: message.ts,
+        tool: {
+          key: message.ts,
+          name: String(m.name ?? 'tool'),
+          input: m.input,
+          result: m.result,
+          isError: Boolean(m.isError),
+        },
+      });
+      continue;
+    }
+    flush();
+
+    switch (c.kind) {
+      case 'user':
+        nodes.push(<UserBubble key={message.ts} message={message} />);
+        break;
+      case 'thinking':
+        nodes.push(<ThinkingBlock key={message.ts} text={message.text} />);
+        break;
+      case 'approval':
+        nodes.push(<ApprovalCardView key={message.ts} card={c.card} threadRef={threadRef} onOpenPlan={onOpenPlan} />);
+        break;
+      case 'verdict':
+        nodes.push(<VerdictCardView key={message.ts} card={c.card} />);
+        break;
+      case 'decision':
+        nodes.push(<DecisionChip key={message.ts} message={message} />);
+        break;
+      case 'park':
+        nodes.push(<ParkAndAsk key={message.ts} message={message} />);
+        break;
+      case 'pr':
+        nodes.push(<PrCard key={message.ts} message={message} />);
+        break;
+      case 'event':
+        nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
+        break;
+      case 'claude':
+      default:
+        nodes.push(<ClaudeBubble key={message.ts} message={message} />);
+        break;
+    }
+  }
+  flush();
+
+  return nodes;
 }
 
 /**

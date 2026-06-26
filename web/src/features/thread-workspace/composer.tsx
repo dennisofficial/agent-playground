@@ -39,13 +39,13 @@ export function Composer({
 
   return (
     <div
-      className="shrink-0 px-[22px] pb-4 pt-3.5"
-      style={{ background: 'linear-gradient(to top, var(--panel) 62%, transparent)' }}
+      className="pointer-events-none absolute inset-x-0 bottom-0 px-6 pb-5 pt-[22px]"
+      style={{ background: 'linear-gradient(to top, var(--panel) 58%, transparent)' }}
     >
-      <div className="mx-auto max-w-[880px]">
+      <div className="pointer-events-auto mx-auto max-w-[880px]">
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
-          style={{ boxShadow: '0 8px 30px rgba(20,18,12,.10), 0 2px 8px rgba(20,18,12,.05)' }}
+          style={{ boxShadow: '0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)' }}
         >
           <div className="flex items-start gap-2.5">
             <textarea
