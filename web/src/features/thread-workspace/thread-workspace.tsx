@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAllThreads } from '@/lib/api/inbox';
 import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread } from '@/lib/api/thread-queries';
@@ -14,6 +14,7 @@ import type { ThreadKind, ThreadStatus, WebApprovalCard } from '@/lib/api/types'
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
 import { PhaseView } from './phase-view';
+import { useSelectedNode } from './use-selected-node';
 
 type WorkMode = 'conversation' | 'phase';
 
@@ -38,20 +39,16 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
 
   const { data: inbox } = useAllThreads();
   const { data: messages = [], isLoading: messagesLoading } = useThreadMessages(ref);
-  const { data: pipeline } = usePipeline(ref);
+  const { data: pipeline, isLoading: pipelineLoading, isError: pipelineError } = usePipeline(ref);
   const { data: context, isLoading: contextLoading } = useThreadContext(ref);
   const del = useDeleteThread(ref);
   const rename = useRenameThread(ref);
   useThreadEvents(ref);
 
-  const [workMode, setWorkMode] = useState<WorkMode>('conversation');
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
-
-  // New thread → reset the work column to the conversation.
-  useEffect(() => {
-    setWorkMode('conversation');
-    setSelectedNode(null);
-  }, [threadId]);
+  // The selected node lives in `?node=` (single source of truth). A thread switch navigates to a fresh
+  // clean `threadHref()` URL with no query, so the selection naturally resets — no reset effect needed.
+  const { selectedNode, selectNode, openConversation } = useSelectedNode();
+  const workMode: WorkMode = selectedNode ? 'phase' : 'conversation';
 
   const inboxThread = useMemo(() => inbox?.find((t) => t.id === threadId), [inbox, threadId]);
   const job = pipelineJob(pipeline);
@@ -87,15 +84,9 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     footer: FOOTERS[status],
   };
 
-  const onConversation = () => setWorkMode('conversation');
-  const onSelectNode = (node: string) => {
-    setSelectedNode(node);
-    setWorkMode('phase');
-  };
-  const onOpenPlan = () => {
-    setSelectedNode('plan');
-    setWorkMode('phase');
-  };
+  const onConversation = openConversation;
+  const onSelectNode = selectNode;
+  const onOpenPlan = () => selectNode('plan');
   const onRename = (title: string) => rename.mutate(title);
   const onDelete = () =>
     del.mutate(undefined, {
@@ -140,6 +131,8 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
             <PhaseView
               threadRef={ref}
               pipeline={pipeline}
+              pipelineLoading={pipelineLoading}
+              pipelineError={pipelineError}
               messages={messages}
               approvalCard={approvalCard}
               selectedNode={selectedNode}

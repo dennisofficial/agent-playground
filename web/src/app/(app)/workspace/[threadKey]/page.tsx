@@ -1,9 +1,10 @@
 'use client';
 
-import { use } from 'react';
+import { Suspense, use } from 'react';
 import Link from 'next/link';
 import { decodeThreadRef, ROUTES } from '@/lib/routes';
 import { ThreadWorkspace } from '@/features/thread-workspace/thread-workspace';
+import { Spinner } from '@/components/ui/spinner';
 
 /**
  * The thread workspace — navigator + work column (Conversation / Phase). The `[threadKey]` segment
@@ -32,5 +33,17 @@ export default function ThreadPage({ params }: { params: Promise<{ threadKey: st
     );
   }
 
-  return <ThreadWorkspace orgId={ref.orgId} repoId={ref.repoId} threadId={ref.threadId} />;
+  // `ThreadWorkspace` reads the selected node from `?node=` via `useSearchParams`, which needs a Suspense
+  // boundary (else a statically-rendered route bails to client rendering). Keep it tight — just this reader.
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full min-h-0 items-center justify-center">
+          <Spinner className="h-5 w-5 text-faint" />
+        </div>
+      }
+    >
+      <ThreadWorkspace orgId={ref.orgId} repoId={ref.repoId} threadId={ref.threadId} />
+    </Suspense>
+  );
 }

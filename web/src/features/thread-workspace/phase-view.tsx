@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Info, X } from 'lucide-react';
+import { ArrowRight, Info, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useContextFile, useSay } from '@/lib/api/thread-queries';
@@ -13,6 +13,7 @@ import { pipelineJob, type ThreadMessage, type ThreadRef } from '@/lib/api/threa
 import {
   APPROVE_ACTION_ID,
   type ContextFileContent,
+  type PipelineJob,
   type PipelineState,
   type WebApprovalCard,
 } from '@/lib/api/types';
@@ -29,6 +30,8 @@ type PhaseTab = 'transcript' | 'diff' | 'logs';
 export function PhaseView({
   threadRef,
   pipeline,
+  pipelineLoading,
+  pipelineError,
   messages,
   approvalCard,
   selectedNode,
@@ -36,6 +39,9 @@ export function PhaseView({
 }: {
   threadRef: ThreadRef;
   pipeline: PipelineState | undefined;
+  /** The pipeline query's loading / error state — needed to tell "still loading" from "node is gone". */
+  pipelineLoading?: boolean;
+  pipelineError?: boolean;
   messages: ThreadMessage[];
   approvalCard: WebApprovalCard | null;
   selectedNode: string;
@@ -48,8 +54,18 @@ export function PhaseView({
   const phaseIndex = owningSection ? owningSection.phases.findIndex((p) => p.id === selectedNode) : -1;
   const phase = owningSection?.phases[phaseIndex] ?? null;
 
+  // A `?node=` URL can outlive the node it names (deleted spec, a section/phase id from before a re-plan).
+  // Resolve EVERY job-derived token against the live job so a stale link shows NodeNotFound rather than a
+  // misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:` self-handle a 404
+  // inside FileView; `plan`/`decision`/`diff` render from card/derived data and are always resolvable.
+  const resolution = resolveNode(selectedNode, job, Boolean(pipelineLoading), Boolean(pipelineError));
+
   let body: React.ReactNode;
-  if (selectedNode === 'plan') {
+  if (resolution === 'loading') {
+    body = <Placeholder title="Loading…" body="Resolving this node against the pipeline." />;
+  } else if (resolution === 'not_found') {
+    body = <NodeNotFound node={selectedNode} onConversation={onConversation} />;
+  } else if (selectedNode === 'plan') {
     body = <PlanDoc card={approvalCard} title={job?.title} sections={job?.sections.map((s) => s.brief)} threadRef={threadRef} />;
   } else if (selectedNode === 'decision') {
     body = <DecisionDoc card={approvalCard} />;
@@ -488,6 +504,60 @@ const PROSE_THEME = {
   '--tw-prose-th-borders': 'var(--border)',
   '--tw-prose-td-borders': 'var(--hair)',
 } as React.CSSProperties;
+
+// ── node resolution (stale `?node=` → not-found) ─────────────────────────────────────────────────
+type NodeResolution = 'loading' | 'found' | 'not_found';
+
+/** Literals that render from card / derived data — no live-id dependency, always resolvable. */
+const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
+
+/**
+ * Classify a `?node=` token against the live job. Job-derived tokens (`secplan:`/`rev:`/`autofix:` carry a
+ * section id; a bare token is a section or phase id) become `not_found` when their id is gone — otherwise a
+ * stale URL would render a misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:`
+ * self-handle a missing file inside `FileView`, so they stay `found` here.
+ */
+function resolveNode(node: string, job: PipelineJob | null, loading: boolean, error: boolean): NodeResolution {
+  if (ID_FREE_NODES.has(node)) return 'found';
+  if (node.startsWith('spec:') || node.startsWith('artifact:')) return 'found';
+
+  if (loading) return 'loading';
+  if (error || !job) return 'not_found';
+
+  if (node.startsWith('secplan:')) return hasSection(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
+  if (node.startsWith('rev:')) return hasSection(job, node.split(':')[1] ?? '') ? 'found' : 'not_found';
+  if (node.startsWith('autofix:')) return hasSection(job, node.slice('autofix:'.length)) ? 'found' : 'not_found';
+
+  // Bare token — a section or a phase leaf.
+  const matches = job.sections.some((s) => s.id === node || s.phases.some((p) => p.id === node));
+  return matches ? 'found' : 'not_found';
+}
+
+function hasSection(job: PipelineJob, id: string): boolean {
+  return id.length > 0 && job.sections.some((s) => s.id === id);
+}
+
+/** A `?node=` that no longer resolves (deleted file, re-planned section/phase). Placeholder styling — the
+ *  designer will restyle/replace this. */
+function NodeNotFound({ node, onConversation }: { node: string; onConversation: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+      <p className="text-[14px] font-semibold text-text">This node isn’t here anymore</p>
+      <p className="mt-1.5 max-w-md text-[12.5px] leading-relaxed text-dim">
+        The pane you linked to (<span className="font-mono text-[11.5px]">{node}</span>) is no longer part of
+        this thread — it may have been removed or replaced when the plan changed.
+      </p>
+      <button
+        type="button"
+        onClick={onConversation}
+        className="mt-5 inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-medium text-accent"
+        style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
+      >
+        Back to conversation <ArrowRight size={13} />
+      </button>
+    </div>
+  );
+}
 
 // ── shared bits ──────────────────────────────────────────────────────────────────────────────────
 function Placeholder({ title, body }: { title: string; body: string }) {
