@@ -46,16 +46,29 @@ export class ReplicationSource {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    try {
-      await this.service?.stop();
-    } catch {
-      /* best effort */
-    }
-    this.service = undefined;
+    await this.stopService();
     this.buffer = [];
   }
 
+  /** Close and drop the current service, releasing its replication connection (walsender). Best-effort. */
+  private async stopService(): Promise<void> {
+    const service = this.service;
+    this.service = undefined;
+    if (!service) return;
+    try {
+      await service.stop();
+    } catch {
+      /* best effort */
+    }
+  }
+
   private async connect(): Promise<void> {
+    if (this.stopped) return;
+    // Tear down any prior service before opening a new replication connection. A failed
+    // subscribe (see onFailure) leaves the old service's walsender open, so without this
+    // a reconnect orphans it — the leaked walsender sits in `startup` forever (it never
+    // streams, so wal_sender_timeout never reaps it) and eventually exhausts max_wal_senders.
+    await this.stopService();
     if (this.stopped) return;
     const plugin = new PgoutputPlugin({
       protoVersion: 1,
@@ -123,6 +136,10 @@ export class ReplicationSource {
 
   private onFailure(err: unknown): void {
     if (this.stopped) return;
+    // Release the failed connection's walsender NOW rather than waiting for the next connect().
+    // pg-logical-replication leaves the client open when START_REPLICATION fails (e.g. "slot is
+    // active" during a hot-reload handoff), so this is what actually stops the leak.
+    void this.stopService();
     const message = err instanceof Error ? err.message : String(err);
     this.attempts += 1;
     const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (this.attempts - 1));

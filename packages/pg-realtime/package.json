@@ -25,7 +25,9 @@
   "files": ["dist", "src"],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "mingo": "^6.4.15",
@@ -36,6 +38,7 @@
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
     "tsup": "^8.5.1",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "^3.0.0"
   }
 }
