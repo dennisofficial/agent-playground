@@ -236,12 +236,10 @@ function OrgSection({
 
   return (
     <div className="mt-2.5 border-t border-border px-0.5 pb-1.5 pt-2.5">
-      {/* Org header — the whole row toggles collapse; the absolute icon cluster keeps the title centered. */}
+      {/* Org header — the whole row toggles collapse; the absolute icon cluster keeps the title centered.
+          No hairline under it: dividers separate siblings (repo↔repo, org↔org), never header↔content. */}
       <div
-        className={cn(
-          'group/org relative border-hair',
-          expanded ? 'mb-[5px] border-b pb-[7px]' : 'pb-[3px]',
-        )}
+        className={cn('group/org relative', expanded ? 'mb-[5px] pb-[5px]' : 'pb-[3px]')}
       >
         <button
           type="button"
@@ -319,7 +317,7 @@ function OrgSection({
 
           {vm.activeRepos.length > 0 ? (
             <>
-              {vm.activeRepos.map((repo) => (
+              {vm.activeRepos.map((repo, i) => (
                 <RepoGroup
                   key={repo.key}
                   orgId={org.id}
@@ -327,16 +325,18 @@ function OrgSection({
                   threadsLoading={threadsLoading}
                   pathname={pathname}
                   onToggle={() => onToggleRepo(repo.key)}
+                  divided={i > 0}
                 />
               ))}
 
-              {/* Idle repos in an active org roll up under a disclosure (default closed). */}
+              {/* Idle repos in an active org roll up under a disclosure (default closed). The disclosure
+                  divides from the active repos above it; its revealed repos hang under it without a line. */}
               {vm.idleCount > 0 ? (
                 <>
                   <button
                     type="button"
                     onClick={onToggleIdle}
-                    className="flex w-full items-center gap-1.5 rounded-[4px] px-1 py-1 text-left text-[10.5px] text-faint transition hover:text-dim"
+                    className="mt-[3px] flex w-full items-center gap-1.5 border-t border-hair rounded-[4px] px-1 pb-1 pt-[7px] text-left text-[10.5px] text-faint transition hover:text-dim"
                     aria-expanded={vm.idleExpanded}
                   >
                     <ChevronRight
@@ -350,7 +350,7 @@ function OrgSection({
                   </button>
 
                   {vm.idleExpanded
-                    ? vm.idleRepos.map((repo) => (
+                    ? vm.idleRepos.map((repo, i) => (
                         <RepoGroup
                           key={repo.key}
                           orgId={org.id}
@@ -358,6 +358,7 @@ function OrgSection({
                           threadsLoading={threadsLoading}
                           pathname={pathname}
                           onToggle={() => onToggleRepo(repo.key)}
+                          divided={i > 0}
                         />
                       ))
                     : null}
@@ -366,7 +367,7 @@ function OrgSection({
             </>
           ) : (
             /* Fully-idle org: it's only visible because it was expanded, so list its repos directly. */
-            vm.idleRepos.map((repo) => (
+            vm.idleRepos.map((repo, i) => (
               <RepoGroup
                 key={repo.key}
                 orgId={org.id}
@@ -374,6 +375,7 @@ function OrgSection({
                 threadsLoading={threadsLoading}
                 pathname={pathname}
                 onToggle={() => onToggleRepo(repo.key)}
+                divided={i > 0}
               />
             ))
           )}
@@ -383,23 +385,27 @@ function OrgSection({
   );
 }
 
-/** A repo subgroup: a bold-mono "folder" header over its thread leaves (or an empty "Start one ＋" row). */
+/** A repo subgroup: a bold-mono "folder" header over its thread leaves (or an empty "Start one ＋" row).
+ * `divided` draws a top hairline — set only when this repo follows a sibling, so the line separates groups
+ * rather than sitting under a header or trailing the list. */
 function RepoGroup({
   orgId,
   repo,
   threadsLoading,
   pathname,
   onToggle,
+  divided,
 }: {
   orgId: string;
   repo: RepoVM;
   threadsLoading: boolean;
   pathname: string;
   onToggle: () => void;
+  divided: boolean;
 }) {
   const iconBtn = 'grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition';
   return (
-    <div className="mb-[3px] border-b border-hair pb-[3px]">
+    <div className={cn('pb-[3px]', divided && 'mt-[3px] border-t border-hair pt-[3px]')}>
       <div className="group/repo flex items-center gap-1 pr-1">
         <button
           type="button"
