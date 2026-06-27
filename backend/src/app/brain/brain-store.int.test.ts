@@ -344,7 +344,80 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const plans2 = await sectionPlans(dataSource, threadId);
     expect(plans2).toEqual([null]); // one track, no plan (no authored steps this time)
   }, 30_000);
+
+  it('the human-input gate: openQuestion is atomic + one-at-a-time, and answered→delivered drives boot recovery', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+         ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-gate-it', 'Gate Repo', 'https://github.com/acme/gate.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+      [TEAM_ID],
+    );
+    const repoId = repoRow.id;
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO threads (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'gate') RETURNING id`,
+      [TEAM_ID, repoId],
+    );
+    const threadId = thread.id;
+    const mkCard = (id: string, q: string) => ({
+      ts: id,
+      text: q,
+      card: { type: 'question_card', threadId, questionId: id, question: q, options: [] },
+    });
+
+    // open q-1 → card row + gate pointer commit together (atomic).
+    expect(await store.openQuestion(threadId, mkCard('q-1', 'Editable or fixed?'))).toEqual({ ok: true });
+    expect(await awaitingId(dataSource, threadId)).toBe('q-1');
+    expect((await store.getQuestionCard(threadId, 'q-1'))?.question).toBe('Editable or fixed?');
+
+    // a second question while q-1 is UNANSWERED is refused (one open question at a time); pointer holds.
+    expect(await store.openQuestion(threadId, mkCard('q-2', 'Which region?'))).toEqual({
+      ok: false,
+      alreadyOpen: true,
+    });
+    expect(await awaitingId(dataSource, threadId)).toBe('q-1');
+    expect(await store.getQuestionCard(threadId, 'q-2')).toBeNull(); // never persisted
+
+    // operator answers q-1 → it becomes an answered-but-undelivered question the boot sweep recovers.
+    await store.updateCardMessage(threadId, 'q-1', { answer: 'Editable', answeredAt: '2026-06-27T00:00:00Z' });
+    expect(await store.findUndeliveredAnsweredQuestions()).toContainEqual({
+      threadId,
+      orgId: TEAM_ID,
+      repoId,
+      questionId: 'q-1',
+      question: 'Editable or fixed?',
+      answer: 'Editable',
+    });
+
+    // a delivery turn stamps delivered; the pointer clear is compare-and-clear (a stale id no-ops).
+    await store.markQuestionDelivered(threadId, 'q-1');
+    await store.clearAwaitingQuestion(threadId, 'not-q-1');
+    expect(await awaitingId(dataSource, threadId)).toBe('q-1'); // wrong id → unchanged
+    await store.clearAwaitingQuestion(threadId, 'q-1');
+    expect(await awaitingId(dataSource, threadId)).toBeNull();
+
+    // once delivered (deliveredAt set + pointer cleared) it's no longer a recovery candidate.
+    expect((await store.getQuestionCard(threadId, 'q-1'))?.deliveredAt).toBeTruthy();
+    expect(
+      (await store.findUndeliveredAnsweredQuestions()).some((q) => q.threadId === threadId),
+    ).toBe(false);
+  }, 30_000);
 });
+
+async function awaitingId(ds: DataSource, threadId: string): Promise<string | null> {
+  const rows: Array<{ awaiting_question_id: string | null }> = await ds.query(
+    `SELECT awaiting_question_id FROM threads WHERE id = $1`,
+    [threadId],
+  );
+  return rows[0]?.awaiting_question_id ?? null;
+}
 
 async function insertUserMessage(
   ds: DataSource,

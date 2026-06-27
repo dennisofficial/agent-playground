@@ -37,6 +37,13 @@ export interface WebQuestionCard {
   answer?: string;
   /** ISO-8601 answer time. */
   answeredAt?: string;
+  /**
+   * ISO-8601 time the answer was DELIVERED to the brain (a delivery turn actually ran). The durable
+   * lifecycle is `asked → answered (answer/answeredAt) → delivered (deliveredAt) → loggedDecision`.
+   * Stamped only after a successful turn consumes the answer, so the boot reconciliation sweep can
+   * re-deliver any `answer != null && deliveredAt == null` card a crash left stranded (at-least-once).
+   */
+  deliveredAt?: string;
   /** Set true once a `log_decision` has consumed this Q&A, so the same answer can't attach twice. */
   loggedDecision?: boolean;
 }

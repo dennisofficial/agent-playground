@@ -112,6 +112,17 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'boolean', default: false })
   turn_active!: boolean;
 
+  /**
+   * The durable HUMAN-INPUT GATE: the `questionId` (a question card's `ts`) this thread is currently
+   * awaiting an operator answer for, or null. Set atomically with the card row by `ask_question`
+   * (`BrainStoreService.openQuestion`); cleared once a delivery turn has handed the answer to the brain.
+   * Authoritative "this thread is blocked on a question" state — survives sandbox AND host restarts, so
+   * the boot reconciliation sweep can re-deliver an answered-but-undelivered question. The asking turn
+   * ends cleanly (async, not a blocking tool-result), so nothing is held in memory across the wait.
+   */
+  @Column({ type: 'text', nullable: true })
+  awaiting_question_id!: string | null;
+
   /** The locked decision record (FK → decision_records.id); null until the upfront grill produces one. */
   @Column({ type: 'uuid', nullable: true })
   decision_record_id!: string | null;

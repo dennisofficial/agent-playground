@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import type { Decision, Thread, ThreadKind } from '../domain';
+import type { WebQuestionCard } from '../surface';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/planner-llm';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -193,6 +194,110 @@ export class BrainStoreService {
   async latestUnansweredQuestionCard(threadId: string): Promise<MessageEntity | null> {
     const cards = await this.questionCards(threadId);
     return cards.find((m) => (m.card as Record<string, unknown>).answer == null) ?? null;
+  }
+
+  // ── human-input gate (durable ask_question lifecycle: asked → answered → delivered → loggedDecision) ──
+
+  /**
+   * Open a human-input gate ATOMICALLY: in ONE transaction, persist the question card row AND point the
+   * thread's `awaiting_question_id` at it. A crash between the two writes can't leave a visible question
+   * with no authoritative pointer (which the answer endpoint + boot sweep key off). Refuses (`alreadyOpen`)
+   * if the thread already has an UNANSWERED question open, so the brain can't stack questions; an
+   * answered-but-not-yet-delivered prior question is allowed to be superseded (its card stays answered and
+   * is still stamped delivered by the in-flight turn, while the new pointer wins).
+   */
+  async openQuestion(
+    threadId: string,
+    input: { ts: string; text?: string; card: Record<string, unknown> },
+  ): Promise<{ ok: boolean; alreadyOpen?: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const threads = m.getRepository(ThreadEntity);
+      const messages = m.getRepository(MessageEntity);
+      const thread = await threads.findOne({ where: { id: threadId } });
+      if (!thread) return { ok: false };
+      if (thread.awaiting_question_id) {
+        const open = await messages.findOne({
+          where: { thread_id: threadId, ts: thread.awaiting_question_id, kind: 'card' },
+        });
+        const card = open?.card as WebQuestionCard | undefined;
+        if (card && card.answer == null) return { ok: false, alreadyOpen: true };
+      }
+      await messages.save(
+        messages.create({
+          thread_id: threadId,
+          author: 'Atlas',
+          author_id: 'atlas',
+          author_bot_id: 'atlas',
+          text: input.text ?? '',
+          kind: 'card',
+          ts: input.ts,
+          card: input.card,
+        }),
+      );
+      await threads.update({ id: threadId }, { awaiting_question_id: input.ts });
+      return { ok: true };
+    });
+  }
+
+  /** The questionId this thread is awaiting an operator answer for (the gate pointer), or null. */
+  async awaitingQuestionId(threadId: string): Promise<string | null> {
+    const row = await this.threads.findOne({ where: { id: threadId } });
+    return row?.awaiting_question_id ?? null;
+  }
+
+  /** Fetch one thread's question-card payload by id (the card's `ts`); null if absent / not a question. */
+  async getQuestionCard(threadId: string, questionId: string): Promise<WebQuestionCard | null> {
+    const row = await this.messages.findOne({
+      where: { thread_id: threadId, ts: questionId, kind: 'card' },
+    });
+    const card = row?.card as WebQuestionCard | undefined;
+    return card?.type === 'question_card' ? card : null;
+  }
+
+  /** Stamp a question card delivered (its answer reached the brain in a turn that actually ran). */
+  async markQuestionDelivered(threadId: string, questionId: string): Promise<void> {
+    await this.updateCardMessage(threadId, questionId, { deliveredAt: new Date().toISOString() });
+  }
+
+  /** Clear the gate pointer iff it still equals `questionId` (compare-and-clear; ignores a superseded gate). */
+  async clearAwaitingQuestion(threadId: string, questionId: string): Promise<void> {
+    await this.threads.update(
+      { id: threadId, awaiting_question_id: questionId },
+      { awaiting_question_id: null },
+    );
+  }
+
+  /**
+   * Boot reconciliation: threads whose gate points at an ANSWERED-but-UNDELIVERED question — the crash
+   * window where the operator answered (durably stamped) but the host died before a turn handed it to the
+   * brain. The startup sweep re-delivers each so the answer is never silently dropped (at-least-once).
+   */
+  async findUndeliveredAnsweredQuestions(): Promise<
+    { threadId: string; orgId: string; repoId: string; questionId: string; question: string; answer: string }[]
+  > {
+    const rows = await this.threads.find({ where: { awaiting_question_id: Not(IsNull()) } });
+    const out: {
+      threadId: string;
+      orgId: string;
+      repoId: string;
+      questionId: string;
+      question: string;
+      answer: string;
+    }[] = [];
+    for (const t of rows) {
+      const card = await this.getQuestionCard(t.id, t.awaiting_question_id!);
+      if (card?.answer != null && card.deliveredAt == null) {
+        out.push({
+          threadId: t.id,
+          orgId: t.org_id,
+          repoId: t.repo_id,
+          questionId: t.awaiting_question_id!,
+          question: card.question,
+          answer: card.answer,
+        });
+      }
+    }
+    return out;
   }
 
   // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────

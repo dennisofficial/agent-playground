@@ -30,6 +30,7 @@ import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadTitleService } from './thread-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
+import type { WebQuestionCard } from './web-question-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
@@ -467,9 +468,12 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:threadId/answer-question` — answer a brain `ask_question` card. Stamps the durable
-   * answered state onto the card row (so it renders answered on reload), then injects the answer as a
-   * normal operator reply, which fires the next brain turn (where `log_decision` auto-attaches the Q&A).
+   * `POST …/threads/:threadId/answer-question` — answer a brain `ask_question` card. GATED on the thread's
+   * durable human-input gate: only the question the thread is currently awaiting can be answered (a stale
+   * or already-delivered card no-ops, so it never mints a second delivery turn). On the first valid answer
+   * it stamps the durable answered state onto the card row (renders answered on reload) and injects the
+   * answer as a normal operator reply, which fires the next brain turn — its success tail stamps the card
+   * delivered + clears the gate, and `log_decision` auto-attaches the Q&A.
    */
   @Post('orgs/:orgId/repos/:repoId/threads/:threadId/answer-question')
   @UseGuards(OrgMembershipGuard)
@@ -483,15 +487,27 @@ export class WebSurfaceController {
       throw new BadRequestException('questionId and answer are required');
     }
     const thread = await this.requireThread(threadId, org.id);
-    // Stamp the answered state on the card row (no-op if it's not this thread's question card).
     const card = await this.messages.findOne({
       where: { thread_id: threadId, ts: body.questionId, kind: 'card' },
     });
-    if (card) {
-      card.card = { ...(card.card ?? {}), answer, answeredAt: new Date().toISOString() };
-      await this.messages.save(card);
+    const payload = card?.card as WebQuestionCard | undefined;
+    if (!card || payload?.type !== 'question_card') {
+      throw new BadRequestException('no such question on this thread');
     }
-    // Inject the answer as an operator reply → fires the next brain turn.
+    // Gate against stale / already-delivered cards: only the thread's currently-open gate question is
+    // answerable. A mismatch or an already-delivered card is a no-op (idempotent — e.g. a double click).
+    if (thread.awaiting_question_id !== body.questionId || payload.deliveredAt) {
+      return { ok: false, ts: '' };
+    }
+    // Already answered (a delivery turn is in flight / queued): keep the recorded answer, don't fire a
+    // second turn.
+    if (payload.answer != null) {
+      return { ok: true, ts: '' };
+    }
+    // First valid answer: stamp the durable answered state, then inject it as an operator reply → fires
+    // the delivery turn (which stamps `deliveredAt` + clears the gate on success).
+    card.card = { ...(card.card ?? {}), answer, answeredAt: new Date().toISOString() };
+    await this.messages.save(card);
     const ts = this.surface.receiveFromClient(thread.repo_id, answer, {
       orgId: org.id,
       threadTs: threadId,

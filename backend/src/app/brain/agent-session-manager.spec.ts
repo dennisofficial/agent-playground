@@ -51,6 +51,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     updateCardMessage: vi.fn(),
     latestAnsweredQuestionCard: vi.fn().mockResolvedValue(null),
     latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
+    // Durable human-input gate (ask_question lifecycle); default to "no question open".
+    openQuestion: vi.fn().mockResolvedValue({ ok: true }),
+    awaitingQuestionId: vi.fn().mockResolvedValue(null),
+    getQuestionCard: vi.fn().mockResolvedValue(null),
+    markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
+    clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
+    findUndeliveredAnsweredQuestions: vi.fn().mockResolvedValue([]),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
     resetAllTurnActive: vi.fn().mockResolvedValue(0),
@@ -173,6 +180,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.appendDecision as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.latestUnansweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    // Human-input gate defaults: opening succeeds, no question currently open.
+    (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
+    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.markQuestionDelivered as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.clearAwaitingQuestion as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue('/tmp/atlas-test-ctx');
 
     // persistPlan returns the canonical shape BrainStoreService returns.
@@ -367,7 +380,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
-  it('(e) ask_question posts a durable question_card with normalized options', async () => {
+  it('(e) ask_question opens the durable gate with a normalized question_card', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['ask_question']({
       question: 'Where does the customer pick the subdomain?',
@@ -376,8 +389,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: true });
-    expect(mockStore.appendCardMessage).toHaveBeenCalledOnce();
-    const call = (mockStore.appendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    // ask_question opens the gate ATOMICALLY (card row + awaiting pointer in one tx), not a bare append.
+    expect(mockStore.openQuestion).toHaveBeenCalledOnce();
+    const call = (mockStore.openQuestion as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toBe(THREAD_ID);
     const card = call[1].card;
     expect(card).toMatchObject({ type: 'question_card', decisionClass: 'data_model', allowOther: true });
@@ -386,14 +400,24 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(card.options[0].id).toBeTruthy();
   });
 
-  it('(f) log_decision attaches the last answered question and upserts the working set', async () => {
-    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ts: 'q-123',
-      card: {
-        type: 'question_card',
-        question: 'Editable or fixed after checkout?',
-        answer: 'Editable in the Network tab',
-      },
+  it('(e2) ask_question is refused while a question is already open (one-at-a-time gate)', async () => {
+    (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      alreadyOpen: true,
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['ask_question']({ question: 'Another one?', options: [] });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('already awaiting');
+  });
+
+  it('(f) log_decision attaches the gate-pointed answered question and upserts the working set', async () => {
+    // log_decision now sources the Q&A authoritatively from the human-input gate pointer, not a scan.
+    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-123');
+    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: 'question_card',
+      question: 'Editable or fixed after checkout?',
+      answer: 'Editable in the Network tab',
     });
     (mockStore.appendDecision as ReturnType<typeof vi.fn>).mockResolvedValue([{ decisionClass: 'data_model' }]);
 
@@ -477,6 +501,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
+      awaitingQuestionId: vi.fn().mockResolvedValue(null),
+      getQuestionCard: vi.fn().mockResolvedValue(null),
+      markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
+      clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
@@ -689,6 +717,11 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
       createFollowUpThread: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
+      awaitingQuestionId: vi.fn().mockResolvedValue(null),
+      getQuestionCard: vi.fn().mockResolvedValue(null),
+      markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
+      clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;

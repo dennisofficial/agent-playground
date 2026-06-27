@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+  type OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { ChatStimulus, Thread, ThreadKind } from '../domain';
@@ -60,7 +66,7 @@ import { PlanReviewService, buildRevisionInstruction } from './plan-review.servi
  *   - session_id is persisted on the `thread_sandboxes` row so it survives host restarts.
  */
 @Injectable()
-export class AgentSessionManager implements OnModuleInit {
+export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap {
   private readonly logger = new Logger(AgentSessionManager.name);
 
   /**
@@ -294,6 +300,31 @@ export class AgentSessionManager implements OnModuleInit {
     }
   }
 
+  /**
+   * Boot reconciliation for the durable human-input gate: re-deliver any question the operator ANSWERED
+   * (durably stamped) but whose delivery turn the host crash dropped before it reached the brain. Runs in
+   * `onApplicationBootstrap` (NOT `onModuleInit`) so it fires AFTER all modules — incl. the surface/intake
+   * subscribers — are wired; and it bypasses the surface entirely, driving each delivery straight through
+   * the serialized `handleChatTurn` with a synthetic operator stimulus. Fire-and-forget (the turn queue
+   * serializes them); the turn stamps `deliveredAt` on success, so a re-crash simply re-delivers next boot
+   * (at-least-once). Best-effort — a sweep failure never blocks startup.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      const pending = await this.store.findUndeliveredAnsweredQuestions();
+      if (pending.length === 0) return;
+      this.logger.log(`Boot: re-delivering ${pending.length} answered-but-undelivered question(s)`);
+      for (const q of pending) {
+        const stimulus = bootDeliveryStimulus(q);
+        void this.handleChatTurn(stimulus).catch((err) =>
+          this.logger.warn(`boot re-delivery failed for thread=${q.threadId}: ${err}`),
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Boot question-delivery reconciliation failed: ${err}`);
+    }
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
 
   /**
@@ -339,6 +370,18 @@ export class AgentSessionManager implements OnModuleInit {
     // clicked), stamp that card answered so `log_decision` can auto-attach the Q&A. No-op when the answer
     // came through `/answer-question` (it pre-stamps) or there is no pending question.
     await this.linkTypedQuestionAnswer(stimulus);
+
+    // Human-input gate delivery: if this thread's gate points at a now-ANSWERED, not-yet-DELIVERED
+    // question (the answer was stamped by the endpoint, the prose path just above, or persisted before a
+    // crash), THIS turn is its delivery turn. Capture it now; we stamp `deliveredAt` + clear the pointer
+    // ONLY on the successful tail below — never on an early return / error — so a failed turn re-delivers
+    // (at-least-once). Correctness keys off the durable gate, not which path triggered the turn.
+    let deliveredQuestionId: string | null = null;
+    const awaitingId = await this.store.awaitingQuestionId(stimulus.threadId);
+    if (awaitingId) {
+      const card = await this.store.getQuestionCard(stimulus.threadId, awaitingId);
+      if (card?.answer != null && card.deliveredAt == null) deliveredQuestionId = awaitingId;
+    }
 
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
@@ -459,6 +502,19 @@ export class AgentSessionManager implements OnModuleInit {
     // Flush the durable transcript (persists any unpaired tool call + a text fallback if the turn emitted
     // no text block), then signal turn end so the client reconciles its live buffer against /messages.
     await streamer.finish(result.result);
+
+    // SUCCESS TAIL ONLY: the brain consumed the answer this turn, so close the human-input gate — stamp
+    // `deliveredAt` (so the boot sweep won't re-deliver it) and clear the pointer (compare-and-clear, so a
+    // question opened DURING this turn isn't clobbered). Reached only on the happy path; every early return
+    // / error above leaves the question undelivered for the next turn or the boot sweep. Best-effort.
+    if (deliveredQuestionId) {
+      await this.store
+        .markQuestionDelivered(stimulus.threadId, deliveredQuestionId)
+        .catch((err) => this.logger.warn(`markQuestionDelivered failed: ${err}`));
+      await this.store
+        .clearAwaitingQuestion(stimulus.threadId, deliveredQuestionId)
+        .catch((err) => this.logger.warn(`clearAwaitingQuestion failed: ${err}`));
+    }
   }
 
   /**
@@ -625,13 +681,24 @@ export class AgentSessionManager implements OnModuleInit {
           options,
           allowOther: args['allowOther'] !== false,
         });
-        // Durable card row (the surface `post` path does NOT persist `messages.card`); it renders on the
-        // turn-end refetch. The brain should STOP after asking and wait for the operator's answer.
-        await this.store.appendCardMessage(stimulus.threadId, {
+        // Open the durable human-input gate ATOMICALLY: persist the card row + point the thread's
+        // `awaiting_question_id` at it in one transaction (the surface `post` path does NOT persist
+        // `messages.card`; the card renders on the turn-end refetch). Refused if a question is already
+        // open, so the brain can't stack questions. The brain STOPS after asking and waits — the asking
+        // turn ends cleanly (async gate), the answer arrives on a later (delivery) turn.
+        const opened = await this.store.openQuestion(stimulus.threadId, {
           ts: questionId,
           text: question,
           card: card as unknown as Record<string, unknown>,
         });
+        if (!opened.ok) {
+          return {
+            ok: false,
+            reason: opened.alreadyOpen
+              ? 'A question is already awaiting the operator’s answer — wait for it before asking another.'
+              : 'Could not open the question (thread not found).',
+          };
+        }
         return {
           ok: true,
           questionId,
@@ -654,23 +721,29 @@ export class AgentSessionManager implements OnModuleInit {
         }
         if (!ruling) return { ok: false, reason: 'ruling is required' };
 
-        // Auto-attach the question the operator just answered (durable; survives a host restart).
-        const answered = await this.store.latestAnsweredQuestionCard(stimulus.threadId);
-        const answeredCard = answered?.card as WebQuestionCard | undefined;
+        // Auto-attach the question the operator just answered. Sourced AUTHORITATIVELY from the thread's
+        // human-input gate pointer (set when the question opened, still pointing at it through this
+        // delivery turn) rather than a "latest answered card" scan — no race when several questions exist.
+        // Durable: survives a host restart (the pointer + answer are both persisted).
+        const answeredId = await this.store.awaitingQuestionId(stimulus.threadId);
+        const answeredCard = answeredId
+          ? (await this.store.getQuestionCard(stimulus.threadId, answeredId)) ?? undefined
+          : undefined;
+        const hasAnswer = answeredCard?.answer != null;
         const title =
           String(args['title'] ?? '').trim() ||
-          deriveDecisionTitle(answeredCard?.question ?? ruling);
+          deriveDecisionTitle(hasAnswer ? answeredCard!.question : ruling);
         const decision: Decision = {
           decisionClass,
           title,
           ruling,
-          ...(answeredCard?.question ? { question: answeredCard.question } : {}),
-          ...(answeredCard?.answer ? { answer: answeredCard.answer } : {}),
+          ...(hasAnswer && answeredCard!.question ? { question: answeredCard!.question } : {}),
+          ...(hasAnswer ? { answer: answeredCard!.answer } : {}),
         };
 
         const all = await this.store.appendDecision(stimulus.threadId, decision);
-        if (answered?.ts) {
-          await this.store.updateCardMessage(stimulus.threadId, answered.ts, { loggedDecision: true });
+        if (answeredId && hasAnswer) {
+          await this.store.updateCardMessage(stimulus.threadId, answeredId, { loggedDecision: true });
         }
         await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
         return { ok: true, totalDecisions: all.length, title };
@@ -1298,6 +1371,38 @@ const ATLAS_AUTHOR_ID = 'atlas';
 /** True when a turn was authored by the operator (not a synthetic Atlas-authored turn). */
 function isOperatorAuthored(stimulus: ChatStimulus): boolean {
   return stimulus.author.id !== ATLAS_AUTHOR_ID;
+}
+
+/** Frame a recovered answer explicitly so a boot-sweep delivery turn reads as the operator's answer. */
+function frameAnswer(question: string, answer: string): string {
+  return `The operator answered your question "${question}": ${answer}`;
+}
+
+/**
+ * Build the synthetic OPERATOR stimulus the boot sweep uses to re-deliver an answered-but-undelivered
+ * question straight through `handleChatTurn` (bypassing the surface). Operator-authored (so it is treated
+ * as the operator's reply and passive awareness still drains); the framed body restates the Q&A since
+ * there is no natural inbound message to carry it.
+ */
+function bootDeliveryStimulus(q: {
+  threadId: string;
+  orgId: string;
+  repoId: string;
+  question: string;
+  answer: string;
+}): ChatStimulus {
+  return {
+    id: randomUUID(),
+    orgId: q.orgId,
+    repoId: q.repoId,
+    body: frameAnswer(q.question, q.answer),
+    receivedAt: new Date(),
+    kind: 'chat',
+    trust: 'trusted',
+    threadId: q.threadId,
+    author: { id: 'U-OPERATOR', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', threadRef: q.threadId },
+  };
 }
 
 /** Normalize a raw `decisions` tool arg into typed locked decisions (drops malformed entries). */
