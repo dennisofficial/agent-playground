@@ -148,7 +148,14 @@ function fakeCreds(over: Partial<Record<'anthropic' | 'github', string>> = {}): 
 function fakeStore(presence: Partial<CredentialPresence> = {}): TenantCredentialStore {
   return {
     async presence() {
-      return { hasAnthropic: false, hasOpenai: false, hasGithub: false, engineAuthSet: false, ...presence };
+      return {
+        hasAnthropic: false,
+        hasOpenai: false,
+        hasGithub: false,
+        engineAuthSet: false,
+        hasCodex: false,
+        ...presence,
+      };
     },
   } as unknown as TenantCredentialStore;
 }

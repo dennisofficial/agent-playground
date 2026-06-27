@@ -79,6 +79,7 @@ describe('TenantCredentialStore', () => {
       hasOpenai: false,
       hasGithub: false,
       engineAuthSet: false, // no Claude subscription token → harness auth not satisfied
+      hasCodex: false,
     });
   });
 

@@ -55,6 +55,7 @@ export class OrgCredentialsController {
     hasOpenai: boolean;
     hasGithub: boolean;
     engineAuthSet: boolean;
+    hasCodex: boolean;
     llmValidated: boolean;
   }> {
     const presence = await this.store.presence(org.id);

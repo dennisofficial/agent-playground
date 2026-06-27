@@ -57,7 +57,10 @@ export interface CredentialPresence {
   hasAnthropic: boolean;
   hasOpenai: boolean;
   hasGithub: boolean;
+  /** A Claude coding-engine subscription token is set (the primary, required coding engine). */
   engineAuthSet: boolean;
+  /** An optional Codex coding-engine subscription is set. */
+  hasCodex: boolean;
   llmValidated: boolean;
 }
 
@@ -70,13 +73,19 @@ export function useOrgCredentials(orgId: string) {
   });
 }
 
-/** Body for `PUT /web/orgs/:orgId/credentials` — every field optional; only sent ones are written. */
+/**
+ * Body for `PUT /web/orgs/:orgId/credentials` — every field optional; only sent ones are written.
+ * Two distinct purposes: the `*ApiKey` keys power LangChain prompts + embeddings; the subscription
+ * secrets (`claudeOauthToken`, `codexAuthSecret`) authenticate the coding-engine SDK harness.
+ */
 export interface SaveCredentialsBody {
   anthropicApiKey?: string;
   openaiApiKey?: string;
   githubPat?: string;
-  engineAuthMode?: 'api_key' | 'subscription';
-  engineAuthSecret?: string;
+  /** Claude subscription OAuth token for the coding engine (`sk-ant-oat…`). */
+  claudeOauthToken?: string;
+  /** Codex subscription secret for the (optional) Codex coding engine. */
+  codexAuthSecret?: string;
 }
 
 /** The server's per-key validation result (Anthropic key is probed on write). */

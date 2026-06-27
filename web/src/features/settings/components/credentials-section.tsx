@@ -1,12 +1,11 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { Github, MessageSquare } from 'lucide-react';
+import { Check, Copy, Github, MessageSquare, Sparkles, Terminal } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import {
   useOrgCredentials,
   useSaveCredentials,
-  type CredentialPresence,
   type SaveCredentialsBody,
   type SaveCredentialsResult,
 } from '@/lib/api/orgs';
@@ -16,6 +15,12 @@ import {
  * returns secret values), so saved keys render fully masked with no last-4. Writing goes through the real
  * `PUT /web/orgs/:orgId/credentials`; the Anthropic key is probed server-side and that verdict is surfaced.
  * Per-key client-side checks are format sanity only.
+ *
+ * Two distinct purposes, grouped on the page:
+ *  - **API keys** (Anthropic + OpenAI) power LangChain one-shot prompts and embeddings.
+ *  - **Coding-engine subscriptions** (Claude, and optionally Codex) authenticate the SDK harness that
+ *    actually drives the build. The harness runs subscription-only — an API key does NOT authorize it.
+ * That's why Anthropic appears twice: an API key for prompts AND a subscription for the coding engine.
  */
 export function CredentialsSection({ orgId }: { orgId: string }) {
   const { data: presence, isLoading, isError } = useOrgCredentials(orgId);
@@ -33,14 +38,49 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
     <>
       <h1 className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">Credentials</h1>
       <p className="mb-7 mt-1.5 text-[13px] leading-relaxed text-dim">
-        Org-wide secrets used by every thread. OpenAI &amp; Anthropic keys power prompts and embeddings; the coding
-        engine and GitHub run the threads. Encrypted at rest — secret values are never shown.
+        Org-wide secrets used by every thread. Encrypted at rest — secret values are never shown.
       </p>
+
+      <SectionLabel title="Prompts & embeddings" hint="API keys for one-shot LLM calls and memory embeddings." />
+
+      <CredentialCard
+        icon={<span className="block h-[11px] w-[11px] rotate-45 rounded-[3px] border-[1.6px] border-accent" />}
+        iconAccent
+        title="Anthropic API key"
+        sub="Prompts (LangChain chains) — verified on save"
+        present={presence.hasAnthropic}
+        pill={
+          presence.hasAnthropic
+            ? presence.llmValidated
+              ? { label: 'valid', tone: 'green' }
+              : { label: 'set', tone: 'dim' }
+            : { label: 'not set', tone: 'faint' }
+        }
+        modes={[
+          {
+            id: 'anthropic',
+            fieldLabel: 'New Anthropic API key',
+            placeholder: 'sk-ant-api03-…',
+            maskedPrefix: 'sk-ant-api03-',
+            tag: 'API key · prompts',
+            serverValidated: true,
+            validate: (v) => {
+              if (/^sk-ant-oat/.test(v))
+                return { ok: false, reason: 'That’s a subscription token — add it under “Coding engine” below.' };
+              if (!v.startsWith('sk-ant-')) return { ok: false, reason: 'Anthropic keys start with sk-ant-.' };
+              if (v.length < 25) return { ok: false, reason: 'That key looks too short.' };
+              return { ok: true, reason: 'Format looks valid — verifying on save.' };
+            },
+            buildBody: (v) => ({ anthropicApiKey: v }),
+          },
+        ]}
+        onSave={onSave}
+      />
 
       <CredentialCard
         icon={<MessageSquare size={16} />}
         title="OpenAI API key"
-        sub="One-shot prompts & embeddings"
+        sub="Memory embeddings"
         present={presence.hasOpenai}
         pill={presence.hasOpenai ? { label: 'saved', tone: 'green' } : { label: 'not set', tone: 'faint' }}
         modes={[
@@ -62,7 +102,84 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
         onSave={onSave}
       />
 
-      <EngineCard presence={presence} onSave={onSave} />
+      <SectionLabel
+        title="Coding engine"
+        hint="Subscription tokens for the agents that drive the build. The engine runs subscription-only — an API key won’t authorize it."
+      />
+
+      <CredentialCard
+        icon={<Sparkles size={15} />}
+        iconAccent
+        title="Claude subscription"
+        sub="Primary coding engine · required"
+        present={presence.engineAuthSet}
+        pill={presence.engineAuthSet ? { label: 'set', tone: 'dim' } : { label: 'not set', tone: 'faint' }}
+        modes={[
+          {
+            id: 'claude-sub',
+            fieldLabel: 'New Claude OAuth token',
+            placeholder: 'sk-ant-oat01-…',
+            maskedPrefix: 'sk-ant-oat-',
+            tag: 'subscription · engine',
+            help: (
+              <HelpBlock>
+                <p>
+                  Generate a long-lived token from a Claude <strong>Pro</strong> or <strong>Max</strong> plan. With
+                  the Claude Code CLI installed, run:
+                </p>
+                <CommandLine cmd="claude setup-token" />
+                <p>
+                  Sign in when prompted, then paste the <Code>sk-ant-oat01-…</Code> token it prints.
+                </p>
+              </HelpBlock>
+            ),
+            validate: (v) => {
+              if (!v.startsWith('sk-ant-oat'))
+                return { ok: false, reason: 'Subscription tokens start with sk-ant-oat.' };
+              return { ok: true, reason: 'Format looks valid.' };
+            },
+            buildBody: (v) => ({ claudeOauthToken: v }),
+          },
+        ]}
+        onSave={onSave}
+      />
+
+      <CredentialCard
+        icon={<Terminal size={15} />}
+        title="Codex subscription"
+        sub="Optional second coding engine"
+        present={presence.hasCodex}
+        pill={presence.hasCodex ? { label: 'set', tone: 'dim' } : { label: 'optional', tone: 'faint' }}
+        modes={[
+          {
+            id: 'codex-sub',
+            fieldLabel: 'New Codex auth token',
+            placeholder: 'Paste ~/.codex/auth.json…',
+            maskedPrefix: '',
+            tag: 'subscription · optional',
+            help: (
+              <HelpBlock>
+                <p>
+                  Sign in to the OpenAI Codex CLI with your <strong>ChatGPT Plus/Pro</strong> account. With the Codex
+                  CLI installed, run:
+                </p>
+                <CommandLine cmd="codex login" />
+                <p>
+                  This writes <Code>~/.codex/auth.json</Code> — paste the full contents of that file here.
+                </p>
+              </HelpBlock>
+            ),
+            validate: (v) => {
+              if (v.length < 10) return { ok: false, reason: 'That token looks too short.' };
+              return { ok: true, reason: 'Format looks valid.' };
+            },
+            buildBody: (v) => ({ codexAuthSecret: v }),
+          },
+        ]}
+        onSave={onSave}
+      />
+
+      <SectionLabel title="Source control" hint="Repo access for clones, branches and pull requests." />
 
       <CredentialCard
         icon={<Github size={16} />}
@@ -91,60 +208,59 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
   );
 }
 
-/** Anthropic engine card — API key OR Claude subscription token (segmented). */
-function EngineCard({
-  presence,
-  onSave,
-}: {
-  presence: CredentialPresence;
-  onSave: (body: SaveCredentialsBody) => Promise<SaveCredentialsResult>;
-}) {
-  const pill = presence.engineAuthSet
-    ? presence.llmValidated
-      ? ({ label: 'valid', tone: 'green' } as const)
-      : ({ label: 'set', tone: 'dim' } as const)
-    : ({ label: 'not set', tone: 'faint' } as const);
-
+/** A lightweight group heading separating the credential cards by purpose. */
+function SectionLabel({ title, hint }: { title: string; hint: string }) {
   return (
-    <CredentialCard
-      icon={<span className="block h-[11px] w-[11px] rotate-45 rounded-[3px] border-[1.6px] border-accent" />}
-      iconAccent
-      title="Anthropic API key"
-      sub="Prompts, embeddings & the coding engine"
-      present={presence.engineAuthSet}
-      pill={pill}
-      modes={[
-        {
-          id: 'apikey',
-          toggleLabel: 'API key',
-          fieldLabel: 'New Anthropic API key',
-          placeholder: 'sk-ant-api03-…',
-          maskedPrefix: 'sk-ant-api03-',
-          tag: 'API key',
-          serverValidated: true,
-          validate: (v) => {
-            if (!v.startsWith('sk-ant-')) return { ok: false, reason: 'Anthropic keys start with sk-ant-.' };
-            if (v.length < 25) return { ok: false, reason: 'That key looks too short.' };
-            return { ok: true, reason: 'Format looks valid — verifying on save.' };
-          },
-          buildBody: (v) => ({ anthropicApiKey: v, engineAuthMode: 'api_key' }),
-        },
-        {
-          id: 'subscription',
-          toggleLabel: 'Subscription',
-          fieldLabel: 'New Claude OAuth token',
-          placeholder: 'sk-ant-oat01-…',
-          maskedPrefix: 'sk-ant-oat-',
-          tag: 'subscription',
-          validate: (v) => {
-            if (!v.startsWith('sk-ant-oat')) return { ok: false, reason: 'Subscription tokens start with sk-ant-oat.' };
-            return { ok: true, reason: 'Format looks valid.' };
-          },
-          buildBody: (v) => ({ engineAuthMode: 'subscription', engineAuthSecret: v }),
-        },
-      ]}
-      onSave={onSave}
-    />
+    <div className="mb-2.5 mt-6 first:mt-0">
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-dim">{title}</h2>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-faint">{hint}</p>
+    </div>
+  );
+}
+
+/** "How to get this token" panel shown inside a credential's edit form. */
+function HelpBlock({ children }: { children: ReactNode }) {
+  return (
+    <div className="space-y-2 rounded-md border border-border-2 bg-surface-2 p-3 text-[11.5px] leading-relaxed text-dim">
+      {children}
+    </div>
+  );
+}
+
+/** Inline monospace token/path reference inside help copy. */
+function Code({ children }: { children: ReactNode }) {
+  return (
+    <code className="rounded-[3px] bg-surface-3 px-1 py-0.5 font-mono text-[11px] text-text">{children}</code>
+  );
+}
+
+/** A copyable shell command line. */
+function CommandLine({ cmd }: { cmd: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      // Clipboard blocked (e.g. insecure context) — no-op; the command is still selectable.
+    }
+  }
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5">
+      <span aria-hidden className="select-none font-mono text-[11px] text-faint">
+        $
+      </span>
+      <code className="flex-1 select-all font-mono text-[12px] text-text">{cmd}</code>
+      <button
+        type="button"
+        onClick={copy}
+        className="flex items-center gap-1 rounded-sm border border-border-2 px-1.5 py-1 text-[10.5px] font-semibold text-dim transition hover:bg-surface-3"
+      >
+        {copied ? <Check size={11} /> : <Copy size={11} />}
+        {copied ? 'copied' : 'copy'}
+      </button>
+    </div>
   );
 }
 
@@ -157,6 +273,8 @@ interface Mode {
   maskedPrefix: string;
   tag: string;
   serverValidated?: boolean;
+  /** Optional "how to get this token" guidance, shown inside the edit form. */
+  help?: ReactNode;
   validate: (v: string) => { ok: boolean; reason: string };
   buildBody: (v: string) => SaveCredentialsBody;
 }
@@ -307,6 +425,8 @@ function CredentialCard({
               })}
             </div>
           ) : null}
+
+          {mode.help ? <div className="mb-3">{mode.help}</div> : null}
 
           <div className="mb-2 flex items-center gap-2">
             <label className="flex-1 text-[12px] font-medium text-dim">{mode.fieldLabel}</label>
