@@ -28,6 +28,14 @@ export interface Decision {
   title: string;
   /** The ruling — what we decided and (briefly) why. */
   ruling: string;
+  /**
+   * The formal question the brain asked the operator that this decision settles (when it came from an
+   * `ask_question` → answer flow). Captured so the generated decision record shows the actual exchange,
+   * not just the after-the-fact ruling. Optional — a decision can be logged without a prior question.
+   */
+  question?: string;
+  /** The operator's answer to {@link question} (the option they picked or the free text they typed). */
+  answer?: string;
 }
 
 /** The record's lifecycle. Approved ONCE upfront, then immutable for the thread's build duration. */

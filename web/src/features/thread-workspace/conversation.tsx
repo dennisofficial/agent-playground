@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { classifyMessage } from './classify';
 import {
   ClaudeBubble,
@@ -12,6 +12,7 @@ import {
 } from './bubbles';
 import { ToolGroup, type ToolItem } from './tool-call';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
+import { QuestionCardView } from './question-card';
 import { Composer } from './composer';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
 import { useLiveTurn } from '@/lib/api/thread-stream';
@@ -35,6 +36,9 @@ export function Conversation({
   onOpenPlan?: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  // The composer is a floating overlay; track its height so the transcript reserves matching space and
+  // the last line never slips under it as the box auto-grows.
+  const [composerHeight, setComposerHeight] = useState(116);
   const liveTurn = useLiveTurn(threadRef.threadId);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
   const turnActive = liveTurn?.active ?? false;
@@ -50,7 +54,7 @@ export function Conversation({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length, live, liveBlockCount, turnActive, queued.length]);
+  }, [messages.length, live, liveBlockCount, turnActive, queued.length, composerHeight]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -72,12 +76,13 @@ export function Conversation({
           {queued.map((message) => (
             <UserBubble key={message.ts} message={message} queued />
           ))}
-            {/* Spacer so the last line clears the floating composer when scrolled to the bottom. */}
-            <div className="h-[116px] shrink-0" aria-hidden />
+            {/* Spacer so the last line clears the floating composer when scrolled to the bottom.
+                Tracks the composer's live height so it grows with the auto-expanding box. */}
+            <div className="shrink-0" style={{ height: composerHeight }} aria-hidden />
             <div ref={endRef} />
           </div>
         </div>
-        <Composer threadRef={threadRef} />
+        <Composer threadRef={threadRef} onHeightChange={setComposerHeight} />
       </div>
     </div>
   );
@@ -128,6 +133,9 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
         break;
       case 'verdict':
         nodes.push(<VerdictCardView key={message.ts} card={c.card} />);
+        break;
+      case 'question':
+        nodes.push(<QuestionCardView key={message.ts} card={c.card} threadRef={threadRef} />);
         break;
       case 'event':
         nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);

@@ -1,11 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import type { Decision, Thread, ThreadKind } from '../domain';
+import { renderPlan } from '../driver/render-plan';
+import type { PlannedPhase } from '../driver/planner-llm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
+  PhaseEntity,
   SectionEntity,
   StimulusEntity,
   ThreadEntity,
@@ -51,8 +54,12 @@ export class BrainStoreService {
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(SectionEntity, DB_CONNECTION)
     private readonly sections: Repository<SectionEntity>,
+    @InjectRepository(PhaseEntity, DB_CONNECTION)
+    private readonly phases: Repository<PhaseEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
+    @InjectDataSource(DB_CONNECTION)
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -121,6 +128,97 @@ export class BrainStoreService {
     );
   }
 
+  // ── card messages (durable; the surface `post` path does NOT write `messages.card`) ────────────────
+
+  /**
+   * Persist a CARD message row (kind='card') so it survives refetch/reload — the surface `post` path
+   * only writes the outbox + SSE, never `messages.card`. `ts` is the card's stable key (e.g. a
+   * questionId); the card payload renders via `/messages` (which returns `m.card`). Authored by Atlas.
+   */
+  async appendCardMessage(
+    threadId: string,
+    input: { ts: string; text?: string; card: Record<string, unknown> },
+  ): Promise<void> {
+    await this.messages.save(
+      this.messages.create({
+        thread_id: threadId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: input.text ?? '',
+        kind: 'card',
+        ts: input.ts,
+        card: input.card,
+      }),
+    );
+  }
+
+  /** Merge a patch into a card row's `card` jsonb (e.g. stamp the answered state / `loggedDecision`). */
+  async updateCardMessage(
+    threadId: string,
+    ts: string,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    const row = await this.messages.findOne({ where: { thread_id: threadId, ts, kind: 'card' } });
+    if (!row) return;
+    row.card = { ...(row.card ?? {}), ...patch };
+    await this.messages.save(row);
+  }
+
+  /** Load this thread's card rows, newest-first — small helper for the question-card lookups below. */
+  private async questionCards(threadId: string): Promise<MessageEntity[]> {
+    const rows = await this.messages.find({
+      where: { thread_id: threadId, kind: 'card' },
+      order: { created_at: 'DESC' },
+    });
+    return rows.filter((m) => (m.card as Record<string, unknown> | null)?.type === 'question_card');
+  }
+
+  /**
+   * The newest ANSWERED question card not yet consumed by a `log_decision` — what `log_decision`
+   * auto-attaches (its `question` + `answer`) so the brain need not restate them. Durable (DB-backed),
+   * so it survives a host restart between the answer and the log.
+   */
+  async latestAnsweredQuestionCard(threadId: string): Promise<MessageEntity | null> {
+    const cards = await this.questionCards(threadId);
+    return (
+      cards.find((m) => {
+        const c = m.card as Record<string, unknown>;
+        return c.answer != null && c.loggedDecision !== true;
+      }) ?? null
+    );
+  }
+
+  /** The newest UNANSWERED question card — the target for the typed-reply fallback (composer answer). */
+  async latestUnansweredQuestionCard(threadId: string): Promise<MessageEntity | null> {
+    const cards = await this.questionCards(threadId);
+    return cards.find((m) => (m.card as Record<string, unknown>).answer == null) ?? null;
+  }
+
+  // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────
+
+  /** Read a thread's working-set decisions logged so far (the `pending_decisions` jsonb). */
+  async pendingDecisions(threadId: string): Promise<Decision[]> {
+    const row = await this.threads.findOne({ where: { id: threadId } });
+    return row?.pending_decisions ?? [];
+  }
+
+  /**
+   * Upsert a logged decision into the thread's `pending_decisions` working set, keyed by
+   * (decisionClass, title) so re-logging the same decision REVISES its ruling rather than duplicating.
+   * Returns the updated array. (The proposal record is created later, by `submit_plan` → `persistPlan`.)
+   */
+  async appendDecision(threadId: string, decision: Decision): Promise<Decision[]> {
+    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const current = row.pending_decisions ?? [];
+    const idx = current.findIndex(
+      (d) => d.decisionClass === decision.decisionClass && d.title === decision.title,
+    );
+    const next = idx >= 0 ? current.map((d, i) => (i === idx ? decision : d)) : [...current, decision];
+    await this.threads.update({ id: threadId }, { pending_decisions: next });
+    return next;
+  }
+
   /** Resolve where to post into a thread: the repo coordinate + the real thread id. The web/agent
    *  surface keys its conversation by these directly — no channel/surface-ref indirection. */
   async route(thread: { orgId: string; repoId: string; threadId: string }): Promise<ThreadRoute> {
@@ -168,59 +266,104 @@ export class BrainStoreService {
     overview: string;
     decisions: Decision[];
     sectionBriefs: string[];
+    /**
+     * OPTIONAL — the phases Atlas authored up front for each section, aligned by section index
+     * (`phasesBySection[i]` = phases for `sectionBriefs[i]`). When present, the phase rows are LOCKED
+     * here so the driver finds them already present and skips its just-in-time plan turn; `section.plan`
+     * is set from them so the pipeline view shows the plan. ABSENT (direct-build / bugfix dispatch) →
+     * no phase rows created, exactly as before — the driver JIT-plans those sections.
+     */
+    phasesBySection?: PlannedPhase[][];
   }): Promise<PersistedPlan> {
-    // A re-propose (request_changes → reopenScoping → the grill proposes again) reuses the SAME thread,
-    // so any prior DRAFT sections/record from the earlier proposal are still here. Clear them first:
-    // sections MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(thread_id, ordinal)
-    // collision), and the prior draft record is marked `superseded` (audit trail, never an approved
-    // one). Idempotent on the first proposal (nothing to clear).
-    await this.sections.delete({ thread_id: input.threadId });
-    await this.records.update(
-      { thread_id: input.threadId, status: 'draft' },
-      { status: 'superseded' },
-    );
+    // The whole persist runs in ONE transaction: delete prior draft sections (their phases cascade),
+    // supersede the prior draft record, write the new record + sections (+ authored phase rows), and
+    // flip the thread — so a crash mid-write can never leave a half-proposed plan. A re-propose
+    // (request_changes → reopenScoping → propose again) reuses the SAME thread, so prior DRAFT
+    // sections/record are cleared first; idempotent on the first proposal.
+    const decisionRecordId = await this.dataSource.transaction(async (m) => {
+      const threads = m.getRepository(ThreadEntity);
+      const records = m.getRepository(DecisionRecordEntity);
+      const sections = m.getRepository(SectionEntity);
+      const phases = m.getRepository(PhaseEntity);
 
-    const record = await this.records.save(
-      this.records.create({
-        org_id: input.orgId,
-        repo_id: input.repoId,
-        thread_id: input.threadId,
-        status: 'draft',
-        overview: input.overview,
-        decisions: input.decisions,
-        section_briefs: input.sectionBriefs,
-        approved_by: null,
-        approved_at: null,
-      }),
-    );
+      // sections MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(thread_id, ordinal)
+      // collision); `phases.section_id ON DELETE CASCADE` clears their phase rows too. The prior draft
+      // record is marked `superseded` (audit trail, never an approved one).
+      await sections.delete({ thread_id: input.threadId });
+      await records.update(
+        { thread_id: input.threadId, status: 'draft' },
+        { status: 'superseded' },
+      );
 
-    await this.sections.save(
-      input.sectionBriefs.map((brief, i) =>
-        this.sections.create({
-          thread_id: input.threadId,
+      const record = await records.save(
+        records.create({
           org_id: input.orgId,
-          ordinal: (i + 1) * ORDINAL_GAP,
-          brief,
-          plan: null,
-          handoff_in: null,
-          handoff_out: null,
-          status: 'pending',
+          repo_id: input.repoId,
+          thread_id: input.threadId,
+          status: 'draft',
+          overview: input.overview,
+          decisions: input.decisions,
+          section_briefs: input.sectionBriefs,
+          approved_by: null,
+          approved_at: null,
         }),
-      ),
-    );
+      );
 
-    await this.threads.update(
-      { id: input.threadId },
-      {
-        kind: input.kind,
-        title: input.title,
-        status: 'awaiting_approval',
-        decision_record_id: record.id,
-      },
-    );
+      // Save sections first (to get ids), setting `plan` from any authored phases so `hasPlan` is true
+      // in the pipeline view (the authored path never hits the driver's `setSectionPlan`).
+      const savedSections = await sections.save(
+        input.sectionBriefs.map((brief, i) => {
+          const authored = input.phasesBySection?.[i];
+          return sections.create({
+            thread_id: input.threadId,
+            org_id: input.orgId,
+            ordinal: (i + 1) * ORDINAL_GAP,
+            brief,
+            plan: authored?.length ? renderPlan(authored) : null,
+            handoff_in: null,
+            handoff_out: null,
+            status: 'pending',
+          });
+        }),
+      );
+
+      // Lock the authored phases as `phases` rows — same gap-numbered convention as
+      // `DriverStoreService.lockPhases` (ordinal (i+1)*GAP, step 'build', status 'pending') so the
+      // driver's resume/fast-forward cursor reads them identically. Order of savedSections matches the
+      // input order (single save call), so index alignment holds.
+      if (input.phasesBySection?.length) {
+        const phaseRows = savedSections.flatMap((section, i) =>
+          (input.phasesBySection?.[i] ?? []).map((p, j) =>
+            phases.create({
+              section_id: section.id,
+              thread_id: input.threadId,
+              org_id: input.orgId,
+              ordinal: (j + 1) * ORDINAL_GAP,
+              title: p.title,
+              brief: p.brief,
+              step: 'build',
+              status: 'pending',
+            }),
+          ),
+        );
+        if (phaseRows.length) await phases.save(phaseRows);
+      }
+
+      await threads.update(
+        { id: input.threadId },
+        {
+          kind: input.kind,
+          title: input.title,
+          status: 'awaiting_approval',
+          decision_record_id: record.id,
+        },
+      );
+
+      return record.id;
+    });
 
     const thread = await this.loadJob(input.threadId);
-    return { thread, decisionRecordId: record.id };
+    return { thread, decisionRecordId };
   }
 
   /** Mark a decision record approved + flip its thread to `running` (the dispatch precondition). */

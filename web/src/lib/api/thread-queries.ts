@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk } from './query-keys';
 import {
+  answerQuestion,
   approveThread,
   createThread,
   deleteThread,
@@ -13,6 +14,7 @@ import {
   fetchThreadContext,
   renameThread,
   sayMessage,
+  type AnswerQuestionBody,
   type ApproveBody,
   type CreateThreadBody,
   type ThreadMessage,
@@ -127,6 +129,18 @@ export function useApprove(ref: ThreadRef) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+    },
+  });
+}
+
+/** Answer a formal `ask_question` card. Refreshes the conversation (the card flips to answered + the
+ *  brain's next turn lands). */
+export function useAnswerQuestion(ref: ThreadRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AnswerQuestionBody) => answerQuestion(ref, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
     },
   });
 }

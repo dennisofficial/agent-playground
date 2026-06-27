@@ -149,4 +149,10 @@ export interface Phase {
   status: PhaseStatus;
   /** The engine session this phase runs in (`SessionRef.id`); null until started. */
   sessionId: string | null;
+  /**
+   * The execution batch this phase belongs to within its section (consecutive phases packed into one
+   * fresh-context session); null until the section first executes. Stable across restart so a resumed
+   * batch re-groups identically.
+   */
+  batchOrdinal: number | null;
 }

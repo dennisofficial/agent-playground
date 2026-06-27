@@ -81,6 +81,18 @@ export interface PlannerLlm {
     reports: string[];
     orgId?: string;
   }): Promise<string | undefined>;
+  /**
+   * Decide how to pack a section's ORDERED phases into execution sessions: a partition of the phase
+   * INDICES into CONSECUTIVE groups (e.g. `[[0,1,2,3,4],[5,6]]`). Larger groups = fewer fresh-context
+   * sessions but a bigger window; the driver validates/clamps the result. Returns `undefined` when no
+   * LLM is available — the driver then runs one phase per group (the safe default).
+   */
+  batchPhases(input: {
+    phases: PlannedPhase[];
+    overview?: string;
+    brief?: string;
+    orgId?: string;
+  }): Promise<number[][] | undefined>;
 }
 
 export const PLANNER_LLM = Symbol('PLANNER_LLM');
@@ -97,6 +109,9 @@ export namespace PlannerChains {
   });
   const DECISIONS_SCHEMA = z.object({
     decisions: z.array(z.object({ description: z.string(), context: z.string().optional() })),
+  });
+  const BATCH_SCHEMA = z.object({
+    groups: z.array(z.array(z.number().int())),
   });
 
   const PLAN_SYSTEM = [
@@ -140,6 +155,17 @@ export namespace PlannerChains {
     'You summarize what a just-finished section produced so the NEXT section can build on it. Two or three',
     'sentences: what now exists (modules/contracts/endpoints), and anything the next section must know. Be',
     'concrete and terse. Reply with plain text.',
+  ].join('\n');
+
+  const BATCH_SYSTEM = [
+    'You decide how to pack an ORDERED list of build phases into execution sessions. Each session runs with',
+    'a FRESH context window: packing more phases together saves context overhead but widens the window (more',
+    'chance of drift); packing fewer keeps each session tight but fragments related work.',
+    '',
+    'Group CONSECUTIVE phases that are small and tightly related into one session; start a new group before a',
+    'phase that is large on its own or opens a distinct concern. Return a partition of the phase INDICES',
+    '(0-based) into consecutive, non-overlapping groups that covers EVERY index in order — e.g. for 7 phases',
+    '[[0,1,2,3,4],[5,6]] or [[0,1],[2,3,4],[5,6]]. Two or three small phases → one group. Never reorder.',
   ].join('\n');
 
   /** Compose `system + {input}` → structured/typed phases, for an input rendered by `renderUser`. */
@@ -197,7 +223,9 @@ export namespace PlannerChains {
     RunnableSequence.from<{ brief: string; phases: PlannedPhase[]; reports: string[] }, string>([
       RunnableLambda.from((i: { brief: string; phases: PlannedPhase[]; reports: string[] }) => {
         const phases = i.phases.map((p) => `- ${p.title}`).join('\n');
-        const reports = i.reports.map((r, n) => `Phase ${n + 1} report: ${r}`).join('\n\n');
+        // Reports are per execution BATCH (a batch may cover several phases), so label them generically
+        // rather than "Phase N" — the phase list above carries the per-phase work.
+        const reports = i.reports.map((r, n) => `Build report ${n + 1}: ${r}`).join('\n\n');
         return { input: `Section: ${i.brief}\n\nPhases:\n${phases}\n\n${reports}`.slice(0, 16000) };
       }),
       ChatPromptTemplate.fromMessages([
@@ -207,6 +235,25 @@ export namespace PlannerChains {
       llm,
       new StringOutputParser(),
     ]).withConfig({ runName: 'Section Handoff' });
+
+  export const batchPhases = (
+    llm: BaseChatModel,
+  ): Runnable<{ phases: PlannedPhase[]; overview?: string; brief?: string }, number[][]> =>
+    RunnableSequence.from<{ phases: PlannedPhase[]; overview?: string; brief?: string }, number[][]>([
+      RunnableLambda.from((i: { phases: PlannedPhase[]; overview?: string; brief?: string }) => {
+        const phases = i.phases.map((p, n) => `${n}. ${p.title}: ${p.brief}`).join('\n');
+        const ctx = [i.overview ? `Feature: ${i.overview}` : '', i.brief ? `Section: ${i.brief}` : '']
+          .filter(Boolean)
+          .join('\n');
+        return { input: `${ctx}\n\nOrdered phases (index. title: brief):\n${phases}`.trim() };
+      }),
+      ChatPromptTemplate.fromMessages([
+        new SystemMessage(BATCH_SYSTEM),
+        HumanMessagePromptTemplate.fromTemplate('{input}'),
+      ]),
+      llm.withStructuredOutput(BATCH_SCHEMA, { name: 'emit_batches' }),
+      RunnableLambda.from((o: z.infer<typeof BATCH_SCHEMA>) => o.groups),
+    ]).withConfig({ runName: 'Batch Phases' });
 }
 
 /**
@@ -286,6 +333,26 @@ export class AnthropicPlannerLlm implements PlannerLlm {
         reports: input.reports,
       });
       return text.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async batchPhases(input: {
+    phases: PlannedPhase[];
+    overview?: string;
+    brief?: string;
+    orgId?: string;
+  }): Promise<number[][] | undefined> {
+    const llm = await this.model(input.orgId);
+    if (!llm) return undefined;
+    try {
+      const groups = await PlannerChains.batchPhases(llm).invoke({
+        phases: input.phases,
+        ...(input.overview ? { overview: input.overview } : {}),
+        ...(input.brief ? { brief: input.brief } : {}),
+      });
+      return Array.isArray(groups) && groups.length ? groups : undefined;
     } catch {
       return undefined;
     }

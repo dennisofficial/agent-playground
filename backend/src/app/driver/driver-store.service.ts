@@ -199,6 +199,18 @@ export class DriverStoreService {
     await this.phases.update({ id: phaseId }, { step, status });
   }
 
+  /**
+   * Persist the batch grouping for a section's phases — the resumable batching cursor. Assigned ONCE,
+   * the first time a section executes (all its phases have null `batch_ordinal`); after this a restart
+   * reads the stored ordinals and re-groups identically, so a resumed engine session keeps the SAME
+   * batch membership (no second `batchPhases` call, no drift). Each tuple is `[phaseId, batchOrdinal]`.
+   */
+  async setBatchOrdinals(assignments: Array<[string, number]>): Promise<void> {
+    for (const [phaseId, batchOrdinal] of assignments) {
+      await this.phases.update({ id: phaseId }, { batch_ordinal: batchOrdinal });
+    }
+  }
+
   // ── brain read helpers ───────────────────────────────────────────────────────────────────────
 
   /**
@@ -329,6 +341,7 @@ function toPhase(row: PhaseEntity): Phase {
     step: row.step,
     status: row.status as PhaseStatus,
     sessionId: row.session_id,
+    batchOrdinal: row.batch_ordinal ?? null,
   };
 }
 

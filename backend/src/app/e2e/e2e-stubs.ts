@@ -97,6 +97,16 @@ export class FakePlannerLlm implements PlannerLlm {
   async handoff(): Promise<string | undefined> {
     return '(e2e fake) section complete.';
   }
+
+  async batchPhases(input: { phases: PlannedPhase[] }): Promise<number[][] | undefined> {
+    // Deterministic: pack consecutive phases into PAIRS (exercises M<N batching in tests; the driver's
+    // guardrail still validates + caps the result). A 0/1-phase list yields no group → driver fallback.
+    const groups: number[][] = [];
+    for (let i = 0; i < input.phases.length; i += 2) {
+      groups.push(i + 1 < input.phases.length ? [i, i + 1] : [i]);
+    }
+    return groups.length ? groups : undefined;
+  }
 }
 
 /**

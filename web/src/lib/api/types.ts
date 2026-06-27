@@ -87,7 +87,33 @@ export interface WebVerdictCard {
   verdictLine: string;
 }
 
-export type WebCard = WebApprovalCard | WebVerdictCard;
+/** One selectable answer in a question card (mirrors the backend `WebQuestionOption`). */
+export interface WebQuestionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+/**
+ * A formal question the brain posed via `ask_question` — rendered as a card with one button per option
+ * (+ optional free-text "Other"). The operator's pick POSTs to `…/threads/:threadId/answer-question`.
+ * When `answer` is set the card renders the compact answered state. Mirrors the backend `WebQuestionCard`.
+ */
+export interface WebQuestionCard {
+  type: 'question_card';
+  threadId: string;
+  questionId: string;
+  header?: string;
+  question: string;
+  decisionClass?: string;
+  options: WebQuestionOption[];
+  allowOther: boolean;
+  answer?: string;
+  answeredAt?: string;
+  loggedDecision?: boolean;
+}
+
+export type WebCard = WebApprovalCard | WebVerdictCard | WebQuestionCard;
 
 // ── Pipeline (`…/threads/:threadId/pipeline`) ────────────────────────────────────────────────────
 /** One phase of a section's locked plan — the execute folder's leaf (a Claude Code session). */
@@ -145,6 +171,8 @@ export interface ContextFile {
  */
 export interface ThreadContext {
   specs: ContextFile[];
+  /** System-GENERATED, read-only files (e.g. decision-record.md) — written by tool calls, never by hand. */
+  generated: ContextFile[];
   artifacts: ContextFile[];
 }
 

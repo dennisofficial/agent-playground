@@ -175,6 +175,13 @@ export function Navigator({
           onSelectNode={onSelectNode}
         />
 
+        <GeneratedRegion
+          generated={context?.generated}
+          loading={contextLoading}
+          selectedNode={selectedNode}
+          onSelectNode={onSelectNode}
+        />
+
         <PipelineRegion
           status={st}
           job={job}
@@ -253,7 +260,44 @@ function SpecsRegion({
       ) : loading ? (
         <LoadingRow label="Loading specs…" />
       ) : (
-        <EmptyRow text="No spec files yet — plan.md & the decision record appear here as the agent drafts them." />
+        <EmptyRow text="No spec files yet — plan.md & diagrams appear here as the agent drafts them." />
+      )}
+    </>
+  );
+}
+
+// ── GENERATED (system-owned, read-only: decision-record.md) ──────────────────────────────────────────
+
+function GeneratedRegion({
+  generated,
+  loading,
+  selectedNode,
+  onSelectNode,
+}: {
+  generated: ContextFile[] | undefined;
+  loading?: boolean;
+  selectedNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  const files = generated ?? [];
+  // Only show the region once there's something generated — keeps the empty navigator quiet.
+  if (files.length === 0 && !loading) return null;
+  return (
+    <>
+      <Divider label="GENERATED" count={files.length > 0 ? files.length : undefined} />
+      {files.length > 0 ? (
+        files.map((f) => (
+          <FileRow
+            key={f.name}
+            icon={<Lock size={12} className="shrink-0" style={{ color: 'var(--slate)' }} />}
+            name={f.name}
+            active={selectedNode === `gen:${f.name}`}
+            onClick={() => onSelectNode(`gen:${f.name}`)}
+            note={{ text: formatBytes(f.size) }}
+          />
+        ))
+      ) : (
+        <LoadingRow label="Loading…" />
       )}
     </>
   );

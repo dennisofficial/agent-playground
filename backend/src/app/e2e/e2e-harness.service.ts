@@ -340,6 +340,7 @@ export class E2eHarness {
     // Call submit_plan directly — goes through persistPlan → planReview (skipped: no sandbox) →
     // requestApprovalAndAct → approval card posted.
     const result = await tools.submit_plan({
+      goal: 'Add an "About" section to the README',
       overview: 'Add a short note to the README describing what this project does and how to run it.',
       decisions: [
         {
@@ -348,7 +349,19 @@ export class E2eHarness {
           ruling: 'Append a "## About" section to the existing README.md; keep it to ≤5 lines.',
         },
       ],
-      sections: ['Update README.md with a short "About" section and a one-line run instruction.'],
+      sections: [
+        {
+          title: 'Update README.md with a short "About" section and a one-line run instruction.',
+          phases: [
+            {
+              title: 'Append the About section',
+              brief:
+                'Append a "## About" section (≤5 lines) to README.md describing what this project does, ' +
+                'followed by a one-line "how to run it" instruction. Then read the file back to confirm it is well-formed.',
+            },
+          ],
+        },
+      ],
     });
 
     this.logger.debug(`submit_plan direct result: ${JSON.stringify(result)}`);

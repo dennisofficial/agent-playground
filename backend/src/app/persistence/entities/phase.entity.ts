@@ -69,4 +69,14 @@ export class PhaseEntity extends TimestampedEntity {
   /** The engine session this phase runs inside; null until started. */
   @Column({ type: 'text', nullable: true })
   session_id!: string | null;
+
+  /**
+   * Which execution BATCH this phase belongs to within its section. A fresh-context step packs the
+   * ordered phases into consecutive groups; every phase in one group runs in ONE engine session. Null
+   * until the section first executes; assigned + persisted then so a resumed/restarted section
+   * re-groups IDENTICALLY — the resume cursor keys off the group's anchor phase `session_id`, so batch
+   * membership MUST be stable across a restart (a re-batch would hand a resumed session the wrong task).
+   */
+  @Column({ type: 'int', nullable: true })
+  batch_ordinal!: number | null;
 }

@@ -95,6 +95,7 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
         step: 'build',
         status: 'pending' as PhaseStatus,
         sessionId: null,
+        batchOrdinal: null,
       }));
       state.phases.push(...rows);
       return rows.map((p) => ({ ...p }));
@@ -104,6 +105,12 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
       if (p) {
         p.step = step;
         p.status = status;
+      }
+    }),
+    setBatchOrdinals: vi.fn(async (assignments: Array<[string, number]>) => {
+      for (const [id, batchOrdinal] of assignments) {
+        const p = state.phases.find((x) => x.id === id);
+        if (p) p.batchOrdinal = batchOrdinal;
       }
     }),
     route: vi.fn(async () => state.route),
@@ -201,6 +208,9 @@ function makePlanner(): PlannerLlm {
     reviewPlan: vi.fn(async () => undefined), // no revision
     extractDecisions: vi.fn(async () => []), // no notable decision by default
     handoff: vi.fn(async (input: { brief: string }) => `handoff from ${input.brief}`),
+    // Default: no grouping → the driver's guardrail falls back to one batch per phase (preserves the
+    // pre-batching behavior these tests assert). Batching-specific tests override this mock.
+    batchPhases: vi.fn(async () => undefined),
   };
 }
 
@@ -418,6 +428,92 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
   });
 
+  // ── §D fresh-context phase batching ──────────────────────────────────────────────────────────────
+  // A single section PRE-LOCKED with N authored phases (the full-plan-up-front path): the driver finds
+  // phases already present → skips JIT planning → packs the ordered phases into execution batches.
+  function authoredState(n: number): StoreState {
+    const phases: Phase[] = Array.from({ length: n }, (_, i) => ({
+      id: `sec-be-ph${i}`,
+      sectionId: 'sec-be',
+      threadId: 'job-abcdef12',
+      ordinal: (i + 1) * 10,
+      title: `P${i}`,
+      brief: `do ${i}`,
+      step: 'build',
+      status: 'pending' as PhaseStatus,
+      sessionId: null,
+      batchOrdinal: null,
+    }));
+    return {
+      job: makeJob(),
+      record: makeRecord(),
+      sections: [section('sec-be', 10, 'Backend')],
+      phases,
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+  }
+
+  it('packs authored phases into batches: 5 phases → 2 sessions, one commit per batch, NO JIT plan turn', async () => {
+    const state = authoredState(5);
+    const h = assemble(state);
+    (h.planner.batchPhases as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2], [3, 4]]);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // Pre-locked phases ⇒ NO JIT plan turn; 2 batches ⇒ 2 execute turns (not 5).
+    expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0);
+    const exec = h.calls.filter((c) => c.mode === 'execute');
+    expect(exec).toHaveLength(2);
+    // Each batch is anchored on its first phase (the session/resume cursor).
+    expect(exec.map((c) => c.phaseId)).toEqual(['sec-be-ph0', 'sec-be-ph3']);
+    // Every phase marked done; batch_ordinal persisted (group 1 / group 2).
+    expect(state.phases.every((p) => p.status === 'done')).toBe(true);
+    expect(state.phases.map((p) => p.batchOrdinal)).toEqual([1, 1, 1, 2, 2]);
+    // ONE commit per batch (2 build commits), then the single PR.
+    expect(h.commits.filter((m) => m.startsWith('Backend —'))).toHaveLength(2);
+    expect(h.opened).toHaveLength(1);
+  });
+
+  it('guardrail: an INVALID partition falls back to one batch per phase', async () => {
+    const state = authoredState(3);
+    const h = assemble(state);
+    (h.planner.batchPhases as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 2]]); // not covering [0,1,2]
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(3);
+    expect(state.phases.map((p) => p.batchOrdinal)).toEqual([1, 2, 3]);
+  });
+
+  it('guardrail: caps a too-large group at MAX_PHASES_PER_BATCH', async () => {
+    const state = authoredState(5);
+    const h = assemble(state, { env: { MAX_PHASES_PER_BATCH: '2' } });
+    (h.planner.batchPhases as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2, 3, 4]]);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // One group of 5 capped at 2 → [0,1],[2,3],[4] → 3 sessions.
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(3);
+    expect(state.phases.map((p) => p.batchOrdinal)).toEqual([1, 1, 2, 2, 3]);
+  });
+
+  it('resume: batch_ordinal already set ⇒ batchPhases is NOT called again (stable membership)', async () => {
+    const state = authoredState(4);
+    // A prior run already batched (ordinals set) but crashed before any phase finished.
+    state.phases.forEach((p, i) => (p.batchOrdinal = i < 2 ? 1 : 2));
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(h.planner.batchPhases).not.toHaveBeenCalled();
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2); // re-grouped from stored ordinals
+    expect(state.phases.every((p) => p.status === 'done')).toBe(true);
+  });
+
   it('every phase ran in the SAME feature branch (sections share one sandbox)', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -507,8 +603,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
       record: makeRecord(),
       sections: [doneBackend, section('sec-fe', 20, 'Frontend')],
       phases: [
-        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's' },
-        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'done', status: 'done', sessionId: 's' },
+        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
+        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'done', status: 'done', sessionId: 's', batchOrdinal: 2 },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -535,8 +631,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
       record: makeRecord(),
       sections: [section('sec-be', 10, 'Backend', 'executing')],
       phases: [
-        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's' },
-        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'build', status: 'building', sessionId: 's2' },
+        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
+        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'build', status: 'building', sessionId: 's2', batchOrdinal: 2 },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };

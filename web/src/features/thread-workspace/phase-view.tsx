@@ -73,6 +73,8 @@ export function PhaseView({
     body = <DiffView />;
   } else if (selectedNode.startsWith('spec:')) {
     body = <FileView threadRef={threadRef} path={`specs/${selectedNode.slice('spec:'.length)}`} />;
+  } else if (selectedNode.startsWith('gen:')) {
+    body = <FileView threadRef={threadRef} path={`generated/${selectedNode.slice('gen:'.length)}`} />;
   } else if (selectedNode.startsWith('artifact:')) {
     body = <FileView threadRef={threadRef} path={`artifacts/${selectedNode.slice('artifact:'.length)}`} />;
   } else if (selectedNode.startsWith('secplan:')) {
@@ -519,7 +521,7 @@ const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
  */
 function resolveNode(node: string, job: PipelineJob | null, loading: boolean, error: boolean): NodeResolution {
   if (ID_FREE_NODES.has(node)) return 'found';
-  if (node.startsWith('spec:') || node.startsWith('artifact:')) return 'found';
+  if (node.startsWith('spec:') || node.startsWith('gen:') || node.startsWith('artifact:')) return 'found';
 
   if (loading) return 'loading';
   if (error || !job) return 'not_found';

@@ -32,7 +32,7 @@ const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
  * recreate. (rev 2 = added the live engine-bundle mount. rev 3 = worktree mounted at /workspace + git common
  * dir at /repo.git, was same-path host paths. rev 4 = added the durable per-thread /context shared mount.)
  */
-const CONFIG_REV = 4;
+const CONFIG_REV = 5;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -132,13 +132,20 @@ export class SandboxManager implements SandboxProvider {
       mkdirSync(refsDir, { recursive: true });
       binds.push(`${refsDir}:/refs:ro`);
     }
-    // The thread's durable SHARED CONTEXT folder at /context — read/write, lives OUTSIDE the worktree
-    // (keyed by threadId so it survives container recreate; the host reads it via contextDirHost()).
-    // Two buckets: specs/ (the plan) + artifacts/ (outputs) — pre-created so both always list cleanly.
+    // The thread's durable SHARED CONTEXT folder at /context — lives OUTSIDE the worktree (keyed by
+    // threadId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
+    // pre-created so all always list cleanly:
+    //   • specs/     — hand-authored by the brain (plan.md, diagrams). Read/write.
+    //   • generated/ — SYSTEM-owned (decision-record.md, …), written ONLY by host tool calls. Mounted
+    //                  READ-ONLY here (a nested :ro bind over the rw /context parent — Docker honors the
+    //                  more-specific child mount) so no in-sandbox agent can edit a generated file.
+    //   • artifacts/ — outputs for the human.
     const contextDir = this.contextDirHost(orgId, threadId, name);
     mkdirSync(join(contextDir, 'specs'), { recursive: true });
+    mkdirSync(join(contextDir, 'generated'), { recursive: true });
     mkdirSync(join(contextDir, 'artifacts'), { recursive: true });
     binds.push(`${contextDir}:${CONTAINER_CONTEXT}`);
+    binds.push(`${join(contextDir, 'generated')}:${CONTAINER_CONTEXT}/generated:ro`);
 
     this.logger.log(`creating sandbox ${name} (image ${image}, net ${network})`);
     const id = await this.engine.createContainer({

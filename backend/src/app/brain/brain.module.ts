@@ -7,6 +7,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
+  PhaseEntity,
   RepoEntity,
   SectionEntity,
   StimulusEntity,
@@ -62,6 +63,7 @@ import { PlanReviewService } from './plan-review.service';
         MessageEntity,
         DecisionRecordEntity,
         SectionEntity,
+        PhaseEntity,
         StimulusEntity,
         RepoEntity,
         ThreadSandboxEntity,

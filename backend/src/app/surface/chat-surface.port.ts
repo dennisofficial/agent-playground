@@ -91,4 +91,10 @@ export interface ChatSurface {
    * acyclic. Surfaces without a resume affordance (e.g. the agent test surface) omit this.
    */
   readonly resumeRequests$?: Observable<{ jobId: string }>;
+  /**
+   * OPTIONAL — push a live thread-metadata update (e.g. a renamed title) so the client repaints in
+   * place without a reload. `channel` is the repo coordinate the SSE stream filters on. The web
+   * adapter emits on `threadMeta$`; the agent test surface omits this.
+   */
+  emitThreadMeta?(channel: string, threadId: string, title: string): void;
 }

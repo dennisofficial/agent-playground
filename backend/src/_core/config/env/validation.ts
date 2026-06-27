@@ -249,8 +249,11 @@ export interface IEnvConfig {
   //    Default 12. The approved section list is human-gated, so this is belt-and-braces.
   //  - MAX_PHASES_PER_SECTION: the most phases one section may lock (a longer planner output is
   //    truncated to this). Default 8 — keeps a section's build bounded.
+  //  - MAX_PHASES_PER_BATCH: the most phases one execution batch may run in a single fresh-context
+  //    session (the deterministic cap around the LLM batcher). Default 5.
   MAX_SECTIONS?: number;
   MAX_PHASES_PER_SECTION?: number;
+  MAX_PHASES_PER_BATCH?: number;
   // Circuit breakers on the driver (issue #3) — abort + relay a runaway build. Both optional, code
   // defaults: PHASE_TIMEOUT_MS (per engine turn, default 20m) + JOB_TIMEOUT_MS (whole job,
   // checked at section boundaries, default 60m).
@@ -427,6 +430,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Atlas v2 section/phase driver (W4) runaway guards
   MAX_SECTIONS: Joi.number().integer().min(1).optional(),
   MAX_PHASES_PER_SECTION: Joi.number().integer().min(1).optional(),
+  MAX_PHASES_PER_BATCH: Joi.number().integer().min(1).optional(),
   PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   PARK_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),

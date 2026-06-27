@@ -136,6 +136,22 @@ export function approveThread(
   return webJson(threadPath(ref, '/approve'), { method: 'POST', body: JSON.stringify(body) });
 }
 
+// ── Formal questions ─────────────────────────────────────────────────────────────────────────────
+export interface AnswerQuestionBody {
+  /** The question card's id (its message ts). */
+  questionId: string;
+  /** The picked option's label, or free text. */
+  answer: string;
+  answeredBy?: string;
+}
+
+export function answerQuestion(
+  ref: ThreadRef,
+  body: AnswerQuestionBody,
+): Promise<{ ok: boolean; ts: string }> {
+  return webJson(threadPath(ref, '/answer-question'), { method: 'POST', body: JSON.stringify(body) });
+}
+
 // ── Pipeline ───────────────────────────────────────────────────────────────────────────────────
 export function fetchPipeline(ref: ThreadRef): Promise<PipelineState> {
   return webJson<PipelineState>(threadPath(ref, '/pipeline'));

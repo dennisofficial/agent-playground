@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
 import { useSay } from '@/lib/api/thread-queries';
 import type { ThreadRef } from '@/lib/api/thread-api';
@@ -16,12 +16,37 @@ import type { ThreadRef } from '@/lib/api/thread-api';
 export function Composer({
   threadRef,
   placeholder = 'Message Atlas — ask, plan, or steer…',
+  onHeightChange,
 }: {
   threadRef: ThreadRef;
   placeholder?: string;
+  /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
+  onHeightChange?: (height: number) => void;
 }) {
   const say = useSay(threadRef);
   const [text, setText] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Auto-grow the textarea to fit its content (capped by the CSS max-height, which then scrolls).
+  // Reset to `auto` first so the box can also shrink as lines are removed.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
+
+  // Measure the overlay so the transcript spacer tracks it as the box grows/shrinks.
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el || !onHeightChange) return;
+    const report = () => onHeightChange(el.offsetHeight);
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onHeightChange]);
 
   function send() {
     const trimmed = text.trim();
@@ -39,6 +64,7 @@ export function Composer({
 
   return (
     <div
+      ref={rootRef}
       className="pointer-events-none absolute bottom-0 left-0 right-2 px-6 pb-5 pt-[22px]"
       style={{ background: 'linear-gradient(to top, var(--panel) 58%, transparent)' }}
     >
@@ -49,12 +75,13 @@ export function Composer({
         >
           <div className="flex items-start gap-2.5">
             <textarea
+              ref={textareaRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
               rows={1}
               placeholder={placeholder}
-              className="max-h-44 min-h-[24px] flex-1 resize-none bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint"
+              className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint"
             />
             <button
               type="button"

@@ -1,10 +1,19 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { ChatStimulus, Thread, ThreadKind } from '../domain';
 import { MemoryStore } from '../memory';
-import { CHAT_SURFACE, type ChatSurface, type DecisionApprovalCard, LiveTurnStore } from '../surface';
+import {
+  CHAT_SURFACE,
+  type ChatSurface,
+  type DecisionApprovalCard,
+  LiveTurnStore,
+  type WebQuestionCard,
+  webQuestionCard,
+} from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadSandboxEntity } from '../persistence/entities';
 import { ProvisioningNotReadyError, ThreadLifecycleService } from '../driver/thread-lifecycle.service';
@@ -17,12 +26,15 @@ import {
   renderPipelineStateSummary,
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
+import type { PlannedPhase } from '../driver/planner-llm';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver } from '../onboarding';
 import { TicketService } from '../tickets';
 import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../domain/ticket';
 import type { Decision } from '../domain';
+import type { DecisionClass } from '../domain/decision-record';
+import { renderDecisionRecordMd } from './decision-record-md';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import { SANDBOX_RESET_NOTICE } from '../engine/engine.types';
@@ -98,14 +110,16 @@ export class AgentSessionManager {
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
-    `You have 14 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
+    `You have 16 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
     `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
     `ALWAYS call the qualified name (e.g. mcp__${BRIDGE_SERVER_NAME}__submit_plan); the bare name`,
     '(e.g. submit_plan) is NOT a registered tool and will fail with "No such tool available". The prose',
     `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
-    'form. The 14 tools:',
+    'form. The 16 tools:',
+    `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator ONE formal question (renders as a card; see GRILLING)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__log_decision         — record a locked always-ask decision (auto-attaches the last answered question)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read the current locked decision record for this thread`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read the locked decisions + working set for this thread`,
     `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
     `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — propose the full multi-section plan for approval (FULL PATH; see below)`,
@@ -146,49 +160,97 @@ export class AgentSessionManager {
     'GRILLING PROTOCOL (applies to BOTH paths): lock the always-ask decisions before proposing — data',
     'model/schema, public API contracts, new dependencies, infrastructure/topology, cross-cutting patterns',
     '(auth, caching, state, concurrency, error-handling), one-way doors. For security/auth: surface EACH',
-    'mechanism as its OWN decision. Ask ONE focused question at a time. Do NOT ask about never-ask details',
-    '(naming, file placement, test layout).',
+    'mechanism as its OWN decision. Do NOT grill about never-ask details (naming, file placement, test layout).',
+    '',
+    'ASK VIA THE TOOL, NOT IN PROSE: every question you put to the operator goes through `ask_question` —',
+    'NEVER ask a question in your prose reply. Put your reasoning/analysis/recommendation in prose, then pose',
+    'the actual question with `ask_question({ question, header?, decisionClass?, options:[{label,description?}], allowOther? })`:',
+    '  • ONE focused question per call; give 2–4 concrete `options` (the operator can also answer freely if',
+    '    allowOther is true, the default). Set `decisionClass` when the question settles an always-ask class.',
+    '  • After calling it, STOP and wait — do not ask anything else that turn. The operator answers the card',
+    '    (or replies in prose); that fires your next turn with their answer.',
+    'LOG EACH DECISION AS IT LOCKS: the moment an answer settles an always-ask decision, call',
+    '`log_decision({ decisionClass, ruling, title? })`. It AUTO-ATTACHES the question you just asked and the',
+    'operator\'s answer — do NOT restate them. Log it BEFORE asking your next question. Re-call log_decision',
+    'with the same decisionClass + title to REVISE a ruling. This is what fills the decision record (below);',
+    'submit_plan reads these logged decisions, so you do NOT pass decisions to submit_plan.',
     '',
     'THE /context SHARED FOLDER: `/context` is a durable, per-thread space OUTSIDE the repo, shared with the',
-    'build sessions. Two buckets:',
-    '  • `/context/specs/` — THE PLAN, authored LIVE as you work (NOT in one burst at the end). The operator',
-    '    watches this folder fill in as the conversation progresses, so keep it current:',
-    '      – The MOMENT you lock an always-ask decision, append it to `/context/specs/decision-record.md`',
-    '        (the decision, the ruling, and why) — do this BEFORE moving to your next question, every time.',
-    '      – As the shape of the work firms up, grow `/context/specs/plan.md` (the full plan) and any',
-    '        diagrams/mermaid alongside it, revising as decisions change things.',
-    '    This folder IS the plan and the source of truth; the build phases read it for grounding.',
+    'build sessions. THREE buckets, split by who authors them:',
+    '  • `/context/specs/` — HAND-AUTHORED by you, live as you work (NOT in one burst at the end). The operator',
+    '    watches this fill in. Grow `/context/specs/plan.md` (the full plan) + any diagrams/mermaid as the shape',
+    '    of the work firms up, revising as decisions change things. This is the plan the build EXECUTES — follow',
+    '    the fixed heading skeleton in PLAN.MD STRUCTURE below.',
+    '    CADENCE — write a section AND its phases into plan.md the MOMENT their shape settles (the files are open',
+    '    and the decisions are logged), BEFORE you move on to scope the next — the same rhythm as log_decision.',
+    '    By the time the last decision locks, plan.md should already be near-complete. Reaching submit_plan with',
+    '    a thin or empty plan.md means you batched it at the end (the failure mode) — that is a bug, not a',
+    '    shortcut. A PHASE you have fully investigated but not yet written as an execute-ready `#### N.M` block',
+    '    is unfinished work. The `# <goal>` H1 may be revised until you submit.',
+    '  • `/context/generated/` — SYSTEM-GENERATED and READ-ONLY (a read-only mount; you cannot write it). The',
+    '    decisions you lock via `log_decision` are rendered here as `decision-record.md`, live, on every call.',
+    '    Do NOT try to author or edit anything here — it is maintained for you through your tool calls.',
     '  • `/context/artifacts/` — OUTPUTS for the human: preview HTML, screenshots, reports (never the repo).',
     'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
-    'write to `/context` instead.',
+    'write to `/context/specs` (or `/context/artifacts`) instead.',
     '',
     'TWO PATHS — choose based on size/risk:',
     '',
     'FULL PATH — submit_plan (multi-section build run by the deterministic driver). Use for anything beyond',
-    'a small, localized change. By the time you reach this point you have ALREADY authored the plan live in',
-    '`/context/specs/` (per THE /context SHARED FOLDER above): `plan.md` structured by section — each section',
-    'covering goal, touch points (exact files/symbols you actually read), changes per site, constraints',
-    'honored, edge cases, verification, risks — plus the running `decision-record.md` and any diagrams.',
-    '`submit_plan` does NOT author the plan; it simply FLIPS the thread to approval-awaiting and posts the',
-    'approval card from the section titles. Ensure `/context/specs/` is complete and current FIRST, then call',
-    'submit_plan with:',
+    'a small, localized change. You author the ENTIRE plan up front — every section AND all of its phases, each',
+    'phase execute-ready — during the conversation. There is NO later "phase planning" step: the detail you',
+    'write IS what the build runs. By the time you call submit_plan, `/context/specs/plan.md` is already',
+    'complete (per CADENCE above).',
+    '',
+    'PLAN DEPTH (applies to each PHASE brief): a phase must be buildable to the keystroke by a fresh engine',
+    'turn that will NOT ask you anything — aim at the altitude of a senior engineer\'s implementation diff, NOT',
+    'a design summary. Each phase brief covers:',
+    '  • touch points — every file the phase changes, each anchored to an EXACT `path:line` you copied from a',
+    '    Read/Grep (never an estimate or "~line N"), with the symbol that lives at that line;',
+    '  • concrete changes — for any non-trivial edit, the actual change, not prose: the new signature/type, a',
+    '    short code skeleton (the 3–8 lines that matter), and any ordering/safety constraint (e.g. "set the',
+    '    failure field BEFORE the early return"). A builder must not have to re-derive the code. Trivial edits',
+    '    (a one-line add, a stub→real call) stay one sentence — do not pad them;',
+    '  • verify — the ACTUAL command(s) that prove the phase works (test file/path, build or lint cmd) plus any',
+    '    non-obvious gotcha (must rebuild native, won\'t hot-reload, needs a generated migration). "Unit-test',
+    '    it" is a goal, not verification. Let detail follow difficulty — the hard phase gets the depth.',
+    '',
+    'PLAN.MD STRUCTURE — every plan.md follows this exact skeleton so the build reads it identically:',
+    '    # <one-line goal of the whole thread>   (this IS the `goal` arg you pass to submit_plan, verbatim)',
+    '    ## Overview                             (intent · stack · constraints · what is out of scope)',
+    '    ## Architecture                         (OPTIONAL — mermaid / data flow / the moving parts)',
+    '    ## Section N — <milestone title>',
+    '    ### Goal                               (the demo-able slice, 1–2 lines)',
+    '    ### Context                            (what exists today + EXACT path:line anchors + which logged',
+    '                                            decisions shaped it)',
+    '    ### Phases',
+    '    #### N.M — <phase title>               (the body of this block IS the phase brief — PLAN DEPTH above)',
+    '    ### Section validation                 (the demo-able outcome that closes the section)',
+    '  The body you write under each `#### N.M` heading IS the `brief` you pass for that phase in submit_plan —',
+    '  the SAME text, lifted verbatim. State hard phase ORDERING inline ("N.2 needs N.1\'s migration"); do NOT',
+    '  author concurrency/grouping — how phases pack into execution sessions is decided downstream. Do NOT',
+    '  write a "review" section: section self-review is a FIXED automatic stage; `### Section validation` says',
+    '  what success looks like, not how it is reviewed.',
+    '',
+    '`submit_plan` does NOT author the plan; it FLIPS the thread to approval-awaiting and posts the approval',
+    'card. Ensure `/context/specs/plan.md` is complete and all always-ask decisions are logged via log_decision',
+    'FIRST, then call submit_plan with:',
+    '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
     '  - overview: intent + stack + constraints',
-    '  - decisions: locked decisions, each { decisionClass, title, ruling }',
-    '    (decisionClass: data_model | api_contract | dependency | infrastructure | cross_cutting | one_way_door)',
-    '  - sections: the ordered section TITLES (e.g. ["Toggle", "Tokens", "Docs"]) — just the labels; the',
-    '    detail lives in `/context/specs/plan.md`, which the build reads. Do NOT attach files here.',
-    'SECTION GRANULARITY: a section is a BROAD, COHERENT MILESTONE (a slice you could demo or review on its',
-    'own), NOT a single technical component. The fine steps — the data model, a migration, one service, the',
-    'wiring — are PHASES the build planner derives JIT INSIDE a section; do NOT list them as sections. Prefer',
-    'FEW, BROAD sections (≈1–4 for a typical feature). Do NOT split purely by technical layer',
-    '(model / service / worker / API / UI) — that produces narrow, tightly-coupled sections; group related',
-    'work into a milestone instead (e.g. "Scheduling engine (backend)" with the model+service+worker as its',
-    'phases, "Schedules panel" with the API+UI as its phases). Splitting by layer is right ONLY when a layer',
-    'is genuinely large on its own. Broad sections do not bloat context — each phase is a fresh engine turn.',
-    'SELF-CHECK before submit_plan: every applicable always-ask decision locked? could a fresh engineer build',
-    'from `plan.md` with ZERO further questions to you? is it grounded in files you actually opened? is each',
-    'section a coherent milestone (not a lone component)? Do NOT add an "investigate the codebase" section —',
-    'sections are real build work.',
+    '  - sections: the ordered sections, each `{ title, phases: [{ title, brief }] }` — `brief` lifted verbatim',
+    '    from the matching `#### N.M` block. Each section needs ≥1 phase.',
+    '  (No `decisions` arg — submit_plan reads the decisions you logged via log_decision. Pass `decisions`',
+    '   ONLY to authoritatively replace the whole set, e.g. after request-changes pruned some.)',
+    'SECTION & PHASE GRANULARITY: a SECTION is a coherent layer that ends in a self-review / auto-fix pass — a',
+    'slice you could demo or review on its own (the backend / frontend / analytics / testing / docs split is',
+    'the TYPICAL shape of a feature, but a bugfix is one section of one phase). PHASES are context-sized build',
+    'steps YOU author inside a section. Prefer FEW, BROAD sections (≈1–4 for a typical feature) with as many',
+    'phases as the work needs; do NOT inflate a lone component into its own section.',
+    'SELF-CHECK before submit_plan: every applicable always-ask decision logged? could a fresh engine turn',
+    'build EACH PHASE from its `#### N.M` brief ALONE — exact `path:line` anchors, concrete code/signatures for',
+    'the hard edits, runnable verification — with ZERO further questions to you? is it grounded in files you',
+    'actually opened (not guessed)? is the `goal` a single clear line? Do NOT add an "investigate the codebase"',
+    'section — sections are real build work.',
     '',
     'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no sections/phases).',
     'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
@@ -229,6 +291,11 @@ export class AgentSessionManager {
   /** One chat turn (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
    *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
   private async runChatTurn(stimulus: ChatStimulus): Promise<void> {
+    // If this operator message answers an outstanding `ask_question` card typed in prose (rather than
+    // clicked), stamp that card answered so `log_decision` can auto-attach the Q&A. No-op when the answer
+    // came through `/answer-question` (it pre-stamps) or there is no pending question.
+    await this.linkTypedQuestionAnswer(stimulus);
+
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
     // we're setting up so the first turn isn't a silent ~30s wait while we clone + start a container.
@@ -459,7 +526,11 @@ export class AgentSessionManager {
       },
 
       get_decision_record: async (_args) => {
-        return this.driverStore.getDecisionRecord(stimulus.threadId);
+        const record = await this.driverStore.getDecisionRecord(stimulus.threadId);
+        if (record) return record;
+        // No proposal yet — surface the working set logged so far so the brain can see what it has locked.
+        const pending = await this.store.pendingDecisions(stimulus.threadId);
+        return { status: 'drafting', decisions: pending };
       },
 
       recall: async (args) => {
@@ -494,15 +565,99 @@ export class AgentSessionManager {
         }
       },
 
+      ask_question: async (args) => {
+        const question = String(args['question'] ?? '').trim();
+        if (!question) return { ok: false, reason: 'question is required' };
+        const options = normalizeQuestionOptions(args['options']);
+        const decisionClass = asDecisionClass(args['decisionClass']);
+        const header = String(args['header'] ?? '').trim();
+        const questionId = `q-${randomUUID()}`;
+        const card = webQuestionCard({
+          threadId: stimulus.threadId,
+          questionId,
+          question,
+          ...(header ? { header } : {}),
+          ...(decisionClass ? { decisionClass } : {}),
+          options,
+          allowOther: args['allowOther'] !== false,
+        });
+        // Durable card row (the surface `post` path does NOT persist `messages.card`); it renders on the
+        // turn-end refetch. The brain should STOP after asking and wait for the operator's answer.
+        await this.store.appendCardMessage(stimulus.threadId, {
+          ts: questionId,
+          text: question,
+          card: card as unknown as Record<string, unknown>,
+        });
+        return {
+          ok: true,
+          questionId,
+          message:
+            'Question posted to the operator as a card. Stop and wait for their answer — do not ask ' +
+            'anything else this turn. When their answer settles an always-ask decision, call log_decision.',
+        };
+      },
+
+      log_decision: async (args) => {
+        const decisionClass = asDecisionClass(args['decisionClass']);
+        const ruling = String(args['ruling'] ?? '').trim();
+        if (!decisionClass) {
+          return {
+            ok: false,
+            reason:
+              'decisionClass must be one of: data_model | api_contract | dependency | infrastructure | ' +
+              'cross_cutting | one_way_door',
+          };
+        }
+        if (!ruling) return { ok: false, reason: 'ruling is required' };
+
+        // Auto-attach the question the operator just answered (durable; survives a host restart).
+        const answered = await this.store.latestAnsweredQuestionCard(stimulus.threadId);
+        const answeredCard = answered?.card as WebQuestionCard | undefined;
+        const title =
+          String(args['title'] ?? '').trim() ||
+          deriveDecisionTitle(answeredCard?.question ?? ruling);
+        const decision: Decision = {
+          decisionClass,
+          title,
+          ruling,
+          ...(answeredCard?.question ? { question: answeredCard.question } : {}),
+          ...(answeredCard?.answer ? { answer: answeredCard.answer } : {}),
+        };
+
+        const all = await this.store.appendDecision(stimulus.threadId, decision);
+        if (answered?.ts) {
+          await this.store.updateCardMessage(stimulus.threadId, answered.ts, { loggedDecision: true });
+        }
+        await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
+        return { ok: true, totalDecisions: all.length, title };
+      },
+
       submit_plan: async (args) => {
         const overview = String(args['overview'] ?? '').trim();
-        const decisions = normalizeDecisions(args['decisions']);
-        // The full plan (plan.md, decisions, diagrams) lives in the thread's `/context/specs` folder —
-        // `submit_plan` carries only the ordered section TITLES (the pipeline §1/§2/§3); no files attached.
-        const sectionBriefs = normalizeSectionTitles(args['sections']);
+        // The one-line goal of the whole thread — the SAME text Atlas writes as plan.md's `# <H1>`.
+        // Becomes the thread title (durable + live `thread_meta` frame, see requestApprovalAndAct).
+        const goal = String(args['goal'] ?? '').trim();
+        // Decisions are LOGGED incrementally during grilling (log_decision → pending_decisions). Source
+        // them from the working set; an explicit `decisions` arg, if given, is an authoritative override.
+        const decisions =
+          args['decisions'] != null
+            ? normalizeDecisions(args['decisions'])
+            : await this.store.pendingDecisions(stimulus.threadId);
+        // Atlas authors the FULL plan up front: each section carries its ordered phase list (title +
+        // keystroke-level brief). The phases LOCK here (persistPlan) so the driver skips its JIT plan
+        // turn. The rich prose companion still lives in `/context/specs/plan.md`.
+        const sections = normalizeSections(args['sections']);
+        const sectionBriefs = sections.map((s) => s.title);
+        const phasesBySection = sections.map((s) => s.phases);
 
-        if (!overview || sectionBriefs.length === 0) {
-          return { ok: false, reason: 'overview and at least one section title are required' };
+        if (!overview || !goal || sections.length === 0) {
+          return { ok: false, reason: 'overview, goal, and at least one section are required' };
+        }
+        if (sections.some((s) => s.phases.length === 0)) {
+          return {
+            ok: false,
+            reason: 'each section must have at least one phase (each phase needs a title and a brief)',
+          };
         }
 
         // Ensure there's an open scoping job on this thread.
@@ -512,11 +667,12 @@ export class AgentSessionManager {
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
           threadId: jobId,
-          title: jobTitle(overview),
+          title: goal,
           kind: 'feature',
           overview,
           decisions,
           sectionBriefs,
+          phasesBySection,
         });
 
         // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
@@ -532,6 +688,8 @@ export class AgentSessionManager {
             overview,
             decisions,
             sectionBriefs,
+            // §E — Codex now grades the EXECUTION detail (the authored phases), not just titles.
+            phasesBySection,
           });
 
           if (reviewResult !== null) {
@@ -561,7 +719,7 @@ export class AgentSessionManager {
         void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
           jobId: job.id,
           decisionRecordId,
-          title: jobTitle(overview),
+          title: goal,
           summary: overview,
           decisions,
           sections: sectionBriefs,
@@ -605,7 +763,11 @@ export class AgentSessionManager {
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
           : [];
-        const decisions = normalizeDecisions(args['decisions']);
+        // Honor decisions logged during grilling (log_decision → pending_decisions); an explicit arg overrides.
+        const decisions =
+          args['decisions'] != null
+            ? normalizeDecisions(args['decisions'])
+            : await this.store.pendingDecisions(stimulus.threadId);
 
         // SAFETY GATE: "small" must NOT mean skipping an always-ask decision. Classify the change against
         // the locked decisions; an UNCOVERED always-ask class → refuse the fast path.
@@ -829,6 +991,41 @@ export class AgentSessionManager {
     };
   }
 
+  /**
+   * (Re)generate the thread's `decision-record.md` from its working-set decisions and write it to the
+   * READ-ONLY `/context/generated/` bucket (host-side path; the container sees `/context/generated` as a
+   * read-only mount). Called on every `log_decision`, so the file stays incremental + in lockstep with
+   * the structured `pending_decisions` — coding agents read it for grounding but never author it.
+   */
+  private async writeDecisionRecordMd(
+    threadId: string,
+    orgId: string,
+    decisions: Decision[],
+  ): Promise<void> {
+    const generatedDir = join(this.lifecycle.contextDirHost(threadId, orgId), 'generated');
+    await mkdir(generatedDir, { recursive: true });
+    await writeFile(join(generatedDir, 'decision-record.md'), renderDecisionRecordMd(decisions), 'utf8');
+  }
+
+  /**
+   * Typed-reply fallback for formal questions: if the operator answered an outstanding `ask_question`
+   * card in PROSE (the composer) rather than clicking it, stamp that card's durable answered state with
+   * the message text so `log_decision` can still auto-attach the Q&A. No-op when there is no pending
+   * question or it was already answered (e.g. via the `/answer-question` endpoint, which pre-stamps).
+   */
+  private async linkTypedQuestionAnswer(stimulus: ChatStimulus): Promise<void> {
+    try {
+      const pending = await this.store.latestUnansweredQuestionCard(stimulus.threadId);
+      if (!pending?.ts) return;
+      await this.store.updateCardMessage(stimulus.threadId, pending.ts, {
+        answer: stimulus.body,
+        answeredAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      this.logger.debug(`linkTypedQuestionAnswer failed for thread=${stimulus.threadId}: ${err}`);
+    }
+  }
+
   // ── Approval flow ──────────────────────────────────────────────────────────────────────────────
 
   /**
@@ -853,6 +1050,12 @@ export class AgentSessionManager {
       { channel, threadTs, orgId: stimulus.orgId },
       card,
     );
+
+    // §H — the plan reached the operator (a card is now posted). The durable title was already written
+    // to `goal` in persistPlan (full path) / jobTitle(summary) (direct); publish a live `thread_meta`
+    // frame so the open UI repaints the title in place. Emitted on the CARD path only (never on the
+    // pre-review draft return), AFTER the durable write, so live and durable never diverge. Best-effort.
+    this.surface.emitThreadMeta?.(stimulus.repoId, stimulus.threadId, card.title);
 
     let resolution;
     try {
@@ -1072,6 +1275,51 @@ function jobTitle(summary: string): string {
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }
 
+// ── Question / decision tool arg coercion ──────────────────────────────────────────────────────────
+
+const DECISION_CLASSES: ReadonlySet<string> = new Set<DecisionClass>([
+  'data_model',
+  'api_contract',
+  'dependency',
+  'infrastructure',
+  'cross_cutting',
+  'one_way_door',
+]);
+
+/** Coerce a raw `decisionClass` arg into a valid {@link DecisionClass}, or undefined. */
+function asDecisionClass(v: unknown): DecisionClass | undefined {
+  return typeof v === 'string' && DECISION_CLASSES.has(v) ? (v as DecisionClass) : undefined;
+}
+
+/**
+ * Normalize the `ask_question` `options` arg into `{ id?, label, description? }[]`. Accepts plain strings
+ * ("Yes") or objects ({ label, description }); drops empties. The card builder fills missing ids.
+ */
+function normalizeQuestionOptions(raw: unknown): { id?: string; label: string; description?: string }[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out: { id?: string; label: string; description?: string }[] = [];
+  for (const o of arr) {
+    if (typeof o === 'string') {
+      const label = o.trim();
+      if (label) out.push({ label });
+    } else if (o && typeof o === 'object' && 'label' in o) {
+      const label = String((o as { label: unknown }).label ?? '').trim();
+      if (!label) continue;
+      const id = optStr((o as { id?: unknown }).id);
+      const description = optStr((o as { description?: unknown }).description);
+      out.push({ label, ...(id ? { id } : {}), ...(description ? { description } : {}) });
+    }
+  }
+  return out;
+}
+
+/** Derive a short decision title from the question (or ruling) when the brain doesn't supply one. */
+function deriveDecisionTitle(source: string): string {
+  const firstLine = source.split('\n').map((l) => l.trim()).find(Boolean) ?? source;
+  const cleaned = firstLine.replace(/[?:.]+$/, '').trim();
+  return cleaned.length > 72 ? `${cleaned.slice(0, 69)}...` : cleaned || 'Decision';
+}
+
 // ── Ticket-tool arg coercion (args are Record<string, unknown> from the bridge) ────────────────────
 
 /** A trimmed non-empty string, or undefined. */
@@ -1102,19 +1350,29 @@ function errText(err: unknown): string {
 }
 
 /**
- * Normalize the `submit_plan` `sections` arg into ordered section TITLES (the pipeline §1/§2/§3). Accepts
- * plain strings or `{ title }` objects; the full plan detail lives in `/context/specs`, not here.
+ * Normalize the `submit_plan` `sections` arg into ordered sections, each with the ordered phase list
+ * Atlas authored up front: `{ title, phases: [{ title, brief }] }`. `brief` = the keystroke-level
+ * execute instructions for that phase (what the build worker runs). Phases missing a title OR a brief
+ * are dropped; a section with an empty/whitespace title is dropped. The caller enforces ≥1 phase/section.
  */
-function normalizeSectionTitles(raw: unknown): string[] {
+function normalizeSections(raw: unknown): { title: string; phases: PlannedPhase[] }[] {
   const arr = Array.isArray(raw) ? raw : [];
-  return arr
-    .map((s) => {
-      if (typeof s === 'string') return s.trim();
-      if (typeof s === 'object' && s !== null) {
-        const o = s as { title?: string; brief?: string };
-        return (o.title ?? o.brief ?? '').trim();
-      }
-      return '';
-    })
-    .filter(Boolean);
+  const out: { title: string; phases: PlannedPhase[] }[] = [];
+  for (const s of arr) {
+    if (!s || typeof s !== 'object') continue;
+    const o = s as { title?: unknown; brief?: unknown; phases?: unknown };
+    const title = String(o.title ?? o.brief ?? '').trim();
+    if (!title) continue;
+    const phasesRaw = Array.isArray(o.phases) ? o.phases : [];
+    const phases: PlannedPhase[] = [];
+    for (const p of phasesRaw) {
+      if (!p || typeof p !== 'object') continue;
+      const po = p as { title?: unknown; brief?: unknown };
+      const pTitle = String(po.title ?? '').trim();
+      const pBrief = String(po.brief ?? '').trim();
+      if (pTitle && pBrief) phases.push({ title: pTitle, brief: pBrief });
+    }
+    out.push({ title, phases });
+  }
+  return out;
 }

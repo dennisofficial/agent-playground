@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
+import type { PlannedPhase } from '../driver/planner-llm';
 import { CredentialResolver } from '../onboarding';
 
 /**
@@ -39,8 +40,14 @@ export interface PlanReviewInput {
   overview: string;
   /** The locked decisions from the plan. */
   decisions: Decision[];
-  /** The high-level section briefs from the plan. */
+  /** The high-level section briefs (titles) from the plan. */
   sectionBriefs: string[];
+  /**
+   * The phases Atlas authored under each section, aligned by section index (`phasesBySection[i]` =
+   * phases for `sectionBriefs[i]`). Present on the full-plan path so the reviewer grades the EXECUTION
+   * detail, not just titles. Absent on phase-less paths (the reviewer then sees titles only).
+   */
+  phasesBySection?: PlannedPhase[][];
   /** Optional explicit subscription auth for the Codex turn; when absent it's resolved per-org from
    * `orgId` (then the env fallback inside the engine). */
   auth?: EngineAuth;
@@ -66,11 +73,15 @@ const REVIEW_SYSTEM =
   '(read-only) to verify it is GROUNDED — but do NOT implement anything or change any files.\n\n' +
   'Report only REAL, actionable problems in this exact format (one item per line):\n' +
   '  FINDING: <concise description>\n\n' +
+  'Each section lists its PHASES — the execute-ready steps, each with concrete touch points and ' +
+  'instructions. Atlas authors the full implementation detail up front (there is no later "phase ' +
+  'planning" step), so grade that detail: a phase whose touch points are wrong/missing, that is too ' +
+  'vague to build from without further questions, that lacks a real verification command, or that ' +
+  'contradicts a locked decision IS a finding.\n' +
   'Good findings: missing always-ask decisions that will be needed, contradictions between decisions, ' +
-  'section ordering that will cause integration pain, plan steps whose touch points are wrong or do not ' +
-  'exist, parts of the plan that are dangerously vague or ungrounded, missing verification.\n' +
-  'Do NOT report: stylistic nits, naming preferences, low-level implementation details that belong in ' +
-  'phases, anything already covered by the decision record.\n\n' +
+  'section/phase ordering that will cause integration pain, touch points that are wrong or do not ' +
+  'exist, phases that are dangerously vague or ungrounded, missing or hand-wavy verification.\n' +
+  'Do NOT report: stylistic nits, naming preferences, anything already covered by the decision record.\n\n' +
   'If the plan looks solid, output exactly: NO_FINDINGS';
 
 /** Render the plan as a compact review input. */
@@ -82,14 +93,26 @@ function renderPlanForReview(input: PlanReviewInput): string {
     : '  (none)';
 
   const sections = input.sectionBriefs.length
-    ? input.sectionBriefs.map((b, i) => `  ${i + 1}. ${b}`).join('\n')
+    ? input.sectionBriefs
+        .map((b, i) => {
+          const phases = input.phasesBySection?.[i] ?? [];
+          if (!phases.length) return `  ${i + 1}. ${b}`;
+          const body = phases
+            .map((p, j) => `     ${i + 1}.${j + 1} ${p.title}\n       ${p.brief.replace(/\n/g, '\n       ')}`)
+            .join('\n');
+          return `  ${i + 1}. ${b}\n${body}`;
+        })
+        .join('\n')
     : '  (none)';
 
+  const hasPhases = (input.phasesBySection ?? []).some((p) => p.length);
   return [
     'Review this Atlas feature plan and identify any real, actionable problems.\n',
     `OVERVIEW:\n${input.overview}\n`,
     `LOCKED DECISIONS:\n${decisions}\n`,
-    `SECTIONS (high-level briefs — JIT-expanded at build time):\n${sections}\n`,
+    hasPhases
+      ? `SECTIONS (each with its authored phases — the build executes these directly):\n${sections}\n`
+      : `SECTIONS (high-level briefs):\n${sections}\n`,
     'Output FINDING: lines for each real problem, or NO_FINDINGS if the plan looks solid.',
   ].join('\n');
 }

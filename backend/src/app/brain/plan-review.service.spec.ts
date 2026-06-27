@@ -266,6 +266,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
   };
 
   const planArgs = {
+    goal: 'Add OAuth2 login to the API',
     overview: 'Add OAuth2 login to the API.',
     decisions: [
       {
@@ -274,7 +275,16 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
         ruling: 'Use Auth0 via the existing AuthModule.',
       },
     ],
-    sections: ['OAuth2 callback handler', 'JWT validation middleware'],
+    sections: [
+      {
+        title: 'OAuth2 callback handler',
+        phases: [{ title: 'Add callback route', brief: 'Add GET /auth/callback in auth.controller.ts:1 …' }],
+      },
+      {
+        title: 'JWT validation middleware',
+        phases: [{ title: 'Add JWT guard', brief: 'Add JwtGuard in src/auth/jwt.guard.ts:1 …' }],
+      },
+    ],
   };
 
   function makeManager(review: PlanReviewService) {

@@ -1,5 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import type { Decision } from '../../domain/decision-record';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
@@ -132,4 +133,14 @@ export class ThreadEntity extends TimestampedEntity {
     default: () => `'{"markerQueue":[],"conveyedStateSig":null}'::jsonb`,
   })
   pipeline_awareness!: ThreadPipelineAwareness;
+
+  /**
+   * The WORKING SET of decisions logged during grilling via `log_decision`, BEFORE any proposal exists.
+   * Deliberately separate from `decision_records` so the proposal lifecycle (a fresh record + supersede
+   * on every `submit_plan`) stays intact: `submit_plan` snapshots this set into a new decision record.
+   * Upserted by (decisionClass, title) so re-logging a decision revises its ruling. The generated
+   * `/context/generated/decision-record.md` is rendered from this array, live, on every `log_decision`.
+   */
+  @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })
+  pending_decisions!: Decision[];
 }

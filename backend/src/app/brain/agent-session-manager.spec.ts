@@ -44,6 +44,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     cancel: vi.fn(),
     reopenScoping: vi.fn(),
     loadJob: vi.fn(),
+    // Working-set decisions (log_decision / submit_plan source these); default to empty.
+    pendingDecisions: vi.fn().mockResolvedValue([]),
+    appendDecision: vi.fn().mockResolvedValue([]),
+    appendCardMessage: vi.fn(),
+    updateCardMessage: vi.fn(),
+    latestAnsweredQuestionCard: vi.fn().mockResolvedValue(null),
+    latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
   } as unknown as BrainStoreService;
 
   const mockDriverStore = {
@@ -102,6 +109,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockSurface = {
     post: vi.fn(),
     name: 'agent',
+    emitThreadMeta: vi.fn(),
   } as unknown as ChatSurface;
 
   const mockSandboxRows = {
@@ -157,6 +165,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
 
+    // Working-set decisions default to empty; card lookups default to none (reset wiped inline defaults).
+    (mockStore.pendingDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockStore.appendDecision as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.latestUnansweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue('/tmp/atlas-test-ctx');
+
     // persistPlan returns the canonical shape BrainStoreService returns.
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
       thread: {
@@ -210,9 +225,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  it('(a) submit_plan: persists overview + decisions + ordered section titles (the plan lives in /context/specs)', async () => {
+  it('(a) submit_plan: persists overview + decisions + structured sections-with-phases + goal as title', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
+    const goal = 'Add rate limiting to the public API';
     const overview = 'Add token-bucket rate limiting to the public API endpoints.';
     const decisions = [
       {
@@ -226,49 +242,75 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         ruling: "Return { error: 'rate_limited', retryAfterSeconds: N } with a Retry-After header.",
       },
     ];
-    // Sections are just ordered titles (the §1/§2/§3 pipeline); the detail is in /context/specs/plan.md.
-    const sections = ['RateLimiter guard', 'Integration tests'];
+    // Each section carries its authored phases (title + keystroke-level brief).
+    const sections = [
+      {
+        title: 'RateLimiter guard',
+        phases: [
+          { title: 'Add the guard', brief: 'Create RateLimiterGuard in src/guards/rate-limiter.guard.ts:1 …' },
+          { title: 'Wire it in', brief: 'Register the guard in app.module.ts:42 …' },
+        ],
+      },
+      {
+        title: 'Integration tests',
+        phases: [{ title: 'Cover 429s', brief: 'Add rate-limit.int.test.ts asserting the 429 shape …' }],
+      },
+    ];
 
-    const result = await tools['submit_plan']({ overview, decisions, sections });
+    const result = await tools['submit_plan']({ goal, overview, decisions, sections });
 
-    // 1. persistPlan is called with the structured data + the section titles.
+    // 1. persistPlan gets the section titles AND the per-section authored phases + title=goal.
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.overview).toBe(overview);
     expect(persistArgs.decisions).toHaveLength(2);
+    expect(persistArgs.title).toBe(goal);
     expect(persistArgs.sectionBriefs).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(persistArgs.phasesBySection).toHaveLength(2);
+    expect(persistArgs.phasesBySection[0]).toHaveLength(2);
+    expect(persistArgs.phasesBySection[0][0]).toMatchObject({ title: 'Add the guard' });
+    expect(persistArgs.phasesBySection[1]).toHaveLength(1);
     expect(persistArgs.orgId).toBe(TEAM_ID);
     expect(persistArgs.repoId).toBe(PROJECT_ID);
-    expect(persistArgs.threadId).toBe(FAKE_JOB_ID);
 
     // 2. The tool returns ok=true + the job and record ids.
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID });
 
-    // 3. The approval card fires async — sections are the titles.
+    // 3. The approval card fires async with title=goal, and §H publishes a live thread_meta frame.
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(approvalArgs.jobId).toBe(FAKE_JOB_ID);
-    expect(approvalArgs.decisions).toHaveLength(2);
+    expect(approvalArgs.title).toBe(goal);
     expect(approvalArgs.sections).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(mockSurface.emitThreadMeta).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID, goal);
   });
 
-  it('(a) submit_plan: accepts `{ title }` section objects too', async () => {
+  it('(a) submit_plan: returns error (no persist) if goal is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    await tools['submit_plan']({
-      overview: 'x',
-      decisions: [],
-      sections: [{ title: 'Toggle' }, { title: 'Docs' }],
+    const result = await tools['submit_plan']({
+      overview: 'some overview',
+      sections: [{ title: 'S', phases: [{ title: 'p', brief: 'b' }] }],
     });
-    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(persistArgs.sectionBriefs).toEqual(['Toggle', 'Docs']);
+    expect(result).toMatchObject({ ok: false });
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
+  });
+
+  it('(a) submit_plan: returns error if a section has no phases', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['submit_plan']({
+      goal: 'g',
+      overview: 'some overview',
+      sections: [{ title: 'S', phases: [] }],
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
   it('(a) submit_plan: returns error if overview is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
-      decisions: [],
-      sections: ['a section'],
+      goal: 'g',
+      sections: [{ title: 'S', phases: [{ title: 'p', brief: 'b' }] }],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
@@ -277,6 +319,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('(a) submit_plan: returns error if sections are missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
+      goal: 'g',
       overview: 'some overview',
       decisions: [],
       sections: [],
@@ -319,6 +362,61 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { reason: string }).reason).toContain('always-ask');
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
     expect(mockApprovals.request).not.toHaveBeenCalled();
+  });
+
+  it('(e) ask_question posts a durable question_card with normalized options', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['ask_question']({
+      question: 'Where does the customer pick the subdomain?',
+      decisionClass: 'data_model',
+      options: ['Auto-default at provision', { label: 'Pick in the wizard', description: 'first-run UX' }],
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mockStore.appendCardMessage).toHaveBeenCalledOnce();
+    const call = (mockStore.appendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe(THREAD_ID);
+    const card = call[1].card;
+    expect(card).toMatchObject({ type: 'question_card', decisionClass: 'data_model', allowOther: true });
+    expect(card.options).toHaveLength(2);
+    expect(card.options[0]).toMatchObject({ label: 'Auto-default at provision' });
+    expect(card.options[0].id).toBeTruthy();
+  });
+
+  it('(f) log_decision attaches the last answered question and upserts the working set', async () => {
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ts: 'q-123',
+      card: {
+        type: 'question_card',
+        question: 'Editable or fixed after checkout?',
+        answer: 'Editable in the Network tab',
+      },
+    });
+    (mockStore.appendDecision as ReturnType<typeof vi.fn>).mockResolvedValue([{ decisionClass: 'data_model' }]);
+
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['log_decision']({
+      decisionClass: 'data_model',
+      ruling: 'Subdomain is editable; rename reconciles DNS.',
+    });
+
+    expect(result).toMatchObject({ ok: true, totalDecisions: 1 });
+    const decision = (mockStore.appendDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(decision).toMatchObject({
+      decisionClass: 'data_model',
+      ruling: 'Subdomain is editable; rename reconciles DNS.',
+      question: 'Editable or fixed after checkout?',
+      answer: 'Editable in the Network tab',
+    });
+    // The consumed card is flagged so the same Q&A can't attach to a second decision.
+    expect(mockStore.updateCardMessage).toHaveBeenCalledWith(THREAD_ID, 'q-123', { loggedDecision: true });
+  });
+
+  it('(g) log_decision rejects an invalid decisionClass', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['log_decision']({ decisionClass: 'nonsense', ruling: 'x' });
+    expect(result).toMatchObject({ ok: false });
+    expect(mockStore.appendDecision).not.toHaveBeenCalled();
   });
 
   it('(d) approve buffers PASSIVE "approved" + "dispatched" milestones (no brain turn) after the durable approve/dispatch', async () => {
@@ -375,6 +473,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox: vi.fn().mockResolvedValue(opts.findSandbox ?? null),

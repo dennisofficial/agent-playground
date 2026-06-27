@@ -218,6 +218,132 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const row = await loadThreadRow(dataSource, followUpId);
     expect(row).toMatchObject({ status: 'open', origin: 'control', title: 'follow-up', base_branch: 'main' });
   }, 30_000);
+
+  it('logs decisions into the working set (upsert by class+title) and reads them back via the answered card', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+         ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-decisions-it', 'Dec Repo', 'https://github.com/acme/dec.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+      [TEAM_ID],
+    );
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO threads (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'subdomains') RETURNING id`,
+      [TEAM_ID, repoRow.id],
+    );
+    const threadId = thread.id;
+
+    // A posted-then-answered question card.
+    await store.appendCardMessage(threadId, {
+      ts: 'q-1',
+      text: 'Editable or fixed?',
+      card: { type: 'question_card', threadId, questionId: 'q-1', question: 'Editable or fixed?', options: [] },
+    });
+    await store.updateCardMessage(threadId, 'q-1', { answer: 'Editable', answeredAt: '2026-06-26T00:00:00Z' });
+    const answered = await store.latestAnsweredQuestionCard(threadId);
+    expect((answered?.card as { answer?: string } | null)?.answer).toBe('Editable');
+
+    // Log a decision, then re-log the same (class, title) → REVISES (not duplicates).
+    await store.appendDecision(threadId, {
+      decisionClass: 'data_model',
+      title: 'Subdomain',
+      ruling: 'fixed at checkout',
+    });
+    const after = await store.appendDecision(threadId, {
+      decisionClass: 'data_model',
+      title: 'Subdomain',
+      ruling: 'editable in Network tab',
+      question: 'Editable or fixed?',
+      answer: 'Editable',
+    });
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ ruling: 'editable in Network tab', answer: 'Editable' });
+    expect(await store.pendingDecisions(threadId)).toHaveLength(1);
+
+    // Consuming the card flags it so latestAnsweredQuestionCard skips it next time.
+    await store.updateCardMessage(threadId, 'q-1', { loggedDecision: true });
+    expect(await store.latestAnsweredQuestionCard(threadId)).toBeNull();
+  }, 30_000);
+
+  it('persistPlan with phasesBySection locks phase rows + sets section.plan; clears them on re-propose; omitting it creates none', async () => {
+    await dataSource.query(
+      `INSERT INTO organizations (id, name, slug, status)
+         VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
+         ON CONFLICT (id) DO NOTHING`,
+      [TEAM_ID],
+    );
+    const [repoRow]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
+         VALUES ($1, 'brainstore-phases-it', 'Phases Repo', 'https://github.com/acme/phases.git', 'main', true)
+         ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+      [TEAM_ID],
+    );
+    const repoId = repoRow.id;
+    const [thread]: Array<{ id: string }> = await dataSource.query(
+      `INSERT INTO threads (org_id, repo_id, origin, title)
+         VALUES ($1, $2, 'chat', 'authored') RETURNING id`,
+      [TEAM_ID, repoId],
+    );
+    const threadId = thread.id;
+    await store.openJob({ orgId: TEAM_ID, repoId, threadId, title: 'authored', kind: 'feature' });
+
+    // Full-plan-up-front: 2 sections, the first with 2 authored phases, the second with 1.
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      threadId,
+      title: 'authored v1',
+      kind: 'feature',
+      overview: 'overview',
+      decisions: [],
+      sectionBriefs: ['backend', 'frontend'],
+      phasesBySection: [
+        [
+          { title: 'model', brief: 'add the entity at server.entity.ts:1' },
+          { title: 'service', brief: 'add the service at server.service.ts:1' },
+        ],
+        [{ title: 'page', brief: 'add the page at page.tsx:1' }],
+      ],
+    });
+
+    // Phase rows locked: 2 under the first section, 1 under the second, gap-numbered + pending/build.
+    const phases1 = await phasesFor(dataSource, threadId);
+    expect(phases1.map((p) => p.brief)).toEqual([
+      'add the entity at server.entity.ts:1',
+      'add the service at server.service.ts:1',
+      'add the page at page.tsx:1',
+    ]);
+    expect(phases1.every((p) => p.status === 'pending' && p.step === 'build')).toBe(true);
+    // section.plan is set on BOTH sections (so the pipeline view reports hasPlan).
+    const plans1 = await sectionPlans(dataSource, threadId);
+    expect(plans1.every((p) => p != null && p.length > 0)).toBe(true);
+
+    // Re-propose WITHOUT phasesBySection (e.g. a direct-build-style re-shape): prior phase rows are
+    // cascade-cleared with their sections, and no new phase rows are created.
+    await store.reopenScoping(threadId);
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      threadId,
+      title: 'authored v2',
+      kind: 'feature',
+      overview: 'overview v2',
+      decisions: [],
+      sectionBriefs: ['backend only'],
+    });
+
+    expect(await phasesFor(dataSource, threadId)).toHaveLength(0);
+    const plans2 = await sectionPlans(dataSource, threadId);
+    expect(plans2).toEqual([null]); // one section, no plan (no authored phases this time)
+  }, 30_000);
 });
 
 async function insertUserMessage(
@@ -247,6 +373,26 @@ async function sectionBriefs(ds: DataSource, threadId: string): Promise<string[]
     [threadId],
   );
   return rows.map((r) => r.brief);
+}
+
+async function phasesFor(
+  ds: DataSource,
+  threadId: string,
+): Promise<Array<{ brief: string; status: string; step: string; batch_ordinal: number | null }>> {
+  return ds.query(
+    `SELECT p.brief, p.status, p.step, p.batch_ordinal
+       FROM phases p JOIN sections s ON s.id = p.section_id
+      WHERE s.thread_id = $1 ORDER BY s.ordinal ASC, p.ordinal ASC`,
+    [threadId],
+  );
+}
+
+async function sectionPlans(ds: DataSource, threadId: string): Promise<Array<string | null>> {
+  const rows: Array<{ plan: string | null }> = await ds.query(
+    `SELECT plan FROM sections WHERE thread_id = $1 ORDER BY ordinal ASC`,
+    [threadId],
+  );
+  return rows.map((r) => r.plan);
 }
 
 async function loadThreadRow(

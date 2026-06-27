@@ -96,9 +96,9 @@ const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
 };
 
 /**
- * Resolve a caller-supplied relative path WITHIN the thread's `/context` root, restricted to the two
- * exposed buckets (specs/ + artifacts/). Rejects absolute paths and any `..` traversal that escapes the
- * root — the only files readable are the ones the listing endpoint already exposes.
+ * Resolve a caller-supplied relative path WITHIN the thread's `/context` root, restricted to the
+ * exposed buckets (specs/ + generated/ + artifacts/). Rejects absolute paths and any `..` traversal that
+ * escapes the root — the only files readable are the ones the listing endpoint already exposes.
  */
 function resolveContextFilePath(root: string, relPath: string): string {
   const cleaned = relPath.replace(/^[/\\]+/, '');
@@ -108,8 +108,8 @@ function resolveContextFilePath(root: string, relPath: string): string {
     throw new BadRequestException('path escapes the context directory');
   }
   const bucket = relative(root, abs).split(sep)[0];
-  if (bucket !== 'specs' && bucket !== 'artifacts') {
-    throw new BadRequestException('path must be inside specs/ or artifacts/');
+  if (bucket !== 'specs' && bucket !== 'generated' && bucket !== 'artifacts') {
+    throw new BadRequestException('path must be inside specs/, generated/, or artifacts/');
   }
   return abs;
 }
@@ -151,6 +151,13 @@ interface ApproveDto {
   value: string;
   ruledBy: string;
   note?: string;
+}
+interface AnswerQuestionDto {
+  /** The question card's id (its message `ts`). */
+  questionId: string;
+  /** The operator's answer — the picked option's label, or free text. */
+  answer: string;
+  answeredBy?: string;
 }
 
 /**
@@ -414,6 +421,40 @@ export class WebSurfaceController {
     return { ok: true, jobId: meta.jobId };
   }
 
+  /**
+   * `POST …/threads/:threadId/answer-question` — answer a brain `ask_question` card. Stamps the durable
+   * answered state onto the card row (so it renders answered on reload), then injects the answer as a
+   * normal operator reply, which fires the next brain turn (where `log_decision` auto-attaches the Q&A).
+   */
+  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/answer-question')
+  @UseGuards(OrgMembershipGuard)
+  async answerQuestion(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('threadId') threadId: string,
+    @Body() body: AnswerQuestionDto,
+  ): Promise<{ ok: boolean; ts: string }> {
+    const answer = body?.answer?.trim();
+    if (!body?.questionId || !answer) {
+      throw new BadRequestException('questionId and answer are required');
+    }
+    const thread = await this.requireThread(threadId, org.id);
+    // Stamp the answered state on the card row (no-op if it's not this thread's question card).
+    const card = await this.messages.findOne({
+      where: { thread_id: threadId, ts: body.questionId, kind: 'card' },
+    });
+    if (card) {
+      card.card = { ...(card.card ?? {}), answer, answeredAt: new Date().toISOString() };
+      await this.messages.save(card);
+    }
+    // Inject the answer as an operator reply → fires the next brain turn.
+    const ts = this.surface.receiveFromClient(thread.repo_id, answer, {
+      orgId: org.id,
+      threadTs: threadId,
+      ...OPERATOR,
+    });
+    return { ok: true, ts };
+  }
+
   /** `GET …/threads/:threadId/pipeline` — current pipeline state (or `{ status: 'no_job' }`). */
   @Get('orgs/:orgId/repos/:repoId/threads/:threadId/pipeline')
   @UseGuards(OrgMembershipGuard)
@@ -436,11 +477,12 @@ export class WebSurfaceController {
   async context(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('threadId') threadId: string,
-  ): Promise<{ specs: ContextFile[]; artifacts: ContextFile[] }> {
+  ): Promise<{ specs: ContextFile[]; generated: ContextFile[]; artifacts: ContextFile[] }> {
     await this.requireThread(threadId, org.id);
     const root = this.threadLifecycle.contextDirHost(threadId, org.id);
     return {
       specs: listContextBucket(join(root, 'specs')),
+      generated: listContextBucket(join(root, 'generated')),
       artifacts: listContextBucket(join(root, 'artifacts')),
     };
   }

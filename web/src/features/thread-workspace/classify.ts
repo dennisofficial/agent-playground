@@ -1,4 +1,4 @@
-import type { WebApprovalCard, WebVerdictCard } from '@/lib/api/types';
+import type { WebApprovalCard, WebQuestionCard, WebVerdictCard } from '@/lib/api/types';
 import type { ThreadMessage } from '@/lib/api/thread-api';
 
 /**
@@ -15,6 +15,7 @@ export type ClassifiedMessage =
   | { kind: 'tool'; message: ThreadMessage }
   | { kind: 'approval'; message: ThreadMessage; card: WebApprovalCard }
   | { kind: 'verdict'; message: ThreadMessage; card: WebVerdictCard }
+  | { kind: 'question'; message: ThreadMessage; card: WebQuestionCard }
   | { kind: 'event'; message: ThreadMessage; tone: SystemTone };
 
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
@@ -42,6 +43,9 @@ export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
   }
   if (message.card?.type === 'verdict_card') {
     return { kind: 'verdict', message, card: message.card };
+  }
+  if (message.card?.type === 'question_card') {
+    return { kind: 'question', message, card: message.card };
   }
 
   // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source.

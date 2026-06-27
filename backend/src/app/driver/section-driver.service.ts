@@ -29,6 +29,7 @@ import {
   type PlannedPhase,
   type PlannerLlm,
 } from './planner-llm';
+import { renderPlan } from './render-plan';
 import {
   DRIVER_REPO,
   type DriverRepoResolver,
@@ -93,6 +94,14 @@ export class SectionDriver implements JobDispatcher {
   /** Sanity ceiling on a section's phases — a longer planner output is truncated to this. */
   private get maxPhasesPerSection(): number {
     return this.env.get('MAX_PHASES_PER_SECTION') ?? 8;
+  }
+
+  /** Hard cap on how many phases a single execution BATCH may contain — the deterministic envelope
+   *  around the LLM batcher so a group can never swallow a whole large section (keeps the fresh-context
+   *  safety reachable). Default 5. */
+  private get maxPhasesPerBatch(): number {
+    const raw = Number(this.env.get('MAX_PHASES_PER_BATCH'));
+    return Number.isFinite(raw) && raw > 0 ? raw : 5;
   }
 
   /** Per-phase wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m. */
@@ -650,10 +659,13 @@ export class SectionDriver implements JobDispatcher {
   }
 
   /**
-   * Execute a section's phases — each a FRESH engine session (context reset) in the SAME worktree so
-   * later phases build on earlier code. Walks the explicit `step`/`status` cursor: a `done` phase is
-   * fast-forwarded (resume); an unfinished one is (re)run from `building`, committed, marked `done`.
-   * Returns each phase's report (the handoff inputs).
+   * Execute a section's phases. A fresh-context step packs the ordered phases into execution BATCHES —
+   * one engine session per batch (fewer sessions than one-per-phase, but bounded by `maxPhasesPerBatch`
+   * so a batch can't swallow a large section and lose the small-context safety). The grouping is
+   * assigned + PERSISTED (`batch_ordinal`) the first time the section runs and reused verbatim on
+   * resume, so a restarted/halted batch re-groups identically (the resume cursor keys off the batch's
+   * anchor-phase `session_id`). Each batch: fresh session in the SAME worktree → verify → ONE commit →
+   * mark every phase in it done. Returns one report per batch.
    */
   private async executePhases(
     job: Thread,
@@ -662,59 +674,113 @@ export class SectionDriver implements JobDispatcher {
     section: DriverSection,
     record: DecisionRecord | null,
   ): Promise<string[]> {
-    const phases = await this.store.phasesForSection(section.id);
-    const reports: string[] = [];
-    for (const phase of phases) {
-      if (phase.status === 'done') {
-        this.logger.log(`phase ${phase.ordinal} already done — fast-forward`);
+    let phases = await this.store.phasesForSection(section.id);
+
+    // First execute of this section (a not-yet-run phase is still un-batched): ask the planner how to
+    // pack the ordered phases, run it through the deterministic guardrail, and PERSIST the grouping over
+    // ALL phases. On resume every phase already has a batch_ordinal → skip the LLM and re-group from the
+    // stored values (stable membership — the in-flight engine session keeps the same task on restart).
+    if (phases.some((p) => p.status !== 'done' && p.batchOrdinal == null)) {
+      const groups = this.groupPhases(
+        phases,
+        await this.planner
+          .batchPhases({
+            phases: phases.map(asPlannedPhase),
+            overview: record?.overview ?? '',
+            brief: section.brief,
+            orgId: job.orgId,
+          })
+          .catch(() => undefined),
+      );
+      const assignments: Array<[string, number]> = [];
+      groups.forEach((g, bi) => g.forEach((idx) => assignments.push([phases[idx].id, bi + 1])));
+      await this.store.setBatchOrdinals(assignments);
+      this.logger.log(
+        `section ${section.ordinal}: ${phases.length} phase(s) packed into ${groups.length} batch(es)`,
+      );
+      phases = await this.store.phasesForSection(section.id);
+    }
+
+    // Group the NOT-done phases by their persisted batch_ordinal (done phases fast-forward on resume).
+    const byBatch = new Map<number, Phase[]>();
+    for (const p of phases) {
+      if (p.status === 'done') {
+        this.logger.log(`phase ${p.ordinal} already done — fast-forward`);
         continue;
       }
-      reports.push(
-        await this.runPhase(job, route, sandbox, section, record, phase),
-      );
+      const key = p.batchOrdinal ?? p.ordinal;
+      const list = byBatch.get(key) ?? [];
+      list.push(p);
+      byBatch.set(key, list);
+    }
+
+    const reports: string[] = [];
+    for (const key of [...byBatch.keys()].sort((a, b) => a - b)) {
+      reports.push(await this.runBatch(job, route, sandbox, section, record, byBatch.get(key)!));
     }
     return reports;
   }
 
-  /** Run ONE phase: a fresh execute turn → verify → commit → mark done. The explicit cursor moves with
-   *  the work. A per-phase wall-clock timeout aborts a runaway turn; an optional verify command gates
-   *  the commit so broken output never advances the cursor (issues #3, #4). */
-  private async runPhase(
+  /**
+   * Validate the planner's phase partition and turn it into consecutive index groups, then CAP each
+   * group at `maxPhasesPerBatch`. An invalid/absent partition falls back to one-phase-per-group (the
+   * safe default — identical to the pre-batching behavior). The result always covers [0, n) in order.
+   */
+  private groupPhases(phases: Phase[], llmGroups: number[][] | undefined): number[][] {
+    const n = phases.length;
+    const base = isConsecutivePartition(llmGroups, n) ? llmGroups! : phases.map((_, i) => [i]);
+    const cap = this.maxPhasesPerBatch;
+    const out: number[][] = [];
+    for (const g of base) {
+      for (let i = 0; i < g.length; i += cap) out.push(g.slice(i, i + cap));
+    }
+    return out;
+  }
+
+  /**
+   * Run ONE batch (1+ ordered phases) as a SINGLE fresh execute turn → verify → ONE commit → mark every
+   * phase in it done. The batch's FIRST phase is the resume anchor (its id carries the engine session +
+   * the cursor the runner resumes from). A per-batch wall-clock timeout aborts a runaway turn; the
+   * optional verify command gates the commit so broken output never advances the cursor (issues #3, #4).
+   */
+  private async runBatch(
     job: Thread,
     route: JobRoute,
     sandbox: FeatureSandbox,
     section: DriverSection,
     record: DecisionRecord | null,
-    phase: Phase,
+    phases: Phase[],
   ): Promise<string> {
-    const label = phase.title ?? phase.brief ?? `phase ${phase.ordinal}`;
-    this.logger.log(`phase ${phase.ordinal} "${label}" — building`);
-    await this.store.setPhaseState(phase.id, 'build', 'building');
+    const anchor = phases[0];
+    const label =
+      phases.length === 1
+        ? anchor.title ?? anchor.brief ?? `phase ${anchor.ordinal}`
+        : `${phases.length} phases (${phases.map((p) => p.title ?? `#${p.ordinal}`).join(', ')})`;
+    this.logger.log(
+      `section ${section.ordinal} batch [${phases.map((p) => p.ordinal).join(',')}] — building`,
+    );
+    for (const p of phases) await this.store.setPhaseState(p.id, 'build', 'building');
     await this.post(route, `:gear: ${section.brief} — building: ${label}`);
 
     // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
-    // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess (a non-yielding
-    // Bash/exploration). The rejection propagates → the job fails + relays.
+    // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute
+    // to the anchor phase (a batch is one turn; minor observability coarsening for the phase transcript).
     const result = await this.runTurnBounded(
       {
         jobId: job.id,
-        phaseId: phase.id,
+        phaseId: anchor.id,
         sandbox,
         engine: 'claude',
         mode: 'execute',
-        systemPrompt: PHASE_EXECUTE_SYSTEM,
-        task: renderPhaseTask(record, section, phase),
+        systemPrompt: phases.length === 1 ? PHASE_EXECUTE_SYSTEM : BATCH_EXECUTE_SYSTEM,
+        task: renderBatchTask(record, section, phases),
         auth: await this.creds.engineAuth(job.orgId, 'claude'),
         onEvent: (e) => {
-          if (e.kind === 'tool') {
-            this.logger.debug(`phase ${phase.ordinal} tool: ${e.name}`);
-          }
-          // R5: relay engine events to the surface so the web UI can render per-phase transcripts.
-          // Best-effort — a failed post never breaks the build pipeline.
-          void this.postPhaseEvent(route, phase.id, section.ordinal, phase.ordinal, e);
+          if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
+          void this.postPhaseEvent(route, anchor.id, section.ordinal, anchor.ordinal, e);
         },
       },
-      `phase "${label}"`,
+      `batch "${label}"`,
     );
 
     // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
@@ -726,20 +792,18 @@ export class SectionDriver implements JobDispatcher {
       );
     }
 
-    // Verify BEFORE committing (#4): an optional repo verify command must pass, else fail the phase so
+    // Verify BEFORE committing (#4): an optional repo verify command must pass, else fail the batch so
     // broken output never commits or advances the cursor. Unset → rely on the engine's in-turn verify.
     await this.verifyPhase(route, sandbox, label);
 
-    // Commit whatever the phase produced onto the shared feature branch.
+    // ONE commit for the whole batch onto the shared feature branch.
     const sha = await this.git.commitAll(
       sandbox.worktreePath,
-      `${section.brief} — ${phase.title ?? `phase ${phase.ordinal}`}`,
+      `${section.brief} — ${phases.map((p) => p.title ?? `phase ${p.ordinal}`).join(' + ')}`,
     );
-    this.logger.log(
-      `phase ${phase.ordinal} committed ${sha ? sha.slice(0, 8) : '(nothing)'}`,
-    );
+    this.logger.log(`batch committed ${sha ? sha.slice(0, 8) : '(nothing)'}`);
 
-    await this.store.setPhaseState(phase.id, 'done', 'done');
+    for (const p of phases) await this.store.setPhaseState(p.id, 'done', 'done');
     return result.report;
   }
 
@@ -921,15 +985,23 @@ const PHASE_EXECUTE_SYSTEM =
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
   'you cannot fix it within scope, say so explicitly rather than reporting success.';
 
+const BATCH_EXECUTE_SYSTEM =
+  'You are Atlas executing several ORDERED phases of an approved plan in a feature worktree, in ONE ' +
+  'session. Implement each phase IN ORDER, exactly to its brief, respecting the locked decisions; finish ' +
+  'one phase before starting the next and do not exceed the phases\' scope. ' +
+  'If you make ANY change not explicitly called for by these briefs, or you depart from a locked decision ' +
+  '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
+  "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
+  "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling and make " +
+  'sure the changes compile and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
+  'guess. If a phase REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
+  'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
+  'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
+  'you cannot fix it within scope, say so explicitly rather than reporting success.';
+
 /** A locked phase row → the `PlannedPhase` view the gate/visibility/render read (title null → brief). */
 function asPlannedPhase(phase: Phase): PlannedPhase {
   return { title: phase.title ?? phase.brief, brief: phase.brief };
-}
-
-function renderPlan(phases: PlannedPhase[]): string {
-  return phases
-    .map((p, i) => `${i + 1}. **${p.title}** — ${p.brief}`)
-    .join('\n');
 }
 
 function renderPlanTask(input: {
@@ -955,23 +1027,41 @@ function renderPlanTask(input: {
   ].join('\n');
 }
 
-function renderPhaseTask(
+/** Render the execute task for a BATCH of 1+ ordered phases (the unit a single fresh session runs). */
+function renderBatchTask(
   record: DecisionRecord | null,
   section: DriverSection,
-  phase: Phase,
+  phases: Phase[],
 ): string {
   const decisions = record?.decisions.length
     ? record.decisions
         .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
         .join('\n')
     : '(none)';
+  const blocks = phases
+    .map((p, i) => `### Phase ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`)
+    .join('\n\n');
+  const intro =
+    phases.length === 1
+      ? 'Implement this phase:'
+      : `Implement these ${phases.length} phases IN ORDER (each builds on the previous):`;
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nSection: ${section.brief}`,
     `\nThe full plan (plan.md, decisions, diagrams) is in /context/specs — read it for grounding.`,
-    `\nImplement this phase:\n**${phase.title ?? `Phase ${phase.ordinal}`}** — ${phase.brief}`,
+    `\n${intro}\n\n${blocks}`,
   ].join('\n');
+}
+
+/** True iff `groups` flattens to exactly [0,1,…,n-1] in order with no empty group — i.e. a valid
+ *  consecutive, covering, non-overlapping partition of n ordered phases (the batcher's contract). */
+function isConsecutivePartition(groups: number[][] | undefined, n: number): boolean {
+  if (!groups || !groups.length || groups.some((g) => g.length === 0)) return false;
+  const flat = groups.flat();
+  if (flat.length !== n) return false;
+  for (let i = 0; i < n; i++) if (flat[i] !== i) return false;
+  return true;
 }
 
 function fallbackPhases(
