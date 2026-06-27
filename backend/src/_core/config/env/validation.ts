@@ -294,13 +294,6 @@ export interface IEnvConfig {
   TEST_BRIDGE?: 'on';
   DISABLE_RESUME?: string;
 
-  // ── Realtime (pg-realtime over Postgres logical replication) ────────────────────────────────────
-  //  - REALTIME: when 'on', boots the in-process RealtimeEngine (WAL → SSE) so the web sidebar's
-  //    "needs you" dots update live. Requires Postgres `wal_level=logical` + a REPLICATION role.
-  //    Fail-soft: if the engine can't start (e.g. wal_level not logical), boot continues and the
-  //    list endpoints still serve the server-derived status. Unset / any other value → realtime off.
-  REALTIME?: 'on';
-
   // ── Atlas v2 Docker sandbox layer ──────────────────────────────────────────────────────────────
   //  Docker is the ONLY execution mode — every engine turn runs inside a per-feature container via
   //  `docker exec`. The former 'local' in-process path has been removed.
@@ -458,7 +451,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Atlas v2 dev/test tooling (never prod)
   TEST_BRIDGE: Joi.string().valid('on').optional(),
   DISABLE_RESUME: Joi.string().optional(),
-  REALTIME: Joi.string().valid('on').optional(),
   // Atlas v2 Docker sandbox layer (DOCKER_SOCKET_PATH, REFS_ROOT declared above)
   SANDBOX_IMAGE: Joi.string().optional(),
   SANDBOX_REBUILD: Joi.string().optional(),

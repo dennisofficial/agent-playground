@@ -18,9 +18,11 @@ const PUBLICATION_NAME = 'pg_realtime_pub';
  * machinery (pg_notify fan-out, leader election). Any write to the `threads` table propagates to
  * connected sidebars automatically; nothing has to remember to emit.
  *
- * Gated behind `REALTIME=on` and FAIL-SOFT: if the engine can't start (e.g. Postgres `wal_level` isn't
- * `logical`), boot continues and the engine stays unavailable — the REST list endpoints still serve the
- * server-derived `needsYou`, so the dots are correct on refetch, just not live.
+ * Realtime is ALWAYS ON — it's core, not an opt-in. The only exception is automated test runs (where every
+ * int-test would boot an engine and fight over the single replication slot); those are detected by the
+ * `*_test` database invariant and skipped. FAIL-SOFT: if the engine can't start (e.g. Postgres `wal_level`
+ * isn't `logical`), boot continues and the engine stays unavailable — the REST list endpoints still serve
+ * the server-derived `needsYou`, so the dots are correct on refetch, just not live.
  */
 @Injectable()
 export class RealtimeService implements OnModuleInit, OnApplicationShutdown {
@@ -30,8 +32,10 @@ export class RealtimeService implements OnModuleInit, OnApplicationShutdown {
   constructor(private readonly env: EnvService) {}
 
   async onModuleInit(): Promise<void> {
-    if (this.env.get('REALTIME') !== 'on') {
-      this.logger.log('realtime disabled (set REALTIME=on to enable live thread updates)');
+    // Off only in automated tests: many int-tests each boot the full app, and a logical replication slot
+    // is single-consumer — they'd contend over it. The `*_test` DB is the authoritative test signal.
+    if (this.env.get('POSTGRES_DB')?.endsWith('_test')) {
+      this.logger.log('realtime off (test database)');
       return;
     }
     try {
