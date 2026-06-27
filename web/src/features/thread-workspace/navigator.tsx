@@ -21,6 +21,7 @@ import { KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { formatBytes } from '@/lib/format';
 import { sectionTitle } from '@/lib/section-brief';
+import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { Caret, Divider, PipelineTree, haltSectionIdx } from './pipeline-tree';
 import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
@@ -367,28 +368,61 @@ function PipelineRegion({
     );
   }
 
-  // Scoping / awaiting — draft sections (locked in on approval).
+  // Scoping / awaiting — draft sections (locked in on approval). The plan is now authored in full up
+  // front, so a proposed section already carries its phases — show them (expandable) so the operator can
+  // review the whole shape before approving, not just the section titles. Older phase-less drafts (and
+  // the scoping state, before any sections exist) degrade to a plain title row.
   const drafts = job?.sections ?? [];
+  const proposed = status === 'awaiting_approval';
   return (
     <>
-      <Divider label="PIPELINE" count={status === 'awaiting_approval' ? `proposed · ${drafts.length}` : 'forming'} />
+      <Divider label="PIPELINE" count={proposed ? `proposed · ${drafts.length}` : 'forming'} />
       {drafts.length === 0 ? (
         <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
           No sections yet — the plan you approve in the conversation is what creates them.
         </p>
       ) : (
-        drafts.map((s, i) => (
-          <div key={s.id} className="flex items-center gap-[7px] px-2 py-1.5 opacity-60">
-            <Caret expanded={false} />
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ border: '1.5px dashed var(--border-2)', background: 'transparent' }}
-            />
-            <span className="flex-1 truncate text-[12px] font-semibold text-dim">
-              §{i + 1} {sectionTitle(s.brief)}
-            </span>
-          </div>
-        ))
+        drafts.map((s, i) => {
+          const phases = s.phases ?? [];
+          const folderId = `draft:${s.id}`;
+          // Default to expanded while proposed so the full plan is visible at a glance.
+          const expanded = phases.length > 0 && isExpanded(folderId, proposed);
+          return (
+            <div key={s.id} className="select-none">
+              <div
+                className={cn(
+                  'flex items-center gap-[7px] px-2 py-1.5 opacity-60',
+                  phases.length > 0 && 'cursor-pointer hover:opacity-80',
+                )}
+                onClick={phases.length > 0 ? () => toggle(folderId, expanded) : undefined}
+              >
+                {phases.length > 0 ? <Caret expanded={expanded} /> : <span className="w-3 shrink-0" />}
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ border: '1.5px dashed var(--border-2)', background: 'transparent' }}
+                />
+                <span className="flex-1 truncate text-[12px] font-semibold text-dim">
+                  §{i + 1} {sectionTitle(s.brief)}
+                </span>
+                {phases.length > 0 && (
+                  <span className="shrink-0 font-mono text-[9.5px] text-faint">{phases.length}</span>
+                )}
+              </div>
+              {expanded &&
+                phases.map((p, pi) => (
+                  <div key={p.id} className="flex items-center gap-2 py-1 pl-[34px] pr-2 opacity-55">
+                    <span
+                      className="h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{ border: '1px dashed var(--border-2)', background: 'transparent' }}
+                    />
+                    <span className="flex-1 truncate text-[11px] text-dim">
+                      {i + 1}.{pi + 1} {p.title || `Phase ${pi + 1}`}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          );
+        })
       )}
       <p className="px-2 pb-1 pt-2 text-[10.5px] italic leading-relaxed text-faint">
         Drafted in the conversation — these lock in when you approve the plan.
