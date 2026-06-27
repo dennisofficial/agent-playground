@@ -54,6 +54,9 @@ export const ROUTES = {
   workspace: () => '/workspace',
   thread: (threadKey: string) => `/workspace/${threadKey}`,
   newThread: () => '/new',
+  /** The tickets board/backlog. No args → the picker (first repo); with ids → a specific repo's board. */
+  tickets: (orgId?: string, repoId?: string) =>
+    orgId && repoId ? `/tickets/${orgId}/${repoId}` : '/tickets',
   /** Org settings (General / Credentials / Members / Repos). `section` deep-links a tab. */
   orgSettings: (orgId: string, section?: SettingsSection) =>
     section ? `/orgs/${orgId}/settings?section=${section}` : `/orgs/${orgId}/settings`,

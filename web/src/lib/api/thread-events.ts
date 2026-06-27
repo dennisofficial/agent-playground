@@ -94,6 +94,13 @@ export function useThreadEvents(ref: ThreadRef): void {
         }
         return;
       }
+      if (frame?.type === 'ticket_event') {
+        // A board mutation on this repo (often Atlas capturing a ticket mid-conversation) — keep the
+        // tickets caches fresh so the board reflects it the moment the operator switches to it.
+        void qc.invalidateQueries({ queryKey: qk.ticketsList(orgId, repoId) });
+        void qc.invalidateQueries({ queryKey: ['ticket-detail', orgId, repoId] });
+        return;
+      }
       if (frame?.type === 'thread_meta' && frame.threadId && frame.title) {
         // A thread title changed (e.g. the auto-generated one). Patch the inbox cache in place — the
         // sidebar AND the navigator header both read the title from `allThreads` — then invalidate as a

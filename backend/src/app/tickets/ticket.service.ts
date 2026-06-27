@@ -61,6 +61,17 @@ export interface PromoteResult {
   title: string;
 }
 
+/** A board/backlog list row — the ticket plus the cheap per-card signals the board renders. */
+export interface TicketListItem {
+  ticket: TicketEntity;
+  /** Any blocker not yet terminal (done/cancelled). */
+  blocked: boolean;
+  /** The number of the first active blocker (for the "blocked by #N" badge), or null. */
+  blockedBy: number | null;
+  /** The thread promoted from / working this ticket, or null (drives the "in thread" badge). */
+  linkedThreadId: string | null;
+}
+
 /** A ticket with its advisory dependency edges resolved + the derived `blocked` flag. */
 export interface TicketDetail {
   ticket: TicketEntity;
@@ -182,6 +193,50 @@ export class TicketService {
       qb.andWhere('(t.title ILIKE :q OR t.body ILIKE :q)', { q: `%${args.q.trim()}%` });
     }
     return qb.orderBy('t.status', 'ASC').addOrderBy('t.sort_order', 'ASC').addOrderBy('t.number', 'ASC').getMany();
+  }
+
+  /**
+   * Board/backlog listing enriched with the cheap per-card signals (`blocked`, `blockedBy`,
+   * `linkedThreadId`) the UI needs — computed in a few set-based queries rather than N detail fetches.
+   * The brain's `list_tickets` tool uses the plain `list` (it doesn't need these); the web board uses this.
+   */
+  async listEnriched(args: {
+    orgId: string;
+    repoId: string;
+    status?: TicketStatus;
+    q?: string;
+  }): Promise<TicketListItem[]> {
+    const rows = await this.list(args);
+    if (rows.length === 0) return [];
+    const { orgId, repoId } = args;
+    const [edges, threads, all] = await Promise.all([
+      this.deps.find({ where: { org_id: orgId, repo_id: repoId } }),
+      this.threads.find({ where: { org_id: orgId, repo_id: repoId } }),
+      this.tickets.find({ where: { org_id: orgId, repo_id: repoId } }),
+    ]);
+    const statusById = new Map(all.map((t) => [t.id, t.status]));
+    const numById = new Map(all.map((t) => [t.id, t.number]));
+    const linkedByTicket = new Map<string, string>();
+    for (const th of threads) if (th.ticket_id) linkedByTicket.set(th.ticket_id, th.id);
+    const blockersByTicket = new Map<string, string[]>();
+    for (const e of edges) {
+      const arr = blockersByTicket.get(e.ticket_id) ?? [];
+      arr.push(e.depends_on_ticket_id);
+      blockersByTicket.set(e.ticket_id, arr);
+    }
+    return rows.map((t) => {
+      const blockerIds = blockersByTicket.get(t.id) ?? [];
+      const activeBlocker = blockerIds.find((id) => {
+        const s = statusById.get(id);
+        return s != null && !TICKET_TERMINAL_STATUSES.has(s as TicketStatus);
+      });
+      return {
+        ticket: t,
+        blocked: activeBlocker != null,
+        blockedBy: activeBlocker != null ? (numById.get(activeBlocker) ?? null) : null,
+        linkedThreadId: linkedByTicket.get(t.id) ?? null,
+      };
+    });
   }
 
   /** Resolve a ticket scoped to the org+repo (or 404) plus its dependency edges + derived `blocked`. */

@@ -71,13 +71,18 @@ export class TicketController {
     @Query('status') status?: string,
     @Query('q') q?: string,
   ): Promise<unknown[]> {
-    const rows = await this.tickets.list({
+    const rows = await this.tickets.listEnriched({
       orgId: org.id,
       repoId,
       status: status as TicketStatus | undefined,
       q,
     });
-    return rows.map(toTicketDto);
+    return rows.map((r) => ({
+      ...toTicketDto(r.ticket),
+      blocked: r.blocked,
+      blockedBy: r.blockedBy,
+      linkedThreadId: r.linkedThreadId,
+    }));
   }
 
   /** `POST …/repos/:repoId/tickets` — create a ticket on the repo's board. */

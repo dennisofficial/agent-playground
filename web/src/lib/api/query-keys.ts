@@ -22,4 +22,11 @@ export const qk = {
   /** One `/context` file's content. The 4-element prefix matches every open file for the thread. */
   threadContextFile: (ref: { orgId: string; repoId: string; threadId: string }, path: string) =>
     ['thread-context-file', ref.orgId, ref.repoId, ref.threadId, path] as const,
+  /** Every repo across all the operator's orgs (the tickets repo picker). */
+  allRepos: () => ['all-repos'] as const,
+  /** One repo's board/backlog tickets (`GET /web/orgs/:orgId/repos/:repoId/tickets`). */
+  ticketsList: (orgId: string, repoId: string) => ['tickets-list', orgId, repoId] as const,
+  /** One ticket's detail (deps + thread link). */
+  ticketDetail: (orgId: string, repoId: string, ticketId: string) =>
+    ['ticket-detail', orgId, repoId, ticketId] as const,
 };

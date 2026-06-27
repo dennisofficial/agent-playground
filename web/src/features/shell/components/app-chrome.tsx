@@ -1,17 +1,21 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
+import { TopBar } from './top-bar';
 import { CommandPalette } from './command-palette';
 
 /**
- * The persistent app chrome (client). The design collapses the old top-bar + org-rail + sidebar into a
- * single sidebar that is the home for navigation (org → repo → thread); the main region is the dashboard
- * or a thread workspace. This owns the ⌘K palette state + keyboard handling. `dialog` is the `@dialog`
- * parallel slot (the create-thread modal); it overlays everything when its intercepting route is active.
+ * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Threads | Tickets nav + avatar)
+ * spans everything; below it sit the two destinations: the threads workspace keeps its org → repo → thread
+ * sidebar, while the tickets board brings its own repo sidebar (so the org sidebar is hidden there). Owns
+ * the ⌘K palette; `dialog` is the `@dialog` parallel slot (the create-thread modal).
  */
 export function AppChrome({ children, dialog }: { children: ReactNode; dialog: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const pathname = usePathname();
+  const onTickets = pathname.startsWith('/tickets');
 
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 
@@ -29,11 +33,14 @@ export function AppChrome({ children, dialog }: { children: ReactNode; dialog: R
   }, []);
 
   return (
-    <div className="flex h-dvh min-h-0">
-      <Sidebar />
-      <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-      <CommandPalette open={paletteOpen} onClose={closePalette} />
-      {dialog}
+    <div className="flex h-dvh min-h-0 flex-col">
+      <TopBar />
+      <div className="flex min-h-0 flex-1">
+        {onTickets ? null : <Sidebar />}
+        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
+        <CommandPalette open={paletteOpen} onClose={closePalette} />
+        {dialog}
+      </div>
     </div>
   );
 }
