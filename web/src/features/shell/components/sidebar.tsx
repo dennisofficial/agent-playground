@@ -235,16 +235,18 @@ function OrgSection({
   const iconBtn = 'grid h-[18px] w-[18px] flex-none place-items-center rounded-[4px] transition';
 
   return (
-    <div className="mt-2.5 border-t border-border px-0.5 pb-1.5 pt-2.5">
+    // Separation lives in symmetric padding (pt = pb + the parent's gap-0.5), NOT a top margin — so a
+    // COLLAPSED org's label sits centered between its hairline and the next, instead of bottom-heavy.
+    <div className="border-t border-border px-0.5 pb-2 pt-2.5">
       {/* Org header — the whole row toggles collapse; the absolute icon cluster keeps the title centered.
           No hairline under it: dividers separate siblings (repo↔repo, org↔org), never header↔content. */}
       <div
-        className={cn('group/org relative', expanded ? 'mb-[5px] pb-[5px]' : 'pb-[3px]')}
+        className={cn('group/org relative', expanded ? 'mb-[5px] pb-[5px]' : '')}
       >
         <button
           type="button"
           onClick={onToggleOrg}
-          className="flex w-full items-center justify-center px-0.5 pb-0.5 pt-1"
+          className="flex w-full items-center justify-center px-0.5 py-1"
           aria-label={`Toggle ${org.name}`}
         >
           <span className="max-w-[78%] truncate text-center text-[10px] font-bold uppercase tracking-[0.07em] text-muted">
