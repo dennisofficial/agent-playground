@@ -34,6 +34,7 @@ function makeController(threadOrgId: string) {
     {} as never, // repos
     {} as never, // threadTitle
     {} as never, // ticketEvents
+    { available: false } as never, // realtime
   );
   return { controller, deleteThreadDeep, threads, messages };
 }

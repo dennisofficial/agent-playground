@@ -1,15 +1,15 @@
 /**
  * The work model. A THREAD is the unit of work: ONE intent (a feature or a bugfix) = one sandbox =
  * one worktree = one feature branch = ONE PR. A thread may stay a plain conversation (`open`) or enter
- * the build lifecycle. When it builds, it owns an ordered list of SECTIONS (e.g. backend → frontend →
- * devops); a bugfix is a 1-section / 1-phase build, a feature is many — same deterministic driver.
- * Sections stack on the one feature branch; phases run as sequential FRESH sessions on that branch.
+ * the build lifecycle. When it builds, it owns an ordered list of TRACKS (e.g. backend → frontend →
+ * devops); a bugfix is a 1-track / 1-step build, a feature is many — same deterministic driver.
+ * Sections stack on the one feature branch; steps run as sequential FRESH sessions on that branch.
  *
  * Two-level planning: (1) upfront, once — Atlas grills Dennis → a locked `DecisionRecord` + the
- * high-level section list, approved once; (2) per-section, just-in-time — a detailed phased plan, with
- * phases LOCKING once planned. The "dynamism" is the data (the list), not improvised control flow.
+ * high-level track list, approved once; (2) per-track, just-in-time — a detailed phased plan, with
+ * steps LOCKING once planned. The "dynamism" is the data (the list), not improvised control flow.
  *
- * These are the in-memory shapes (kept separate from the `threads` / `messages` / `sections` / `phases`
+ * These are the in-memory shapes (kept separate from the `threads` / `messages` / `tracks` / `steps`
  * rows). Threads are isolated for context hygiene — cross-thread coherence is SHARED MEMORY only, never
  * transcript sharing; one `messages` table is partitioned by `thread_id`.
  */
@@ -24,16 +24,32 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
 export type ThreadStatus =
   | 'open' // a conversation; no build scoped yet
   | 'scoping' // upfront grill in progress (no locked plan yet)
-  | 'awaiting_approval' // decision record + section list posted; waiting on the operator
-  | 'running' // sections executing
+  | 'awaiting_approval' // decision record + track list posted; waiting on the operator
+  | 'running' // tracks executing
   | 'paused' // a turn hit a credential/401 error; the live session is saved, waiting on a re-ping to
-  // resume (NOT auto-resumed on boot — it would just 401 again). Durable: the unfinished phase keeps its
+  // resume (NOT auto-resumed on boot — it would just 401 again). Durable: the unfinished step keeps its
   // `session_id`, so a ping continues the SAME session instead of starting from scratch.
-  | 'done' // one PR opened, all sections handed off
+  | 'done' // one PR opened, all tracks handed off
   | 'failed'
   | 'cancelled';
 
-/** Whether the thread builds a multi-section feature or a single-section bugfix — both run the same driver. */
+/**
+ * Whether a thread NEEDS THE OPERATOR — the single, server-owned definition of the sidebar "alert dot".
+ *
+ * A thread needs you when the AI is NOT actively working and is NOT in a terminal state: neither a live
+ * conversational turn is streaming (`turnActive`) nor a build is running (`status='running'`), and the
+ * thread hasn't finished (`done`/`cancelled`). `turnActive` is a separate axis from `status` because
+ * `status` alone can't tell "grilling, mid-turn" from "grilling, waiting on an answer" (both `scoping`).
+ *
+ * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
+ * the realtime row mapper (they must never diverge).
+ */
+export function deriveNeedsYou(status: string, turnActive: boolean): boolean {
+  if (turnActive) return false;
+  return status !== 'running' && status !== 'done' && status !== 'cancelled';
+}
+
+/** Whether the thread builds a multi-track feature or a single-track bugfix — both run the same driver. */
 export type ThreadKind = 'feature' | 'bugfix';
 
 /** A conversation + (optionally) the build it drives. One intent, one branch, one PR. */
@@ -57,7 +73,7 @@ export interface Thread {
   status: ThreadStatus;
   /** The locked decision record's id (null until the upfront grill produces one). */
   decisionRecordId: string | null;
-  /** The feature branch all sections stack on (null until the branch is cut). */
+  /** The feature branch all tracks stack on (null until the branch is cut). */
   featureBranch: string | null;
   /** The opened PR url (null until the PR-tail stage opens one). */
   prUrl: string | null;
@@ -84,38 +100,38 @@ export interface Message {
   createdAt: Date;
 }
 
-/** A section's lifecycle — explicit, resumable. The driver `await`s each transition. */
-export type SectionStatus =
+/** A track's lifecycle — explicit, resumable. The driver `await`s each transition. */
+export type TrackStatus =
   | 'pending' // not started
   | 'planning' // detailed phased plan being generated
   | 'reviewing' // Codex plan-review loop
   | 'awaiting_approval' // an always-ask decision parked & asked async
-  | 'executing' // phases running
-  | 'auto_fixing' // per-section auto-fix stage
+  | 'executing' // steps running
+  | 'auto_fixing' // per-track auto-fix stage
   | 'done'
   | 'failed';
 
-/** One section of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */
-export interface Section {
-  /** Stable section id (`sections.id`). */
+/** One track of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */
+export interface Track {
+  /** Stable track id (`tracks.id`). */
   id: string;
   /** The owning thread. */
   threadId: string;
   /** Execution order within the thread, GAP-NUMBERED (10, 20, 30…) so a re-plan can splice. */
   ordinal: number;
-  /** The one-line brief from the upfront section list. */
+  /** The one-line brief from the upfront track list. */
   brief: string;
   /** The detailed just-in-time plan once generated (null while pending). */
   plan: string | null;
-  /** The prior section's handoff note threaded into this section's plan prompt. */
+  /** The prior track's handoff note threaded into this track's plan prompt. */
   handoffIn: string | null;
-  /** This section's handoff note for the next section (null until done). */
+  /** This track's handoff note for the next track (null until done). */
   handoffOut: string | null;
-  status: SectionStatus;
+  status: TrackStatus;
 }
 
-/** A phase's lifecycle — explicit, resumable; the driver re-enters at the correct phase on restart. */
-export type PhaseStatus =
+/** A step's lifecycle — explicit, resumable; the driver re-enters at the correct step on restart. */
+export type StepStatus =
   | 'pending'
   | 'building'
   | 'reviewing'
@@ -124,34 +140,34 @@ export type PhaseStatus =
   | 'skipped';
 
 /**
- * One PHASE of a section's locked plan — runs as a fresh session on the feature branch (fresh context
- * per phase keeps the window <300k and avoids hallucination; the shared checkout lets later phases
+ * One PHASE of a track's locked plan — runs as a fresh session on the feature branch (fresh context
+ * per step keeps the window <300k and avoids hallucination; the shared checkout lets later steps
  * build on earlier code). `step` + `status` are the EXPLICIT resumable cursor — no implicit FSM.
  */
-export interface Phase {
-  /** Stable phase id (`phases.id`). */
+export interface Step {
+  /** Stable step id (`steps.id`). */
   id: string;
-  /** The owning section. */
-  sectionId: string;
+  /** The owning track. */
+  trackId: string;
   /** The owning thread (denormalized for thread-scoped boot recovery). */
   threadId: string;
-  /** Execution order within the section, GAP-NUMBERED so a re-plan can splice. */
+  /** Execution order within the track, GAP-NUMBERED so a re-plan can splice. */
   ordinal: number;
-  /** The phase title from the plan. */
+  /** The step title from the plan. */
   title: string | null;
-  /** The phase brief/instructions from the locked plan. */
+  /** The step brief/instructions from the locked plan. */
   brief: string;
   /**
-   * The explicit resumable STEP within the phase — the deterministic driver re-enters here after a
+   * The explicit resumable STEP within the step — the deterministic driver re-enters here after a
    * restart instead of re-deriving control flow from statuses. E.g. 'build' | 'review' | 'fix'.
    */
-  step: string;
-  status: PhaseStatus;
-  /** The engine session this phase runs in (`SessionRef.id`); null until started. */
+  stage: string;
+  status: StepStatus;
+  /** The engine session this step runs in (`SessionRef.id`); null until started. */
   sessionId: string | null;
   /**
-   * The execution batch this phase belongs to within its section (consecutive phases packed into one
-   * fresh-context session); null until the section first executes. Stable across restart so a resumed
+   * The execution batch this step belongs to within its track (consecutive steps packed into one
+   * fresh-context session); null until the track first executes. Stable across restart so a resumed
    * batch re-groups identically.
    */
   batchOrdinal: number | null;

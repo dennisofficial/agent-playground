@@ -8,8 +8,6 @@ import { cn } from '@/lib/cn';
 import { ROUTES, threadHref } from '@/lib/routes';
 import { useOrgs, type OrgSummary } from '@/lib/api/me';
 import { useAllThreads, groupThreadsByOrgAndRepo, type OrgRepoGroup, type InboxThread } from '@/lib/api/inbox';
-import { useThreadStatuses } from '@/lib/api/thread-status';
-import type { ThreadStatusEntry } from '@/lib/api/thread-status';
 import { StatusPie } from '@/components/ui/badges';
 import { AccountMenu } from './account-menu';
 
@@ -17,14 +15,14 @@ import { AccountMenu } from './account-menu';
  * The single sidebar (240px) — the home for all navigation (design "Atlas Workspace Multi-Org"). A
  * greeting/account header, a Dashboard link, then one collapsible card per org nesting repo → thread, and
  * a New thread footer. Every org the operator belongs to is shown (no filtering / switching); orgs with no
- * threads in flight render a header-only card so a freshly-created org stays reachable. The active row +
- * "needs you" dot come from the shared status seam (`thread-status.ts`; today only the open thread).
+ * threads in flight render a header-only card so a freshly-created org stays reachable. The status pie +
+ * "needs you" dot are server-owned fields on each thread row (`InboxThread.status` / `.needsYou`), kept
+ * live for every thread by the realtime feed (`useAllThreadsRealtime`).
  */
 export function Sidebar() {
   const pathname = usePathname();
   const { owned, joined, isLoading: orgsLoading } = useOrgs();
   const { data: threads = [], isLoading: threadsLoading } = useAllThreads();
-  const statuses = useThreadStatuses();
 
   // Owned-first, then joined — a stable order independent of thread recency.
   const orgs = useMemo(() => [...owned, ...joined], [owned, joined]);
@@ -87,7 +85,6 @@ export function Sidebar() {
               collapsedRepos={collapsedRepos}
               onToggleRepo={toggleRepo}
               pathname={pathname}
-              statuses={statuses}
               loading={threadsLoading}
             />
           ))
@@ -116,7 +113,6 @@ function OrgCard({
   collapsedRepos,
   onToggleRepo,
   pathname,
-  statuses,
   loading,
 }: {
   org: OrgSummary;
@@ -126,7 +122,6 @@ function OrgCard({
   collapsedRepos: Record<string, boolean>;
   onToggleRepo: (key: string) => void;
   pathname: string;
-  statuses: ReadonlyMap<string, ThreadStatusEntry>;
   loading: boolean;
 }) {
   const repos = group?.repos ?? [];
@@ -183,7 +178,6 @@ function OrgCard({
                 collapsed={!!collapsedRepos[key]}
                 onToggle={() => onToggleRepo(key)}
                 pathname={pathname}
-                statuses={statuses}
               />
             );
           })
@@ -201,7 +195,6 @@ function RepoGroup({
   collapsed,
   onToggle,
   pathname,
-  statuses,
 }: {
   orgId: string;
   repo: OrgRepoGroup['repos'][number];
@@ -209,7 +202,6 @@ function RepoGroup({
   collapsed: boolean;
   onToggle: () => void;
   pathname: string;
-  statuses: ReadonlyMap<string, ThreadStatusEntry>;
 }) {
   const expanded = !collapsed;
   return (
@@ -228,7 +220,6 @@ function RepoGroup({
               key={t.id}
               thread={t}
               orgId={orgId}
-              status={statuses.get(t.id)}
               active={pathname === threadHref({ orgId, repoId: repo.repoId, threadId: t.id })}
             />
           ))
@@ -241,12 +232,10 @@ function RepoGroup({
 function ThreadRow({
   thread,
   orgId,
-  status,
   active,
 }: {
   thread: InboxThread;
   orgId: string;
-  status?: ThreadStatusEntry;
   active: boolean;
 }) {
   return (
@@ -256,9 +245,9 @@ function ThreadRow({
       className={cn('flex items-center gap-2 rounded-md py-1.5 pl-0.5 pr-1.5 transition', !active && 'hover:bg-surface-2')}
       style={active ? { background: 'var(--accent-soft)', border: '1px solid var(--accent-line)' } : undefined}
     >
-      <StatusPie status={status?.status} size={14} />
+      <StatusPie status={thread.status} size={14} />
       <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-text">{thread.title}</span>
-      {status?.needsYou ? (
+      {thread.needsYou ? (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} aria-hidden />
       ) : null}
     </Link>

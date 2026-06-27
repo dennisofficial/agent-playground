@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
 import { useAllThreads } from '@/lib/api/inbox';
 import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread } from '@/lib/api/thread-queries';
 import { useThreadEvents } from '@/lib/api/thread-events';
-import { setThreadStatus } from '@/lib/api/thread-status';
 import { toThreadStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
@@ -13,25 +13,25 @@ import { pipelineJob, type ThreadRef } from '@/lib/api/thread-api';
 import type { ThreadKind, ThreadStatus, WebApprovalCard } from '@/lib/api/types';
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
-import { PhaseView } from './phase-view';
+import { PhaseView } from './step-view';
 import { useSelectedNode } from './use-selected-node';
 
-type WorkMode = 'conversation' | 'phase';
+type WorkMode = 'conversation' | 'step';
 
 const FOOTERS: Record<ThreadStatus, string> = {
-  running: 'One branch · each phase a fresh session · one PR · the harness resumes on any halt.',
-  scoping: 'Pure conversation — the plan you approve here is what creates the sections.',
+  running: 'One branch · each step a fresh session · one PR · the harness resumes on any halt.',
+  scoping: 'Pure conversation — the plan you approve here is what creates the tracks.',
   awaiting_approval: 'The approval card is inline in the conversation — that is the gate.',
   paused: 'Your paused session — reply to resume. The resume handle is yours.',
-  done: 'One PR per feature · opened early as a draft, filled in live as sections landed.',
+  done: 'One PR per feature · opened early as a draft, filled in live as tracks landed.',
   triaging: 'Autonomous lane — the agent parked one decision for you to answer.',
   failed: 'The run failed — read the conversation for the halt, then steer or retry.',
 };
 
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
- * Phase). Resolves its own data from the org → repo → thread API and feeds the open thread's real status
- * into the shared status seam (`setThreadStatus`) so the shell lights it up.
+ * Step). Resolves its own data from the org → repo → thread API. The shell's "needs you" dots come from
+ * the server-owned thread-list fields (no longer fed from here); this just renders the open thread.
  */
 export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   const router = useRouter();
@@ -48,7 +48,16 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   // The selected node lives in `?node=` (single source of truth). A thread switch navigates to a fresh
   // clean `threadHref()` URL with no query, so the selection naturally resets — no reset effect needed.
   const { selectedNode, selectNode, openConversation } = useSelectedNode();
-  const workMode: WorkMode = selectedNode ? 'phase' : 'conversation';
+  const workMode: WorkMode = selectedNode ? 'step' : 'conversation';
+
+  // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
+  // library remember the layout even though the detail panel is only conditionally mounted.
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: 'thread-work-split',
+    panelIds: ['conversation', 'detail'],
+    storage: typeof window === 'undefined' ? undefined : window.localStorage,
+  });
+  const groupRef = useGroupRef();
 
   const inboxThread = useMemo(() => inbox?.find((t) => t.id === threadId), [inbox, threadId]);
   const job = pipelineJob(pipeline);
@@ -59,12 +68,6 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     : kind === 'event'
       ? 'triaging'
       : 'scoping';
-  const needsYou = status === 'awaiting_approval' || status === 'paused' || status === 'triaging';
-
-  // Feed the open thread's real status into the shared seam (the only live source today).
-  useEffect(() => {
-    setThreadStatus(threadId, { status, needsYou });
-  }, [threadId, status, needsYou]);
 
   const approvalCard = useMemo<WebApprovalCard | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -91,7 +94,6 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   const onDelete = () =>
     del.mutate(undefined, {
       onSuccess: () => {
-        setThreadStatus(threadId, null);
         router.push(ROUTES.workspace());
       },
     });
@@ -112,9 +114,17 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
         deleting={del.isPending}
       />
       {/* Work column — a horizontal split: the conversation is ALWAYS pinned on the left; selecting a
-          navigator node opens its content as a right split beside it (it no longer replaces the chat). */}
-      <div className="flex min-w-0 flex-1 overflow-hidden bg-surface">
-        <div className="flex min-w-0 flex-col overflow-hidden" style={{ flex: '1 1 0' }}>
+          navigator node opens its content as a right split beside it (it no longer replaces the chat).
+          The divider is a draggable resize handle (react-resizable-panels); the ratio is persisted. */}
+      <Group
+        orientation="horizontal"
+        id="thread-work-split"
+        groupRef={groupRef}
+        defaultLayout={defaultLayout}
+        onLayoutChanged={onLayoutChanged}
+        className="min-w-0 flex-1 bg-surface"
+      >
+        <Panel id="conversation" minSize="28%" className="flex min-w-0 flex-col">
           <Conversation
             threadRef={ref}
             messages={messages}
@@ -122,25 +132,31 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
             live={status === 'running'}
             onOpenPlan={onOpenPlan}
           />
-        </div>
-        {workMode === 'phase' && selectedNode ? (
-          <div
-            className="flex min-w-0 flex-col overflow-hidden border-l border-border"
-            style={{ flex: '1.4 1 0' }}
-          >
-            <PhaseView
-              threadRef={ref}
-              pipeline={pipeline}
-              pipelineLoading={pipelineLoading}
-              pipelineError={pipelineError}
-              messages={messages}
-              approvalCard={approvalCard}
-              selectedNode={selectedNode}
-              onConversation={onConversation}
+        </Panel>
+        {workMode === 'step' && selectedNode ? (
+          <>
+            <Separator
+              disableDoubleClick
+              onDoubleClick={() => groupRef.current?.setLayout({ conversation: 50, detail: 50 })}
+              title="Drag to resize · double-click to center"
+              className="relative w-1.5 outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors hover:after:bg-border-2 active:after:bg-text/50"
             />
-          </div>
+            <Panel id="detail" defaultSize="50%" minSize="32%" className="flex min-w-0 flex-col">
+              <PhaseView
+                threadRef={ref}
+                pipeline={pipeline}
+                pipelineLoading={pipelineLoading}
+                pipelineError={pipelineError}
+                messages={messages}
+                approvalCard={approvalCard}
+                selectedNode={selectedNode}
+                onConversation={onConversation}
+                onSelectNode={(node) => selectNode(node, { push: true })}
+              />
+            </Panel>
+          </>
         ) : null}
-      </div>
+      </Group>
     </div>
   );
 }

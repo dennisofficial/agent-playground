@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
-import { Observable, defer, filter, from, map, merge } from 'rxjs';
+import { Observable, catchError, defer, filter, from, map, merge, switchMap } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -38,6 +38,8 @@ import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrganizationService } from '../org/organization.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity, RepoEntity, ThreadEntity, UserEntity } from '../persistence/entities';
+import { deriveNeedsYou } from '../domain/thread';
+import { RealtimeService, realtimeDisabledStream, subscriptionToObservable } from '../realtime';
 import { TicketEventBus } from '../tickets';
 
 const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
@@ -114,25 +116,35 @@ function resolveContextFilePath(root: string, relPath: string): string {
   return abs;
 }
 
-/** List the files in one `/context` bucket dir (missing dir → empty), name-sorted. Files only. */
-function listContextBucket(dir: string): ContextFile[] {
-  let names: string[];
+/**
+ * List the files in one `/context` bucket dir RECURSIVELY (missing dir → empty), name-sorted. Files
+ * only; `name` is the bucket-relative path (e.g. `sections/01-backend.md`) so multi-file specs (the
+ * `sections/` subfolder) surface. The read endpoint (`resolveContextFilePath`) already accepts nested
+ * paths. Bounded depth so a stray deep tree can't blow up the listing.
+ */
+function listContextBucket(dir: string, prefix = '', depth = 0): ContextFile[] {
+  if (depth > 4) return [];
+  let entries: import('fs').Dirent[];
   try {
-    names = readdirSync(dir);
+    entries = readdirSync(dir, { withFileTypes: true });
   } catch {
     return []; // bucket not created yet
   }
-  return names
-    .map((name): ContextFile | null => {
-      try {
-        const st = statSync(join(dir, name));
-        return st.isFile() ? { name, size: st.size, mtime: st.mtime.toISOString() } : null;
-      } catch {
-        return null;
+  const out: ContextFile[] = [];
+  for (const e of entries) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    try {
+      if (e.isDirectory()) {
+        out.push(...listContextBucket(join(dir, e.name), rel, depth + 1));
+      } else if (e.isFile()) {
+        const st = statSync(join(dir, e.name));
+        out.push({ name: rel, size: st.size, mtime: st.mtime.toISOString() });
       }
-    })
-    .filter((f): f is ContextFile => f !== null)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    } catch {
+      /* skip unreadable entry */
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 interface CreateThreadDto {
@@ -186,6 +198,7 @@ export class WebSurfaceController {
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: ThreadTitleService,
     private readonly ticketEvents: TicketEventBus,
+    private readonly realtime: RealtimeService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -219,11 +232,40 @@ export class WebSurfaceController {
         threadId: t.id,
         title: t.title,
         origin: t.origin,
+        status: t.status,
+        turnActive: t.turn_active,
+        needsYou: deriveNeedsYou(t.status, t.turn_active),
         createdAt: t.created_at,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: { id: t.repo_id, name: repoName.get(`${t.org_id}:${t.repo_id}`) ?? t.repo_id },
       };
     });
+  }
+
+  /**
+   * `GET /web/threads/realtime` — a single cross-org SSE stream of the caller's threads, used by the
+   * shell to keep every sidebar "needs you" dot + status pie live. Login-gated; the realtime guard scopes
+   * rows to the caller's org memberships (resolved here into the principal). Each frame is a pg-realtime
+   * `RowDelta` (`data` snapshot, then `add`/`update`/`remove`) carrying the flat thread row. The work is
+   * deferred to subscribe-time (per-connection principal + subscription); when realtime is unavailable the
+   * subscription factory throws and the stream errors (the client falls back to its polling refetch).
+   */
+  @Sse('threads/realtime')
+  threadsRealtime(@CurrentUser() user: UserEntity): Observable<MessageEvent> {
+    // Never 503 here — an error/503 makes EventSource reconnect-storm. When realtime is unavailable
+    // (engine off / wal_level not logical), hand back a `disabled` stream so the client stops trying and
+    // falls back to its polling refetch. `catchError` covers a race where the engine drops mid-open.
+    if (!this.realtime.available) return realtimeDisabledStream();
+    return defer(async () => {
+      const orgs = await this.orgService.listForUser(user.id);
+      return this.realtime.openThreadSubscription({
+        userId: user.id,
+        orgIds: orgs.map((o) => o.id),
+      });
+    }).pipe(
+      switchMap((sub) => subscriptionToObservable(sub)),
+      catchError(() => realtimeDisabledStream()),
+    );
   }
 
   // ── threads ────────────────────────────────────────────────────────────────────────────────────
@@ -243,6 +285,9 @@ export class WebSurfaceController {
       id: t.id,
       title: t.title,
       origin: t.origin,
+      status: t.status,
+      turnActive: t.turn_active,
+      needsYou: deriveNeedsYou(t.status, t.turn_active),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
     }));
@@ -555,7 +600,7 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean }> {
     // Resolve scoped to the org first — a leaked thread id from another org must NOT be deletable.
     await this.requireThread(threadId, org.id);
-    // Full cascade in app code: tear down the sandbox AND sweep messages/sections/phases/
+    // Full cascade in app code: tear down the sandbox AND sweep messages/tracks/steps/
     // decision_records/stimuli/sandbox before the thread row (the live schema has no FK cascades).
     await this.threadLifecycle.deleteThreadDeep(threadId, org.id);
     this.logger.log(`web deleted thread ${threadId} (org ${org.id})`);

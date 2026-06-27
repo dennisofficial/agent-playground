@@ -8,6 +8,17 @@ services:
       POSTGRES_USER: agent
       POSTGRES_PASSWORD: agent
       POSTGRES_DB: agent_playground
+    # Logical replication is required by the in-process realtime engine (pg-realtime → live "needs you"
+    # dots). The POSTGRES_USER ('agent') is the image superuser, which already carries the REPLICATION
+    # attribute, so no extra role grant is needed.
+    command:
+      - postgres
+      - '-c'
+      - 'wal_level=logical'
+      - '-c'
+      - 'max_replication_slots=10'
+      - '-c'
+      - 'max_wal_senders=10'
     ports:
       # Host 5433 (container stays 5432) so this project's Postgres runs alongside another project's
       # Postgres bound to the default 5432. POSTGRES_PORT in .env.local.enc/.env.test.enc matches 5433.

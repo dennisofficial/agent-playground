@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { ChatStimulus, Thread, ThreadKind } from '../domain';
@@ -26,7 +26,7 @@ import {
   renderPipelineStateSummary,
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
-import type { PlannedPhase } from '../driver/planner-llm';
+import type { PlannedStep } from '../driver/planner-llm';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver } from '../onboarding';
 import { TicketService } from '../tickets';
@@ -60,13 +60,13 @@ import { PlanReviewService, buildRevisionInstruction } from './plan-review.servi
  *   - session_id is persisted on the `thread_sandboxes` row so it survives host restarts.
  */
 @Injectable()
-export class AgentSessionManager {
+export class AgentSessionManager implements OnModuleInit {
   private readonly logger = new Logger(AgentSessionManager.name);
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
    * proposes plans. Pinned to Opus (the SDK accepts the `'opus'` alias → latest Opus). A code constant,
-   * NOT an env var — model choice doesn't vary by environment. (Phase workers default to Opus too, in
+   * NOT an env var — model choice doesn't vary by environment. (Step workers default to Opus too, in
    * `engine-core`'s `DEFAULT_WORKER_MODEL`.)
    */
   private static readonly BRAIN_MODEL = 'opus';
@@ -122,7 +122,7 @@ export class AgentSessionManager {
     `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read the locked decisions + working set for this thread`,
     `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — propose the full multi-section plan for approval (FULL PATH; see below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — propose the full multi-track plan for approval (FULL PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
     `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
@@ -156,6 +156,11 @@ export class AgentSessionManager {
     'INVESTIGATE FIRST: before proposing anything, ground yourself in the repo with Read/Glob/Grep (stack,',
     'structure, conventions, the exact files you will touch). Never ask the operator anything the repo',
     'already answers (tech stack, file existence, tooling, how the codebase does something).',
+    'DOCS BEFORE GREP: if the repo has orienting docs — CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md,',
+    'CONTRIBUTING.md, docs/ — READ those FIRST; they are the human-curated map and let you skip a grep-storm',
+    'to rediscover where things live and how this codebase does things. Then Read/Glob/Grep to confirm the',
+    'specific files you will touch. Treat docs as orientation that may be stale — the CODE is authoritative;',
+    'where a doc and the code disagree, trust the code.',
     '',
     'GRILLING PROTOCOL (applies to BOTH paths): lock the always-ask decisions before proposing — data',
     'model/schema, public API contracts, new dependencies, infrastructure/topology, cross-cutting patterns',
@@ -177,16 +182,18 @@ export class AgentSessionManager {
     '',
     'THE /context SHARED FOLDER: `/context` is a durable, per-thread space OUTSIDE the repo, shared with the',
     'build sessions. THREE buckets, split by who authors them:',
-    '  • `/context/specs/` — HAND-AUTHORED by you, live as you work (NOT in one burst at the end). The operator',
-    '    watches this fill in. Grow `/context/specs/plan.md` (the full plan) + any diagrams/mermaid as the shape',
-    '    of the work firms up, revising as decisions change things. This is the plan the build EXECUTES — follow',
-    '    the fixed heading skeleton in PLAN.MD STRUCTURE below.',
-    '    CADENCE — write a section AND its phases into plan.md the MOMENT their shape settles (the files are open',
-    '    and the decisions are logged), BEFORE you move on to scope the next — the same rhythm as log_decision.',
-    '    By the time the last decision locks, plan.md should already be near-complete. Reaching submit_plan with',
-    '    a thin or empty plan.md means you batched it at the end (the failure mode) — that is a bug, not a',
-    '    shortcut. A PHASE you have fully investigated but not yet written as an execute-ready `#### N.M` block',
-    '    is unfinished work. The `# <goal>` H1 may be revised until you submit.',
+    '  • `/context/specs/` — HAND-AUTHORED by you, live as you work (NOT in one burst at the end), as CONTEXT',
+    '    for the operator + the build engines. (The build orchestrates off the structured plan you submit; these',
+    '    files are the human/engine-readable companion.) MULTI-FILE — follow PLAN.MD STRUCTURE below:',
+    '      – `plan.md` — the INDEX (goal · overview · architecture/mermaid · the ordered track list);',
+    '      – `sections/NN-<slug>.md` — ONE file per track (its goal, context, steps, validation);',
+    '      – `data-model.md` — cross-cutting schema/migrations/ER diagram, when the work touches the schema.',
+    '    The operator watches these fill in; revise as decisions change things.',
+    '    CADENCE — write a track\'s `sections/NN.md` (and grow the `plan.md` index) the MOMENT its shape settles',
+    '    (its files are open and its decisions are logged), BEFORE you scope the next — the same rhythm as',
+    '    log_decision. By the time the last decision locks the spec files are near-complete. A STEP you have',
+    '    fully investigated but not yet written as an execute-ready `#### N.M` block is unfinished work. The',
+    '    `# <goal>` H1 may be revised until you submit.',
     '  • `/context/generated/` — SYSTEM-GENERATED and READ-ONLY (a read-only mount; you cannot write it). The',
     '    decisions you lock via `log_decision` are rendered here as `decision-record.md`, live, on every call.',
     '    Do NOT try to author or edit anything here — it is maintained for you through your tool calls.',
@@ -196,63 +203,71 @@ export class AgentSessionManager {
     '',
     'TWO PATHS — choose based on size/risk:',
     '',
-    'FULL PATH — submit_plan (multi-section build run by the deterministic driver). Use for anything beyond',
-    'a small, localized change. You author the ENTIRE plan up front — every section AND all of its phases, each',
-    'phase execute-ready — during the conversation. There is NO later "phase planning" step: the detail you',
+    'FULL PATH — submit_plan (multi-track build run by the deterministic driver). Use for anything beyond',
+    'a small, localized change. You author the ENTIRE plan up front — every track AND all of its steps, each',
+    'step execute-ready — during the conversation. There is NO later "step planning" step: the detail you',
     'write IS what the build runs. By the time you call submit_plan, `/context/specs/plan.md` is already',
     'complete (per CADENCE above).',
     '',
-    'PLAN DEPTH (applies to each PHASE brief): a phase must be buildable to the keystroke by a fresh engine',
+    'PLAN DEPTH (applies to each PHASE brief): a step must be buildable to the keystroke by a fresh engine',
     'turn that will NOT ask you anything — aim at the altitude of a senior engineer\'s implementation diff, NOT',
-    'a design summary. Each phase brief covers:',
-    '  • touch points — every file the phase changes, each anchored to an EXACT `path:line` you copied from a',
+    'a design summary. Each step brief covers:',
+    '  • touch points — every file the step changes, each anchored to an EXACT `path:line` you copied from a',
     '    Read/Grep (never an estimate or "~line N"), with the symbol that lives at that line;',
     '  • concrete changes — for any non-trivial edit, the actual change, not prose: the new signature/type, a',
     '    short code skeleton (the 3–8 lines that matter), and any ordering/safety constraint (e.g. "set the',
     '    failure field BEFORE the early return"). A builder must not have to re-derive the code. Trivial edits',
     '    (a one-line add, a stub→real call) stay one sentence — do not pad them;',
-    '  • verify — the ACTUAL command(s) that prove the phase works (test file/path, build or lint cmd) plus any',
+    '  • verify — the ACTUAL command(s) that prove the step works (test file/path, build or lint cmd) plus any',
     '    non-obvious gotcha (must rebuild native, won\'t hot-reload, needs a generated migration). "Unit-test',
-    '    it" is a goal, not verification. Let detail follow difficulty — the hard phase gets the depth.',
+    '    it" is a goal, not verification. Let detail follow difficulty — the hard step gets the depth.',
     '',
-    'PLAN.MD STRUCTURE — every plan.md follows this exact skeleton so the build reads it identically:',
-    '    # <one-line goal of the whole thread>   (this IS the `goal` arg you pass to submit_plan, verbatim)',
-    '    ## Overview                             (intent · stack · constraints · what is out of scope)',
-    '    ## Architecture                         (OPTIONAL — mermaid / data flow / the moving parts)',
-    '    ## Section N — <milestone title>',
-    '    ### Goal                               (the demo-able slice, 1–2 lines)',
-    '    ### Context                            (what exists today + EXACT path:line anchors + which logged',
-    '                                            decisions shaped it)',
-    '    ### Phases',
-    '    #### N.M — <phase title>               (the body of this block IS the phase brief — PLAN DEPTH above)',
-    '    ### Section validation                 (the demo-able outcome that closes the section)',
-    '  The body you write under each `#### N.M` heading IS the `brief` you pass for that phase in submit_plan —',
-    '  the SAME text, lifted verbatim. State hard phase ORDERING inline ("N.2 needs N.1\'s migration"); do NOT',
-    '  author concurrency/grouping — how phases pack into execution sessions is decided downstream. Do NOT',
-    '  write a "review" section: section self-review is a FIXED automatic stage; `### Section validation` says',
-    '  what success looks like, not how it is reviewed.',
+    'PLAN.MD STRUCTURE — the specs are MULTI-FILE; author them so build + operator read them the same way:',
+    '    /context/specs/plan.md  — the INDEX:',
+    '        # <one-line goal>          (the `goal` arg, verbatim)',
+    '        ## Overview                (intent · stack · constraints · out of scope)',
+    '        ## Architecture            (OPTIONAL — mermaid / data flow / the moving parts)',
+    '        ## Decisions               (one line: "see decision-record.md" — generated; do not duplicate)',
+    '        ## Tracks                  (ordered list; each links its file + 1-line goal + type, e.g.',
+    '                                    "1. [Backend](sections/01-backend.md) — <slice> · type: backend")',
+    '    /context/specs/data-model.md — cross-cutting schema/migrations/ER mermaid (only if schema changes)',
+    '    /context/specs/sections/NN-<slug>.md — ONE per track:',
+    '        # Track N — <title>',
+    '        ## Goal                    (the demo-able slice, 1–2 lines)',
+    '        ## Context                 (what exists today + EXACT path:line anchors + which decisions shaped it)',
+    '        ## Steps',
+    '        #### N.M — <step title>    (the body is the step brief — PLAN DEPTH above)',
+    '        ## Validation              (the demo-able outcome that closes the track)',
+    '  These files are CONTEXT; the AUTHORITATIVE structured tracks/steps are the `submit_plan` ARGS (below) —',
+    '  the build orchestrates off those. The arg `brief` is the execute instruction (PLAN DEPTH); the section',
+    '  file is the same work as readable narrative + diagrams (need not be byte-identical). State hard step',
+    '  ORDERING inline ("N.2 needs N.1\'s migration"); do NOT author concurrency/grouping — how steps pack into',
+    '  sessions is decided downstream. Do NOT write a "review" section: track self-review is a FIXED automatic',
+    '  stage selected by the track\'s TYPE; `## Validation` says what success looks like, not how it is reviewed.',
     '',
     '`submit_plan` does NOT author the plan; it FLIPS the thread to approval-awaiting and posts the approval',
     'card. Ensure `/context/specs/plan.md` is complete and all always-ask decisions are logged via log_decision',
     'FIRST, then call submit_plan with:',
     '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
     '  - overview: intent + stack + constraints',
-    '  - sections: the ordered sections, each `{ title, phases: [{ title, brief }] }` — `brief` lifted verbatim',
-    '    from the matching `#### N.M` block. Each section needs ≥1 phase.',
+    '  - tracks: the ordered tracks, each `{ title, type, steps: [{ title, brief }] }`. `type` = the track\'s',
+    '    scope — backend | frontend | docs | testing | analytics | infra (or another short label if none fit);',
+    '    it SELECTS the review agents. `brief` = the execute-ready step instruction (PLAN DEPTH). ≥1 step/track.',
     '  (No `decisions` arg — submit_plan reads the decisions you logged via log_decision. Pass `decisions`',
     '   ONLY to authoritatively replace the whole set, e.g. after request-changes pruned some.)',
-    'SECTION & PHASE GRANULARITY: a SECTION is a coherent layer that ends in a self-review / auto-fix pass — a',
-    'slice you could demo or review on its own (the backend / frontend / analytics / testing / docs split is',
-    'the TYPICAL shape of a feature, but a bugfix is one section of one phase). PHASES are context-sized build',
-    'steps YOU author inside a section. Prefer FEW, BROAD sections (≈1–4 for a typical feature) with as many',
-    'phases as the work needs; do NOT inflate a lone component into its own section.',
-    'SELF-CHECK before submit_plan: every applicable always-ask decision logged? could a fresh engine turn',
-    'build EACH PHASE from its `#### N.M` brief ALONE — exact `path:line` anchors, concrete code/signatures for',
-    'the hard edits, runnable verification — with ZERO further questions to you? is it grounded in files you',
-    'actually opened (not guessed)? is the `goal` a single clear line? Do NOT add an "investigate the codebase"',
-    'section — sections are real build work.',
+    'TRACK & STEP GRANULARITY: a TRACK is a SCOPE-TYPED layer that ends in a self-review/auto-fix pass — a',
+    'slice you could demo or review on its own, and its `type` (backend/frontend/docs/testing/analytics/infra)',
+    'selects the reviewers. Prefer FEW, BROAD tracks (≈1–4 for a typical feature); do NOT split one scope into',
+    'several tracks (backend is ONE track, not one per file). A STEP is one focused unit an engineer finishes',
+    'in one sitting — GROUP naturally-related edits (a column + its DTO; a component + its hook) into one step;',
+    'do NOT make a step per file. Prefer ~2–5 steps per track; a tiny track is ONE step.',
+    'SELF-CHECK before submit_plan: every applicable always-ask decision logged? does each track have a `type`?',
+    'could a fresh engine turn build EACH STEP from its `#### N.M` brief ALONE — exact `path:line` anchors,',
+    'concrete code/signatures for the hard edits, runnable verification — with ZERO further questions to you?',
+    'is it grounded in files you actually opened (not guessed)? is the `goal` a single clear line? Do NOT add',
+    'an "investigate the codebase" track — tracks are real build work.',
     '',
-    'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no sections/phases).',
+    'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no tracks/steps).',
     'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
     'Args: { summary, changeOutline?: string[], decisions? }. summary = what you will change and why;',
     'changeOutline = a few bullet lines of the concrete edits. This posts a lightweight approval card. If it',
@@ -264,6 +279,20 @@ export class AgentSessionManager {
     'assume a server or background process you started in a previous turn is still running — verify it is',
     'up (curl/health-check) and restart it if needed before relying on it.',
   ].join('\n');
+
+  /**
+   * Boot reconciliation: clear any `turn_active` flag left set by a crash mid-turn. No conversational
+   * turn survives a process restart, so a still-true flag is stale and would otherwise keep a thread
+   * looking "actively working" forever (suppressing its "needs you" dot). Best-effort.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const reset = await this.store.resetAllTurnActive();
+      if (reset > 0) this.logger.log(`Boot: cleared stale turn_active on ${reset} thread(s)`);
+    } catch (err) {
+      this.logger.warn(`Boot turn_active reconciliation failed: ${err}`);
+    }
+  }
 
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
 
@@ -288,9 +317,24 @@ export class AgentSessionManager {
     return next;
   }
 
-  /** One chat turn (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
-   *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
+  /**
+   * One chat turn — marks the thread "actively working" for its WHOLE duration (including the ~30s first
+   * provisioning), so the sidebar "needs you" dot clears while we work and returns the moment control
+   * comes back to the operator (every early return below still hits the `finally`). Best-effort flag
+   * writes never block the turn. Delegates the actual turn to `runChatTurnInner`.
+   */
   private async runChatTurn(stimulus: ChatStimulus): Promise<void> {
+    await this.store.setTurnActive(stimulus.threadId, true).catch(() => undefined);
+    try {
+      await this.runChatTurnInner(stimulus);
+    } finally {
+      await this.store.setTurnActive(stimulus.threadId, false).catch(() => undefined);
+    }
+  }
+
+  /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
+   *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
+  private async runChatTurnInner(stimulus: ChatStimulus): Promise<void> {
     // If this operator message answers an outstanding `ask_question` card typed in prose (rather than
     // clicked), stamp that card answered so `log_decision` can auto-attach the Q&A. No-op when the answer
     // came through `/answer-question` (it pre-stamps) or there is no pending question.
@@ -643,20 +687,21 @@ export class AgentSessionManager {
           args['decisions'] != null
             ? normalizeDecisions(args['decisions'])
             : await this.store.pendingDecisions(stimulus.threadId);
-        // Atlas authors the FULL plan up front: each section carries its ordered phase list (title +
-        // keystroke-level brief). The phases LOCK here (persistPlan) so the driver skips its JIT plan
+        // Atlas authors the FULL plan up front: each track carries its ordered step list (title +
+        // keystroke-level brief). The steps LOCK here (persistPlan) so the driver skips its JIT plan
         // turn. The rich prose companion still lives in `/context/specs/plan.md`.
-        const sections = normalizeSections(args['sections']);
-        const sectionBriefs = sections.map((s) => s.title);
-        const phasesBySection = sections.map((s) => s.phases);
+        const tracks = normalizeTracks(args['tracks']);
+        const trackTitles = tracks.map((s) => s.title);
+        const trackTypes = tracks.map((s) => s.type);
+        const stepsByTrack = tracks.map((s) => s.steps);
 
-        if (!overview || !goal || sections.length === 0) {
-          return { ok: false, reason: 'overview, goal, and at least one section are required' };
+        if (!overview || !goal || tracks.length === 0) {
+          return { ok: false, reason: 'overview, goal, and at least one track are required' };
         }
-        if (sections.some((s) => s.phases.length === 0)) {
+        if (tracks.some((s) => s.steps.length === 0)) {
           return {
             ok: false,
-            reason: 'each section must have at least one phase (each phase needs a title and a brief)',
+            reason: 'each track must have at least one step (each step needs a title and a brief)',
           };
         }
 
@@ -671,8 +716,9 @@ export class AgentSessionManager {
           kind: 'feature',
           overview,
           decisions,
-          sectionBriefs,
-          phasesBySection,
+          trackTitles,
+          trackTypes,
+          stepsByTrack,
         });
 
         // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
@@ -687,9 +733,9 @@ export class AgentSessionManager {
             ...(sandbox.containerId ? { containerId: sandbox.containerId } : {}),
             overview,
             decisions,
-            sectionBriefs,
-            // §E — Codex now grades the EXECUTION detail (the authored phases), not just titles.
-            phasesBySection,
+            trackTitles,
+            // §E — Codex now grades the EXECUTION detail (the authored steps), not just titles.
+            stepsByTrack,
           });
 
           if (reviewResult !== null) {
@@ -722,7 +768,7 @@ export class AgentSessionManager {
           title: goal,
           summary: overview,
           decisions,
-          sections: sectionBriefs,
+          tracks: trackTitles,
         });
 
         return {
@@ -754,7 +800,7 @@ export class AgentSessionManager {
       },
 
       start_direct_build: async (args) => {
-        // FAST PATH — a small, localized change the brain implements ITSELF (no sections/phases). Still
+        // FAST PATH — a small, localized change the brain implements ITSELF (no tracks/steps). Still
         // gated by a lightweight approval; on approval an autonomous implementation turn runs.
         const summary = String(args['summary'] ?? '').trim();
         if (!summary) {
@@ -786,7 +832,7 @@ export class AgentSessionManager {
           };
         }
 
-        // Persist a MINIMAL record (overview = summary, any locked decisions, NO sections) and post the
+        // Persist a MINIMAL record (overview = summary, any locked decisions, NO tracks) and post the
         // lightweight approval card. The build runs only after approval (kind: 'direct').
         const jobId = await this.ensureJob(stimulus, summary, 'feature');
         const { thread: job, decisionRecordId } = await this.store.persistPlan({
@@ -797,7 +843,7 @@ export class AgentSessionManager {
           kind: 'feature',
           overview: summary,
           decisions,
-          sectionBriefs: [],
+          trackTitles: [],
         });
 
         void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
@@ -807,7 +853,7 @@ export class AgentSessionManager {
           title: jobTitle(summary),
           summary,
           decisions,
-          sections: changeOutline,
+          tracks: changeOutline,
         });
 
         return {
@@ -1350,29 +1396,32 @@ function errText(err: unknown): string {
 }
 
 /**
- * Normalize the `submit_plan` `sections` arg into ordered sections, each with the ordered phase list
- * Atlas authored up front: `{ title, phases: [{ title, brief }] }`. `brief` = the keystroke-level
- * execute instructions for that phase (what the build worker runs). Phases missing a title OR a brief
- * are dropped; a section with an empty/whitespace title is dropped. The caller enforces ≥1 phase/section.
+ * Normalize the `submit_plan` `tracks` arg into ordered tracks, each with the ordered step list
+ * Atlas authored up front: `{ title, steps: [{ title, brief }] }`. `brief` = the keystroke-level
+ * execute instructions for that step (what the build worker runs). Phases missing a title OR a brief
+ * are dropped; a track with an empty/whitespace title is dropped. The caller enforces ≥1 step/track.
  */
-function normalizeSections(raw: unknown): { title: string; phases: PlannedPhase[] }[] {
+function normalizeTracks(raw: unknown): { title: string; type: string; steps: PlannedStep[] }[] {
   const arr = Array.isArray(raw) ? raw : [];
-  const out: { title: string; phases: PlannedPhase[] }[] = [];
+  const out: { title: string; type: string; steps: PlannedStep[] }[] = [];
   for (const s of arr) {
     if (!s || typeof s !== 'object') continue;
-    const o = s as { title?: unknown; brief?: unknown; phases?: unknown };
+    const o = s as { title?: unknown; brief?: unknown; type?: unknown; steps?: unknown };
     const title = String(o.title ?? o.brief ?? '').trim();
     if (!title) continue;
-    const phasesRaw = Array.isArray(o.phases) ? o.phases : [];
-    const phases: PlannedPhase[] = [];
-    for (const p of phasesRaw) {
+    // Scope type selects the review agents (TRACK_TYPES), but allow-other — a non-enum value is stored
+    // verbatim (lowercased); default 'general' when absent (the prompt asks the brain to set one).
+    const type = String(o.type ?? '').trim().toLowerCase() || 'general';
+    const stepsRaw = Array.isArray(o.steps) ? o.steps : [];
+    const steps: PlannedStep[] = [];
+    for (const p of stepsRaw) {
       if (!p || typeof p !== 'object') continue;
       const po = p as { title?: unknown; brief?: unknown };
       const pTitle = String(po.title ?? '').trim();
       const pBrief = String(po.brief ?? '').trim();
-      if (pTitle && pBrief) phases.push({ title: pTitle, brief: pBrief });
+      if (pTitle && pBrief) steps.push({ title: pTitle, brief: pBrief });
     }
-    out.push({ title, phases });
+    out.push({ title, type, steps });
   }
   return out;
 }

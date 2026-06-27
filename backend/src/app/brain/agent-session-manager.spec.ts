@@ -26,7 +26,7 @@ import type { CredentialResolver } from '../onboarding';
 
 /**
  * R3 GATE TESTS — two assertions:
- *   (a) A chat turn's `submit_plan` tool call persists a detailed decision record + sections
+ *   (a) A chat turn's `submit_plan` tool call persists a detailed decision record + tracks
  *       (offline-deterministic, fake bridge — drives `buildTools()` directly, no real engine).
  *   (b) An EVENT still parks/dispatches via `EventTriageService` (the event lane is UNCHANGED).
  */
@@ -51,6 +51,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     updateCardMessage: vi.fn(),
     latestAnsweredQuestionCard: vi.fn().mockResolvedValue(null),
     latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
+    // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
+    setTurnActive: vi.fn().mockResolvedValue(undefined),
+    resetAllTurnActive: vi.fn().mockResolvedValue(0),
   } as unknown as BrainStoreService;
 
   const mockDriverStore = {
@@ -225,7 +228,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  it('(a) submit_plan: persists overview + decisions + structured sections-with-phases + goal as title', async () => {
+  it('(a) submit_plan: persists overview + decisions + structured tracks-with-steps + goal as title', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
     const goal = 'Add rate limiting to the public API';
@@ -242,34 +245,34 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         ruling: "Return { error: 'rate_limited', retryAfterSeconds: N } with a Retry-After header.",
       },
     ];
-    // Each section carries its authored phases (title + keystroke-level brief).
-    const sections = [
+    // Each track carries its authored steps (title + keystroke-level brief).
+    const tracks = [
       {
         title: 'RateLimiter guard',
-        phases: [
+        steps: [
           { title: 'Add the guard', brief: 'Create RateLimiterGuard in src/guards/rate-limiter.guard.ts:1 …' },
           { title: 'Wire it in', brief: 'Register the guard in app.module.ts:42 …' },
         ],
       },
       {
         title: 'Integration tests',
-        phases: [{ title: 'Cover 429s', brief: 'Add rate-limit.int.test.ts asserting the 429 shape …' }],
+        steps: [{ title: 'Cover 429s', brief: 'Add rate-limit.int.test.ts asserting the 429 shape …' }],
       },
     ];
 
-    const result = await tools['submit_plan']({ goal, overview, decisions, sections });
+    const result = await tools['submit_plan']({ goal, overview, decisions, tracks });
 
-    // 1. persistPlan gets the section titles AND the per-section authored phases + title=goal.
+    // 1. persistPlan gets the track titles AND the per-track authored steps + title=goal.
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.overview).toBe(overview);
     expect(persistArgs.decisions).toHaveLength(2);
     expect(persistArgs.title).toBe(goal);
-    expect(persistArgs.sectionBriefs).toEqual(['RateLimiter guard', 'Integration tests']);
-    expect(persistArgs.phasesBySection).toHaveLength(2);
-    expect(persistArgs.phasesBySection[0]).toHaveLength(2);
-    expect(persistArgs.phasesBySection[0][0]).toMatchObject({ title: 'Add the guard' });
-    expect(persistArgs.phasesBySection[1]).toHaveLength(1);
+    expect(persistArgs.trackTitles).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(persistArgs.stepsByTrack).toHaveLength(2);
+    expect(persistArgs.stepsByTrack[0]).toHaveLength(2);
+    expect(persistArgs.stepsByTrack[0][0]).toMatchObject({ title: 'Add the guard' });
+    expect(persistArgs.stepsByTrack[1]).toHaveLength(1);
     expect(persistArgs.orgId).toBe(TEAM_ID);
     expect(persistArgs.repoId).toBe(PROJECT_ID);
 
@@ -281,7 +284,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(approvalArgs.title).toBe(goal);
-    expect(approvalArgs.sections).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(approvalArgs.tracks).toEqual(['RateLimiter guard', 'Integration tests']);
     expect(mockSurface.emitThreadMeta).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID, goal);
   });
 
@@ -289,18 +292,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       overview: 'some overview',
-      sections: [{ title: 'S', phases: [{ title: 'p', brief: 'b' }] }],
+      tracks: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: returns error if a section has no phases', async () => {
+  it('(a) submit_plan: returns error if a track has no steps', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       goal: 'g',
       overview: 'some overview',
-      sections: [{ title: 'S', phases: [] }],
+      tracks: [{ title: 'S', steps: [] }],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
@@ -310,19 +313,19 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       goal: 'g',
-      sections: [{ title: 'S', phases: [{ title: 'p', brief: 'b' }] }],
+      tracks: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: returns error if sections are missing', async () => {
+  it('(a) submit_plan: returns error if tracks are missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       goal: 'g',
       overview: 'some overview',
       decisions: [],
-      sections: [],
+      tracks: [],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
@@ -336,16 +339,16 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-    // Minimal record: no sections.
+    // Minimal record: no tracks.
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(persistArgs.sectionBriefs).toEqual([]);
+    expect(persistArgs.trackTitles).toEqual([]);
     expect(persistArgs.overview).toContain('off-by-one');
 
     // The card is the lightweight 'direct' variant carrying the change outline.
     await new Promise((r) => setTimeout(r, 0));
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(approvalArgs.kind).toBe('direct');
-    expect(approvalArgs.sections).toEqual(['adjust the slice bound in paginate()']);
+    expect(approvalArgs.tracks).toEqual(['adjust the slice bound in paginate()']);
   });
 
   it('(c) start_direct_build: classifier ASK (uncovered always-ask) → refused, no persist', async () => {
@@ -432,7 +435,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       fakeStimulus,
       runningJob as never,
       FAKE_RECORD_ID,
-      { jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, title: 'rate limiting', summary: 'x', decisions: [], sections: [] } as never,
+      { jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, title: 'rate limiting', summary: 'x', decisions: [], tracks: [] } as never,
     );
 
     // The build was dispatched (the durable action) — and the milestones were buffered AFTER it, not pushed.
@@ -474,6 +477,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
+      setTurnActive: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox: vi.fn().mockResolvedValue(opts.findSandbox ?? null),
@@ -685,6 +689,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
       createFollowUpThread: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      setTurnActive: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
     const manager = new AgentSessionManager(
@@ -814,7 +819,7 @@ describe('R3 gate: StimulusRouter — (b) event lane still parks/dispatches via 
       orgId: 'T-ROUTER',
       repoId: 'router-proj',
       threadId: 'th-router-001',
-      body: 'Add a README section',
+      body: 'Add a README track',
       author: { id: 'U-OP', displayName: 'Op' },
       replyRoute: { surfaceId: 'agent', threadRef: 'ts-router-001' },
     };

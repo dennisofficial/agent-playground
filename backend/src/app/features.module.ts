@@ -12,6 +12,7 @@ import { LiveTurnModule, SurfaceModule } from './surface';
 import { MemoryModule } from './memory';
 import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
+import { RealtimeModule } from './realtime';
 import { TicketsModule } from './tickets';
 import { TestBridgeModule } from './test-bridge';
 
@@ -28,8 +29,8 @@ import { TestBridgeModule } from './test-bridge';
  *    (`POST /ingress/github`, `POST /ingress/webhook`).
  *  - `BrainModule` (W3) — the brain: triage (the real `STIMULUS_CONSUMER`, replacing W2's no-op), the
  *    conversational grill, the decision-record approval gate. It injects `JOB_DISPATCHER` (bound by W4).
- *  - `DriverModule` (W4) — the deterministic, resumable section/phase driver. Binds the REAL
- *    `JOB_DISPATCHER` (`useExisting: SectionDriver`, @Global), so the brain's dispatch reaches the driver
+ *  - `DriverModule` (W4) — the deterministic, resumable track/step driver. Binds the REAL
+ *    `JOB_DISPATCHER` (`useExisting: TrackDriver`, @Global), so the brain's dispatch reaches the driver
  *    with zero changes; consumes W5 (gate), W7 (auto-fix), and W1 (runner/git). Reconciles in-flight jobs
  *    on boot.
  *
@@ -46,6 +47,7 @@ import { TestBridgeModule } from './test-bridge';
     OrgModule,
     TicketsModule,
     SandboxModule,
+    RealtimeModule,
     LiveTurnModule,
     SurfaceModule,
     RunnerModule,

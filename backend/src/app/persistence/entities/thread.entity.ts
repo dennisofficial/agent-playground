@@ -8,7 +8,7 @@ import { TicketEntity } from './ticket.entity';
 
 /**
  * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an
- * idempotency key — a build stage emits the same id repeatedly (the driver fires many events per phase),
+ * idempotency key — a build stage emits the same id repeatedly (the driver fires many events per step),
  * the buffer keeps exactly one. `text` is the passive line shown to the brain; `at` orders the prefix.
  */
 export interface PipelineMarker {
@@ -34,7 +34,7 @@ export interface ThreadPipelineAwareness {
 /**
  * A THREAD — the unit of work. One intent (a feature or a bugfix) = one sandbox = one worktree = one
  * feature branch = ONE PR. A thread may stay a plain conversation (`status='open'`) or enter the build
- * lifecycle; when it builds, the `sections`/`phases` rows hang directly off it (the former `jobs` layer
+ * lifecycle; when it builds, the `tracks`/`steps` rows hang directly off it (the former `jobs` layer
  * is folded in here). `decision_records` (1:many — the draft→superseded proposal trail) reference it.
  * `messages` partition by `thread_id`. Threads are isolated for context hygiene — cross-thread coherence
  * is shared memory only, never transcript sharing.
@@ -94,13 +94,23 @@ export class ThreadEntity extends TimestampedEntity {
   ticket?: TicketEntity | null;
 
   // ── build lifecycle (folded in from the former `jobs` table) ───────────────────────────────────────
-  /** Build intent: 'feature' (many sections) | 'bugfix' (one). Null until the thread is scoped. */
+  /** Build intent: 'feature' (many tracks) | 'bugfix' (one). Null until the thread is scoped. */
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
   // 'open' | 'scoping' | 'awaiting_approval' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled'
   @Column({ type: 'text', default: 'open' })
   status!: string;
+
+  /**
+   * Whether a live conversational (brain) turn is streaming RIGHT NOW. Toggled around `runChatTurn`
+   * (true for its whole duration, including provisioning; cleared in a `finally`). A SEPARATE axis from
+   * `status` — together they yield the "needs you" signal (see `deriveNeedsYou`): `status` covers build
+   * activity, `turn_active` covers conversation activity. Reset to false on boot (no turn survives a
+   * process restart) so a crash mid-turn can't leave a thread looking "working" forever.
+   */
+  @Column({ type: 'boolean', default: false })
+  turn_active!: boolean;
 
   /** The locked decision record (FK → decision_records.id); null until the upfront grill produces one. */
   @Column({ type: 'uuid', nullable: true })
@@ -110,7 +120,7 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'decision_record_id' })
   decisionRecord?: DecisionRecordEntity | null;
 
-  /** The feature branch all sections stack on; null until the branch is cut. */
+  /** The feature branch all tracks stack on; null until the branch is cut. */
   @Column({ type: 'text', nullable: true })
   feature_branch!: string | null;
 

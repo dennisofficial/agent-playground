@@ -5,18 +5,15 @@ import { StatusPie } from '@/components/ui/badges';
 import { orgSwatch } from '@/lib/org-display';
 import { threadHref } from '@/lib/routes';
 import { STATUS_META } from '@/lib/api/status';
-import { useThreadStatuses } from '@/lib/api/thread-status';
 import type { InboxThread } from '@/lib/api/inbox';
 
 /**
  * The cross-org "Needs you" band — every thread whose status is yours to act on (approvals routed to you,
- * your triage, your paused threads), across every org. Fed by the shared status seam; today only the open
- * thread populates it, so this renders nothing until a thread needs you (graceful absence). When the
- * realtime status feed lands (see `thread-status.ts`), it fills out on its own.
+ * your triage, your paused threads), across every org. Reads the server-owned `needsYou` field on each
+ * thread row, so it covers ALL threads (not just the open one) and stays live via the realtime feed.
  */
 export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
-  const statuses = useThreadStatuses();
-  const attention = threads.filter((t) => statuses.get(t.id)?.needsYou);
+  const attention = threads.filter((t) => t.needsYou);
   if (attention.length === 0) return null;
 
   return (
@@ -32,24 +29,21 @@ export function NeedsYouBand({ threads }: { threads: InboxThread[] }) {
         </span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(238px,1fr))] gap-3">
-        {attention.map((t) => {
-          const status = statuses.get(t.id)!;
-          return (
-            <Link
-              key={t.id}
-              href={threadHref({ orgId: t.org.id, repoId: t.repo.id, threadId: t.id })}
-              className="rounded-md border border-border bg-surface p-3 transition hover:border-border-2"
-            >
-              <div className="mb-2 flex items-center gap-2">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-sm" style={{ background: orgSwatch() }} />
-                <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-faint">{t.org.name}</span>
-                <StatusPie status={status.status} size={14} />
-              </div>
-              <div className="text-[13px] font-semibold leading-tight text-text">{t.title}</div>
-              <div className="mt-2 font-mono text-[9px] text-accent">{STATUS_META[status.status].label} ↗</div>
-            </Link>
-          );
-        })}
+        {attention.map((t) => (
+          <Link
+            key={t.id}
+            href={threadHref({ orgId: t.org.id, repoId: t.repo.id, threadId: t.id })}
+            className="rounded-md border border-border bg-surface p-3 transition hover:border-border-2"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-sm" style={{ background: orgSwatch() }} />
+              <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-faint">{t.org.name}</span>
+              <StatusPie status={t.status} size={14} />
+            </div>
+            <div className="text-[13px] font-semibold leading-tight text-text">{t.title}</div>
+            <div className="mt-2 font-mono text-[9px] text-accent">{STATUS_META[t.status].label} ↗</div>
+          </Link>
+        ))}
       </div>
     </div>
   );

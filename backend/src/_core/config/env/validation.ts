@@ -105,6 +105,14 @@ export interface IEnvConfig {
   // slack-app (the writer) and the Docker daemon (the bind source), exactly like REPO_ROOT in DooD.
   // Code default: <homedir>/.agent-playground/refs. Point at a persistent volume in deployment.
   REFS_ROOT?: string;
+  // Root for the operator GOLDEN-SEED dirs — non-secret gitignored files the worktree hydrator copies
+  // into a fresh worktree, laid out as <ATLAS_GOLDEN_ROOT>/<orgId>/<slug>/<path>. Optional; unset → the
+  // manifest's seed[] is skipped. (Secrets come from the encrypted store, NOT here.)
+  ATLAS_GOLDEN_ROOT?: string;
+  // Host-only dir for the worktree hydration sidecar (the forbidden-paths record commitAll's leak-scan
+  // reads). Read directly from process.env by git/hydration-sidecar.ts; declared here for completeness.
+  // Code default: <homedir>/.agent-playground/atlas-hydration-state. Never under a worktree.
+  ATLAS_HYDRATION_STATE?: string;
   // ⚠️ DEPRECATED (v1 harness sandbox stack, removed in commit f82a748). The Atlas v2 Docker layer
   // (src/app/sandbox/) REUSES only `DOCKER_SOCKET_PATH` (via DOCKER_SOCKET_PATH ?? this),
   // `REFS_ROOT` (via REFS_ROOT ?? this), and `WORKSPACE_IMAGE` (the sandbox base-image tag). The
@@ -286,6 +294,13 @@ export interface IEnvConfig {
   TEST_BRIDGE?: 'on';
   DISABLE_RESUME?: string;
 
+  // ── Realtime (pg-realtime over Postgres logical replication) ────────────────────────────────────
+  //  - REALTIME: when 'on', boots the in-process RealtimeEngine (WAL → SSE) so the web sidebar's
+  //    "needs you" dots update live. Requires Postgres `wal_level=logical` + a REPLICATION role.
+  //    Fail-soft: if the engine can't start (e.g. wal_level not logical), boot continues and the
+  //    list endpoints still serve the server-derived status. Unset / any other value → realtime off.
+  REALTIME?: 'on';
+
   // ── Atlas v2 Docker sandbox layer ──────────────────────────────────────────────────────────────
   //  Docker is the ONLY execution mode — every engine turn runs inside a per-feature container via
   //  `docker exec`. The former 'local' in-process path has been removed.
@@ -372,6 +387,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   REPOS_ROOT: Joi.string().optional(),
   AGENT_HOME_ROOT: Joi.string().optional(),
   REFS_ROOT: Joi.string().optional(),
+  ATLAS_GOLDEN_ROOT: Joi.string().optional(),
+  ATLAS_HYDRATION_STATE: Joi.string().optional(),
   // Sandbox lifecycle (Phase 6)
   DOCKER_SOCKET_PATH: Joi.string().optional(),
   WORKSPACE_IMAGE: Joi.string().optional(),
@@ -441,6 +458,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Atlas v2 dev/test tooling (never prod)
   TEST_BRIDGE: Joi.string().valid('on').optional(),
   DISABLE_RESUME: Joi.string().optional(),
+  REALTIME: Joi.string().valid('on').optional(),
   // Atlas v2 Docker sandbox layer (DOCKER_SOCKET_PATH, REFS_ROOT declared above)
   SANDBOX_IMAGE: Joi.string().optional(),
   SANDBOX_REBUILD: Joi.string().optional(),

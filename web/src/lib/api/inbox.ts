@@ -4,21 +4,27 @@ import { useQuery } from '@tanstack/react-query';
 import { env } from '@/lib/env';
 import { fetchWithRefresh } from './refresh';
 import { qk } from './query-keys';
-import type { ThreadKind } from './types';
+import { toThreadStatus } from './status';
+import type { JobStatus, ThreadKind, ThreadStatus } from './types';
 
 /**
  * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/threads`), the
  * data behind the "All organizations" board and the org-grouped sidebar. The endpoint is login-gated and
  * inherently scoped to the caller's memberships; each row carries its org + repo so the UI can label it.
  *
- * NOTE (backend gap): the row has NO status / "needs you" signal, and only a coarse `origin` — so the UI
- * derives `kind` from `origin` and omits status dots. See the plan's "Data gaps" section.
+ * The row carries a server-owned `status` + `needsYou` ("needs you" = the AI isn't actively working and
+ * the thread isn't terminal — see the backend `deriveNeedsYou`). These power the status pie + the alert
+ * dot for EVERY thread, not just the open one; a realtime feed keeps them live (see `useAllThreadsRealtime`).
  */
 
-interface RawInboxThread {
+export interface RawInboxThread {
   threadId: string;
   title: string | null;
   origin: string; // 'chat' | 'event' | 'control'
+  /** Raw backend thread status ('open' | 'scoping' | … | 'cancelled'). */
+  status: string;
+  /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
+  needsYou: boolean;
   createdAt: string;
   org: { id: string; slug?: string; name?: string };
   repo: { id: string; name?: string };
@@ -28,6 +34,10 @@ export interface InboxThread {
   id: string;
   title: string;
   kind: ThreadKind;
+  /** UI status (mapped from the backend status) — drives the status pie. */
+  status: ThreadStatus;
+  /** The alert dot: this thread is waiting on you. */
+  needsYou: boolean;
   createdAt: string;
   org: { id: string; slug: string; name: string };
   repo: { id: string; name: string };
@@ -38,11 +48,19 @@ function kindFromOrigin(origin: string): ThreadKind {
   return origin === 'event' ? 'event' : 'feat';
 }
 
-function normalize(r: RawInboxThread): InboxThread {
+/** Backend status (incl. `open`, which `toThreadStatus` doesn't cover) → UI status for the pie. */
+export function uiStatus(backend: string, origin: string): ThreadStatus {
+  if (backend === 'open') return origin === 'event' ? 'triaging' : 'scoping';
+  return toThreadStatus(backend as JobStatus);
+}
+
+export function normalize(r: RawInboxThread): InboxThread {
   return {
     id: r.threadId,
     title: r.title?.trim() || 'Untitled thread',
     kind: kindFromOrigin(r.origin),
+    status: uiStatus(r.status, r.origin),
+    needsYou: r.needsYou,
     createdAt: r.createdAt,
     org: { id: r.org.id, slug: r.org.slug ?? r.org.id, name: r.org.name ?? 'Organization' },
     repo: { id: r.repo.id, name: r.repo.name ?? r.repo.id },

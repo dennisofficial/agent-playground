@@ -3,13 +3,13 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import type { Decision, Thread, ThreadKind } from '../domain';
 import { renderPlan } from '../driver/render-plan';
-import type { PlannedPhase } from '../driver/planner-llm';
+import type { PlannedStep } from '../driver/planner-llm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  PhaseEntity,
-  SectionEntity,
+  StepEntity,
+  TrackEntity,
   StimulusEntity,
   ThreadEntity,
 } from '../persistence/entities';
@@ -29,18 +29,18 @@ export interface PersistedPlan {
   decisionRecordId: string;
 }
 
-/** Section briefs are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
+/** Track briefs are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
 
 /**
  * W3 — the BRAIN's persistence. The single place the brain reads the thread transcript and writes the
- * locked plan (decision record + section rows) on the 'app' connection. The THREAD is the build unit
+ * locked plan (decision record + track rows) on the 'app' connection. The THREAD is the build unit
  * (the former `jobs` layer is folded into it), so "open a job" / "load a job" here are thread status
  * transitions on the same row. Keeps the conversational brain free of repository wiring — it speaks
  * domain shapes, this maps them to rows.
  *
- * The detailed per-section PHASE plan is W4's job, NOT the brain's: this writes the high-level section
- * BRIEFS (each a `pending` section with no `plan` yet); W4's driver fills `plan` + the phase rows
+ * The detailed per-track PHASE plan is W4's job, NOT the brain's: this writes the high-level track
+ * BRIEFS (each a `pending` track with no `plan` yet); W4's driver fills `plan` + the step rows
  * just-in-time. Zero v1 imports.
  */
 @Injectable()
@@ -52,10 +52,10 @@ export class BrainStoreService {
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
-    @InjectRepository(SectionEntity, DB_CONNECTION)
-    private readonly sections: Repository<SectionEntity>,
-    @InjectRepository(PhaseEntity, DB_CONNECTION)
-    private readonly phases: Repository<PhaseEntity>,
+    @InjectRepository(TrackEntity, DB_CONNECTION)
+    private readonly tracks: Repository<TrackEntity>,
+    @InjectRepository(StepEntity, DB_CONNECTION)
+    private readonly steps: Repository<StepEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectDataSource(DB_CONNECTION)
@@ -219,6 +219,25 @@ export class BrainStoreService {
     return next;
   }
 
+  /**
+   * Mark whether a live conversational (brain) turn is streaming for this thread. Drives the durable
+   * `turn_active` axis of the "needs you" signal (see `deriveNeedsYou`). Best-effort — a write failure
+   * here must never break the turn itself (the caller swallows errors).
+   */
+  async setTurnActive(threadId: string, active: boolean): Promise<void> {
+    await this.threads.update({ id: threadId }, { turn_active: active });
+  }
+
+  /**
+   * Boot reconciliation: no conversational turn can survive a process restart, so clear any `turn_active`
+   * left set by a crash mid-turn — otherwise the thread would read as "working" forever and never show
+   * the "needs you" dot. Returns the number of rows reset.
+   */
+  async resetAllTurnActive(): Promise<number> {
+    const res = await this.threads.update({ turn_active: true }, { turn_active: false });
+    return res.affected ?? 0;
+  }
+
   /** Resolve where to post into a thread: the repo coordinate + the real thread id. The web/agent
    *  surface keys its conversation by these directly — no channel/surface-ref indirection. */
   async route(thread: { orgId: string; repoId: string; threadId: string }): Promise<ThreadRoute> {
@@ -252,8 +271,8 @@ export class BrainStoreService {
   }
 
   /**
-   * Persist a LOCKED plan: the decision record (draft) + the section rows + flip the thread to
-   * `awaiting_approval`. Writes the high-level section BRIEFS (titles); the full plan (plan.md,
+   * Persist a LOCKED plan: the decision record (draft) + the track rows + flip the thread to
+   * `awaiting_approval`. Writes the high-level track BRIEFS (titles); the full plan (plan.md,
    * decisions, diagrams) lives in the thread's `/context/specs` folder, which the build sessions read.
    * Returns the thread (domain shape) + the decision record id.
    */
@@ -265,31 +284,37 @@ export class BrainStoreService {
     kind: ThreadKind;
     overview: string;
     decisions: Decision[];
-    sectionBriefs: string[];
+    trackTitles: string[];
     /**
-     * OPTIONAL — the phases Atlas authored up front for each section, aligned by section index
-     * (`phasesBySection[i]` = phases for `sectionBriefs[i]`). When present, the phase rows are LOCKED
-     * here so the driver finds them already present and skips its just-in-time plan turn; `section.plan`
-     * is set from them so the pipeline view shows the plan. ABSENT (direct-build / bugfix dispatch) →
-     * no phase rows created, exactly as before — the driver JIT-plans those sections.
+     * OPTIONAL — the scope type per track (backend/frontend/…), aligned by track index. Selects the
+     * review agents. Defaults to `'general'` per track when absent (the autonomous bugfix / direct-build
+     * callers pass no types) — matches the DB column default.
      */
-    phasesBySection?: PlannedPhase[][];
+    trackTypes?: string[];
+    /**
+     * OPTIONAL — the steps Atlas authored up front for each track, aligned by track index
+     * (`stepsByTrack[i]` = steps for `trackTitles[i]`). When present, the step rows are LOCKED
+     * here so the driver finds them already present and skips its just-in-time plan turn; `track.plan`
+     * is set from them so the pipeline view shows the plan. ABSENT (direct-build / bugfix dispatch) →
+     * no step rows created, exactly as before — the driver JIT-plans those tracks.
+     */
+    stepsByTrack?: PlannedStep[][];
   }): Promise<PersistedPlan> {
-    // The whole persist runs in ONE transaction: delete prior draft sections (their phases cascade),
-    // supersede the prior draft record, write the new record + sections (+ authored phase rows), and
+    // The whole persist runs in ONE transaction: delete prior draft tracks (their steps cascade),
+    // supersede the prior draft record, write the new record + tracks (+ authored step rows), and
     // flip the thread — so a crash mid-write can never leave a half-proposed plan. A re-propose
     // (request_changes → reopenScoping → propose again) reuses the SAME thread, so prior DRAFT
-    // sections/record are cleared first; idempotent on the first proposal.
+    // tracks/record are cleared first; idempotent on the first proposal.
     const decisionRecordId = await this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(ThreadEntity);
       const records = m.getRepository(DecisionRecordEntity);
-      const sections = m.getRepository(SectionEntity);
-      const phases = m.getRepository(PhaseEntity);
+      const tracks = m.getRepository(TrackEntity);
+      const steps = m.getRepository(StepEntity);
 
-      // sections MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(thread_id, ordinal)
-      // collision); `phases.section_id ON DELETE CASCADE` clears their phase rows too. The prior draft
+      // tracks MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(thread_id, ordinal)
+      // collision); `steps.track_id ON DELETE CASCADE` clears their step rows too. The prior draft
       // record is marked `superseded` (audit trail, never an approved one).
-      await sections.delete({ thread_id: input.threadId });
+      await tracks.delete({ thread_id: input.threadId });
       await records.update(
         { thread_id: input.threadId, status: 'draft' },
         { status: 'superseded' },
@@ -303,22 +328,24 @@ export class BrainStoreService {
           status: 'draft',
           overview: input.overview,
           decisions: input.decisions,
-          section_briefs: input.sectionBriefs,
+          track_titles: input.trackTitles,
           approved_by: null,
           approved_at: null,
         }),
       );
 
-      // Save sections first (to get ids), setting `plan` from any authored phases so `hasPlan` is true
-      // in the pipeline view (the authored path never hits the driver's `setSectionPlan`).
-      const savedSections = await sections.save(
-        input.sectionBriefs.map((brief, i) => {
-          const authored = input.phasesBySection?.[i];
-          return sections.create({
+      // Save tracks first (to get ids), setting `plan` from any authored steps so `hasPlan` is true
+      // in the pipeline view (the authored path never hits the driver's `setTrackPlan`).
+      const savedSections = await tracks.save(
+        input.trackTitles.map((brief, i) => {
+          const authored = input.stepsByTrack?.[i];
+          return tracks.create({
             thread_id: input.threadId,
             org_id: input.orgId,
             ordinal: (i + 1) * ORDINAL_GAP,
             brief,
+            // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
+            type: input.trackTypes?.[i] ?? 'general',
             plan: authored?.length ? renderPlan(authored) : null,
             handoff_in: null,
             handoff_out: null,
@@ -327,26 +354,26 @@ export class BrainStoreService {
         }),
       );
 
-      // Lock the authored phases as `phases` rows — same gap-numbered convention as
-      // `DriverStoreService.lockPhases` (ordinal (i+1)*GAP, step 'build', status 'pending') so the
+      // Lock the authored steps as `steps` rows — same gap-numbered convention as
+      // `DriverStoreService.lockSteps` (ordinal (i+1)*GAP, step 'build', status 'pending') so the
       // driver's resume/fast-forward cursor reads them identically. Order of savedSections matches the
       // input order (single save call), so index alignment holds.
-      if (input.phasesBySection?.length) {
-        const phaseRows = savedSections.flatMap((section, i) =>
-          (input.phasesBySection?.[i] ?? []).map((p, j) =>
-            phases.create({
-              section_id: section.id,
+      if (input.stepsByTrack?.length) {
+        const phaseRows = savedSections.flatMap((track, i) =>
+          (input.stepsByTrack?.[i] ?? []).map((p, j) =>
+            steps.create({
+              track_id: track.id,
               thread_id: input.threadId,
               org_id: input.orgId,
               ordinal: (j + 1) * ORDINAL_GAP,
               title: p.title,
               brief: p.brief,
-              step: 'build',
+              stage: 'build',
               status: 'pending',
             }),
           ),
         );
-        if (phaseRows.length) await phases.save(phaseRows);
+        if (phaseRows.length) await steps.save(phaseRows);
       }
 
       await threads.update(

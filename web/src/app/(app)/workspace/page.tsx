@@ -4,20 +4,18 @@ import { useMemo } from 'react';
 import { Check } from 'lucide-react';
 import { useOrgs } from '@/lib/api/me';
 import { useAllThreads } from '@/lib/api/inbox';
-import { useThreadStatuses } from '@/lib/api/thread-status';
 import { NeedsYouBand } from '@/features/inbox/components/needs-you-band';
 
 /**
  * Dashboard — the cross-org coordinator. The org-grouped board is gone (the sidebar is now the home for
- * all projects); this surfaces only what needs the operator, across every org. Cross-thread `needsYou` is
- * known only for the open thread today (`thread-status.ts`), so when nothing needs you it shows an
- * "all caught up" state rather than a blank page.
+ * all projects); this surfaces only what needs the operator, across every org. `needsYou` is a server-owned
+ * field on every thread row (kept live by the realtime feed), so this reflects ALL threads — when nothing
+ * needs you it shows an "all caught up" state rather than a blank page.
  */
 export default function CoordinatorPage() {
   const { orgs, isLoading: orgsLoading } = useOrgs();
   const { data: threads = [], isLoading } = useAllThreads();
-  const statuses = useThreadStatuses();
-  const attention = useMemo(() => threads.filter((t) => statuses.get(t.id)?.needsYou), [threads, statuses]);
+  const attention = useMemo(() => threads.filter((t) => t.needsYou), [threads]);
 
   return (
     <div className="h-full overflow-y-auto">
