@@ -18,6 +18,7 @@
   --hair: rgba(0, 0, 0, 0.06);
   --text: #1a1d23;
   --dim: #5c6573;
+  --muted: #6b7280; /* org-divider section labels (handoff Hierarchy table) — between --dim and --faint */
   --faint: #969eaa;
   --accent: #c9700a;
   --accent-2: #a85d06;
@@ -72,6 +73,7 @@
   --color-hair: var(--hair);
   --color-text: var(--text);
   --color-dim: var(--dim);
+  --color-muted: var(--muted);
   --color-faint: var(--faint);
   --color-accent: var(--accent);
   --color-accent-2: var(--accent-2);
@@ -93,6 +95,18 @@
   --radius-sm: var(--r-sm);
   --radius-md: var(--r);
   --radius-lg: var(--r-lg);
+}
+
+/* Tailwind v4's Preflight resets buttons to `cursor: default`. Restore the pointer cursor for every
+   enabled interactive control (handoff designs assume it everywhere). Disabled controls stay default. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label[for],
+  summary,
+  select:not(:disabled) {
+    cursor: pointer;
+  }
 }
 
 html {
@@ -250,4 +264,54 @@ body {
 
 ::selection {
   background: var(--accent-soft);
+}
+
+/* ============================================================================================
+   Syntax highlighting — highlight.js token classes (via rehype-highlight), themed for the dark
+   terminal code frame (--term). The light-tuned --c-* tokens read poorly on the dark surface, so
+   these are the dark-frame variants of the same hue family. Base text stays --term-fg from <pre>.
+   ============================================================================================ */
+.hljs-comment,
+.hljs-quote {
+  color: var(--term-dim);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-name,
+.hljs-tag {
+  color: #e8983f; /* amber — accent family */
+}
+.hljs-string,
+.hljs-attr,
+.hljs-template-tag,
+.hljs-addition,
+.hljs-regexp {
+  color: #6fb3c9; /* teal */
+}
+.hljs-number,
+.hljs-built_in,
+.hljs-type,
+.hljs-meta,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-params {
+  color: #d89a5c;
+}
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_,
+.hljs-attribute {
+  color: #b89cf0; /* lavender */
+}
+.hljs-deletion {
+  color: var(--red);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
 }

@@ -53,7 +53,14 @@ export const ROUTES = {
   },
   workspace: () => '/workspace',
   thread: (threadKey: string) => `/workspace/${threadKey}`,
-  newThread: () => '/new',
+  /** Create-thread route. Optionally pre-select an org (and repo) — used by the sidebar's per-org/repo ＋. */
+  newThread: (opts?: { orgId?: string; repoId?: string }) => {
+    const p = new URLSearchParams();
+    if (opts?.orgId) p.set('org', opts.orgId);
+    if (opts?.repoId) p.set('repo', opts.repoId);
+    const qs = p.toString();
+    return qs ? `/new?${qs}` : '/new';
+  },
   /** The tickets board/backlog. No args → the picker (first repo); with ids → a specific repo's board. */
   tickets: (orgId?: string, repoId?: string) =>
     orgId && repoId ? `/tickets/${orgId}/${repoId}` : '/tickets',
@@ -62,7 +69,7 @@ export const ROUTES = {
     section ? `/orgs/${orgId}/settings?section=${section}` : `/orgs/${orgId}/settings`,
 } as const;
 
-export type SettingsSection = 'general' | 'credentials' | 'members' | 'repos';
+export type SettingsSection = 'general' | 'credentials' | 'worktree-secrets' | 'members' | 'repos';
 
 /** Only honor a same-origin relative `?next=` target (no open-redirect). */
 export function safeNext(next: string | null | undefined, fallback = ROUTES.workspace()): string {
