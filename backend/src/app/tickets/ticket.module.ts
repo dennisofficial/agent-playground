@@ -15,7 +15,7 @@ import { TicketService } from './ticket.service';
 
 /**
  * TICKETS — the internal board/backlog. `@Global` (like `OrgModule`/`OnboardingModule`) so the brain
- * (Phase 3 tools) can inject `TicketService` and the web surface can inject `TicketEventBus` for the
+ * (Step 3 tools) can inject `TicketService` and the web surface can inject `TicketEventBus` for the
  * SSE merge WITHOUT import edges — keeping `BrainModule`/`SurfaceModule` free of a cycle with this
  * module. Registered in `FeaturesModule`; the three entities are also in the persistence `ENTITIES`.
  */

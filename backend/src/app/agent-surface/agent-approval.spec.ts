@@ -15,7 +15,7 @@ describe('agent-facing approval simulation (AgentChatSurface + DecisionApprovalS
     decisionRecordId: 'dr-1',
     title: 'CSV export',
     summary: 'Add CSV export.',
-    sections: ['Backend', 'Frontend'],
+    tracks: ['Backend', 'Frontend'],
   };
 
   it('post card → read it off the surface → approve → the gate verdict resolves', async () => {

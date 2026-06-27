@@ -44,6 +44,18 @@
   --term-2: #0a111b;
   --term-fg: #c5cdd9;
   --term-dim: #6b7686;
+  /* Dark diff frame — Write/Edit/Read bodies render dark (like the terminal block). The row chrome
+     (chips/pills/icons) keeps the light --add/--del above; these are the on-dark variants (handoff
+     "terminal" theme) used INSIDE the code frame only. */
+  --term-strip: #141921; /* hunk-header strip (slightly lifted from --term) */
+  --term-border: #1b222d; /* in-frame separators / borders */
+  --term-purple: #b08cff; /* @@ hunk header on dark */
+  --term-add: #3fd68b;
+  --term-add-bg: rgba(63, 214, 139, 0.12);
+  --term-add-gut: rgba(63, 214, 139, 0.22);
+  --term-del: #fb6f6f;
+  --term-del-bg: rgba(251, 111, 111, 0.11);
+  --term-del-gut: rgba(251, 111, 111, 0.2);
   --c-comment: #8a93a0;
   --c-kw: #b45309;
   --c-str: #0a7ea4;
@@ -51,6 +63,16 @@
   --c-add: #15803d;
   --c-del: #dc2626;
   --c-num: #b45309;
+  /* Diff tokens — file-change rows in the conversation (handoff: File-Edit diff rows). Vivid add/del
+     (aligned with the syntax --c-add/--c-del) since a diff is content, not a status signal; the
+     restrained slate/neutral palette governs status only. `bg` = row fill, `gut` = gutter fill + chip
+     border. --purple (hunk header) and --accent (Edit pencil) already exist. */
+  --add: var(--c-add);
+  --add-bg: #f0fbf4;
+  --add-gut: rgba(21, 128, 61, 0.16);
+  --del: var(--c-del);
+  --del-bg: #fdeeee;
+  --del-gut: rgba(220, 38, 38, 0.14);
 
   /* radii / shadows (converged on --r:7px per handoff note) */
   --r: 7px;

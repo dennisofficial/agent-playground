@@ -2,14 +2,14 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
-import type { PlannedPhase } from '../driver/planner-llm';
+import type { PlannedStep } from '../driver/planner-llm';
 import { CredentialResolver } from '../onboarding';
 
 /**
  * R4 — PLAN-LEVEL CODEX PRE-REVIEW.
  *
  * On `submit_plan` (before the operator sees the approval card): runs ONE Codex review turn in the
- * thread's sandbox against the persisted decision-record + section plan, parses the findings, and
+ * thread's sandbox against the persisted decision-record + track plan, parses the findings, and
  * returns them so `AgentSessionManager` can relay them back into the Claude session for a SINGLE
  * revision.  After that revision the session calls `submit_plan` again; the one-pass guard
  * (per-job `Set`) detects the second call and returns `null` — the caller proceeds directly to the
@@ -40,14 +40,14 @@ export interface PlanReviewInput {
   overview: string;
   /** The locked decisions from the plan. */
   decisions: Decision[];
-  /** The high-level section briefs (titles) from the plan. */
-  sectionBriefs: string[];
+  /** The high-level track briefs (titles) from the plan. */
+  trackTitles: string[];
   /**
-   * The phases Atlas authored under each section, aligned by section index (`phasesBySection[i]` =
-   * phases for `sectionBriefs[i]`). Present on the full-plan path so the reviewer grades the EXECUTION
-   * detail, not just titles. Absent on phase-less paths (the reviewer then sees titles only).
+   * The steps Atlas authored under each track, aligned by track index (`stepsByTrack[i]` =
+   * steps for `trackTitles[i]`). Present on the full-plan path so the reviewer grades the EXECUTION
+   * detail, not just titles. Absent on step-less paths (the reviewer then sees titles only).
    */
-  phasesBySection?: PlannedPhase[][];
+  stepsByTrack?: PlannedStep[][];
   /** Optional explicit subscription auth for the Codex turn; when absent it's resolved per-org from
    * `orgId` (then the env fallback inside the engine). */
   auth?: EngineAuth;
@@ -66,21 +66,23 @@ export type PlanReviewResult = { findings: string } | null;
 /** System prompt for the Codex plan-review turn. */
 const REVIEW_SYSTEM =
   'You are a senior software engineer doing a one-pass pre-review of an Atlas feature plan before ' +
-  'it reaches the operator. The full plan is authored in `/context/specs/` — `plan.md` (the plan, ' +
-  'structured by section), `decision-record.md`, and any diagrams. You are given the overview, the ' +
-  'locked decisions, and the ordered section titles below.\n\n' +
-  'READ `/context/specs/plan.md` for the full detail, and you MAY read the codebase files it references ' +
-  '(read-only) to verify it is GROUNDED — but do NOT implement anything or change any files.\n\n' +
+  'it reaches the operator. The full plan is authored across `/context/specs/` — `plan.md` (the INDEX: ' +
+  'goal, overview, architecture, the ordered track list), `sections/NN-<slug>.md` (one per track, with ' +
+  'its steps), `data-model.md` (cross-cutting schema, when present), `decision-record.md`, and diagrams. ' +
+  'You are given the overview, the locked decisions, and the ordered track titles below.\n\n' +
+  'READ `plan.md` AND the per-track `sections/*.md` (and `data-model.md`) for the full detail, and you ' +
+  'MAY read the codebase files they reference (read-only) to verify it is GROUNDED — but do NOT ' +
+  'implement anything or change any files.\n\n' +
   'Report only REAL, actionable problems in this exact format (one item per line):\n' +
   '  FINDING: <concise description>\n\n' +
-  'Each section lists its PHASES — the execute-ready steps, each with concrete touch points and ' +
-  'instructions. Atlas authors the full implementation detail up front (there is no later "phase ' +
-  'planning" step), so grade that detail: a phase whose touch points are wrong/missing, that is too ' +
+  'Each track lists its STEPS — the execute-ready steps, each with concrete touch points and ' +
+  'instructions. Atlas authors the full implementation detail up front (there is no later "step ' +
+  'planning" step), so grade that detail: a step whose touch points are wrong/missing, that is too ' +
   'vague to build from without further questions, that lacks a real verification command, or that ' +
   'contradicts a locked decision IS a finding.\n' +
   'Good findings: missing always-ask decisions that will be needed, contradictions between decisions, ' +
-  'section/phase ordering that will cause integration pain, touch points that are wrong or do not ' +
-  'exist, phases that are dangerously vague or ungrounded, missing or hand-wavy verification.\n' +
+  'track/step ordering that will cause integration pain, touch points that are wrong or do not ' +
+  'exist, steps that are dangerously vague or ungrounded, missing or hand-wavy verification.\n' +
   'Do NOT report: stylistic nits, naming preferences, anything already covered by the decision record.\n\n' +
   'If the plan looks solid, output exactly: NO_FINDINGS';
 
@@ -92,12 +94,12 @@ function renderPlanForReview(input: PlanReviewInput): string {
         .join('\n')
     : '  (none)';
 
-  const sections = input.sectionBriefs.length
-    ? input.sectionBriefs
+  const tracks = input.trackTitles.length
+    ? input.trackTitles
         .map((b, i) => {
-          const phases = input.phasesBySection?.[i] ?? [];
-          if (!phases.length) return `  ${i + 1}. ${b}`;
-          const body = phases
+          const steps = input.stepsByTrack?.[i] ?? [];
+          if (!steps.length) return `  ${i + 1}. ${b}`;
+          const body = steps
             .map((p, j) => `     ${i + 1}.${j + 1} ${p.title}\n       ${p.brief.replace(/\n/g, '\n       ')}`)
             .join('\n');
           return `  ${i + 1}. ${b}\n${body}`;
@@ -105,14 +107,14 @@ function renderPlanForReview(input: PlanReviewInput): string {
         .join('\n')
     : '  (none)';
 
-  const hasPhases = (input.phasesBySection ?? []).some((p) => p.length);
+  const hasPhases = (input.stepsByTrack ?? []).some((p) => p.length);
   return [
     'Review this Atlas feature plan and identify any real, actionable problems.\n',
     `OVERVIEW:\n${input.overview}\n`,
     `LOCKED DECISIONS:\n${decisions}\n`,
     hasPhases
-      ? `SECTIONS (each with its authored phases — the build executes these directly):\n${sections}\n`
-      : `SECTIONS (high-level briefs):\n${sections}\n`,
+      ? `TRACKS (each with its authored steps — the build executes these directly):\n${tracks}\n`
+      : `TRACKS (high-level briefs):\n${tracks}\n`,
     'Output FINDING: lines for each real problem, or NO_FINDINGS if the plan looks solid.',
   ].join('\n');
 }

@@ -1,0 +1,164 @@
+'use client';
+
+import { useState } from 'react';
+import type { ToolItem } from './types';
+import { resolveHandler } from './registry';
+import type { ToolBadge } from './types';
+import { Badge, Chevron, NewPill, StructuredPanel, ToolIcon } from './ui';
+import { formatPayload } from './util';
+import { isFileEditTool } from './handlers/native-file';
+
+/**
+ * Split a run of consecutive tool calls into maximal segments of file-edits vs. other tools, preserving
+ * order. A file-edit segment renders as a "N files changed" group (Write/Edit rows + diff bodies);
+ * everything else stays a "N tools called" group. So `Read, Grep, Write, Edit, Bash` → three groups.
+ */
+export function segmentToolRun(tools: ToolItem[]): ToolItem[][] {
+  const segments: ToolItem[][] = [];
+  for (const tool of tools) {
+    const last = segments[segments.length - 1];
+    if (last && isFileEditTool(last[0].name) === isFileEditTool(tool.name)) last.push(tool);
+    else segments.push([tool]);
+  }
+  return segments;
+}
+
+/** Sum the +/- diffstats across a group's tool calls into one badge — null if none carry a diffstat. */
+function aggregateDiffstat(tools: ToolItem[]): ToolBadge {
+  let added = 0;
+  let removed = 0;
+  let sawDiffstat = false;
+  let sawRemoved = false;
+  for (const t of tools) {
+    const badge = resolveHandler(t.name, t.input).describe(t).badge;
+    if (badge?.kind !== 'diffstat') continue;
+    sawDiffstat = true;
+    added += badge.added;
+    if (badge.removed != null) {
+      removed += badge.removed;
+      sawRemoved = true;
+    }
+  }
+  return sawDiffstat ? { kind: 'diffstat', added, removed: sawRemoved ? removed : null } : null;
+}
+
+export type { ToolItem } from './types';
+
+/**
+ * Tool-call rendering for the conversation.
+ *
+ * Consecutive tool calls collapse into ONE group ("N tools called" + a preview of names). Each row's
+ * treatment comes from the pluggable {@link resolveHandler} registry: native tools (Bash/Read/Edit/…)
+ * and the Atlas host-bridge tools get bespoke renderers; unknown tools fall back to a generic `mcp · name`
+ * row. File edits carry a `+N −N` diffstat badge and expand to a unified diff.
+ */
+
+/** The inline arg slot. For a file path, dims the directory prefix and keeps the filename normal. */
+function PathArg({ arg, pathArg }: { arg: string; pathArg?: boolean }) {
+  if (!pathArg) return <span className="flex-1 truncate font-mono text-[11.5px]">{arg}</span>;
+  const cut = arg.lastIndexOf('/');
+  const dir = cut >= 0 ? arg.slice(0, cut + 1) : '';
+  const base = cut >= 0 ? arg.slice(cut + 1) : arg;
+  return (
+    <span className="flex-1 truncate font-mono text-[11.5px]">
+      {dir ? <span className="text-faint">{dir}</span> : null}
+      {base}
+    </span>
+  );
+}
+
+function ToolRow({ tool }: { tool: ToolItem }) {
+  const [open, setOpen] = useState(false);
+  const handler = resolveHandler(tool.name, tool.input);
+  const d = handler.describe(tool);
+  const Body = handler.Body;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-[5px] text-left text-[12.5px] text-dim transition hover:bg-surface-3"
+      >
+        <ToolIcon kind={d.icon} color={d.color} />
+        {d.isMcp ? (
+          <span className="flex-1 truncate font-mono text-[11.5px]" style={{ color: 'var(--blue)' }}>
+            <span className="text-faint">mcp · </span>
+            {d.arg}
+          </span>
+        ) : (
+          <>
+            <span className="shrink-0 font-semibold text-text">{d.label}</span>
+            <PathArg arg={d.arg} pathArg={d.pathArg} />
+          </>
+        )}
+        {d.pill ? <NewPill text={d.pill} /> : null}
+        <Badge badge={d.badge} />
+        {tool.running ? (
+          <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
+        ) : null}
+        <Chevron className={`text-faint ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open ? (
+        Body ? (
+          <Body tool={tool} />
+        ) : (
+          <StructuredPanel
+            input={formatPayload(tool.input)}
+            result={formatPayload(tool.result)}
+            isError={tool.isError}
+          />
+        )
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A run of consecutive tool calls, collapsed into one group. Open by default while any tool is running.
+ * A group of only file-edits reads as "N files changed" with a `+N −N` rollup chip — shown ONLY while
+ * collapsed (open, each file row carries its own counts, so the rollup is redundant).
+ */
+export function ToolGroup({ tools }: { tools: ToolItem[] }) {
+  const anyRunning = tools.some((t) => t.running);
+  const [open, setOpen] = useState(anyRunning);
+  const preview = tools
+    .map((t) => resolveHandler(t.name, t.input).describe(t).preview)
+    .filter(Boolean)
+    .join(' · ');
+  const count = tools.length;
+  const totalStat = aggregateDiffstat(tools);
+  const allFiles = tools.every((t) => isFileEditTool(t.name));
+  const label = allFiles
+    ? `${count} ${count === 1 ? 'file' : 'files'} changed`
+    : `${count} ${count === 1 ? 'tool' : 'tools'} called`;
+  const showStat = totalStat && (!allFiles || !open);
+
+  return (
+    <div className="anim-fadeUp my-px">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="group flex w-full items-center gap-[7px] px-0.5 py-[5px] text-left text-[12.5px]"
+      >
+        <Chevron size={12} className={`text-faint ${open ? 'rotate-90' : ''}`} />
+        <span className="shrink-0 font-semibold text-dim transition group-hover:text-text">{label}</span>
+        <span className="flex-1 truncate font-mono text-[11px] text-faint">{preview}</span>
+        {showStat ? <Badge badge={totalStat} size="group" /> : null}
+        {anyRunning ? (
+          <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          className="ml-[5px] flex flex-col gap-px pl-[13px]"
+          style={{ borderLeft: '1.5px solid var(--border)' }}
+        >
+          {tools.map((t) => (
+            <ToolRow key={t.key} tool={t} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}

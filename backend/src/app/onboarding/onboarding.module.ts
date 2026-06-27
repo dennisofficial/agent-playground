@@ -6,6 +6,8 @@ import {
   DecisionRecordEntity,
   OrganizationEntity,
   OrgCredentialsEntity,
+  OrgWorktreeSecretEntity,
+  OrgWorktreeSecretGrantEntity,
   RepoEntity,
   StimulusEntity,
   ThreadEntity,
@@ -17,6 +19,8 @@ import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
 import { RepoController } from './repo.controller';
 import { TenantCredentialStore } from './tenant-credential.store';
+import { WorktreeSecretStore } from './worktree-secret.store';
+import { WorktreeSecretsController } from './worktree-secrets.controller';
 
 /**
  * The ONBOARDING layer — the per-tenant credential store + the `CredentialResolver` seam every other
@@ -24,7 +28,7 @@ import { TenantCredentialStore } from './tenant-credential.store';
  * factories inject `CredentialResolver` with zero per-module import churn. Imported EARLY in the app
  * composition root so the global provider exists when those factories instantiate.
  *
- * Phase 1 adds `OnboardingService` (channel binding + checklist) here; Phase 2/3 add the Slack
+ * Step 1 adds `OnboardingService` (channel binding + checklist) here; Step 2/3 add the Slack
  * installation store + the onboarding surfaces.
  */
 @Global()
@@ -34,6 +38,8 @@ import { TenantCredentialStore } from './tenant-credential.store';
     TypeOrmModule.forFeature(
       [
         OrgCredentialsEntity,
+        OrgWorktreeSecretEntity,
+        OrgWorktreeSecretGrantEntity,
         OrganizationEntity,
         RepoEntity,
         ThreadEntity,
@@ -44,8 +50,13 @@ import { TenantCredentialStore } from './tenant-credential.store';
       DB_CONNECTION,
     ),
   ],
-  controllers: [OrgCredentialsController, RepoController, OnboardingController],
-  providers: [TenantCredentialStore, CredentialResolver, OnboardingService],
-  exports: [TenantCredentialStore, CredentialResolver, OnboardingService],
+  controllers: [
+    OrgCredentialsController,
+    WorktreeSecretsController,
+    RepoController,
+    OnboardingController,
+  ],
+  providers: [TenantCredentialStore, WorktreeSecretStore, CredentialResolver, OnboardingService],
+  exports: [TenantCredentialStore, WorktreeSecretStore, CredentialResolver, OnboardingService],
 })
 export class OnboardingModule {}

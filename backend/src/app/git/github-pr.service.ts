@@ -182,6 +182,33 @@ export class GithubPrService {
     return pr.state;
   }
 
+  /**
+   * List a repo's branch names with the token — feeds the create-thread base-branch picker. Paginated
+   * (100/page) and capped so a repo with thousands of branches can't run the request away. Returns the
+   * names in GitHub's order (the caller surfaces the default branch first); throws on a non-OK response.
+   */
+  async listBranches(token: string, owner: string, repo: string): Promise<string[]> {
+    const PER_PAGE = 100;
+    const MAX_PAGES = 10; // cap at 1000 branches
+    const names: string[] = [];
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await this.fetchImpl(
+        `${API}/repos/${owner}/${repo}/branches?per_page=${PER_PAGE}&page=${page}`,
+        { headers: this.headers(token) },
+      );
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+        throw new Error(
+          `GitHub couldn't list branches for ${owner}/${repo} (${res.status}): ${errBody.message ?? 'no detail'}`,
+        );
+      }
+      const batch = (await res.json()) as Array<{ name: string }>;
+      names.push(...batch.map((b) => b.name));
+      if (batch.length < PER_PAGE) break;
+    }
+    return names;
+  }
+
   /** Fetch one repo the token can see — the registration probe. null on 404/403; throws otherwise. */
   async getRepo(token: string, owner: string, repo: string): Promise<RepoInfo | null> {
     const res = await this.fetchImpl(`${API}/repos/${owner}/${repo}`, {

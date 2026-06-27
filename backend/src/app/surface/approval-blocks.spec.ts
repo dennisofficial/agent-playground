@@ -13,11 +13,11 @@ const card: DecisionApprovalCard = {
   decisionRecordId: 'dr-1',
   title: 'Payments',
   summary: 'Use Stripe; add a webhooks table.',
-  sections: ['backend: stripe client + webhooks', 'frontend: checkout page'],
+  tracks: ['backend: stripe client + webhooks', 'frontend: checkout page'],
 };
 
 describe('decisionApprovalBlocks', () => {
-  it('renders headline, summary, numbered section list, and verdict buttons', () => {
+  it('renders headline, summary, numbered track list, and verdict buttons', () => {
     const blocks = decisionApprovalBlocks(card);
     const json = JSON.stringify(blocks);
     expect(json).toContain('Plan proposal — Payments');

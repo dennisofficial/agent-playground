@@ -8,8 +8,12 @@ export const qk = {
   orgMembers: (orgId: string) => ['org-members', orgId] as const,
   /** One org's credential presence flags (`GET /web/orgs/:orgId/credentials`). */
   orgCredentials: (orgId: string) => ['org-credentials', orgId] as const,
+  /** One org's worktree secret names + grants (`GET /web/orgs/:orgId/worktree-secrets`). */
+  orgWorktreeSecrets: (orgId: string) => ['org-worktree-secrets', orgId] as const,
   /** One org's connected repos (`GET /web/orgs/:orgId/repos`) — the create-thread picker. */
   orgRepos: (orgId: string) => ['org-repos', orgId] as const,
+  /** One repo's branches (`GET /web/orgs/:orgId/repos/:repoId/branches`) — the base-branch picker. */
+  repoBranches: (orgId: string, repoId: string) => ['repo-branches', orgId, repoId] as const,
   /** One thread's durable message log. */
   threadMessages: (ref: { orgId: string; repoId: string; threadId: string }) =>
     ['thread-messages', ref.orgId, ref.repoId, ref.threadId] as const,

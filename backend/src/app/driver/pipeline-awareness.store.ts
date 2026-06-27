@@ -13,7 +13,7 @@ import type { PipelineMarker, ThreadPipelineAwareness } from '../persistence/ent
  * Both run as a single `SELECT … FOR UPDATE` + write transaction, so they serialize on the thread row —
  * a human turn arriving mid-build can't read-clear the queue while the driver is appending to it, and no
  * marker is dropped. Idempotent append (dedup by `id`) means the driver firing the same milestone twice
- * (it emits many events per phase) keeps exactly one.
+ * (it emits many events per step) keeps exactly one.
  */
 @Injectable()
 export class PipelineAwarenessStore {

@@ -1,8 +1,8 @@
 /**
  * W7 — the AUTO-FIX STAGE domain types (clean-room, Atlas v2). A fan-out of parallel read-only review
- * passes over a section's (or the whole feature's) diff → aggregate + dedupe findings → one execute
- * turn that applies the fixes → a git commit. Two entry points share the core: per-section (after a
- * section's phases) and PR-tail (over the whole accumulated diff before the human reviews the PR).
+ * passes over a track's (or the whole feature's) diff → aggregate + dedupe findings → one execute
+ * turn that applies the fixes → a git commit. Two entry points share the core: per-track (after a
+ * track's steps) and PR-tail (over the whole accumulated diff before the human reviews the PR).
  *
  * These shapes live in THIS subfolder, never `domain/index.ts`. Zero imports from `harness/**` or the
  * v1 `slack-app` surface — the stage talks only to W1's `EngineRunner` + `LocalGitService`.
@@ -47,8 +47,8 @@ export interface AutoFixCommit {
 
 /** What one fan-out + fix pass produced — the structured summary the driver records/relays. */
 export interface AutoFixSummary {
-  /** 'section' (after a section's phases) or 'pull_request' (PR-tail over the whole diff). */
-  mode: 'section' | 'pull_request';
+  /** 'track' (after a track's steps) or 'pull_request' (PR-tail over the whole diff). */
+  mode: 'track' | 'pull_request';
   /** The lens ids that actually ran. */
   lensesRun: string[];
   /** Every finding, post-aggregation + dedupe (across lenses). */
@@ -65,7 +65,7 @@ export interface AutoFixSummary {
 
 /**
  * Tunable knobs for one auto-fix run. Every field is OPTIONAL — the stage applies conservative
- * defaults (see DEFAULT_AUTOFIX_OPTIONS), so the driver can call `autofixSection(ctx)` with no opts.
+ * defaults (see DEFAULT_AUTOFIX_OPTIONS), so the driver can call `autofixTrack(ctx)` with no opts.
  * The orchestrator can also surface these as env later; W7 keeps them as options to avoid editing
  * `validation.ts`.
  */
@@ -113,23 +113,23 @@ export interface AutoFixContext {
   sandboxKey: string;
   /**
    * The unified diff to review. When omitted the stage derives one from the worktree git state (see
-   * `gitRange`). Supplying it is cheaper + deterministic (the driver already has the section's diff).
+   * `gitRange`). Supplying it is cheaper + deterministic (the driver already has the track's diff).
    */
   diff?: string;
   /** The repo-relative changed files (review framing + scopes the fix). Optional alongside `diff`. */
   changedFiles?: string[];
   /**
    * When `diff` is absent, the git range the stage diffs to build one (e.g. `origin/main...HEAD` for a
-   * PR-tail pass, or a section's start sha `..HEAD`). Defaults to the worktree's full uncommitted +
+   * PR-tail pass, or a track's start sha `..HEAD`). Defaults to the worktree's full uncommitted +
    * committed delta against the merge-base when unset (the stage falls back to `git diff HEAD`).
    */
   gitRange?: string;
   /**
-   * Light context: what the section / feature was meant to do (the section brief + decision-record
+   * Light context: what the track / feature was meant to do (the track brief + decision-record
    * overview, or the bugfix intent). Grounds the review so lenses judge against intent, not vacuum.
    */
   intent: string;
-  /** Optional label for logs/commit messages (e.g. the section brief or "PR-tail"). */
+  /** Optional label for logs/commit messages (e.g. the track brief or "PR-tail"). */
   label?: string;
   /**
    * Docker mode: the sandbox CONTAINER the review/fix turns exec into (threaded from the driver's

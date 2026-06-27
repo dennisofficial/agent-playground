@@ -2,7 +2,7 @@
  * deleteOrg cascade GATE — deleting an org must leave ZERO org-scoped rows behind.
  *
  * The schema now carries real FK constraints (the `RestoreReferentialIntegrity` migration): deleting the
- * `organizations` row cascades `ON DELETE CASCADE` down repos/threads/messages/sections/phases/
+ * `organizations` row cascades `ON DELETE CASCADE` down repos/threads/messages/tracks/steps/
  * decision_records/stimuli/thread_sandboxes plus the org-direct org_credentials/org_invites/
  * organization_members/memory. `deleteOrg` runs the physical per-thread teardown (container + worktree)
  * then deletes the org row; this proves the combination removes every one of those rows — and ONLY this
@@ -33,16 +33,16 @@ import {
   OrgInviteEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
-  PhaseEntity,
+  StepEntity,
   RepoEntity,
-  SectionEntity,
+  TrackEntity,
   StimulusEntity,
   ThreadEntity,
   ThreadSandboxEntity,
   UserEntity,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
-import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, ThreadLifecycleService } from '../driver';
+import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, ThreadLifecycleService, WorktreeProvisioner } from '../driver';
 import { OrganizationService } from './organization.service';
 
 function dbOpts() {
@@ -116,7 +116,7 @@ async function purge(): Promise<void> {
     if (ids.length) {
       await ds.query(`DELETE FROM messages WHERE thread_id = ANY($1)`, [ids]);
     }
-    for (const table of ['phases', 'sections', 'decision_records', 'stimuli', 'thread_sandboxes', 'threads', 'repos', 'org_credentials', 'org_invites', 'organization_members', 'memory']) {
+    for (const table of ['steps', 'tracks', 'decision_records', 'stimuli', 'thread_sandboxes', 'threads', 'repos', 'org_credentials', 'org_invites', 'organization_members', 'memory']) {
       await ds.query(`DELETE FROM ${table} WHERE org_id = $1`, [org]);
     }
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [org]);
@@ -137,11 +137,11 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
 /** Seed one row in every child/org-scoped table for `threadId` under (`orgId`, `repoId`). */
 async function seedThreadChildren(orgId: string, repoIdArg: string, threadId: string): Promise<void> {
   await ds.query(`INSERT INTO messages (thread_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
-  const [section] = await ds.query(
-    `INSERT INTO sections (thread_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
+  const [track] = await ds.query(
+    `INSERT INTO tracks (thread_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
     [threadId, orgId],
   );
-  await ds.query(`INSERT INTO phases (section_id, thread_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [section.id, threadId, orgId]);
+  await ds.query(`INSERT INTO steps (track_id, thread_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [track.id, threadId, orgId]);
   await ds.query(`INSERT INTO decision_records (org_id, repo_id, thread_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, threadId]);
   await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, thread_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, threadId]);
 }
@@ -173,8 +173,8 @@ beforeEach(async () => {
           ThreadSandboxEntity,
           RepoEntity,
           MessageEntity,
-          SectionEntity,
-          PhaseEntity,
+          TrackEntity,
+          StepEntity,
           DecisionRecordEntity,
           StimulusEntity,
         ],
@@ -198,6 +198,7 @@ beforeEach(async () => {
       },
       { provide: GithubPrService, useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' } },
       { provide: DRIVER_REPO, useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used'); } } as DriverRepoResolver },
+      { provide: WorktreeProvisioner, useValue: { provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({ sandbox, hydrationSig: 'sig' }) } },
       ThreadLifecycleService,
       OrganizationService,
     ],
@@ -241,8 +242,8 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('org_credentials', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('repos', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('threads', 'org_id', ORG_ID)).toBe(0);
-    expect(await countWhere('sections', 'org_id', ORG_ID)).toBe(0);
-    expect(await countWhere('phases', 'org_id', ORG_ID)).toBe(0);
+    expect(await countWhere('tracks', 'org_id', ORG_ID)).toBe(0);
+    expect(await countWhere('steps', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('decision_records', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('stimuli', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('thread_sandboxes', 'org_id', ORG_ID)).toBe(0);
@@ -267,8 +268,8 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('organizations', 'id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('repos', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('threads', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('sections', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('phases', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('tracks', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('steps', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('stimuli', 'org_id', OTHER_ORG_ID)).toBe(2);
     expect(await countWhere('thread_sandboxes', 'org_id', OTHER_ORG_ID)).toBe(1);

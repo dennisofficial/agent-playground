@@ -36,15 +36,15 @@ import {
   MessageEntity,
   OrgCredentialsEntity,
   OrganizationEntity,
-  PhaseEntity,
+  StepEntity,
   RepoEntity,
-  SectionEntity,
+  TrackEntity,
   StimulusEntity,
   ThreadEntity,
   ThreadSandboxEntity,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
-import { DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, type ResolvedRepo } from '.';
+import { DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, WorktreeProvisioner, type ResolvedRepo } from '.';
 import { ProvisioningNotReadyError } from './thread-lifecycle.service';
 
 import { ENTITIES } from '../persistence/entities';
@@ -160,8 +160,8 @@ beforeEach(async () => {
           ThreadSandboxEntity,
           OrgCredentialsEntity,
           MessageEntity,
-          SectionEntity,
-          PhaseEntity,
+          TrackEntity,
+          StepEntity,
           DecisionRecordEntity,
           StimulusEntity,
         ],
@@ -196,6 +196,17 @@ beforeEach(async () => {
       {
         provide: DRIVER_REPO,
         useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used in this gate'); } },
+      },
+      {
+        // The provisioner delegates to the fake SANDBOX_PROVIDER so attach/warm behavior is unchanged;
+        // hydration is a no-op here (no `.atlas/worktree.json` in the fake worktrees).
+        provide: WorktreeProvisioner,
+        useValue: {
+          provisionAndAttach: async ({ sandbox, orgId, threadId }: { sandbox: FeatureSandbox; orgId: string; threadId?: string }) => ({
+            sandbox: await provider.attach({ sandbox, orgId, threadId }),
+            hydrationSig: 'int-sig',
+          }),
+        },
       },
       ThreadLifecycleService,
     ],
@@ -347,13 +358,13 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
     // Seed one child row in every table that references the thread; deleting the thread must remove all
     // of them via the FK ON DELETE CASCADE (RestoreReferentialIntegrity migration) — zero orphans.
     await ds.query(`INSERT INTO messages (thread_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
-    const [section] = await ds.query(
-      `INSERT INTO sections (thread_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
+    const [track] = await ds.query(
+      `INSERT INTO tracks (thread_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
       [threadId, FAKE_TEAM_ID],
     );
     await ds.query(
-      `INSERT INTO phases (section_id, thread_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`,
-      [section.id, threadId, FAKE_TEAM_ID],
+      `INSERT INTO steps (track_id, thread_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`,
+      [track.id, threadId, FAKE_TEAM_ID],
     );
     await ds.query(
       `INSERT INTO decision_records (org_id, repo_id, thread_id, overview) VALUES ($1, $2, $3, 'o')`,
@@ -370,8 +381,8 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
       Number((await ds.query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${col} = $1`, [threadId]))[0].count);
     expect(await count('threads', 'id')).toBe(0);
     expect(await count('messages')).toBe(0);
-    expect(await count('sections')).toBe(0);
-    expect(await count('phases')).toBe(0);
+    expect(await count('tracks')).toBe(0);
+    expect(await count('steps')).toBe(0);
     expect(await count('decision_records')).toBe(0);
     expect(await count('stimuli')).toBe(0);
     expect(await count('thread_sandboxes')).toBe(0);

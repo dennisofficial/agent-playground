@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { SettingsSection } from '@/lib/routes';
+import { BranchPicker } from '@/components/branch-picker';
 import { Spinner } from '@/components/ui/spinner';
 import { useOrgRepos } from '@/lib/api/thread-queries';
 import type { RepoView } from '@/lib/api/thread-api';
@@ -689,12 +690,14 @@ function RepoEditRow({
             className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] text-text outline-none transition focus:border-accent"
           />
         </div>
-        <div className="w-40">
+        <div className="w-48">
           <label className="mb-1.5 block text-[11.5px] font-medium text-dim">Base branch</label>
-          <input
+          <BranchPicker
+            orgId={orgId}
+            repoId={repo.id}
             value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 font-mono text-[12.5px] text-text outline-none transition focus:border-accent"
+            onChange={setBranch}
+            fallback={repo.defaultBranch}
           />
         </div>
       </div>

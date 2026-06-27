@@ -10,6 +10,7 @@ import {
   fetchContextFile,
   fetchMessages,
   fetchOrgRepos,
+  fetchRepoBranches,
   fetchPipeline,
   fetchThreadContext,
   renameThread,
@@ -37,7 +38,7 @@ export function useThreadMessages(ref: ThreadRef) {
   });
 }
 
-/** A thread's pipeline (job + sections), or `{ status: 'no_job' }` before a plan is approved. */
+/** A thread's pipeline (job + tracks), or `{ status: 'no_job' }` before a plan is approved. */
 export function usePipeline(ref: ThreadRef) {
   return useQuery({
     queryKey: qk.threadPipeline(ref),
@@ -73,6 +74,16 @@ export function useOrgRepos(orgId: string) {
     queryKey: qk.orgRepos(orgId),
     queryFn: () => fetchOrgRepos(orgId),
     enabled: Boolean(orgId),
+    staleTime: 30_000,
+  });
+}
+
+/** A repo's branches — the create-thread base-branch picker (hits GitHub via the org token). */
+export function useRepoBranches(orgId: string, repoId: string) {
+  return useQuery({
+    queryKey: qk.repoBranches(orgId, repoId),
+    queryFn: () => fetchRepoBranches(orgId, repoId),
+    enabled: Boolean(orgId && repoId),
     staleTime: 30_000,
   });
 }

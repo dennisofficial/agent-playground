@@ -10,7 +10,7 @@ import {
   ThinkingBlock,
   UserBubble,
 } from './bubbles';
-import { ToolGroup, type ToolItem } from './tool-call';
+import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { QuestionCardView } from './question-card';
 import { Composer } from './composer';
@@ -36,6 +36,14 @@ export function Conversation({
   onOpenPlan?: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the view is "tailing" — pinned at (or near) the bottom. We only auto-scroll on new content
+  // while this is true, so reading scrollback isn't yanked back down on every streamed token. A ref (not
+  // state) so the scroll listener and the auto-scroll effect share the latest value without re-rendering.
+  const stuckToBottom = useRef(true);
+  // Drives the "Jump to latest" pill — shown only while scrolled up off the tail. Mirrors `stuckToBottom`
+  // but as state, since visibility has to re-render (the ref intentionally doesn't).
+  const [showJump, setShowJump] = useState(false);
   // The composer is a floating overlay; track its height so the transcript reserves matching space and
   // the last line never slips under it as the box auto-grows.
   const [composerHeight, setComposerHeight] = useState(116);
@@ -52,15 +60,34 @@ export function Conversation({
   const log = messages.filter((m) => !isQueued(m));
   const queued = messages.filter(isQueued);
 
+  // Track whether the user is tailing the conversation. Within ~80px of the bottom counts as "stuck" so
+  // a tiny bit of slack (and sub-pixel rounding during streaming) doesn't read as "scrolled up".
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const stuck = distanceFromBottom < 80;
+    stuckToBottom.current = stuck;
+    setShowJump(!stuck);
+  };
+
+  const jumpToLatest = () => {
+    stuckToBottom.current = true;
+    setShowJump(false);
+    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  };
+
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' });
+    if (stuckToBottom.current) {
+      endRef.current?.scrollIntoView({ block: 'end' });
+    }
   }, [messages.length, live, liveBlockCount, turnActive, queued.length, composerHeight]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar />
       <div className="relative min-h-0 flex-1">
-        <div className="h-full overflow-y-auto px-7 pt-5">
+        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-7 pt-5">
           <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">Loading conversation…</p>
@@ -82,6 +109,21 @@ export function Conversation({
             <div ref={endRef} />
           </div>
         </div>
+        {showJump ? (
+          <button
+            type="button"
+            onClick={jumpToLatest}
+            title="Jump to latest"
+            style={{ bottom: composerHeight + 8 }}
+            className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface-2 py-1.5 pl-3 pr-3.5 text-[12px] text-dim shadow-md transition hover:text-text"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14" />
+              <path d="M19 12l-7 7-7-7" />
+            </svg>
+            Jump to latest
+          </button>
+        ) : null}
         <Composer threadRef={threadRef} onHeightChange={setComposerHeight} />
       </div>
     </div>
@@ -89,8 +131,9 @@ export function Conversation({
 }
 
 /**
- * Render the durable transcript, collapsing runs of consecutive tool messages into one `ToolGroup`
- * (matching the conversation design) while every other kind renders as its own typed block.
+ * Render the durable transcript, collapsing runs of consecutive tool messages into `ToolGroup`s
+ * (file-edits split into their own "N files changed" group via {@link segmentToolRun}) while every
+ * other kind renders as its own typed block.
  */
 function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () => void): React.ReactNode {
   const nodes: React.ReactNode[] = [];
@@ -98,8 +141,9 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
 
   const flush = () => {
     if (pending.length === 0) return;
-    const tools = pending.map((p) => p.tool);
-    nodes.push(<ToolGroup key={`tg-${pending[0].key}`} tools={tools} />);
+    for (const seg of segmentToolRun(pending.map((p) => p.tool))) {
+      nodes.push(<ToolGroup key={`tg-${seg[0].key}`} tools={seg} />);
+    }
     pending = [];
   };
 
@@ -157,7 +201,7 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
  */
 function ConversationTopBar() {
   return (
-    <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3.5 py-2">
+    <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3.5">
       <span className="min-w-0 flex-1 font-mono text-[9px] tracking-[0.16em] text-faint">CONVERSATION</span>
       <div className="flex items-center gap-0.5">
         <TopBarButton title="Search this thread">

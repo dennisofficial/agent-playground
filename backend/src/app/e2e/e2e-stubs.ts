@@ -4,9 +4,9 @@ import type { BrainLlm, TriageInput } from '../brain';
 import type { TriageAction } from '../brain/brain.types';
 import type { ClassifierLlm } from '../decision-gate/classifier-llm';
 import type {
-  PlanSectionInput,
+  PlanTrackInput,
   PlannedDecision,
-  PlannedPhase,
+  PlannedStep,
   PlannerLlm,
 } from '../driver';
 import type { EngineRunResult, RunEngineArgs } from '../engine';
@@ -75,16 +75,16 @@ export class FakeBrainLlm implements BrainLlm {
 }
 
 /**
- * Fake `PLANNER_LLM`. Returns a single, deterministic phase per section (the same degraded-but-
+ * Fake `PLANNER_LLM`. Returns a single, deterministic step per track (the same degraded-but-
  * correct shape the real driver falls back to key-less), and surfaces NO notable decisions (so the
  * feature path's gate stays clean and never parks). Handoff is a terse canned line.
  */
 export class FakePlannerLlm implements PlannerLlm {
-  async planSection(input: PlanSectionInput): Promise<PlannedPhase[] | undefined> {
+  async planTrack(input: PlanTrackInput): Promise<PlannedStep[] | undefined> {
     return [{ title: input.brief, brief: input.brief }];
   }
 
-  async reviewPlan(): Promise<PlannedPhase[] | undefined> {
+  async reviewPlan(): Promise<PlannedStep[] | undefined> {
     // No revision — keep the drafted plan (a clean single review loop with no change).
     return undefined;
   }
@@ -95,15 +95,15 @@ export class FakePlannerLlm implements PlannerLlm {
   }
 
   async handoff(): Promise<string | undefined> {
-    return '(e2e fake) section complete.';
+    return '(e2e fake) track complete.';
   }
 
-  async batchPhases(input: { phases: PlannedPhase[] }): Promise<number[][] | undefined> {
-    // Deterministic: pack consecutive phases into PAIRS (exercises M<N batching in tests; the driver's
-    // guardrail still validates + caps the result). A 0/1-phase list yields no group → driver fallback.
+  async batchSteps(input: { steps: PlannedStep[] }): Promise<number[][] | undefined> {
+    // Deterministic: pack consecutive steps into PAIRS (exercises M<N batching in tests; the driver's
+    // guardrail still validates + caps the result). A 0/1-step list yields no group → driver fallback.
     const groups: number[][] = [];
-    for (let i = 0; i < input.phases.length; i += 2) {
-      groups.push(i + 1 < input.phases.length ? [i, i + 1] : [i]);
+    for (let i = 0; i < input.steps.length; i += 2) {
+      groups.push(i + 1 < input.steps.length ? [i, i + 1] : [i]);
     }
     return groups.length ? groups : undefined;
   }

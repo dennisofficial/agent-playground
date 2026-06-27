@@ -66,9 +66,9 @@ export function ApprovalCardView({
         className="flex w-full items-center gap-2.5 border-t border-border bg-surface-2 px-4 py-3 text-left hover:brightness-[0.99]"
       >
         <span className="font-mono text-[10.5px] text-dim">
-          {card.decisions.length} locked decision{card.decisions.length === 1 ? '' : 's'} · {card.sections.length}{' '}
-          {card.kind === 'direct' ? 'change' : 'section'}
-          {card.sections.length === 1 ? '' : 's'}
+          {card.decisions.length} locked decision{card.decisions.length === 1 ? '' : 's'} · {card.tracks.length}{' '}
+          {card.kind === 'direct' ? 'change' : 'track'}
+          {card.tracks.length === 1 ? '' : 's'}
         </span>
         <div className="flex-1" />
         <span className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-accent">

@@ -105,6 +105,18 @@ export class RepoController {
     }));
   }
 
+  /**
+   * `GET …/repos/:repoId/branches` — the repo's branches (default first) for the create-thread
+   * base-branch picker. Any member can read (creating threads is a member action).
+   */
+  @Get(':repoId/branches')
+  async branches(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+  ): Promise<{ branches: string[]; defaultBranch: string }> {
+    return this.onboarding.listRepoBranches(org.id, repoId);
+  }
+
   /** `POST …/repos/:repoId/revalidate` — re-probe GitHub access with the org's token. Owner only. */
   @Post(':repoId/revalidate')
   @UseGuards(OrgOwnerGuard)

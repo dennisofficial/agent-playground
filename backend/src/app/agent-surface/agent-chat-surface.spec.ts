@@ -97,7 +97,7 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
         decisionRecordId: 'dr-7',
         title: 'CSV export',
         summary: 'Add CSV export to the reports page.',
-        sections: ['Backend', 'Frontend'],
+        tracks: ['Backend', 'Frontend'],
       });
 
       await surface.post('C1', 'Plan proposal — CSV export', { threadTs: 'root.1', blocks });
@@ -120,7 +120,7 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
           jobId: 'job-99',
           title: 'X',
           summary: 'Y',
-          sections: ['Z'],
+          tracks: ['Z'],
         }),
       });
 
@@ -143,14 +143,14 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
         decisionRecordId: 'd1',
         title: 'T',
         summary: 'S',
-        sections: [],
+        tracks: [],
       });
       expect(parseApprovalMeta(blocks)).toEqual({ jobId: 'j1', decisionRecordId: 'd1' });
     });
 
     it('returns undefined for missing/non-approval blocks', () => {
       expect(parseApprovalMeta(undefined)).toBeUndefined();
-      expect(parseApprovalMeta([{ type: 'section', text: { type: 'mrkdwn', text: 'x' } }])).toBeUndefined();
+      expect(parseApprovalMeta([{ type: 'track', text: { type: 'mrkdwn', text: 'x' } }])).toBeUndefined();
     });
   });
 });

@@ -1,28 +1,28 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import { EngineAuthError, type EngineRunnerPort, type RunEngineArgs } from '../engine';
-import type { PhaseEntity } from '../persistence/entities';
+import type { StepEntity } from '../persistence/entities';
 import type { FeatureSandbox } from '../git';
 import { TurnRunnerService } from './turn-runner.service';
 
 /**
  * TurnRunnerService — DURABILITY of the resume handle. The point: a coding session must survive a halt
- * by CONTINUING, not respawning. That hinges on the engine `session_id` being persisted onto the phase
+ * by CONTINUING, not respawning. That hinges on the engine `session_id` being persisted onto the step
  * row the instant it exists (turn START), so a mid-turn crash/kill/restart still has a resume handle.
  */
 
-/** A fake phases repo capturing the last persisted session_id; `findOne` returns the prior one. */
-function fakePhases(priorSessionId: string | null = null) {
+/** A fake steps repo capturing the last persisted session_id; `findOne` returns the prior one. */
+function fakeSteps(priorSessionId: string | null = null) {
   const updates: Array<{ id: unknown; patch: { session_id?: string } }> = [];
   let current = priorSessionId;
   const repo = {
-    findOne: vi.fn(async () => (current === null ? null : ({ session_id: current } as PhaseEntity))),
+    findOne: vi.fn(async () => (current === null ? null : ({ session_id: current } as StepEntity))),
     update: vi.fn(async (where: { id: unknown }, patch: { session_id?: string }) => {
       updates.push({ id: where.id, patch });
       if (patch.session_id) current = patch.session_id;
       return { affected: 1 } as never;
     }),
-  } as unknown as Repository<PhaseEntity>;
+  } as unknown as Repository<StepEntity>;
   return { repo, updates, last: () => current };
 }
 
@@ -35,7 +35,7 @@ const sandbox: FeatureSandbox = {
 
 const baseInput = {
   jobId: 'job-1',
-  phaseId: 'phase-1',
+  stepId: 'step-1',
   sandbox,
   engine: 'claude' as const,
   mode: 'execute' as const,
@@ -45,7 +45,7 @@ const baseInput = {
 
 describe('TurnRunnerService — session-handle durability', () => {
   it('persists the session id on the early `session` event, BEFORE the turn finishes', async () => {
-    const { repo, last } = fakePhases();
+    const { repo, last } = fakeSteps();
     // An engine that surfaces the session at turn start, then keeps "working" — assert the handle is
     // already persisted by the time work begins (we observe right after the session event fires).
     const engine: EngineRunnerPort = {
@@ -64,7 +64,7 @@ describe('TurnRunnerService — session-handle durability', () => {
   });
 
   it('keeps the session id even when the turn HALTS mid-flight (continues, not respawns)', async () => {
-    const { repo, last, updates } = fakePhases();
+    const { repo, last, updates } = fakeSteps();
     // The session is established, then the turn dies (process crash / kill / non-auth error).
     const engine: EngineRunnerPort = {
       run: vi.fn(async (args: RunEngineArgs) => {
@@ -80,7 +80,7 @@ describe('TurnRunnerService — session-handle durability', () => {
   });
 
   it('on a 401 the auth-error session id is persisted too (resume after credential fix)', async () => {
-    const { repo, last } = fakePhases();
+    const { repo, last } = fakeSteps();
     const engine: EngineRunnerPort = {
       run: vi.fn(async () => {
         throw new EngineAuthError('401 invalid api key', 'sess-401');
@@ -92,7 +92,7 @@ describe('TurnRunnerService — session-handle durability', () => {
   });
 
   it('resumes a prior session: the persisted id is threaded back as `sessionId`', async () => {
-    const { repo } = fakePhases('sess-prior');
+    const { repo } = fakeSteps('sess-prior');
     let seen: string | undefined;
     const engine: EngineRunnerPort = {
       run: vi.fn(async (args: RunEngineArgs) => {

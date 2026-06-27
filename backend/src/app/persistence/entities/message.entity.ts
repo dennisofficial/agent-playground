@@ -48,7 +48,7 @@ export class MessageEntity extends TimestampedEntity {
   @Column({ type: 'jsonb', nullable: true })
   card!: Record<string, unknown> | null;
 
-  /** Opaque metadata (e.g. build-phase event context) when kind='build_event'; null otherwise. */
+  /** Opaque metadata (e.g. build-step event context) when kind='build_event'; null otherwise. */
   @Column({ type: 'jsonb', nullable: true })
   meta!: Record<string, unknown> | null;
 }

@@ -85,7 +85,12 @@ export class AcceptanceGateService {
       repoPath = repo.repoPath;
       record('clone', true, `repo at ${repo.repoPath} (base ${repo.defaultBranch})`);
       sandbox = await this.git.createFeatureSandbox(repo, branch);
-      // Attach the execution environment (no-op in local mode; a container in docker mode).
+      // Attach the execution environment (no-op in local mode; a container in docker mode). This is the
+      // ONE attach path that deliberately does NOT route through WorktreeProvisioner: the gate is a
+      // standalone proof CLI (GateRootModule, no OnboardingModule) running under the synthetic
+      // `orgId:'gate'`, so it has no org/grants and can never hydrate a tenant secret. Wiring the
+      // provisioner here would drag the onboarding store + entities into the gate datasource for zero
+      // secret coverage; if the gate ever needs manifest cache mounts, give it the provisioner then.
       sandbox = await this.sandboxes.attach({ sandbox, orgId: 'gate' });
       record('worktree', true, `${sandbox.worktreePath} on ${branch}${sandbox.containerId ? ' (sandboxed)' : ''}`);
 

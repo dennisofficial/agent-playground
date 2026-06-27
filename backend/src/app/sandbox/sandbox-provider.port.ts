@@ -3,6 +3,19 @@ import type { FeatureSandbox } from '../git';
 /** DI token for the {@link SandboxProvider}. */
 export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');
 
+/**
+ * A cache/state directory to bind-mount into the container under the worktree (e.g. `.cocoindex`,
+ * `node_modules/.cache`). Declared here (not imported from the driver's manifest types) so the sandbox
+ * layer takes no dependency on the driver — the `WorktreeProvisioner` passes already-validated specs.
+ * `per-thread` = its own host dir (no cross-thread write contention); `shared-ro` = one immutable host
+ * dir mounted read-only into every thread. There is deliberately no shared read-write mode.
+ */
+export interface SandboxMount {
+  /** Worktree-relative path (already path-guarded by the provisioner). */
+  path: string;
+  mode: 'per-thread' | 'shared-ro';
+}
+
 /** Input to `attach` — the cut worktree plus the tenant scope (for container naming/labels/isolation). */
 export interface SandboxAttachInput {
   /** The per-feature worktree the driver already cut (LocalGitService.createFeatureSandbox). */
@@ -15,6 +28,17 @@ export interface SandboxAttachInput {
    * gate sandboxes, which stay keyed by branch (one container per branch — unchanged behavior).
    */
   threadId?: string;
+  /**
+   * The repo's uuid (`repos.id`) — carried separately from the slug-valued `sandbox.repoId`. Used by the
+   * provisioner for grant resolution; not needed by `attach` itself but threaded through for parity.
+   */
+  repoDbId?: string;
+  /**
+   * Validated cache mounts to bind under the worktree. The provisioner resolves these from the repo's
+   * `.atlas/worktree.json`; `attach` only applies them (picks host dirs, pre-creates + chowns the
+   * in-worktree mountpoints, and folds them into the recreate fingerprint).
+   */
+  mounts?: SandboxMount[];
 }
 
 /**
@@ -33,7 +57,7 @@ export interface SandboxProvider {
   /**
    * The HOST path of a thread's durable `/context` shared folder (the same dir bind-mounted into the
    * container at `/context`). Outside the worktree, keyed by `threadId`, durable across container
-   * recreate. The brain authors plan/section specs here and reads them back via this path.
+   * recreate. The brain authors plan/track specs here and reads them back via this path.
    */
   contextDirHost(orgId: string, threadId: string): string;
   /**

@@ -1,6 +1,6 @@
 /**
- * The Atlas v2 ONBOARDING layer — per-tenant credentials + the resolver seam (Phase 0), the onboarding
- * service / channel binding (Phase 1), and the onboarding surfaces (Phase 3). Public surface only.
+ * The Atlas v2 ONBOARDING layer — per-tenant credentials + the resolver seam (Step 0), the onboarding
+ * service / channel binding (Step 1), and the onboarding surfaces (Step 3). Public surface only.
  */
 export { OnboardingModule } from './onboarding.module';
 export { CredentialResolver } from './credential-resolver.service';
@@ -20,6 +20,10 @@ export {
   type TenantCredentialPatch,
   type CredentialPresence,
 } from './tenant-credential.store';
+export {
+  WorktreeSecretStore,
+  type WorktreeSecretGrant,
+} from './worktree-secret.store';
 export { encryptSecret, decryptSecret, loadSecretsKey } from './secret-cipher';
 export { engineAuthFromEnv } from './env-engine-auth';
 

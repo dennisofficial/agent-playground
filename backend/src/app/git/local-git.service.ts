@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { gitAuthEnv } from './git-auth';
+import { readForbiddenPaths } from './hydration-sidecar';
 
 const execFileAsync = promisify(execFile);
 
@@ -27,7 +28,7 @@ export interface ProjectRepo {
 /** A cut per-feature sandbox = a git worktree on a feature branch. */
 export interface FeatureSandbox {
   repoId: string;
-  /** The feature branch all the job's phases stack on. */
+  /** The feature branch all the job's steps stack on. */
   branch: string;
   /** Absolute path to the worktree checkout (the engine's cwd, bind-mounted at /workspace in docker mode). */
   worktreePath: string;
@@ -117,6 +118,28 @@ export class LocalGitService {
       maxBuffer: 64 * 1024 * 1024,
     });
     return stdout.trim();
+  }
+
+  /**
+   * Is `relPath` (worktree-relative) ignored by git in `worktreePath`? The worktree hydrator uses this
+   * to refuse rendering a secret/seed to a path that ISN'T gitignored (which would let `git add -A`
+   * sweep it into a PR). Goes through the hardened `git()` wrapper (hooks off). `check-ignore -q` exits
+   * 0 = ignored, 1 = not ignored.
+   */
+  async isIgnored(worktreePath: string, relPath: string): Promise<boolean> {
+    try {
+      await this.git(['check-ignore', '-q', '--', relPath], { cwd: worktreePath });
+      return true;
+    } catch (err) {
+      if ((err as { code?: number }).code === 1) return false;
+      throw err;
+    }
+  }
+
+  /** Worktree-relative names of files currently staged in the index. */
+  async stagedNames(worktreePath: string): Promise<string[]> {
+    const out = await this.git(['diff', '--cached', '--name-only'], { cwd: worktreePath });
+    return out ? out.split('\n').filter(Boolean) : [];
   }
 
   /** Serialize mutating ops against one repo path so concurrent worktree/index ops don't race. */
@@ -240,10 +263,24 @@ export class LocalGitService {
   ): Promise<string | null> {
     return this.withLock(worktreePath, async () => {
       await this.git(['add', '-A'], { cwd: worktreePath });
+      const stagedList = await this.git(['diff', '--cached', '--name-only'], { cwd: worktreePath });
+      const staged = stagedList ? stagedList.split('\n').filter(Boolean) : [];
+      // LEAK-SCAN: never let a hydrated secret/seed file into a commit, even if it was `git add -f`'d
+      // or the in-worktree manifest was edited. The forbidden list comes from the host-only sidecar
+      // (written at hydration time, outside the worktree) — NOT the mutable `.atlas/worktree.json`.
+      const forbidden = readForbiddenPaths(worktreePath);
+      if (forbidden.length) {
+        const leaked = staged.filter((p) => forbidden.includes(p));
+        if (leaked.length) {
+          throw new Error(
+            `Refusing to commit: hydrated secret/seed file(s) are staged — ${leaked.join(', ')}. ` +
+              `These are managed by the worktree hydrator and must never be committed.`,
+          );
+        }
+      }
       if (!(await this.hasChanges(worktreePath))) {
         // `add` may have staged nothing (e.g. only ignored files) — check staged too.
-        const staged = await this.git(['diff', '--cached', '--name-only'], { cwd: worktreePath });
-        if (!staged) return null;
+        if (!staged.length) return null;
       }
       await this.git(
         [

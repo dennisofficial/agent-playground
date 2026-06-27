@@ -6,14 +6,14 @@ import { ENGINE_RUNNER, EngineAuthError, SANDBOX_RESET_NOTICE, type EngineRunner
 import type { EngineAuth, EngineEvent, EngineRunResult, EngineUsage } from '../engine';
 import type { FeatureSandbox } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { PhaseEntity } from '../persistence/entities';
+import { StepEntity } from '../persistence/entities';
 
 /** What one turn needs to run. The sandbox supplies the worktree (the engine cwd) + branch. */
 export interface RunTurnInput {
   /** The job this turn serves. */
   jobId: string;
-  /** The phase this turn builds, if any (its `session_id` is the resume handle + is persisted). */
-  phaseId?: string | null;
+  /** The step this turn builds, if any (its `session_id` is the resume handle + is persisted). */
+  stepId?: string | null;
   /** The per-feature sandbox (worktree) the turn runs inside. */
   sandbox: FeatureSandbox;
   engine: SessionEngine;
@@ -46,11 +46,11 @@ export interface RunTurnResult {
  * Atlas v2's LOCAL turn-runner — the seam tying engine + git together, host-only. It opens or resumes
  * an engine session INSIDE a per-feature worktree, runs ONE turn (plan or execute) by calling the
  * `EngineRunner` directly, and persists the minimal session state (the engine session id onto
- * `phases.session_id`, returned in a `SessionRef`). It deliberately BYPASSES v1's
+ * `steps.session_id`, returned in a `SessionRef`). It deliberately BYPASSES v1's
  * `SessionRunnerService` (which throws off-daemon). Zero v1 imports.
  *
  * Statelessness: a turn is identified by the sandbox + an optional prior session id (resumed from the
- * phase row). The runner holds no in-memory session registry — the source of truth is the phase row
+ * step row). The runner holds no in-memory session registry — the source of truth is the step row
  * (durable) and the returned `SessionRef` (the driver's in-memory pointer), so it survives restarts.
  */
 @Injectable()
@@ -59,16 +59,16 @@ export class TurnRunnerService {
 
   constructor(
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
-    @InjectRepository(PhaseEntity, DB_CONNECTION)
-    private readonly phases: Repository<PhaseEntity>,
+    @InjectRepository(StepEntity, DB_CONNECTION)
+    private readonly steps: Repository<StepEntity>,
   ) {}
 
   async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
-    const { sandbox, phaseId, jobId, engine, mode } = input;
+    const { sandbox, stepId, jobId, engine, mode } = input;
 
-    // Resume handle: the phase row's prior session id (if any) — durable across restarts.
-    const priorSessionId = phaseId
-      ? ((await this.phases.findOne({ where: { id: phaseId } }))?.session_id ?? undefined)
+    // Resume handle: the step row's prior session id (if any) — durable across restarts.
+    const priorSessionId = stepId
+      ? ((await this.steps.findOne({ where: { id: stepId } }))?.session_id ?? undefined)
       : undefined;
 
     // The sandbox key namespaces the engine's isolated home + Codex client cache, so two concurrent
@@ -83,7 +83,7 @@ export class TurnRunnerService {
     const task = needsResetNotice ? `${SANDBOX_RESET_NOTICE}\n\n${input.task}` : input.task;
 
     this.logger.log(
-      `Turn: job=${jobId} phase=${phaseId ?? '-'} engine=${engine} mode=${mode} ` +
+      `Turn: job=${jobId} step=${stepId ?? '-'} engine=${engine} mode=${mode} ` +
         `cwd=${sandbox.worktreePath}${priorSessionId ? ` resume=${priorSessionId}` : ''}`,
     );
 
@@ -91,8 +91,8 @@ export class TurnRunnerService {
     // (process crash, container/host restart, kill) recovers by RESUMING this same session rather than
     // spawning a fresh one. Best-effort write; the turn-end + auth-error persists below are belt-and-braces.
     const onEvent = (e: EngineEvent): void => {
-      if (e.kind === 'session' && phaseId && e.sessionId) {
-        void this.phases.update({ id: phaseId }, { session_id: e.sessionId }).catch(() => undefined);
+      if (e.kind === 'session' && stepId && e.sessionId) {
+        void this.steps.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
       }
       input.onEvent?.(e);
     };
@@ -124,22 +124,22 @@ export class TurnRunnerService {
       });
     } catch (err) {
       // On a 401/auth failure, PERSIST the session id so a re-ping resumes this same session (the
-      // agent's partial work is on disk in the worktree) instead of starting the phase from scratch.
-      if (err instanceof EngineAuthError && phaseId && err.sessionId) {
-        await this.phases.update({ id: phaseId }, { session_id: err.sessionId });
+      // agent's partial work is on disk in the worktree) instead of starting the step from scratch.
+      if (err instanceof EngineAuthError && stepId && err.sessionId) {
+        await this.steps.update({ id: stepId }, { session_id: err.sessionId });
       }
       throw err;
     }
 
     // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread.
-    if (phaseId && result.sessionId) {
-      await this.phases.update({ id: phaseId }, { session_id: result.sessionId });
+    if (stepId && result.sessionId) {
+      await this.steps.update({ id: stepId }, { session_id: result.sessionId });
     }
 
     const session: SessionRef = {
       id: result.sessionId ?? priorSessionId ?? '',
       threadId: jobId,
-      phaseId: phaseId ?? null,
+      stepId: stepId ?? null,
       engine,
       mode,
       branch: sandbox.branch,

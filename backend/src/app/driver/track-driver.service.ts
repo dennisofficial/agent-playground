@@ -9,7 +9,7 @@ import {
   type DecisionClassification,
 } from '../decision-gate';
 import { AutoFixStage } from '../autofix';
-import type { DecisionRecord, Phase, Thread } from '../domain';
+import type { DecisionRecord, Step, Thread } from '../domain';
 import { EngineAuthError, type EngineEvent } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { CHAT_SURFACE, type ChatSurface } from '../surface';
@@ -21,12 +21,12 @@ import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
   DriverStoreService,
-  type DriverSection,
+  type DriverTrack,
   type JobRoute,
 } from './driver-store.service';
 import {
   PLANNER_LLM,
-  type PlannedPhase,
+  type PlannedStep,
   type PlannerLlm,
 } from './planner-llm';
 import { renderPlan } from './render-plan';
@@ -36,22 +36,23 @@ import {
   type ResolvedRepo,
 } from './repo-resolver';
 import { ThreadLifecycleService } from './thread-lifecycle.service';
+import { WorktreeProvisioner } from './worktree-provisioner.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
- * status-FSM. Read it top-to-bottom: `dispatch` kicks the build off async, `runJob` walks the sections
- * in order, `runSection` does plan → review → gate → execute phases → auto-fix → handoff, `executePhases`
- * runs each phase as a fresh engine session on the shared feature branch, and `finishWithPr` runs the
+ * status-FSM. Read it top-to-bottom: `dispatch` kicks the build off async, `runJob` walks the tracks
+ * in order, `runTrack` does plan → review → gate → execute steps → auto-fix → handoff, `executeSteps`
+ * runs each step as a fresh engine session on the shared feature branch, and `finishWithPr` runs the
  * PR-tail auto-fix and opens ONE PR. `resume` re-enters the SAME straight functions on boot, fast-
  * forwarding completed work — no signal racing, no status-enum re-derivation.
  *
- * The "dynamism" (how many sections/phases) is DATA the planner emits; the control flow is a plain
+ * The "dynamism" (how many tracks/steps) is DATA the planner emits; the control flow is a plain
  * `await`-each-step loop. Explicit `status`/`step` rows exist ONLY for resumability — the live path is a
  * straight function. Bound as the real `JOB_DISPATCHER` (overriding W3's logging no-op). Zero v1 imports.
  */
 @Injectable()
-export class SectionDriver implements JobDispatcher {
-  private readonly logger = new Logger(SectionDriver.name);
+export class TrackDriver implements JobDispatcher {
+  private readonly logger = new Logger(TrackDriver.name);
   /** Jobs being driven right now — guards against a double dispatch / a resume racing a live drive. */
   private readonly active = new Set<string>();
 
@@ -73,6 +74,7 @@ export class SectionDriver implements JobDispatcher {
     private readonly threadLifecycle: ThreadLifecycleService,
     private readonly ship: BuildShipService,
     private readonly awareness: PipelineAwarenessStore,
+    private readonly provisioner: WorktreeProvisioner,
   ) {}
 
   /**
@@ -86,44 +88,44 @@ export class SectionDriver implements JobDispatcher {
       .catch((err) => this.logger.debug(`milestone append failed (continuing): ${err}`));
   }
 
-  /** Sanity ceiling on a job's sections — a malformed plan can't drive an unbounded build. */
-  private get maxSections(): number {
+  /** Sanity ceiling on a job's tracks — a malformed plan can't drive an unbounded build. */
+  private get maxTracks(): number {
     return this.env.get('MAX_SECTIONS') ?? 12;
   }
 
-  /** Sanity ceiling on a section's phases — a longer planner output is truncated to this. */
-  private get maxPhasesPerSection(): number {
+  /** Sanity ceiling on a track's steps — a longer planner output is truncated to this. */
+  private get maxStepsPerTrack(): number {
     return this.env.get('MAX_PHASES_PER_SECTION') ?? 8;
   }
 
-  /** Hard cap on how many phases a single execution BATCH may contain — the deterministic envelope
-   *  around the LLM batcher so a group can never swallow a whole large section (keeps the fresh-context
+  /** Hard cap on how many steps a single execution BATCH may contain — the deterministic envelope
+   *  around the LLM batcher so a group can never swallow a whole large track (keeps the fresh-context
    *  safety reachable). Default 5. */
-  private get maxPhasesPerBatch(): number {
+  private get maxStepsPerBatch(): number {
     const raw = Number(this.env.get('MAX_PHASES_PER_BATCH'));
     return Number.isFinite(raw) && raw > 0 ? raw : 5;
   }
 
-  /** Per-phase wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m. */
+  /** Per-step wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m. */
   private get phaseTimeoutMs(): number {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     return Number.isFinite(raw) && raw > 0 ? raw : 20 * 60_000;
   }
 
-  /** Per-job wall-clock budget (checked at section boundaries) — backstop against an unbounded build. Default 60m. */
+  /** Per-job wall-clock budget (checked at track boundaries) — backstop against an unbounded build. Default 60m. */
   private get jobTimeoutMs(): number {
     const raw = Number(this.env.get('JOB_TIMEOUT_MS'));
     return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
   }
 
   /** How long a mid-build PARK waits for the human before it gives up (fail + relay). Default 60m. The
-   *  job/phase timeouts don't cover a park (it's between phases), so this is its dedicated guard. */
+   *  job/step timeouts don't cover a park (it's between steps), so this is its dedicated guard. */
   private get parkTimeoutMs(): number {
     const raw = Number(this.env.get('PARK_TIMEOUT_MS'));
     return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
   }
 
-  /** A repo-specific verify command (e.g. `pnpm typecheck`); when set, a phase must pass it before it
+  /** A repo-specific verify command (e.g. `pnpm typecheck`); when set, a step must pass it before it
    *  commits + is marked done. Unset → rely on the engine's own in-turn verification (prompt-enforced). */
   private get verifyCmd(): string | undefined {
     const raw = this.env.get('VERIFY_CMD');
@@ -148,8 +150,8 @@ export class SectionDriver implements JobDispatcher {
 
   /**
    * BOOT RECONCILIATION (legible, not signal-racing). For every job still `running`, re-enter the SAME
-   * straight drive: `runJob` fast-forwards sections/phases already `done` and continues at the first
-   * unfinished one. An interrupted `executing` phase is reopened (re-run) by `executePhases`. No web of
+   * straight drive: `runJob` fast-forwards tracks/steps already `done` and continues at the first
+   * unfinished one. An interrupted `executing` step is reopened (re-run) by `executeSteps`. No web of
    * signals — just "read the persisted cursor, continue the function".
    */
   async resume(): Promise<void> {
@@ -168,7 +170,7 @@ export class SectionDriver implements JobDispatcher {
   /**
    * Resume a job PAUSED on a credential/401 halt (the `/test/resume` ping / a re-engage once creds are
    * fixed). Flips it back to `running` and re-drives: `runJob` fast-forwards completed work and the
-   * unfinished phase resumes its SAME engine session (its `session_id` was persisted at the halt) rather
+   * unfinished step resumes its SAME engine session (its `session_id` was persisted at the halt) rather
    * than restarting. A no-op if the job isn't paused. NOT auto-called on boot — a paused job would just
    * 401 again, so it waits for an explicit ping.
    */
@@ -206,7 +208,7 @@ export class SectionDriver implements JobDispatcher {
       await this.runJob(jobId);
     } catch (err) {
       if (err instanceof EngineAuthError) {
-        // A credential/401 halt — PAUSE (don't fail): the unfinished phase's session_id is persisted, so
+        // A credential/401 halt — PAUSE (don't fail): the unfinished step's session_id is persisted, so
         // a ping (`resumePaused`) continues the SAME session once creds are fixed. Re-driving now would
         // just 401 again, so we wait for the human.
         this.logger.warn(
@@ -256,10 +258,10 @@ export class SectionDriver implements JobDispatcher {
   }
 
   /**
-   * Walk a job's sections in order. The whole build flow lives here, readable top-to-bottom:
-   *   load the job + record + route → ensure the feature sandbox → for each section: runSection (which
-   *   carries the prior handoff forward) → after all sections: finishWithPr (PR-tail auto-fix + open PR).
-   * Fast-forwards `done` sections (resume): a finished section just yields its persisted handoff_out.
+   * Walk a job's tracks in order. The whole build flow lives here, readable top-to-bottom:
+   *   load the job + record + route → ensure the feature sandbox → for each track: runTrack (which
+   *   carries the prior handoff forward) → after all tracks: finishWithPr (PR-tail auto-fix + open PR).
+   * Fast-forwards `done` tracks (resume): a finished track just yields its persisted handoff_out.
    */
   private async runJob(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId);
@@ -278,43 +280,43 @@ export class SectionDriver implements JobDispatcher {
       `job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`,
     );
 
-    const allSections = await this.store.sectionsForJob(jobId);
-    const sections = allSections.slice(0, this.maxSections);
-    if (allSections.length > sections.length) {
+    const allSections = await this.store.tracksForJob(jobId);
+    const tracks = allSections.slice(0, this.maxTracks);
+    if (allSections.length > tracks.length) {
       this.logger.warn(
-        `job=${jobId} has ${allSections.length} sections > MAX_SECTIONS (${this.maxSections}) — capping`,
+        `job=${jobId} has ${allSections.length} tracks > MAX_SECTIONS (${this.maxTracks}) — capping`,
       );
     }
-    const pending = sections.filter((s) => s.status !== 'done').length;
+    const pending = tracks.filter((s) => s.status !== 'done').length;
     if (pending > 0) {
       await this.post(
         route,
-        `:rocket: Starting the build — ${pending} section(s) on \`${sandbox.branch}\`.`,
+        `:rocket: Starting the build — ${pending} track(s) on \`${sandbox.branch}\`.`,
       );
     }
 
-    // Per-job wall-clock backstop (issue #3) — checked at each section boundary; the per-phase timeout
-    // guards within a section. A breach aborts + relays (caught in drive()).
+    // Per-job wall-clock backstop (issue #3) — checked at each track boundary; the per-step timeout
+    // guards within a track. A breach aborts + relays (caught in drive()).
     const deadline = Date.now() + this.jobTimeoutMs;
     let handoff: string | null = null;
-    for (const section of sections) {
-      if (section.status === 'done') {
-        // Already built (a resume) — carry its persisted handoff to the next section, don't re-run.
-        handoff = section.handoffOut ?? handoff;
+    for (const track of tracks) {
+      if (track.status === 'done') {
+        // Already built (a resume) — carry its persisted handoff to the next track, don't re-run.
+        handoff = track.handoffOut ?? handoff;
         continue;
       }
       if (Date.now() > deadline) {
         throw new Error(
-          `job exceeded JOB_TIMEOUT_MS (${this.jobTimeoutMs}ms) before section "${section.brief}"`,
+          `job exceeded JOB_TIMEOUT_MS (${this.jobTimeoutMs}ms) before track "${track.brief}"`,
         );
       }
-      handoff = await this.runSection(
+      handoff = await this.runTrack(
         job,
         record,
         route,
         repo,
         sandbox,
-        section,
+        track,
         handoff,
       );
     }
@@ -323,52 +325,52 @@ export class SectionDriver implements JobDispatcher {
   }
 
   /**
-   * Run ONE section, returning its handoff for the next. The per-section flow, in order:
-   *   a. plan just-in-time (an engine plan turn → phases), or resume the locked plan;
+   * Run ONE track, returning its handoff for the next. The per-track flow, in order:
+   *   a. plan just-in-time (an engine plan turn → steps), or resume the locked plan;
    *   b. one Codex-style review → revise pass (clean single loop);
    *   c. the decision gate — classify notable decisions; an uncovered always-ask PARKS & awaits a human;
    *   d. post the plan for visibility (non-blocking);
-   *   e. execute the phases (fresh session each) on the shared branch;
-   *   f. per-section auto-fix over the section's diff;
-   *   g. summarize the handoff for the next section.
+   *   e. execute the steps (fresh session each) on the shared branch;
+   *   f. per-track auto-fix over the track's diff;
+   *   g. summarize the handoff for the next track.
    */
-  private async runSection(
+  private async runTrack(
     job: Thread,
     record: DecisionRecord | null,
     route: JobRoute,
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
-    section: DriverSection,
+    track: DriverTrack,
     handoffIn: string | null,
   ): Promise<string | null> {
-    this.logger.log(`section ${section.ordinal} "${section.brief}" — planning`);
+    this.logger.log(`track ${track.ordinal} "${track.brief}" — planning`);
     await this.post(
       route,
-      `:hammer_and_wrench: Planning section — *${section.brief}*`,
+      `:hammer_and_wrench: Planning track — *${track.brief}*`,
     );
 
-    // a. PLAN (just-in-time) — or reuse the locked plan on a resume (phases already exist).
-    const { phases, planned } = await this.planSection(
+    // a. PLAN (just-in-time) — or reuse the locked plan on a resume (steps already exist).
+    const { steps, planned } = await this.planTrack(
       job,
       record,
       sandbox,
-      section,
+      track,
       handoffIn,
     );
 
     // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
-    //    (The locked phase ROWS are the source of truth; review only reshapes a fresh plan's prose.)
-    if (planned) await this.reviewPlan(record, section, handoffIn, planned, job.orgId);
+    //    (The locked step ROWS are the source of truth; review only reshapes a fresh plan's prose.)
+    if (planned) await this.reviewPlan(record, track, handoffIn, planned, job.orgId);
 
-    // The plan view the gate + visibility read — derived from the locked phase rows (resume-safe).
-    const planView = phases.map(asPlannedPhase);
+    // The plan view the gate + visibility read — derived from the locked step rows (resume-safe).
+    const planView = steps.map(asPlannedStep);
 
     // c. GATE — classify the plan's notable decisions; an uncovered always-ask parks & awaits a human.
     const classifications = await this.gateSection(
       job,
       route,
       record,
-      section,
+      track,
       planView,
     );
 
@@ -377,33 +379,33 @@ export class SectionDriver implements JobDispatcher {
       channel: route.channel ?? '',
       ...(route.threadTs ? { threadTs: route.threadTs } : {}),
       ...(route.orgId ? { orgId: route.orgId } : {}),
-      title: section.brief,
+      title: track.brief,
       plan: renderPlan(planView),
       decisions: classifications,
     });
 
-    // e. EXECUTE — run each phase as a fresh session on the shared feature branch.
+    // e. EXECUTE — run each step as a fresh session on the shared feature branch.
     const sectionStartSha = await this.git
       .headSha(sandbox.worktreePath)
       .catch(() => undefined);
-    await this.store.setSectionStatus(section.id, 'executing');
-    const reports = await this.executePhases(
+    await this.store.setTrackStatus(track.id, 'executing');
+    const reports = await this.executeSteps(
       job,
       route,
       sandbox,
-      section,
+      track,
       record,
     );
 
-    // f. AUTO-FIX — fan-out review → fix over this section's diff.
-    await this.store.setSectionStatus(section.id, 'auto_fixing');
+    // f. AUTO-FIX — fan-out review → fix over this track's diff.
+    await this.store.setTrackStatus(track.id, 'auto_fixing');
     await this.autofix
-      .autofixSection({
+      .autofixTrack({
         worktreePath: sandbox.worktreePath,
         sandboxKey: sandboxKey(sandbox),
         ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
-        intent: `${record?.overview ?? ''}\n\nSection: ${section.brief}`.trim(),
-        label: section.brief,
+        intent: `${record?.overview ?? ''}\n\nSection: ${track.brief}`.trim(),
+        label: track.brief,
         ...(sandbox.containerId
           ? {
               containerId: sandbox.containerId,
@@ -412,62 +414,62 @@ export class SectionDriver implements JobDispatcher {
           : {}),
       })
       .catch((err) =>
-        this.logger.warn(`section auto-fix failed (continuing): ${err}`),
+        this.logger.warn(`track auto-fix failed (continuing): ${err}`),
       );
-    // Passive milestone: auto-fix is a transient stage (section status is overwritten to `done` next), so
+    // Passive milestone: auto-fix is a transient stage (track status is overwritten to `done` next), so
     // the net-state snapshot can't reconstruct that it ran — record it explicitly for the brain.
     await this.recordMilestone(
       job.id,
-      `section:${section.id}:autofix`,
-      `Auto-fix pass applied over the diff for section "${section.brief}".`,
+      `track:${track.id}:autofix`,
+      `Auto-fix pass applied over the diff for track "${track.brief}".`,
     );
 
-    // g. HANDOFF — summarize what this section produced for the next.
-    const handoffOut = await this.summarizeHandoff(section, phases, reports, job.orgId);
-    await this.store.setSectionHandoffOut(section.id, handoffOut);
-    await this.store.setSectionStatus(section.id, 'done');
-    this.logger.log(`section ${section.ordinal} done`);
+    // g. HANDOFF — summarize what this track produced for the next.
+    const handoffOut = await this.summarizeHandoff(track, steps, reports, job.orgId);
+    await this.store.setTrackHandoffOut(track.id, handoffOut);
+    await this.store.setTrackStatus(track.id, 'done');
+    this.logger.log(`track ${track.ordinal} done`);
     await this.recordMilestone(
       job.id,
-      `section:${section.id}:done`,
-      `Section "${section.brief}" finished building.`,
+      `track:${track.id}:done`,
+      `Track "${track.brief}" finished building.`,
     );
     await this.post(
       route,
-      `:white_check_mark: Section done — *${section.brief}*`,
+      `:white_check_mark: Track done — *${track.brief}*`,
     );
     return handoffOut;
   }
 
   /**
-   * Produce (or resume) the section's locked phases. On a fresh run: an engine PLAN turn in the sandbox
-   * grounded in the record + handoff → the planner LLM shapes the phase list (fallback: a single phase
-   * whose brief is the section brief) → persisted. On a resume: the phases already exist, so reuse them
+   * Produce (or resume) the track's locked steps. On a fresh run: an engine PLAN turn in the sandbox
+   * grounded in the record + handoff → the planner LLM shapes the step list (fallback: a single step
+   * whose brief is the track brief) → persisted. On a resume: the steps already exist, so reuse them
    * (returns `planned: undefined` to signal "no re-review needed").
    */
-  private async planSection(
+  private async planTrack(
     job: Thread,
     record: DecisionRecord | null,
     sandbox: FeatureSandbox,
-    section: DriverSection,
+    track: DriverTrack,
     handoffIn: string | null,
-  ): Promise<{ phases: Phase[]; planned: PlannedPhase[] | null }> {
-    const existing = await this.store.phasesForSection(section.id);
+  ): Promise<{ steps: Step[]; planned: PlannedStep[] | null }> {
+    const existing = await this.store.stepsForTrack(track.id);
     if (existing.length > 0) {
       this.logger.log(
-        `section ${section.ordinal}: ${existing.length} phase(s) already locked — resuming`,
+        `track ${track.ordinal}: ${existing.length} step(s) already locked — resuming`,
       );
-      return { phases: existing, planned: null };
+      return { steps: existing, planned: null };
     }
 
-    await this.store.setSectionStatus(section.id, 'planning');
+    await this.store.setTrackStatus(track.id, 'planning');
 
     // An engine PLAN turn explores the worktree read-only; its plan text grounds the structured planner.
     // The full plan (plan.md, decisions, diagrams) lives in /context/specs — the plan turn reads it there.
     const planInput = {
       overview: record?.overview ?? '',
       decisions: record?.decisions ?? [],
-      brief: section.brief,
+      brief: track.brief,
       handoffIn,
       orgId: job.orgId,
     };
@@ -480,55 +482,55 @@ export class SectionDriver implements JobDispatcher {
         sandbox,
         engine: 'claude',
         mode: 'plan',
-        systemPrompt: SECTION_PLAN_SYSTEM,
+        systemPrompt: TRACK_PLAN_SYSTEM,
         task: renderPlanTask(planInput),
         auth: await this.creds.engineAuth(job.orgId, 'claude'),
       },
-      `section ${section.ordinal} plan turn`,
+      `track ${track.ordinal} plan turn`,
     ).catch((err) => {
       this.logger.warn(
-        `section ${section.ordinal} plan turn failed (continuing): ${err}`,
+        `track ${track.ordinal} plan turn failed (continuing): ${err}`,
       );
       return undefined;
     });
 
     const planned = (
-      (await this.planner.planSection(planInput).catch(() => undefined)) ??
-      fallbackPhases(section.brief, planTurn?.planText ?? planTurn?.report)
-    ).slice(0, this.maxPhasesPerSection);
+      (await this.planner.planTrack(planInput).catch(() => undefined)) ??
+      fallbackSteps(track.brief, planTurn?.planText ?? planTurn?.report)
+    ).slice(0, this.maxStepsPerTrack);
 
-    await this.store.setSectionPlan(section.id, renderPlan(planned), handoffIn);
-    const phases = await this.store.lockPhases(section, planned);
-    return { phases, planned };
+    await this.store.setTrackPlan(track.id, renderPlan(planned), handoffIn);
+    const steps = await this.store.lockSteps(track, planned);
+    return { steps, planned };
   }
 
   /**
    * ONE Codex-style review → revise pass over the freshly-drafted plan (a clean single loop). When the
-   * reviewer returns a revision it RE-PERSISTS the section's plan prose; the locked phase rows stay the
+   * reviewer returns a revision it RE-PERSISTS the track's plan prose; the locked step rows stay the
    * execution source of truth (they're already gap-numbered + resumable). Best-effort — a failed review
    * leaves the original plan.
    */
   private async reviewPlan(
     record: DecisionRecord | null,
-    section: DriverSection,
+    track: DriverTrack,
     handoffIn: string | null,
-    draft: PlannedPhase[],
+    draft: PlannedStep[],
     orgId?: string,
   ): Promise<void> {
-    await this.store.setSectionStatus(section.id, 'reviewing');
+    await this.store.setTrackStatus(track.id, 'reviewing');
     const revised = await this.planner
       .reviewPlan({
         overview: record?.overview ?? '',
         decisions: record?.decisions ?? [],
-        brief: section.brief,
+        brief: track.brief,
         handoffIn,
         draft,
         ...(orgId ? { orgId } : {}),
       })
       .catch(() => undefined);
     if (revised)
-      await this.store.setSectionPlan(
-        section.id,
+      await this.store.setTrackPlan(
+        track.id,
         renderPlan(revised),
         handoffIn,
       );
@@ -536,25 +538,25 @@ export class SectionDriver implements JobDispatcher {
 
   /**
    * The DECISION GATE (W5). Mine the plan for notable decisions, classify each against the record. An
-   * uncovered always-ask (`verdict === 'ask'`) PARKS the section: post the question in-thread and AWAIT
-   * the human (the section suspends; resumable across restart). Covered/proceed continue. Returns the
+   * uncovered always-ask (`verdict === 'ask'`) PARKS the track: post the question in-thread and AWAIT
+   * the human (the track suspends; resumable across restart). Covered/proceed continue. Returns the
    * non-ask classifications for the visibility post.
    */
   private async gateSection(
     job: Thread,
     route: JobRoute,
     record: DecisionRecord | null,
-    section: DriverSection,
-    planned: PlannedPhase[],
+    track: DriverTrack,
+    planned: PlannedStep[],
   ): Promise<DecisionClassification[]> {
     const decisions =
       (await this.planner
         .extractDecisions({
           overview: record?.overview ?? '',
           decisions: record?.decisions ?? [],
-          brief: section.brief,
-          handoffIn: section.handoffIn,
-          phases: planned,
+          brief: track.brief,
+          handoffIn: track.handoffIn,
+          steps: planned,
           orgId: job.orgId,
         })
         .catch(() => undefined)) ?? [];
@@ -567,9 +569,9 @@ export class SectionDriver implements JobDispatcher {
         job.orgId,
       );
       if (c.verdict === 'ask') {
-        await this.store.setSectionStatus(section.id, 'awaiting_approval');
+        await this.store.setTrackStatus(track.id, 'awaiting_approval');
         this.logger.log(
-          `section ${section.ordinal} parks on: ${proposed.description}`,
+          `track ${track.ordinal} parks on: ${proposed.description}`,
         );
         const handle = await this.park.ask(
           {
@@ -577,24 +579,24 @@ export class SectionDriver implements JobDispatcher {
             ...(route.threadTs ? { threadTs: route.threadTs } : {}),
             ...(route.orgId ? { orgId: route.orgId } : {}),
           },
-          parkQuestion(section.brief, proposed.description, c.reason),
+          parkQuestion(track.brief, proposed.description, c.reason),
         );
-        // AWAIT the human — the section is suspended here, the process is not. Bounded by a wall-clock
-        // budget so an unanswered park can't hang the build forever (the job/phase timeouts don't cover a
-        // park, which is between phases): on expiry it throws → the job fails + relays (issue #2/#3).
+        // AWAIT the human — the track is suspended here, the process is not. Bounded by a wall-clock
+        // budget so an unanswered park can't hang the build forever (the job/step timeouts don't cover a
+        // park, which is between steps): on expiry it throws → the job fails + relays (issue #2/#3).
         const answer = await this.awaitAnswer(
           handle.answer,
           proposed.description,
         );
         this.logger.log(
-          `section ${section.ordinal} unparked: ${answer.text.slice(0, 80)}`,
+          `track ${track.ordinal} unparked: ${answer.text.slice(0, 80)}`,
         );
         // Passive milestone: a guard parked on a decision and the human answered it — a transient moment
-        // the net-state snapshot can't reconstruct (the section status moves on). Deduped by the decision.
+        // the net-state snapshot can't reconstruct (the track status moves on). Deduped by the decision.
         await this.recordMilestone(
           job.id,
-          `section:${section.id}:gate:${proposed.description.slice(0, 60)}`,
-          `While planning section "${section.brief}" a decision was raised and the operator answered it: ${proposed.description}`,
+          `track:${track.id}:gate:${proposed.description.slice(0, 60)}`,
+          `While planning track "${track.brief}" a decision was raised and the operator answered it: ${proposed.description}`,
         );
         // The human answered → treat the always-ask as now-settled and continue (it was visible + ruled).
       } else {
@@ -659,53 +661,53 @@ export class SectionDriver implements JobDispatcher {
   }
 
   /**
-   * Execute a section's phases. A fresh-context step packs the ordered phases into execution BATCHES —
-   * one engine session per batch (fewer sessions than one-per-phase, but bounded by `maxPhasesPerBatch`
-   * so a batch can't swallow a large section and lose the small-context safety). The grouping is
-   * assigned + PERSISTED (`batch_ordinal`) the first time the section runs and reused verbatim on
+   * Execute a track's steps. A fresh-context step packs the ordered steps into execution BATCHES —
+   * one engine session per batch (fewer sessions than one-per-step, but bounded by `maxStepsPerBatch`
+   * so a batch can't swallow a large track and lose the small-context safety). The grouping is
+   * assigned + PERSISTED (`batch_ordinal`) the first time the track runs and reused verbatim on
    * resume, so a restarted/halted batch re-groups identically (the resume cursor keys off the batch's
-   * anchor-phase `session_id`). Each batch: fresh session in the SAME worktree → verify → ONE commit →
-   * mark every phase in it done. Returns one report per batch.
+   * anchor-step `session_id`). Each batch: fresh session in the SAME worktree → verify → ONE commit →
+   * mark every step in it done. Returns one report per batch.
    */
-  private async executePhases(
+  private async executeSteps(
     job: Thread,
     route: JobRoute,
     sandbox: FeatureSandbox,
-    section: DriverSection,
+    track: DriverTrack,
     record: DecisionRecord | null,
   ): Promise<string[]> {
-    let phases = await this.store.phasesForSection(section.id);
+    let steps = await this.store.stepsForTrack(track.id);
 
-    // First execute of this section (a not-yet-run phase is still un-batched): ask the planner how to
-    // pack the ordered phases, run it through the deterministic guardrail, and PERSIST the grouping over
-    // ALL phases. On resume every phase already has a batch_ordinal → skip the LLM and re-group from the
+    // First execute of this track (a not-yet-run step is still un-batched): ask the planner how to
+    // pack the ordered steps, run it through the deterministic guardrail, and PERSIST the grouping over
+    // ALL steps. On resume every step already has a batch_ordinal → skip the LLM and re-group from the
     // stored values (stable membership — the in-flight engine session keeps the same task on restart).
-    if (phases.some((p) => p.status !== 'done' && p.batchOrdinal == null)) {
-      const groups = this.groupPhases(
-        phases,
+    if (steps.some((p) => p.status !== 'done' && p.batchOrdinal == null)) {
+      const groups = this.groupSteps(
+        steps,
         await this.planner
-          .batchPhases({
-            phases: phases.map(asPlannedPhase),
+          .batchSteps({
+            steps: steps.map(asPlannedStep),
             overview: record?.overview ?? '',
-            brief: section.brief,
+            brief: track.brief,
             orgId: job.orgId,
           })
           .catch(() => undefined),
       );
       const assignments: Array<[string, number]> = [];
-      groups.forEach((g, bi) => g.forEach((idx) => assignments.push([phases[idx].id, bi + 1])));
+      groups.forEach((g, bi) => g.forEach((idx) => assignments.push([steps[idx].id, bi + 1])));
       await this.store.setBatchOrdinals(assignments);
       this.logger.log(
-        `section ${section.ordinal}: ${phases.length} phase(s) packed into ${groups.length} batch(es)`,
+        `track ${track.ordinal}: ${steps.length} step(s) packed into ${groups.length} batch(es)`,
       );
-      phases = await this.store.phasesForSection(section.id);
+      steps = await this.store.stepsForTrack(track.id);
     }
 
-    // Group the NOT-done phases by their persisted batch_ordinal (done phases fast-forward on resume).
-    const byBatch = new Map<number, Phase[]>();
-    for (const p of phases) {
+    // Group the NOT-done steps by their persisted batch_ordinal (done steps fast-forward on resume).
+    const byBatch = new Map<number, Step[]>();
+    for (const p of steps) {
       if (p.status === 'done') {
-        this.logger.log(`phase ${p.ordinal} already done — fast-forward`);
+        this.logger.log(`step ${p.ordinal} already done — fast-forward`);
         continue;
       }
       const key = p.batchOrdinal ?? p.ordinal;
@@ -716,20 +718,20 @@ export class SectionDriver implements JobDispatcher {
 
     const reports: string[] = [];
     for (const key of [...byBatch.keys()].sort((a, b) => a - b)) {
-      reports.push(await this.runBatch(job, route, sandbox, section, record, byBatch.get(key)!));
+      reports.push(await this.runBatch(job, route, sandbox, track, record, byBatch.get(key)!));
     }
     return reports;
   }
 
   /**
-   * Validate the planner's phase partition and turn it into consecutive index groups, then CAP each
-   * group at `maxPhasesPerBatch`. An invalid/absent partition falls back to one-phase-per-group (the
+   * Validate the planner's step partition and turn it into consecutive index groups, then CAP each
+   * group at `maxStepsPerBatch`. An invalid/absent partition falls back to one-step-per-group (the
    * safe default — identical to the pre-batching behavior). The result always covers [0, n) in order.
    */
-  private groupPhases(phases: Phase[], llmGroups: number[][] | undefined): number[][] {
-    const n = phases.length;
-    const base = isConsecutivePartition(llmGroups, n) ? llmGroups! : phases.map((_, i) => [i]);
-    const cap = this.maxPhasesPerBatch;
+  private groupSteps(steps: Step[], llmGroups: number[][] | undefined): number[][] {
+    const n = steps.length;
+    const base = isConsecutivePartition(llmGroups, n) ? llmGroups! : steps.map((_, i) => [i]);
+    const cap = this.maxStepsPerBatch;
     const out: number[][] = [];
     for (const g of base) {
       for (let i = 0; i < g.length; i += cap) out.push(g.slice(i, i + cap));
@@ -738,8 +740,8 @@ export class SectionDriver implements JobDispatcher {
   }
 
   /**
-   * Run ONE batch (1+ ordered phases) as a SINGLE fresh execute turn → verify → ONE commit → mark every
-   * phase in it done. The batch's FIRST phase is the resume anchor (its id carries the engine session +
+   * Run ONE batch (1+ ordered steps) as a SINGLE fresh execute turn → verify → ONE commit → mark every
+   * step in it done. The batch's FIRST step is the resume anchor (its id carries the engine session +
    * the cursor the runner resumes from). A per-batch wall-clock timeout aborts a runaway turn; the
    * optional verify command gates the commit so broken output never advances the cursor (issues #3, #4).
    */
@@ -747,37 +749,37 @@ export class SectionDriver implements JobDispatcher {
     job: Thread,
     route: JobRoute,
     sandbox: FeatureSandbox,
-    section: DriverSection,
+    track: DriverTrack,
     record: DecisionRecord | null,
-    phases: Phase[],
+    steps: Step[],
   ): Promise<string> {
-    const anchor = phases[0];
+    const anchor = steps[0];
     const label =
-      phases.length === 1
-        ? anchor.title ?? anchor.brief ?? `phase ${anchor.ordinal}`
-        : `${phases.length} phases (${phases.map((p) => p.title ?? `#${p.ordinal}`).join(', ')})`;
+      steps.length === 1
+        ? anchor.title ?? anchor.brief ?? `step ${anchor.ordinal}`
+        : `${steps.length} steps (${steps.map((p) => p.title ?? `#${p.ordinal}`).join(', ')})`;
     this.logger.log(
-      `section ${section.ordinal} batch [${phases.map((p) => p.ordinal).join(',')}] — building`,
+      `track ${track.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — building`,
     );
-    for (const p of phases) await this.store.setPhaseState(p.id, 'build', 'building');
-    await this.post(route, `:gear: ${section.brief} — building: ${label}`);
+    for (const p of steps) await this.store.setStepState(p.id, 'build', 'building');
+    await this.post(route, `:gear: ${track.brief} — building: ${label}`);
 
     // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
     // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute
-    // to the anchor phase (a batch is one turn; minor observability coarsening for the phase transcript).
+    // to the anchor step (a batch is one turn; minor observability coarsening for the step transcript).
     const result = await this.runTurnBounded(
       {
         jobId: job.id,
-        phaseId: anchor.id,
+        stepId: anchor.id,
         sandbox,
         engine: 'claude',
         mode: 'execute',
-        systemPrompt: phases.length === 1 ? PHASE_EXECUTE_SYSTEM : BATCH_EXECUTE_SYSTEM,
-        task: renderBatchTask(record, section, phases),
+        systemPrompt: steps.length === 1 ? STEP_EXECUTE_SYSTEM : BATCH_EXECUTE_SYSTEM,
+        task: renderBatchTask(record, track, steps),
         auth: await this.creds.engineAuth(job.orgId, 'claude'),
         onEvent: (e) => {
           if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
-          void this.postPhaseEvent(route, anchor.id, section.ordinal, anchor.ordinal, e);
+          void this.postPhaseEvent(route, anchor.id, track.ordinal, anchor.ordinal, e);
         },
       },
       `batch "${label}"`,
@@ -799,15 +801,15 @@ export class SectionDriver implements JobDispatcher {
     // ONE commit for the whole batch onto the shared feature branch.
     const sha = await this.git.commitAll(
       sandbox.worktreePath,
-      `${section.brief} — ${phases.map((p) => p.title ?? `phase ${p.ordinal}`).join(' + ')}`,
+      `${track.brief} — ${steps.map((p) => p.title ?? `step ${p.ordinal}`).join(' + ')}`,
     );
     this.logger.log(`batch committed ${sha ? sha.slice(0, 8) : '(nothing)'}`);
 
-    for (const p of phases) await this.store.setPhaseState(p.id, 'done', 'done');
+    for (const p of steps) await this.store.setStepState(p.id, 'done', 'done');
     return result.report;
   }
 
-  /** Run VERIFY_CMD in the worktree (when set); a non-zero exit fails the phase (caught → relayed).
+  /** Run VERIFY_CMD in the worktree (when set); a non-zero exit fails the step (caught → relayed).
    *  Repo-agnostic by being opt-in: the operator points it at their own typecheck/test/build. */
   private async verifyPhase(
     route: JobRoute,
@@ -816,22 +818,22 @@ export class SectionDriver implements JobDispatcher {
   ): Promise<void> {
     const cmd = this.verifyCmd;
     if (!cmd) return;
-    this.logger.log(`phase "${label}" — verifying: ${cmd}`);
+    this.logger.log(`step "${label}" — verifying: ${cmd}`);
     try {
       await execShell(cmd, sandbox.worktreePath, this.phaseTimeoutMs);
     } catch (err) {
       await this.post(
         route,
-        `:warning: Verification failed after *${label}* (\`${cmd}\`) — failing the phase.`,
+        `:warning: Verification failed after *${label}* (\`${cmd}\`) — failing the step.`,
       );
       throw new Error(
-        `verify command "${cmd}" failed after phase "${label}": ${shortReason(err)}`,
+        `verify command "${cmd}" failed after step "${label}": ${shortReason(err)}`,
       );
     }
   }
 
   /**
-   * PR-TAIL. After all sections: one auto-fix pass over the WHOLE accumulated diff, push the branch,
+   * PR-TAIL. After all tracks: one auto-fix pass over the WHOLE accumulated diff, push the branch,
    * open ONE PR per feature (idempotent — a re-run finds the existing PR), record the url, mark the job
    * done, and post "PR ready" in-thread. Sections stacked on one branch ⇒ one PR.
    */
@@ -842,7 +844,7 @@ export class SectionDriver implements JobDispatcher {
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
   ): Promise<void> {
-    this.logger.log(`job=${job.id} all sections done — shipping`);
+    this.logger.log(`job=${job.id} all tracks done — shipping`);
     await this.ship.ship({
       job,
       record,
@@ -888,23 +890,31 @@ export class SectionDriver implements JobDispatcher {
     const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
     const sandbox = await this.git.createFeatureSandbox(repo.projectRepo, branch);
     if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
-    return this.sandboxes.attach({ sandbox, orgId: job.orgId });
+    // Route through the provisioner so this non-thread path gets the same hydration + mounts. No sandbox
+    // row here, so re-hydrate every time (forceHydrate). repoDbId = the thread's repo uuid (for grants).
+    const { sandbox: attached } = await this.provisioner.provisionAndAttach({
+      sandbox,
+      orgId: job.orgId,
+      repoDbId: job.repoId,
+      forceHydrate: true,
+    });
+    return attached;
   }
 
-  /** Summarize a section's handoff (LLM, with a terse rule-based fallback). */
+  /** Summarize a track's handoff (LLM, with a terse rule-based fallback). */
   private async summarizeHandoff(
-    section: DriverSection,
-    phases: Phase[],
+    track: DriverTrack,
+    steps: Step[],
     reports: string[],
     orgId?: string,
   ): Promise<string> {
-    const planned = phases.map(asPlannedPhase);
+    const planned = steps.map(asPlannedStep);
     const llm = await this.planner
-      .handoff({ brief: section.brief, phases: planned, reports, ...(orgId ? { orgId } : {}) })
+      .handoff({ brief: track.brief, steps: planned, reports, ...(orgId ? { orgId } : {}) })
       .catch(() => undefined);
     if (llm) return llm;
-    const built = phases.map((p) => p.title ?? p.brief).join('; ');
-    return `Section "${section.brief}" complete. Built: ${built || '(see commits)'}.`;
+    const built = steps.map((p) => p.title ?? p.brief).join('; ');
+    return `Track "${track.brief}" complete. Built: ${built || '(see commits)'}.`;
   }
 
   /** Post into the job's thread (best-effort — visibility never breaks the pipeline). */
@@ -921,14 +931,14 @@ export class SectionDriver implements JobDispatcher {
   }
 
   /**
-   * R5: relay a per-phase engine event to the web surface (SSE) so the UI can render the live
-   * phase transcript. Only text/tool/result events are relayed (session events carry no useful text).
+   * R5: relay a per-step engine event to the web surface (SSE) so the UI can render the live
+   * step transcript. Only text/tool/result events are relayed (session events carry no useful text).
    * Posts with a `meta.kind='build_event'` marker so SSE subscribers can distinguish them from
    * conversational messages. Best-effort — a failed post never breaks the build.
    */
   private async postPhaseEvent(
     route: JobRoute,
-    phaseId: string,
+    stepId: string,
     sectionOrdinal: number,
     phaseOrdinal: number,
     e: EngineEvent,
@@ -950,58 +960,62 @@ export class SectionDriver implements JobDispatcher {
         ...(route.orgId ? { orgId: route.orgId } : {}),
         meta: {
           kind: 'build_event',
-          phaseId,
+          stepId,
           sectionOrdinal,
           phaseOrdinal,
           eventKind: e.kind,
         },
       });
     } catch {
-      // Silently drop — phase event relay is purely informational.
+      // Silently drop — step event relay is purely informational.
     }
   }
 }
 
 // ── pure render helpers ──────────────────────────────────────────────────────────────────────────
 
-const SECTION_PLAN_SYSTEM =
-  'You are Atlas planning ONE section of an approved feature. Explore the codebase read-only and produce ' +
-  'a concrete phased plan for this section, respecting the locked decision record. Do not write any files. ' +
-  "The plan MUST end with VERIFICATION: a final phase (or explicit step) that runs the repo's OWN " +
-  'typecheck/build/tests and confirms the change works. For a DELETION, an early phase must PROVE the code ' +
+const TRACK_PLAN_SYSTEM =
+  'You are Atlas planning ONE track of an approved feature. Explore the codebase read-only and produce ' +
+  'a concrete phased plan for this track, respecting the locked decision record. Do not write any files. ' +
+  'DOCS BEFORE GREP: if the repo has orienting docs (CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md, ' +
+  'CONTRIBUTING.md, docs/), read those FIRST to skip a grep-storm rediscovering where things live and how ' +
+  'this codebase does things, then Grep/Read to confirm the exact files you will touch. Docs may be stale — ' +
+  'the CODE is authoritative; where they disagree, trust the code. ' +
+  "The plan MUST end with VERIFICATION: a final step (or explicit step) that runs the repo's OWN " +
+  'typecheck/build/tests and confirms the change works. For a DELETION, an early step must PROVE the code ' +
   'is truly unused — search for every intra-file and cross-file reference (and dynamic/string usages) — ' +
   'before anything is removed. Never plan to claim done without verifying.';
 
-const PHASE_EXECUTE_SYSTEM =
-  'You are Atlas executing ONE phase of an approved plan in a feature worktree. Implement exactly this ' +
-  "phase's brief, respecting the locked decisions. Make focused, working changes; do not exceed the phase scope. " +
+const STEP_EXECUTE_SYSTEM =
+  'You are Atlas executing ONE step of an approved plan in a feature worktree. Implement exactly this ' +
+  "step's brief, respecting the locked decisions. Make focused, working changes; do not exceed the step scope. " +
   'If you make ANY change not explicitly called for by this brief, or you depart from a locked decision ' +
   '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
   "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
   "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling and make " +
   'sure your change compiles and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
-  'guess. If this phase REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
+  'guess. If this step REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
   'you cannot fix it within scope, say so explicitly rather than reporting success.';
 
 const BATCH_EXECUTE_SYSTEM =
-  'You are Atlas executing several ORDERED phases of an approved plan in a feature worktree, in ONE ' +
-  'session. Implement each phase IN ORDER, exactly to its brief, respecting the locked decisions; finish ' +
-  'one phase before starting the next and do not exceed the phases\' scope. ' +
+  'You are Atlas executing several ORDERED steps of an approved plan in a feature worktree, in ONE ' +
+  'session. Implement each step IN ORDER, exactly to its brief, respecting the locked decisions; finish ' +
+  'one step before starting the next and do not exceed the steps\' scope. ' +
   'If you make ANY change not explicitly called for by these briefs, or you depart from a locked decision ' +
   '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
   "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
   "VERIFY before you finish: discover and run the repository's OWN typecheck/build/test tooling and make " +
   'sure the changes compile and the relevant tests pass — do NOT claim the work is done on the basis of a ' +
-  'guess. If a phase REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
+  'guess. If a step REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
   'you cannot fix it within scope, say so explicitly rather than reporting success.';
 
-/** A locked phase row → the `PlannedPhase` view the gate/visibility/render read (title null → brief). */
-function asPlannedPhase(phase: Phase): PlannedPhase {
-  return { title: phase.title ?? phase.brief, brief: phase.brief };
+/** A locked step row → the `PlannedStep` view the gate/visibility/render read (title null → brief). */
+function asPlannedStep(step: Step): PlannedStep {
+  return { title: step.title ?? step.brief, brief: step.brief };
 }
 
 function renderPlanTask(input: {
@@ -1016,46 +1030,47 @@ function renderPlanTask(input: {
         .join('\n')
     : '(none)';
   const handoff = input.handoffIn
-    ? `\n\nPrior section handoff:\n${input.handoffIn}`
+    ? `\n\nPrior track handoff:\n${input.handoffIn}`
     : '';
   return [
     `Feature overview:\n${input.overview}`,
     `\nLocked decisions (respect these):\n${decisions}`,
-    `\nPlan THIS section:\n${input.brief}${handoff}`,
-    '\nThe full plan (plan.md, decisions, diagrams) is in /context/specs — read it before planning phases.',
-    '\nProduce an ordered list of phases. Do not write files.',
+    `\nPlan THIS track:\n${input.brief}${handoff}`,
+    '\nThe plan is in /context/specs — read THIS track\'s `sections/*.md` file (+ `data-model.md` and the' +
+      ' `plan.md` index) before planning steps.',
+    '\nProduce an ordered list of steps. Do not write files.',
   ].join('\n');
 }
 
-/** Render the execute task for a BATCH of 1+ ordered phases (the unit a single fresh session runs). */
+/** Render the execute task for a BATCH of 1+ ordered steps (the unit a single fresh session runs). */
 function renderBatchTask(
   record: DecisionRecord | null,
-  section: DriverSection,
-  phases: Phase[],
+  track: DriverTrack,
+  steps: Step[],
 ): string {
   const decisions = record?.decisions.length
     ? record.decisions
         .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
         .join('\n')
     : '(none)';
-  const blocks = phases
-    .map((p, i) => `### Phase ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`)
+  const blocks = steps
+    .map((p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`)
     .join('\n\n');
   const intro =
-    phases.length === 1
-      ? 'Implement this phase:'
-      : `Implement these ${phases.length} phases IN ORDER (each builds on the previous):`;
+    steps.length === 1
+      ? 'Implement this step:'
+      : `Implement these ${steps.length} steps IN ORDER (each builds on the previous):`;
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
-    `\nSection: ${section.brief}`,
-    `\nThe full plan (plan.md, decisions, diagrams) is in /context/specs — read it for grounding.`,
+    `\nTrack: ${track.brief}`,
+    `\nThe plan is in /context/specs — read THIS track's \`sections/*.md\` file (+ \`data-model.md\`) for grounding.`,
     `\n${intro}\n\n${blocks}`,
   ].join('\n');
 }
 
 /** True iff `groups` flattens to exactly [0,1,…,n-1] in order with no empty group — i.e. a valid
- *  consecutive, covering, non-overlapping partition of n ordered phases (the batcher's contract). */
+ *  consecutive, covering, non-overlapping partition of n ordered steps (the batcher's contract). */
 function isConsecutivePartition(groups: number[][] | undefined, n: number): boolean {
   if (!groups || !groups.length || groups.some((g) => g.length === 0)) return false;
   const flat = groups.flat();
@@ -1064,10 +1079,10 @@ function isConsecutivePartition(groups: number[][] | undefined, n: number): bool
   return true;
 }
 
-function fallbackPhases(
+function fallbackSteps(
   brief: string,
   planText: string | undefined,
-): PlannedPhase[] {
+): PlannedStep[] {
   return [
     { title: brief, brief: planText ? `${brief}\n\n${planText}` : brief },
   ];
@@ -1090,7 +1105,7 @@ function sandboxKey(sandbox: FeatureSandbox): string {
   return `${sandbox.repoId}--${sandbox.branch}`;
 }
 
-/** Pull the engine's flagged off-spec deviations out of a phase report ('DEVIATION:' lines, #7). */
+/** Pull the engine's flagged off-spec deviations out of a step report ('DEVIATION:' lines, #7). */
 function extractDeviations(report: string): string[] {
   return report
     .split('\n')
@@ -1110,7 +1125,7 @@ function shortReason(err: unknown): string {
 const execAsync = promisify(exec);
 
 /** Run a shell command string in `cwd` with a wall-clock timeout; throws (with captured stderr) on a
- *  non-zero exit or timeout. Used by the optional VERIFY_CMD phase gate. */
+ *  non-zero exit or timeout. Used by the optional VERIFY_CMD step gate. */
 async function execShell(
   cmd: string,
   cwd: string,

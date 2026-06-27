@@ -116,6 +116,81 @@ export function useSaveCredentials(orgId: string) {
   });
 }
 
+// ── Worktree secrets (named secret files rendered into a thread's sandbox) ─────────────────────────
+// GET returns names + grants only (never values). Writes (secret PUT/DELETE, grant PUT/DELETE) are
+// owner-only server-side. A secret is inert until an owner GRANTS it for a specific repo + path — the
+// repo's committed `.atlas/worktree.json` is a request, the grant is the authority.
+
+export interface WorktreeSecretGrant {
+  repoId: string;
+  name: string;
+  path: string;
+}
+export interface WorktreeSecretsView {
+  names: string[];
+  grants: WorktreeSecretGrant[];
+}
+
+export function useWorktreeSecrets(orgId: string) {
+  return useQuery({
+    queryKey: qk.orgWorktreeSecrets(orgId),
+    queryFn: () => webJson<WorktreeSecretsView>(`/orgs/${orgId}/worktree-secrets`),
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
+}
+
+/** Owner-only: create/replace a named secret value. */
+export function useSaveWorktreeSecret(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, value }: { name: string; value: string }) =>
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ value }),
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+  });
+}
+
+/** Owner-only: delete a named secret (and its grants). */
+export function useDeleteWorktreeSecret(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/secrets/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+  });
+}
+
+/** Owner-only: grant a secret to a repo + path (the security control). */
+export function useGrantWorktreeSecret(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: WorktreeSecretGrant) =>
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/grants`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+  });
+}
+
+/** Owner-only: revoke a grant. */
+export function useRevokeWorktreeSecret(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: WorktreeSecretGrant) =>
+      webJson<{ ok: boolean }>(`/orgs/${orgId}/worktree-secrets/grants`, {
+        method: 'DELETE',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.orgWorktreeSecrets(orgId) }),
+  });
+}
+
 // ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────
 // The org rail + settings read orgs off the SESSION (`GET /auth/session`), so every write invalidates
 // `qk.session()`. The cross-org inbox (`/web/threads`, `useAllThreads`) embeds `org.name` per row and

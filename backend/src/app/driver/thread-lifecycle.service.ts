@@ -10,6 +10,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, ThreadEntity, ThreadSandboxEntity } from '../persistence/entities';
 import { hostExecUser, SANDBOX_PROVIDER, SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
+import { WorktreeProvisioner } from './worktree-provisioner.service';
 
 /** Default idle window before an attached-but-quiet container is reaped to `detached` (12h). */
 const DEFAULT_IDLE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -86,6 +87,7 @@ export class ThreadLifecycleService {
     private readonly activity: SandboxActivityRegistry,
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
+    private readonly provisioner: WorktreeProvisioner,
   ) {}
 
   /**
@@ -228,19 +230,26 @@ export class ThreadLifecycleService {
     if (!row || row.lifecycle === 'closed') return null;
 
     // Common path: the durable worktree is present → skip the repo resolve (a git fetch) entirely. Only
-    // resolve + restore when it's actually gone (crash / host-down / pruned).
+    // resolve + restore when it's actually gone (crash / host-down / pruned). A restored worktree has no
+    // hydrated files, so force a re-hydration in that case.
+    let worktreeRestored = false;
     if (!row.worktree_path || !existsSync(row.worktree_path)) {
       await this.ensureWorktree(row, await this.repoForRow(row));
+      worktreeRestored = true;
     }
 
     // If we're at the global cap and this thread has no live container yet, evict the least-recently
     // active idle one to make room (never a busy thread).
     if (!row.container_id) await this.evictForCapacity();
 
-    const attached = await this.sandboxProvider.attach({
+    // Hydrate (granted secrets/seed) only when stale or the worktree was just restored, then attach.
+    const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
       sandbox: await this.rowToSandbox(row),
       orgId,
       threadId,
+      repoDbId: row.repo_id,
+      knownSig: row.hydration_sig ?? undefined,
+      forceHydrate: worktreeRestored,
     });
 
     const wasReset = attached.warm === false;
@@ -248,6 +257,7 @@ export class ThreadLifecycleService {
     row.container_id = attached.containerId ?? null;
     row.lifecycle = 'attached';
     row.last_active_at = new Date();
+    row.hydration_sig = hydrationSig;
     await this.sandboxes.save(row);
 
     if (wasReset) this.logger.log(`thread ${threadId} re-attached a COLD container — turn will be told the sandbox reset`);
@@ -292,7 +302,7 @@ export class ThreadLifecycleService {
    *   1. `closeThread` — the PHYSICAL teardown a database can't do: reclaim the Docker container and the
    *      git worktree (flips the sandbox row to `closed`; no-op if already closed).
    *   2. delete the org-scoped `threads` row — the database then CASCADES every child row (messages,
-   *      sections, phases, decision_records, stimuli, thread_sandboxes) through the `ON DELETE CASCADE`
+   *      tracks, steps, decision_records, stimuli, thread_sandboxes) through the `ON DELETE CASCADE`
    *      FKs added in the `RestoreReferentialIntegrity` migration. No app-side child sweep is needed.
    *
    * The delete is org-scoped (defense-in-depth beyond the caller's membership check). Idempotent and safe
@@ -446,17 +456,21 @@ export class ThreadLifecycleService {
       const baseSandboxInput = await this.git.createBaseWorktree(projectRepo, thread.id);
       const branched = await this.git.switchBranch(baseSandboxInput, projectRepo, featureBranch);
 
-      // Attach the execution environment (thread-keyed container).
-      const attached = await this.sandboxProvider.attach({
+      // Hydrate the freshly-cut worktree (granted secrets + golden seed + cache mounts) and attach the
+      // execution environment (thread-keyed container). forceHydrate: the worktree is brand new.
+      const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
         sandbox: branched,
         orgId: thread.org_id,
         threadId: thread.id,
+        repoDbId: project.id,
+        forceHydrate: true,
       });
 
       row.worktree_path = attached.worktreePath;
       row.container_id = attached.containerId ?? null;
       row.lifecycle = 'attached';
       row.last_active_at = new Date();
+      row.hydration_sig = hydrationSig;
       await this.sandboxes.save(row);
 
       // Record the feature branch on the THREAD (single owner).

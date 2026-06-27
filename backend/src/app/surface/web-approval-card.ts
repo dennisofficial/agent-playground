@@ -38,7 +38,7 @@ export interface WebApprovalCard {
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
-  sections: string[];
+  tracks: string[];
   planUrl?: string;
   actions: WebCardAction[];
 }
@@ -104,7 +104,7 @@ export function webApprovalCard(card: DecisionApprovalCard): WebApprovalCard {
     title: card.title,
     summary: card.summary,
     decisions: card.decisions ?? [],
-    sections: card.sections,
+    tracks: card.tracks,
     ...(card.planUrl ? { planUrl: card.planUrl } : {}),
     actions,
   };

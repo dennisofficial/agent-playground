@@ -7,7 +7,7 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngineRunnerPort, RunEngineArgs } from '../engine';
 import type { FeatureSandbox } from '../git';
-import type { PhaseEntity } from '../persistence/entities';
+import type { StepEntity } from '../persistence/entities';
 import { TurnRunnerService } from '../runner/turn-runner.service';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
@@ -29,16 +29,16 @@ import type { Repository } from 'typeorm';
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
 
-/** Map-backed phases repository that survives across TurnRunnerService instances (models Postgres). */
+/** Map-backed steps repository that survives across TurnRunnerService instances (models Postgres). */
 function makeDurablePhaseRepo(initial: { id: string; session_id: string | null }) {
   const row: { id: string; session_id: string | null } = { ...initial };
   const repo = {
-    findOne: vi.fn(async () => ({ session_id: row.session_id } as PhaseEntity)),
+    findOne: vi.fn(async () => ({ session_id: row.session_id } as StepEntity)),
     update: vi.fn(async (_where: { id: unknown }, patch: { session_id?: string }) => {
       if (patch.session_id !== undefined) row.session_id = patch.session_id;
       return { affected: 1 } as never;
     }),
-  } as unknown as Repository<PhaseEntity>;
+  } as unknown as Repository<StepEntity>;
   return { repo, row };
 }
 
@@ -115,7 +115,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       // Ensure the sandbox image is present before any manager attaches.
       await builder1.ensureImage();
 
-      // ── Durable phases row (survives the "restart") ───────────────────────────────────────
+      // ── Durable steps row (survives the "restart") ───────────────────────────────────────
       const { repo: fakePhases, row: phaseRow } = makeDurablePhaseRepo({
         id: 'ph1',
         session_id: null,
@@ -141,7 +141,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
 
       await new TurnRunnerService(fakeEngine1, fakePhases).runTurn({
         jobId: 'j1',
-        phaseId: 'ph1',
+        stepId: 'ph1',
         sandbox: s1,
         engine: 'claude',
         mode: 'execute',
@@ -149,7 +149,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
         systemPrompt: 'persona',
       });
 
-      // Session id must be persisted onto the (durable) phase row.
+      // Session id must be persisted onto the (durable) step row.
       expect(phaseRow.session_id).toBe('SESSION-1');
 
       // Engine received the docker target.
@@ -180,7 +180,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
 
       await new TurnRunnerService(fakeEngine2, fakePhases).runTurn({
         jobId: 'j1',
-        phaseId: 'ph1',
+        stepId: 'ph1',
         sandbox: s2,
         engine: 'claude',
         mode: 'execute',

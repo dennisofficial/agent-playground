@@ -99,6 +99,27 @@ describe('GithubPrService.getRepo', () => {
   });
 });
 
+describe('GithubPrService.listBranches', () => {
+  it('returns branch names and stops when a page is short of the page size', async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, body: [{ name: 'main' }, { name: 'develop' }] },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    expect(await svc.listBranches('T', 'acme', 'app')).toEqual(['main', 'develop']);
+    // A short first page (< 100) means no second request.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain('/repos/acme/app/branches?per_page=100&page=1');
+  });
+
+  it('throws with the GitHub status (never the token) on a non-OK response', async () => {
+    const { impl } = fakeFetch([{ status: 403, body: { message: 'forbidden' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await expect(svc.listBranches('TOK', 'acme', 'app')).rejects.toThrow(/403.*forbidden/);
+  });
+});
+
 describe('parseGithubRepoUrl', () => {
   it('parses owner/repo and drops .git; null on non-github', () => {
     expect(parseGithubRepoUrl('https://github.com/acme/app.git')).toEqual({ owner: 'acme', repo: 'app' });

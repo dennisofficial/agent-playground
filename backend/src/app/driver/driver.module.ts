@@ -16,9 +16,9 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  PhaseEntity,
+  StepEntity,
   RepoEntity,
-  SectionEntity,
+  TrackEntity,
   StimulusEntity,
   ThreadEntity,
   ThreadSandboxEntity,
@@ -31,28 +31,30 @@ import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
-import { SectionDriver } from './section-driver.service';
+import { TrackDriver } from './track-driver.service';
 import { ThreadLifecycleService } from './thread-lifecycle.service';
+import { WorktreeHydrator } from './worktree-hydrator.service';
+import { WorktreeProvisioner } from './worktree-provisioner.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
  * turns an approved `Job` into ONE PR:
- *   - `SectionDriver` — the legible top-to-bottom driver (plan → review → gate → execute phases →
+ *   - `TrackDriver` — the legible top-to-bottom driver (plan → review → gate → execute steps →
  *     auto-fix → handoff → one PR), bound as the REAL `JOB_DISPATCHER`.
- *   - `DriverStoreService` — the section/phase row reads/writes (explicit, resumable `status`/`step`).
+ *   - `DriverStoreService` — the track/step row reads/writes (explicit, resumable `status`/`step`).
  *   - `GitDriverRepoResolver` (behind `DRIVER_REPO`) — a job's project → a ready-to-use repo.
- *   - `PLANNER_LLM` — the section planner's chat-model port (a declarative chain on a hardcoded Sonnet,
- *     keyed off `ANTHROPIC_API_KEY`; key-less → the driver falls back to a single-phase plan).
+ *   - `PLANNER_LLM` — the track planner's chat-model port (a declarative chain on a hardcoded Sonnet,
+ *     keyed off `ANTHROPIC_API_KEY`; key-less → the driver falls back to a single-step plan).
  *
  * THE DISPATCH SEAM OVERRIDE: `BrainModule` no longer binds the `JOB_DISPATCHER` no-op (it kept
  * `LoggingJobDispatcher` only as an exported fallback) — exactly the precedent W3 set when it removed
  * W2's local `STIMULUS_CONSUMER` no-op. This @Global module provides + exports the REAL binding
- * (`useExisting: SectionDriver`), so the brain's `@Inject(JOB_DISPATCHER)` resolves to the driver with
+ * (`useExisting: TrackDriver`), so the brain's `@Inject(JOB_DISPATCHER)` resolves to the driver with
  * ZERO changes anywhere else.
  *
  * Consumes W5 (`DecisionGateModule`: classifier + park-and-ask + visibility), W7 (`AutoFixModule`), and
  * W1 (`RunnerModule`: turn-runner + engine + git). `CHAT_SURFACE` comes from the @Global `SurfaceModule`.
- * On boot it reconciles in-flight jobs (`SectionDriver.resume`). Zero v1 imports.
+ * On boot it reconciles in-flight jobs (`TrackDriver.resume`). Zero v1 imports.
  */
 @Global()
 @Module({
@@ -62,8 +64,8 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
     AutoFixModule,
     TypeOrmModule.forFeature(
       [
-        SectionEntity,
-        PhaseEntity,
+        TrackEntity,
+        StepEntity,
         DecisionRecordEntity,
         ThreadEntity,
         RepoEntity,
@@ -85,15 +87,18 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
       useFactory: (creds: CredentialResolver) =>
         new AnthropicPlannerLlm((orgId) => creds.anthropicKey(orgId)),
     },
-    SectionDriver,
+    TrackDriver,
     ThreadLifecycleService,
+    WorktreeHydrator,
+    WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
-    { provide: JOB_DISPATCHER, useExisting: SectionDriver },
+    { provide: JOB_DISPATCHER, useExisting: TrackDriver },
   ],
   exports: [
-    SectionDriver,
+    TrackDriver,
     JOB_DISPATCHER,
     ThreadLifecycleService,
+    WorktreeProvisioner,
     DriverStoreService,
     PipelineAwarenessStore,
     BuildShipService,
@@ -105,7 +110,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private reapTimer?: ReturnType<typeof setInterval>;
 
   constructor(
-    private readonly driver: SectionDriver,
+    private readonly driver: TrackDriver,
     private readonly env: EnvService,
     private readonly lifecycle: ThreadLifecycleService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,

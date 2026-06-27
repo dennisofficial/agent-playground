@@ -78,7 +78,7 @@ const BASE_INPUT = {
   decisions: [
     { decisionClass: 'infrastructure' as const, title: 'Auth provider', ruling: 'Use Auth0.' },
   ],
-  sectionBriefs: ['Implement the OAuth2 callback handler.', 'Add JWT validation middleware.'],
+  trackTitles: ['Implement the OAuth2 callback handler.', 'Add JWT validation middleware.'],
 };
 
 // ── (a) PlanReviewService unit tests ─────────────────────────────────────────────────────────────
@@ -92,12 +92,12 @@ describe('parsePlanFindings', () => {
   it('extracts FINDING: lines stripping the prefix', () => {
     const output = [
       'Here is my review.',
-      'FINDING: Section 1 brief is too vague to implement without re-asking.',
+      'FINDING: Track 1 brief is too vague to implement without re-asking.',
       'FINDING: Missing error-handling decision for OAuth callback failures.',
       'Looks otherwise ok.',
     ].join('\n');
     const result = parsePlanFindings(output);
-    expect(result).toContain('Section 1 brief is too vague');
+    expect(result).toContain('Track 1 brief is too vague');
     expect(result).toContain('Missing error-handling decision');
     // Each finding on its own bullet line
     expect(result.split('\n')).toHaveLength(2);
@@ -116,7 +116,7 @@ describe('parsePlanFindings', () => {
 describe('PlanReviewService — one-pass guard + Codex turn', () => {
   it('FIRST call: runs ONE Codex review turn and returns findings', async () => {
     const { engine, calls } = fakeEngine(
-      'FINDING: The section briefs are too vague.\nFINDING: Missing dependency decision.',
+      'FINDING: The track briefs are too vague.\nFINDING: Missing dependency decision.',
     );
     const service = new PlanReviewService(engine, fakeCreds);
 
@@ -129,7 +129,7 @@ describe('PlanReviewService — one-pass guard + Codex turn', () => {
 
     // Result is not null (first pass) and has findings.
     expect(result).not.toBeNull();
-    expect(result!.findings).toContain('section briefs are too vague');
+    expect(result!.findings).toContain('track briefs are too vague');
     expect(result!.findings).toContain('Missing dependency decision');
   });
 
@@ -275,14 +275,14 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
         ruling: 'Use Auth0 via the existing AuthModule.',
       },
     ],
-    sections: [
+    tracks: [
       {
         title: 'OAuth2 callback handler',
-        phases: [{ title: 'Add callback route', brief: 'Add GET /auth/callback in auth.controller.ts:1 …' }],
+        steps: [{ title: 'Add callback route', brief: 'Add GET /auth/callback in auth.controller.ts:1 …' }],
       },
       {
         title: 'JWT validation middleware',
-        phases: [{ title: 'Add JWT guard', brief: 'Add JwtGuard in src/auth/jwt.guard.ts:1 …' }],
+        steps: [{ title: 'Add JWT guard', brief: 'Add JwtGuard in src/auth/jwt.guard.ts:1 …' }],
       },
     ],
   };
@@ -353,7 +353,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
 
     // Build the fake review engine.
     const { engine, calls } = fakeEngine(
-      'FINDING: The OAuth callback section brief is too vague — specify which library.',
+      'FINDING: The OAuth callback track brief is too vague — specify which library.',
     );
     reviewEngine = engine;
     reviewEngineCalls = calls;
@@ -374,7 +374,7 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
     // Tool response carries the findings (so the session can revise).
     // The message includes the bullet-formatted finding text + instruction to call submit_plan again.
     expect(result).toMatchObject({ ok: true, pendingReview: true });
-    expect((result as { message: string }).message).toContain('OAuth callback section brief');
+    expect((result as { message: string }).message).toContain('OAuth callback track brief');
     expect((result as { message: string }).message).toContain('submit_plan');
 
     // Approval card NOT raised yet — the revision has not happened.
@@ -464,8 +464,8 @@ describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + o
 
 describe('buildRevisionInstruction', () => {
   it('includes the findings text and instructs to call submit_plan again', () => {
-    const instruction = buildRevisionInstruction('• Section 1 too vague.\n• Missing decision.');
-    expect(instruction).toContain('Section 1 too vague');
+    const instruction = buildRevisionInstruction('• Track 1 too vague.\n• Missing decision.');
+    expect(instruction).toContain('Track 1 too vague');
     expect(instruction).toContain('Missing decision');
     expect(instruction).toContain('submit_plan');
   });

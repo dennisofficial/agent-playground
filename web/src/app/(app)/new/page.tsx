@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { CreateThread } from '@/features/create/components/create-thread';
 
 /**
@@ -14,7 +15,10 @@ export default function NewThreadPage() {
         <p className="mb-6 mt-1 text-[13px] text-dim">
           Pick a repo and describe the work — Atlas starts the conversation.
         </p>
-        <CreateThread />
+        {/* `CreateThread` reads `?org=&repo=` via `useSearchParams`, which needs a Suspense boundary. */}
+        <Suspense fallback={null}>
+          <CreateThread />
+        </Suspense>
       </div>
     </div>
   );

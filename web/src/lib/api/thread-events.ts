@@ -16,10 +16,21 @@ interface SseFrame {
   type?: string;
   threadId?: string;
   seq?: number;
-  event?: { kind?: string };
+  event?: { kind?: string; name?: string; input?: { file_path?: string } };
   /** `thread_meta` frame: the new thread title (e.g. an auto-generated one). */
   title?: string;
 }
+
+/**
+ * In-turn `/context` freshness: the brain authors `specs/` (and `artifacts/`) files DURING a turn via its
+ * standard Write/Edit tools, but durable messages only persist at `turn_end` — so the SPECS/GENERATED/
+ * ARTIFACTS listing would otherwise sit stale until the turn finishes. The `tool_use` engine events
+ * already stream live, carrying the `file_path` being written, so we refetch the context listing the
+ * moment a context file is touched. (Bash-based writes — echo/sed — don't surface as a Write tool_use and
+ * are not covered here; they settle on the next `message`/`turn_end` reconcile.)
+ */
+const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
 
 /**
  * Live updates for the open thread. The repo-scoped SSE (`…/repos/:repoId/events`) carries two frame
@@ -48,6 +59,7 @@ export function useThreadEvents(ref: ThreadRef): void {
     let closed = false;
     let refreshedOnce = false;
     let debounce: ReturnType<typeof setTimeout> | null = null;
+    let ctxDebounce: ReturnType<typeof setTimeout> | null = null;
 
     // The 4-element prefix matches every open `/context` file for this thread (the 5th element is the path).
     const contextFilesKey = qk.threadContextFile(liveRef, '').slice(0, 4);
@@ -57,6 +69,16 @@ export function useThreadEvents(ref: ThreadRef): void {
       debounce = setTimeout(() => {
         void qc.invalidateQueries({ queryKey: qk.threadMessages(liveRef) });
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(liveRef) });
+        void qc.invalidateQueries({ queryKey: qk.threadContext(liveRef) });
+        void qc.invalidateQueries({ queryKey: contextFilesKey });
+      }, 250);
+    };
+
+    // Context-only refetch (the listing + any open file's contents) — kept separate from `refetch()` so a
+    // mid-turn spec write doesn't needlessly churn the messages/pipeline caches.
+    const refetchContext = () => {
+      if (ctxDebounce) clearTimeout(ctxDebounce);
+      ctxDebounce = setTimeout(() => {
         void qc.invalidateQueries({ queryKey: qk.threadContext(liveRef) });
         void qc.invalidateQueries({ queryKey: contextFilesKey });
       }, 250);
@@ -91,6 +113,18 @@ export function useThreadEvents(ref: ThreadRef): void {
         } else {
           // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store.
           applyStreamFrame(threadId, frame.seq ?? 0, frame.event);
+          // In-turn freshness: the brain just wrote a `/context` file via Write/Edit → refresh the
+          // SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the turn's durable reconcile.
+          const ev = frame.event;
+          if (
+            ev?.kind === 'tool_use' &&
+            ev.name != null &&
+            FILE_WRITE_TOOLS.has(ev.name) &&
+            ev.input?.file_path != null &&
+            CONTEXT_WRITE_RE.test(ev.input.file_path)
+          ) {
+            refetchContext();
+          }
         }
         return;
       }
@@ -149,6 +183,7 @@ export function useThreadEvents(ref: ThreadRef): void {
     return () => {
       closed = true;
       if (debounce) clearTimeout(debounce);
+      if (ctxDebounce) clearTimeout(ctxDebounce);
       es?.close();
     };
   }, [orgId, repoId, threadId, qc]);

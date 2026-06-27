@@ -1,10 +1,10 @@
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import { EngineAuthError } from '../engine';
-import { SectionDriver } from './section-driver.service';
+import { TrackDriver } from './track-driver.service';
 import { BuildShipService } from './build-ship.service';
-import type { DriverStoreService, DriverSection, JobRoute } from './driver-store.service';
-import type { PlannerLlm, PlannedPhase } from './planner-llm';
+import type { DriverStoreService, DriverTrack, JobRoute } from './driver-store.service';
+import type { PlannerLlm, PlannedStep } from './planner-llm';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
 import type {
   DecisionClassifier,
@@ -21,18 +21,18 @@ import type { CredentialResolver } from '../onboarding';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
   DecisionRecord,
-  Phase,
-  PhaseStatus,
-  Section,
-  SectionStatus,
+  Step,
+  StepStatus,
+  Track,
+  TrackStatus,
   Thread,
 } from '../domain';
 
 /**
  * W4 — the SECTION/PHASE DRIVER unit tests. Every dependency is mocked (NO real LLM / git / network):
- * the driver walks a 2-section / multi-phase job to ONE PR; an uncovered always-ask decision PARKS and
- * resumes on a simulated human answer; phase step-state persists; `resume()` fast-forwards completed
- * work after a simulated restart; sections share one branch ⇒ one PR.
+ * the driver walks a 2-track / multi-step job to ONE PR; an uncovered always-ask decision PARKS and
+ * resumes on a simulated human answer; step step-state persists; `resume()` fast-forwards completed
+ * work after a simulated restart; tracks share one branch ⇒ one PR.
  *
  * The store is an in-memory fake the test can re-instantiate a fresh driver against — that's how the
  * resumability test simulates a process restart (same rows, new driver). Zero real I/O.
@@ -43,8 +43,8 @@ import type {
 interface StoreState {
   job: Thread;
   record: DecisionRecord | null;
-  sections: DriverSection[];
-  phases: Phase[];
+  tracks: DriverTrack[];
+  steps: Step[];
   route: JobRoute;
 }
 
@@ -63,53 +63,53 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
       state.job.status = 'done';
     }),
     decisionRecord: vi.fn(async () => state.record),
-    sectionsForJob: vi.fn(async () => state.sections.map((s) => ({ ...s }))),
-    setSectionStatus: vi.fn(async (id: string, status: SectionStatus) => {
-      const s = state.sections.find((x) => x.id === id);
+    tracksForJob: vi.fn(async () => state.tracks.map((s) => ({ ...s }))),
+    setTrackStatus: vi.fn(async (id: string, status: TrackStatus) => {
+      const s = state.tracks.find((x) => x.id === id);
       if (s) s.status = status;
     }),
-    setSectionPlan: vi.fn(async (id: string, plan: string, handoffIn: string | null) => {
-      const s = state.sections.find((x) => x.id === id);
+    setTrackPlan: vi.fn(async (id: string, plan: string, handoffIn: string | null) => {
+      const s = state.tracks.find((x) => x.id === id);
       if (s) {
         s.plan = plan;
         s.handoffIn = handoffIn;
       }
     }),
-    setSectionHandoffOut: vi.fn(async (id: string, handoffOut: string) => {
-      const s = state.sections.find((x) => x.id === id);
+    setTrackHandoffOut: vi.fn(async (id: string, handoffOut: string) => {
+      const s = state.tracks.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
     }),
-    phasesForSection: vi.fn(async (sectionId: string) =>
-      state.phases.filter((p) => p.sectionId === sectionId).map((p) => ({ ...p })),
+    stepsForTrack: vi.fn(async (trackId: string) =>
+      state.steps.filter((p) => p.trackId === trackId).map((p) => ({ ...p })),
     ),
-    lockPhases: vi.fn(async (section: DriverSection, planned: PlannedPhase[]) => {
-      const existing = state.phases.filter((p) => p.sectionId === section.id);
+    lockSteps: vi.fn(async (track: DriverTrack, planned: PlannedStep[]) => {
+      const existing = state.steps.filter((p) => p.trackId === track.id);
       if (existing.length) return existing.map((p) => ({ ...p }));
-      const rows: Phase[] = planned.map((p, i) => ({
-        id: `${section.id}-ph${i}`,
-        sectionId: section.id,
-        threadId: section.threadId,
+      const rows: Step[] = planned.map((p, i) => ({
+        id: `${track.id}-ph${i}`,
+        trackId: track.id,
+        threadId: track.threadId,
         ordinal: (i + 1) * 10,
         title: p.title,
         brief: p.brief,
-        step: 'build',
-        status: 'pending' as PhaseStatus,
+        stage: 'build',
+        status: 'pending' as StepStatus,
         sessionId: null,
         batchOrdinal: null,
       }));
-      state.phases.push(...rows);
+      state.steps.push(...rows);
       return rows.map((p) => ({ ...p }));
     }),
-    setPhaseState: vi.fn(async (id: string, step: string, status: PhaseStatus) => {
-      const p = state.phases.find((x) => x.id === id);
+    setStepState: vi.fn(async (id: string, stage: string, status: StepStatus) => {
+      const p = state.steps.find((x) => x.id === id);
       if (p) {
-        p.step = step;
+        p.stage = stage;
         p.status = status;
       }
     }),
     setBatchOrdinals: vi.fn(async (assignments: Array<[string, number]>) => {
       for (const [id, batchOrdinal] of assignments) {
-        const p = state.phases.find((x) => x.id === id);
+        const p = state.steps.find((x) => x.id === id);
         if (p) p.batchOrdinal = batchOrdinal;
       }
     }),
@@ -175,18 +175,18 @@ function makePr(): { pr: GithubPrService; opened: Array<{ head: string }> } {
   return { pr, opened };
 }
 
-function makeTurn(): { turn: TurnRunnerService; calls: Array<{ mode: string; phaseId?: string | null }> } {
-  const calls: Array<{ mode: string; phaseId?: string | null }> = [];
+function makeTurn(): { turn: TurnRunnerService; calls: Array<{ mode: string; stepId?: string | null }> } {
+  const calls: Array<{ mode: string; stepId?: string | null }> = [];
   const turn = {
-    runTurn: vi.fn(async (input: { mode: string; phaseId?: string | null; jobId: string }) => {
-      calls.push({ mode: input.mode, phaseId: input.phaseId });
+    runTurn: vi.fn(async (input: { mode: string; stepId?: string | null; jobId: string }) => {
+      calls.push({ mode: input.mode, stepId: input.stepId });
       return {
-        report: input.mode === 'plan' ? 'I will build it in phases.' : `did phase ${input.phaseId}`,
+        report: input.mode === 'plan' ? 'I will build it in steps.' : `did step ${input.stepId}`,
         ...(input.mode === 'plan' ? { planText: 'PLAN: do the thing' } : {}),
         session: {
           id: 'sess',
           jobId: input.jobId,
-          phaseId: input.phaseId ?? null,
+          stepId: input.stepId ?? null,
           engine: 'claude' as const,
           mode: input.mode as 'plan' | 'execute' | 'review',
           branch: 'b',
@@ -198,19 +198,19 @@ function makeTurn(): { turn: TurnRunnerService; calls: Array<{ mode: string; pha
   return { turn, calls };
 }
 
-/** A planner that emits a fixed 2-phase plan per section. */
+/** A planner that emits a fixed 2-step plan per track. */
 function makePlanner(): PlannerLlm {
   return {
-    planSection: vi.fn(async (input: { brief: string }) => [
-      { title: `${input.brief} — phase A`, brief: 'do A' },
-      { title: `${input.brief} — phase B`, brief: 'do B' },
+    planTrack: vi.fn(async (input: { brief: string }) => [
+      { title: `${input.brief} — step A`, brief: 'do A' },
+      { title: `${input.brief} — step B`, brief: 'do B' },
     ]),
     reviewPlan: vi.fn(async () => undefined), // no revision
     extractDecisions: vi.fn(async () => []), // no notable decision by default
     handoff: vi.fn(async (input: { brief: string }) => `handoff from ${input.brief}`),
-    // Default: no grouping → the driver's guardrail falls back to one batch per phase (preserves the
+    // Default: no grouping → the driver's guardrail falls back to one batch per step (preserves the
     // pre-batching behavior these tests assert). Batching-specific tests override this mock.
-    batchPhases: vi.fn(async () => undefined),
+    batchSteps: vi.fn(async () => undefined),
   };
 }
 
@@ -248,20 +248,20 @@ function makeVisibility(): VisibilityHandle {
 
 interface AutofixHandle {
   autofix: AutoFixStage;
-  autofixSection: ReturnType<typeof vi.fn>;
+  autofixTrack: ReturnType<typeof vi.fn>;
   autofixPullRequest: ReturnType<typeof vi.fn>;
 }
 function makeAutofix(): AutofixHandle {
-  const autofixSection = vi.fn(async () => cleanSummary('section'));
+  const autofixTrack = vi.fn(async () => cleanSummary('track'));
   const autofixPullRequest = vi.fn(async () => cleanSummary('pull_request'));
   return {
-    autofix: { autofixSection, autofixPullRequest } as unknown as AutoFixStage,
-    autofixSection,
+    autofix: { autofixTrack, autofixPullRequest } as unknown as AutoFixStage,
+    autofixTrack,
     autofixPullRequest,
   };
 }
 
-function cleanSummary(mode: 'section' | 'pull_request') {
+function cleanSummary(mode: 'track' | 'pull_request') {
   return { mode, lensesRun: [], findings: [], fixesAttempted: false, fixReport: '', commits: [], clean: true };
 }
 
@@ -309,20 +309,20 @@ function makeRecord(): DecisionRecord {
     status: 'approved',
     overview: 'Build the widget feature.',
     decisions: [],
-    sectionBriefs: ['Backend', 'Frontend'],
+    trackTitles: ['Backend', 'Frontend'],
     approvedBy: 'U1',
     approvedAt: new Date(),
   };
 }
 
-function makeSections(): DriverSection[] {
+function makeSections(): DriverTrack[] {
   return [
-    section('sec-be', 10, 'Backend'),
-    section('sec-fe', 20, 'Frontend'),
+    track('sec-be', 10, 'Backend'),
+    track('sec-fe', 20, 'Frontend'),
   ];
 }
 
-function section(id: string, ordinal: number, brief: string, status: SectionStatus = 'pending'): DriverSection {
+function track(id: string, ordinal: number, brief: string, status: TrackStatus = 'pending'): DriverTrack {
   return {
     id,
     threadId: 'job-abcdef12',
@@ -353,7 +353,7 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
   const { surface, posts } = makeSurface();
   // A no-op env by default: every guard reads its code default. opts.env supplies overrides per test.
   const env = { get: vi.fn((k: string) => opts.env?.[k]) } as unknown as EnvService;
-  const driver = new SectionDriver(
+  const driver = new TrackDriver(
     store,
     repos,
     git,
@@ -386,19 +386,26 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     new BuildShipService(autofix.autofix, git, pr, store),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     { appendMarker: async () => undefined, drainAndAdvance: async () => ({ markers: [], stateChanged: false }) } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
+    // WorktreeProvisioner: pass-through (host-local) — returns the sandbox unchanged, like the no-op attach.
+    {
+      provisionAndAttach: async ({ sandbox }: { sandbox: import('../git').FeatureSandbox }) => ({
+        sandbox,
+        hydrationSig: 'test-sig',
+      }),
+    } as unknown as import('./worktree-provisioner.service').WorktreeProvisioner,
   );
   return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts };
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
 
-describe('SectionDriver — the legible section/phase pipeline', () => {
-  it('walks a 2-section / multi-phase job to ONE PR (plan → execute phases → autofix → handoff → next → PR-tail)', async () => {
+describe('TrackDriver — the legible track/step pipeline', () => {
+  it('walks a 2-track / multi-step job to ONE PR (plan → execute steps → autofix → handoff → next → PR-tail)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: makeSections(),
-      phases: [],
+      tracks: makeSections(),
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
@@ -406,21 +413,21 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // Both sections planned (one plan turn each) + each ran its 2 phases (execute turns).
+    // Both tracks planned (one plan turn each) + each ran its 2 steps (execute turns).
     const planTurns = h.calls.filter((c) => c.mode === 'plan');
     const execTurns = h.calls.filter((c) => c.mode === 'execute');
     expect(planTurns).toHaveLength(2);
-    expect(execTurns).toHaveLength(4); // 2 sections × 2 phases
+    expect(execTurns).toHaveLength(4); // 2 tracks × 2 steps
 
-    // Per-section auto-fix ran once per section; PR-tail ran exactly once.
-    expect(h.autofix.autofixSection).toHaveBeenCalledTimes(2);
+    // Per-track auto-fix ran once per track; PR-tail ran exactly once.
+    expect(h.autofix.autofixTrack).toHaveBeenCalledTimes(2);
     expect(h.autofix.autofixPullRequest).toHaveBeenCalledTimes(1);
 
-    // Both sections are done with a handoff; the SECOND section received the first's handoff.
-    expect(state.sections.every((s) => s.status === 'done')).toBe(true);
-    expect(state.sections[1].handoffIn).toBe('handoff from Backend');
+    // Both tracks are done with a handoff; the SECOND track received the first's handoff.
+    expect(state.tracks.every((s) => s.status === 'done')).toBe(true);
+    expect(state.tracks[1].handoffIn).toBe('handoff from Backend');
 
-    // ONE branch, ONE push, ONE PR — sections stacked on the same feature branch.
+    // ONE branch, ONE push, ONE PR — tracks stacked on the same feature branch.
     expect(new Set(h.pushed).size).toBe(1);
     expect(h.opened).toHaveLength(1);
     expect(state.job.prUrl).toBe('https://github.com/acme/widget/pull/1');
@@ -428,98 +435,98 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
   });
 
-  // ── §D fresh-context phase batching ──────────────────────────────────────────────────────────────
-  // A single section PRE-LOCKED with N authored phases (the full-plan-up-front path): the driver finds
-  // phases already present → skips JIT planning → packs the ordered phases into execution batches.
+  // ── §D fresh-context step batching ──────────────────────────────────────────────────────────────
+  // A single track PRE-LOCKED with N authored steps (the full-plan-up-front path): the driver finds
+  // steps already present → skips JIT planning → packs the ordered steps into execution batches.
   function authoredState(n: number): StoreState {
-    const phases: Phase[] = Array.from({ length: n }, (_, i) => ({
+    const steps: Step[] = Array.from({ length: n }, (_, i) => ({
       id: `sec-be-ph${i}`,
-      sectionId: 'sec-be',
+      trackId: 'sec-be',
       threadId: 'job-abcdef12',
       ordinal: (i + 1) * 10,
       title: `P${i}`,
       brief: `do ${i}`,
-      step: 'build',
-      status: 'pending' as PhaseStatus,
+      stage: 'build',
+      status: 'pending' as StepStatus,
       sessionId: null,
       batchOrdinal: null,
     }));
     return {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases,
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps,
       route: { channel: 'C1', threadTs: 't1' },
     };
   }
 
-  it('packs authored phases into batches: 5 phases → 2 sessions, one commit per batch, NO JIT plan turn', async () => {
+  it('packs authored steps into batches: 5 steps → 2 sessions, one commit per batch, NO JIT plan turn', async () => {
     const state = authoredState(5);
     const h = assemble(state);
-    (h.planner.batchPhases as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2], [3, 4]]);
+    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2], [3, 4]]);
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // Pre-locked phases ⇒ NO JIT plan turn; 2 batches ⇒ 2 execute turns (not 5).
+    // Pre-locked steps ⇒ NO JIT plan turn; 2 batches ⇒ 2 execute turns (not 5).
     expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0);
     const exec = h.calls.filter((c) => c.mode === 'execute');
     expect(exec).toHaveLength(2);
-    // Each batch is anchored on its first phase (the session/resume cursor).
-    expect(exec.map((c) => c.phaseId)).toEqual(['sec-be-ph0', 'sec-be-ph3']);
-    // Every phase marked done; batch_ordinal persisted (group 1 / group 2).
-    expect(state.phases.every((p) => p.status === 'done')).toBe(true);
-    expect(state.phases.map((p) => p.batchOrdinal)).toEqual([1, 1, 1, 2, 2]);
+    // Each batch is anchored on its first step (the session/resume cursor).
+    expect(exec.map((c) => c.stepId)).toEqual(['sec-be-ph0', 'sec-be-ph3']);
+    // Every step marked done; batch_ordinal persisted (group 1 / group 2).
+    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
+    expect(state.steps.map((p) => p.batchOrdinal)).toEqual([1, 1, 1, 2, 2]);
     // ONE commit per batch (2 build commits), then the single PR.
     expect(h.commits.filter((m) => m.startsWith('Backend —'))).toHaveLength(2);
     expect(h.opened).toHaveLength(1);
   });
 
-  it('guardrail: an INVALID partition falls back to one batch per phase', async () => {
+  it('guardrail: an INVALID partition falls back to one batch per step', async () => {
     const state = authoredState(3);
     const h = assemble(state);
-    (h.planner.batchPhases as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 2]]); // not covering [0,1,2]
+    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 2]]); // not covering [0,1,2]
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(3);
-    expect(state.phases.map((p) => p.batchOrdinal)).toEqual([1, 2, 3]);
+    expect(state.steps.map((p) => p.batchOrdinal)).toEqual([1, 2, 3]);
   });
 
   it('guardrail: caps a too-large group at MAX_PHASES_PER_BATCH', async () => {
     const state = authoredState(5);
     const h = assemble(state, { env: { MAX_PHASES_PER_BATCH: '2' } });
-    (h.planner.batchPhases as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2, 3, 4]]);
+    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2, 3, 4]]);
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
     // One group of 5 capped at 2 → [0,1],[2,3],[4] → 3 sessions.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(3);
-    expect(state.phases.map((p) => p.batchOrdinal)).toEqual([1, 1, 2, 2, 3]);
+    expect(state.steps.map((p) => p.batchOrdinal)).toEqual([1, 1, 2, 2, 3]);
   });
 
-  it('resume: batch_ordinal already set ⇒ batchPhases is NOT called again (stable membership)', async () => {
+  it('resume: batch_ordinal already set ⇒ batchSteps is NOT called again (stable membership)', async () => {
     const state = authoredState(4);
-    // A prior run already batched (ordinals set) but crashed before any phase finished.
-    state.phases.forEach((p, i) => (p.batchOrdinal = i < 2 ? 1 : 2));
+    // A prior run already batched (ordinals set) but crashed before any step finished.
+    state.steps.forEach((p, i) => (p.batchOrdinal = i < 2 ? 1 : 2));
     const h = assemble(state);
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    expect(h.planner.batchPhases).not.toHaveBeenCalled();
+    expect(h.planner.batchSteps).not.toHaveBeenCalled();
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2); // re-grouped from stored ordinals
-    expect(state.phases.every((p) => p.status === 'done')).toBe(true);
+    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
-  it('every phase ran in the SAME feature branch (sections share one sandbox)', async () => {
+  it('every step ran in the SAME feature branch (tracks share one sandbox)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: makeSections(),
-      phases: [],
+      tracks: makeSections(),
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
@@ -533,20 +540,20 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(branches).toEqual(new Set(['atlas/feature-job-abcd']));
   });
 
-  it('an uncovered always-ask decision PARKS the section and resumes on the human answer', async () => {
+  it('an uncovered always-ask decision PARKS the track and resumes on the human answer', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
-    // A human reply we resolve LATER — the section must suspend on `handle.answer` until then.
+    // A human reply we resolve LATER — the track must suspend on `handle.answer` until then.
     let resolveAnswer!: (r: ParkResolution) => void;
     const answer = new Promise<ParkResolution>((res) => {
       resolveAnswer = res;
     });
-    // The planner surfaces a notable decision; the classifier says ASK → the section parks.
+    // The planner surfaces a notable decision; the classifier says ASK → the track parks.
     const h = assemble(state, { classifierVerdict: 'ask', parkAnswer: answer });
     (h.planner.extractDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([
       { description: 'add a new users table' },
@@ -555,37 +562,37 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     await h.driver.dispatch(state.job);
     await flush();
 
-    // The section parked: ask was called, the section sits awaiting_approval, NO execute turn yet.
+    // The track parked: ask was called, the track sits awaiting_approval, NO execute turn yet.
     expect(h.ask).toHaveBeenCalledTimes(1);
-    expect(state.sections[0].status).toBe('awaiting_approval');
+    expect(state.tracks[0].status).toBe('awaiting_approval');
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(false);
 
-    // The human replies → the section unparks and runs to completion.
+    // The human replies → the track unparks and runs to completion.
     resolveAnswer({ parkId: 'park1', text: 'yes, use a users table', authorId: 'U1', ts: 'a1' });
     await flushUntil(() => state.job.status === 'done');
 
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(true);
-    expect(state.sections[0].status).toBe('done');
+    expect(state.tracks[0].status).toBe('done');
     expect(state.job.status).toBe('done');
   });
 
-  it('persists resumable phase step-state (each phase ends done/done; session set during the turn)', async () => {
+  it('persists resumable step step-state (each step ends done/done; session set during the turn)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    const phases = state.phases.filter((p) => p.sectionId === 'sec-be');
-    expect(phases).toHaveLength(2);
-    expect(phases.every((p) => p.status === 'done' && p.step === 'done')).toBe(true);
-    // setPhaseState was driven to 'building' then 'done' for each phase (explicit, resumable cursor).
-    expect((h.store.setPhaseState as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[2])).toEqual([
+    const steps = state.steps.filter((p) => p.trackId === 'sec-be');
+    expect(steps).toHaveLength(2);
+    expect(steps.every((p) => p.status === 'done' && p.stage === 'done')).toBe(true);
+    // setStepState was driven to 'building' then 'done' for each step (explicit, resumable cursor).
+    expect((h.store.setStepState as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[2])).toEqual([
       'building',
       'done',
       'building',
@@ -593,18 +600,18 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     ]);
   });
 
-  it('resume() fast-forwards completed sections/phases after a simulated restart (no re-execution)', async () => {
-    // Simulate a restart MID-JOB: section 1 (Backend) already done with a handoff + its phases done;
-    // section 2 (Frontend) still pending, no phases yet. Same store rows, a FRESH driver.
-    const doneBackend = section('sec-be', 10, 'Backend', 'done');
+  it('resume() fast-forwards completed tracks/steps after a simulated restart (no re-execution)', async () => {
+    // Simulate a restart MID-JOB: track 1 (Backend) already done with a handoff + its steps done;
+    // track 2 (Frontend) still pending, no steps yet. Same store rows, a FRESH driver.
+    const doneBackend = track('sec-be', 10, 'Backend', 'done');
     doneBackend.handoffOut = 'handoff from Backend';
     const state: StoreState = {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
-      sections: [doneBackend, section('sec-fe', 20, 'Frontend')],
-      phases: [
-        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
-        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'done', status: 'done', sessionId: 's', batchOrdinal: 2 },
+      tracks: [doneBackend, track('sec-fe', 20, 'Frontend')],
+      steps: [
+        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
+        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 2 },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -613,26 +620,26 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     await h.driver.resume();
     await flushUntil(() => state.job.status === 'done');
 
-    // The done Backend section was NOT re-planned and NOT re-executed (no plan/exec turn for it).
-    // Only the Frontend section planned (1 plan turn) + ran (2 exec turns).
+    // The done Backend track was NOT re-planned and NOT re-executed (no plan/exec turn for it).
+    // Only the Frontend track planned (1 plan turn) + ran (2 exec turns).
     expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(1);
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
-    // The Frontend section received Backend's persisted handoff.
-    expect(state.sections[1].handoffIn).toBe('handoff from Backend');
+    // The Frontend track received Backend's persisted handoff.
+    expect(state.tracks[1].handoffIn).toBe('handoff from Backend');
     // Still ONE PR.
     expect(h.opened).toHaveLength(1);
     expect(state.job.status).toBe('done');
   });
 
-  it('resume() re-runs an interrupted (executing) phase — reopens the current phase, idempotent commit', async () => {
-    // A phase left mid-build by a crash: status 'building'. resume() should re-run it (status not done).
+  it('resume() re-runs an interrupted (executing) step — reopens the current step, idempotent commit', async () => {
+    // A step left mid-build by a crash: status 'building'. resume() should re-run it (status not done).
     const state: StoreState = {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend', 'executing')],
-      phases: [
-        { id: 'sec-be-ph0', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', step: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
-        { id: 'sec-be-ph1', sectionId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', step: 'build', status: 'building', sessionId: 's2', batchOrdinal: 2 },
+      tracks: [track('sec-be', 10, 'Backend', 'executing')],
+      steps: [
+        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
+        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'build', status: 'building', sessionId: 's2', batchOrdinal: 2 },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -641,11 +648,11 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     await h.driver.resume();
     await flushUntil(() => state.job.status === 'done');
 
-    // The already-locked phases skip planning; only the unfinished phase (B) re-runs.
-    expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0); // phases already locked
-    const execPhaseIds = h.calls.filter((c) => c.mode === 'execute').map((c) => c.phaseId);
-    expect(execPhaseIds).toEqual(['sec-be-ph1']); // only the interrupted phase
-    expect(state.phases.find((p) => p.id === 'sec-be-ph1')?.status).toBe('done');
+    // The already-locked steps skip planning; only the unfinished step (B) re-runs.
+    expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0); // steps already locked
+    const execPhaseIds = h.calls.filter((c) => c.mode === 'execute').map((c) => c.stepId);
+    expect(execPhaseIds).toEqual(['sec-be-ph1']); // only the interrupted step
+    expect(state.steps.find((p) => p.id === 'sec-be-ph1')?.status).toBe('done');
     expect(state.job.status).toBe('done');
   });
 
@@ -653,8 +660,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     const state: StoreState = {
       job: makeJob({ kind: 'bugfix' }),
       record: makeRecord(),
-      sections: [section('sec-fix', 10, 'Fix the bug')],
-      phases: [],
+      tracks: [track('sec-fix', 10, 'Fix the bug')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state, { classifierVerdict: 'covered' });
@@ -674,8 +681,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: makeSections(),
-      phases: [],
+      tracks: makeSections(),
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
@@ -683,40 +690,40 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     await flushUntil(() => state.job.status === 'done');
 
     expect(h.posts.some((p) => p.includes('Starting the build'))).toBe(true);
-    expect(h.posts.some((p) => p.includes('Planning section') && p.includes('Backend'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('Planning track') && p.includes('Backend'))).toBe(true);
     expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(true);
     expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
   });
 
-  it('relays a clear "build failed — why" when a phase errors, never dead-ends silently (issue #2)', async () => {
+  it('relays a clear "build failed — why" when a step errors, never dead-ends silently (issue #2)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
     // Plan turn succeeds; the execute turn explodes → must propagate to a failure relay.
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string }) => {
       if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
-      throw new Error('engine exploded mid-phase');
+      throw new Error('engine exploded mid-step');
     });
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'failed');
 
     expect(state.job.status).toBe('failed');
-    expect(h.posts.some((p) => p.includes('Build failed') && p.includes('engine exploded mid-phase'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('Build failed') && p.includes('engine exploded mid-step'))).toBe(true);
     expect(h.opened).toHaveLength(0); // no PR opened on a failed build
   });
 
-  it('aborts + relays a phase that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
+  it('aborts + relays a step that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state, { env: { PHASE_TIMEOUT_MS: '20' } });
@@ -736,12 +743,12 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.posts.some((p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'))).toBe(true);
   });
 
-  it('fails the phase when VERIFY_CMD exits non-zero, before any commit (issue #4)', async () => {
+  it('fails the step when VERIFY_CMD exits non-zero, before any commit (issue #4)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state, { env: { VERIFY_CMD: 'exit 1' } });
@@ -759,25 +766,25 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
 
     expect(state.job.status).toBe('failed');
     expect(h.posts.some((p) => p.includes('Verification failed'))).toBe(true);
-    // The phase failed at verification → nothing was committed for it.
+    // The step failed at verification → nothing was committed for it.
     expect(h.commits).toHaveLength(0);
     expect(h.opened).toHaveLength(0);
   });
 
-  it('relays off-spec DEVIATION lines a phase flags in its report (issue #7)', async () => {
+  it('relays off-spec DEVIATION lines a step flags in its report (issue #7)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string; phaseId?: string | null }) => {
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string; stepId?: string | null }) => {
       if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
       return {
         report: 'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
-        session: { id: 's', jobId: 'j', phaseId: input.phaseId ?? null, engine: 'claude', mode: 'execute', branch: 'b', worktreePath: '/wt/b' },
+        session: { id: 's', jobId: 'j', stepId: input.stepId ?? null, engine: 'claude', mode: 'execute', branch: 'b', worktreePath: '/wt/b' },
       };
     });
 
@@ -792,8 +799,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const never = new Promise<ParkResolution>(() => {}); // the human never answers
@@ -820,8 +827,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
@@ -843,8 +850,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     const running: StoreState = {
       job: makeJob({ status: 'done' }),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend', 'done')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend', 'done')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const noop = assemble(running);
@@ -855,8 +862,8 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     const state: StoreState = {
       job: makeJob({ status: 'paused' }),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
@@ -866,29 +873,29 @@ describe('SectionDriver — the legible section/phase pipeline', () => {
     expect(h.opened).toHaveLength(1);
   });
 
-  it('bounds a runaway section PLAN turn — aborts + falls back to the planner, no hang (issue #3)', async () => {
+  it('bounds a runaway track PLAN turn — aborts + falls back to the planner, no hang (issue #3)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state, { env: { PHASE_TIMEOUT_MS: '20' } });
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async (input: { mode: string; phaseId?: string | null }) => {
+      async (input: { mode: string; stepId?: string | null }) => {
         // The plan turn NEVER settles and ignores abort (a runaway read-only exploration the SDK won't
         // interrupt). The hard race-timeout must bound it and fall back to the planner.
         if (input.mode === 'plan') return new Promise(() => {});
-        return { report: `did ${input.phaseId}`, session: {} };
+        return { report: `did ${input.stepId}`, session: {} };
       },
     );
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // The plan turn timed out but the build did NOT hang: the structured planner supplied phases and
-    // execution proceeded to completion (phases committed, one PR opened).
+    // The plan turn timed out but the build did NOT hang: the structured planner supplied steps and
+    // execution proceeded to completion (steps committed, one PR opened).
     expect(state.job.status).toBe('done');
     expect(h.commits.length).toBeGreaterThan(0);
     expect(h.opened).toHaveLength(1);
@@ -916,22 +923,22 @@ async function flushUntil(pred: () => boolean, cap = 300): Promise<void> {
 
 // ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
 
-describe('SectionDriver — 401 auth recovery', () => {
+describe('TrackDriver — 401 auth recovery', () => {
   /** A turn that throws EngineAuthError on the FIRST execute (a mid-build 401), then succeeds. */
   function flakyAuthTurn(): TurnRunnerService {
     let executes = 0;
     return {
-      runTurn: vi.fn(async (input: { mode: string; phaseId?: string | null; jobId: string }) => {
+      runTurn: vi.fn(async (input: { mode: string; stepId?: string | null; jobId: string }) => {
         if (input.mode === 'execute' && ++executes === 1) {
           throw new EngineAuthError('401 Invalid API key', 'sess-401');
         }
         return {
-          report: input.mode === 'plan' ? 'plan' : `did ${input.phaseId}`,
+          report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
           ...(input.mode === 'plan' ? { planText: 'P' } : {}),
           session: {
             id: 'sess-401',
             jobId: input.jobId,
-            phaseId: input.phaseId ?? null,
+            stepId: input.stepId ?? null,
             engine: 'claude' as const,
             mode: input.mode as 'plan' | 'execute' | 'review',
             branch: 'b',
@@ -946,8 +953,8 @@ describe('SectionDriver — 401 auth recovery', () => {
     return {
       job: makeJob(),
       record: makeRecord(),
-      sections: [section('sec-be', 10, 'Backend')],
-      phases: [],
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
   }

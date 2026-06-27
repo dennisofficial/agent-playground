@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ChevronRight, Clock } from 'lucide-react';
 import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
-import { ToolGroup, type ToolItem } from './tool-call';
+import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import type { ThreadMessage } from '@/lib/api/thread-api';
 import type { LiveBlock, LiveTurn } from '@/lib/api/thread-stream';
 
@@ -109,8 +109,9 @@ export function LiveTurnView({ turn }: { turn: LiveTurn }) {
   let pending: ToolItem[] = [];
   const flush = () => {
     if (pending.length === 0) return;
-    const tools = pending;
-    items.push({ key: `tg-${tools[0].key}`, node: <ToolGroup tools={tools} /> });
+    for (const seg of segmentToolRun(pending)) {
+      items.push({ key: `tg-${seg[0].key}`, node: <ToolGroup tools={seg} /> });
+    }
     pending = [];
   };
 

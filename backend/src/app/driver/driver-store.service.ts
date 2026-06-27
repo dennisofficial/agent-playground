@@ -4,31 +4,31 @@ import { Repository } from 'typeorm';
 import type {
   Decision,
   DecisionRecord,
-  Phase,
-  PhaseStatus,
-  Section,
-  SectionStatus,
+  Step,
+  StepStatus,
+  Track,
+  TrackStatus,
   Thread,
   ThreadStatus,
 } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  PhaseEntity,
-  SectionEntity,
+  StepEntity,
+  TrackEntity,
   ThreadEntity,
 } from '../persistence/entities';
-import type { PlannedPhase } from './planner-llm';
+import type { PlannedStep } from './planner-llm';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
 
 /**
- * The section shape the driver works with — the domain `Section` plus the denormalized `orgId` the phase
- * rows need (phases carry `org_id`). The driver never reaches a repository, so the store carries the one
+ * The track shape the driver works with — the domain `Track` plus the denormalized `orgId` the step
+ * rows need (steps carry `org_id`). The driver never reaches a repository, so the store carries the one
  * extra field rather than the driver re-querying the thread for it.
  */
-export type DriverSection = Section & { orgId: string };
+export type DriverTrack = Track & { orgId: string };
 
 /** Where to post a thread's chatter — the repo coordinate + the real thread id. */
 export interface JobRoute {
@@ -40,14 +40,14 @@ export interface JobRoute {
 }
 
 /**
- * W4 — the DRIVER's persistence. The single place the section driver reads/writes the section + phase
+ * W4 — the DRIVER's persistence. The single place the track driver reads/writes the track + step
  * rows (and resolves the decision record + thread route) on the 'app' connection. The THREAD is the build
  * unit (the former `jobs` layer is folded into it), so the "job" methods here operate on the thread row.
- * Keeps `SectionDriver` a legible pipeline that speaks DOMAIN shapes (`Section`, `Phase`) — this maps
+ * Keeps `TrackDriver` a legible pipeline that speaks DOMAIN shapes (`Track`, `Step`) — this maps
  * them to/from rows and owns the explicit, resumable `status`/`step` transitions.
  *
- * The brain (W3) already wrote the high-level section BRIEFS (`pending`, no plan). This fills the
- * just-in-time detail: the section `plan`, its phase rows, and the status cursors the driver re-enters
+ * The brain (W3) already wrote the high-level track BRIEFS (`pending`, no plan). This fills the
+ * just-in-time detail: the track `plan`, its step rows, and the status cursors the driver re-enters
  * at on restart. Zero v1 imports.
  */
 @Injectable()
@@ -55,10 +55,10 @@ export class DriverStoreService {
   constructor(
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(SectionEntity, DB_CONNECTION)
-    private readonly sections: Repository<SectionEntity>,
-    @InjectRepository(PhaseEntity, DB_CONNECTION)
-    private readonly phases: Repository<PhaseEntity>,
+    @InjectRepository(TrackEntity, DB_CONNECTION)
+    private readonly tracks: Repository<TrackEntity>,
+    @InjectRepository(StepEntity, DB_CONNECTION)
+    private readonly steps: Repository<StepEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
   ) {}
@@ -82,7 +82,7 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { status });
   }
 
-  /** Record the feature branch all sections stack on (set once, when the sandbox is cut). */
+  /** Record the feature branch all tracks stack on (set once, when the sandbox is cut). */
   async setFeatureBranch(threadId: string, branch: string): Promise<void> {
     await this.threads.update({ id: threadId }, { feature_branch: branch });
   }
@@ -114,107 +114,107 @@ export class DriverStoreService {
     return row ? toRecord(row) : null;
   }
 
-  // ── sections ─────────────────────────────────────────────────────────────────────────────────
+  // ── tracks ─────────────────────────────────────────────────────────────────────────────────
 
-  /** The thread's sections in execution order (ORDER BY ordinal). */
-  async sectionsForJob(threadId: string): Promise<DriverSection[]> {
-    const rows = await this.sections.find({
+  /** The thread's tracks in execution order (ORDER BY ordinal). */
+  async tracksForJob(threadId: string): Promise<DriverTrack[]> {
+    const rows = await this.tracks.find({
       where: { thread_id: threadId },
       order: { ordinal: 'ASC' },
     });
-    return rows.map(toSection);
+    return rows.map(toTrack);
   }
 
-  async setSectionStatus(
-    sectionId: string,
-    status: SectionStatus,
+  async setTrackStatus(
+    trackId: string,
+    status: TrackStatus,
   ): Promise<void> {
-    await this.sections.update({ id: sectionId }, { status });
+    await this.tracks.update({ id: trackId }, { status });
   }
 
-  /** Persist the just-in-time plan prose + the prior section's handoff onto the section. */
-  async setSectionPlan(
-    sectionId: string,
+  /** Persist the just-in-time plan prose + the prior track's handoff onto the track. */
+  async setTrackPlan(
+    trackId: string,
     plan: string,
     handoffIn: string | null,
   ): Promise<void> {
-    await this.sections.update(
-      { id: sectionId },
+    await this.tracks.update(
+      { id: trackId },
       { plan, handoff_in: handoffIn },
     );
   }
 
-  /** Record the section's handoff note for the next section (set when the section is done). */
-  async setSectionHandoffOut(
-    sectionId: string,
+  /** Record the track's handoff note for the next track (set when the track is done). */
+  async setTrackHandoffOut(
+    trackId: string,
     handoffOut: string,
   ): Promise<void> {
-    await this.sections.update({ id: sectionId }, { handoff_out: handoffOut });
+    await this.tracks.update({ id: trackId }, { handoff_out: handoffOut });
   }
 
-  // ── phases ───────────────────────────────────────────────────────────────────────────────────
+  // ── steps ───────────────────────────────────────────────────────────────────────────────────
 
-  /** A section's phases in execution order. */
-  async phasesForSection(sectionId: string): Promise<Phase[]> {
-    const rows = await this.phases.find({
-      where: { section_id: sectionId },
+  /** A track's steps in execution order. */
+  async stepsForTrack(trackId: string): Promise<Step[]> {
+    const rows = await this.steps.find({
+      where: { track_id: trackId },
       order: { ordinal: 'ASC' },
     });
-    return rows.map(toPhase);
+    return rows.map(toStep);
   }
 
   /**
-   * Lock a section's phases: persist the planned phase list as `phases` rows (gap-numbered,
+   * Lock a track's steps: persist the planned step list as `steps` rows (gap-numbered,
    * `pending`/step `build`). Idempotent across a resume — if rows already exist (the plan locked before
-   * the restart) the existing rows are returned untouched, so phases never double-create.
+   * the restart) the existing rows are returned untouched, so steps never double-create.
    */
-  async lockPhases(
-    section: DriverSection,
-    planned: PlannedPhase[],
-  ): Promise<Phase[]> {
-    const existing = await this.phasesForSection(section.id);
+  async lockSteps(
+    track: DriverTrack,
+    planned: PlannedStep[],
+  ): Promise<Step[]> {
+    const existing = await this.stepsForTrack(track.id);
     if (existing.length > 0) return existing;
     const rows = planned.map((p, i) =>
-      this.phases.create({
-        section_id: section.id,
-        thread_id: section.threadId,
-        org_id: section.orgId,
+      this.steps.create({
+        track_id: track.id,
+        thread_id: track.threadId,
+        org_id: track.orgId,
         ordinal: (i + 1) * ORDINAL_GAP,
         title: p.title,
         brief: p.brief,
-        step: 'build',
+        stage: 'build',
         status: 'pending',
       }),
     );
-    await this.phases.save(rows);
-    return rows.map(toPhase);
+    await this.steps.save(rows);
+    return rows.map(toStep);
   }
 
-  /** Advance a phase's explicit cursor (`step` + `status`) — the resumable transition. */
-  async setPhaseState(
-    phaseId: string,
-    step: string,
-    status: PhaseStatus,
+  /** Advance a step's explicit cursor (`step` + `status`) — the resumable transition. */
+  async setStepState(
+    stepId: string,
+    stage: string,
+    status: StepStatus,
   ): Promise<void> {
-    await this.phases.update({ id: phaseId }, { step, status });
+    await this.steps.update({ id: stepId }, { stage, status });
   }
 
   /**
-   * Persist the batch grouping for a section's phases — the resumable batching cursor. Assigned ONCE,
-   * the first time a section executes (all its phases have null `batch_ordinal`); after this a restart
+   * Persist the batch grouping for a track's steps — the resumable batching cursor. Assigned ONCE,
+   * the first time a track executes (all its steps have null `batch_ordinal`); after this a restart
    * reads the stored ordinals and re-groups identically, so a resumed engine session keeps the SAME
-   * batch membership (no second `batchPhases` call, no drift). Each tuple is `[phaseId, batchOrdinal]`.
+   * batch membership (no second `batchSteps` call, no drift). Each tuple is `[stepId, batchOrdinal]`.
    */
   async setBatchOrdinals(assignments: Array<[string, number]>): Promise<void> {
-    for (const [phaseId, batchOrdinal] of assignments) {
-      await this.phases.update({ id: phaseId }, { batch_ordinal: batchOrdinal });
+    for (const [stepId, batchOrdinal] of assignments) {
+      await this.steps.update({ id: stepId }, { batch_ordinal: batchOrdinal });
     }
   }
 
   // ── brain read helpers ───────────────────────────────────────────────────────────────────────
 
   /**
-   * R3 — `get_pipeline_state` tool impl. Returns the current build + section state for a thread, or
+   * R3 — `get_pipeline_state` tool impl. Returns the current build + track state for a thread, or
    * `{ status: 'no_job' }` if the thread hasn't entered the build lifecycle. Used by the in-sandbox
    * AgentSessionManager brain session.
    */
@@ -223,20 +223,20 @@ export class DriverStoreService {
       where: { id: threadId, org_id: orgId },
     });
     if (!thread || thread.status === 'open') return { status: 'no_job' };
-    const sections = await this.sections.find({
+    const tracks = await this.tracks.find({
       where: { thread_id: thread.id },
       order: { ordinal: 'ASC' },
     });
-    // All the thread's phases in one query (avoid N+1), grouped by section for the nav folder tree.
-    const phases = await this.phases.find({
+    // All the thread's steps in one query (avoid N+1), grouped by track for the nav folder tree.
+    const steps = await this.steps.find({
       where: { thread_id: thread.id },
       order: { ordinal: 'ASC' },
     });
-    const phasesBySection = new Map<string, PhaseEntity[]>();
-    for (const p of phases) {
-      const list = phasesBySection.get(p.section_id) ?? [];
+    const stepsByTrack = new Map<string, StepEntity[]>();
+    for (const p of steps) {
+      const list = stepsByTrack.get(p.track_id) ?? [];
       list.push(p);
-      phasesBySection.set(p.section_id, list);
+      stepsByTrack.set(p.track_id, list);
     }
     return {
       threadId: thread.id,
@@ -248,18 +248,19 @@ export class DriverStoreService {
       prNumber: thread.pr_number,
       featureBranch: thread.feature_branch,
       baseBranch: thread.base_branch,
-      sections: sections.map((s) => ({
+      tracks: tracks.map((s) => ({
         id: s.id,
         ordinal: s.ordinal,
         brief: s.brief,
+        type: s.type,
         status: s.status,
         hasPlan: s.plan != null,
-        phases: (phasesBySection.get(s.id) ?? []).map((p) => ({
+        steps: (stepsByTrack.get(s.id) ?? []).map((p) => ({
           id: p.id,
           ordinal: p.ordinal,
           title: p.title,
           brief: p.brief,
-          step: p.step,
+          stage: p.stage,
           status: p.status,
         })),
       })),
@@ -282,7 +283,7 @@ export class DriverStoreService {
       status: record.status,
       overview: record.overview,
       decisions: record.decisions,
-      sectionBriefs: record.section_briefs,
+      trackTitles: record.track_titles,
     };
   }
 
@@ -316,7 +317,7 @@ function toThread(row: ThreadEntity): Thread {
   };
 }
 
-function toSection(row: SectionEntity): DriverSection {
+function toTrack(row: TrackEntity): DriverTrack {
   return {
     id: row.id,
     threadId: row.thread_id,
@@ -326,20 +327,20 @@ function toSection(row: SectionEntity): DriverSection {
     plan: row.plan,
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,
-    status: row.status as SectionStatus,
+    status: row.status as TrackStatus,
   };
 }
 
-function toPhase(row: PhaseEntity): Phase {
+function toStep(row: StepEntity): Step {
   return {
     id: row.id,
-    sectionId: row.section_id,
+    trackId: row.track_id,
     threadId: row.thread_id,
     ordinal: row.ordinal,
     title: row.title,
     brief: row.brief,
-    step: row.step,
-    status: row.status as PhaseStatus,
+    stage: row.stage,
+    status: row.status as StepStatus,
     sessionId: row.session_id,
     batchOrdinal: row.batch_ordinal ?? null,
   };
@@ -354,7 +355,7 @@ function toRecord(row: DecisionRecordEntity): DecisionRecord {
     status: row.status as DecisionRecord['status'],
     overview: row.overview,
     decisions: row.decisions as Decision[],
-    sectionBriefs: row.section_briefs,
+    trackTitles: row.track_titles,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
   };

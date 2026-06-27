@@ -7,7 +7,7 @@ import { GateModule } from './gate.module';
 /**
  * Standalone composition root for the W1 acceptance gate CLI (`gate`). It brings up what the gate
  * needs — Env + Logger + the `atlas` datasource + the GateModule (engine + git + surface + runner).
- * The runner persists/resumes session state via the `PhaseEntity` repository on the 'app' connection,
+ * The runner persists/resumes session state via the `StepEntity` repository on the 'app' connection,
  * so the (@Global) OrmConnectionModule must be present. Zero v1 imports.
  */
 @CreateModule({

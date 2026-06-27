@@ -1,8 +1,11 @@
 'use client';
 
-import { memo, type ReactNode } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
 
 /**
  * Markdown renderer for assistant prose in the conversation — ported from the "Atlas Conversation View"
@@ -37,6 +40,224 @@ function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
   );
 }
 
+// ── Mermaid (lazy) ─────────────────────────────────────────────────────────────────────────────────
+// Inline ```mermaid fences render as real diagrams. mermaid is heavy + DOM-only, so it's dynamically
+// imported (kept out of the main bundle) and initialized ONCE, client-side, pulling its palette from the
+// live CSS tokens so diagrams match the design system. securityLevel 'strict' DOMPurify-sanitizes the SVG
+// (diagrams are agent-authored), which makes the dangerouslySetInnerHTML below safe.
+let mermaidReady: Promise<typeof import('mermaid').default> | null = null;
+function loadMermaid() {
+  if (!mermaidReady) {
+    mermaidReady = import('mermaid').then((mod) => {
+      const mermaid = mod.default;
+      const css = getComputedStyle(document.documentElement);
+      const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'base',
+        fontFamily: v('--f-mono', 'ui-monospace, monospace'),
+        themeVariables: {
+          background: 'transparent',
+          primaryColor: v('--surface-2', '#f6f6f3'),
+          primaryTextColor: v('--text', '#1a1d23'),
+          primaryBorderColor: v('--border-2', '#d3d3cc'),
+          secondaryColor: v('--surface-3', '#eeeee9'),
+          tertiaryColor: v('--surface', '#ffffff'),
+          lineColor: v('--dim', '#5c6573'),
+          textColor: v('--text', '#1a1d23'),
+        },
+      });
+      return mermaid;
+    });
+  }
+  return mermaidReady;
+}
+
+/** Flatten code-block children to plain text (string, number, or rehype-highlight span nodes). */
+function nodeText(node: ReactNode): string {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join('');
+  if (typeof node === 'object' && 'props' in node) {
+    return nodeText((node as { props?: { children?: ReactNode } }).props?.children);
+  }
+  return '';
+}
+
+/**
+ * Strip mermaid's inline `max-width` clamp (which uniformly downscales wide diagrams until text is
+ * illegible) and read the intrinsic px size from the viewBox, so we can size the diagram ourselves.
+ */
+function parseSvg(raw: string): { svg: string; w: number; h: number } {
+  const vb = /viewBox="[\d.\-]+ [\d.\-]+ ([\d.\-]+) ([\d.\-]+)"/.exec(raw);
+  return {
+    svg: raw.replace(/max-width:\s*[\d.]+px;?/g, ''),
+    w: vb ? Math.round(parseFloat(vb[1])) : 0,
+    h: vb ? Math.round(parseFloat(vb[2])) : 0,
+  };
+}
+
+function Mermaid({ chart }: { chart: string }) {
+  // useId is colon-bearing; mermaid's render id must be a valid DOM/CSS id, so strip non-word chars.
+  const renderId = `mmd-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+  const [result, setResult] = useState<{ svg: string; w: number; h: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [zoomed, setZoomed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setResult(null);
+    setError(null);
+    loadMermaid()
+      .then((mermaid) => mermaid.render(renderId, chart))
+      .then(({ svg }) => {
+        if (!cancelled) setResult(parseSvg(svg));
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chart, renderId]);
+
+  // A malformed diagram still shows its source (with the parse error) rather than vanishing.
+  if (error) {
+    return (
+      <div className="my-3">
+        <p className="mb-1 font-mono text-[10px] text-red">diagram failed to render — {error}</p>
+        <CodeBlock lang="mermaid">{chart}</CodeBlock>
+      </div>
+    );
+  }
+  if (!result) {
+    return (
+      <div className="my-3 flex items-center justify-center rounded-[9px] border border-border bg-surface-2 px-4 py-6 font-mono text-[10.5px] text-faint">
+        rendering diagram…
+      </div>
+    );
+  }
+  return (
+    <>
+      <figure className="group relative my-3 overflow-hidden rounded-[9px] border border-border bg-surface">
+        <button
+          type="button"
+          onClick={() => setZoomed(true)}
+          title="Expand diagram"
+          className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-border bg-panel/90 px-2 py-1 font-mono text-[10px] text-dim opacity-0 backdrop-blur transition hover:text-text group-hover:opacity-100"
+        >
+          <Maximize2 size={12} /> expand
+        </button>
+        {/* Fit to width, but never upscale past the intrinsic size — so the diagram never breaks the doc
+            layout, and the whole thing is click-to-expand for a readable view. */}
+        <div
+          onClick={() => setZoomed(true)}
+          className="cursor-zoom-in p-4 [&>svg]:!h-auto [&>svg]:!w-full"
+          style={{ maxWidth: result.w || undefined }}
+          // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
+          dangerouslySetInnerHTML={{ __html: result.svg }}
+        />
+      </figure>
+      {zoomed ? (
+        <MermaidLightbox svg={result.svg} w={result.w} h={result.h} onClose={() => setZoomed(false)} />
+      ) : null}
+    </>
+  );
+}
+
+/** Fullscreen, zoomable, pannable view of one diagram — the readable view for dense plan diagrams. */
+function MermaidLightbox({ svg, w, h, onClose }: { svg: string; w: number; h: number; onClose: () => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; l: number; t: number } | null>(null);
+  // Start at fit-to-viewport (capped at 2× so a small diagram doesn't blow up), then zoom/pan from there.
+  const fit = () => {
+    if (typeof window === 'undefined' || !w || !h) return 1;
+    const s = Math.min((window.innerWidth - 96) / w, (window.innerHeight - 150) / h);
+    return Math.max(0.25, Math.min(2, Number(s.toFixed(2))));
+  };
+  const [scale, setScale] = useState(fit);
+  const zoom = (f: number) => setScale((s) => Math.max(0.25, Math.min(4, Number((s * f).toFixed(2)))));
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex flex-col" role="dialog" aria-modal>
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.55)' }} />
+      <div className="relative z-10 flex items-center justify-between border-b border-border bg-panel px-3 py-2">
+        <span className="font-mono text-[9px] tracking-[0.16em] text-faint">DIAGRAM</span>
+        <div className="flex items-center gap-0.5">
+          <ToolBtn onClick={() => zoom(1 / 1.25)} title="Zoom out"><ZoomOut size={14} /></ToolBtn>
+          <span className="w-11 text-center font-mono text-[11px] text-dim">{Math.round(scale * 100)}%</span>
+          <ToolBtn onClick={() => zoom(1.25)} title="Zoom in"><ZoomIn size={14} /></ToolBtn>
+          <ToolBtn onClick={() => setScale(fit())} title="Fit to screen"><RotateCcw size={13} /></ToolBtn>
+          <div className="mx-1 h-4 w-px bg-border" />
+          <ToolBtn onClick={onClose} title="Close (Esc)"><X size={15} /></ToolBtn>
+        </div>
+      </div>
+      <div
+        ref={scrollRef}
+        className="relative z-10 flex-1 overflow-auto"
+        // Clicking the grayed-out area (anything that isn't the diagram card) closes the lightbox.
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest('[data-mmd-card]')) onClose();
+        }}
+      >
+        {/* min-h/w-full + flex centering keeps the diagram centered when it fits, and scrollable when it
+            doesn't. The diagram sits on its own solid surface card so it reads over the dark backdrop. */}
+        <div className="flex min-h-full min-w-full items-center justify-center p-8">
+          {/* Drag the diagram itself to pan (like an image viewer); clicks elsewhere fall through to close. */}
+          <div
+            data-mmd-card
+            className="shrink-0 cursor-grab touch-none rounded-lg border border-border bg-surface p-5 shadow-[var(--shadow-card)] active:cursor-grabbing"
+            onPointerDown={(e) => {
+              const el = scrollRef.current;
+              if (!el) return;
+              drag.current = { x: e.clientX, y: e.clientY, l: el.scrollLeft, t: el.scrollTop };
+              e.currentTarget.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const el = scrollRef.current;
+              if (!el || !drag.current) return;
+              el.scrollLeft = drag.current.l - (e.clientX - drag.current.x);
+              el.scrollTop = drag.current.t - (e.clientY - drag.current.y);
+            }}
+            onPointerUp={() => (drag.current = null)}
+          >
+            <div
+              className="[&>svg]:!h-full [&>svg]:!w-full"
+              style={{ width: (w || 300) * scale, height: (h || 200) * scale }}
+              // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ToolBtn({ onClick, title, children }: { onClick: () => void; title: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className="flex h-7 w-7 items-center justify-center rounded-md text-dim transition hover:bg-surface-2 hover:text-text"
+    >
+      {children}
+    </button>
+  );
+}
+
 const COMPONENTS: Components = {
   h1: ({ children }) => (
     <h1 className="mb-1 mt-1 font-disp text-[21px] font-bold leading-tight tracking-[-0.02em] text-text">{children}</h1>
@@ -50,17 +271,7 @@ const COMPONENTS: Components = {
   p: ({ children }) => <p className="my-2 text-[14px] leading-[1.62] text-text first:mt-0 last:mb-0">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-text">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-accent"
-      style={{ textDecoration: 'none', borderBottom: '1px solid var(--accent-line)' }}
-    >
-      {children}
-    </a>
-  ),
+  a: ({ href, children }) => <ExternalAnchor href={href}>{children}</ExternalAnchor>,
   ul: ({ children }) => <ul className="my-2 flex list-disc flex-col gap-1.5 pl-5 text-[14px] leading-[1.5]">{children}</ul>,
   ol: ({ children }) => (
     <ol className="my-2 flex list-decimal flex-col gap-1.5 pl-5 text-[14px] leading-[1.5]">{children}</ol>
@@ -95,9 +306,13 @@ const COMPONENTS: Components = {
     </td>
   ),
   code: ({ className, children }) => {
-    const text = String(children ?? '');
-    const match = /language-(\w+)/.exec(className ?? '');
-    const isBlock = Boolean(match) || text.includes('\n');
+    const cls = className ?? '';
+    const match = /language-(\w+)/.exec(cls);
+    // A ```mermaid fence becomes a rendered diagram instead of a code frame.
+    if (match?.[1] === 'mermaid') return <Mermaid chart={nodeText(children).replace(/\n$/, '')} />;
+    // rehype-highlight tags fenced block code (and only block code) with `hljs`; fall back to a
+    // newline sniff for the rare un-highlighted block.
+    const isBlock = cls.includes('hljs') || Boolean(match) || String(children ?? '').includes('\n');
     if (isBlock) return <CodeBlock lang={match?.[1]}>{children}</CodeBlock>;
     return (
       <code
@@ -111,10 +326,76 @@ const COMPONENTS: Components = {
   pre: ({ children }) => <>{children}</>,
 };
 
-export const Markdown = memo(function Markdown({ children }: { children: string }) {
+/** The default external link (new tab) — used for absolute/scheme/anchor hrefs. */
+function ExternalAnchor({ href, children }: { href?: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="text-accent"
+      style={{ textDecoration: 'none', borderBottom: '1px solid var(--accent-line)' }}
+    >
+      {children}
+    </a>
+  );
+}
+
+/** A relative link (no scheme, not an anchor, not site-absolute) — e.g. `sections/01-backend.md`. */
+function isRelativeHref(href: string | undefined): href is string {
+  return (
+    !!href &&
+    !/^[a-z][a-z0-9+.-]*:/i.test(href) && // scheme: http:, mailto:, …
+    !href.startsWith('#') &&
+    !href.startsWith('/') &&
+    !href.startsWith('//')
+  );
+}
+
+export const Markdown = memo(function Markdown({
+  children,
+  resolveRelativeLink,
+}: {
+  children: string;
+  /** Resolve a RELATIVE link (e.g. a spec file linking `sections/01-backend.md`) to a real in-app deep
+   *  link + a select action. The anchor's `href` becomes `url` (so cmd/middle-click opens the right thing
+   *  in a new tab), and a plain left-click is intercepted to `onSelect()` (SPA nav, no reload). Return null
+   *  to leave a link as a normal external anchor. Absent → all links render as external anchors. */
+  resolveRelativeLink?: (href: string) => { url: string; onSelect: () => void } | null;
+}) {
+  const components = useMemo<Components>(() => {
+    if (!resolveRelativeLink) return COMPONENTS;
+    return {
+      ...COMPONENTS,
+      a: ({ href, children }) => {
+        const r = isRelativeHref(href) ? resolveRelativeLink(href) : null;
+        if (!r) return <ExternalAnchor href={href}>{children}</ExternalAnchor>;
+        return (
+          <a
+            href={r.url}
+            onClick={(e) => {
+              // Let the browser handle modified / non-left clicks (new tab/window) — they open `r.url`,
+              // a real deep link. Intercept only a plain left-click for in-app SPA navigation.
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+              e.preventDefault();
+              r.onSelect();
+            }}
+            className="cursor-pointer text-accent"
+            style={{ textDecoration: 'none', borderBottom: '1px solid var(--accent-line)' }}
+          >
+            {children}
+          </a>
+        );
+      },
+    };
+  }, [resolveRelativeLink]);
   return (
     <div className="text-[14px] leading-[1.62] text-text">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        components={components}
+      >
         {children}
       </ReactMarkdown>
     </div>

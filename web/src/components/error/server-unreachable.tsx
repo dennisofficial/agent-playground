@@ -172,11 +172,13 @@ const TOP_LINE: CSSProperties = {
 
 // ── illustration ─────────────────────────────────────────────────────────────────────────────
 const ILLUSTRATION: CSSProperties = {
+  // Top-align the three columns so every 60px card shares the same top edge — and therefore the
+  // same vertical center as the cable/X marker. Centering instead would push each card's center up
+  // by half its label height (the cable column has no label), leaving the lines visibly low.
   position: 'relative',
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   justifyContent: 'center',
-  height: 148,
   marginBottom: 34,
 };
 const NODE_CARD: CSSProperties = {

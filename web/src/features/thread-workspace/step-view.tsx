@@ -1,14 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { usePathname } from 'next/navigation';
 import { ArrowRight, Info, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useContextFile, useSay } from '@/lib/api/thread-queries';
-import { sectionTitle } from '@/lib/section-brief';
+import { trackTitle } from '@/lib/track-title';
 import { VerdictButtons } from './approval-card';
+import { Markdown } from './markdown';
 import { pipelineJob, type ThreadMessage, type ThreadRef } from '@/lib/api/thread-api';
 import {
   APPROVE_ACTION_ID,
@@ -21,10 +21,10 @@ import {
 type PhaseTab = 'transcript' | 'diff' | 'logs';
 
 /**
- * Phase mode — the work column when a navigator node is selected. The plan / decision docs and the build
+ * Step mode — the work column when a navigator node is selected. The plan / decision docs and the build
  * transcript/diff/logs render REAL data where the web API exposes it (the approved plan card's decisions +
- * sections; the thread's `build_event` relays) and clearly-labeled PLACEHOLDERS where it doesn't (no
- * per-phase transcript/diff/logs endpoint, no plan.md/decision-record content endpoint — see
+ * tracks; the thread's `build_event` relays) and clearly-labeled PLACEHOLDERS where it doesn't (no
+ * per-step transcript/diff/logs endpoint, no plan.md/decision-record content endpoint — see
  * `web/BACKEND_GAPS.md`).
  */
 export function PhaseView({
@@ -36,6 +36,7 @@ export function PhaseView({
   approvalCard,
   selectedNode,
   onConversation,
+  onSelectNode,
 }: {
   threadRef: ThreadRef;
   pipeline: PipelineState | undefined;
@@ -46,57 +47,95 @@ export function PhaseView({
   approvalCard: WebApprovalCard | null;
   selectedNode: string;
   onConversation: () => void;
+  /** Select another navigator node (URL `?node=`) — lets a rendered spec file's relative links open the
+   *  linked file in-app. */
+  onSelectNode?: (node: string) => void;
 }) {
   const job = pipelineJob(pipeline);
-  const section = job?.sections.find((s) => s.id === selectedNode) ?? null;
-  // A phase leaf (execute folder) — find which section owns it + its 1-based index, for the label.
-  const owningSection = job?.sections.find((s) => s.phases.some((p) => p.id === selectedNode)) ?? null;
-  const phaseIndex = owningSection ? owningSection.phases.findIndex((p) => p.id === selectedNode) : -1;
-  const phase = owningSection?.phases[phaseIndex] ?? null;
+  const track = job?.tracks.find((s) => s.id === selectedNode) ?? null;
+  // A step leaf (execute folder) — find which track owns it + its 1-based index, for the label.
+  const owningSection = job?.tracks.find((s) => s.steps.some((p) => p.id === selectedNode)) ?? null;
+  const phaseIndex = owningSection ? owningSection.steps.findIndex((p) => p.id === selectedNode) : -1;
+  const step = owningSection?.steps[phaseIndex] ?? null;
 
-  // A `?node=` URL can outlive the node it names (deleted spec, a section/phase id from before a re-plan).
+  // A `?node=` URL can outlive the node it names (deleted spec, a track/step id from before a re-plan).
   // Resolve EVERY job-derived token against the live job so a stale link shows NodeNotFound rather than a
   // misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:` self-handle a 404
   // inside FileView; `plan`/`decision`/`diff` render from card/derived data and are always resolvable.
   const resolution = resolveNode(selectedNode, job, Boolean(pipelineLoading), Boolean(pipelineError));
 
+  // Context-file nodes (specs / generated / artifacts) resolve to a single `/context` path. The header's
+  // byte count reads from the same (cached) query FileView uses, so calling it here costs nothing extra.
+  const filePath = selectedNode.startsWith('spec:')
+    ? `specs/${selectedNode.slice('spec:'.length)}`
+    : selectedNode.startsWith('gen:')
+      ? `generated/${selectedNode.slice('gen:'.length)}`
+      : selectedNode.startsWith('artifact:')
+        ? `artifacts/${selectedNode.slice('artifact:'.length)}`
+        : null;
+  const fileQuery = useContextFile(threadRef, filePath);
+
+  // The detail pane's header (title + subtitle) lives in the top bar — each branch supplies it alongside
+  // its body so the scrolling content no longer repeats it.
+  let title: string;
+  let subtitle = '';
   let body: React.ReactNode;
   if (resolution === 'loading') {
+    title = 'Loading…';
     body = <Placeholder title="Loading…" body="Resolving this node against the pipeline." />;
   } else if (resolution === 'not_found') {
+    title = 'Not found';
+    subtitle = selectedNode;
     body = <NodeNotFound node={selectedNode} onConversation={onConversation} />;
   } else if (selectedNode === 'plan') {
-    body = <PlanDoc card={approvalCard} title={job?.title} sections={job?.sections.map((s) => s.brief)} threadRef={threadRef} />;
+    const n = (approvalCard?.tracks ?? job?.tracks.map((s) => s.brief) ?? []).length;
+    title = job?.title ?? approvalCard?.title ?? 'Plan';
+    subtitle = `${n} track${n === 1 ? '' : 's'} · plan.md`;
+    body = <PlanDoc card={approvalCard} tracks={job?.tracks.map((s) => s.brief)} threadRef={threadRef} />;
   } else if (selectedNode === 'decision') {
+    title = 'Decision record';
+    subtitle = "locked at approval · the build's input contract";
     body = <DecisionDoc card={approvalCard} />;
   } else if (selectedNode === 'diff') {
+    title = 'Diff';
+    subtitle = 'the accumulated change across all tracks';
     body = <DiffView />;
-  } else if (selectedNode.startsWith('spec:')) {
-    body = <FileView threadRef={threadRef} path={`specs/${selectedNode.slice('spec:'.length)}`} />;
-  } else if (selectedNode.startsWith('gen:')) {
-    body = <FileView threadRef={threadRef} path={`generated/${selectedNode.slice('gen:'.length)}`} />;
-  } else if (selectedNode.startsWith('artifact:')) {
-    body = <FileView threadRef={threadRef} path={`artifacts/${selectedNode.slice('artifact:'.length)}`} />;
+  } else if (filePath) {
+    title = filePath.split('/').pop() ?? filePath;
+    subtitle = fileQuery.data ? `${filePath} · ${formatBytes(fileQuery.data.size)}` : filePath;
+    body = <FileView threadRef={threadRef} path={filePath} onSelectNode={onSelectNode} />;
   } else if (selectedNode.startsWith('secplan:')) {
     const id = selectedNode.slice('secplan:'.length);
-    const sec = job?.sections.find((s) => s.id === id) ?? null;
-    body = <SectionPlanDoc brief={sec ? sectionTitle(sec.brief) : 'Section plan'} />;
+    const sec = job?.tracks.find((s) => s.id === id) ?? null;
+    title = sec ? trackTitle(sec.brief) : 'Track plan';
+    subtitle = 'track plan';
+    body = <SectionPlanDoc />;
   } else if (selectedNode.startsWith('rev:')) {
-    body = <ReviewView lens={selectedNode.split(':')[2] ?? 'review'} />;
+    const lens = selectedNode.split(':')[2] ?? 'review';
+    title = lens;
+    subtitle = 'review lens · over the track diff';
+    body = <ReviewView lens={lens} />;
   } else if (selectedNode.startsWith('autofix:')) {
+    title = 'Auto-fix';
+    subtitle = '3-lens self-review · over the track diff';
     body = <AutoFixView />;
-  } else if (phase) {
-    const label = `phase ${phaseIndex + 1}${phase.title ? ` · ${phase.title}` : ''}`;
-    body = <BuildView threadRef={threadRef} label={label} messages={messages} phaseId={phase.id} />;
-  } else if (section) {
-    body = <BuildView threadRef={threadRef} label={`§ ${sectionTitle(section.brief)}`} messages={messages} />;
+  } else if (step) {
+    title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
+    subtitle = 'Claude · execute';
+    body = <BuildView threadRef={threadRef} messages={messages} phaseId={step.id} />;
+  } else if (track) {
+    title = `§ ${trackTitle(track.brief)}`;
+    subtitle = 'Claude · execute';
+    body = <BuildView threadRef={threadRef} messages={messages} />;
   } else {
-    body = <BuildView threadRef={threadRef} label="Build" messages={messages} />;
+    title = 'Build';
+    subtitle = 'Claude · execute';
+    body = <BuildView threadRef={threadRef} messages={messages} />;
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-5 py-2.5">
+      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-5">
         <button
           type="button"
           onClick={onConversation}
@@ -106,24 +145,27 @@ export function PhaseView({
         >
           <X size={13} strokeWidth={2.2} />
         </button>
-        <span className="font-mono text-[9px] tracking-[0.16em] text-faint">NAVIGATOR · DETAIL</span>
+        <div className="flex min-w-0 flex-col justify-center">
+          <span className="truncate font-disp text-[13.5px] font-semibold leading-tight text-text">{title}</span>
+          {subtitle ? (
+            <span className="truncate font-mono text-[10px] leading-tight text-faint">{subtitle}</span>
+          ) : null}
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
     </div>
   );
 }
 
-// ── Build phase (transcript / diff / logs) ───────────────────────────────────────────────────────
+// ── Build step (transcript / diff / logs) ───────────────────────────────────────────────────────
 function BuildView({
   threadRef,
-  label,
   messages,
   phaseId,
 }: {
   threadRef: ThreadRef;
-  label: string;
   messages: ThreadMessage[];
-  /** When set, the transcript is filtered to this phase's relayed events (meta.phaseId). */
+  /** When set, the transcript is filtered to this step's relayed events (meta.phaseId). */
   phaseId?: string;
 }) {
   const [tab, setTab] = useState<PhaseTab>('transcript');
@@ -137,15 +179,6 @@ function BuildView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 px-5 pt-3">
-        <div className="mb-2.5 flex items-center gap-2.5">
-          <span className="font-mono text-[12px] font-semibold">{label}</span>
-          <span
-            className="inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-[10px] text-accent"
-            style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
-          >
-            Claude · execute
-          </span>
-        </div>
         <div className="flex gap-5 text-[12px] font-semibold">
           {(['transcript', 'diff', 'logs'] as PhaseTab[]).map((t) => (
             <button
@@ -167,7 +200,7 @@ function BuildView({
         ) : (
           <Placeholder
             title={tab === 'diff' ? 'Diff' : 'Logs'}
-            body={`The per-phase ${tab} stream isn't exposed by the web surface yet. It will render here once the backend adds a phase read endpoint.`}
+            body={`The per-step ${tab} stream isn't exposed by the web surface yet. It will render here once the backend adds a step read endpoint.`}
           />
         )}
       </div>
@@ -183,7 +216,7 @@ function Transcript({ lines, scoped }: { lines: string[]; scoped?: boolean }) {
       <Banner
         text={
           scoped
-            ? "This phase's build-event relays (filtered by phase). Diff & logs streams are still pending a backend endpoint."
+            ? "This step's build-event relays (filtered by step). Diff & logs streams are still pending a backend endpoint."
             : 'Showing live build-event relays from the thread.'
         }
       />
@@ -238,7 +271,7 @@ function InterjectBar({ threadRef }: { threadRef: ThreadRef }) {
           ⏸ Pause
         </button>
         <button type="button" disabled className="rounded-md border border-border-2 px-3 py-1.5 text-[11px] text-dim opacity-60" title="Needs a backend revert route">
-          ↩ Revert phase
+          ↩ Revert step
         </button>
       </div>
       <div
@@ -252,7 +285,7 @@ function InterjectBar({ threadRef }: { threadRef: ThreadRef }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter') send();
           }}
-          placeholder="Interject this phase — folded in at the next turn boundary, no restart…"
+          placeholder="Interject this step — folded in at the next turn boundary, no restart…"
           className="flex-1 bg-transparent text-[12.5px] text-text outline-none placeholder:text-faint"
         />
         <button
@@ -273,26 +306,20 @@ function InterjectBar({ threadRef }: { threadRef: ThreadRef }) {
 // ── Docs ─────────────────────────────────────────────────────────────────────────────────────────
 function PlanDoc({
   card,
-  title,
-  sections,
+  tracks,
   threadRef,
 }: {
   card: WebApprovalCard | null;
-  title?: string;
-  sections?: string[];
+  tracks?: string[];
   threadRef: ThreadRef;
 }) {
   const decisions = card?.decisions ?? [];
-  const sectionList = card?.sections ?? sections ?? [];
+  const sectionList = card?.tracks ?? tracks ?? [];
   const value = card?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? '';
 
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[720px]">
-        <div className="font-disp text-[22px] font-semibold tracking-[-0.01em] text-text">{title ?? card?.title ?? 'Plan'}</div>
-        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">
-          {sectionList.length} section{sectionList.length === 1 ? '' : 's'} · plan.md
-        </div>
         {card?.summary ? (
           <p className="mb-6 whitespace-pre-wrap text-[14px] leading-relaxed text-text">{card.summary}</p>
         ) : null}
@@ -322,7 +349,7 @@ function PlanDoc({
         {sectionList.map((s, i) => (
           <div key={i} className="flex items-baseline gap-3 border-t py-2" style={{ borderColor: 'var(--hair)' }}>
             <span className="w-4 font-mono text-[11px] text-faint">{i + 1}</span>
-            <span className="text-[13.5px] font-medium text-text">{sectionTitle(s)}</span>
+            <span className="text-[13.5px] font-medium text-text">{trackTitle(s)}</span>
           </div>
         ))}
 
@@ -341,8 +368,6 @@ function DecisionDoc({ card }: { card: WebApprovalCard | null }) {
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[720px]">
-        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">Decision record</div>
-        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">locked at approval · the build&apos;s input contract</div>
         {decisions.length === 0 ? (
           <Placeholder
             title="Decision record"
@@ -364,15 +389,13 @@ function DecisionDoc({ card }: { card: WebApprovalCard | null }) {
   );
 }
 
-function SectionPlanDoc({ brief }: { brief: string }) {
+function SectionPlanDoc() {
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[720px]">
-        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">{brief}</div>
-        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">section plan</div>
         <Placeholder
-          title="Section plan"
-          body="The just-in-time section plan (its build phases) isn't exposed by the web surface yet. The planning step decides the phase split when the section starts."
+          title="Track plan"
+          body="The just-in-time track plan (its build steps) isn't exposed by the web surface yet. The planning step decides the step split when the track starts."
         />
       </div>
     </div>
@@ -381,14 +404,14 @@ function SectionPlanDoc({ brief }: { brief: string }) {
 
 function AutoFixView() {
   const lenses = [
-    { name: 'best-practices', note: 'A self-review lens over the section diff.' },
-    { name: 'correctness', note: 'A self-review lens over the section diff.' },
-    { name: 'consistency', note: 'A self-review lens over the section diff.' },
+    { name: 'best-practices', note: 'A self-review lens over the track diff.' },
+    { name: 'correctness', note: 'A self-review lens over the track diff.' },
+    { name: 'consistency', note: 'A self-review lens over the track diff.' },
   ];
   return (
     <div className="h-full overflow-y-auto px-6 py-5">
       <div className="flex max-w-[760px] flex-col gap-3">
-        <Banner text="The 3-lens auto-fix runs over the section diff, then commits the fixes. Per-lens results aren't exposed by the web surface yet." />
+        <Banner text="The 3-lens auto-fix runs over the track diff, then commits the fixes. Per-lens results aren't exposed by the web surface yet." />
         {lenses.map((l) => (
           <div key={l.name} className="rounded-md border border-border bg-surface px-4 py-3">
             <div className="flex items-center gap-2">
@@ -407,8 +430,6 @@ function DiffView() {
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[720px]">
-        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">Diff</div>
-        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">the accumulated change across all sections</div>
         <Placeholder
           title="Diff"
           body="The accumulated diff isn't exposed by the web surface yet — it lives in the feature branch and lands in the PR. Open the pull request from ARTIFACTS to review the change on GitHub."
@@ -418,16 +439,14 @@ function DiffView() {
   );
 }
 
-/** One review-agent lens (a self-review pass over the section diff). Findings are ephemeral (relayed to chat). */
+/** One review-agent lens (a self-review pass over the track diff). Findings are ephemeral (relayed to chat). */
 function ReviewView({ lens }: { lens: string }) {
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[720px]">
-        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">{lens}</div>
-        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">review lens · over the section diff</div>
         <Placeholder
           title={`${lens} review`}
-          body="Review lenses run as parallel self-review passes over the section's diff; their findings are relayed into the conversation rather than persisted, so they aren't browsable here yet."
+          body="Review lenses run as parallel self-review passes over the track's diff; their findings are relayed into the conversation rather than persisted, so they aren't browsable here yet."
         />
       </div>
     </div>
@@ -436,17 +455,19 @@ function ReviewView({ lens }: { lens: string }) {
 
 // ── Context file viewer (specs / artifacts) ───────────────────────────────────────────────────────
 /** Render one real `/context` file: markdown → prose, images → inline, anything else → mono text. */
-function FileView({ threadRef, path }: { threadRef: ThreadRef; path: string }) {
+function FileView({
+  threadRef,
+  path,
+  onSelectNode,
+}: {
+  threadRef: ThreadRef;
+  path: string;
+  onSelectNode?: (node: string) => void;
+}) {
   const { data, isLoading, error } = useContextFile(threadRef, path);
-  const name = path.split('/').pop() ?? path;
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
       <div className="max-w-[820px]">
-        <div className="font-disp text-[21px] font-semibold tracking-[-0.01em] text-text">{name}</div>
-        <div className="mt-1.5 mb-5 font-mono text-[10.5px] text-faint">
-          {path}
-          {data ? ` · ${formatBytes(data.size)}` : ''}
-        </div>
         {isLoading ? (
           <p className="font-mono text-[11.5px] text-faint">Loading…</p>
         ) : error ? (
@@ -455,14 +476,35 @@ function FileView({ threadRef, path }: { threadRef: ThreadRef; path: string }) {
             body={error instanceof Error ? error.message : 'Unknown error reading this file.'}
           />
         ) : data ? (
-          <FileBody file={data} />
+          <FileBody file={data} onSelectNode={onSelectNode} />
         ) : null}
       </div>
     </div>
   );
 }
 
-function FileBody({ file }: { file: ContextFileContent }) {
+/**
+ * Resolve a RELATIVE markdown link (e.g. `sections/01-backend.md`, `../data-model.md`) found inside a
+ * `/context` file at `fromPath` (bucket-rooted, e.g. `specs/plan.md`) to the navigator node that opens it
+ * (`spec:`/`gen:`/`artifact:` + the bucket-relative path). Returns null if it escapes a known bucket.
+ */
+function contextNodeForLink(fromPath: string, href: string): string | null {
+  const parts = fromPath.split('/');
+  const bucket = parts[0];
+  const prefix = bucket === 'specs' ? 'spec:' : bucket === 'generated' ? 'gen:' : bucket === 'artifacts' ? 'artifact:' : null;
+  if (!prefix) return null;
+  const stack = parts.slice(1, -1); // dir of the current file, within the bucket
+  for (const seg of href.split(/[?#]/)[0].split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') stack.pop();
+    else stack.push(seg);
+  }
+  if (stack.length === 0) return null;
+  return prefix + stack.join('/');
+}
+
+function FileBody({ file, onSelectNode }: { file: ContextFileContent; onSelectNode?: (node: string) => void }) {
+  const pathname = usePathname();
   if (file.mime.startsWith('image/')) {
     const src =
       file.encoding === 'base64'
@@ -475,10 +517,26 @@ function FileBody({ file }: { file: ContextFileContent }) {
     return <p className="font-mono text-[11.5px] italic text-faint">This file is empty.</p>;
   }
   if (file.mime === 'text/markdown') {
+    // Shared renderer — same dark terminal code frames + syntax highlighting as the conversation view.
+    // Relative links (cross-spec, e.g. plan.md → sections/01-backend.md) open the target in-app instead
+    // of letting the browser navigate the SPA route to a 404.
     return (
-      <div className="prose prose-sm max-w-none" style={PROSE_THEME}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{file.content}</ReactMarkdown>
-      </div>
+      <Markdown
+        resolveRelativeLink={
+          onSelectNode
+            ? (href) => {
+                const node = contextNodeForLink(file.path, href);
+                if (!node) return null;
+                return {
+                  url: `${pathname}?node=${encodeURIComponent(node)}`,
+                  onSelect: () => onSelectNode(node),
+                };
+              }
+            : undefined
+        }
+      >
+        {file.content}
+      </Markdown>
     );
   }
   return (
@@ -488,25 +546,6 @@ function FileBody({ file }: { file: ContextFileContent }) {
   );
 }
 
-/** Map the typography plugin's color vars onto the app theme tokens so prose works in any theme. */
-const PROSE_THEME = {
-  '--tw-prose-body': 'var(--text)',
-  '--tw-prose-headings': 'var(--text)',
-  '--tw-prose-bold': 'var(--text)',
-  '--tw-prose-links': 'var(--accent)',
-  '--tw-prose-code': 'var(--text)',
-  '--tw-prose-quotes': 'var(--dim)',
-  '--tw-prose-quote-borders': 'var(--border)',
-  '--tw-prose-bullets': 'var(--border-2)',
-  '--tw-prose-counters': 'var(--faint)',
-  '--tw-prose-hr': 'var(--border)',
-  '--tw-prose-captions': 'var(--faint)',
-  '--tw-prose-pre-bg': 'var(--surface-2)',
-  '--tw-prose-pre-code': 'var(--dim)',
-  '--tw-prose-th-borders': 'var(--border)',
-  '--tw-prose-td-borders': 'var(--hair)',
-} as React.CSSProperties;
-
 // ── node resolution (stale `?node=` → not-found) ─────────────────────────────────────────────────
 type NodeResolution = 'loading' | 'found' | 'not_found';
 
@@ -515,7 +554,7 @@ const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
 
 /**
  * Classify a `?node=` token against the live job. Job-derived tokens (`secplan:`/`rev:`/`autofix:` carry a
- * section id; a bare token is a section or phase id) become `not_found` when their id is gone — otherwise a
+ * track id; a bare token is a track or step id) become `not_found` when their id is gone — otherwise a
  * stale URL would render a misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:`
  * self-handle a missing file inside `FileView`, so they stay `found` here.
  */
@@ -530,16 +569,16 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (node.startsWith('rev:')) return hasSection(job, node.split(':')[1] ?? '') ? 'found' : 'not_found';
   if (node.startsWith('autofix:')) return hasSection(job, node.slice('autofix:'.length)) ? 'found' : 'not_found';
 
-  // Bare token — a section or a phase leaf.
-  const matches = job.sections.some((s) => s.id === node || s.phases.some((p) => p.id === node));
+  // Bare token — a track or a step leaf.
+  const matches = job.tracks.some((s) => s.id === node || s.steps.some((p) => p.id === node));
   return matches ? 'found' : 'not_found';
 }
 
 function hasSection(job: PipelineJob, id: string): boolean {
-  return id.length > 0 && job.sections.some((s) => s.id === id);
+  return id.length > 0 && job.tracks.some((s) => s.id === id);
 }
 
-/** A `?node=` that no longer resolves (deleted file, re-planned section/phase). Placeholder styling — the
+/** A `?node=` that no longer resolves (deleted file, re-planned track/step). Placeholder styling — the
  *  designer will restyle/replace this. */
 function NodeNotFound({ node, onConversation }: { node: string; onConversation: () => void }) {
   return (

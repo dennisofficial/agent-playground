@@ -1,8 +1,8 @@
 import type {
   JobKind,
   JobStatus,
-  PhaseStatus,
-  SectionStatus,
+  StepStatus,
+  TrackStatus,
   ThreadKind,
   ThreadStatus,
 } from './types';
@@ -67,8 +67,8 @@ export function toThreadKind(kind: JobKind): ThreadKind {
   return kind === 'bugfix' ? 'fix' : 'feat';
 }
 
-/** Per-section dot color for the navigator pipeline tree. */
-export function sectionColor(status: SectionStatus): { color: string; pulse: boolean } {
+/** Per-track dot color for the navigator pipeline tree. */
+export function trackColor(status: TrackStatus): { color: string; pulse: boolean } {
   switch (status) {
     case 'done':
       return { color: 'var(--green)', pulse: false };
@@ -88,11 +88,11 @@ export function sectionColor(status: SectionStatus): { color: string; pulse: boo
 }
 
 /**
- * Per-phase / per-session dot for the navigator's execute-folder leaves. Same dot grammar as sections
+ * Per-step / per-session dot for the navigator's execute-folder leaves. Same dot grammar as tracks
  * (handoff §Dots): active = accent + pulse, done = green, failed = red, skipped = faint, pending = the
  * neutral pending dot. `skipped` is rendered as a hollow ring + strikethrough at the call site.
  */
-export function phaseColor(status: PhaseStatus): { color: string; pulse: boolean } {
+export function stepColor(status: StepStatus): { color: string; pulse: boolean } {
   switch (status) {
     case 'done':
       return { color: 'var(--green)', pulse: false };
@@ -109,7 +109,7 @@ export function phaseColor(status: PhaseStatus): { color: string; pulse: boolean
   }
 }
 
-const PHASE_LABEL: Record<PhaseStatus, string> = {
+const PHASE_LABEL: Record<StepStatus, string> = {
   pending: 'pending',
   building: 'building',
   reviewing: 'reviewing',
@@ -118,6 +118,6 @@ const PHASE_LABEL: Record<PhaseStatus, string> = {
   skipped: 'skipped',
 };
 
-export function phaseLabel(status: PhaseStatus): string {
+export function phaseLabel(status: StepStatus): string {
   return PHASE_LABEL[status];
 }

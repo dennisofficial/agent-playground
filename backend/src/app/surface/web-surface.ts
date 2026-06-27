@@ -16,9 +16,9 @@ export interface WebOutboundMessage {
   /** Web approval card payload (rendered when the post carries an approval card). */
   card?: WebApprovalCard;
   /**
-   * Optional opaque metadata (from `PostOptions.meta`). The driver uses this to attach build-phase
-   * event context (e.g. `{ kind: 'build_event', phaseId, sectionOrdinal, eventKind }`) so a web UI
-   * can distinguish build-phase engine events from conversational chat messages.
+   * Optional opaque metadata (from `PostOptions.meta`). The driver uses this to attach build-step
+   * event context (e.g. `{ kind: 'build_event', stepId, sectionOrdinal, eventKind }`) so a web UI
+   * can distinguish build-step engine events from conversational chat messages.
    */
   meta?: Record<string, unknown>;
   postedAt: Date;
@@ -273,18 +273,18 @@ function detectAndConvertApprovalCard(
   }
   if (!meta) return undefined;
 
-  // Extract summary (first section block text) and sections (numbered list in a later section block).
+  // Extract summary (first track block text) and tracks (numbered list in a later track block).
   let summary = '';
-  const sections: string[] = [];
+  const tracks: string[] = [];
   let decisions: ApprovalDecision[] = [];
   let planUrl: string | undefined;
   // The headline is either "*Plan proposal — <title>*" (full ceremony) or "*Direct build — <title>*"
-  // (fast path); the list block is labelled "*Sections*" or "*Changes*" to match.
+  // (fast path); the list block is labelled "*Tracks*" or "*Changes*" to match.
   let kind: 'plan' | 'direct' = 'plan';
   let title = text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() || text;
 
   for (const block of blocks) {
-    if (block.type === 'section') {
+    if (block.type === 'track') {
       const t = block.text as Record<string, unknown> | undefined;
       const raw = typeof t?.text === 'string' ? (t.text as string) : '';
       if (raw.startsWith('*Plan proposal') || raw.startsWith('*Direct build')) {
@@ -294,12 +294,12 @@ function detectAndConvertApprovalCard(
         if (match) title = match[1].trim();
       } else if (!summary) {
         summary = raw;
-      } else if (raw.startsWith('*Sections*') || raw.startsWith('*Changes*')) {
-        // Parse the numbered section / change-outline list.
-        const lines = raw.split('\n').slice(1); // drop the "*Sections*"/"*Changes*" header line
+      } else if (raw.startsWith('*Tracks*') || raw.startsWith('*Changes*')) {
+        // Parse the numbered track / change-outline list.
+        const lines = raw.split('\n').slice(1); // drop the "*Tracks*"/"*Changes*" header line
         for (const line of lines) {
           const m = /^\d+\.\s+(.+)$/.exec(line.trim());
-          if (m) sections.push(m[1]);
+          if (m) tracks.push(m[1]);
         }
       } else if (raw.startsWith('*Decisions*')) {
         // Parse decisions — bullet format: `• *title* _(class)_ — ruling`
@@ -325,7 +325,7 @@ function detectAndConvertApprovalCard(
     title,
     summary,
     ...(decisions.length ? { decisions } : {}),
-    sections,
+    tracks,
     ...(planUrl ? { planUrl } : {}),
   });
 }

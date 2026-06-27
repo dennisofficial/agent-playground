@@ -48,11 +48,11 @@ describe('renderSectionPlan', () => {
       channel: 'C1',
       threadTs: 'root',
       title: 'Backend',
-      plan: 'Phase 1: client. Phase 2: handler.',
+      plan: 'Step 1: client. Step 2: handler.',
       decisions: [covered, proceeding, ask],
     });
     expect(text).toContain('Plan — Backend');
-    expect(text).toContain('Phase 1: client.');
+    expect(text).toContain('Step 1: client.');
     expect(text).toContain('Decisions made autonomously');
     expect(text).toContain('Reuses the chosen auth guard.');
     expect(text).toContain('per "Auth via JWT guard"');

@@ -109,7 +109,7 @@ export class EventTriageService {
   }
 
   /**
-   * Dispatch a clean autonomous bugfix: a 1-section job (no decision record, nothing always-ask), handed
+   * Dispatch a clean autonomous bugfix: a 1-track job (no decision record, nothing always-ask), handed
    * straight to the `JOB_DISPATCHER` (W4 driver). The seeded event thread is the job's thread.
    */
   private async dispatchBugfix(
@@ -124,7 +124,7 @@ export class EventTriageService {
       title: jobTitle(summary),
       kind: 'bugfix',
     });
-    // A bugfix has one section and no upfront decision record (the gate already cleared it).
+    // A bugfix has one track and no upfront decision record (the gate already cleared it).
     const { thread } = await this.store.persistPlan({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
@@ -133,8 +133,8 @@ export class EventTriageService {
       kind: 'bugfix',
       overview: summary,
       decisions: [],
-      // Autonomous bugfix: one section, the summary IS the work.
-      sectionBriefs: [summary],
+      // Autonomous bugfix: one track, the summary IS the work.
+      trackTitles: [summary],
     });
     const running = await this.store.approve(thread.id, requireRecordId(thread), 'atlas:autonomous');
     await this.dispatcher.dispatch(running);

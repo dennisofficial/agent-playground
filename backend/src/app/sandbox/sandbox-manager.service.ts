@@ -1,7 +1,8 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chownSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
@@ -23,6 +24,15 @@ const execFileAsync = promisify(execFile);
 /** The in-container path of the engine entrypoint baked by the Dockerfile — bind-mounted live over it. */
 const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
 
+/** realpath a path, falling back to the input if it can't be resolved (e.g. doesn't exist yet). */
+function realpathSafe(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
 /**
  * Container-provisioning revision — bump when the container's CREATE config changes in a way that an
  * existing container must be recreated to pick up (new mounts, volumes, labels, privileges…). Combined
@@ -30,9 +40,13 @@ const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
  * attach (the thread/worktree survive — only the disposable container is replaced). Engine-CODE changes
  * do NOT bump this: the engine bundle is bind-mounted live, so they're served on the next turn with no
  * recreate. (rev 2 = added the live engine-bundle mount. rev 3 = worktree mounted at /workspace + git common
- * dir at /repo.git, was same-path host paths. rev 4 = added the durable per-thread /context shared mount.)
+ * dir at /repo.git, was same-path host paths. rev 4 = added the durable per-thread /context shared mount.
+ * rev 6 = added per-repo worktree cache mounts from `.atlas/worktree.json`, folded into the fingerprint.)
+ *
+ * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
+ * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 5;
+const CONFIG_REV = 6;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -71,7 +85,11 @@ export class SandboxManager implements SandboxProvider {
     const name = this.containerName(orgId, sandbox.repoId, sandbox.branch, threadId);
 
     const image = await this.images.ensureImage();
-    const fingerprint = `${(await this.engine.imageId(image)) ?? 'noimg'}|cfg${CONFIG_REV}`;
+    // Fold the per-repo mount SET into the fingerprint so a changed `.atlas/worktree.json` mount list
+    // recreates an existing (warm) container — binds are only applied at create time.
+    const mountKey = (input.mounts ?? []).map((m) => `${m.path}:${m.mode}`).sort().join(',');
+    const mountFp = mountKey ? createHash('sha256').update(mountKey).digest('hex').slice(0, 12) : 'none';
+    const fingerprint = `${(await this.engine.imageId(image)) ?? 'noimg'}|cfg${CONFIG_REV}|m${mountFp}`;
 
     const existing = await this.engine.inspect(name);
     if (existing) {
@@ -146,6 +164,12 @@ export class SandboxManager implements SandboxProvider {
     mkdirSync(join(contextDir, 'artifacts'), { recursive: true });
     binds.push(`${contextDir}:${CONTAINER_CONTEXT}`);
     binds.push(`${join(contextDir, 'generated')}:${CONTAINER_CONTEXT}/generated:ro`);
+
+    // Per-repo CACHE MOUNTS from `.atlas/worktree.json` (resolved + validated by the WorktreeProvisioner).
+    // Each lands at /workspace/<path>; per-thread gets its own host dir (no cross-thread write contention),
+    // shared-ro mounts one immutable host dir read-only. Host dirs + the in-worktree mountpoint are
+    // pre-created (+chowned to the host uid) so docker doesn't create them root-owned.
+    binds.push(...this.cacheMountBinds(input));
 
     this.logger.log(`creating sandbox ${name} (image ${image}, net ${network})`);
     const id = await this.engine.createContainer({
@@ -298,7 +322,7 @@ export class SandboxManager implements SandboxProvider {
    * The HOST path of a thread's durable `/context` shared folder — the same dir bind-mounted into the
    * container at {@link CONTAINER_CONTEXT}. Keyed by `threadId` so it is STABLE across the container's
    * lifecycle (recreate, idle-reap, cold re-attach) and never deleted by container teardown (only by a
-   * deep thread delete). The brain authors plan/section specs here and reads them back via this path;
+   * deep thread delete). The brain authors plan/track specs here and reads them back via this path;
    * the build sessions read it as shared context. Sandboxes WITHOUT a thread (legacy per-feature + gate
    * runs) fall back to a name-keyed dir — never resolved by the brain, just keeps the mount uniform.
    */
@@ -306,6 +330,51 @@ export class SandboxManager implements SandboxProvider {
     const root = join(this.agentHomeRootHost(), 'contexts');
     if (threadId) return join(root, orgId, threadId);
     return join(root, '_sandbox', name ?? 'unkeyed');
+  }
+
+  /**
+   * Build the bind strings for the per-repo cache mounts AND pre-create their host dirs + in-worktree
+   * mountpoints (chowned to the host uid so docker doesn't create them root-owned). per-thread caches get
+   * their own host dir keyed by thread (or branch, for the legacy threadId-less path); shared-ro caches
+   * share one read-only host dir per repo. The bind target is /workspace/<path>.
+   */
+  private cacheMountBinds(input: SandboxAttachInput): string[] {
+    const mounts = input.mounts ?? [];
+    if (!mounts.length) return [];
+    const { sandbox, orgId, threadId } = input;
+    const slug = sandbox.repoId.replace(/[^a-z0-9_-]/gi, '_') || 'repo';
+    const safeOrg = orgId.replace(/[^a-z0-9_-]/gi, '_') || 'org';
+    const perThreadKey = threadId ?? `_branch-${sandbox.branch.replace(/[^a-z0-9_-]/gi, '-')}`;
+    const cacheRoot = join(this.agentHomeRootHost(), 'caches', safeOrg, slug);
+
+    const binds: string[] = [];
+    for (const m of mounts) {
+      const hostDir =
+        m.mode === 'shared-ro'
+          ? join(cacheRoot, '_shared', m.path)
+          : join(cacheRoot, perThreadKey, m.path);
+      const mountpoint = join(sandbox.worktreePath, m.path);
+      this.ensureHostOwnedDir(hostDir);
+      this.ensureHostOwnedDir(mountpoint);
+      const ro = m.mode === 'shared-ro' ? ':ro' : '';
+      // Container path is POSIX under /workspace; manifest paths already use '/'.
+      binds.push(`${hostDir}:${CONTAINER_WORKTREE}/${m.path}${ro}`);
+    }
+    return binds;
+  }
+
+  /** mkdir -p a dir and chown it to the host uid/gid (best-effort) so in-container writes stay host-owned. */
+  private ensureHostOwnedDir(dir: string): void {
+    mkdirSync(dir, { recursive: true });
+    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+    const gid = typeof process.getgid === 'function' ? process.getgid() : undefined;
+    if (uid !== undefined && gid !== undefined) {
+      try {
+        chownSync(dir, uid, gid);
+      } catch {
+        /* best-effort: we created it as ourselves anyway */
+      }
+    }
   }
 
   /** The per-tenant reference-library dir mounted read-only at /refs (undefined → no /refs). */
@@ -340,7 +409,11 @@ export class SandboxManager implements SandboxProvider {
       const raw = readFileSync(join(worktreePath, '.git'), 'utf8').trim();
       const m = raw.match(/^gitdir:\s*(.+)$/);
       if (!m) return undefined;
-      const rel = relative(commonDir, m[1].trim()); // e.g. "worktrees/thread-X"
+      // Realpath-normalize BOTH operands before diffing. `git --git-common-dir` returns a realpath'd
+      // absolute path, but the `.git` pointer's stored gitdir may use a symlinked form (on macOS the OS
+      // tmp/repos root is `/var/folders/…` → `/private/var/folders/…`). Without normalizing, `relative()`
+      // yields a bogus `../../…` and we'd bail, leaving no in-container `.git` → "not a git repository".
+      const rel = relative(realpathSafe(commonDir), realpathSafe(m[1].trim())); // e.g. "worktrees/thread-X"
       if (!rel || rel.startsWith('..')) return undefined; // gitdir not under the common dir — bail safely
       const file = join(hostHome, 'worktree.git');
       writeFileSync(file, `gitdir: ${CONTAINER_GIT_COMMON}/${rel}\n`);

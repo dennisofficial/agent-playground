@@ -58,7 +58,7 @@ interface ApprovalState {
 /**
  * W3 — the DECISION-RECORD APPROVAL service (the human gate). NOT v1's board-stateful `ProposalService`:
  * this is decision-record-keyed and stateless beyond an in-memory pending map. When the conversational
- * brain has a locked decision record + section list it calls `request(...)`:
+ * brain has a locked decision record + track list it calls `request(...)`:
  *   1. POSTS the approval card (the copied `approval-blocks` renderer) into the job's thread;
  *   2. returns an `ApprovalHandle` whose `verdict` promise resolves when the human rules.
  *

@@ -1,28 +1,45 @@
 /**
  * The locked DECISION RECORD — the upfront grill's output. Atlas grills Dennis once → the
- * architecture/system calls + the high-level section list, approved ONCE. Sections then auto-run; a
- * section planner parks & asks async only when it hits an ALWAYS-ASK decision class NOT already
- * covered by the record. The record is the durable "what we agreed" that grounds every section's
+ * architecture/system calls + the high-level track list, approved ONCE. Sections then auto-run; a
+ * track planner parks & asks async only when it hits an ALWAYS-ASK decision class NOT already
+ * covered by the record. The record is the durable "what we agreed" that grounds every track's
  * just-in-time plan and the decision-class gate. This is the in-memory shape (separate from the
  * `decision_records` row).
  */
 
 /**
- * The ALWAYS-ASK decision classes — the ones a section planner must park on if not already covered by
+ * The ALWAYS-ASK decision classes — the ones a track planner must park on if not already covered by
  * a locked decision. The boundary doubles as a security control (injected "go change X" in an
  * untrusted event body touches one of these → park, never execute).
+ *
+ * THIS IS THE SINGLE SOURCE OF TRUTH for the classes, their canonical order, and their human-facing
+ * blurbs. Everything else derives from it: the {@link DecisionClass} union, the order + section
+ * headings of the generated `decision-record.md`, the grilling-protocol enumeration and the
+ * `log_decision` validation in the brain's system prompt, the runtime arg-coercion set, and the
+ * classifier's Zod enum. Add or reorder a class HERE and every consumer follows — do not re-list
+ * the classes anywhere else.
  */
-export type DecisionClass =
-  | 'data_model' // schema / data model
-  | 'api_contract' // public / cross-service API contracts
-  | 'dependency' // new deps / libraries / services
-  | 'infrastructure' // infra / topology
-  | 'cross_cutting' // auth, caching, state, concurrency, error-handling patterns
-  | 'one_way_door'; // irreversible calls
+export const DECISION_CLASS_META = [
+  { id: 'data_model', heading: 'Data model', grill: 'data model/schema' },
+  { id: 'api_contract', heading: 'API contract', grill: 'public API contracts' },
+  { id: 'dependency', heading: 'Dependencies', grill: 'new dependencies' },
+  { id: 'infrastructure', heading: 'Infrastructure', grill: 'infrastructure/topology' },
+  {
+    id: 'cross_cutting',
+    heading: 'Cross-cutting',
+    grill: 'cross-cutting patterns (auth, caching, state, concurrency, error-handling)',
+  },
+  { id: 'one_way_door', heading: 'One-way doors', grill: 'one-way doors' },
+] as const satisfies ReadonlyArray<{ id: string; heading: string; grill: string }>;
+
+export type DecisionClass = (typeof DECISION_CLASS_META)[number]['id'];
+
+/** The canonical ordered list of class ids — drives every derived enumeration (order, set, enum). */
+export const DECISION_CLASS_IDS: readonly DecisionClass[] = DECISION_CLASS_META.map((c) => c.id);
 
 /** One locked decision inside the record — a class + the call that was made. */
 export interface Decision {
-  /** Which always-ask class this decision settles (so a section planner can skip parking on it). */
+  /** Which always-ask class this decision settles (so a track planner can skip parking on it). */
   decisionClass: DecisionClass;
   /** A short human label for the decision. */
   title: string;
@@ -41,7 +58,7 @@ export interface Decision {
 /** The record's lifecycle. Approved ONCE upfront, then immutable for the thread's build duration. */
 export type DecisionRecordStatus = 'draft' | 'approved' | 'superseded';
 
-/** The upfront grill's locked output: the system calls + the high-level section list. */
+/** The upfront grill's locked output: the system calls + the high-level track list. */
 export interface DecisionRecord {
   /** Stable id (`decision_records.id`). */
   id: string;
@@ -53,15 +70,15 @@ export interface DecisionRecord {
   threadId: string;
   status: DecisionRecordStatus;
   /**
-   * The agreed overview — the feature's intent, stack, constraints, and how the sections fit
-   * together. Seeded into EVERY section's just-in-time plan prompt so each section is grounded in the
+   * The agreed overview — the feature's intent, stack, constraints, and how the tracks fit
+   * together. Seeded into EVERY track's just-in-time plan prompt so each track is grounded in the
    * whole, not just its one-line brief.
    */
   overview: string;
   /** The locked architecture/system calls. */
   decisions: Decision[];
-  /** The high-level section list (briefs) approved upfront — drives the thread's `Section` rows. */
-  sectionBriefs: string[];
+  /** The high-level track list (briefs) approved upfront — drives the thread's `Track` rows. */
+  trackTitles: string[];
   /** Who approved it (Dennis's id); null until approved. */
   approvedBy: string | null;
   approvedAt: Date | null;

@@ -52,7 +52,7 @@ export interface PostOptions {
   orgId?: string;
   /**
    * Optional opaque metadata carried by this post — the web surface attaches it to
-   * `WebOutboundMessage.meta` so SSE subscribers can distinguish build-phase engine events from
+   * `WebOutboundMessage.meta` so SSE subscribers can distinguish build-step engine events from
    * conversational chat messages.
    */
   meta?: Record<string, unknown>;

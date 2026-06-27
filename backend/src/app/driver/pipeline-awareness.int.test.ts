@@ -135,7 +135,7 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
   it('the drain/append RACE drops no marker (FOR UPDATE serializes the human turn vs the driver)', async () => {
     const threadId = await newThread();
     // 20 concurrent appends (the driver) racing one drain (a human turn arriving mid-build).
-    const ids = Array.from({ length: 20 }, (_, i) => `phase:${i}:done`);
+    const ids = Array.from({ length: 20 }, (_, i) => `step:${i}:done`);
     const appends = ids.map((id) => store.appendMarker(threadId, marker(id)));
     const drain = store.drainAndAdvance(threadId, null);
     const [{ markers: drained }] = await Promise.all([drain, ...appends.map((p) => p.then(() => undefined))]);

@@ -3,9 +3,9 @@
 import type { MouseEvent, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { Dot } from '@/components/ui/badges';
-import { phaseColor, sectionColor } from '@/lib/api/status';
-import { sectionTitle } from '@/lib/section-brief';
-import type { PipelineJob, PipelinePhase, PipelineSection, SectionStatus, ThreadStatus } from '@/lib/api/types';
+import { stepColor, trackColor } from '@/lib/api/status';
+import { trackTitle } from '@/lib/track-title';
+import type { PipelineJob, PipelineStep, PipelineTrack, TrackStatus, ThreadStatus } from '@/lib/api/types';
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
 
@@ -54,18 +54,18 @@ function SkippedDot() {
 
 // ── status helpers ───────────────────────────────────────────────────────────────────────────────
 
-const ACTIVE_SECTION: SectionStatus[] = ['planning', 'reviewing', 'awaiting_approval', 'executing', 'auto_fixing'];
-const isActiveSection = (s: SectionStatus) => ACTIVE_SECTION.includes(s);
+const ACTIVE_TRACK: TrackStatus[] = ['planning', 'reviewing', 'awaiting_approval', 'executing', 'auto_fixing'];
+const isActiveTrack = (s: TrackStatus) => ACTIVE_TRACK.includes(s);
 
-/** The halt section for a failed thread: the furthest in-flight (non-done, non-pending) section, else the
+/** The halt track for a failed thread: the furthest in-flight (non-done, non-pending) track, else the
  *  last non-done one. Exported so the navigator's halt banner derives the same index. */
-export function haltSectionIdx(sections: { status: SectionStatus }[]): number {
-  for (let i = sections.length - 1; i >= 0; i -= 1) {
-    const st = sections[i].status;
+export function haltTrackIdx(tracks: { status: TrackStatus }[]): number {
+  for (let i = tracks.length - 1; i >= 0; i -= 1) {
+    const st = tracks[i].status;
     if (st !== 'done' && st !== 'pending') return i;
   }
-  for (let i = sections.length - 1; i >= 0; i -= 1) {
-    if (sections[i].status !== 'done') return i;
+  for (let i = tracks.length - 1; i >= 0; i -= 1) {
+    if (tracks[i].status !== 'done') return i;
   }
   return -1;
 }
@@ -85,29 +85,29 @@ export interface TreeProps {
 
 /**
  * The PIPELINE folder tree (running / paused / done / failed). Four nesting levels —
- * section → plan(optional)/execute/review → phase leaves (under execute) + review-agent leaves (under
+ * track → plan(optional)/execute/review → step leaves (under execute) + review-agent leaves (under
  * review). Folders collapse via the `collapsed` map (owned by the navigator); the active path
- * auto-expands down to the live phase. Sections/phases are real (`/pipeline`); review lenses are
+ * auto-expands down to the live step. Sections/steps are real (`/pipeline`); review lenses are
  * placeholder (ephemeral, never persisted). Clicking a leaf opens it in the work column.
  */
 export function PipelineTree({ job, status, selectedNode, onSelectNode, isExpanded, toggle }: TreeProps) {
-  const sections = job.sections;
-  const activeIdx = sections.findIndex((s) => isActiveSection(s.status));
-  // Failed: sections/phases aren't persisted as `failed` (only the thread flips), so derive the halt
-  // point — the in-flight section (the furthest one that's neither `done` nor `pending`) is where the run
-  // stopped; later `pending` sections were never reached. Fall back to the last non-`done` section.
-  const haltIdx = status === 'failed' ? haltSectionIdx(sections) : -1;
+  const tracks = job.tracks;
+  const activeIdx = tracks.findIndex((s) => isActiveTrack(s.status));
+  // Failed: tracks/steps aren't persisted as `failed` (only the thread flips), so derive the halt
+  // point — the in-flight track (the furthest one that's neither `done` nor `pending`) is where the run
+  // stopped; later `pending` tracks were never reached. Fall back to the last non-`done` track.
+  const haltIdx = status === 'failed' ? haltTrackIdx(tracks) : -1;
 
-  if (sections.length === 0) {
-    return <p className="px-2 py-2 font-mono text-[10.5px] text-faint">No sections yet.</p>;
+  if (tracks.length === 0) {
+    return <p className="px-2 py-2 font-mono text-[10.5px] text-faint">No tracks yet.</p>;
   }
 
   return (
     <div className="flex flex-col gap-px">
-      {sections.map((s, i) => (
+      {tracks.map((s, i) => (
         <SectionNode
           key={s.id}
-          section={s}
+          track={s}
           index={i}
           isHalt={i === haltIdx}
           isActive={i === activeIdx}
@@ -124,7 +124,7 @@ export function PipelineTree({ job, status, selectedNode, onSelectNode, isExpand
 }
 
 function SectionNode({
-  section: s,
+  track: s,
   index,
   isHalt,
   isActive,
@@ -135,7 +135,7 @@ function SectionNode({
   isExpanded,
   toggle,
 }: {
-  section: PipelineSection;
+  track: PipelineTrack;
   index: number;
   isHalt: boolean;
   isActive: boolean;
@@ -149,7 +149,7 @@ function SectionNode({
   const folderId = `sec:${s.id}`;
   const execId = `${folderId}.exec`;
   const revId = `${folderId}.rev`;
-  const dot = isHalt ? { color: 'var(--red)', pulse: false } : sectionColor(s.status);
+  const dot = isHalt ? { color: 'var(--red)', pulse: false } : trackColor(s.status);
   const expanded = isExpanded(folderId, isActive || isHalt);
   // Folders default-open only on the active/halt path; everything else folds.
   const execOpen = isExpanded(execId, isActive || isHalt);
@@ -159,7 +159,7 @@ function SectionNode({
 
   return (
     <div className="flex flex-col">
-      {/* §section — a folder row (toggles; does not navigate) */}
+      {/* §track — a folder row (toggles; does not navigate) */}
       <button
         type="button"
         onClick={() => toggle(folderId, expanded)}
@@ -178,7 +178,7 @@ function SectionNode({
         <Caret expanded={expanded} />
         <Dot color={dot.color} pulse={dot.pulse} size={8} />
         <span className={cn('flex-1 truncate text-[12px] font-semibold', dim && 'text-dim')}>
-          §{index + 1} {sectionTitle(s.brief)}
+          §{index + 1} {trackTitle(s.brief)}
         </span>
       </button>
 
@@ -197,7 +197,7 @@ function SectionNode({
             />
           )}
 
-          {/* execute — folder of phase leaves */}
+          {/* execute — folder of step leaves */}
           <FolderRow
             level={2}
             label="execute"
@@ -207,12 +207,12 @@ function SectionNode({
             onToggle={() => toggle(execId, execOpen)}
           />
           {execOpen &&
-            s.phases.map((p, pi) => {
+            s.steps.map((p, pi) => {
               const inFlight = p.status === 'building' || p.status === 'reviewing';
               return (
                 <PhaseLeaf
                   key={p.id}
-                  phase={p}
+                  step={p}
                   index={pi}
                   live={isActive && !isHalt && !paused && inFlight}
                   halted={isHalt && inFlight}
@@ -221,8 +221,8 @@ function SectionNode({
                 />
               );
             })}
-          {execOpen && s.phases.length === 0 && (
-            <div className="py-1 pl-12 pr-2 font-mono text-[9.5px] text-faint">phases form when this section starts</div>
+          {execOpen && s.steps.length === 0 && (
+            <div className="py-1 pl-12 pr-2 font-mono text-[9.5px] text-faint">steps form when this track starts</div>
           )}
 
           {/* review — folder of review-agent lenses (placeholder; ephemeral findings) */}
@@ -329,24 +329,24 @@ function FolderRow({
   );
 }
 
-/** A phase (Claude Code session) leaf at level 3 — or the live session card when it's the running one. */
+/** A step (Claude Code session) leaf at level 3 — or the live session card when it's the running one. */
 function PhaseLeaf({
-  phase: p,
+  step: p,
   index,
   live,
   halted,
   selected,
   onClick,
 }: {
-  phase: PipelinePhase;
+  step: PipelineStep;
   index: number;
   live: boolean;
-  /** The in-flight phase of a failed thread's halt section — render red, not a live card. */
+  /** The in-flight step of a failed thread's halt track — render red, not a live card. */
   halted?: boolean;
   selected: boolean;
   onClick: () => void;
 }) {
-  const name = `phase ${index + 1}${p.title ? ` · ${p.title}` : ''}`;
+  const name = `step ${index + 1}${p.title ? ` · ${p.title}` : ''}`;
 
   if (live) {
     return (
@@ -375,7 +375,7 @@ function PhaseLeaf({
     );
   }
 
-  const dot = halted ? { color: 'var(--red)', pulse: false } : phaseColor(p.status);
+  const dot = halted ? { color: 'var(--red)', pulse: false } : stepColor(p.status);
   return (
     <button
       type="button"

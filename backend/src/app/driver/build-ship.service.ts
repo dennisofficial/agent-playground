@@ -22,7 +22,7 @@ export interface ShipInput {
   sandbox: FeatureSandbox;
   /**
    * When set, stage + commit any uncommitted worktree changes under this message BEFORE shipping. The
-   * section-driver omits it (it commits per-phase); the direct-build fast path sets it (the brain wrote
+   * track-driver omits it (it commits per-step); the direct-build fast path sets it (the brain wrote
    * the change but hasn't committed). A clean tree → no-op.
    */
   commitMessage?: string;
@@ -31,14 +31,14 @@ export interface ShipInput {
 }
 
 /**
- * The shared TERMINAL "ship" sequence — extracted from the section-driver's PR-tail so BOTH the full
- * section build and the direct-build fast path finalize identically:
+ * The shared TERMINAL "ship" sequence — extracted from the track-driver's PR-tail so BOTH the full
+ * track build and the direct-build fast path finalize identically:
  *
  *   PR-tail auto-fix (whole accumulated diff) → push the branch → open ONE PR (idempotent; a re-run
  *   finds the existing PR) → record `pr_url`/`pr_number` on the THREAD (which flips it to `done`, so the
  *   merge poll watches it) → relay "PR ready".
  *
- * References NO sections/phases — its only inputs are the job row, the (optional) decision record, the
+ * References NO tracks/steps — its only inputs are the job row, the (optional) decision record, the
  * resolved repo, and the sandbox. Returns the opened PR, or `null` when no GitHub token is configured
  * (the caller is notified; the thread stays `running` so a later token + re-run can ship it).
  */

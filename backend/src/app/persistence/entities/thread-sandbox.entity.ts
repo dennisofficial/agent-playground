@@ -76,4 +76,14 @@ export class ThreadSandboxEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   last_active_at!: Date | null;
+
+  /**
+   * Signature of the last worktree HYDRATION (hash of `.atlas/worktree.json` + the resolved secret
+   * versions + seed source mtimes). `ensureContainer` re-runs the hydrator only when this is stale, so a
+   * rotated secret or changed manifest re-applies on the next attach without re-decrypting every turn.
+   * Null before the first hydration. Thread sandboxes only — non-thread (gate/legacy) paths re-hydrate
+   * statelessly each attach.
+   */
+  @Column({ type: 'text', nullable: true })
+  hydration_sig!: string | null;
 }

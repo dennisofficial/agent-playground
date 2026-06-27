@@ -1,7 +1,7 @@
 /**
  * A handle to a running engine session — the brain's reference to a "hands" turn. Phases run as
  * sequential FRESH sessions on the feature branch; a `SessionRef` is the in-memory pointer the driver
- * holds while a phase builds (the engine conversation id + the sandbox/worktree it runs in). W1 owns
+ * holds while a step builds (the engine conversation id + the sandbox/worktree it runs in). W1 owns
  * the local turn-runner that actually drives these; W0 just defines the shape so the driver/domain
  * types can reference it.
  */
@@ -23,11 +23,11 @@ export interface SessionRef {
   id: string;
   /** The thread this session serves. */
   threadId: string;
-  /** The phase this session is building (null for non-phase sessions, e.g. planning). */
-  phaseId: string | null;
+  /** The step this session is building (null for non-step sessions, e.g. planning). */
+  stepId: string | null;
   engine: SessionEngine;
   mode: SessionMode;
-  /** The feature branch the session works on (shared across the job's phases). */
+  /** The feature branch the session works on (shared across the job's steps). */
   branch: string;
   /** Absolute path to the sandbox checkout (MVP: a local git worktree). */
   worktreePath: string;

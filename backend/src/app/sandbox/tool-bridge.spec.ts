@@ -170,7 +170,7 @@ async function runFakeTurn(opts: {
 describe('R1 Tool Bridge — live contract gate', () => {
   it('tool_request is dispatched, host returns correlated tool_response, turn continues with it', async () => {
     const threadId = 'thread-abc-123';
-    const PIPELINE_STATE = { status: 'planning', sections: 2 };
+    const PIPELINE_STATE = { status: 'planning', tracks: 2 };
 
     const bridge: ToolBridgeOptions = {
       threadId,

@@ -16,10 +16,11 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 const NODE_PARAM = 'node';
 
 export interface SelectedNode {
-  /** The current node token (e.g. `spec:plan.md`, `diff`, a phase id), or `null` for conversation-only. */
+  /** The current node token (e.g. `spec:plan.md`, `diff`, a step id), or `null` for conversation-only. */
   selectedNode: string | null;
-  /** Open a node in the right pane. `URLSearchParams` handles encoding of `:` / `/` in the token. */
-  selectNode: (node: string) => void;
+  /** Open a node in the right pane. `URLSearchParams` handles encoding of `:` / `/` in the token. Pass
+   *  `{ push: true }` to force a history entry (e.g. following a link inside a doc, so Back returns to it). */
+  selectNode: (node: string, opts?: { push?: boolean }) => void;
   /** Close the pane back to conversation-only by dropping `?node=`. */
   openConversation: () => void;
 }
@@ -31,14 +32,15 @@ export function useSelectedNode(): SelectedNode {
   const selectedNode = params.get(NODE_PARAM);
 
   const selectNode = useCallback(
-    (node: string) => {
+    (node: string, opts?: { push?: boolean }) => {
       const qs = new URLSearchParams();
       qs.set(NODE_PARAM, node);
       const href = `${pathname}?${qs.toString()}`;
-      // Entering phase mode is a discrete step (Back closes the pane); switching between nodes replaces so
-      // sibling browsing doesn't stack history.
-      if (selectedNode) router.replace(href);
-      else router.push(href);
+      // Entering step mode is a discrete step (Back closes the pane); switching between nodes replaces so
+      // sibling browsing doesn't stack history. `opts.push` overrides — following a LINK inside a doc is a
+      // navigation the user expects Back to reverse, so it always pushes.
+      if (opts?.push || !selectedNode) router.push(href);
+      else router.replace(href);
     },
     [pathname, router, selectedNode],
   );

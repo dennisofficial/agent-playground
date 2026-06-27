@@ -25,7 +25,7 @@ import { BrainStoreService } from './brain-store.service';
  * `scoping` (`reopenScoping`) and the grill proposes again, re-running `persistPlan` on the SAME job.
  * Sections are gap-numbered from 10 each time, so without clearing the prior draft the second proposal
  * collides on `UNIQUE(job_id, ordinal)`. This proves `persistPlan` is now self-consistent: it deletes
- * the prior sections and supersedes the prior draft record, so a re-propose succeeds cleanly.
+ * the prior tracks and supersedes the prior draft record, so a re-propose succeeds cleanly.
  *
  * Boots the REAL AppModule (agent surface) against live Postgres, mocking only the external boundaries
  * (LLMs/engine/git/PR) — none are exercised here; we drive `BrainStoreService` directly.
@@ -75,7 +75,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
   });
 
   it('a re-propose on the same scoping thread clears the prior draft instead of colliding', async () => {
-    // The thread IS the build unit; sections/decision_records FK → threads.id, and threads.repo_id
+    // The thread IS the build unit; tracks/decision_records FK → threads.id, and threads.repo_id
     // FK → repos.id — so seed an org + repo, then anchor a real thread.
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
@@ -105,7 +105,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
     });
 
-    // First proposal — two sections at ordinals 10, 20.
+    // First proposal — two tracks at ordinals 10, 20.
     const first = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -114,10 +114,10 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v1',
       decisions: [],
-      sectionBriefs: ['backend middleware', 'frontend banner'],
+      trackTitles: ['backend middleware', 'frontend banner'],
     });
     expect(first.thread.status).toBe('awaiting_approval');
-    expect(await sectionBriefs(dataSource, threadId)).toEqual([
+    expect(await trackTitles(dataSource, threadId)).toEqual([
       'backend middleware',
       'frontend banner',
     ]);
@@ -125,7 +125,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // Human requests changes → back to scoping.
     await store.reopenScoping(threadId);
 
-    // Second proposal on the SAME thread — fewer sections, re-using ordinal 10. Must NOT throw.
+    // Second proposal on the SAME thread — fewer tracks, re-using ordinal 10. Must NOT throw.
     const second = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -134,7 +134,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v2',
       decisions: [],
-      sectionBriefs: ['backend middleware only'],
+      trackTitles: ['backend middleware only'],
     });
 
     expect(second.thread.status).toBe('awaiting_approval');
@@ -142,7 +142,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(second.thread.title).toBe('rate limiting v2');
 
     // Sections reflect ONLY the new proposal — the stale ones are gone.
-    expect(await sectionBriefs(dataSource, threadId)).toEqual(['backend middleware only']);
+    expect(await trackTitles(dataSource, threadId)).toEqual(['backend middleware only']);
 
     // The prior draft record is superseded; exactly one draft remains (the new one).
     expect(await recordStatus(dataSource, first.decisionRecordId)).toBe('superseded');
@@ -272,7 +272,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await store.latestAnsweredQuestionCard(threadId)).toBeNull();
   }, 30_000);
 
-  it('persistPlan with phasesBySection locks phase rows + sets section.plan; clears them on re-propose; omitting it creates none', async () => {
+  it('persistPlan with stepsByTrack locks step rows + sets track.plan; clears them on re-propose; omitting it creates none', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
@@ -281,7 +281,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
     const [repoRow]: Array<{ id: string }> = await dataSource.query(
       `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok)
-         VALUES ($1, 'brainstore-phases-it', 'Phases Repo', 'https://github.com/acme/phases.git', 'main', true)
+         VALUES ($1, 'brainstore-steps-it', 'Phases Repo', 'https://github.com/acme/steps.git', 'main', true)
          ON CONFLICT (org_id, slug) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
       [TEAM_ID],
@@ -295,7 +295,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const threadId = thread.id;
     await store.openJob({ orgId: TEAM_ID, repoId, threadId, title: 'authored', kind: 'feature' });
 
-    // Full-plan-up-front: 2 sections, the first with 2 authored phases, the second with 1.
+    // Full-plan-up-front: 2 tracks, the first with 2 authored steps, the second with 1.
     await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -304,8 +304,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview',
       decisions: [],
-      sectionBriefs: ['backend', 'frontend'],
-      phasesBySection: [
+      trackTitles: ['backend', 'frontend'],
+      stepsByTrack: [
         [
           { title: 'model', brief: 'add the entity at server.entity.ts:1' },
           { title: 'service', brief: 'add the service at server.service.ts:1' },
@@ -314,20 +314,20 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       ],
     });
 
-    // Phase rows locked: 2 under the first section, 1 under the second, gap-numbered + pending/build.
+    // Step rows locked: 2 under the first track, 1 under the second, gap-numbered + pending/build.
     const phases1 = await phasesFor(dataSource, threadId);
     expect(phases1.map((p) => p.brief)).toEqual([
       'add the entity at server.entity.ts:1',
       'add the service at server.service.ts:1',
       'add the page at page.tsx:1',
     ]);
-    expect(phases1.every((p) => p.status === 'pending' && p.step === 'build')).toBe(true);
-    // section.plan is set on BOTH sections (so the pipeline view reports hasPlan).
+    expect(phases1.every((p) => p.status === 'pending' && p.stage === 'build')).toBe(true);
+    // track.plan is set on BOTH tracks (so the pipeline view reports hasPlan).
     const plans1 = await sectionPlans(dataSource, threadId);
     expect(plans1.every((p) => p != null && p.length > 0)).toBe(true);
 
-    // Re-propose WITHOUT phasesBySection (e.g. a direct-build-style re-shape): prior phase rows are
-    // cascade-cleared with their sections, and no new phase rows are created.
+    // Re-propose WITHOUT stepsByTrack (e.g. a direct-build-style re-shape): prior step rows are
+    // cascade-cleared with their tracks, and no new step rows are created.
     await store.reopenScoping(threadId);
     await store.persistPlan({
       orgId: TEAM_ID,
@@ -337,12 +337,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v2',
       decisions: [],
-      sectionBriefs: ['backend only'],
+      trackTitles: ['backend only'],
     });
 
     expect(await phasesFor(dataSource, threadId)).toHaveLength(0);
     const plans2 = await sectionPlans(dataSource, threadId);
-    expect(plans2).toEqual([null]); // one section, no plan (no authored phases this time)
+    expect(plans2).toEqual([null]); // one track, no plan (no authored steps this time)
   }, 30_000);
 });
 
@@ -367,9 +367,9 @@ async function messageTexts(ds: DataSource, threadId: string): Promise<string[]>
   return rows.map((r) => r.text);
 }
 
-async function sectionBriefs(ds: DataSource, threadId: string): Promise<string[]> {
+async function trackTitles(ds: DataSource, threadId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
-    `SELECT brief FROM sections WHERE thread_id = $1 ORDER BY ordinal ASC`,
+    `SELECT brief FROM tracks WHERE thread_id = $1 ORDER BY ordinal ASC`,
     [threadId],
   );
   return rows.map((r) => r.brief);
@@ -378,10 +378,10 @@ async function sectionBriefs(ds: DataSource, threadId: string): Promise<string[]
 async function phasesFor(
   ds: DataSource,
   threadId: string,
-): Promise<Array<{ brief: string; status: string; step: string; batch_ordinal: number | null }>> {
+): Promise<Array<{ brief: string; status: string; stage: string; batch_ordinal: number | null }>> {
   return ds.query(
-    `SELECT p.brief, p.status, p.step, p.batch_ordinal
-       FROM phases p JOIN sections s ON s.id = p.section_id
+    `SELECT p.brief, p.status, p.stage, p.batch_ordinal
+       FROM steps p JOIN tracks s ON s.id = p.track_id
       WHERE s.thread_id = $1 ORDER BY s.ordinal ASC, p.ordinal ASC`,
     [threadId],
   );
@@ -389,7 +389,7 @@ async function phasesFor(
 
 async function sectionPlans(ds: DataSource, threadId: string): Promise<Array<string | null>> {
   const rows: Array<{ plan: string | null }> = await ds.query(
-    `SELECT plan FROM sections WHERE thread_id = $1 ORDER BY ordinal ASC`,
+    `SELECT plan FROM tracks WHERE thread_id = $1 ORDER BY ordinal ASC`,
     [threadId],
   );
   return rows.map((r) => r.plan);

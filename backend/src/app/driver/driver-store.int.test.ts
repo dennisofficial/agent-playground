@@ -2,12 +2,12 @@
  * DriverStoreService.getPipelineState — the web `/pipeline` read model.
  *
  * Proves (against live Postgres) that the payload the operator console renders the navigator from now
- * carries the section's PHASES (the execute folder's leaves) + the section `hasPlan` flag, and the
+ * carries the track's STEPS (the execute folder's leaves) + the track `hasPlan` flag, and the
  * thread's PR + branch on the job — the fields the thread-sidebar handoff added. Additive over the old
  * shape (id/ordinal/brief/status), so the brain's `get_pipeline_state` passthrough is unaffected.
  *
  * Integration: real Postgres (atlas_test schema), no fakes (the method only touches repositories).
- * Seeds an org/repo/thread + sections + phases directly, then asserts the mapped read model.
+ * Seeds an org/repo/thread + tracks + steps directly, then asserts the mapped read model.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -16,7 +16,7 @@ import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, PhaseEntity, SectionEntity, ThreadEntity } from '../persistence/entities';
+import { ENTITIES, StepEntity, TrackEntity, ThreadEntity } from '../persistence/entities';
 import { DriverStoreService } from './driver-store.service';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
@@ -44,8 +44,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   let ds: DataSource;
   let store: DriverStoreService;
   let threads: Repository<ThreadEntity>;
-  let sections: Repository<SectionEntity>;
-  let phases: Repository<PhaseEntity>;
+  let tracks: Repository<TrackEntity>;
+  let steps: Repository<StepEntity>;
   let repoId: string;
 
   beforeAll(async () => {
@@ -60,8 +60,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     store = mod.get(DriverStoreService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
-    sections = mod.get(getRepositoryToken(SectionEntity, DB_CONNECTION));
-    phases = mod.get(getRepositoryToken(PhaseEntity, DB_CONNECTION));
+    tracks = mod.get(getRepositoryToken(TrackEntity, DB_CONNECTION));
+    steps = mod.get(getRepositoryToken(StepEntity, DB_CONNECTION));
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
@@ -82,10 +82,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE phases, sections, threads RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE steps, tracks, threads RESTART IDENTITY CASCADE');
   });
 
-  it('returns phases + hasPlan per section and the PR + branch on the job', async () => {
+  it('returns steps + hasPlan per track and the PR + branch on the job', async () => {
     const thread = await threads.save(
       threads.create({
         org_id: ORG_ID,
@@ -100,8 +100,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         pr_number: 43,
       }),
     );
-    const section = await sections.save(
-      sections.create({
+    const track = await tracks.save(
+      tracks.create({
         thread_id: thread.id,
         org_id: ORG_ID,
         ordinal: 10,
@@ -110,25 +110,25 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         status: 'executing',
       }),
     );
-    await phases.save([
-      phases.create({
-        section_id: section.id,
+    await steps.save([
+      steps.create({
+        track_id: track.id,
         thread_id: thread.id,
         org_id: ORG_ID,
         ordinal: 10,
         title: 'replay',
         brief: 'build replay',
-        step: 'build',
+        stage: 'build',
         status: 'building',
       }),
-      phases.create({
-        section_id: section.id,
+      steps.create({
+        track_id: track.id,
         thread_id: thread.id,
         org_id: ORG_ID,
         ordinal: 20,
         title: 'sync',
         brief: 'build sync',
-        step: 'build',
+        stage: 'build',
         status: 'pending',
       }),
     ]);
@@ -139,11 +139,11 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       prNumber: number | null;
       featureBranch: string | null;
       baseBranch: string | null;
-      sections: Array<{
+      tracks: Array<{
         id: string;
         hasPlan: boolean;
         status: string;
-        phases: Array<{ ordinal: number; title: string | null; step: string; status: string }>;
+        steps: Array<{ ordinal: number; title: string | null; stage: string; status: string }>;
       }>;
     };
 
@@ -153,12 +153,12 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.featureBranch).toBe('atlas/feature-stripe');
     expect(state.baseBranch).toBe(BASE_BRANCH);
 
-    expect(state.sections).toHaveLength(1);
-    const [sec] = state.sections;
+    expect(state.tracks).toHaveLength(1);
+    const [sec] = state.tracks;
     expect(sec.hasPlan).toBe(true);
-    expect(sec.phases.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
-    expect(sec.phases[0].status).toBe('building');
-    expect(sec.phases[1].status).toBe('pending');
+    expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
+    expect(sec.steps[0].status).toBe('building');
+    expect(sec.steps[1].status).toBe('pending');
   });
 
   it('still reports `no_job` for a thread that has not entered the build lifecycle', async () => {

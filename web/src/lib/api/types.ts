@@ -1,7 +1,7 @@
 /**
  * Contracts for the Atlas web surface (`/web/*`). These MIRROR the backend shapes verbatim:
  *  - `WebApprovalCard` / `WebVerdictCard` — the approval-card payload carried on a message's `card`.
- *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + sections + per-section phases; carries
+ *  - `PipelineState` — `DriverStoreService.getPipelineState` (job + tracks + per-track steps; carries
  *    the thread's PR url/number + feature/base branch — the navigator's ARTIFACTS + header read them).
  *
  * The live message + request shapes are owned by `thread-api.ts` (the org → repo → thread client).
@@ -19,7 +19,7 @@ export type JobStatus =
 
 export type JobKind = 'feature' | 'bugfix';
 
-export type SectionStatus =
+export type TrackStatus =
   | 'pending'
   | 'planning'
   | 'reviewing'
@@ -29,8 +29,8 @@ export type SectionStatus =
   | 'done'
   | 'failed';
 
-/** Per-phase status (the execute folder's leaves). Mirrors backend `PhaseStatus` in `domain/thread.ts`. */
-export type PhaseStatus =
+/** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
+export type StepStatus =
   | 'pending'
   | 'building'
   | 'reviewing'
@@ -74,7 +74,7 @@ export interface WebApprovalCard {
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
-  sections: string[];
+  tracks: string[];
   planUrl?: string;
   actions: WebCardAction[];
 }
@@ -116,26 +116,28 @@ export interface WebQuestionCard {
 export type WebCard = WebApprovalCard | WebVerdictCard | WebQuestionCard;
 
 // ── Pipeline (`…/threads/:threadId/pipeline`) ────────────────────────────────────────────────────
-/** One phase of a section's locked plan — the execute folder's leaf (a Claude Code session). */
-export interface PipelinePhase {
+/** One step of a track's locked plan — the execute folder's leaf (a Claude Code session). */
+export interface PipelineStep {
   id: string;
   ordinal: number;
   title: string | null;
   brief: string;
-  /** The resumable cursor within the phase ('build' | 'review' | 'fix'). */
-  step: string;
-  status: PhaseStatus;
+  /** The resumable cursor within the step ('build' | 'review' | 'fix'). */
+  stage: string;
+  status: StepStatus;
 }
 
-export interface PipelineSection {
+export interface PipelineTrack {
   id: string;
   ordinal: number;
   brief: string;
-  status: SectionStatus;
+  /** The track's scope type (backend/frontend/docs/…) — selects the review agents. */
+  type: string;
+  status: TrackStatus;
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
-  /** The section's phases (execute folder leaves), ordinal-sorted. */
-  phases: PipelinePhase[];
+  /** The track's steps (execute folder leaves), ordinal-sorted. */
+  steps: PipelineStep[];
 }
 
 export interface PipelineJob {
@@ -148,10 +150,10 @@ export interface PipelineJob {
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
   prUrl: string | null;
   prNumber: number | null;
-  /** The feature branch all sections stack on (header), or null before the sandbox is cut. */
+  /** The feature branch all tracks stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   baseBranch: string | null;
-  sections: PipelineSection[];
+  tracks: PipelineTrack[];
 }
 
 export type PipelineState = PipelineJob | { status: 'no_job' };

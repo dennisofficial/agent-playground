@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { Modal } from '@/features/create/components/modal';
 import { CreateThread } from '@/features/create/components/create-thread';
 
@@ -10,7 +11,10 @@ import { CreateThread } from '@/features/create/components/create-thread';
 export default function NewThreadModal() {
   return (
     <Modal title="New thread" subtitle="Pick a repo and describe the work — Atlas starts the conversation.">
-      <CreateThread />
+      {/* `CreateThread` reads `?org=&repo=` via `useSearchParams`, which needs a Suspense boundary. */}
+      <Suspense fallback={null}>
+        <CreateThread />
+      </Suspense>
     </Modal>
   );
 }

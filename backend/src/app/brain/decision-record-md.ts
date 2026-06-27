@@ -1,4 +1,5 @@
-import type { Decision, DecisionClass } from '../domain/decision-record';
+import { DECISION_CLASS_IDS, DECISION_CLASS_META } from '../domain/decision-record';
+import type { Decision } from '../domain/decision-record';
 
 /**
  * Renders the GENERATED `decision-record.md` from the thread's working-set decisions. This file lives in
@@ -6,25 +7,6 @@ import type { Decision, DecisionClass } from '../domain/decision-record';
  * NOT a hand-authored doc, so coding agents read it for grounding but never edit it. `log_decision`
  * re-renders it on every call, so it stays incremental and always matches the structured truth.
  */
-
-/** Human labels for the always-ask classes, in the order they render. */
-const CLASS_LABELS: Record<DecisionClass, string> = {
-  data_model: 'Data model',
-  api_contract: 'API contract',
-  dependency: 'Dependencies',
-  infrastructure: 'Infrastructure',
-  cross_cutting: 'Cross-cutting',
-  one_way_door: 'One-way doors',
-};
-
-const CLASS_ORDER: DecisionClass[] = [
-  'data_model',
-  'api_contract',
-  'dependency',
-  'infrastructure',
-  'cross_cutting',
-  'one_way_door',
-];
 
 function renderDecision(d: Decision): string {
   const lines = [`#### ${d.title}`, '', d.ruling];
@@ -55,10 +37,10 @@ export function renderDecisionRecordMd(decisions: Decision[], overview?: string)
     return parts.join('\n');
   }
 
-  for (const cls of CLASS_ORDER) {
+  for (const cls of DECISION_CLASS_IDS) {
     const inClass = decisions.filter((d) => d.decisionClass === cls);
     if (inClass.length === 0) continue;
-    parts.push(`## ${CLASS_LABELS[cls]}`, '');
+    parts.push(`## ${DECISION_CLASS_META.find((c) => c.id === cls)!.heading}`, '');
     for (const d of inClass) {
       parts.push(renderDecision(d), '');
     }

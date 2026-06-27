@@ -204,6 +204,16 @@ export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {
   return webJson<RepoView[]>(`/orgs/${orgId}/repos`);
 }
 
+export interface RepoBranches {
+  branches: string[];
+  defaultBranch: string;
+}
+
+/** A repo's branches (default first) for the create-thread base-branch picker. */
+export function fetchRepoBranches(orgId: string, repoId: string): Promise<RepoBranches> {
+  return webJson<RepoBranches>(`/orgs/${orgId}/repos/${repoId}/branches`);
+}
+
 export interface CreateThreadBody {
   firstMessage: string;
   title?: string;

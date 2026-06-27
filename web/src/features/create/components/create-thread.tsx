@@ -1,11 +1,12 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, GitBranch, Plug } from 'lucide-react';
+import { Check, Plug } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
+import { BranchPicker, Dropdown } from '@/components/branch-picker';
 import { useOrgs } from '@/lib/api/me';
 import { useOrgRepos, useCreateThread } from '@/lib/api/thread-queries';
 import { orgSwatch, orgInitials } from '@/lib/org-display';
@@ -21,8 +22,19 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const router = useRouter();
   const { orgs, isLoading: orgsLoading } = useOrgs();
 
-  const [orgId, setOrgId] = useState<string>('');
-  const [repoId, setRepoId] = useState<string>('');
+  // Pre-selection from the sidebar's per-org / per-repo ＋ (`/new?org=…&repo=…`). Read from the router's
+  // search params (NOT `window.location.search`) — on a `<Link>` navigation into the intercepted `/new`
+  // modal, `window.location` still holds the PREVIOUS url during this render, so the preselect would come
+  // back empty and the org/repo would wrongly fall back to the first one. `useSearchParams` reflects the
+  // navigated-to route correctly; both call sites wrap this component in a `<Suspense>` boundary for it.
+  const search = useSearchParams();
+  const [preselect] = useState(() => ({
+    org: search.get('org') ?? '',
+    repo: search.get('repo') ?? '',
+  }));
+
+  const [orgId, setOrgId] = useState<string>(preselect.org);
+  const [repoId, setRepoId] = useState<string>(preselect.repo);
   const [branch, setBranch] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +50,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
 
   // When the org (or its repo list) changes, default the repo + its base branch.
   useEffect(() => {
+    // Don't clobber the preselected repo (`/new?repo=…`) while the list is still loading — `repos`
+    // defaults to `[]` mid-fetch, which would otherwise reset `repoId` to '' before the real list lands.
+    if (reposLoading) return;
     if (repos.length === 0) {
       setRepoId('');
       return;
@@ -46,7 +61,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     const next = stillValid ? repos.find((r) => r.id === repoId)! : repos[0];
     if (!stillValid) setRepoId(next.id);
     setBranch((b) => b || next.defaultBranch || 'main');
-  }, [repos, repoId]);
+  }, [repos, repoId, reposLoading]);
 
   const selectedRepo = useMemo(() => repos.find((r) => r.id === repoId), [repos, repoId]);
 
@@ -101,25 +116,22 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
       </div>
 
       <div>
-        <p className="text-[12px] font-medium text-dim">Repo &amp; base branch</p>
+        <p className="text-[12px] font-medium text-dim">Repo</p>
         {reposLoading ? (
           <p className="mt-1.5 text-[12px] text-faint">Loading repos…</p>
         ) : repos.length === 0 ? (
           <NoRepos orgId={orgId} onDone={onDone} />
         ) : (
           <>
-            <div className="mt-1.5 flex gap-2">
-              <RepoPicker repos={repos} value={repoId} onChange={setRepoId} />
-              <div className="flex h-10 items-center gap-1.5 rounded-md border border-border-2 bg-surface px-2.5">
-                <GitBranch size={13} className="text-faint" />
-                <input
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                  className="w-28 bg-transparent font-mono text-[11.5px] text-text outline-none"
-                  aria-label="Base branch"
-                  placeholder={selectedRepo?.defaultBranch ?? 'main'}
-                />
-              </div>
+            <div className="mt-1.5">
+              <RepoPicker
+                repos={repos}
+                value={repoId}
+                onChange={(id) => {
+                  setRepoId(id);
+                  setBranch(''); // re-default to the new repo's base branch (effect picks it up)
+                }}
+              />
             </div>
             {selectedRepo && !selectedRepo.accessOk ? (
               <p className="mt-1 font-mono text-[9.5px] text-red">
@@ -129,6 +141,21 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           </>
         )}
       </div>
+
+      {repos.length > 0 ? (
+        <div>
+          <p className="text-[12px] font-medium text-dim">Base branch</p>
+          <div className="mt-1.5">
+            <BranchPicker
+              orgId={orgId}
+              repoId={repoId}
+              value={branch}
+              onChange={setBranch}
+              fallback={selectedRepo?.defaultBranch ?? 'main'}
+            />
+          </div>
+        </div>
+      ) : null}
 
       <div>
         <p className="text-[12px] font-medium text-dim">First message</p>
@@ -247,45 +274,6 @@ function RepoPicker({
           ))
         }
       </Dropdown>
-    </div>
-  );
-}
-
-/** A small click-away dropdown (trigger button + a render-prop menu). */
-function Dropdown({
-  trigger,
-  children,
-}: {
-  trigger: React.ReactNode;
-  children: (close: () => void) => React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full items-center gap-2 rounded-md border border-border-2 bg-surface px-3"
-      >
-        {trigger}
-        <ChevronDown size={13} className="shrink-0 text-faint" />
-      </button>
-      {open ? (
-        <div
-          className="absolute left-0 top-[calc(100%+6px)] z-50 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-panel py-1"
-          style={{ boxShadow: 'var(--shadow-menu)' }}
-        >
-          {children(() => setOpen(false))}
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { ChatAnthropic } from '@langchain/anthropic';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -218,6 +218,26 @@ export class OnboardingService {
       defaultBranch: fresh.default_branch,
       accessOk: fresh.access_ok,
     };
+  }
+
+  /**
+   * List a connected repo's branches with the org's GitHub token — the create-thread base-branch picker.
+   * The repo's configured default branch is surfaced first, then the rest in GitHub's order (de-duped).
+   * Scoped to the org (404 on a cross-tenant id).
+   */
+  async listRepoBranches(
+    orgId: string,
+    repoId: string,
+  ): Promise<{ branches: string[]; defaultBranch: string }> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo) throw new NotFoundException('repo not found');
+    const parsed = parseGithubRepoUrl(repo.git_url);
+    if (!parsed) throw new BadRequestException(`not an HTTPS GitHub URL: ${repo.git_url}`);
+    const token = await this.creds.githubToken(orgId);
+    if (!token) throw new BadRequestException('no GitHub token set for this org');
+    const names = await this.pr.listBranches(token, parsed.owner, parsed.repo);
+    const def = repo.default_branch || 'main';
+    return { branches: [def, ...names.filter((n) => n !== def)], defaultBranch: def };
   }
 
   /**

@@ -8,8 +8,8 @@ import { UserEntity } from './user.entity';
 
 /**
  * The locked DECISION RECORD — the upfront grill's durable output: the agreed overview, the
- * architecture/system calls (`decisions`), and the high-level section list (`section_briefs`),
- * approved ONCE. It grounds every section's just-in-time plan and the decision-class gate (a section
+ * architecture/system calls (`decisions`), and the high-level track list (`track_titles`),
+ * approved ONCE. It grounds every track's just-in-time plan and the decision-class gate (a track
  * planner parks only on an always-ask class NOT already settled here). 1:many with the thread — a
  * re-propose marks the prior draft `superseded` and writes a new one (the proposal audit trail).
  */
@@ -48,7 +48,7 @@ export class DecisionRecordEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'draft' })
   status!: string;
 
-  /** The agreed overview — intent, stack, constraints, and how the sections fit together. */
+  /** The agreed overview — intent, stack, constraints, and how the tracks fit together. */
   @Column({ type: 'text' })
   overview!: string;
 
@@ -56,9 +56,9 @@ export class DecisionRecordEntity extends TimestampedEntity {
   @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })
   decisions!: Decision[];
 
-  /** The high-level section briefs approved upfront — drives the thread's section rows. */
+  /** The high-level track briefs approved upfront — drives the thread's track rows. */
   @Column({ type: 'text', array: true, default: () => `'{}'` })
-  section_briefs!: string[];
+  track_titles!: string[];
 
   /** Who approved it (a user id); null until approved. */
   @Column({ type: 'uuid', nullable: true })

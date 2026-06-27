@@ -44,7 +44,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
   let containerId: string | undefined;
   let artifacts: { net: string; vol: string } | undefined;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     if (!dockerUp) return;
     repoRoot = mkdtempSync(join(tmpdir(), 'atlas-sbxmgr-'));
     homeRoot = mkdtempSync(join(tmpdir(), 'atlas-sbxhome-'));
@@ -60,6 +60,11 @@ describe('SandboxManager (integration, needs Docker)', () => {
     git(['worktree', 'add', '-q', worktree, '-b', 'atlas/feat'], repoRoot);
     sandbox = { repoId: 'proj', branch: 'atlas/feat', worktreePath: worktree, gitUrl: '' };
     manager = new SandboxManager(engine, builder, env({ AGENT_HOME_ROOT: homeRoot }));
+    // Reclaim any STALE container from a prior run: the container name is deterministic
+    // (`atlas-sbx-team1-proj-atlas-feat`), so a leftover one would be reused WARM with binds pointing at
+    // this run's now-different (deleted) repoRoot → an empty /workspace. Real Atlas keeps a stable
+    // per-thread worktree path so warm reuse is correct; this churn is test-only. Idempotent.
+    await manager.teardownByIdentity({ sandbox, orgId: 'team1' });
   });
 
   afterAll(async () => {
@@ -108,7 +113,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     const raw = await new Docker().getContainer(attached.containerId!).inspect();
     const mounts = (raw.Mounts ?? []) as Array<{ Destination?: string }>;
     expect(mounts.some((m) => m.Destination === '/usr/local/lib/atlas/engine-entrypoint.mjs')).toBe(true);
-    expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(/\|cfg\d+$/);
+    expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(/\|cfg\d+\|m([0-9a-f]+|none)$/);
 
     // idempotent: a second attach reuses the same container (fingerprint matches → not stale).
     const again = await manager.attach({ sandbox, orgId: 'team1' });

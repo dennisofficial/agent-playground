@@ -190,7 +190,7 @@ export interface RunEngineArgs {
   /**
    * Opt into RICH token-level streaming (the thread brain): enables the SDK's partial-message stream +
    * extended thinking, so `runClaude` emits `text_delta`/`thinking`/`thinking_delta`/`tool_use`/
-   * `tool_result` events in addition to the coarse `text`/`tool`/`result`. Omit (build/phase turns) for
+   * `tool_result` events in addition to the coarse `text`/`tool`/`result`. Omit (build/step turns) for
    * the existing block-level behavior.
    */
   richStream?: boolean;

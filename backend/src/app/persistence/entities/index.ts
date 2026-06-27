@@ -11,11 +11,13 @@ export * from './repo.entity';
 export * from './thread.entity';
 export * from './message.entity';
 export * from './stimulus.entity';
-export * from './section.entity';
-export * from './phase.entity';
+export * from './track.entity';
+export * from './step.entity';
 export * from './decision-record.entity';
 export * from './memory.entity';
 export * from './org-credentials.entity';
+export * from './org-worktree-secret.entity';
+export * from './org-worktree-secret-grant.entity';
 export * from './thread-sandbox.entity';
 export * from './user.entity';
 export * from './ticket.entity';
@@ -29,11 +31,13 @@ import { RepoEntity } from './repo.entity';
 import { ThreadEntity } from './thread.entity';
 import { MessageEntity } from './message.entity';
 import { StimulusEntity } from './stimulus.entity';
-import { SectionEntity } from './section.entity';
-import { PhaseEntity } from './phase.entity';
+import { TrackEntity } from './track.entity';
+import { StepEntity } from './step.entity';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
+import { OrgWorktreeSecretEntity } from './org-worktree-secret.entity';
+import { OrgWorktreeSecretGrantEntity } from './org-worktree-secret-grant.entity';
 import { ThreadSandboxEntity } from './thread-sandbox.entity';
 import { UserEntity } from './user.entity';
 import { TicketEntity } from './ticket.entity';
@@ -49,11 +53,13 @@ export const ENTITIES = [
   ThreadEntity,
   MessageEntity,
   StimulusEntity,
-  SectionEntity,
-  PhaseEntity,
+  TrackEntity,
+  StepEntity,
   DecisionRecordEntity,
   MemoryEntity,
   OrgCredentialsEntity,
+  OrgWorktreeSecretEntity,
+  OrgWorktreeSecretGrantEntity,
   ThreadSandboxEntity,
   UserEntity,
   TicketEntity,

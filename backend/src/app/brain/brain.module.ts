@@ -7,9 +7,9 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  PhaseEntity,
+  StepEntity,
   RepoEntity,
-  SectionEntity,
+  TrackEntity,
   StimulusEntity,
   ThreadEntity,
   ThreadSandboxEntity,
@@ -43,7 +43,7 @@ import { PlanReviewService } from './plan-review.service';
  *
  * THE TWO SEAMS:
  *  - INPUT: `STIMULUS_CONSUMER` ⟵ `StimulusRouter` (replaces the old TriageService binding).
- *  - OUTPUT: `JOB_DISPATCHER` — bound by W4's @Global `DriverModule` (`useExisting: SectionDriver`).
+ *  - OUTPUT: `JOB_DISPATCHER` — bound by W4's @Global `DriverModule` (`useExisting: TrackDriver`).
  *
  * Imports `DecisionGateModule` (classifier + park-and-ask), `MemoryModule` (recall), `DriverModule`
  * (ThreadLifecycleService + DriverStoreService for the brain tools). `CHAT_SURFACE` comes from the
@@ -62,8 +62,8 @@ import { PlanReviewService } from './plan-review.service';
         ThreadEntity,
         MessageEntity,
         DecisionRecordEntity,
-        SectionEntity,
-        PhaseEntity,
+        TrackEntity,
+        StepEntity,
         StimulusEntity,
         RepoEntity,
         ThreadSandboxEntity,
@@ -86,7 +86,7 @@ import { PlanReviewService } from './plan-review.service';
     StimulusRouter,
     // INPUT SEAM — the router IS the stimulus consumer (replaces the old TriageService binding).
     { provide: STIMULUS_CONSUMER, useExisting: StimulusRouter },
-    // OUTPUT SEAM (`JOB_DISPATCHER`) is bound by W4's @Global DriverModule (useExisting: SectionDriver).
+    // OUTPUT SEAM (`JOB_DISPATCHER`) is bound by W4's @Global DriverModule (useExisting: TrackDriver).
   ],
   exports: [
     StimulusRouter,

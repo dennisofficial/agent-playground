@@ -20,10 +20,10 @@ import {
 import { KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { formatBytes } from '@/lib/format';
-import { sectionTitle } from '@/lib/section-brief';
+import { trackTitle } from '@/lib/track-title';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/thread-api';
-import { Caret, Divider, PipelineTree, haltSectionIdx } from './pipeline-tree';
+import { Caret, Divider, PipelineTree, haltTrackIdx } from './pipeline-tree';
 import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
 
 export interface ThreadMeta {
@@ -338,10 +338,10 @@ function PipelineRegion({
     );
   }
 
-  // The live build tree (running / paused / done / failed) — real sections + phases.
+  // The live build tree (running / paused / done / failed) — real tracks + steps.
   if ((status === 'running' || status === 'paused' || status === 'done' || status === 'failed') && job) {
-    const total = job.sections.length;
-    const activeIdx = job.sections.findIndex(
+    const total = job.tracks.length;
+    const activeIdx = job.tracks.findIndex(
       (s) => s.status !== 'done' && s.status !== 'pending' && s.status !== 'failed',
     );
     const activeNo = activeIdx === -1 ? total : activeIdx + 1;
@@ -368,55 +368,60 @@ function PipelineRegion({
     );
   }
 
-  // Scoping / awaiting — draft sections (locked in on approval). The plan is now authored in full up
-  // front, so a proposed section already carries its phases — show them (expandable) so the operator can
-  // review the whole shape before approving, not just the section titles. Older phase-less drafts (and
-  // the scoping state, before any sections exist) degrade to a plain title row.
-  const drafts = job?.sections ?? [];
+  // Scoping / awaiting — draft tracks (locked in on approval). The plan is now authored in full up
+  // front, so a proposed track already carries its steps — show them (expandable) so the operator can
+  // review the whole shape before approving, not just the track titles. Older step-less drafts (and
+  // the scoping state, before any tracks exist) degrade to a plain title row.
+  const drafts = job?.tracks ?? [];
   const proposed = status === 'awaiting_approval';
   return (
     <>
       <Divider label="PIPELINE" count={proposed ? `proposed · ${drafts.length}` : 'forming'} />
       {drafts.length === 0 ? (
         <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
-          No sections yet — the plan you approve in the conversation is what creates them.
+          No tracks yet — the plan you approve in the conversation is what creates them.
         </p>
       ) : (
         drafts.map((s, i) => {
-          const phases = s.phases ?? [];
+          const steps = s.steps ?? [];
           const folderId = `draft:${s.id}`;
           // Default to expanded while proposed so the full plan is visible at a glance.
-          const expanded = phases.length > 0 && isExpanded(folderId, proposed);
+          const expanded = steps.length > 0 && isExpanded(folderId, proposed);
           return (
             <div key={s.id} className="select-none">
               <div
                 className={cn(
                   'flex items-center gap-[7px] px-2 py-1.5 opacity-60',
-                  phases.length > 0 && 'cursor-pointer hover:opacity-80',
+                  steps.length > 0 && 'cursor-pointer hover:opacity-80',
                 )}
-                onClick={phases.length > 0 ? () => toggle(folderId, expanded) : undefined}
+                onClick={steps.length > 0 ? () => toggle(folderId, expanded) : undefined}
               >
-                {phases.length > 0 ? <Caret expanded={expanded} /> : <span className="w-3 shrink-0" />}
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
                   style={{ border: '1.5px dashed var(--border-2)', background: 'transparent' }}
                 />
                 <span className="flex-1 truncate text-[12px] font-semibold text-dim">
-                  §{i + 1} {sectionTitle(s.brief)}
+                  §{i + 1} {trackTitle(s.brief)}
                 </span>
-                {phases.length > 0 && (
-                  <span className="shrink-0 font-mono text-[9.5px] text-faint">{phases.length}</span>
+                {s.type && s.type !== 'general' && (
+                  <span className="shrink-0 rounded-sm bg-surface-3 px-1 font-mono text-[8.5px] uppercase tracking-wide text-faint">
+                    {s.type}
+                  </span>
                 )}
+                {steps.length > 0 && (
+                  <span className="shrink-0 font-mono text-[9.5px] text-faint">{steps.length}</span>
+                )}
+                {steps.length > 0 ? <Caret expanded={expanded} /> : null}
               </div>
               {expanded &&
-                phases.map((p, pi) => (
-                  <div key={p.id} className="flex items-center gap-2 py-1 pl-[34px] pr-2 opacity-55">
+                steps.map((p, pi) => (
+                  <div key={p.id} className="flex items-center gap-2 py-1 pl-[23px] pr-2 opacity-55">
                     <span
                       className="h-1.5 w-1.5 shrink-0 rounded-full"
                       style={{ border: '1px dashed var(--border-2)', background: 'transparent' }}
                     />
                     <span className="flex-1 truncate text-[11px] text-dim">
-                      {i + 1}.{pi + 1} {p.title || `Phase ${pi + 1}`}
+                      {i + 1}.{pi + 1} {p.title || `Step ${pi + 1}`}
                     </span>
                   </div>
                 ))}
@@ -591,7 +596,7 @@ function StateBanner({
 }
 
 function haltSectionNo(job: PipelineJob): number | null {
-  const idx = haltSectionIdx(job.sections);
+  const idx = haltTrackIdx(job.tracks);
   return idx === -1 ? null : idx + 1;
 }
 
