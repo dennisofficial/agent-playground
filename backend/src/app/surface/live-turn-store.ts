@@ -16,11 +16,19 @@ export interface LiveTurnBlock {
   result?: unknown;
   isError?: boolean;
   done: boolean;
+  /**
+   * Set only for SUBAGENT blocks (the spawning Task tool_use id). Carried through the snapshot so a
+   * mid-turn reconnect preserves subagent ownership — the web peels subagent activity out by this. Also
+   * partitions the delta-merge so a subagent's forwarded text never appends onto the brain's open block.
+   */
+  parentToolUseId?: string;
 }
 
-/** The cumulative state of a thread's in-flight turn — the RESUMABLE snapshot replayed on (re)connect. */
+/** The cumulative state of one in-flight turn (a `(threadId, lane)` pair) — the RESUMABLE snapshot. */
 export interface LiveTurnSnapshot {
   threadId: string;
+  /** `'main'` = the brain turn; `'phase:<stepId>'` = a build turn. The client routes blocks by lane. */
+  lane: string;
   blocks: LiveTurnBlock[];
   active: boolean;
   /** The highest frame `seq` reflected in this snapshot (the client dedupes deltas against it). */
@@ -31,15 +39,21 @@ export interface LiveTurnSnapshot {
 export interface LiveStreamFrame {
   channel: string;
   threadId: string;
+  lane: string;
   seq: number;
   event: unknown;
 }
 
 interface TurnState {
+  threadId: string;
+  lane: string;
   blocks: LiveTurnBlock[];
   active: boolean;
   lastSeq: number;
 }
+
+/** The default lane — the thread brain's conversational turn. */
+export const MAIN_LANE = 'main';
 
 /**
  * THE RESUMABLE/DURABLE LIVE-STREAM BUFFER.
@@ -65,7 +79,7 @@ interface TurnState {
 @Injectable()
 export class LiveTurnStore {
   private readonly subject = new Subject<LiveStreamFrame>();
-  /** channel (repoId) → threadId → cumulative in-flight turn. */
+  /** channel (repoId) → `${threadId}::${lane}` → cumulative in-flight turn. */
   private readonly turns = new Map<string, Map<string, TurnState>>();
   private seq = 0;
   private blockSeq = 0;
@@ -75,51 +89,62 @@ export class LiveTurnStore {
     return this.subject.asObservable();
   }
 
-  /** Apply one engine event to a thread's in-flight turn (cumulative) AND fan it live with a fresh seq. */
-  push(channel: string, threadId: string, event: { kind: string; [k: string]: unknown }): void {
-    const state = this.ensure(channel, threadId);
+  /** Apply one engine event to a turn's in-flight state (cumulative) AND fan it live with a fresh seq. */
+  push(
+    channel: string,
+    threadId: string,
+    event: { kind: string; [k: string]: unknown },
+    lane: string = MAIN_LANE,
+  ): void {
+    const state = this.ensure(channel, threadId, lane);
     this.applyToState(state, event);
     const seq = ++this.seq;
     state.lastSeq = seq;
-    this.subject.next({ channel, threadId, seq, event });
+    this.subject.next({ channel, threadId, lane, seq, event });
   }
 
   /** End a turn: fan a `turn_end` marker (so the client reconciles against the durable log), then drop it. */
-  end(channel: string, threadId: string): void {
+  end(channel: string, threadId: string, lane: string = MAIN_LANE): void {
     const seq = ++this.seq;
-    this.subject.next({ channel, threadId, seq, event: { kind: 'turn_end' } });
-    this.turns.get(channel)?.delete(threadId);
+    this.subject.next({ channel, threadId, lane, seq, event: { kind: 'turn_end' } });
+    this.turns.get(channel)?.delete(this.key(threadId, lane));
   }
 
-  /** The current cumulative snapshot for one thread (or null when no turn is in flight). */
-  snapshot(channel: string, threadId: string): LiveTurnSnapshot | null {
-    const state = this.turns.get(channel)?.get(threadId);
+  /** The current cumulative snapshot for one turn lane (or null when no turn is in flight). */
+  snapshot(channel: string, threadId: string, lane: string = MAIN_LANE): LiveTurnSnapshot | null {
+    const state = this.turns.get(channel)?.get(this.key(threadId, lane));
     if (!state) return null;
-    return { threadId, blocks: state.blocks, active: state.active, seq: state.lastSeq };
+    return { threadId, lane, blocks: state.blocks, active: state.active, seq: state.lastSeq };
   }
 
-  /** Every in-flight turn for a repo — replayed to a client the moment its SSE connects. */
+  /** Every in-flight turn lane for a repo — replayed to a client the moment its SSE connects. */
   snapshotsForRepo(channel: string): LiveTurnSnapshot[] {
     const m = this.turns.get(channel);
     if (!m) return [];
-    return [...m.entries()].map(([threadId, s]) => ({
-      threadId,
+    return [...m.values()].map((s) => ({
+      threadId: s.threadId,
+      lane: s.lane,
       blocks: s.blocks,
       active: s.active,
       seq: s.lastSeq,
     }));
   }
 
-  private ensure(channel: string, threadId: string): TurnState {
+  private key(threadId: string, lane: string): string {
+    return `${threadId}::${lane}`;
+  }
+
+  private ensure(channel: string, threadId: string, lane: string): TurnState {
     let m = this.turns.get(channel);
     if (!m) {
       m = new Map();
       this.turns.set(channel, m);
     }
-    let s = m.get(threadId);
+    const k = this.key(threadId, lane);
+    let s = m.get(k);
     if (!s) {
-      s = { blocks: [], active: true, lastSeq: 0 };
-      m.set(threadId, s);
+      s = { threadId, lane, blocks: [], active: true, lastSeq: 0 };
+      m.set(k, s);
     }
     s.active = true;
     return s;
@@ -130,26 +155,30 @@ export class LiveTurnStore {
     const blocks = state.blocks;
     const last = blocks[blocks.length - 1];
     const text = typeof ev['text'] === 'string' ? (ev['text'] as string) : '';
+    // Only merge into the open block when it belongs to the SAME author (brain vs a given subagent), so a
+    // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
+    const pid = typeof ev['parentToolUseId'] === 'string' ? (ev['parentToolUseId'] as string) : undefined;
+    const sameAuthor = (b: LiveTurnBlock | undefined): boolean => !!b && b.parentToolUseId === pid;
     switch (ev.kind) {
       case 'text_delta':
-        if (last && last.kind === 'text' && !last.done) last.text = (last.text ?? '') + text;
-        else blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: false });
+        if (last && last.kind === 'text' && !last.done && sameAuthor(last)) last.text = (last.text ?? '') + text;
+        else blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: false, parentToolUseId: pid });
         break;
       case 'text':
-        if (last && last.kind === 'text' && !last.done) {
+        if (last && last.kind === 'text' && !last.done && sameAuthor(last)) {
           last.text = text;
           last.done = true;
-        } else blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: true });
+        } else blocks.push({ kind: 'text', key: `b${this.blockSeq++}`, text, done: true, parentToolUseId: pid });
         break;
       case 'thinking_delta':
-        if (last && last.kind === 'thinking' && !last.done) last.text = (last.text ?? '') + text;
-        else blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: false });
+        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last)) last.text = (last.text ?? '') + text;
+        else blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: false, parentToolUseId: pid });
         break;
       case 'thinking':
-        if (last && last.kind === 'thinking' && !last.done) {
+        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last)) {
           last.text = text;
           last.done = true;
-        } else blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: true });
+        } else blocks.push({ kind: 'thinking', key: `b${this.blockSeq++}`, text, done: true, parentToolUseId: pid });
         break;
       case 'tool_use':
         blocks.push({
@@ -159,6 +188,7 @@ export class LiveTurnStore {
           name: typeof ev['name'] === 'string' ? (ev['name'] as string) : 'tool',
           input: ev['input'],
           done: false,
+          parentToolUseId: pid,
         });
         break;
       case 'tool_result': {

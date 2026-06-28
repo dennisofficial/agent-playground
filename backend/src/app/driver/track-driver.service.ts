@@ -10,9 +10,9 @@ import {
 } from '../decision-gate';
 import { AutoFixStage } from '../autofix';
 import type { DecisionRecord, Step, Thread } from '../domain';
-import { EngineAuthError, type EngineEvent } from '../engine';
+import { EngineAuthError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
-import { CHAT_SURFACE, type ChatSurface } from '../surface';
+import { CHAT_SURFACE, type ChatSurface, BLOCK_SINK, type BlockSink, TurnHarnessFactory } from '../surface';
 import { CredentialResolver } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import type { JobDispatcher } from '../brain';
@@ -75,6 +75,10 @@ export class TrackDriver implements JobDispatcher {
     private readonly ship: BuildShipService,
     private readonly awareness: PipelineAwarenessStore,
     private readonly provisioner: WorktreeProvisioner,
+    // The shared transcript spine — a build turn rides it on a `phase:<stepId>` lane so the step sub-page
+    // renders a full transcript (thinking/prose/tool calls), exactly like a subagent run.
+    private readonly turnHarness: TurnHarnessFactory,
+    @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
   ) {}
 
   /**
@@ -764,26 +768,64 @@ export class TrackDriver implements JobDispatcher {
     for (const p of steps) await this.store.setStepState(p.id, 'build', 'building');
     await this.post(route, `:gear: ${track.brief} — building: ${label}`);
 
+    // The build turn rides the shared transcript spine on its own `phase:<anchorStepId>` lane, tagging every
+    // durable block with `phaseId` so the web peels it into the step sub-page (like a subagent). A batch is
+    // ONE turn ⇒ ONE transcript tagged with the ANCHOR step id; every step in the batch maps to it. The
+    // channel falls back to the repo id so durable persistence works even if the route has no live channel.
+    const channel = route.channel ?? job.repoId;
+    const lane = `phase:${anchor.id}`;
+    const batchOrdinal = anchor.batchOrdinal ?? null;
+    // Synthetic anchor row at batch START — the in-conversation `BuildStepCard` latches onto this (a phase
+    // has no spawning Task tool block), and it sorts the card at the batch's chronological position.
+    await this.blockSink
+      .appendBlock(job.id, {
+        kind: 'build_anchor',
+        text: `${track.brief} — ${label}`,
+        meta: {
+          phaseId: anchor.id,
+          ...(batchOrdinal != null ? { batchOrdinal } : {}),
+          batchStepIds: steps.map((p) => p.id),
+          label,
+        },
+      })
+      .catch((err) => this.logger.warn(`build_anchor append failed for thread=${job.id}: ${err}`));
+    const harness = this.turnHarness.create({
+      threadId: job.id,
+      channel,
+      lane,
+      metaTag: { phaseId: anchor.id, ...(batchOrdinal != null ? { batchOrdinal } : {}) },
+    });
+
     // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
     // rejects so the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute
     // to the anchor step (a batch is one turn; minor observability coarsening for the step transcript).
-    const result = await this.runTurnBounded(
-      {
-        jobId: job.id,
-        stepId: anchor.id,
-        sandbox,
-        engine: 'claude',
-        mode: 'execute',
-        systemPrompt: steps.length === 1 ? STEP_EXECUTE_SYSTEM : BATCH_EXECUTE_SYSTEM,
-        task: renderBatchTask(record, track, steps),
-        auth: await this.creds.engineAuth(job.orgId, 'claude'),
-        onEvent: (e) => {
-          if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
-          void this.postPhaseEvent(route, anchor.id, track.ordinal, anchor.ordinal, e);
+    let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
+    try {
+      result = await this.runTurnBounded(
+        {
+          jobId: job.id,
+          stepId: anchor.id,
+          sandbox,
+          engine: 'claude',
+          mode: 'execute',
+          systemPrompt: steps.length === 1 ? STEP_EXECUTE_SYSTEM : BATCH_EXECUTE_SYSTEM,
+          task: renderBatchTask(record, track, steps),
+          auth: await this.creds.engineAuth(job.orgId, 'claude'),
+          richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
+          onEvent: (e) => {
+            if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
+            harness.onEvent(e);
+          },
         },
-      },
-      `batch "${label}"`,
-    );
+        `batch "${label}"`,
+      );
+    } catch (err) {
+      // Timeout / auth / engine error — persist whatever partials streamed and end the lane exactly once.
+      await harness.abort();
+      throw err;
+    }
+    // Engine turn done — persist the transcript (+ fallback) and end the live lane.
+    await harness.finish(result.report);
 
     // Surface any off-spec deviations the engine flagged in its report (#7) — never silent.
     const deviations = extractDeviations(result.report);
@@ -927,47 +969,6 @@ export class TrackDriver implements JobDispatcher {
       });
     } catch (err) {
       this.logger.warn(`post failed (continuing): ${err}`);
-    }
-  }
-
-  /**
-   * R5: relay a per-step engine event to the web surface (SSE) so the UI can render the live
-   * step transcript. Only text/tool/result events are relayed (session events carry no useful text).
-   * Posts with a `meta.kind='build_event'` marker so SSE subscribers can distinguish them from
-   * conversational messages. Best-effort — a failed post never breaks the build.
-   */
-  private async postPhaseEvent(
-    route: JobRoute,
-    stepId: string,
-    sectionOrdinal: number,
-    phaseOrdinal: number,
-    e: EngineEvent,
-  ): Promise<void> {
-    if (!route.channel) return;
-    // Only relay events that carry useful text — skip bare session events.
-    const text =
-      e.kind === 'text'
-        ? e.text.trim()
-        : e.kind === 'tool'
-          ? `[tool] ${e.name}${e.detail ? `: ${e.detail}` : ''}`
-          : e.kind === 'result'
-            ? e.text.trim()
-            : '';
-    if (!text) return;
-    try {
-      await this.surface.post(route.channel, text, {
-        ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-        ...(route.orgId ? { orgId: route.orgId } : {}),
-        meta: {
-          kind: 'build_event',
-          stepId,
-          sectionOrdinal,
-          phaseOrdinal,
-          eventKind: e.kind,
-        },
-      });
-    } catch {
-      // Silently drop — step event relay is purely informational.
     }
   }
 }

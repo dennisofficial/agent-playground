@@ -428,6 +428,7 @@ export class WebSurfaceController {
           data: {
             type: 'stream',
             threadId: s.threadId,
+            lane: s.lane,
             seq: s.seq,
             event: { kind: 'snapshot', blocks: s.blocks, active: s.active },
           },
@@ -438,7 +439,7 @@ export class WebSurfaceController {
       filter((f) => f.channel === repoId),
       map(
         (f): MessageEvent => ({
-          data: { type: 'stream', threadId: f.threadId, seq: f.seq, event: f.event },
+          data: { type: 'stream', threadId: f.threadId, lane: f.lane, seq: f.seq, event: f.event },
         }),
       ),
     );

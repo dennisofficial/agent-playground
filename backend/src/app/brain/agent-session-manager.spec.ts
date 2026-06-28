@@ -12,7 +12,17 @@ import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { TicketService } from '../tickets';
 import type { DecisionClassifier } from '../decision-gate';
-import type { ChatSurface, LiveTurnStore } from '../surface';
+import type { BlockSink, ChatSurface, LiveTurnStore } from '../surface';
+import { TurnHarnessFactory } from '../surface';
+
+/** A no-op transcript harness for tests that don't exercise streaming. */
+const noopTurnHarness = {
+  create: () => ({
+    onEvent: vi.fn(),
+    finish: vi.fn().mockResolvedValue(undefined),
+    abort: vi.fn().mockResolvedValue(undefined),
+  }),
+} as unknown as TurnHarnessFactory;
 import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import { AgentSessionManager } from './agent-session-manager.service';
@@ -145,12 +155,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     save: vi.fn(),
   } as unknown as Repository<ThreadSandboxEntity>;
 
-  const mockLiveTurns = {
-    push: vi.fn(),
-    end: vi.fn(),
-    snapshot: vi.fn(),
-    snapshotsForRepo: vi.fn(),
-  } as unknown as LiveTurnStore;
 
   const TEAM_ID = 'T-R3GATE';
   const PROJECT_ID = 'r3gate-proj';
@@ -267,7 +271,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockDispatcher,
       mockSurface,
       mockSandboxRows,
-      mockLiveTurns,
+      noopTurnHarness,
       mockClassifier,
       mockShip,
       mockRepos,
@@ -821,6 +825,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     } as unknown as Repository<ThreadSandboxEntity>;
     const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as DockerEngineRunner;
     const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+    // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
+    // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
+    const blockSink = { appendBlock: vi.fn().mockResolvedValue(undefined) } as unknown as BlockSink;
+    const turnHarness = new TurnHarnessFactory(liveTurns, blockSink);
     const driverStore = {
       getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),
     } as unknown as DriverStoreService;
@@ -841,7 +849,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as JobDispatcher,
       surface,
       sandboxRows,
-      liveTurns,
+      turnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
@@ -849,7 +857,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as TicketService,
       { engineAuth: async () => undefined } as unknown as CredentialResolver,
     );
-    return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, awareness };
+    return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -863,7 +871,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       args.onEvent?.({ kind: 'result', text: 'Done.' });
       return { result: 'Done.', sessionId: 'sess-1' };
     });
-    const { manager, store, surface, liveTurns, dockerRunner } = makeManager({ run });
+    const { manager, store, surface, liveTurns, blockSink, dockerRunner } = makeManager({ run });
 
     await manager.handleChatTurn(stimulus);
 
@@ -871,15 +879,18 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
     expect(runArgs.richStream).toBe(true);
 
-    // Every engine event was pushed LIVE into the resumable store, then the turn was ended (turn_end).
+    // Every engine event was pushed LIVE into the resumable store (on the default `main` lane), then the
+    // turn was ended (turn_end).
     const pushed = (liveTurns.push as ReturnType<typeof vi.fn>).mock.calls.map(
       (c) => (c[2] as EngineEvent).kind,
     );
     expect(pushed).toEqual(['session', 'thinking', 'text', 'tool_use', 'tool_result', 'text', 'result']);
+    expect((liveTurns.push as ReturnType<typeof vi.fn>).mock.calls.every((c) => (c[3] ?? 'main') === 'main')).toBe(true);
     expect(liveTurns.end as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
 
-    // The authoritative blocks were persisted: thinking, two text (chat) blocks, and one paired tool call.
-    const blocks = (store.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    // The authoritative blocks were persisted via the durable sink: thinking, two text (chat) blocks, and
+    // one paired tool call.
+    const blocks = (blockSink.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
     expect(blocks).toContainEqual(expect.objectContaining({ kind: 'thinking', text: 'reasoning…' }));
     expect(blocks.filter((b) => b.kind === 'chat').map((b) => b.text)).toEqual(['Hello', 'Done.']);
     const toolBlock = blocks.find((b) => b.kind === 'tool');
@@ -1052,7 +1063,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       {} as unknown as JobDispatcher,
       { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
       { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<ThreadSandboxEntity>,
-      { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore,
+      noopTurnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,

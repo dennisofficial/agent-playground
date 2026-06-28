@@ -122,3 +122,50 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     sub.unsubscribe();
   });
 });
+
+describe('LiveTurnStore — lanes (a brain turn and a build turn coexist on one thread)', () => {
+  const PHASE = 'phase:step-7';
+
+  it('two lanes on the same thread accumulate independently and do not clobber each other', () => {
+    const store = new LiveTurnStore();
+    // The brain turn (default `main` lane) and a build turn (a `phase:` lane) interleave on ONE thread.
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'brain ' });
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'reply' }, PHASE); // wrong-author would merge here if no lane
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'thinking' }, PHASE);
+    store.push(REPO, THREAD, { kind: 'text_delta', text: '!' });
+
+    const main = store.snapshot(REPO, THREAD)!; // default lane
+    const phase = store.snapshot(REPO, THREAD, PHASE)!;
+    expect(main.lane).toBe('main');
+    expect(phase.lane).toBe(PHASE);
+    expect(main.blocks).toHaveLength(1);
+    expect(main.blocks[0]).toMatchObject({ kind: 'text', text: 'brain !' });
+    expect(phase.blocks[0]).toMatchObject({ kind: 'text', text: 'replythinking' });
+
+    // Ending one lane leaves the other intact.
+    store.end(REPO, THREAD, PHASE);
+    expect(store.snapshot(REPO, THREAD, PHASE)).toBeNull();
+    expect(store.snapshot(REPO, THREAD)).not.toBeNull();
+  });
+
+  it('snapshotsForRepo returns one snapshot PER (thread, lane), each carrying its lane', () => {
+    const store = new LiveTurnStore();
+    store.push(REPO, THREAD, { kind: 'text', text: 'a' });
+    store.push(REPO, THREAD, { kind: 'text', text: 'b' }, PHASE);
+    const snaps = store.snapshotsForRepo(REPO);
+    expect(snaps).toHaveLength(2);
+    expect(new Set(snaps.map((s) => s.lane))).toEqual(new Set(['main', PHASE]));
+    expect(snaps.every((s) => s.threadId === THREAD)).toBe(true);
+  });
+
+  it('a snapshot preserves parentToolUseId so subagent ownership survives a mid-turn reconnect', () => {
+    const store = new LiveTurnStore();
+    // Brain text, then a subagent's forwarded text (different author) — must NOT merge into one block.
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'main' });
+    store.push(REPO, THREAD, { kind: 'text_delta', text: 'sub', parentToolUseId: 'tu-9' });
+    const snap = store.snapshot(REPO, THREAD)!;
+    expect(snap.blocks).toHaveLength(2);
+    expect(snap.blocks[0]).toMatchObject({ text: 'main', parentToolUseId: undefined });
+    expect(snap.blocks[1]).toMatchObject({ text: 'sub', parentToolUseId: 'tu-9' });
+  });
+});

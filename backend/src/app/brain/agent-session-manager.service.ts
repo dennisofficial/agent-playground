@@ -16,7 +16,7 @@ import {
   CHAT_SURFACE,
   type ChatSurface,
   type DecisionApprovalCard,
-  LiveTurnStore,
+  TurnHarnessFactory,
   SYSTEM_SEED_AUTHOR,
   type WebQuestionCard,
   webQuestionCard,
@@ -47,7 +47,7 @@ import { renderDecisionRecordMd } from './decision-record-md';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import { isUnresumableSessionMessage, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
-import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../engine/engine.types';
+import type { EngineRunnerPort, ToolImpl, RunEngineArgs } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
@@ -101,7 +101,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
     private readonly sandboxRows: Repository<ThreadSandboxEntity>,
-    private readonly liveTurns: LiveTurnStore,
+    // The shared transcript spine — builds the per-turn streamer (live frames + durable blocks).
+    private readonly turnHarness: TurnHarnessFactory,
     // Fast (direct-build) path: classify always-ask decisions, resolve the repo, and ship the result.
     private readonly classifier: DecisionClassifier,
     private readonly ship: BuildShipService,
@@ -598,7 +599,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       threadId: stimulus.threadId,
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
-    const streamer = this.makeTurnStreamer(stimulus, channel);
+    // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation.
+    const streamer = this.turnHarness.create({ threadId: stimulus.threadId, channel });
 
     const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.threadId}`;
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
@@ -667,128 +669,6 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         .clearAwaitingQuestion(stimulus.threadId, deliveredQuestionId)
         .catch((err) => this.logger.warn(`clearAwaitingQuestion failed: ${err}`));
     }
-  }
-
-  /**
-   * A per-turn streamer — the bridge between the in-sandbox session and the web. For each engine event it
-   * (a) emits a LIVE frame to the surface (token deltas, thinking, tool calls/results) and (b) records the
-   * AUTHORITATIVE blocks into the durable transcript: assistant text (`chat`), thinking (`thinking`), and
-   * tool calls paired with their results by id (`tool`, with `{name,input,result,isError}` in `meta`).
-   * Persists are serialized (a promise chain) to preserve transcript order; `finish` flushes any unpaired
-   * tool call + a text fallback, awaits the chain so rows are durable, then emits the `turn_end` marker.
-   */
-  private makeTurnStreamer(
-    stimulus: ChatStimulus,
-    channel: string,
-  ): { onEvent: (e: EngineEvent) => void; finish: (finalText?: string) => Promise<void> } {
-    const threadId = stimulus.threadId;
-    // The durable transcript, accumulated in event order. Persisted to `messages` ONLY at turn end — so
-    // DURING the turn the resumable `LiveTurnStore` is the SOLE source of the in-flight blocks. This is
-    // what prevents a double-render on reconnect: if completed blocks were persisted mid-turn, a
-    // reconnecting client would see them BOTH from `/messages` AND from the live snapshot (which holds the
-    // whole cumulative turn). DB-on-completion-only mirrors the rs-crm-app email-summary pattern.
-    //
-    // Each block carries `emittedAt` — the wall-clock moment it streamed. Persisting at turn end would
-    // otherwise stamp the whole batch with the turn-END time, sorting it AFTER a follow-up the operator
-    // sent mid-turn (persisted at its real send time) — the bug where a later question jumps to the top of
-    // the turn. Stamps are forced strictly-monotonic so blocks never tie within a turn (ms granularity).
-    type DurableBlock = {
-      kind: string;
-      text?: string;
-      meta?: Record<string, unknown>;
-      toolId?: string;
-      done?: boolean;
-      emittedAt: Date;
-    };
-    const blocks: DurableBlock[] = [];
-    let lastEmitMs = 0;
-    const stamp = (): Date => {
-      lastEmitMs = Math.max(Date.now(), lastEmitMs + 1);
-      return new Date(lastEmitMs);
-    };
-
-    return {
-      onEvent: (e: EngineEvent) => {
-        // LIVE + RESUMABLE: the store fans the frame AND holds the cumulative turn for snapshot-on-connect.
-        this.liveTurns.push(channel, threadId, e);
-        switch (e.kind) {
-          case 'text':
-            // `parentToolUseId` (set only for subagent blocks) is stamped into meta so the web can peel
-            // subagent activity out of the main transcript into its own sub-page.
-            if (e.text.trim())
-              blocks.push({
-                kind: 'chat',
-                text: e.text,
-                emittedAt: stamp(),
-                ...(e.parentToolUseId ? { meta: { parentToolUseId: e.parentToolUseId } } : {}),
-              });
-            break;
-          case 'thinking':
-            if (e.text.trim())
-              blocks.push({
-                kind: 'thinking',
-                text: e.text,
-                emittedAt: stamp(),
-                ...(e.parentToolUseId ? { meta: { parentToolUseId: e.parentToolUseId } } : {}),
-              });
-            break;
-          case 'tool_use': {
-            const toolId = e.id || `tool-${blocks.length}`;
-            blocks.push({
-              kind: 'tool',
-              toolId,
-              done: false,
-              meta: {
-                // `id` is persisted (the durable row otherwise drops it) so the web can join a subagent's
-                // child blocks (`meta.parentToolUseId`) back to THIS spawning Task block.
-                id: toolId,
-                name: e.name,
-                input: e.input ?? null,
-                result: null,
-                isError: false,
-                ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}),
-              },
-              emittedAt: stamp(),
-            });
-            break;
-          }
-          case 'tool_result': {
-            // Pair with the newest still-open tool block (preserving interleaved order with text/thinking).
-            for (let i = blocks.length - 1; i >= 0; i--) {
-              const b = blocks[i];
-              if (b.kind === 'tool' && !b.done && (b.toolId === e.id || !e.id)) {
-                b.done = true;
-                b.meta = { ...b.meta, result: e.result ?? null, isError: e.isError ?? false };
-                break;
-              }
-            }
-            break;
-          }
-          default:
-            break; // session / result / *_delta — not part of the durable transcript
-        }
-      },
-      finish: async (finalText?: string) => {
-        // Fallback: a turn that emitted NO text block — keep the final summary so the reply isn't lost.
-        if (!blocks.some((b) => b.kind === 'chat') && finalText && finalText.trim()) {
-          blocks.push({ kind: 'chat', text: finalText.trim(), emittedAt: stamp() });
-        }
-        // Persist the whole transcript in order (each row stamped with its emission time so an
-        // interleaved mid-turn user message sorts correctly), THEN signal turn end (so the client's
-        // refetch sees it before the live buffer is cleared — no gap, no double-render).
-        for (const b of blocks) {
-          await this.store
-            .appendBlock(threadId, {
-              kind: b.kind,
-              createdAt: b.emittedAt,
-              ...(b.text != null ? { text: b.text } : {}),
-              ...(b.meta ? { meta: b.meta } : {}),
-            })
-            .catch((err) => this.logger.warn(`appendBlock failed for thread=${threadId}: ${err}`));
-        }
-        this.liveTurns.end(channel, threadId); // fans turn_end + drops the in-flight buffer
-      },
-    };
   }
 
   // ── Host-side tool impls ───────────────────────────────────────────────────────────────────────

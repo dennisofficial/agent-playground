@@ -24,6 +24,7 @@ import {
   type SubBlock,
 } from './subagents';
 import { useLiveTurn, type LiveTurn } from '@/lib/api/thread-stream';
+import { durablePhaseBlocks, indexPhaseBlocks, livePhaseBlocks, phaseLane } from './phases';
 import { pipelineJob, type ThreadMessage, type ThreadRef } from '@/lib/api/thread-api';
 import {
   APPROVE_ACTION_ID,
@@ -152,7 +153,9 @@ export function PhaseView({
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
     subtitle = 'Claude · execute';
-    body = <BuildView threadRef={threadRef} messages={messages} phaseId={step.id} />;
+    // A batch runs as ONE turn whose transcript is tagged with the ANCHOR step id — remap so a non-anchor
+    // step in the batch resolves the same transcript (and live lane) instead of rendering empty.
+    body = <BuildView threadRef={threadRef} messages={messages} anchorStepId={step.anchorStepId} />;
   } else if (track) {
     title = `§ ${trackTitle(track.brief)}`;
     subtitle = 'Claude · execute';
@@ -179,23 +182,38 @@ export function PhaseView({
 }
 
 // ── Build step (transcript / diff / logs) ───────────────────────────────────────────────────────
+/**
+ * The build step's work pane. The TRANSCRIPT tab renders the SAME full transcript a subagent run does
+ * (thinking + prose via the canonical Markdown + tool calls) via {@link SubagentTranscript} — the phase
+ * rides the shared spine, so its durable blocks (tagged `meta.phaseId`) and its live `phase:<id>` lane
+ * feed the identical renderer. During the build the live lane is the sole source; the durable rows take
+ * over after the turn ends.
+ */
 function BuildView({
   threadRef,
   messages,
-  phaseId,
+  anchorStepId,
 }: {
   threadRef: ThreadRef;
   messages: ThreadMessage[];
-  /** When set, the transcript is filtered to this step's relayed events (meta.phaseId). */
-  phaseId?: string;
+  /** The batch's ANCHOR step id — its transcript tag + live lane. Unset = the track/whole-build view. */
+  anchorStepId?: string;
 }) {
   const [tab, setTab] = useState<PhaseTab>('transcript');
-  const buildEvents = messages
-    .filter(
-      (m) =>
-        m.kind === 'build_event' && (phaseId ? (m.meta?.phaseId as string | undefined) === phaseId : true),
-    )
-    .map((m) => m.text);
+  const index = indexPhaseBlocks(messages);
+  // The live lane for THIS phase. Hooks can't be conditional, so an unset anchor reads a dead lane (→ none).
+  const live = useLiveTurn(threadRef.threadId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
+  const active = Boolean(live?.active);
+
+  let blocks: SubBlock[];
+  if (anchorStepId) {
+    const durable = durablePhaseBlocks(index, anchorStepId);
+    // Prefer durable (post-turn); fall back to the live lane while building (mirrors SubagentView).
+    blocks = durable.length ? durable : live ? livePhaseBlocks(live.blocks) : [];
+  } else {
+    // Track / whole-build view: every phase's durable transcript, in message order (no single live lane).
+    blocks = durableSubBlocks(messages.filter((m) => m.meta?.phaseId != null && m.kind !== 'build_anchor'));
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -217,7 +235,21 @@ function BuildView({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {tab === 'transcript' ? (
-          <Transcript lines={buildEvents} scoped={Boolean(phaseId)} />
+          <div className="mx-auto max-w-[820px]">
+            {blocks.length === 0 ? (
+              <p className="text-[12.5px] text-faint">
+                {active ? 'Building…' : 'No build activity yet — this step hasn’t run.'}
+              </p>
+            ) : (
+              <SubagentTranscript blocks={blocks} active={active} />
+            )}
+            {active ? (
+              <div className="mt-3 flex items-center gap-2 text-[11.5px] text-accent">
+                <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
+                <span>Building — the transcript streams live and persists when the step finishes.</span>
+              </div>
+            ) : null}
+          </div>
         ) : (
           <Placeholder
             title={tab === 'diff' ? 'Diff' : 'Logs'}
@@ -227,30 +259,6 @@ function BuildView({
       </div>
 
       <InterjectBar threadRef={threadRef} />
-    </div>
-  );
-}
-
-function Transcript({ lines, scoped }: { lines: string[]; scoped?: boolean }) {
-  return (
-    <div className="flex max-w-[780px] flex-col gap-2 font-mono text-[12px]">
-      <Banner
-        text={
-          scoped
-            ? "This step's build-event relays (filtered by step). Diff & logs streams are still pending a backend endpoint."
-            : 'Showing live build-event relays from the thread.'
-        }
-      />
-      {lines.length === 0 ? (
-        <p className="text-faint">No build activity relayed yet.</p>
-      ) : (
-        lines.map((line, i) => (
-          <div key={i} className="rounded-md border border-border bg-surface-2 px-3 py-2 text-dim">
-            {line}
-          </div>
-        ))
-      )}
-      <span className="cursor-blink inline-block h-3.5 w-1.5" style={{ background: 'var(--accent)' }} aria-hidden />
     </div>
   );
 }

@@ -26,6 +26,11 @@ export interface RunTurnInput {
   model?: string;
   /** How the turn authenticates (defaults derived from env by the EngineRunner). */
   auth?: EngineAuth;
+  /**
+   * Opt into RICH token-level streaming (thinking + tool calls/results + subagent forwarding). Build turns
+   * pass this so they ride the shared transcript spine (a full transcript, not coarse text/tool/result).
+   */
+  richStream?: boolean;
   /** Progress callback. */
   onEvent?: (e: EngineEvent) => void;
   signal?: AbortSignal;
@@ -119,6 +124,7 @@ export class TurnRunnerService {
           : {}),
         ...(input.auth ? { auth: input.auth } : {}),
         ...(input.model ? { model: input.model } : {}),
+        ...(input.richStream ? { richStream: true } : {}),
         onEvent,
         ...(input.signal ? { signal: input.signal } : {}),
       });

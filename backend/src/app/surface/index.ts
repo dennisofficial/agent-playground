@@ -1,6 +1,7 @@
 export * from './chat-surface.port';
 export * from './live-turn-store';
 export * from './live-turn.module';
+export * from './turn-harness.service';
 export * from './web-surface';
 export * from './approval-blocks';
 export * from './web-approval-card';

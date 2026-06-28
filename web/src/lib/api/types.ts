@@ -128,6 +128,16 @@ export interface PipelineStep {
   /** The resumable cursor within the step ('build' | 'review' | 'fix'). */
   stage: string;
   status: StepStatus;
+  /** The execution batch this step belongs to within its track; null until the track first executes. */
+  batchOrdinal: number | null;
+  /**
+   * The ANCHOR step id of this step's batch — a batch runs as ONE engine turn whose transcript is tagged
+   * with the anchor's id. A non-anchor step must remap to this before reading the transcript / live lane.
+   * Defaults to the step's own id when not yet batched.
+   */
+  anchorStepId: string;
+  /** Every step id in this step's batch (so the sub-page can show "steps 2–4 built together"). */
+  batchStepIds: string[];
 }
 
 export interface PipelineTrack {

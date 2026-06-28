@@ -255,14 +255,7 @@ export class DriverStoreService {
         type: s.type,
         status: s.status,
         hasPlan: s.plan != null,
-        steps: (stepsByTrack.get(s.id) ?? []).map((p) => ({
-          id: p.id,
-          ordinal: p.ordinal,
-          title: p.title,
-          brief: p.brief,
-          stage: p.stage,
-          status: p.status,
-        })),
+        steps: mapBatchedSteps(stepsByTrack.get(s.id) ?? []),
       })),
     };
   }
@@ -293,6 +286,46 @@ export class DriverStoreService {
   async route(thread: Thread): Promise<JobRoute> {
     return { channel: thread.repoId, threadTs: thread.id, orgId: thread.orgId };
   }
+}
+
+/**
+ * Map a track's step rows for the `/pipeline` read model, resolving each step's BATCH so the web can find
+ * the batch's transcript. A batch runs as ONE engine turn whose transcript is tagged with the ANCHOR step
+ * id (the first/lowest-ordinal step in the batch), so a non-anchor step page must remap to `anchorStepId`
+ * before filtering durable phase blocks / choosing the live `phase:<id>` lane. Steps not yet batched
+ * (`batch_ordinal` null) anchor to themselves.
+ */
+function mapBatchedSteps(list: StepEntity[]): Array<{
+  id: string;
+  ordinal: number;
+  title: string | null;
+  brief: string;
+  stage: string;
+  status: string;
+  batchOrdinal: number | null;
+  anchorStepId: string;
+  batchStepIds: string[];
+}> {
+  const anchorByBatch = new Map<number, string>();
+  const idsByBatch = new Map<number, string[]>();
+  for (const p of list) {
+    if (p.batch_ordinal == null) continue;
+    if (!anchorByBatch.has(p.batch_ordinal)) anchorByBatch.set(p.batch_ordinal, p.id);
+    const arr = idsByBatch.get(p.batch_ordinal) ?? [];
+    arr.push(p.id);
+    idsByBatch.set(p.batch_ordinal, arr);
+  }
+  return list.map((p) => ({
+    id: p.id,
+    ordinal: p.ordinal,
+    title: p.title,
+    brief: p.brief,
+    stage: p.stage,
+    status: p.status,
+    batchOrdinal: p.batch_ordinal ?? null,
+    anchorStepId: p.batch_ordinal != null ? (anchorByBatch.get(p.batch_ordinal) ?? p.id) : p.id,
+    batchStepIds: p.batch_ordinal != null ? (idsByBatch.get(p.batch_ordinal) ?? [p.id]) : [p.id],
+  }));
 }
 
 // ── row ⇄ domain mappers ─────────────────────────────────────────────────────────────────────────

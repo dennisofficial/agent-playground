@@ -17,6 +17,7 @@ import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { QuestionCardView } from './question-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
+import { BuildStepCard, indexPhaseBlocks } from './phases';
 import { Composer } from './composer';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
 import { useLiveTurn } from '@/lib/api/thread-stream';
@@ -124,6 +125,9 @@ function renderLog(
   // Subagent activity is peeled out: its child blocks are hidden from the main log, and the spawning Task
   // block renders as a card (opens the run's sub-page) instead of as a row in a tool group.
   const sub = indexDurableSubagents(log);
+  // Build-phase activity is peeled out the same way: a phase's blocks are hidden, and its `build_anchor`
+  // row renders as a `BuildStepCard` (opens the step sub-page).
+  const phase = indexPhaseBlocks(log);
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -136,6 +140,25 @@ function renderLog(
   for (const message of log) {
     // A block produced BY a subagent — lives in the sub-page, not the main conversation.
     if (sub.childKeys.has(message.ts)) continue;
+    // A block produced BY a build phase — lives in the step sub-page, not the main conversation.
+    if (phase.childKeys.has(message.ts)) continue;
+    // The synthetic `build_anchor` row — render its card (flush any open tool run first).
+    if (phase.anchorKeys.has(message.ts)) {
+      flush();
+      const phaseId = typeof message.meta?.phaseId === 'string' ? message.meta.phaseId : '';
+      const anchor = phase.anchorByPhase.get(phaseId);
+      if (anchor)
+        nodes.push(
+          <BuildStepCard
+            key={message.ts}
+            threadId={threadRef.threadId}
+            anchor={anchor}
+            durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
+            onOpen={() => onSelectNode?.(phaseId)}
+          />,
+        );
+      continue;
+    }
     // The Task block that spawned a subagent — render its card (flush any open tool run first).
     if (sub.anchorKeys.has(message.ts)) {
       flush();

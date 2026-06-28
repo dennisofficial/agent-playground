@@ -40,7 +40,15 @@ export class MessageEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   ts!: string | null;
 
-  /** What this row is: 'chat' (conversational, fed to the grill) | 'card' | 'build_event'. */
+  /**
+   * What this row is:
+   *  - 'chat' (conversational, fed to the grill) | 'thinking' | 'tool' — transcript blocks (the brain AND
+   *    build phases both write these via the shared transcript spine; phase blocks carry `meta.phaseId`).
+   *  - 'card' — an approval/verdict/question card payload.
+   *  - 'build_event' — a system pill (e.g. the Codex-review notice).
+   *  - 'build_anchor' — the synthetic per-batch marker a build phase writes at start; the web renders it as
+   *    the in-conversation "Build step" card that opens the step sub-page (carries `meta.phaseId`/label).
+   */
   @Column({ type: 'text', default: 'chat' })
   kind!: string;
 
@@ -48,7 +56,10 @@ export class MessageEntity extends TimestampedEntity {
   @Column({ type: 'jsonb', nullable: true })
   card!: Record<string, unknown> | null;
 
-  /** Opaque metadata (e.g. build-step event context) when kind='build_event'; null otherwise. */
+  /**
+   * Opaque metadata: subagent/phase join keys (`parentToolUseId`, `id`, `phaseId`, `batchOrdinal`,
+   * `batchStepIds`), tool `{name,input,result,isError}`, or message provenance (`source`); null otherwise.
+   */
   @Column({ type: 'jsonb', nullable: true })
   meta!: Record<string, unknown> | null;
 }

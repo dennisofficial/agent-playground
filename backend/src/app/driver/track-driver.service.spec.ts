@@ -16,7 +16,8 @@ import type {
 import type { AutoFixStage } from '../autofix';
 import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
 import type { TurnRunnerService } from '../runner';
-import type { ChatSurface } from '../surface';
+import type { BlockSink, ChatSurface, LiveTurnStore } from '../surface';
+import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
@@ -353,6 +354,16 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
   const { surface, posts } = makeSurface();
   // A no-op env by default: every guard reads its code default. opts.env supplies overrides per test.
   const env = { get: vi.fn((k: string) => opts.env?.[k]) } as unknown as EnvService;
+  // The shared transcript spine over a fake live store + a capturing durable sink — so build turns persist
+  // their transcript (and the `build_anchor`) through the same path production uses, and tests can assert it.
+  const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
+  const sunk: Array<{ threadId: string; block: { kind: string; text?: string; meta?: Record<string, unknown> | null } }> = [];
+  const blockSink = {
+    appendBlock: vi.fn(async (threadId: string, block: { kind: string; text?: string; meta?: Record<string, unknown> | null }) => {
+      sunk.push({ threadId, block });
+    }),
+  } as unknown as BlockSink;
+  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink);
   const driver = new TrackDriver(
     store,
     repos,
@@ -393,8 +404,10 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
         hydrationSig: 'test-sig',
       }),
     } as unknown as import('./worktree-provisioner.service').WorktreeProvisioner,
+    turnHarness,
+    blockSink,
   );
-  return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts };
+  return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts, liveTurns, blockSink, sunk };
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
@@ -433,6 +446,61 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     expect(state.job.prUrl).toBe('https://github.com/acme/widget/pull/1');
     expect(state.job.status).toBe('done');
     expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
+  });
+
+  it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per batch', async () => {
+    const seen: Array<{ mode: string; richStream?: boolean }> = [];
+    const turn = {
+      runTurn: vi.fn(async (input: { mode: string; jobId: string; stepId?: string | null; richStream?: boolean; onEvent?: (e: { kind: string; [k: string]: unknown }) => void }) => {
+        seen.push({ mode: input.mode, richStream: input.richStream });
+        if (input.mode === 'execute') {
+          input.onEvent?.({ kind: 'thinking', text: 'planning the edit' });
+          input.onEvent?.({ kind: 'text', text: 'editing the file' });
+          input.onEvent?.({ kind: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } });
+          input.onEvent?.({ kind: 'tool_result', id: 't1', result: 'ok' });
+        }
+        return {
+          report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
+          ...(input.mode === 'plan' ? { planText: 'PLAN' } : {}),
+          session: { id: 'sess', jobId: input.jobId, stepId: input.stepId ?? null, engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review', branch: 'b', worktreePath: '/wt/b' },
+        };
+      }),
+    } as unknown as TurnRunnerService;
+
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      tracks: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state, { turn });
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // Every EXECUTE (build) turn requested richStream (plan turns don't).
+    const exec = seen.filter((c) => c.mode === 'execute');
+    expect(exec.length).toBeGreaterThan(0);
+    expect(exec.every((c) => c.richStream === true)).toBe(true);
+
+    // A synthetic `build_anchor` row per batch, each tagged with its phaseId.
+    const anchors = h.sunk.filter((s) => s.block.kind === 'build_anchor');
+    expect(anchors.length).toBeGreaterThan(0);
+    expect(anchors.every((a) => typeof a.block.meta?.phaseId === 'string')).toBe(true);
+
+    // The transcript blocks landed via the durable sink — all tagged with meta.phaseId (peeled into the step).
+    const transcript = h.sunk.filter((s) => ['chat', 'thinking', 'tool'].includes(s.block.kind));
+    expect(transcript.length).toBeGreaterThan(0);
+    expect(transcript.every((t) => typeof t.block.meta?.phaseId === 'string')).toBe(true);
+    expect(transcript.some((t) => t.block.kind === 'thinking')).toBe(true);
+    expect(transcript.some((t) => t.block.kind === 'tool' && (t.block.meta as { name?: string }).name === 'Edit')).toBe(true);
+
+    // The live phase lane was used (push called with a `phase:` lane arg).
+    const pushCalls = (h.liveTurns.push as ReturnType<typeof vi.fn>).mock.calls;
+    expect(pushCalls.some((c) => typeof c[3] === 'string' && (c[3] as string).startsWith('phase:'))).toBe(true);
+
+    // The old `build_event` relay is gone — no build_event posts to the surface.
+    expect(h.posts.every((p) => !p.includes('[tool]'))).toBe(true);
   });
 
   // ── §D fresh-context step batching ──────────────────────────────────────────────────────────────

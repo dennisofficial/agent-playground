@@ -15,6 +15,8 @@ import { clearQueuedSends } from './queued-sends';
 interface SseFrame {
   type?: string;
   threadId?: string;
+  /** Which turn lane this stream frame belongs to: `'main'` (the brain) or `'phase:<stepId>'` (a build). */
+  lane?: string;
   seq?: number;
   event?: { kind?: string; name?: string; input?: { file_path?: string } };
   /** `thread_meta` frame: the new thread title (e.g. an auto-generated one). */
@@ -102,17 +104,20 @@ export function useThreadEvents(ref: ThreadRef): void {
       }
       if (frame?.type === 'stream') {
         if (frame.threadId !== threadId) return; // only the open thread's live turn
+        // Which lane (the brain `main` turn, or a `phase:<stepId>` build turn). Lanes are independent
+        // in-flight turns on the same thread; the conversation reads `main`, the step sub-page reads its phase.
+        const lane = frame.lane ?? 'main';
         if (frame.event?.kind === 'turn_end') {
-          // Reconcile: refetch durable messages, THEN clear the live buffer (so no gap/flicker). The
-          // blocking turn is done, so any messages queued behind it are no longer waiting — drop the
-          // queued tags; their durable rows now settle into chronological order.
+          // Reconcile: refetch durable messages, THEN clear THIS lane's live buffer (so no gap/flicker). The
+          // queued-sends tags belong to the brain's serialized queue, so only the `main` turn ending clears
+          // them; a build (phase) turn ending must not drop a follow-up the operator queued for the brain.
           void reconcileNow().then(() => {
-            endLiveTurn(threadId);
-            clearQueuedSends(threadId);
+            endLiveTurn(threadId, lane);
+            if (lane === 'main') clearQueuedSends(threadId);
           });
         } else {
-          // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store.
-          applyStreamFrame(threadId, frame.seq ?? 0, frame.event);
+          // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store, per lane.
+          applyStreamFrame(threadId, lane, frame.seq ?? 0, frame.event);
           // In-turn freshness: the brain just wrote a `/context` file via Write/Edit → refresh the
           // SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the turn's durable reconcile.
           const ev = frame.event;

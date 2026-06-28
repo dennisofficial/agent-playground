@@ -62,20 +62,27 @@ type StreamPayload = {
 const EMPTY: ReadonlyMap<string, LiveTurn> = new Map();
 let blockSeq = 0;
 
+/** The default lane — the thread brain's conversational turn (vs `phase:<stepId>` for a build turn). */
+export const MAIN_LANE = 'main';
+/** The store keys an in-flight turn by thread AND lane, so a brain turn and a build turn coexist. */
+const laneKey = (threadId: string, lane: string): string => `${threadId}::${lane}`;
+
 class ThreadStreamStore {
+  /** key: `${threadId}::${lane}` → that lane's in-flight turn. */
   private map = new Map<string, LiveTurn>();
   private snapshot: ReadonlyMap<string, LiveTurn> = EMPTY;
   private readonly listeners = new Set<() => void>();
 
-  /** Apply a `{type:'stream'}` frame's event (snapshot or delta) for a thread, deduped by `seq`. */
-  apply(threadId: string, seq: number, ev: StreamPayload | null | undefined): void {
+  /** Apply a `{type:'stream'}` frame's event (snapshot or delta) for a turn lane, deduped by `seq`. */
+  apply(threadId: string, lane: string, seq: number, ev: StreamPayload | null | undefined): void {
     if (!threadId || !ev?.kind) return;
-    const cur = this.map.get(threadId);
+    const key = laneKey(threadId, lane);
+    const cur = this.map.get(key);
 
     // Snapshot: the authoritative full state at `seq`. Replace, unless we already have newer deltas.
     if (ev.kind === 'snapshot') {
       if (cur && seq < cur.lastSeq) return;
-      this.map.set(threadId, {
+      this.map.set(key, {
         blocks: (ev.blocks ?? []).map((b) => ({ ...b })),
         active: ev.active ?? true,
         lastSeq: seq,
@@ -140,19 +147,24 @@ class ThreadStreamStore {
       }
       default:
         // session / result — advance seq but don't change rendered blocks.
-        this.map.set(threadId, { blocks, active: true, lastSeq: seq });
+        this.map.set(key, { blocks, active: true, lastSeq: seq });
         this.bump();
         return;
     }
 
-    this.map.set(threadId, { blocks, active: true, lastSeq: seq });
+    this.map.set(key, { blocks, active: true, lastSeq: seq });
     this.bump();
   }
 
-  end(threadId: string): void {
-    if (!this.map.has(threadId)) return;
-    this.map.delete(threadId);
+  end(threadId: string, lane: string): void {
+    const key = laneKey(threadId, lane);
+    if (!this.map.has(key)) return;
+    this.map.delete(key);
     this.bump();
+  }
+
+  get(threadId: string, lane: string): LiveTurn | undefined {
+    return this.snapshot.get(laneKey(threadId, lane));
   }
 
   private bump(): void {
@@ -172,26 +184,32 @@ class ThreadStreamStore {
 
 const store = new ThreadStreamStore();
 
-/** Feed one `{type:'stream'}` frame (snapshot or delta) into the thread's live turn. */
-export function applyStreamFrame(threadId: string, seq: number, event: unknown): void {
-  store.apply(threadId, seq, event as StreamPayload);
+/** Feed one `{type:'stream'}` frame (snapshot or delta) into a thread's live turn lane. */
+export function applyStreamFrame(threadId: string, lane: string, seq: number, event: unknown): void {
+  store.apply(threadId, lane, seq, event as StreamPayload);
 }
 
-/** Clear a thread's live turn — call AFTER the durable `/messages` refetch lands (post `turn_end`). */
-export function endLiveTurn(threadId: string): void {
-  store.end(threadId);
+/** Clear a thread's live turn lane — call AFTER the durable `/messages` refetch lands (post `turn_end`). */
+export function endLiveTurn(threadId: string, lane: string = MAIN_LANE): void {
+  store.end(threadId, lane);
 }
 
 /**
- * Is a turn currently streaming for this thread? Read OUTSIDE React (e.g. in a mutation's `onMutate`) to
- * decide whether a just-sent message is QUEUED behind a running turn — the brain serializes turns per
- * thread, so a follow-up sent mid-turn waits for the current one to finish.
+ * Is the `main` (brain) turn currently streaming for this thread? Read OUTSIDE React (e.g. in a mutation's
+ * `onMutate`) to decide whether a just-sent message is QUEUED behind a running turn — the brain serializes
+ * turns per thread, so a follow-up sent mid-turn waits for the current one to finish. (Build/phase lanes
+ * don't gate the brain's input, so this only consults the `main` lane.)
  */
 export function isLiveTurnActive(threadId: string): boolean {
-  return store.getSnapshot().get(threadId)?.active ?? false;
+  return store.get(threadId, MAIN_LANE)?.active ?? false;
 }
 
-/** Subscribe to one thread's in-flight live turn (the conversation renders it below durable messages). */
-export function useLiveTurn(threadId: string): LiveTurn | undefined {
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot).get(threadId);
+/**
+ * Subscribe to one thread's in-flight live turn for a lane (default the brain's `main` turn). The
+ * conversation reads `main`; a step sub-page reads its `phase:<stepId>` lane.
+ */
+export function useLiveTurn(threadId: string, lane: string = MAIN_LANE): LiveTurn | undefined {
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot).get(
+    laneKey(threadId, lane),
+  );
 }
