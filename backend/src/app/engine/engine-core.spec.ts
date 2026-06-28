@@ -1,8 +1,10 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
-import { EngineCore } from './engine-core';
+import { claudeSessionExists, EngineCore } from './engine-core';
+import { atlasEngineHomeDir } from './engine-home';
+import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
 import type { EngineEvent } from './engine.types';
 
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-spec-${process.pid}`);
@@ -299,7 +301,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(opts.allowedTools).toEqual(expect.arrayContaining(['Read', 'Glob', 'Grep', ...names]));
   });
 
-  it('no bridge: allowedTools stays the read set and no mcpServers leak (worker invariant)', async () => {
+  it('no bridge: allowedTools is the static auto-approve set and no mcpServers leak (worker invariant)', async () => {
     const { sdk, captured } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
     await core.run({
@@ -311,7 +313,8 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       mode: 'execute',
     });
     const opts = captured.options!;
-    expect(opts.allowedTools).toEqual(['Read', 'Glob', 'Grep']);
+    // Auto-approve: safe reads + web + subagent spawning. Writes/Bash still fall through to canUseTool.
+    expect(opts.allowedTools).toEqual(['Read', 'Glob', 'Grep', 'Task', 'WebSearch', 'WebFetch']);
     expect(opts.mcpServers).toBeUndefined();
   });
 });
@@ -353,5 +356,58 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
       auth: { secret: 'codex-oauth' },
     });
     expect(threadCalls[0].sandboxMode).toBe('read-only');
+  });
+});
+
+describe('EngineCore — unresumable session detection', () => {
+  it('claudeSessionExists is true only when the transcript is present under the config dir', () => {
+    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', 'resume-present');
+    expect(claudeSessionExists(dir, 'sess-x')).toBe(false); // no projects dir yet
+    mkdirSync(join(dir, 'projects', '-tmp-wt'), { recursive: true });
+    writeFileSync(join(dir, 'projects', '-tmp-wt', 'sess-x.jsonl'), '{}');
+    expect(claudeSessionExists(dir, 'sess-x')).toBe(true);
+    expect(claudeSessionExists(dir, 'sess-other')).toBe(false);
+  });
+
+  it('isUnresumableSessionMessage matches the marker', () => {
+    expect(isUnresumableSessionMessage(`${UNRESUMABLE_SESSION_MARKER}: nope`)).toBe(true);
+    expect(isUnresumableSessionMessage('Claude engine ended: error_during_execution')).toBe(false);
+  });
+
+  it('run() throws a marked, specific error (and never calls the SDK) when the session is unresumable', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    await expect(
+      core.run({
+        engine: 'claude',
+        task: 'resume me',
+        cwd: '/tmp/wt',
+        systemPrompt: 'persona',
+        sandboxKey: 'resume-missing',
+        mode: 'execute',
+        auth: { secret: 'oauth-tok' },
+        sessionId: 'ghost-session',
+      }),
+    ).rejects.toThrow(UNRESUMABLE_SESSION_MARKER);
+    expect(captured.options).toBeUndefined(); // failed BEFORE querying the SDK
+  });
+
+  it('run() resumes normally when the transcript exists', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', 'resume-ok');
+    mkdirSync(join(dir, 'projects', '-tmp-wt'), { recursive: true });
+    writeFileSync(join(dir, 'projects', '-tmp-wt', 'live-session.jsonl'), '{}');
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    await core.run({
+      engine: 'claude',
+      task: 'resume me',
+      cwd: '/tmp/wt',
+      systemPrompt: 'persona',
+      sandboxKey: 'resume-ok',
+      mode: 'execute',
+      auth: { secret: 'oauth-tok' },
+      sessionId: 'live-session',
+    });
+    expect(captured.options!.resume).toBe('live-session');
   });
 });

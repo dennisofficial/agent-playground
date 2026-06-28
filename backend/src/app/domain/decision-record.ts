@@ -73,6 +73,15 @@ export interface Decision {
   question?: string;
   /** The operator's answer to {@link question} (the option they picked or the free text they typed). */
   answer?: string;
+  /**
+   * PROVENANCE — true ONLY when the operator's attached {@link answer} directly settles THIS decision's
+   * ruling (they were asked and they chose). Absent/false means Atlas AUTHORED this default itself — a
+   * recommendation, not an operator call. Purely informational: it does NOT change decision-class coverage
+   * or any gate; it makes under-grilling VISIBLE at the approval gate (the record + card flag authored
+   * defaults so the operator can scrutinise the calls they never actually made). Set via `create_decision`
+   * (default false) or `update_decision`; the host coerces it to false unless an operator answer is attached.
+   */
+  confirmedByOperator?: boolean;
 }
 
 /** The record's lifecycle. Approved ONCE upfront, then immutable for the thread's build duration. */

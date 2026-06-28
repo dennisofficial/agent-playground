@@ -9,6 +9,21 @@ import { useContextFile, useSay } from '@/lib/api/thread-queries';
 import { trackTitle } from '@/lib/track-title';
 import { VerdictButtons } from './approval-card';
 import { Markdown } from './markdown';
+import { StreamTextBubble, ThinkingBlock, UserBubble } from './bubbles';
+import { JumpToLatestButton, useTailFollow } from './tail-follow';
+import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
+import {
+  durableSubBlocks,
+  durableSubagentPrompt,
+  indexDurableSubagents,
+  indexLiveSubagents,
+  liveSubBlocksForParent,
+  liveSubagentPrompt,
+  subagentLabel,
+  subagentModel,
+  type SubBlock,
+} from './subagents';
+import { useLiveTurn, type LiveTurn } from '@/lib/api/thread-stream';
 import { pipelineJob, type ThreadMessage, type ThreadRef } from '@/lib/api/thread-api';
 import {
   APPROVE_ACTION_ID,
@@ -51,6 +66,8 @@ export function PhaseView({
    *  linked file in-app. */
   onSelectNode?: (node: string) => void;
 }) {
+  // Subagent sub-pages stream live (a running subagent) and fall back to the durable transcript afterward.
+  const liveTurn = useLiveTurn(threadRef.threadId);
   const job = pipelineJob(pipeline);
   const track = job?.tracks.find((s) => s.id === selectedNode) ?? null;
   // A step leaf (execute folder) — find which track owns it + its 1-based index, for the label.
@@ -100,6 +117,19 @@ export function PhaseView({
     title = 'Diff';
     subtitle = 'the accumulated change across all tracks';
     body = <DiffView />;
+  } else if (selectedNode.startsWith('subagent:')) {
+    const parentId = selectedNode.slice('subagent:'.length);
+    const summary =
+      indexDurableSubagents(messages).summaryById.get(parentId) ??
+      (liveTurn ? indexLiveSubagents(liveTurn.blocks).summaryById.get(parentId) : undefined);
+    const model = summary ? subagentModel(summary.type) : undefined;
+    title = summary ? subagentLabel(summary.type) : 'Subagent';
+    subtitle = summary
+      ? [`subagent · ${summary.type}`, summary.background ? 'background' : null, model, summary.running ? 'running' : 'done']
+          .filter(Boolean)
+          .join(' · ')
+      : parentId;
+    body = <SubagentView messages={messages} liveTurn={liveTurn ?? null} parentId={parentId} />;
   } else if (filePath) {
     title = filePath.split('/').pop() ?? filePath;
     subtitle = fileQuery.data ? `${filePath} · ${formatBytes(fileQuery.data.size)}` : filePath;
@@ -225,6 +255,123 @@ function Transcript({ lines, scoped }: { lines: string[]; scoped?: boolean }) {
   );
 }
 
+// ── Subagent run (its own sub-page) ──────────────────────────────────────────────────────────────
+/**
+ * The detail-pane view for one subagent (Task) run. Renders the subagent's OWN transcript — its thinking,
+ * narration, and tool calls — peeled out of the main conversation by `meta.parentToolUseId`. Prefers the
+ * durable transcript (post-turn); falls back to the live blocks while the subagent is still running.
+ * Read-only: the operator steers the brain, not the subagent.
+ */
+function SubagentView({
+  messages,
+  liveTurn,
+  parentId,
+}: {
+  messages: ThreadMessage[];
+  liveTurn: LiveTurn | null;
+  parentId: string;
+}) {
+  const durable = indexDurableSubagents(messages);
+  const durableKids = durable.childrenById.get(parentId) ?? [];
+  const summary =
+    durable.summaryById.get(parentId) ??
+    (liveTurn ? indexLiveSubagents(liveTurn.blocks).summaryById.get(parentId) : undefined);
+  const blocks: SubBlock[] = durableKids.length
+    ? durableSubBlocks(durableKids)
+    : liveTurn
+      ? liveSubBlocksForParent(liveTurn.blocks, parentId)
+      : [];
+  // The durable anchor isn't persisted until the turn ends, so fall back to the live blocks — otherwise the
+  // Task prompt (the run's "first message") is blank for the whole time the subagent is streaming.
+  const prompt =
+    durableSubagentPrompt(messages, parentId) ||
+    (liveTurn ? liveSubagentPrompt(liveTurn.blocks, parentId) : '');
+  const active = Boolean(liveTurn?.active && summary?.running);
+  const model = summary ? subagentModel(summary.type) : undefined;
+
+  // Tail-follow this run's transcript while it streams — same behavior as the conversation. The stream
+  // signature folds in growing text so it keeps following token-by-token, not just on block boundaries.
+  const streamSig = blocks.reduce((n, b) => n + (b.kind === 'tool' ? 1 : b.text.length), 0);
+  const tail = useTailFollow([blocks.length, streamSig, active]);
+
+  return (
+    <div className="relative h-full min-h-0">
+      <div ref={tail.scrollRef} onScroll={tail.onScroll} className="h-full overflow-y-auto px-5 py-4">
+        <div className="mx-auto flex max-w-[820px] flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {summary ? <Chip>{summary.type}</Chip> : null}
+            {summary?.background ? <Chip>background</Chip> : null}
+            {model ? <Chip>{model}</Chip> : null}
+            <Chip>read-only</Chip>
+          </div>
+
+          {/* The Task prompt that kicked the run off — rendered as the operator's "user message" to the
+              subagent, identical to the main conversation transcript. */}
+          {prompt ? <UserBubble text={prompt} /> : null}
+
+          <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-faint">Agent transcript</span>
+          {blocks.length === 0 ? (
+            <p className="text-[12.5px] text-faint">No activity yet.</p>
+          ) : (
+            <SubagentTranscript blocks={blocks} active={active} />
+          )}
+          {active ? (
+            <div className="flex items-center gap-2 text-[11.5px] text-accent">
+              <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
+              <span>
+                {summary ? subagentLabel(summary.type) : 'Subagent'} is working — its result posts back into the
+                conversation when it finishes.
+              </span>
+            </div>
+          ) : null}
+          <p className="pt-1 font-mono text-[10px] text-faint">
+            read-only view of the subagent — you’re not steering it here
+          </p>
+          <div ref={tail.endRef} />
+        </div>
+      </div>
+      {tail.showJump ? <JumpToLatestButton onClick={tail.jumpToLatest} style={{ bottom: 16 }} /> : null}
+    </div>
+  );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-sm bg-surface-3 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-dim">
+      {children}
+    </span>
+  );
+}
+
+/** Render a subagent's normalized transcript — consecutive tool blocks collapse into one group. */
+function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: boolean }) {
+  const items: Array<{ key: string; node: React.ReactNode }> = [];
+  let pending: ToolItem[] = [];
+  const flush = () => {
+    if (pending.length === 0) return;
+    for (const seg of segmentToolRun(pending)) items.push({ key: `tg-${seg[0].key}`, node: <ToolGroup tools={seg} /> });
+    pending = [];
+  };
+  for (const b of blocks) {
+    if (b.kind === 'tool') {
+      pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, running: b.running });
+      continue;
+    }
+    flush();
+    if (b.kind === 'text')
+      items.push({ key: b.key, node: <StreamTextBubble text={b.text} streaming={Boolean(b.running) && active} /> });
+    else items.push({ key: b.key, node: <ThinkingBlock text={b.text} streaming={Boolean(b.running) && active} /> });
+  }
+  flush();
+  return (
+    <div className="flex flex-col gap-[9px]">
+      {items.map((it) => (
+        <div key={it.key}>{it.node}</div>
+      ))}
+    </div>
+  );
+}
+
 /** Talks to the build session (via the thread). Pause / Revert are UI-only (no backend op route). */
 function InterjectBar({ threadRef }: { threadRef: ThreadRef }) {
   const say = useSay(threadRef);
@@ -328,6 +475,7 @@ function PlanDoc({
                 <span className="whitespace-nowrap rounded border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-[0.04em] text-dim">
                   {d.decisionClass.replace(/_/g, ' ')}
                 </span>
+                <ProvenanceBadge confirmed={d.confirmedByOperator} />
                 <span className="text-[13px] leading-relaxed text-text">
                   <span className="font-semibold">{d.title}</span> — {d.ruling}
                 </span>
@@ -368,7 +516,10 @@ function DecisionDoc({ card }: { card: WebApprovalCard | null }) {
           <div className="flex flex-col gap-3">
             {decisions.map((d, i) => (
               <div key={i} className="rounded-md border border-border bg-surface-2 px-3.5 py-3">
-                <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-dim">{d.decisionClass.replace(/_/g, ' ')}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-dim">{d.decisionClass.replace(/_/g, ' ')}</span>
+                  <ProvenanceBadge confirmed={d.confirmedByOperator} />
+                </div>
                 <p className="mt-1 text-[13px] font-semibold text-text">{d.title}</p>
                 <p className="mt-0.5 text-[12.5px] leading-relaxed text-dim">{d.ruling}</p>
               </div>
@@ -552,6 +703,8 @@ const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
 function resolveNode(node: string, job: PipelineJob | null, loading: boolean, error: boolean): NodeResolution {
   if (ID_FREE_NODES.has(node)) return 'found';
   if (node.startsWith('spec:') || node.startsWith('gen:') || node.startsWith('artifact:')) return 'found';
+  // Subagent runs aren't job nodes — they self-handle a missing run inside SubagentView. Always resolvable.
+  if (node.startsWith('subagent:')) return 'found';
 
   if (loading) return 'loading';
   if (error || !job) return 'not_found';
@@ -637,4 +790,33 @@ function Banner({ text }: { text: string }) {
 
 function DocLabel({ children }: { children: React.ReactNode }) {
   return <div className="mb-2.5 font-mono text-[9px] tracking-[0.14em] text-faint">{children}</div>;
+}
+
+/**
+ * Provenance chip — whether the operator actually confirmed a decision, or Atlas authored the default.
+ * Surfaces under-grilling at the gate: an `Atlas-authored` decision is one the operator never explicitly
+ * decided, so they can scrutinise it before approving.
+ */
+function ProvenanceBadge({ confirmed }: { confirmed?: boolean }) {
+  return confirmed ? (
+    <span
+      className="whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-[0.04em]"
+      style={{
+        color: 'var(--green, #15803d)',
+        background: 'color-mix(in srgb, var(--green, #15803d) 12%, transparent)',
+      }}
+    >
+      confirmed
+    </span>
+  ) : (
+    <span
+      className="whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[8.5px] uppercase tracking-[0.04em]"
+      style={{
+        color: 'var(--amber, #b45309)',
+        background: 'color-mix(in srgb, var(--amber, #b45309) 12%, transparent)',
+      }}
+    >
+      Atlas-authored
+    </span>
+  );
 }

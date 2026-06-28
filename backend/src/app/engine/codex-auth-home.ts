@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { atlasAgentHomeBase } from './engine-home';
+import { atlasAgentHomeBase, safeHomeKey } from './engine-home';
 
 /**
  * Materialize a Codex SUBSCRIPTION home — an isolated CODEX_HOME owning its own `auth.json` (the
@@ -17,8 +17,7 @@ export function ensureCodexAuthHome(
   sandboxKey: string,
   secret: string,
 ): string {
-  const safeKey = sandboxKey.replace(/[^a-z0-9_-]/gi, '_') || 'default';
-  const home = join(atlasAgentHomeBase(root), safeKey, 'codex-sub');
+  const home = join(atlasAgentHomeBase(root), safeHomeKey(sandboxKey), 'codex-sub');
   mkdirSync(home, { recursive: true });
   // Accept either a full auth.json blob or a bare token; wrap a bare token defensively.
   const authJson = secret.trim().startsWith('{')

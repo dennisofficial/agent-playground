@@ -326,11 +326,21 @@ function detectAndConvertApprovalCard(
           if (m) tracks.push(m[1]);
         }
       } else if (raw.startsWith('*Decisions*')) {
-        // Parse decisions — bullet format: `• *title* _(class)_ — ruling`
+        // Parse decisions — bullet format: `• [confirmed|authored] *title* _(class)_ — ruling`. The
+        // provenance tag is an optional leading group so the greedy ruling capture is unaffected.
         const lines = raw.split('\n').slice(1);
         for (const line of lines) {
-          const m = /^•\s+\*(.+?)\*\s+_\((.+?)\)_\s+[—-]\s+(.+)$/.exec(line.trim());
-          if (m) decisions.push({ title: m[1], decisionClass: m[2], ruling: m[3] });
+          const m = /^•\s+(?:\[(confirmed|authored)\]\s+)?\*(.+?)\*\s+_\((.+?)\)_\s+[—-]\s+(.+)$/.exec(
+            line.trim(),
+          );
+          if (m) {
+            decisions.push({
+              title: m[2],
+              decisionClass: m[3],
+              ruling: m[4],
+              confirmedByOperator: m[1] === 'confirmed',
+            });
+          }
         }
       }
     }

@@ -20,8 +20,10 @@ import { useSyncExternalStore } from 'react';
  */
 
 export type LiveBlock =
-  | { kind: 'text'; key: string; text: string; done: boolean }
-  | { kind: 'thinking'; key: string; text: string; done: boolean }
+  // `parentToolUseId` (set only for SUBAGENT blocks) lets the live view peel a subagent's activity out of
+  // the main turn into its own card / sub-page — mirrors the durable `meta.parentToolUseId`.
+  | { kind: 'text'; key: string; text: string; done: boolean; parentToolUseId?: string }
+  | { kind: 'thinking'; key: string; text: string; done: boolean; parentToolUseId?: string }
   | {
       kind: 'tool';
       key: string;
@@ -31,6 +33,7 @@ export type LiveBlock =
       result?: unknown;
       isError?: boolean;
       done: boolean;
+      parentToolUseId?: string;
     };
 
 export interface LiveTurn {
@@ -49,6 +52,8 @@ type StreamPayload = {
   input?: unknown;
   result?: unknown;
   isError?: boolean;
+  /** set only for subagent blocks (the spawning Task id) — peeled into a sub-page by consumers. */
+  parentToolUseId?: string;
   /** present on `kind:'snapshot'` */
   blocks?: LiveBlock[];
   active?: boolean;
@@ -85,27 +90,31 @@ class ThreadStreamStore {
     const blocks = cur ? [...cur.blocks] : [];
     const last = blocks[blocks.length - 1];
     const text = typeof ev.text === 'string' ? ev.text : '';
+    // Only merge into the open block when it belongs to the SAME author (brain vs a given subagent), so a
+    // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
+    const pid = ev.parentToolUseId;
+    const sameAuthor = (b: LiveBlock | undefined): boolean => !!b && b.parentToolUseId === pid;
 
     switch (ev.kind) {
       case 'text_delta':
-        if (last && last.kind === 'text' && !last.done)
+        if (last && last.kind === 'text' && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text: last.text + text };
-        else blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: false });
+        else blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: false, parentToolUseId: pid });
         break;
       case 'text':
-        if (last && last.kind === 'text' && !last.done)
+        if (last && last.kind === 'text' && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text, done: true };
-        else blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: true });
+        else blocks.push({ kind: 'text', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
         break;
       case 'thinking_delta':
-        if (last && last.kind === 'thinking' && !last.done)
+        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text: last.text + text };
-        else blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: false });
+        else blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: false, parentToolUseId: pid });
         break;
       case 'thinking':
-        if (last && last.kind === 'thinking' && !last.done)
+        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last))
           blocks[blocks.length - 1] = { ...last, text, done: true };
-        else blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: true });
+        else blocks.push({ kind: 'thinking', key: `c${blockSeq++}`, text, done: true, parentToolUseId: pid });
         break;
       case 'tool_use':
         blocks.push({
@@ -115,6 +124,7 @@ class ThreadStreamStore {
           name: typeof ev.name === 'string' ? ev.name : 'tool',
           input: ev.input,
           done: false,
+          parentToolUseId: pid,
         });
         break;
       case 'tool_result': {

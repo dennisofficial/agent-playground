@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowRight, CheckCircle2, ClipboardCheck } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useApprove } from '@/lib/api/thread-queries';
 import type { ThreadRef } from '@/lib/api/thread-api';
@@ -37,6 +37,8 @@ export function ApprovalCardView({
   onOpenPlan?: () => void;
 }) {
   const value = card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? card.actions[0]?.value ?? '';
+  const confirmedCount = card.decisions.filter((d) => d.confirmedByOperator).length;
+  const authoredCount = card.decisions.length - confirmedCount;
 
   return (
     <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
@@ -66,7 +68,7 @@ export function ApprovalCardView({
         className="flex w-full items-center gap-2.5 border-t border-border bg-surface-2 px-4 py-3 text-left hover:brightness-[0.99]"
       >
         <span className="font-mono text-[10.5px] text-dim">
-          {card.decisions.length} locked decision{card.decisions.length === 1 ? '' : 's'} · {card.tracks.length}{' '}
+          {confirmedCount} confirmed · {authoredCount} Atlas-authored · {card.tracks.length}{' '}
           {card.kind === 'direct' ? 'change' : 'track'}
           {card.tracks.length === 1 ? '' : 's'}
         </span>
@@ -75,6 +77,22 @@ export function ApprovalCardView({
           Open full plan <ArrowRight size={13} />
         </span>
       </button>
+
+      {authoredCount > 0 ? (
+        <div
+          className="flex items-start gap-2 border-t border-border px-4 py-2.5 text-[11.5px] leading-relaxed"
+          style={{
+            color: 'var(--amber, #b45309)',
+            background: 'color-mix(in srgb, var(--amber, #b45309) 8%, transparent)',
+          }}
+        >
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          <span>
+            {authoredCount} decision{authoredCount === 1 ? '' : 's'} {authoredCount === 1 ? 'was' : 'were'} authored by
+            Atlas, not confirmed by you — review {authoredCount === 1 ? 'it' : 'them'} before approving.
+          </span>
+        </div>
+      ) : null}
 
       <div className="border-t border-border bg-surface-2 px-4 py-3">
         <VerdictButtons threadRef={threadRef} value={value} />

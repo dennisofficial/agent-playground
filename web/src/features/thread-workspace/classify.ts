@@ -17,8 +17,10 @@ export type ClassifiedMessage =
   | { kind: 'verdict'; message: ThreadMessage; card: WebVerdictCard }
   | { kind: 'question'; message: ThreadMessage; card: WebQuestionCard }
   | { kind: 'event'; message: ThreadMessage; tone: SystemTone }
-  /** Harness-injected review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
-  | { kind: 'harness'; message: ThreadMessage };
+  /** System→operator+Atlas review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
+  | { kind: 'system_shared'; message: ThreadMessage }
+  /** System→operator-only notice (e.g. an unresumable-thread error). Its own dedicated box. */
+  | { kind: 'system_operator'; message: ThreadMessage };
 
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
 const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
@@ -32,10 +34,13 @@ const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
  * "Decision needed — paused" card).
  */
 export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
-  // Harness-injected messages (e.g. Codex plan-review findings) — check BEFORE user/atlas fallback.
-  // Only an explicit `source === 'harness'` triggers this; older rows without the field are unaffected.
-  if (message.source === 'harness') {
-    return { kind: 'harness', message };
+  // System messages (provenance-tagged) — check BEFORE the user/atlas fallback. Older rows without an
+  // explicit `source` are unaffected (they fall through to user/atlas).
+  if (message.source === 'system_operator') {
+    return { kind: 'system_operator', message };
+  }
+  if (message.source === 'system_shared') {
+    return { kind: 'system_shared', message };
   }
 
   if (message.author === 'user' || message.local) {

@@ -46,7 +46,7 @@ import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
-import { SANDBOX_RESET_NOTICE } from '../engine/engine.types';
+import { isUnresumableSessionMessage, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
@@ -127,7 +127,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
     'form. The 19 tools:',
     `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator ONE formal question (renders as a card; see GRILLING)`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (auto-attaches the last answered question); returns its stable id`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (auto-attaches the last answered question; set confirmedByOperator when the operator chose it, see GRILLING); returns its stable id`,
     `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__delete_decision      — drop a locked decision BY ID`,
     `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
@@ -179,6 +179,36 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'to rediscover where things live and how this codebase does things. Then Read/Glob/Grep to confirm the',
     'specific files you will touch. Treat docs as orientation that may be stale — the CODE is authoritative;',
     'where a doc and the code disagree, trust the code.',
+    'DELEGATE BIG INVESTIGATIONS: for anything beyond a couple of reads — tracing how a feature works across',
+    'many files, mapping conventions in an unfamiliar area, or researching a library — spawn the read-only',
+    '`explore` subagent via the Task tool (Task({ subagent_type: "explore", description, prompt })). It runs',
+    'on a cheaper model, searches the repo and the web for you, and returns a tight findings summary instead',
+    'of flooding your context with raw file dumps. State the breadth you want in the prompt — "quick",',
+    '"medium", or "very thorough". Use it to stay oriented on large repos without burning tokens.',
+    'OTHER SUBAGENTS (same Task tool, all Sonnet + advisory — they report, they do NOT edit files):',
+    '  • `docs` — look up EXTERNAL library/framework/API documentation (this repo\'s own docs are `explore`);',
+    '  • `review` — a second pass on a diff + intent for bugs, removed behavior, and convention drift;',
+    '  • `debug` — trace a failure (error/stack/failing test) to its root cause and fix site;',
+    '  • `test` — run the repo\'s verification and get back a diagnosis instead of raw logs.',
+    'Reach for `review` and `test` especially when you implement a direct build yourself (FAST PATH).',
+    'WEB ACCESS: you have WebSearch and WebFetch — use them to check current library docs, latest versions, and',
+    'recent changes rather than relying on memory; the codebase is authoritative for THIS repo, the web for the',
+    'outside world.',
+    '',
+    'WHY YOU GRILL — THE PLAN IS A HANDOFF, NOT YOUR OWN BUILD NOTES: you do NOT build the full plan',
+    'yourself. A FRESH, CONTEXT-LESS engine agent — ZERO memory of this conversation — will REVIEW your',
+    'specs and then IMPLEMENT them, seeing ONLY `/context/specs/`, the structured plan you submit, and the',
+    'repo. Everything you learn by grilling that you do not WRITE DOWN is lost to it. So the interview has',
+    'TWO outputs, not one: (1) the right decisions; (2) the written context a cold agent needs to build AND',
+    'review the work WITHOUT you. Grill hard enough to get both. A spec only YOU could execute — because you',
+    'still hold unwritten context in your head — is a FAILED spec.',
+    '',
+    'CALIBRATE THE INTERVIEW TO THE WORK (this is why both paths exist): depth scales with scope, risk, and',
+    'reversibility — by how many always-ask classes the work genuinely touches, not a fixed script. A',
+    'localized bug fix with an obvious cause: confirm the diagnosis, often ZERO formal questions, take the',
+    'FAST PATH. A schema-touching, multi-track feature: the full branch-walking interview, and lock nothing',
+    'unasked that is a one-way door. Do not interrogate a typo; do not one-shot a migration. Match the',
+    'ceremony to the change in front of you.',
     '',
     'GRILLING PROTOCOL (applies to BOTH paths): lock the always-ask decisions before proposing — data',
     'model/schema, public API contracts, new dependencies, infrastructure/topology, cross-cutting patterns',
@@ -209,6 +239,18 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     '    engines and the operator to read. (Architectural rationale that is hard to reverse and surprising',
     '    without context belongs in the locked decisions + the specs `## Architecture`, not the glossary.)',
     '',
+    'RECOMMEND ≠ DECIDE — the failure to avoid: proposing a default is NOT the operator deciding. For every',
+    'always-ask class the work touches you must do ONE of two things — never neither, never silently fold it',
+    'into another decision\'s ruling: (a) ASK it via `ask_question`, lock the answer, and mark the decision',
+    '`confirmedByOperator: true`; or (b) when the default is low-risk and you are confident, lock it as a',
+    'decision you AUTHORED (`confirmedByOperator: false`, the default) so it still surfaces at the gate for',
+    'the operator to veto. A SCOPE REDUCTION — cutting functionality, e.g. "read-only, defer the writes" — is',
+    'itself an always-ask decision: ASK, do not quietly assume it. (The approval card flags every authored',
+    'default so the operator sees exactly which calls they did not make — do not lean on that to skip asking',
+    'the consequential ones.)',
+    'ONE DECISION PER CALL: a `create_decision` ruling settles ONE always-ask call. Do NOT bundle independent',
+    'calls into one ruling — auth + data model + API shape is THREE create_decision calls, not one paragraph.',
+    '',
     'ASK VIA THE TOOL, NOT IN PROSE: every question you put to the operator goes through `ask_question` —',
     'NEVER ask a question in your prose reply. Put your reasoning/analysis/recommendation in prose, then pose',
     'the actual question with `ask_question({ question, header?, decisionClass?, options:[{label,description?}], allowOther? })`:',
@@ -219,9 +261,12 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     '    turn; the operator’s answer arrives on your NEXT turn as a `<system_notification>` line carrying',
     '    their choice. One question per turn.',
     'LOCK EACH DECISION AS IT SETTLES: the moment an answer settles an always-ask decision, call',
-    `\`create_decision({ decisionClass, ruling, title? })\` — decisionClass is EXACTLY one of (underscores, not`,
-    `hyphens): ${DECISION_CLASS_IDS.join(' | ')}. It AUTO-ATTACHES the question you just asked and the`,
-    'operator\'s answer — do NOT restate them. Lock it BEFORE asking your next question. The call RETURNS the',
+    `\`create_decision({ decisionClass, ruling, confirmedByOperator?, title? })\` — decisionClass is EXACTLY`,
+    `one of (underscores, not hyphens): ${DECISION_CLASS_IDS.join(' | ')}. Set \`confirmedByOperator: true\``,
+    'ONLY when the operator\'s attached answer directly settles THIS ruling (asked and chosen); omit it (false)',
+    'for a default you authored. The host coerces it to false unless an operator answer is on record, and',
+    'echoes a running `confirmed`/`authored` tally back to you. It AUTO-ATTACHES the question you just asked',
+    'and the operator\'s answer — do NOT restate them. Lock it BEFORE asking your next question. The call RETURNS the',
     'fully-resolved decision — its stable `id` plus the attached Q&A — so you now hold the exact stored record',
     'in context. To change a ruling later call `update_decision({ id, ruling? / title? / decisionClass? })`; to',
     'drop one call `delete_decision({ id })`. NEVER re-create to revise (that just adds a duplicate). This is',
@@ -234,7 +279,9 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'build sessions. THREE buckets, split by who authors them:',
     '  • `/context/specs/` — HAND-AUTHORED by you, live as you work (NOT in one burst at the end), as CONTEXT',
     '    for the operator + the build engines. (The build orchestrates off the structured plan you submit; these',
-    '    files are the human/engine-readable companion.) MULTI-FILE — follow PLAN.MD STRUCTURE below:',
+    '    files are the HANDOFF a fresh, context-less engine reads to build AND review — capture the WHY and the',
+    '    domain knowledge you extracted by grilling, especially in each section\'s `## Context`, not just the WHAT.)',
+    '    MULTI-FILE — follow PLAN.MD STRUCTURE below:',
     '      – `plan.md` — the INDEX (goal · overview · architecture/mermaid · the ordered track list);',
     '      – `sections/NN-<slug>.md` — ONE file per track (its goal, context, steps, validation);',
     '      – `data-model.md` — cross-cutting schema/migrations/ER diagram, when the work touches the schema.',
@@ -300,7 +347,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'review runs in the background (it can take several minutes). When it finishes I relay its findings to you',
     'as a "Codex review" message. ADDRESS each finding — APPLY it (revise the specs + the structured plan), or',
     'PUSH BACK with reasoning — then either call `submit_plan` AGAIN to re-review the revised plan, or call',
-    '`finalize_plan` to send the reviewed plan to the operator. Only `finalize_plan` posts the approval card;',
+    '`finalize_plan` to send the reviewed plan to the operator. Do NOT call `finalize_plan` until I have',
+    'relayed the Codex findings — while a review is still running it is refused. Only `finalize_plan` posts the approval card;',
     'the operator is the FINAL GATE before the build runs, and they see any findings you pushed back on. (The',
     'review is bounded to a few rounds; after the cap, finalize_plan over the remaining findings.) Ensure',
     '`/context/specs/plan.md` is complete and all always-ask decisions are locked via create_decision FIRST,',
@@ -336,6 +384,16 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'SANDBOX RUNTIME: your sandbox can be restarted between turns (idle reaps, crashes, restarts). Never',
     'assume a server or background process you started in a previous turn is still running — verify it is',
     'up (curl/health-check) and restart it if needed before relying on it.',
+    '',
+    'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
+    'The hard-to-reverse, outward-facing actions are `finalize_build` / `dispatch_build` (they commit code and',
+    'open a real PR) and `finalize_plan` (it posts the operator approval card) — take them only when the work',
+    'is genuinely ready, never to "move things along". When implementing a direct build, before you overwrite',
+    'or delete anything in `/workspace`, look at what is actually there: if it contradicts what you expected,',
+    'or you did not create it, surface that instead of plowing ahead. Report outcomes as they truly are — if a',
+    'verification command fails, say so and show the output; if you skipped a check, say that; when something',
+    'is done and verified, state it plainly without hedging. Never report a build, test, or fix as succeeding',
+    'on the strength of what you intended rather than what you actually observed.',
   ].join('\n');
 
   /**
@@ -573,7 +631,17 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     } catch (err) {
       this.logger.error(`in-sandbox turn failed for thread=${stimulus.threadId}: ${err}`);
       await streamer.finish();
-      await this.say(stimulus, `I ran into an error — please try again. (${String(err).slice(0, 200)})`);
+      // An unresumable session is terminal for this thread — retrying re-hits the same missing transcript.
+      // This is an error FOR THE OPERATOR, not Atlas: surface it as a system→operator notice (its own box,
+      // not an Atlas bubble) and don't say "try again". A normal turn error stays an Atlas-voice reply.
+      if (isUnresumableSessionMessage(String(err))) {
+        await this.saySystemOperator(
+          stimulus,
+          "This thread can't continue — its engine session state is gone (this happens after an engine update or if the session home was cleared). Retrying won't help. Please start a new thread to pick this back up.",
+        );
+      } else {
+        await this.say(stimulus, `I ran into an error — please try again. (${String(err).slice(0, 200)})`);
+      }
       return;
     }
 
@@ -645,20 +713,45 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         this.liveTurns.push(channel, threadId, e);
         switch (e.kind) {
           case 'text':
-            if (e.text.trim()) blocks.push({ kind: 'chat', text: e.text, emittedAt: stamp() });
+            // `parentToolUseId` (set only for subagent blocks) is stamped into meta so the web can peel
+            // subagent activity out of the main transcript into its own sub-page.
+            if (e.text.trim())
+              blocks.push({
+                kind: 'chat',
+                text: e.text,
+                emittedAt: stamp(),
+                ...(e.parentToolUseId ? { meta: { parentToolUseId: e.parentToolUseId } } : {}),
+              });
             break;
           case 'thinking':
-            if (e.text.trim()) blocks.push({ kind: 'thinking', text: e.text, emittedAt: stamp() });
+            if (e.text.trim())
+              blocks.push({
+                kind: 'thinking',
+                text: e.text,
+                emittedAt: stamp(),
+                ...(e.parentToolUseId ? { meta: { parentToolUseId: e.parentToolUseId } } : {}),
+              });
             break;
-          case 'tool_use':
+          case 'tool_use': {
+            const toolId = e.id || `tool-${blocks.length}`;
             blocks.push({
               kind: 'tool',
-              toolId: e.id || `tool-${blocks.length}`,
+              toolId,
               done: false,
-              meta: { name: e.name, input: e.input ?? null, result: null, isError: false },
+              meta: {
+                // `id` is persisted (the durable row otherwise drops it) so the web can join a subagent's
+                // child blocks (`meta.parentToolUseId`) back to THIS spawning Task block.
+                id: toolId,
+                name: e.name,
+                input: e.input ?? null,
+                result: null,
+                isError: false,
+                ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}),
+              },
               emittedAt: stamp(),
             });
             break;
+          }
           case 'tool_result': {
             // Pair with the newest still-open tool block (preserving interleaved order with text/thinking).
             for (let i = blocks.length - 1; i >= 0; i--) {
@@ -729,6 +822,10 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         ? (await this.store.getQuestionCard(stimulus.threadId, answeredId)) ?? undefined
         : undefined;
       const hasAnswer = answeredCard?.answer != null;
+      // PROVENANCE: `confirmedByOperator` is true ONLY if the brain asserts it AND an operator answer is
+      // actually attached (same `hasAnswer` the Q&A auto-attach uses — never a second pointer read, so the
+      // two can't disagree). Default false: an unasked default lands as Atlas-authored, surfacing at the gate.
+      const confirmedByOperator = args['confirmedByOperator'] === true && hasAnswer;
       const title =
         String(args['title'] ?? '').trim() ||
         deriveDecisionTitle(hasAnswer ? answeredCard!.question : ruling);
@@ -736,6 +833,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         decisionClass,
         title,
         ruling,
+        confirmedByOperator,
         ...(hasAnswer && answeredCard!.question ? { question: answeredCard!.question } : {}),
         ...(hasAnswer ? { answer: answeredCard!.answer } : {}),
       });
@@ -743,7 +841,14 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         await this.store.updateCardMessage(stimulus.threadId, answeredId, { loggedDecision: true });
       }
       await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
-      return { ok: true, decision, total: all.length };
+      // Echo the running provenance balance so the brain sees how much it has actually CONFIRMED vs authored.
+      const confirmedCount = all.filter((d) => d.confirmedByOperator).length;
+      return {
+        ok: true,
+        decision,
+        total: all.length,
+        provenance: { confirmed: confirmedCount, authored: all.length - confirmedCount },
+      };
     };
 
     return {
@@ -847,7 +952,23 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         if (!id) return { ok: false, reason: 'id is required' };
         // Validate decisionClass when present — an unrecognized class would persist but then be silently
         // dropped by the record renderer's class grouping. ruling/title are free text.
-        const patch: Partial<Pick<Decision, 'ruling' | 'title' | 'decisionClass'>> = {};
+        const patch: Partial<Pick<Decision, 'ruling' | 'title' | 'decisionClass' | 'confirmedByOperator'>> =
+          {};
+        if (args['confirmedByOperator'] !== undefined) {
+          // Promoting a default to operator-confirmed requires evidence: an operator answer must be attached
+          // NOW (same rule as create_decision). A bare `true` with no answer on record coerces to false, so
+          // confirmation is never asserted without a Q&A linkage. Demotion to false is always allowed.
+          const wantsConfirm = args['confirmedByOperator'] === true;
+          if (wantsConfirm) {
+            const answeredId = await this.store.awaitingQuestionId(stimulus.threadId);
+            const answeredCard = answeredId
+              ? await this.store.getQuestionCard(stimulus.threadId, answeredId)
+              : null;
+            patch.confirmedByOperator = answeredCard?.answer != null;
+          } else {
+            patch.confirmedByOperator = false;
+          }
+        }
         if (args['decisionClass'] !== undefined) {
           const decisionClass = asDecisionClass(args['decisionClass']);
           if (!decisionClass) {
@@ -949,10 +1070,16 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         // Open a review round (renders + persists the durable `plan_reviews` row); the Codex turn runs
         // in the BACKGROUND (5-30 min) and its findings are delivered to this session in a later,
         // server-initiated turn. This tool returns immediately. Bounded by the round cap.
+        // Give the reviewer the operator's INTENT — the goal + the originating ticket (when the thread was
+        // promoted from one) — so it judges whether the plan ACHIEVES what was asked, not just internal
+        // consistency. Ticket fetch is best-effort.
+        const reviewTicket = await this.resolveReviewTicket(stimulus.orgId, stimulus.repoId, job.id);
         const started = await this.planReview.start({
           threadId: job.id,
           orgId: stimulus.orgId,
           decisionRecordId,
+          goal,
+          ...(reviewTicket ? { ticket: reviewTicket } : {}),
           overview,
           decisions,
           trackTitles,
@@ -1009,6 +1136,19 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
           return {
             ok: false,
             reason: `Finalize is only valid after submit_plan (status is '${job.status}'). Call submit_plan first.`,
+          };
+        }
+        // The async Codex review must FINISH before the plan can reach the operator. `submit_plan` flips
+        // the thread to `plan_review` immediately and runs Codex in the background, so the status above
+        // does NOT prove the review is done — block finalize while a round is still running. The findings
+        // arrive as a "Codex review" message; the brain finalizes after addressing them.
+        const running = await this.planReview.runningReview(job.id);
+        if (running) {
+          return {
+            ok: false,
+            reason:
+              `The Codex plan review (round ${running.round}) is still running — wait for it to finish before ` +
+              `finalizing. I will relay its findings as a Codex review message; address each, then call finalize_plan.`,
           };
         }
         const rec = await this.store.loadDecisionRecord(job.decisionRecordId);
@@ -1511,7 +1651,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     if (!job) return;
 
     const capReached = review.round >= this.planReview.maxReviewRounds;
-    const body = renderFindingsDelivery(review.findings ?? '', review.round, capReached);
+    const status = review.status === 'failed' ? 'failed' : 'complete';
+    const body = renderFindingsDelivery(review.findings ?? '', review.round, capReached, status, review.error);
 
     // (1) The single operator-visible artifact (idempotent on the review id).
     await this.store.appendReviewFindingsMessage(review.thread_id, review.id, body);
@@ -1527,6 +1668,27 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
 
     // (3) Reached only when the delivery turn completed — stamp delivered so boot won't re-deliver.
     await this.planReview.markDelivered(review.id);
+  }
+
+  /**
+   * Resolve the originating ticket for a thread's plan review (the operator's captured intent) — null
+   * when the thread isn't tied to a ticket. Best-effort: any lookup failure → null (the review still
+   * runs on the goal + overview).
+   */
+  private async resolveReviewTicket(
+    orgId: string,
+    repoId: string,
+    threadId: string,
+  ): Promise<{ number: number; title: string; body?: string } | null> {
+    try {
+      const ticketId = await this.store.threadTicketId(threadId);
+      if (!ticketId) return null;
+      const { ticket } = await this.tickets.get({ orgId, repoId, ticketId });
+      return { number: ticket.number, title: ticket.title, ...(ticket.body ? { body: ticket.body } : {}) };
+    } catch (err) {
+      this.logger.debug(`resolveReviewTicket failed (continuing without ticket): ${err}`);
+      return null;
+    }
   }
 
   // ── Passive pipeline-milestone awareness ─────────────────────────────────────────────────────────
@@ -1579,6 +1741,31 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
     await this.store.appendAtlasMessage(stimulus.threadId, text);
+  }
+
+  /**
+   * Post a SYSTEM→OPERATOR notice — a runtime/harness message for the OPERATOR ONLY, NOT in Atlas's voice
+   * and never seeded into the brain (e.g. an unresumable-thread error). Mirrors {@link say} (live SSE post
+   * + durable row) but stamps `meta.source='system_operator'` so the web renders its own system-notice box.
+   */
+  private async saySystemOperator(stimulus: ChatStimulus, text: string): Promise<void> {
+    const route = await this.store.route({
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      threadId: stimulus.threadId,
+    });
+    const channel = route.channel ?? stimulus.replyRoute.threadRef;
+    const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
+    try {
+      await this.surface.post(channel, text, {
+        threadTs,
+        orgId: stimulus.orgId,
+        meta: { source: 'system_operator' },
+      });
+    } catch (err) {
+      this.logger.warn(`failed to post system→operator notice: ${err}`);
+    }
+    await this.store.appendSystemOperatorMessage(stimulus.threadId, text);
   }
 
   /** Find the open scoping job on this thread, or open a fresh one. */
@@ -1693,6 +1880,8 @@ function normalizeDecisions(raw: unknown): Decision[] {
       ruling: String(d['ruling']),
       ...(typeof d['question'] === 'string' ? { question: d['question'] } : {}),
       ...(typeof d['answer'] === 'string' ? { answer: d['answer'] } : {}),
+      // Carry provenance through the override path; absent → undefined (renders as Atlas-authored).
+      ...(d['confirmedByOperator'] === true ? { confirmedByOperator: true } : {}),
     });
   }
   return out;

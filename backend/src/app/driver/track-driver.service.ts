@@ -986,6 +986,17 @@ const TRACK_PLAN_SYSTEM =
   'is truly unused — search for every intra-file and cross-file reference (and dynamic/string usages) — ' +
   'before anything is removed. Never plan to claim done without verifying.';
 
+// Shared tail for the execute prompts: the read-only/advisory subagents a worker can delegate to via
+// Task to stay focused and keep its context clean. `test` runs the verification and reports a diagnosis
+// (not raw logs); the rest only read and report. None of them edit files — only the worker does.
+const WORKER_SUBAGENTS_NOTE =
+  ' To stay focused and keep your context clean, you can delegate to read-only subagents via the Task ' +
+  'tool: `explore` (trace how the code works, incl. this repo\'s own docs), `docs` (look up EXTERNAL ' +
+  'library/framework/API documentation), `review` ' +
+  '(a second pass on your diff for bugs + convention drift before you finish), `debug` (root-cause a ' +
+  'failure to its fix site), and `test` (run the repo verification and get back a diagnosis instead of ' +
+  'thousands of lines of raw output). They report back; only you change files.';
+
 const STEP_EXECUTE_SYSTEM =
   'You are Atlas executing ONE step of an approved plan in a feature worktree. Implement exactly this ' +
   "step's brief, respecting the locked decisions. Make focused, working changes; do not exceed the step scope. " +
@@ -997,7 +1008,8 @@ const STEP_EXECUTE_SYSTEM =
   'guess. If this step REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
-  'you cannot fix it within scope, say so explicitly rather than reporting success.';
+  'you cannot fix it within scope, say so explicitly rather than reporting success.' +
+  WORKER_SUBAGENTS_NOTE;
 
 const BATCH_EXECUTE_SYSTEM =
   'You are Atlas executing several ORDERED steps of an approved plan in a feature worktree, in ONE ' +
@@ -1011,7 +1023,8 @@ const BATCH_EXECUTE_SYSTEM =
   'guess. If a step REMOVES code, first prove it is genuinely unreferenced (grep for every importer AND ' +
   'intra-file caller, plus dynamic/string references) and that the build still passes after removal; if you ' +
   'cannot prove it is unused, do NOT delete it — report the uncertainty instead. If verification fails and ' +
-  'you cannot fix it within scope, say so explicitly rather than reporting success.';
+  'you cannot fix it within scope, say so explicitly rather than reporting success.' +
+  WORKER_SUBAGENTS_NOTE;
 
 /** A locked step row → the `PlannedStep` view the gate/visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {

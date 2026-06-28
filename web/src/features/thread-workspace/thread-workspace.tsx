@@ -129,6 +129,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
             isLoading={messagesLoading}
             live={status === 'running' || status === 'plan_review'}
             onOpenPlan={onOpenPlan}
+            onSelectNode={(node) => selectNode(node, { push: true })}
           />
         </Panel>
         <Separator

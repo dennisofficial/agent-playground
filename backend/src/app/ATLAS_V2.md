@@ -120,7 +120,7 @@ Built 2026-06-20 (plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-gre
 |---|---|---|
 | Container seam | `sandbox/container-engine.port.ts` (`CONTAINER_ENGINE`) + `sandbox/dockerode-container-engine.ts` | thin dockerode wrapper: network/image/create/start/**streamed exec**/stop/remove/list/inspect |
 | Base image | `sandbox/image/Dockerfile` + `sandbox-init.sh` + `sandbox/sandbox-image.builder.ts` | node+pnpm+git+docker+dockerd + the bundled engine entrypoint + the 2 SDKs; PID1 starts inner dockerd. Boot-memoized build (tag `SANDBOX_IMAGE`, default `atlas-sandbox:latest`) |
-| Engine entrypoint | `sandbox/image/engine-entrypoint.ts` → esbuild → `.mjs` (`pnpm sandbox:bundle`) | runs the SAME `engine/engine-core.ts` (extracted, Nest-free) in-container: stdin JSON spec → NDJSON events → final result |
+| Engine entrypoint | `sandbox/image/engine-entrypoint.ts` → esbuild → `.mjs` (`bundleEngine`) | runs the SAME `engine/engine-core.ts` (extracted, Nest-free) in-container: stdin JSON spec → NDJSON events → final result. **HOT — the API re-bundles it on every (re)start (`bundleEngine`, via `SandboxImageBuilder`) and bind-mounts it live into every sandbox**, so engine code edits land on the NEXT turn — NO manual bundle step, NO image rebuild, NO container recreate. (The Dockerfile bakes a copy at image-build time as a fallback only; the live mount overrides it.) A dev `--watch` restart and a prod deploy-restart both trigger the re-bundle. |
 | Host transport | `sandbox/docker-engine-runner.ts` | `docker exec atlas-engine-turn`, creds via exec ENV, NDJSON→`onEvent`→`EngineRunResult` |
 | Lifecycle | `sandbox/sandbox-manager.service.ts` | acquire (reuse-by-name, inner-dockerd readiness poll, soft concurrency cap), teardown, reapStopped; per-sandbox network + DinD volume + privileged |
 | Refs | `sandbox/sandbox-refs.service.ts` | host-maintained read-only `/refs` library (mount + clone/fetch; mechanism only) |
@@ -133,7 +133,7 @@ Built 2026-06-20 (plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-gre
 **Verified:** 198 unit/int tests green (incl. Docker integration: `sandbox/*.int.test.ts` build image + run privileged DinD + exec; `sandbox-manager.int.test.ts` proves linked-worktree git + host-uid write). LIVE: a real Claude turn + session-resume in a container (D1); the headline DinD-postgres (D3); and the **assembled path** end-to-end — `SANDBOX_MODE=docker pnpm gate -- --repo <url>` clones → attaches a container → runs a real in-container turn → host-commits (no PR/Slack in dry-run).
 
 ```
-pnpm sandbox:bundle                                   # (re)build the in-container entrypoint bundle (run before image build)
+# (no manual engine-bundle step — the API re-bundles + bind-mounts the entrypoint live on every (re)start)
 SANDBOX_MODE=docker pnpm gate -- --repo <url>   # assembled docker proof (dry-run; add --live + --channel for a real PR)
 SANDBOX_MODE=docker pnpm e2e -- --live --repo <url>   # full feature drive, every turn in-container (NOT yet run — billed + opens a PR)
 ```

@@ -32,13 +32,24 @@ import { PlanReviewEntity } from '../persistence/entities';
  */
 
 /** What `start` needs to render + persist a review round. */
-export interface PlanReviewStartInput {
+export type PlanReviewStartInput = {
   /** Thread the plan belongs to. */
   threadId: string;
   /** Tenant (for credential resolution + sandbox scoping). */
   orgId: string;
   /** The draft decision record this round grades (audit). */
   decisionRecordId?: string | null;
+  /**
+   * The one-line GOAL of the thread — the operator's INTENT. The reviewer judges whether the plan
+   * actually achieves THIS (not just whether it is internally consistent).
+   */
+  goal: string;
+  /**
+   * The originating ticket (when the thread was promoted from one) — the operator's captured intent +
+   * context. Given to the reviewer so it can check the plan against what was actually asked for. Absent
+   * for threads not tied to a ticket.
+   */
+  ticket?: { number: number; title: string; body?: string } | null;
   /** The overview text from the plan. */
   overview: string;
   /** The locked decisions from the plan. */
@@ -51,37 +62,78 @@ export interface PlanReviewStartInput {
    * just titles. Absent on step-less paths (the reviewer then sees titles only).
    */
   stepsByTrack?: PlannedStep[][];
-}
+};
 
 /** Outcome of `start`: a fresh review round, or the round cap was hit (no review run). */
 export type PlanReviewStart =
   | { reviewId: string; round: number }
   | { capped: true; round: number };
 
-/** System prompt for the Codex plan-review turn. */
-const REVIEW_SYSTEM =
-  'You are a senior software engineer doing a one-pass pre-review of an Atlas feature plan before ' +
-  'it reaches the operator. The full plan is authored across `/context/specs/` — `plan.md` (the INDEX: ' +
-  'goal, overview, architecture, the ordered track list), `sections/NN-<slug>.md` (one per track, with ' +
-  'its steps), `data-model.md` (cross-cutting schema, when present), `decision-record.md`, and diagrams. ' +
-  'You are given the overview, the locked decisions, and the ordered track titles below.\n\n' +
-  'READ `plan.md` AND the per-track `sections/*.md` (and `data-model.md`) for the full detail, and you ' +
-  'MAY read the codebase files they reference (read-only) to verify it is GROUNDED — but do NOT ' +
-  'implement anything or change any files.\n\n' +
-  'Report only REAL, actionable problems in this exact format (one item per line):\n' +
-  '  FINDING: <concise description>\n\n' +
-  'Each track lists its STEPS — the execute-ready steps, each with concrete touch points and ' +
-  'instructions. Atlas authors the full implementation detail up front (there is no later "step ' +
-  'planning" step), so grade that detail: a step whose touch points are wrong/missing, that is too ' +
-  'vague to build from without further questions, that lacks a real verification command, or that ' +
-  'contradicts a locked decision IS a finding.\n' +
-  'Good findings: missing always-ask decisions that will be needed, contradictions between decisions, ' +
-  'track/step ordering that will cause integration pain, touch points that are wrong or do not ' +
-  'exist, steps that are dangerously vague or ungrounded, missing or hand-wavy verification.\n' +
-  'Do NOT report: stylistic nits, naming preferences, anything already covered by the decision record.\n\n' +
-  'If the plan looks solid, output exactly: NO_FINDINGS';
+/**
+ * System prompt for the Codex plan-review turn — a STRUCTURED brief, not "review this and tell me your
+ * findings". It frames Codex as an independent reviewer (it did NOT write the plan), points it at the
+ * authored specs + the repo to GROUND its critique, names the failure modes to hunt in priority order
+ * (intent gaps first), and pins a tight FINDING:/NO_FINDINGS output contract. The operator's INTENT and
+ * the structured plan arrive in the per-run task (`renderPlanForReview`).
+ */
+const REVIEW_SYSTEM = [
+  '<role>',
+  'You are an independent senior software engineer doing a pre-review of a feature PLAN that another',
+  'engineer ("Atlas") authored for THIS repository, before it goes to the operator for approval. You did',
+  'NOT write this plan — review it skeptically. Your job: find the REAL, actionable problems, and above',
+  "all judge whether the plan actually ACHIEVES the operator's stated intent (see <intent> in the task).",
+  'Read the repository (read-only) to ground EVERY claim against its real architecture and conventions.',
+  'Do NOT implement anything, do NOT change any files, and do NOT nitpick wording.',
+  '</role>',
+  '',
+  '<plan_location>',
+  'The full plan is authored under `/context/specs/` — READ THESE before judging (they are authoritative;',
+  'the <authored_plan> summary in the task is just an index):',
+  '  - `plan.md` — goal · overview · architecture/diagrams · the ordered track list',
+  '  - `sections/NN-<slug>.md` — ONE per track: its goal, context, execute-ready steps, validation',
+  '  - `data-model.md` — cross-cutting schema/migrations (when the work touches the schema)',
+  '  - `generated/decision-record.md` — the locked always-ask decisions',
+  'Then read the codebase files the steps reference to verify the plan is GROUNDED in what actually exists.',
+  '</plan_location>',
+  '',
+  '<what_to_hunt>',
+  'Report only REAL, actionable problems. Highest-value first:',
+  '  1. INTENT GAP — the plan does not achieve what the operator asked for: a missing capability, a misread',
+  '     requirement, scope that drifts from the goal/ticket, or an obvious failure mode / edge case the goal',
+  '     implies that the plan never handles. This is the most important class.',
+  '  2. UNGROUNDED / WRONG touch points — a step cites a `path:line` or symbol that is wrong or does not',
+  '     exist, or builds against an API/pattern this repo does not actually have. Verify against the code.',
+  '  3. MISSING / CONTRADICTORY decisions — an always-ask decision (data model, API contract, dependency,',
+  '     infra, cross-cutting pattern, one-way door) the plan needs but never locks, or two that conflict.',
+  '  4. ORDERING / INTEGRATION risk — track/step ordering that breaks the build (e.g. a step depends on a',
+  '     migration a later step creates).',
+  '  5. UNBUILDABLE step — too vague to build without re-asking the operator, or with no real verification.',
+  '     Atlas authors the FULL implementation detail up front (there is no later "step planning"), so grade',
+  '     that detail at the altitude of an implementation diff.',
+  '  6. VERSION / DEPENDENCY mismatch — the plan assumes an API shape, config flag, component name, or CLI',
+  '     syntax that does not match the version actually installed in this repo (check package.json / the',
+  '     lockfile / the imports). Flag anything that mixes patterns from a different version or generation of',
+  '     a library, SDK, framework, or platform than what is in use.',
+  '  7. OVER-ENGINEERING / SCOPE CREEP — the plan introduces a NEW abstraction, dependency, service, or',
+  '     pattern where an EXISTING one in this repo would do, or builds more than the goal needs. Changes',
+  '     should be minimal and tightly scoped; flag speculative generality and gold-plating.',
+  "  8. CONVENTION BREAK — the plan's approach contradicts THIS repo's OWN established conventions: its",
+  '     naming, type style, file/module layout, error-handling, state/data-access, and test patterns. Judge',
+  '     against what the repo actually does (read neighboring code), NOT an external style preference.',
+  'Do NOT report: stylistic nits, personal preferences not grounded in the repo, anything already settled',
+  'in the decision record.',
+  '</what_to_hunt>',
+  '',
+  '<output_contract>',
+  'Output ONLY findings, one per line, each EXACTLY in this form:',
+  '  FINDING: <concise, actionable problem — what is wrong and why it matters>',
+  'Be a demanding reviewer: surface every substantive issue you can justify from the specs + the code.',
+  'Output EXACTLY `NO_FINDINGS` (and nothing else) ONLY if, after reading the specs and the referenced',
+  'code, you genuinely cannot find a substantive problem and the plan clearly achieves the intent.',
+  '</output_contract>',
+].join('\n');
 
-/** Render the plan as a compact review input. */
+/** Render the structured review task: the operator's INTENT first, then the authored plan to grade. */
 function renderPlanForReview(input: PlanReviewStartInput): string {
   const decisions = input.decisions.length
     ? input.decisions
@@ -95,7 +147,10 @@ function renderPlanForReview(input: PlanReviewStartInput): string {
           const steps = input.stepsByTrack?.[i] ?? [];
           if (!steps.length) return `  ${i + 1}. ${b}`;
           const body = steps
-            .map((p, j) => `     ${i + 1}.${j + 1} ${p.title}\n       ${p.brief.replace(/\n/g, '\n       ')}`)
+            .map(
+              (p, j) =>
+                `     ${i + 1}.${j + 1} ${p.title}\n       ${p.brief.replace(/\n/g, '\n       ')}`,
+            )
             .join('\n');
           return `  ${i + 1}. ${b}\n${body}`;
         })
@@ -103,14 +158,49 @@ function renderPlanForReview(input: PlanReviewStartInput): string {
     : '  (none)';
 
   const hasPhases = (input.stepsByTrack ?? []).some((p) => p.length);
-  return [
-    'Review this Atlas feature plan and identify any real, actionable problems.\n',
-    `OVERVIEW:\n${input.overview}\n`,
-    `LOCKED DECISIONS:\n${decisions}\n`,
+
+  // The INTENT block — what the operator is trying to achieve. The reviewer judges the plan against THIS.
+  const intent = [
+    '<intent>',
+    'What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.',
+    '',
+    `GOAL: ${input.goal || '(see overview)'}`,
+  ];
+  if (input.ticket) {
+    intent.push(
+      '',
+      `ORIGINATING TICKET #${input.ticket.number} — ${input.ticket.title}`,
+      ...(input.ticket.body ? [input.ticket.body] : []),
+    );
+  }
+  intent.push(
+    '',
+    "OVERVIEW (Atlas's framing of the work):",
+    input.overview,
+    '</intent>',
+  );
+
+  const authoredPlan = [
+    '<authored_plan>',
+    'The structured plan Atlas authored. The `/context/specs/` files are authoritative — read them; this is',
+    'just the index to orient your reading.',
+    '',
+    'LOCKED DECISIONS:',
+    decisions,
+    '',
     hasPhases
-      ? `TRACKS (each with its authored steps — the build executes these directly):\n${tracks}\n`
-      : `TRACKS (high-level briefs):\n${tracks}\n`,
-    'Output FINDING: lines for each real problem, or NO_FINDINGS if the plan looks solid.',
+      ? 'TRACKS (each with its execute-ready steps — the build runs these directly):'
+      : 'TRACKS (high-level briefs):',
+    tracks,
+    '</authored_plan>',
+  ];
+
+  return [
+    ...intent,
+    '',
+    ...authoredPlan,
+    '',
+    'Now review per <what_to_hunt> + <output_contract>. Read the specs and the referenced code first.',
   ].join('\n');
 }
 
@@ -136,7 +226,19 @@ export class PlanReviewService {
   private readonly logger = new Logger(PlanReviewService.name);
 
   /** Max review ROUNDS per thread — each `submit_plan` is a round. Bounds Codex cost/latency. */
-  private readonly maxRounds = Number(process.env['PLAN_REVIEW_MAX_ROUNDS']) || 3;
+  private readonly maxRounds =
+    Number(process.env['PLAN_REVIEW_MAX_ROUNDS']) || 3;
+
+  /**
+   * Wall-clock ceiling for ONE Codex review turn. A review that has not returned by this point is
+   * abandoned: the turn is aborted, the row is stamped `failed` (a timeout), and delivery surfaces it as
+   * a non-clean failure (never a silent "no findings"). Set comfortably above the 5-30 min expected range
+   * so only a genuine HANG trips it. Doubles as the `runningReview` orphan threshold: a row stuck
+   * `running` past this age means the host died before the in-process timer could fire (the timer dies
+   * with the process), so the gate stops treating it as blocking. Env-tunable.
+   */
+  private readonly timeoutMs =
+    Number(process.env['PLAN_REVIEW_TIMEOUT_MS']) || 45 * 60_000;
 
   constructor(
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
@@ -158,10 +260,14 @@ export class PlanReviewService {
    * `runReview(reviewId)` next (in the background).
    */
   async start(input: PlanReviewStartInput): Promise<PlanReviewStart> {
-    const prior = await this.reviews.count({ where: { thread_id: input.threadId } });
+    const prior = await this.reviews.count({
+      where: { thread_id: input.threadId },
+    });
     const round = prior + 1;
     if (round > this.maxRounds) {
-      this.logger.log(`plan-review: thread=${input.threadId} hit round cap (${this.maxRounds}) — not reviewing`);
+      this.logger.log(
+        `plan-review: thread=${input.threadId} hit round cap (${this.maxRounds}) — not reviewing`,
+      );
       return { capped: true, round: prior };
     }
     const prompt = renderPlanForReview(input);
@@ -178,7 +284,9 @@ export class PlanReviewService {
         delivered_at: null,
       }),
     );
-    this.logger.log(`plan-review: opened round ${round} (review=${row.id}) for thread=${input.threadId}`);
+    this.logger.log(
+      `plan-review: opened round ${round} (review=${row.id}) for thread=${input.threadId}`,
+    );
     return { reviewId: row.id, round };
   }
 
@@ -188,50 +296,101 @@ export class PlanReviewService {
    * on engine error → treated as no findings). Idempotent-ish: re-running a row simply re-stamps it.
    * Returns the findings (''=clean) and the terminal status.
    */
-  async runReview(reviewId: string): Promise<{ status: 'complete' | 'failed'; findings: string }> {
+  async runReview(reviewId: string): Promise<{
+    status: 'complete' | 'failed';
+    findings: string;
+    error?: string;
+  }> {
     const row = await this.reviews.findOneOrFail({ where: { id: reviewId } });
 
     // (Re-)attach a live container against the durable worktree (the async/boot path can't assume one is
     // warm). Returns null only if the thread has no sandbox row or is closed → record failed, no findings.
-    const ensured = await this.lifecycle.ensureContainer(row.thread_id, row.org_id).catch((err) => {
-      this.logger.warn(`plan-review: ensureContainer failed for review=${reviewId}: ${err}`);
-      return null;
-    });
+    const ensured = await this.lifecycle
+      .ensureContainer(row.thread_id, row.org_id)
+      .catch((err) => {
+        this.logger.warn(
+          `plan-review: ensureContainer failed for review=${reviewId}: ${err}`,
+        );
+        return null;
+      });
     if (!ensured) {
-      await this.stamp(row, 'failed', '');
-      return { status: 'failed', findings: '' };
+      const error =
+        'Could not attach a sandbox to run the review (no container for this thread).';
+      await this.stamp(row, 'failed', '', error);
+      return { status: 'failed', findings: '', error };
     }
     const sandbox = ensured.sandbox;
 
     const sandboxKey = `plan-review-${row.org_id}-${reviewId}`;
     // Per-org Codex subscription secret (deployed); undefined locally → the in-container engine falls back
     // to CODEX_OAUTH_TOKEN. With neither set the turn throws and is caught below as "failed / no findings".
-    const auth: EngineAuth | undefined = await this.creds.engineAuth(row.org_id, 'codex');
+    const auth: EngineAuth | undefined = await this.creds.engineAuth(
+      row.org_id,
+      'codex',
+    );
 
-    this.logger.log(`plan-review: running Codex review turn for review=${reviewId} thread=${row.thread_id}`);
+    this.logger.log(
+      `plan-review: running Codex review turn for review=${reviewId} thread=${row.thread_id}`,
+    );
+
+    // Watchdog: bound the turn so a HUNG engine can never leave the row stuck `running` forever (which
+    // would wedge the `finalize_plan` gate). The runner honors `signal`, so abort propagates and aborts
+    // the turn; the `Promise.race` is the belt-and-suspenders that lets `runReview` return even if a
+    // runner ignored the signal. On timeout we throw → the catch below stamps the row `failed`.
+    const ac = new AbortController();
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watchdog = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        ac.abort();
+        reject(
+          new Error(
+            `Codex plan review timed out after ${Math.round(this.timeoutMs / 60_000)}m`,
+          ),
+        );
+      }, this.timeoutMs);
+    });
+
     let reviewerOutput: string;
     try {
-      const result = await this.engine.run({
-        engine: 'codex',
-        task: row.prompt,
-        cwd: sandbox.worktreePath,
-        systemPrompt: REVIEW_SYSTEM,
-        sandboxKey,
-        mode: 'review',
-        ...(auth ? { auth } : {}),
-        ...(sandbox.containerId
-          ? { target: { containerId: sandbox.containerId, worktreeHost: sandbox.worktreePath } }
-          : {}),
-      });
+      const result = await Promise.race([
+        this.engine.run({
+          engine: 'codex',
+          task: row.prompt,
+          cwd: sandbox.worktreePath,
+          systemPrompt: REVIEW_SYSTEM,
+          sandboxKey,
+          mode: 'review',
+          // Review hard — pin max reasoning (subscription accounts accept this knob; verified by spike).
+          modelReasoningEffort: 'xhigh',
+          signal: ac.signal,
+          ...(auth ? { auth } : {}),
+          ...(sandbox.containerId
+            ? {
+                target: {
+                  containerId: sandbox.containerId,
+                  worktreeHost: sandbox.worktreePath,
+                },
+              }
+            : {}),
+        }),
+        watchdog,
+      ]);
       reviewerOutput = result.result;
     } catch (err) {
-      this.logger.warn(`plan-review: Codex turn failed for review=${reviewId} — recording failed: ${err}`);
-      await this.stamp(row, 'failed', '');
-      return { status: 'failed', findings: '' };
+      const error = summarizeEngineError(err);
+      this.logger.warn(
+        `plan-review: Codex turn ${timedOut ? 'timed out' : 'failed'} for review=${reviewId} — recording failed: ${err}`,
+      );
+      await this.stamp(row, 'failed', '', error);
+      return { status: 'failed', findings: '', error };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
 
     const findings = parsePlanFindings(reviewerOutput);
-    await this.stamp(row, 'complete', findings);
+    await this.stamp(row, 'complete', findings, null);
     this.logger.log(
       findings
         ? `plan-review: review=${reviewId} — ${findings.split('\n').length} finding(s)`
@@ -240,14 +399,53 @@ export class PlanReviewService {
     return { status: 'complete', findings };
   }
 
-  /** Stamp a review row terminal: findings + completed_at + status. */
-  private async stamp(row: PlanReviewEntity, status: 'complete' | 'failed', findings: string): Promise<void> {
-    await this.reviews.update({ id: row.id }, { status, findings, completed_at: new Date() });
+  /** Stamp a review row terminal: findings + completed_at + status (+ a failure reason). */
+  private async stamp(
+    row: PlanReviewEntity,
+    status: 'complete' | 'failed',
+    findings: string,
+    error: string | null,
+  ): Promise<void> {
+    await this.reviews.update(
+      { id: row.id },
+      { status, findings, error, completed_at: new Date() },
+    );
   }
 
   /** Load one review row (for delivery). */
   async load(reviewId: string): Promise<PlanReviewEntity | null> {
     return this.reviews.findOne({ where: { id: reviewId } });
+  }
+
+  /**
+   * The `finalize_plan` gate: is a Codex review round for this thread still IN FLIGHT (`running`)?
+   * `submit_plan` flips the thread to `plan_review` and kicks the Codex turn in the background, so the
+   * thread status alone never proves the review actually finished — the brain could (and did) post the
+   * approval card while Codex was still reviewing. Returns the in-flight round (for the refusal message)
+   * or null when no round is running, i.e. the latest review has completed (its findings are delivered, or
+   * are being delivered in this very turn) and the brain is free to finalize.
+   */
+  async runningReview(threadId: string): Promise<{ round: number } | null> {
+    const row = await this.reviews.findOne({
+      where: { thread_id: threadId, status: 'running' },
+      order: { round: 'DESC' },
+    });
+    if (!row) return null;
+    // Orphan backstop: a row stuck `running` past the watchdog ceiling can only be a crash orphan — the
+    // host died before the in-process timeout could stamp it `failed` (the timer died with the process).
+    // Don't let it wedge the operator gate forever; treat it as non-blocking. Boot reconciliation will
+    // still re-run/redeliver it, and the live path's watchdog stamps in-process hangs `failed` well
+    // before this. Mirrors the service rule: a review outage must NEVER permanently block the build.
+    const ageMs = Date.now() - new Date(row.created_at).getTime();
+    if (ageMs > this.timeoutMs) {
+      this.logger.warn(
+        `plan-review: thread=${threadId} round ${row.round} stuck 'running' for ${Math.round(
+          ageMs / 60_000,
+        )}m — treating as orphaned (not blocking finalize)`,
+      );
+      return null;
+    }
+    return { round: row.round };
   }
 
   /** Stamp a review delivered (its findings reached Atlas in a turn that actually ran). */
@@ -279,8 +477,26 @@ export class PlanReviewService {
  * the harness-seeded "Codex review" message the operator sees AND the input the brain's session receives,
  * so the operator watches the exact same exchange Atlas reacts to.
  */
-export function renderFindingsDelivery(findings: string, round: number, capReached: boolean): string {
+export function renderFindingsDelivery(
+  findings: string,
+  round: number,
+  capReached: boolean,
+  status: 'complete' | 'failed' = 'complete',
+  error?: string | null,
+): string {
   const header = `🔍 **Codex plan review** (round ${round})`;
+  // A FAILED review (engine error) is NOT a clean pass — never report it as "the plan looks solid".
+  // Surface the actual reason so the operator + Atlas see WHAT happened, not a silent "no findings".
+  // (`findings` is also empty on failure, so this must be checked BEFORE the empty-findings branch.)
+  if (status === 'failed') {
+    const reason = error?.trim() ? `\n\n> ${error.trim()}` : '';
+    return (
+      `⚠️ ${header} could NOT run — the review errored before completing, so the plan was NOT validated.${reason}\n\n` +
+      'Atlas: this is an infrastructure failure, not a clean pass. Either call `submit_plan` to retry the ' +
+      'review, or call `finalize_plan` to send the plan to the operator as-is — but if you finalize, tell ' +
+      'them plainly that the Codex review did not run (and why).'
+    );
+  }
   if (!findings) {
     return (
       `${header} — no findings. The plan looks solid.\n\n` +
@@ -293,4 +509,16 @@ export function renderFindingsDelivery(findings: string, round: number, capReach
     : '\n\nAtlas: address each — APPLY it, or PUSH BACK with reasoning — then call `submit_plan` to ' +
       're-review, or `finalize_plan` to send the reviewed plan to the operator for approval.';
   return `${header} — ${findings.split('\n').length} finding(s):\n\n${findings}${capNote}`;
+}
+
+/**
+ * Reduce a raw engine/Codex error to one concise, human-readable line for the failure surface. Engine
+ * errors often embed a JSON body like `{"...","message":"<human readable>"}` (e.g. a 4xx from the model
+ * API) — pull that out; otherwise take the first line. Capped so it stays a one-liner in the UI.
+ */
+export function summarizeEngineError(err: unknown): string {
+  const raw = (err instanceof Error ? err.message : String(err)).trim();
+  const m = raw.match(/"message"\s*:\s*"([^"]+)"/);
+  const msg = (m ? m[1] : raw.split('\n')[0]).trim() || 'unknown engine error';
+  return msg.length > 300 ? `${msg.slice(0, 297)}…` : msg;
 }

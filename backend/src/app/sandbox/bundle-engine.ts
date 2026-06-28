@@ -7,11 +7,12 @@ import { join } from 'node:path';
  * are kept EXTERNAL (installed in the sandbox image, dynamically imported at runtime); everything else
  * (EngineCore + helpers) is bundled in.
  *
- * This is the SAME bundle the CLI (`build-entrypoint.mjs`, run before a Docker image build) produces —
- * but exposed as a function so the API can refresh it itself on bootstrap. That is what makes engine
- * updates HOT: the bundle is bind-mounted into every sandbox (see `SandboxManager`), so once the API
- * (re)bundles, the next turn in any running thread execs the new engine — no container restart, no image
- * rebuild, no SSH. A dev watch-restart and a prod deploy-restart both trigger it.
+ * The API calls this on every bootstrap (`SandboxImageBuilder`), which is what makes engine updates HOT:
+ * the bundle is bind-mounted into every sandbox (see `SandboxManager`), so once the API (re)bundles, the
+ * next turn in any running thread execs the new engine — no manual bundle step, no container restart, no
+ * image rebuild, no SSH. A dev watch-restart and a prod deploy-restart both trigger it. (The image also
+ * bakes a copy at build time via the Dockerfile `COPY`, used only as a fallback if the live mount is
+ * absent; the build reads the `.mjs` this function wrote on boot.)
  *
  * `__dirname` resolves to `src/app/sandbox` under ts-node/tsx (dev) and `dist/app/sandbox` when compiled
  * — so the entry is taken from the TS source in dev and the compiled JS in a built deployment.

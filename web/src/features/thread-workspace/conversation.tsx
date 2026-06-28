@@ -1,19 +1,22 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { classifyMessage } from './classify';
+import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import {
   ClaudeBubble,
   HarnessBubble,
   LiveIndicator,
   LiveTurnView,
   SystemEventPill,
+  SystemOperatorNotice,
   ThinkingBlock,
   UserBubble,
 } from './bubbles';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { QuestionCardView } from './question-card';
+import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { Composer } from './composer';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
 import { useLiveTurn } from '@/lib/api/thread-stream';
@@ -29,28 +32,28 @@ export function Conversation({
   isLoading,
   live,
   onOpenPlan,
+  onSelectNode,
 }: {
   threadRef: ThreadRef;
   messages: ThreadMessage[];
   isLoading: boolean;
   live: boolean;
   onOpenPlan?: () => void;
+  /** Open a node in the right detail pane (e.g. a subagent run's sub-page). */
+  onSelectNode?: (node: string) => void;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  // Whether the view is "tailing" — pinned at (or near) the bottom. We only auto-scroll on new content
-  // while this is true, so reading scrollback isn't yanked back down on every streamed token. A ref (not
-  // state) so the scroll listener and the auto-scroll effect share the latest value without re-rendering.
-  const stuckToBottom = useRef(true);
-  // Drives the "Jump to latest" pill — shown only while scrolled up off the tail. Mirrors `stuckToBottom`
-  // but as state, since visibility has to re-render (the ref intentionally doesn't).
-  const [showJump, setShowJump] = useState(false);
   // The composer is a floating overlay; track its height so the transcript reserves matching space and
   // the last line never slips under it as the box auto-grows.
   const [composerHeight, setComposerHeight] = useState(116);
   const liveTurn = useLiveTurn(threadRef.threadId);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
   const turnActive = liveTurn?.active ?? false;
+  // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
+  // block boundaries (mirrors the subagent run view).
+  const liveStreamSig = (liveTurn?.blocks ?? []).reduce(
+    (n, b) => n + (b.kind === 'tool' ? 1 : b.text.length),
+    0,
+  );
 
   // Messages sent while a turn is streaming are QUEUED behind it (the brain serializes turns per thread).
   // Pull them out of the main log and render them below the live response with a "queued" treatment — so
@@ -61,28 +64,15 @@ export function Conversation({
   const log = messages.filter((m) => !isQueued(m));
   const queued = messages.filter(isQueued);
 
-  // Track whether the user is tailing the conversation. Within ~80px of the bottom counts as "stuck" so
-  // a tiny bit of slack (and sub-pixel rounding during streaming) doesn't read as "scrolled up".
-  const onScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const stuck = distanceFromBottom < 80;
-    stuckToBottom.current = stuck;
-    setShowJump(!stuck);
-  };
-
-  const jumpToLatest = () => {
-    stuckToBottom.current = true;
-    setShowJump(false);
-    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    if (stuckToBottom.current) {
-      endRef.current?.scrollIntoView({ block: 'end' });
-    }
-  }, [messages.length, live, liveBlockCount, turnActive, queued.length, composerHeight]);
+  const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow([
+    messages.length,
+    live,
+    liveBlockCount,
+    liveStreamSig,
+    turnActive,
+    queued.length,
+    composerHeight,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -97,12 +87,12 @@ export function Conversation({
               No messages yet — say something to Atlas below.
             </p>
           ) : (
-            renderLog(log, threadRef, onOpenPlan)
+            renderLog(log, threadRef, onOpenPlan, onSelectNode)
           )}
-          {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} /> : null}
+          {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} onSelectNode={onSelectNode} /> : null}
           {live || turnActive ? <LiveIndicator /> : null}
           {queued.map((message) => (
-            <UserBubble key={message.ts} message={message} queued />
+            <UserBubble key={message.ts} text={message.text} queued />
           ))}
             {/* Spacer so the last line clears the floating composer when scrolled to the bottom.
                 Tracks the composer's live height so it grows with the auto-expanding box. */}
@@ -110,21 +100,7 @@ export function Conversation({
             <div ref={endRef} />
           </div>
         </div>
-        {showJump ? (
-          <button
-            type="button"
-            onClick={jumpToLatest}
-            title="Jump to latest"
-            style={{ bottom: composerHeight + 8 }}
-            className="absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface-2 py-1.5 pl-3 pr-3.5 text-[12px] text-dim shadow-md transition hover:text-text"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14" />
-              <path d="M19 12l-7 7-7-7" />
-            </svg>
-            Jump to latest
-          </button>
-        ) : null}
+        {showJump ? <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: composerHeight + 8 }} /> : null}
         <Composer threadRef={threadRef} onHeightChange={setComposerHeight} />
       </div>
     </div>
@@ -136,9 +112,18 @@ export function Conversation({
  * (file-edits split into their own "N files changed" group via {@link segmentToolRun}) while every
  * other kind renders as its own typed block.
  */
-function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () => void): React.ReactNode {
+function renderLog(
+  log: ThreadMessage[],
+  threadRef: ThreadRef,
+  onOpenPlan?: () => void,
+  onSelectNode?: (node: string) => void,
+): React.ReactNode {
   const nodes: React.ReactNode[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
+
+  // Subagent activity is peeled out: its child blocks are hidden from the main log, and the spawning Task
+  // block renders as a card (opens the run's sub-page) instead of as a row in a tool group.
+  const sub = indexDurableSubagents(log);
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -149,6 +134,23 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
   };
 
   for (const message of log) {
+    // A block produced BY a subagent — lives in the sub-page, not the main conversation.
+    if (sub.childKeys.has(message.ts)) continue;
+    // The Task block that spawned a subagent — render its card (flush any open tool run first).
+    if (sub.anchorKeys.has(message.ts)) {
+      flush();
+      const summary = sub.summaryById.get(String(message.meta?.id));
+      if (summary)
+        nodes.push(
+          <SubagentCard
+            key={message.ts}
+            summary={summary}
+            onOpen={() => onSelectNode?.(subagentNode(summary.parentId))}
+          />,
+        );
+      continue;
+    }
+
     const c = classifyMessage(message);
     if (c.kind === 'tool') {
       const m = message.meta ?? {};
@@ -168,7 +170,7 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
 
     switch (c.kind) {
       case 'user':
-        nodes.push(<UserBubble key={message.ts} message={message} />);
+        nodes.push(<UserBubble key={message.ts} text={message.text} />);
         break;
       case 'thinking':
         nodes.push(<ThinkingBlock key={message.ts} text={message.text} />);
@@ -185,8 +187,11 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
       case 'event':
         nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
         break;
-      case 'harness':
+      case 'system_shared':
         nodes.push(<HarnessBubble key={message.ts} message={message} />);
+        break;
+      case 'system_operator':
+        nodes.push(<SystemOperatorNotice key={message.ts} message={message} />);
         break;
       case 'claude':
       default:

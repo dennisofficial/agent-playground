@@ -37,6 +37,27 @@ describe('renderDecisionRecordMd', () => {
     expect(md).not.toContain('> **Q:** \n');
   });
 
+  it('renders an unambiguous provenance status line per decision', () => {
+    const md = renderDecisionRecordMd([
+      {
+        decisionClass: 'data_model',
+        title: 'Confirmed call',
+        ruling: 'Operator picked this.',
+        question: 'A or B?',
+        answer: 'A',
+        confirmedByOperator: true,
+      },
+      {
+        decisionClass: 'api_contract',
+        title: 'Authored default',
+        ruling: 'Atlas chose this default.',
+      },
+    ]);
+    expect(md).toContain('**Status:** Confirmed by the operator.');
+    expect(md).toContain('**Status:** Authored by Atlas');
+    expect(md).toContain('NOT confirmed by the operator');
+  });
+
   it('omits classes with no decisions', () => {
     const md = renderDecisionRecordMd([
       { decisionClass: 'dependency', title: 'Use Stripe', ruling: 'Keep Stripe for checkout.' },

@@ -173,6 +173,18 @@ interface AnswerQuestionDto {
   answeredBy?: string;
 }
 
+/** Operator-visible message provenance, by AUDIENCE. See the `/messages` mapping for the full rationale. */
+export type WebMessageSource = 'operator' | 'atlas' | 'system_operator' | 'system_shared';
+
+/** Map a row's stored `meta.source` (+ isAtlas fallback) to the web renderer's audience-explicit source.
+ *  Legacy rows stamped the shared kind as `'harness'` — fold those into `'system_shared'`. */
+export function mapMessageSource(stored: unknown, isAtlas: boolean): WebMessageSource {
+  if (stored === 'system_operator') return 'system_operator';
+  if (stored === 'system_shared' || stored === 'harness') return 'system_shared';
+  if (stored === 'atlas' || stored === 'operator') return stored;
+  return isAtlas ? 'atlas' : 'operator';
+}
+
 /**
  * WEB SURFACE — org/repo/thread-scoped HTTP + SSE for the web console. All `/web/orgs/:orgId/*` routes
  * are gated by the global `AuthGuard` (cookie) AND `OrgMembershipGuard` (membership). Threads are
@@ -352,14 +364,14 @@ export class WebSurfaceController {
       author: m.author,
       authorId: m.author_id,
       isAtlas: m.author_bot_id != null,
-      // Provenance for the web renderer: 'harness' (e.g. Codex plan-review findings, shown distinctly and
-      // never hidden) | 'atlas' | 'operator'. Only an explicit harness marker triggers harness rendering.
-      source:
-        (m.meta as { source?: unknown } | null)?.source === 'harness'
-          ? 'harness'
-          : m.author_bot_id != null
-            ? 'atlas'
-            : 'operator',
+      // Provenance for the web renderer, by AUDIENCE:
+      //   'system_operator' — system→operator only (e.g. an unresumable-thread error); Atlas didn't author
+      //                       it and never sees it. Rendered as a dedicated system-notice box.
+      //   'system_shared'   — system→operator AND Atlas (e.g. Codex plan-review findings; Atlas gets a
+      //                       separate seed). Rendered as the "Codex review" panel.
+      //   'atlas' | 'operator' — ordinary turns (inferred from author when no explicit source).
+      // Legacy rows stamped the shared kind as 'harness' → fold into 'system_shared'.
+      source: mapMessageSource((m.meta as { source?: unknown } | null)?.source, m.author_bot_id != null),
       text: m.text,
       kind: m.kind,
       ...(m.card ? { card: m.card } : {}),

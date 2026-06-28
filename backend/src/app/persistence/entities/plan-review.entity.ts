@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { ThreadEntity } from './thread.entity';
 
@@ -55,6 +62,13 @@ export class PlanReviewEntity extends TimestampedEntity {
   /** The parsed findings (bulleted) once the Codex turn completes; '' = clean; null = not yet run. */
   @Column({ type: 'text', nullable: true })
   findings!: string | null;
+
+  /**
+   * On a FAILED review, a concise human-readable reason (engine/auth error, no sandbox, …) so the failure
+   * is SURFACED to Atlas + the operator instead of masquerading as "no findings". Null on success.
+   */
+  @Column({ type: 'text', nullable: true })
+  error!: string | null;
 
   /** When the Codex turn finished (null while running). */
   @Column({ type: 'timestamptz', nullable: true })

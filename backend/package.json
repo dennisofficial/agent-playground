@@ -12,7 +12,6 @@
     "start:prod": "node dist/main",
     "gate": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.gate.json node -r tsconfig-paths/register -r ts-node/register src/app/gate/gate-main.ts",
     "e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.e2e.json node -r tsconfig-paths/register -r ts-node/register src/app/e2e/e2e-main.ts",
-    "sandbox:bundle": "node src/app/sandbox/build-entrypoint.mjs",
     "reap": "cross-env TS_NODE_PROJECT=tsconfig.cli.json node -r ts-node/register cli/reap-sandboxes.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.ts\"",

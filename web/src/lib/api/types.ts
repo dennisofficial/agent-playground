@@ -54,6 +54,8 @@ export interface ApprovalDecision {
   decisionClass: string;
   title: string;
   ruling: string;
+  /** PROVENANCE — true when the operator confirmed this call; false/absent = Atlas authored the default. */
+  confirmedByOperator?: boolean;
 }
 
 export interface WebCardAction {

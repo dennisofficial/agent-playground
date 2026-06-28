@@ -22,6 +22,8 @@ export interface ApprovalDecision {
   decisionClass: string;
   title: string;
   ruling: string;
+  /** PROVENANCE — true when the operator confirmed this call; false/absent = Atlas authored the default. */
+  confirmedByOperator?: boolean;
 }
 
 /** The upfront approval proposal: the decision record + the high-level track list, approved once. */
@@ -76,8 +78,14 @@ export function decisionApprovalBlocks(card: DecisionApprovalCard): Array<Record
       ? '_(see summary)_'
       : '_(no tracks)_';
 
+  // A leading `[confirmed]`/`[authored]` provenance tag rides in the bullet text so the web surface can
+  // recover it from these blocks (the web card is reconstructed by regex-parsing this format). Leading,
+  // not trailing, so the greedy ruling capture stays intact.
   const decisionList = (card.decisions ?? [])
-    .map((d) => `• *${d.title}* _(${d.decisionClass})_ — ${d.ruling}`)
+    .map(
+      (d) =>
+        `• ${d.confirmedByOperator ? '[confirmed]' : '[authored]'} *${d.title}* _(${d.decisionClass})_ — ${d.ruling}`,
+    )
     .join('\n');
 
   const actionElements: Array<Record<string, unknown>> = [];

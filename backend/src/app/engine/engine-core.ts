@@ -1,13 +1,16 @@
 import type { CanUseTool, Options, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
-import { resolve as resolvePath } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
 import { applyClaudeAuth } from './claude-auth';
 import { atlasEngineHomeDir } from './engine-home';
 import { ensureCodexAuthHome } from './codex-auth-home';
 import {
   EngineAuthError,
   isAuthErrorMessage,
+  UNRESUMABLE_SESSION_MARKER,
+  type CodexReasoningEffort,
   type EngineAuth,
   type EngineRunResult,
   type EngineUsage,
@@ -45,7 +48,10 @@ export interface EngineCoreConfig {
  * Opus, like the brain); the Codex id is the Codex SDK's coding model.
  */
 const DEFAULT_WORKER_MODEL = 'opus';
-const DEFAULT_CODEX_MODEL = 'gpt-5-codex';
+// NOTE: Codex runs subscription-only here — a ChatGPT-account OAuth token (see `resolveAuth`; there is no
+// API-key path). A ChatGPT account REJECTS any explicit model with a 400 ("The '<model>' model is not
+// supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
+// pin a Codex model — we leave it unset and let the Codex SDK use the account's own default model.
 
 /** A minimal logger so the core stays Nest-free. */
 export interface CoreLogger {
@@ -54,17 +60,137 @@ export interface CoreLogger {
 
 const NOOP_LOGGER: CoreLogger = { warn: () => undefined };
 
+/**
+ * Whether a resumable Claude session transcript exists under this config dir. The SDK stores it at
+ * `<configDir>/projects/<cwd-slug>/<sessionId>.jsonl`; we scan the project dirs rather than recompute
+ * the slug. Passing `resume` for a session whose transcript ISN'T here makes the SDK end the turn with a
+ * generic `error_during_execution` — so we check first and raise a specific error instead.
+ */
+export function claudeSessionExists(configDir: string, sessionId: string): boolean {
+  const projects = join(configDir, 'projects');
+  let dirs: string[];
+  try {
+    dirs = readdirSync(projects);
+  } catch {
+    return false; // no projects dir yet → nothing to resume
+  }
+  return dirs.some((d) => existsSync(join(projects, d, `${sessionId}.jsonl`)));
+}
+
 // Claude built-in tool sets. `tools` RESTRICTS the available set (unlike `allowedTools`, which only
-// auto-approves). A focused file+shell worker: no WebSearch/Agent/MCP.
-const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'];
+// auto-approves).
+// Web access: WebSearch runs server-side (no container egress needed); WebFetch runs client-side in
+// the sandbox (the per-sandbox bridge network has NAT egress). Enabled on every turn so the engine can
+// pull current docs / latest versions. This is a personal, trusted deployment — see `agents/web` notes.
+const WEB_TOOLS = ['WebSearch', 'WebFetch'];
+// `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
+const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...WEB_TOOLS];
 // A plan turn adds ExitPlanMode — native plan mode's turn-ender and the one place the FULL plan text
 // reaches canUseTool headlessly (the CLI auto-writes the plan file, then calls ExitPlanMode with the
 // plan in its input).
 const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
-// A read-only review turn gets the read tools only.
-const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash'];
-// Auto-approve safe reads; writes/bash fall through to canUseTool where the boundary is re-applied.
-const AUTO_APPROVE = ['Read', 'Glob', 'Grep'];
+// A read-only review turn gets the read tools (+ web for verifying against current docs). No Task — a
+// review turn shouldn't fan out.
+const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS];
+// Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
+// boundary is re-applied.
+const AUTO_APPROVE = ['Read', 'Glob', 'Grep', 'Task', ...WEB_TOOLS];
+
+// Subagent types the engine can spawn via `Task`. With `settingSources: []` there are NO on-disk agent
+// definitions, so this map is the ONLY set of spawnable subagents — every subagent is Sonnet-pinned by
+// construction (cheaper than the Opus brain). All are advisory: they investigate and report, and NONE
+// can Write/Edit (only the calling turn changes files). `test` is the one exception to "read-only": it
+// gets Bash so it can RUN the repo's verification, but it still cannot edit/commit. This keeps delegated
+// work token-cheap and side-effect-free, while letting a worker push noisy test output off its context.
+const SUBAGENTS: NonNullable<Options['agents']> = {
+  explore: {
+    description:
+      'Read-only CODE explorer. Delegate investigation here — locating files, tracing how a ' +
+      'feature works, mapping conventions — to keep the main context clean and save tokens. Returns a ' +
+      'concise findings summary, not raw file dumps. Also handles the repo\'s OWN docs (CLAUDE.md, ' +
+      'README, ARCHITECTURE.md, docs/). State the search breadth you want: "quick" (one targeted ' +
+      'lookup), "medium" (moderate exploration), or "very thorough" (sweep multiple locations and ' +
+      'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    model: 'sonnet',
+    prompt:
+      'You are a read-only exploration subagent. Investigate exactly what you were asked and return a ' +
+      'tight, factual summary: the relevant file paths (with line numbers where useful), how the ' +
+      'pieces fit together, and the specific answer to the question. Use Read/Glob/Grep to search the ' +
+      'repo and WebSearch/WebFetch for external docs, and fire multiple searches in parallel rather ' +
+      'than one at a time. Scale your effort to the breadth the caller asked for — "quick" is a single ' +
+      'targeted lookup, "medium" is moderate exploration, "very thorough" sweeps multiple locations and ' +
+      'naming conventions. Do NOT propose changes or write files — report findings only. Be concise; ' +
+      'the caller wants conclusions, not transcripts.',
+  },
+  docs: {
+    description:
+      'External library/framework/API documentation researcher — answers "how do I use X" / "what\'s the ' +
+      'current API for Y" from the LIBRARY\'S OWN docs on the web, not from this repo\'s source. Returns a ' +
+      'synthesized, cited, version-aware answer. Use `explore` for how THIS codebase (and its own docs) ' +
+      'work; use `docs` for third-party packages, frameworks, and external APIs.',
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    model: 'sonnet',
+    prompt:
+      'You are a read-only documentation research subagent for EXTERNAL libraries, frameworks, and APIs. ' +
+      'Answer from the official/third-party documentation via WebSearch/WebFetch — current versions, ' +
+      'syntax, configuration, migration notes, CLI usage. Read the repo ONLY to ground the answer in ' +
+      "what's actually installed (the version in package.json / the lockfile, how the package is already " +
+      'imported) so your answer matches the version in use — do NOT answer the question from this repo\'s ' +
+      'source. Synthesize a direct answer, quote the exact API/signature/config, and cite the URL (and ' +
+      'the version it applies to). Flag where the docs lag the installed version or are ambiguous. Do ' +
+      'NOT propose changes or write files — report findings only. Be concise: the answer plus its sources.',
+  },
+  review: {
+    description:
+      'Read-only code reviewer. Hand it a diff (or changed files) plus the intent, and it returns ' +
+      'concrete findings — correctness bugs, behavior silently removed, convention/altitude drift, ' +
+      'missing edge cases — grounded in the surrounding code. A cheap second pair of eyes before a step ' +
+      'is called done. It reports; it does NOT fix.',
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    model: 'sonnet',
+    prompt:
+      'You are a read-only code-review subagent. You are given changed code (a diff or file list) and ' +
+      'the intent behind it. Review skeptically against the real surrounding code: find correctness ' +
+      'bugs, behavior the change silently removed or broke, violations of the conventions this codebase ' +
+      'already follows, and missing edge cases or error handling. Read the neighboring code to ground ' +
+      'EVERY finding — do not guess. Report each finding on its own line as `file:line — what is wrong ' +
+      'and why it matters`, most severe first; if the change is clean, say so plainly. Do NOT edit ' +
+      'files — report findings only.',
+  },
+  debug: {
+    description:
+      'Read-only root-cause tracer. Give it a failure (error, stack trace, failing test, wrong ' +
+      'behavior) and it traces the cause through the code and names the exact fix site and smallest fix ' +
+      '— it does not run commands or change anything. Use `test` to actually run the verification.',
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
+    model: 'sonnet',
+    prompt:
+      'You are a read-only debugging subagent. Given a failure — an error message, stack trace, failing ' +
+      'test, or described misbehavior — trace it to its ROOT CAUSE by reading the code paths involved ' +
+      '(follow the stack, the data flow, the call sites). Use the web to check library behavior when ' +
+      'relevant. Return: the root cause in one or two sentences, the exact `file:line` where the fix ' +
+      'belongs, and the smallest change that would fix it (described, not applied). Distinguish what you ' +
+      'PROVED from what you merely suspect. Do NOT run commands or edit files — diagnose and report only.',
+  },
+  test: {
+    description:
+      "Runs the repository's verification (typecheck/build/lint/tests) in the worktree and returns a " +
+      'DIAGNOSIS, not raw logs — pass/fail per command, and for failures the specific errors and likely ' +
+      'cause. Keeps thousands of lines of test output out of your context. It can run commands (Bash) ' +
+      'but does NOT edit files or change git state.',
+    tools: ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS],
+    model: 'sonnet',
+    prompt:
+      "You are a verification subagent. Discover and run the repository's OWN typecheck/build/lint/test " +
+      'tooling for the change or area you were asked to verify — read package.json scripts / Makefile / ' +
+      'the repo docs to find the REAL commands, do not assume them — using Bash. Then return a TIGHT ' +
+      'diagnosis, NOT the raw output: for each command, the command and whether it passed or failed; for ' +
+      'failures, the specific failing tests/errors and the most likely cause, with `file:line` where you ' +
+      'can locate it. Run read-only verification only — do NOT edit files, commit, or change git state. ' +
+      'Be concise; the caller wants the verdict and the actionable failures, not the transcript.',
+  },
+};
 
 /** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
 function isInsideRoot(path: string, root: string): boolean {
@@ -163,6 +289,16 @@ export class EngineCore {
 
     // Pin the SDK subprocess to Atlas's ISOLATED config/state home — never ~/.claude.
     const claudeConfigDir = atlasEngineHomeDir(this.homeRoot(), 'claude', sandboxKey);
+
+    // A stored sessionId whose transcript isn't in THIS config dir can't be resumed — the SDK would end
+    // the turn with an opaque `error_during_execution`. Detect it up front and fail with a SPECIFIC,
+    // actionable error (retrying is futile; the thread must be recreated). See UNRESUMABLE_SESSION_MARKER.
+    if (sessionId && !claudeSessionExists(claudeConfigDir, sessionId)) {
+      throw new Error(
+        `${UNRESUMABLE_SESSION_MARKER}: engine session ${sessionId} not found under ${claudeConfigDir} — cannot resume`,
+      );
+    }
+
     const planMode = mode === 'plan';
     const readOnly = mode !== 'execute';
 
@@ -179,6 +315,9 @@ export class EngineCore {
       // No skills: settingSources [] means NO on-disk config files are read (full isolation).
       settingSources: [],
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
+      // Programmatic subagent definitions (settingSources [] means none are read from disk) — the only
+      // spawnable Task subagents, all Sonnet-pinned + read-only. See SUBAGENTS.
+      agents: SUBAGENTS,
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
       // they're host-controlled, never a human prompt. Empty for non-bridge turns (workers).
@@ -195,7 +334,11 @@ export class EngineCore {
       ...(model ? { model } : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.
-      ...(richStream ? { includePartialMessages: true, thinking: { type: 'adaptive' as const } } : {}),
+      // forwardSubagentText: forward a subagent's FULL text+thinking (not just its tool calls) tagged with
+      // `parent_tool_use_id`, so the brain turn can render each subagent run as its own nested transcript.
+      ...(richStream
+        ? { includePartialMessages: true, thinking: { type: 'adaptive' as const }, forwardSubagentText: true }
+        : {}),
       // R1 tool-bridge: optional extra options (e.g. mcpServers) from the in-container entrypoint.
       ...(extraClaudeOptions ?? {}),
     } as Options;
@@ -220,6 +363,10 @@ export class EngineCore {
               onEvent?.({ kind: 'thinking_delta', text: ev.delta.thinking });
           }
         } else if (message.type === 'assistant') {
+          // `parent_tool_use_id` is UNSET for the brain's own blocks, SET to the spawning Task id for a
+          // subagent's blocks (forwardSubagentText forwards subagent text/thinking the same way).
+          const parent = message.parent_tool_use_id ?? undefined;
+          const sub = parent ? { parentToolUseId: parent } : {};
           for (const block of message.message.content as Array<{
             type: string;
             id?: string;
@@ -229,21 +376,24 @@ export class EngineCore {
             thinking?: string;
           }>) {
             if (block.type === 'text' && block.text) {
-              onEvent?.({ kind: 'text', text: block.text });
+              onEvent?.({ kind: 'text', text: block.text, ...sub });
             } else if (block.type === 'thinking' && block.thinking) {
-              if (richStream) onEvent?.({ kind: 'thinking', text: block.thinking });
+              if (richStream) onEvent?.({ kind: 'thinking', text: block.thinking, ...sub });
             } else if (block.type === 'tool_use' && block.name) {
               // Rich turns get the full tool call (id + input) so the UI can render it; coarse turns keep
               // the legacy name-only `tool` event.
               if (richStream)
-                onEvent?.({ kind: 'tool_use', id: block.id ?? '', name: block.name, input: block.input });
+                onEvent?.({ kind: 'tool_use', id: block.id ?? '', name: block.name, input: block.input, ...sub });
               else onEvent?.({ kind: 'tool', name: block.name });
             }
           }
         } else if (richStream && message.type === 'user') {
           // Tool results are fed back to the model as a `user` message — surface them so the UI can pair
-          // each result with its `tool_use` by id.
-          const content = (message as { message?: { content?: unknown } }).message?.content;
+          // each result with its `tool_use` by id. A subagent's tool results carry the same parent id.
+          const userMsg = message as { parent_tool_use_id?: string | null; message?: { content?: unknown } };
+          const parent = userMsg.parent_tool_use_id ?? undefined;
+          const sub = parent ? { parentToolUseId: parent } : {};
+          const content = userMsg.message?.content;
           if (Array.isArray(content)) {
             for (const block of content as Array<{
               type: string;
@@ -257,6 +407,7 @@ export class EngineCore {
                   id: block.tool_use_id ?? '',
                   result: block.content,
                   isError: block.is_error,
+                  ...sub,
                 });
             }
           }
@@ -312,6 +463,7 @@ export class EngineCore {
     cwd: string,
     model: string | undefined,
     readOnly: boolean,
+    reasoningEffort?: CodexReasoningEffort,
   ): ThreadOptions {
     // Grant write access to the shared git dir (outside cwd in a linked worktree) so an execute turn
     // can commit/push. Not needed on a read-only turn.
@@ -326,17 +478,22 @@ export class EngineCore {
       webSearchMode: 'live',
       ...(gitDir ? { additionalDirectories: [gitDir] } : {}),
       ...(model ? { model } : {}),
+      // Subscription accounts REJECT an explicit `model` but ACCEPT this knob (verified by spike) — the
+      // plan-review turn pins `'xhigh'` so the reviewer reasons hard.
+      ...(reasoningEffort ? { modelReasoningEffort: reasoningEffort } : {}),
     };
   }
 
   private async runCodex(args: RunEngineArgs): Promise<EngineRunResult> {
     const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal } = args;
     const auth = this.resolveAuth('codex', args.auth);
-    const model = args.model ?? DEFAULT_CODEX_MODEL;
+    // Pass through ONLY an explicit caller override (none today); otherwise leave unset so
+    // `codexThreadOptions` omits `model` and the subscription account's default is used (see note above).
+    const model = args.model;
     const readOnly = mode !== 'execute';
 
     const client = this.getCodex(sandboxKey, auth);
-    const opts = this.codexThreadOptions(cwd, model, readOnly);
+    const opts = this.codexThreadOptions(cwd, model, readOnly, args.modelReasoningEffort);
     const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
 
     // Codex has no systemPrompt option — seed the persona as a first-turn preamble. Resumes already

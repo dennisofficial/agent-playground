@@ -5,6 +5,7 @@ import { ChevronRight, Clock } from 'lucide-react';
 import type { SystemTone } from './classify';
 import { Markdown } from './markdown';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
+import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
 import type { ThreadMessage } from '@/lib/api/thread-api';
 import type { LiveBlock, LiveTurn } from '@/lib/api/thread-stream';
 
@@ -30,7 +31,12 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
   );
 }
 
-export function UserBubble({ message, queued = false }: { message: ThreadMessage; queued?: boolean }) {
+/**
+ * An operator message — the right-aligned accent bubble. Takes raw `text` (not a `ThreadMessage`) so it can
+ * stand in for any operator-authored instruction, including a subagent's Task prompt (the "user message"
+ * that kicked the run off), rendered identically to the main transcript.
+ */
+export function UserBubble({ text, queued = false }: { text: string; queued?: boolean }) {
   return (
     <div className="anim-fadeUp flex flex-col items-end gap-1">
       <div
@@ -42,7 +48,7 @@ export function UserBubble({ message, queued = false }: { message: ThreadMessage
           opacity: queued ? 0.72 : 1,
         }}
       >
-        {message.text}
+        {text}
       </div>
       {queued ? (
         <span className="flex items-center gap-1 pr-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-faint">
@@ -103,7 +109,7 @@ export function ThinkingBlock({ text, streaming = false }: { text: string; strea
 }
 
 /** Render a thread's in-flight LIVE turn (token-streamed text, thinking, and grouped tool calls). */
-export function LiveTurnView({ turn }: { turn: LiveTurn }) {
+export function LiveTurnView({ turn, onSelectNode }: { turn: LiveTurn; onSelectNode?: (node: string) => void }) {
   // Collapse runs of consecutive tool blocks into one group; text/thinking break the run.
   const items: Array<{ key: string; node: React.ReactNode }> = [];
   let pending: ToolItem[] = [];
@@ -115,7 +121,23 @@ export function LiveTurnView({ turn }: { turn: LiveTurn }) {
     pending = [];
   };
 
+  // Peel subagent activity out of the live turn: hide its child blocks, render the spawning Task as a card.
+  const sub = indexLiveSubagents(turn.blocks as LiveBlock[]);
+
   for (const b of turn.blocks as LiveBlock[]) {
+    if (sub.childKeys.has(b.key)) continue;
+    if (b.kind === 'tool' && b.toolId && sub.anchorKeys.has(b.key)) {
+      flush();
+      const summary = sub.summaryById.get(b.toolId);
+      if (summary) {
+        const parentId = summary.parentId;
+        items.push({
+          key: b.key,
+          node: <SubagentCard summary={summary} onOpen={() => onSelectNode?.(subagentNode(parentId))} />,
+        });
+      }
+      continue;
+    }
     if (b.kind === 'tool') {
       pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, running: !b.done });
       continue;
@@ -167,9 +189,48 @@ export function LiveIndicator({ text = 'Atlas is working…' }: { text?: string 
 }
 
 /**
- * A harness-injected review block (e.g. Codex plan-review findings seeded by the harness).
- * Visually distinct from both operator bubbles (right-aligned) and Atlas prose (plain markdown):
- * a full-width bordered panel with a small labelled header and the markdown body inside.
+ * A SYSTEM→OPERATOR notice — a runtime/harness message addressed to the OPERATOR, not authored by Atlas
+ * and never seen by it (e.g. "this thread can't be resumed — start a new one"). Deliberately NOT an Atlas
+ * bubble: a full-width warn-toned panel with a "SYSTEM" header so it reads as coming from the harness.
+ */
+export function SystemOperatorNotice({ message }: { message: ThreadMessage }) {
+  return (
+    <div
+      className="anim-fadeUp rounded-[9px] border"
+      style={{ borderColor: 'var(--red-line)', background: 'var(--red-soft)' }}
+    >
+      {/* Header strip */}
+      <div
+        className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
+        style={{
+          borderBottom: '1px solid var(--red-line)',
+          background: 'color-mix(in srgb, var(--red) 10%, transparent)',
+        }}
+      >
+        <span aria-hidden style={{ color: 'var(--red)', fontSize: 11, lineHeight: 1 }}>
+          ⚠
+        </span>
+        <span
+          className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
+          style={{ color: 'var(--red)' }}
+        >
+          System
+        </span>
+        <span className="flex-1" />
+        <span className="font-mono text-[10px] text-faint">harness</span>
+      </div>
+      {/* Markdown body */}
+      <div className="px-3.5 py-3">
+        <Markdown>{message.text}</Markdown>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A harness-injected review block (e.g. Codex plan-review findings — `source='system_shared'`, seen by
+ * both the operator and Atlas). Visually distinct from both operator bubbles (right-aligned) and Atlas
+ * prose (plain markdown): a full-width bordered panel with a small labelled header and the markdown body.
  */
 export function HarnessBubble({ message }: { message: ThreadMessage }) {
   return (

@@ -17,6 +17,7 @@ import type { Repository } from 'typeorm';
 import type { ThreadSandboxEntity } from '../persistence/entities';
 import { AgentSessionManager } from './agent-session-manager.service';
 import { ProvisioningNotReadyError } from '../driver/thread-lifecycle.service';
+import { UNRESUMABLE_SESSION_MARKER } from '../engine/engine.types';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventTriageService } from './event-triage.service';
 import type { EventStimulus } from '../domain';
@@ -40,6 +41,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     persistPlan: vi.fn(),
     route: vi.fn(),
     appendAtlasMessage: vi.fn(),
+    appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
     approve: vi.fn(),
     cancel: vi.fn(),
     reopenScoping: vi.fn(),
@@ -65,6 +67,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
+    threadTicketId: vi.fn().mockResolvedValue(null),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
     resetAllTurnActive: vi.fn().mockResolvedValue(0),
@@ -122,6 +125,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markDelivered: vi.fn().mockResolvedValue(undefined),
     findIncompleteReviews: vi.fn().mockResolvedValue([]),
     findUndeliveredReviews: vi.fn().mockResolvedValue([]),
+    // The finalize_plan gate: default = no round running (the review finished), so finalize is allowed.
+    runningReview: vi.fn().mockResolvedValue(null),
     maxReviewRounds: 3,
   } as unknown as PlanReviewService;
 
@@ -211,6 +216,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.markAwaitingApproval as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.appendReviewFindingsMessage as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockPlanReview.start as ReturnType<typeof vi.fn>).mockResolvedValue({ reviewId: 'rev-r3gate-001', round: 1 });
     (mockPlanReview.runReview as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'complete', findings: '' });
     (mockPlanReview.load as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -380,6 +386,28 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
+  it('finalize_plan: refuses (no card) while a Codex review round is still running', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    // The thread is in plan_review with a locked record, but the background Codex review has not finished.
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'plan_review',
+      title: 'Add rate limiting to the API',
+      decisionRecordId: FAKE_RECORD_ID,
+      repoId: PROJECT_ID,
+      orgId: TEAM_ID,
+    });
+    (mockPlanReview.runningReview as ReturnType<typeof vi.fn>).mockResolvedValue({ round: 2 });
+
+    const result = await tools['finalize_plan']({});
+
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain('still running');
+    // The gate fires BEFORE the approval card is posted (the review must finish first).
+    expect(mockStore.markAwaitingApproval).not.toHaveBeenCalled();
+    expect(mockApprovals.request).not.toHaveBeenCalled();
+  });
+
   it('(a) submit_plan: returns error (no persist) if goal is missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
@@ -528,6 +556,87 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     // The consumed card is flagged so the same Q&A can't attach to a second decision.
     expect(mockStore.updateCardMessage).toHaveBeenCalledWith(THREAD_ID, 'q-123', { loggedDecision: true });
+  });
+
+  it('(f1a) create_decision marks confirmedByOperator true ONLY with an attached answer', async () => {
+    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-1');
+    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: 'question_card',
+      question: 'A or B?',
+      answer: 'A',
+    });
+    (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1' },
+      all: [{ id: 'd1', confirmedByOperator: true }],
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    await tools['create_decision']({ decisionClass: 'data_model', ruling: 'x', confirmedByOperator: true });
+    const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(input.confirmedByOperator).toBe(true);
+  });
+
+  it('(f1b) create_decision coerces confirmedByOperator to false when no answer is attached', async () => {
+    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1' },
+      all: [{ id: 'd1', confirmedByOperator: false }],
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['create_decision']({
+      decisionClass: 'data_model',
+      ruling: 'x',
+      confirmedByOperator: true, // claimed, but no answer on record → coerced false
+    });
+    const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(input.confirmedByOperator).toBe(false);
+    // The result echoes the running provenance balance.
+    expect(result).toMatchObject({ provenance: { confirmed: 0, authored: 1 } });
+  });
+
+  it('(f1c) create_decision defaults confirmedByOperator to false (authored) when the arg is omitted', async () => {
+    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-1');
+    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: 'question_card',
+      question: 'A or B?',
+      answer: 'A',
+    });
+    (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1' },
+      all: [{ id: 'd1' }],
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    await tools['create_decision']({ decisionClass: 'data_model', ruling: 'x' });
+    const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(input.confirmedByOperator).toBe(false);
+  });
+
+  it('(f1d) update_decision promotes to confirmed only with evidence; demotion always allowed', async () => {
+    (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1' },
+      all: [{ id: 'd1' }],
+    });
+    const tools = manager.buildTools(fakeStimulus);
+
+    // Promote with an answer attached → true.
+    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-1');
+    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({ answer: 'A' });
+    await tools['update_decision']({ id: 'd1', confirmedByOperator: true });
+    expect((mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2]).toMatchObject({
+      confirmedByOperator: true,
+    });
+
+    // Promote with NO answer → coerced false.
+    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    await tools['update_decision']({ id: 'd1', confirmedByOperator: true });
+    expect((mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2]).toMatchObject({
+      confirmedByOperator: false,
+    });
+
+    // Explicit demotion is always allowed.
+    await tools['update_decision']({ id: 'd1', confirmedByOperator: false });
+    expect((mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2]).toMatchObject({
+      confirmedByOperator: false,
+    });
   });
 
   it('(f2) the deprecated log_decision alias still creates a decision', async () => {
@@ -686,6 +795,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
       latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),
@@ -785,6 +895,26 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     // The final reply is NOT also persisted as a separate say() — only the "setting up…" line is.
     expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');
+  });
+
+  it('routes an unresumable-session error to a system→operator notice (own box), not an Atlas reply', async () => {
+    const run = vi.fn().mockRejectedValue(
+      new Error(`${UNRESUMABLE_SESSION_MARKER}: engine session ghost not found — cannot resume`),
+    );
+    const { manager, store, surface } = makeManager({ run });
+
+    await manager.handleChatTurn(stimulus);
+
+    // Persisted via the system→operator seam (own box), NOT as an Atlas message.
+    expect(store.appendSystemOperatorMessage as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    // The live post carries `meta.source='system_operator'` so the web renders the dedicated box…
+    const notice = (surface.post as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[2] as { meta?: { source?: string } } | undefined)?.meta?.source === 'system_operator',
+    );
+    expect(notice).toBeTruthy();
+    // …and it does NOT tell the operator to "try again" (retrying is futile).
+    expect(String(notice![1])).not.toContain('try again');
+    expect(String(notice![1]).toLowerCase()).toContain('new thread');
   });
 
   it('serializes concurrent turns for one thread — a follow-up queues, never two engine turns at once', async () => {

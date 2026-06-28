@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -21,9 +22,7 @@ export function atlasEngineHomeDir(
   engine: 'claude' | 'codex',
   sandboxKey: string,
 ): string {
-  // Defensive: never let a key escape the base dir (path traversal / odd chars).
-  const safeKey = sandboxKey.replace(/[^a-z0-9_-]/gi, '_') || 'default';
-  const dir = join(atlasAgentHomeBase(root), safeKey, engine);
+  const dir = join(atlasAgentHomeBase(root), safeHomeKey(sandboxKey), engine);
   // Idempotent — the CLIs expect the dir to exist (they won't create a deep custom path themselves).
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -33,4 +32,24 @@ export function atlasEngineHomeDir(
  * v1 `AGENT_HOME_ROOT`, else `~/.agent-playground/atlas-agent-home`. */
 export function atlasAgentHomeBase(root: string | undefined): string {
   return root ?? join(homedir(), '.agent-playground', 'atlas-agent-home');
+}
+
+/**
+ * The single on-disk directory NAME for a sandbox key (one path component, used by both the Claude
+ * home here and the Codex auth home). Two jobs:
+ *   1. Sanitize — never let a key escape the base dir (path traversal / odd chars → `_`).
+ *   2. Collapse over-long keys to a SHORT, unsplittable token. A raw brain key is
+ *      `brain-<orgUuid>-<repoUuid>-<threadUuid>` — a ~95-char hyphen-run that *looks* segmentable, so
+ *      a model copying a spill-file path under it reliably turns one hyphen into a `/` and the Read
+ *      404s (the dir it invents doesn't exist). We keep a short readable prefix (up to the first `-`,
+ *      capped) then a content hash: one token, no UUID-looking seams to split on, still stable+unique.
+ *      NOTE: this renames homes vs the old raw-key layout, so in-flight resumable sessions whose
+ *      transcript lived under the old path start fresh ONCE (DB transcript is untouched).
+ */
+export function safeHomeKey(sandboxKey: string): string {
+  const safe = sandboxKey.replace(/[^a-z0-9_-]/gi, '_') || 'default';
+  if (safe.length <= 40) return safe;
+  const dash = safe.indexOf('-');
+  const prefix = safe.slice(0, dash > 0 ? Math.min(dash, 12) : 12);
+  return `${prefix}_${createHash('sha256').update(safe).digest('hex').slice(0, 12)}`;
 }

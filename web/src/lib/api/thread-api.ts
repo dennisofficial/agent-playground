@@ -72,10 +72,12 @@ export interface RawThreadMessage {
   text: string;
   kind: string; // 'chat' | 'thinking' | 'tool' | 'card' | 'build_event'
   /**
-   * Message provenance — present on new rows; absent on older rows (treat missing as default).
-   * `'harness'` = injected by the harness (e.g. Codex plan-review findings).
+   * Message provenance, by AUDIENCE — present on new rows; absent on older rows (treat missing as default).
+   * `'system_operator'` = system→operator only (e.g. an unresumable-thread error; Atlas didn't author it
+   * and never sees it). `'system_shared'` = system→operator AND Atlas (e.g. Codex plan-review findings).
+   * Legacy rows may still carry `'harness'` (folded into `system_shared`).
    */
-  source?: 'operator' | 'atlas' | 'harness';
+  source?: 'operator' | 'atlas' | 'system_operator' | 'system_shared' | 'harness';
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -92,11 +94,12 @@ export interface ThreadMessage {
   text: string;
   kind: string;
   /**
-   * Message provenance (may be absent on older rows — normalize applies a default).
-   * `'harness'` = injected by the harness (e.g. Codex plan-review findings); rendered as a
-   * distinct block, NOT as an operator or Atlas bubble.
+   * Message provenance, by AUDIENCE (normalize applies a default for older rows). Both `system_*` kinds
+   * render as their own distinct block, NOT as an operator or Atlas bubble:
+   * `'system_operator'` = system→operator only (e.g. an unresumable-thread error);
+   * `'system_shared'`   = system→operator AND Atlas (e.g. Codex plan-review findings).
    */
-  source: 'operator' | 'atlas' | 'harness';
+  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared';
   card?: WebCard;
   meta?: Record<string, unknown>;
   postedAt: string;
@@ -107,12 +110,13 @@ export interface ThreadMessage {
 }
 
 /**
- * Derive message provenance from the raw row. An explicit `source` wins; for older rows that lack it,
- * the default is `'harness'` only if source is explicitly `'harness'` — otherwise fall back by
- * `isAtlas`: `'atlas'` for assistant messages, `'operator'` for human ones.
+ * Derive message provenance from the raw row. An explicit `source` wins (legacy `'harness'` folds into
+ * `'system_shared'`); for older rows that lack the field, fall back by `isAtlas`: `'atlas'` for assistant
+ * messages, `'operator'` for human ones.
  */
-function deriveSource(r: RawThreadMessage): 'operator' | 'atlas' | 'harness' {
-  if (r.source === 'harness') return 'harness';
+function deriveSource(r: RawThreadMessage): ThreadMessage['source'] {
+  if (r.source === 'system_operator') return 'system_operator';
+  if (r.source === 'system_shared' || r.source === 'harness') return 'system_shared';
   if (r.source === 'atlas' || r.source === 'operator') return r.source;
   // Missing field → infer from isAtlas (backwards-compat with older rows).
   return r.isAtlas ? 'atlas' : 'operator';

@@ -14,6 +14,15 @@ function renderDecision(d: Decision): string {
     lines.push('', `> **Q:** ${d.question}`);
     if (d.answer) lines.push(`> **A:** ${d.answer}`);
   }
+  // PROVENANCE — an explicit, unambiguous status line. Downstream LLM consumers (the Codex plan reviewer,
+  // the step worker) read this file as the locked record; an Atlas-authored DEFAULT must NOT be mistaken
+  // for a settled operator call, so spell it out rather than relying on a glyph.
+  lines.push(
+    '',
+    d.confirmedByOperator
+      ? '**Status:** Confirmed by the operator.'
+      : '**Status:** Authored by Atlas — a provisional default, NOT confirmed by the operator. Treat as not-yet-settled.',
+  );
   return lines.join('\n');
 }
 

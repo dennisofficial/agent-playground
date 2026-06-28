@@ -17,7 +17,7 @@ export type EngineAuth = { secret: string };
 
 /** A normalized progress event, emitted by both engines regardless of native event shape. */
 export type EngineEvent =
-  | { kind: 'text'; text: string }
+  | { kind: 'text'; text: string; parentToolUseId?: string }
   | { kind: 'tool'; name: string; detail?: string }
   | { kind: 'result'; text: string }
   /**
@@ -29,16 +29,32 @@ export type EngineEvent =
   // ── Rich streaming (emitted only when `RunEngineArgs.richStream` is set — the thread BRAIN turn). The
   //    `*_delta` kinds are LIVE-only (token-by-token); the full-block kinds (`text`/`thinking`/`tool_use`/
   //    `tool_result`) are AUTHORITATIVE — the caller persists those as the durable transcript. ──
+  //
+  // `parentToolUseId` (authoritative blocks only): the SDK message's `parent_tool_use_id`. UNSET for the
+  // main agent (the brain); SET to the spawning `Task` tool_use id for blocks produced by a SUBAGENT. The
+  // caller uses it to peel subagent activity out of the main transcript into its own sub-page.
   /** A live assistant-text token chunk (not persisted; reconciled by the final `text` block). */
   | { kind: 'text_delta'; text: string }
   /** A complete thinking block (authoritative — persisted). */
-  | { kind: 'thinking'; text: string }
+  | { kind: 'thinking'; text: string; parentToolUseId?: string }
   /** A live thinking token chunk (not persisted). */
   | { kind: 'thinking_delta'; text: string }
   /** A tool call with its input (authoritative). Pairs with `tool_result` by `id`. */
-  | { kind: 'tool_use'; id: string; name: string; input?: unknown }
+  | {
+      kind: 'tool_use';
+      id: string;
+      name: string;
+      input?: unknown;
+      parentToolUseId?: string;
+    }
   /** A tool result (authoritative). `id` correlates to the `tool_use`. */
-  | { kind: 'tool_result'; id: string; result?: unknown; isError?: boolean };
+  | {
+      kind: 'tool_result';
+      id: string;
+      result?: unknown;
+      isError?: boolean;
+      parentToolUseId?: string;
+    };
 
 /** Vendor-neutral token-usage counts (all optional — engines populate what their SDK reports). */
 export interface EngineUsage {
@@ -151,6 +167,17 @@ export const SANDBOX_RESET_NOTICE = [
   'anything you started in a previous turn is still alive.',
 ].join(' ');
 
+/**
+ * Codex reasoning effort — mirrors `@openai/codex-sdk`'s `ModelReasoningEffort` (v0.137.0). Kept as a
+ * local union so `engine.types.ts` stays SDK-import-free (the SDK is loaded dynamically in-container).
+ */
+export type CodexReasoningEffort =
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh';
+
 export interface RunEngineArgs {
   /** Which engine backs this run. */
   engine: SessionEngine;
@@ -185,6 +212,12 @@ export interface RunEngineArgs {
   auth?: EngineAuth;
   /** Override the model for this run. Falls back to the engine's env/default when unset. */
   model?: string;
+  /**
+   * Codex-only: the reasoning effort for this run (maps to the SDK's `ThreadOptions.modelReasoningEffort`).
+   * Unset → the account/CLI default. The plan-review turn pins `'xhigh'` so the reviewer reasons hard.
+   * (A ChatGPT-account token REJECTS an explicit `model`, but ACCEPTS this knob — verified by spike.)
+   */
+  modelReasoningEffort?: CodexReasoningEffort;
   /** Called for each progress event as the run streams. */
   onEvent?: (e: EngineEvent) => void;
   /**
@@ -250,6 +283,20 @@ export class EngineAuthError extends Error {
     super(message);
     this.name = 'EngineAuthError';
   }
+}
+
+/**
+ * A marker embedded in the thrown error when a stored engine session can't be resumed — its transcript
+ * is missing from the config dir (e.g. the agent-home dir name changed, or the home was cleared). Unlike
+ * a normal turn error, RETRYING is futile: the session state is gone for good and the thread must be
+ * recreated. The marker is plain text so it survives the in-container → host error-frame boundary; the
+ * host matches it via {@link isUnresumableSessionMessage} to show a specific, actionable message.
+ */
+export const UNRESUMABLE_SESSION_MARKER = 'ENGINE_SESSION_UNRESUMABLE';
+
+/** Whether this engine error is an unresumable-session failure (see {@link UNRESUMABLE_SESSION_MARKER}). */
+export function isUnresumableSessionMessage(message: string): boolean {
+  return message.includes(UNRESUMABLE_SESSION_MARKER);
 }
 
 /** Heuristic: does this engine error message look like a credential/401 failure (vs a normal error)? */

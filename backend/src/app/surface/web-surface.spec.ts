@@ -173,6 +173,29 @@ describe('WebSurface — approval card conversion', () => {
     expect(meta?.decisionRecordId).toBe('dr-xyz');
   });
 
+  it('decision provenance (confirmedByOperator) survives the Block Kit → WebApprovalCard reparse', async () => {
+    const card: DecisionApprovalCard = {
+      ...SAMPLE_CARD,
+      decisions: [
+        { decisionClass: 'dependency', title: 'Payment gateway', ruling: 'Stripe', confirmedByOperator: true },
+        { decisionClass: 'api_contract', title: 'Webhook route', ruling: 'POST /webhooks', confirmedByOperator: false },
+      ],
+    };
+    const blocks = decisionApprovalBlocks(card);
+    const outbound = firstValueFrom(surface.outbound$.pipe(take(1)));
+    await surface.post('C-web', `Plan proposal — ${card.title}`, { blocks });
+    const decisions = (await outbound).card!.decisions;
+
+    expect(decisions).toHaveLength(2);
+    const confirmed = decisions.find((d) => d.title === 'Payment gateway');
+    const authored = decisions.find((d) => d.title === 'Webhook route');
+    expect(confirmed?.confirmedByOperator).toBe(true);
+    expect(authored?.confirmedByOperator).toBe(false);
+    // The ruling capture is unaffected by the leading provenance tag.
+    expect(confirmed?.ruling).toBe('Stripe');
+    expect(authored?.ruling).toBe('POST /webhooks');
+  });
+
   it('post() with non-approval blocks does NOT produce a card', async () => {
     const blocks = [{ type: 'track', text: { type: 'mrkdwn', text: 'Hello' } }];
     await surface.post('C-web', 'Hello', { blocks });
