@@ -21,6 +21,36 @@ import go from 'highlight.js/lib/languages/go';
 import rust from 'highlight.js/lib/languages/rust';
 import dockerfile from 'highlight.js/lib/languages/dockerfile';
 import ini from 'highlight.js/lib/languages/ini';
+import type { HLJSApi, Language } from 'highlight.js';
+
+/**
+ * Minimal Terraform/HCL grammar — highlight.js core ships no HCL, but infra threads read `.tf` files
+ * constantly. Covers the parts that read at a glance per-line: block keywords, literals, quoted strings
+ * (with interpolation), hash/slash/block comments, numbers, and `attr =` keys.
+ */
+function terraform(hljs: HLJSApi): Language {
+  return {
+    name: 'Terraform',
+    aliases: ['tf', 'hcl'],
+    keywords: {
+      keyword: 'resource variable module data output provider locals terraform for for_each count depends_on dynamic if else',
+      literal: 'true false null',
+    },
+    contains: [
+      hljs.HASH_COMMENT_MODE,
+      hljs.COMMENT('//', '$'),
+      hljs.COMMENT('/\\*', '\\*/'),
+      {
+        className: 'string',
+        begin: '"',
+        end: '"',
+        contains: [{ className: 'subst', begin: /\$\{/, end: /\}/ }],
+      },
+      hljs.NUMBER_MODE,
+      { className: 'attr', begin: /[\w-]+(?=\s*=[^=])/ },
+    ],
+  };
+}
 
 let registered = false;
 function ensureRegistered() {
@@ -39,6 +69,7 @@ function ensureRegistered() {
   hljs.registerLanguage('rust', rust);
   hljs.registerLanguage('dockerfile', dockerfile);
   hljs.registerLanguage('ini', ini);
+  hljs.registerLanguage('terraform', terraform);
   registered = true;
 }
 
@@ -57,6 +88,7 @@ const EXT_LANG: Record<string, string> = {
   go: 'go',
   rs: 'rust',
   toml: 'ini', ini: 'ini', env: 'ini',
+  tf: 'terraform', tfvars: 'terraform', hcl: 'terraform',
 };
 
 /** The highlight.js language for a path, or `null` when unknown (caller renders plain escaped text). */

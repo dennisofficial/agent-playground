@@ -42,6 +42,19 @@ function aggregateDiffstat(tools: ToolItem[]): ToolBadge {
   return sawDiffstat ? { kind: 'diffstat', added, removed: sawRemoved ? removed : null } : null;
 }
 
+/** Sum the line counts across a group's tool calls (Read) into one badge — null if none. */
+function aggregateLines(tools: ToolItem[]): ToolBadge {
+  let n = 0;
+  let saw = false;
+  for (const t of tools) {
+    const badge = resolveHandler(t.name, t.input).describe(t).badge;
+    if (badge?.kind !== 'lines') continue;
+    saw = true;
+    n += badge.n;
+  }
+  return saw ? { kind: 'lines', n } : null;
+}
+
 export type { ToolItem } from './types';
 
 /**
@@ -128,11 +141,18 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
     .join(' · ');
   const count = tools.length;
   const totalStat = aggregateDiffstat(tools);
+  const totalLines = aggregateLines(tools);
   const allFiles = tools.every((t) => isFileEditTool(t.name));
+  // How many of the grouped files are newly created (their row carries a "NEW" pill) — rolled up onto
+  // the collapsed header alongside the diffstat, mirroring the per-row tags.
+  const newCount = tools.reduce((n, t) => (resolveHandler(t.name, t.input).describe(t).pill === 'NEW' ? n + 1 : n), 0);
   const label = allFiles
     ? `${count} ${count === 1 ? 'file' : 'files'} changed`
     : `${count} ${count === 1 ? 'tool' : 'tools'} called`;
+  // Rollups show ONLY while collapsed (open, each row carries its own tags, so they'd be redundant).
   const showStat = totalStat && (!allFiles || !open);
+  const showNew = allFiles && !open && newCount > 0;
+  const showLines = totalLines && !open;
 
   return (
     <div className="anim-fadeUp my-px">
@@ -144,7 +164,9 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
         <Chevron size={12} className={`text-faint ${open ? 'rotate-90' : ''}`} />
         <span className="shrink-0 font-semibold text-dim transition group-hover:text-text">{label}</span>
         <span className="flex-1 truncate font-mono text-[11px] text-faint">{preview}</span>
+        {showNew ? <NewPill text={newCount === count ? 'NEW' : `${newCount} NEW`} size="group" /> : null}
         {showStat ? <Badge badge={totalStat} size="group" /> : null}
+        {showLines ? <Badge badge={totalLines} /> : null}
         {anyRunning ? (
           <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
         ) : null}

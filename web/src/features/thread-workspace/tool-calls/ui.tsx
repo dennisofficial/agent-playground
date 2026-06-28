@@ -76,6 +76,42 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
           <path d="M21 21l-4.3-4.3" />
         </svg>
       );
+    case 'todo':
+      // checklist with ticks
+      return (
+        <svg {...common}>
+          <path d="M11 6h9" />
+          <path d="M11 12h9" />
+          <path d="M11 18h9" />
+          <path d="M3.5 6.5l1.2 1.2L7 5.5" />
+          <path d="M3.5 12.5l1.2 1.2L7 11.5" />
+          <path d="M3.5 18.5l1.2 1.2L7 17.5" />
+        </svg>
+      );
+    case 'web':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18" />
+          <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
+        </svg>
+      );
+    case 'task':
+      // sparkle — a spawned sub-agent
+      return (
+        <svg {...common}>
+          <path d="M12 3l1.7 4.8L18.5 9.5l-4.8 1.7L12 16l-1.7-4.8L5.5 9.5l4.8-1.7L12 3z" />
+        </svg>
+      );
+    case 'plan':
+      // clipboard-check
+      return (
+        <svg {...common}>
+          <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+          <path d="M9 5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1H9V5z" />
+          <path d="M9 14l2 2 3.5-3.5" />
+        </svg>
+      );
     case 'mcp':
     default:
       return (
@@ -89,11 +125,12 @@ export function ToolIcon({ kind, color }: { kind: IconKind; color: string }) {
   }
 }
 
-/** An add-toned pill before the badge — e.g. "NEW" on a Write row. */
-export function NewPill({ text }: { text: string }) {
+/** An add-toned pill before the badge — e.g. "NEW" on a Write row, or "N NEW" rolled up on a group. */
+export function NewPill({ text, size = 'row' }: { text: string; size?: 'group' | 'row' }) {
+  const dims = size === 'group' ? 'text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]' : 'text-[9px] px-1.5 py-px rounded-[4px]';
   return (
     <span
-      className="shrink-0 rounded-[4px] px-1.5 py-px font-mono text-[9px] font-bold"
+      className={`shrink-0 font-mono font-bold ${dims}`}
       style={{ color: 'var(--add)', background: 'var(--add-bg)', border: '1px solid var(--add-gut)' }}
     >
       {text}
@@ -115,7 +152,15 @@ export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group
     );
   }
   if (badge.kind === 'lines') {
-    return <span className="shrink-0 font-mono text-[10px] text-faint">{badge.n} ln</span>;
+    // Neutral gray pill — e.g. the line count read off a Read row.
+    return (
+      <span
+        className="shrink-0 rounded-[4px] px-[6px] py-[0.5px] font-mono text-[9.5px] font-semibold tabular-nums"
+        style={{ color: 'var(--dim)', background: 'var(--surface-3)', border: '1px solid var(--border)' }}
+      >
+        {badge.n} ln
+      </span>
+    );
   }
   // diffstat — chip pills; the minus glyph is U+2212, not a hyphen.
   const chip = size === 'group' ? 'text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]' : 'text-[9.5px] px-[5px] py-[0.5px] rounded-[4px]';
@@ -133,15 +178,62 @@ export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group
   );
 }
 
-/** Dark terminal output block — for shell/file/search tool results. Capped + scrolls past ~14 lines. */
-export function TerminalBlock({ body }: { body: string }) {
+/** A shell prompt line (bash-highlighted) above terminal output — the command as if we'd typed it. */
+function CommandPrompt({ command }: { command: string }) {
+  const lines = command.replace(/\n$/, '').split('\n');
   return (
-    <pre
-      className="my-[3px] ml-0 overflow-auto whitespace-pre rounded-[7px] px-[11px] py-[9px] font-mono text-[10.5px] leading-[1.8]"
-      style={{ background: 'var(--term)', color: 'var(--term-dim)', maxHeight: CODE_MAX_HEIGHT }}
-    >
-      {body}
-    </pre>
+    <div className="mb-1.5">
+      {lines.map((line, i) => (
+        <div key={i} className="flex">
+          <span className="shrink-0 select-none pr-2" style={{ color: 'var(--term-add)' }}>
+            {i === 0 ? '$' : NBSP}
+          </span>
+          <CodeText code={line} lang="bash" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Dark terminal output block — for shell/search tool results. Capped + scrolls past ~14 lines.
+ * `chrome` adds a macOS-window title bar (traffic-light dots + optional `label`); `command` prints a
+ * bash-highlighted `$` prompt above the output, so the Bash row reads as a real terminal session.
+ * Grep/Glob keep the plain block.
+ */
+export function TerminalBlock({
+  body,
+  chrome = false,
+  label,
+  command,
+}: {
+  body: string;
+  chrome?: boolean;
+  label?: string;
+  command?: string;
+}) {
+  return (
+    <div className="my-[3px] overflow-hidden rounded-[7px]" style={{ background: 'var(--term)', border: '1px solid var(--term-border)' }}>
+      {chrome ? (
+        <div className="flex items-center gap-[6px] px-[11px] py-[6px]" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#ff5f57' }} />
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#febc2e' }} />
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: '#28c840' }} />
+          <span className="flex-1" />
+          {label ? (
+            <span className="font-mono text-[10px] lowercase" style={{ color: 'var(--term-dim)' }}>
+              {label}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="overflow-auto px-[11px] py-[9px] font-mono text-[10.5px] leading-[1.8]" style={{ maxHeight: CODE_MAX_HEIGHT }}>
+        {command ? <CommandPrompt command={command} /> : null}
+        <pre className="m-0 whitespace-pre" style={{ color: 'var(--term-dim)' }}>
+          {body}
+        </pre>
+      </div>
+    </div>
   );
 }
 
@@ -275,27 +367,100 @@ export function DiffView({ before, after, lang = null }: { before: string; after
   );
 }
 
+/** A numbered code listing on the dark frame: right-aligned line-number gutter + highlighted code. */
+function CodeListing({
+  rows,
+  lang,
+  leftAccent = false,
+}: {
+  rows: Array<{ no: number | string; code: string }>;
+  lang: string | null;
+  leftAccent?: boolean;
+}) {
+  // Size the gutter to the widest line number so big-file numbers don't wrap or clip.
+  const widest = rows.reduce((m, r) => Math.max(m, String(r.no).length), 0);
+  const gutter = Math.max(30, widest * 7 + 16);
+  return (
+    <div
+      className="my-[3px] overflow-hidden rounded-[7px]"
+      style={{
+        background: 'var(--term)',
+        border: '1px solid var(--term-border)',
+        ...(leftAccent ? { borderLeft: '3px solid var(--term-add)' } : {}),
+      }}
+    >
+      <div className="overflow-auto py-2 font-mono text-[11px]" style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}>
+        {rows.map((r, i) => (
+          <div key={i} className="flex">
+            <span className="shrink-0 text-right tabular-nums" style={{ width: gutter, padding: '0 8px', color: 'var(--term-dim)', opacity: 0.7 }}>
+              {r.no === '' ? NBSP : r.no}
+            </span>
+            <CodeText code={r.code} lang={lang} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * A created-file listing — the body of a Write tool row. Dark frame, single right-aligned gutter, no
  * `+/−` signs (the green left border conveys "new"), syntax highlighting via `lang`, same scroll window
  * as {@link DiffView}.
  */
 export function WriteFileView({ content, lang = null }: { content: string; lang?: string | null }) {
-  const lines = splitLines(content);
+  const rows = splitLines(content).map((code, i) => ({ no: i + 1, code }));
+  return <CodeListing rows={rows} lang={lang} leftAccent />;
+}
+
+/**
+ * A read-file listing — the body of a Read tool row. Claude Code returns the file as `<n>\t<line>`
+ * lines; we split off that gutter so the code can be syntax-highlighted and the real (file) line
+ * numbers are preserved. Non-numbered lines (e.g. a trailing truncation note) keep a blank gutter.
+ */
+export function ReadFileView({ result, lang = null }: { result: string; lang?: string | null }) {
+  const rows = splitLines(result).map((line) => {
+    const tab = line.indexOf('\t');
+    if (tab > 0 && /^\d+$/.test(line.slice(0, tab))) return { no: line.slice(0, tab), code: line.slice(tab + 1) };
+    return { no: '' as const, code: line };
+  });
+  return <CodeListing rows={rows} lang={lang} />;
+}
+
+/**
+ * A grep match listing — the body of a Grep tool row in `-n` content mode. Ripgrep prints `<n>:<match>`
+ * (and `<n>-<context>`) when one file is searched; we split that gutter off and highlight the match
+ * with the file's `lang`. Only used for the single-file numbered case (the handler detects it);
+ * multi-file / files-with-matches output stays a plain terminal block.
+ */
+export function GrepView({ result, lang = null }: { result: string; lang?: string | null }) {
+  const rows = splitLines(result).map((line) => {
+    const m = /^(\d+)[:-](.*)$/.exec(line);
+    return m ? { no: m[1], code: m[2] } : { no: '' as const, code: line };
+  });
+  return <CodeListing rows={rows} lang={lang} />;
+}
+
+/**
+ * A path listing — the body of a Glob tool row. Glob returns matching file paths (not code, so nothing
+ * to syntax-highlight); we dim the directory and keep the filename bright so the matches scan quickly.
+ */
+export function PathListView({ result }: { result: string }) {
+  const lines = splitLines(result);
   return (
-    <div
-      className="my-[3px] overflow-hidden rounded-[7px]"
-      style={{ background: 'var(--term)', border: '1px solid var(--term-border)', borderLeft: '3px solid var(--term-add)' }}
-    >
-      <div className="overflow-auto py-2 font-mono text-[11px]" style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}>
-        {lines.map((code, i) => (
-          <div key={i} className="flex">
-            <span className="shrink-0 text-right tabular-nums" style={{ width: 30, padding: '0 8px', color: 'var(--term-dim)', opacity: 0.7 }}>
-              {i + 1}
-            </span>
-            <CodeText code={code} lang={lang} />
-          </div>
-        ))}
+    <div className="my-[3px] overflow-hidden rounded-[7px]" style={{ background: 'var(--term)', border: '1px solid var(--term-border)' }}>
+      <div className="overflow-auto px-[11px] py-2 font-mono text-[11px]" style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}>
+        {lines.map((line, i) => {
+          const cut = line.lastIndexOf('/');
+          const dir = cut >= 0 ? line.slice(0, cut + 1) : '';
+          const base = cut >= 0 ? line.slice(cut + 1) : line;
+          return (
+            <div key={i} className="whitespace-pre">
+              {dir ? <span style={{ color: 'var(--term-dim)' }}>{dir}</span> : null}
+              <span style={{ color: 'var(--term-fg)' }}>{base || NBSP}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

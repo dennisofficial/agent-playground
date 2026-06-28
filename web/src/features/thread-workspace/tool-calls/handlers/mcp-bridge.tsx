@@ -2,7 +2,7 @@
 
 import { BRIDGE_TOOL_LABELS } from '../constants';
 import type { ToolHandler, ToolItem } from '../types';
-import { argsOf, formatPayload, isBridgeTool, mcpName, resultLineCount } from '../util';
+import { argsOf, formatPayload, isBridgeTool, mcpName } from '../util';
 import { StructuredPanel } from '../ui';
 
 function BridgeBody({ tool }: { tool: ToolItem }) {
@@ -20,7 +20,6 @@ export const mcpBridgeHandler: ToolHandler = {
   describe: (tool) => {
     const bare = mcpName(tool.name);
     const label = BRIDGE_TOOL_LABELS[bare] ?? bare;
-    const n = resultLineCount(tool.result);
     return {
       icon: 'mcp',
       label: '',
@@ -28,7 +27,7 @@ export const mcpBridgeHandler: ToolHandler = {
       preview: label,
       color: 'var(--blue)',
       isMcp: true,
-      badge: tool.isError ? { kind: 'error' } : n ? { kind: 'lines', n } : null,
+      badge: tool.isError ? { kind: 'error' } : null,
     };
   },
   Body: BridgeBody,
