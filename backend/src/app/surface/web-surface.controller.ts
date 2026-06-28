@@ -473,7 +473,7 @@ export class WebSurfaceController {
    * or already-delivered card no-ops, so it never mints a second delivery turn). On the first valid answer
    * it stamps the durable answered state onto the card row (renders answered on reload) and injects the
    * answer as a normal operator reply, which fires the next brain turn — its success tail stamps the card
-   * delivered + clears the gate, and `log_decision` auto-attaches the Q&A.
+   * delivered + clears the gate, and `create_decision` auto-attaches the Q&A.
    */
   @Post('orgs/:orgId/repos/:repoId/threads/:threadId/answer-question')
   @UseGuards(OrgMembershipGuard)

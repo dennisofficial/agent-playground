@@ -39,6 +39,7 @@ import { TicketService } from '../tickets';
 import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../domain/ticket';
 import type { Decision } from '../domain';
+import { nextDecisionId } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
@@ -116,16 +117,18 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
-    `You have 16 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
+    `You have 18 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
     `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
     `ALWAYS call the qualified name (e.g. mcp__${BRIDGE_SERVER_NAME}__submit_plan); the bare name`,
     '(e.g. submit_plan) is NOT a registered tool and will fail with "No such tool available". The prose',
     `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
-    'form. The 16 tools:',
+    'form. The 18 tools:',
     `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator ONE formal question (renders as a card; see GRILLING)`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__log_decision         — record a locked always-ask decision (auto-attaches the last answered question)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (auto-attaches the last answered question); returns its stable id`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__delete_decision      — drop a locked decision BY ID`,
     `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read the locked decisions + working set for this thread`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read back the locked decisions (RECOVERY ONLY — see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
     `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — propose the full multi-track plan for approval (FULL PATH; see below)`,
@@ -180,11 +183,16 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     '    allowOther is true, the default). Set `decisionClass` when the question settles an always-ask class.',
     '  • After calling it, STOP and wait — do not ask anything else that turn. The operator answers the card',
     '    (or replies in prose); that fires your next turn with their answer.',
-    'LOG EACH DECISION AS IT LOCKS: the moment an answer settles an always-ask decision, call',
-    '`log_decision({ decisionClass, ruling, title? })`. It AUTO-ATTACHES the question you just asked and the',
-    'operator\'s answer — do NOT restate them. Log it BEFORE asking your next question. Re-call log_decision',
-    'with the same decisionClass + title to REVISE a ruling. This is what fills the decision record (below);',
-    'submit_plan reads these logged decisions, so you do NOT pass decisions to submit_plan.',
+    'LOCK EACH DECISION AS IT SETTLES: the moment an answer settles an always-ask decision, call',
+    '`create_decision({ decisionClass, ruling, title? })`. It AUTO-ATTACHES the question you just asked and the',
+    'operator\'s answer — do NOT restate them. Lock it BEFORE asking your next question. The call RETURNS the',
+    'fully-resolved decision — its stable `id` plus the attached Q&A — so you now hold the exact stored record',
+    'in context. To change a ruling later call `update_decision({ id, ruling? / title? / decisionClass? })`; to',
+    'drop one call `delete_decision({ id })`. NEVER re-create to revise (that just adds a duplicate). This is',
+    'what fills the decision record (below); submit_plan reads these decisions, so you do NOT pass them to it.',
+    'YOU ALREADY HAVE THE RECORD: because every create/update/delete_decision return is in your context, the',
+    'whole working set is too — do NOT call get_decision_record to "double-check" before submit_plan. That tool',
+    'is RECOVERY ONLY: use it solely if this session was resumed/compacted and the earlier returns are gone.',
     '',
     'THE /context SHARED FOLDER: `/context` is a durable, per-thread space OUTSIDE the repo, shared with the',
     'build sessions. THREE buckets, split by who authors them:',
@@ -197,11 +205,11 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     '    The operator watches these fill in; revise as decisions change things.',
     '    CADENCE — write a track\'s `sections/NN.md` (and grow the `plan.md` index) the MOMENT its shape settles',
     '    (its files are open and its decisions are logged), BEFORE you scope the next — the same rhythm as',
-    '    log_decision. By the time the last decision locks the spec files are near-complete. A STEP you have',
+    '    create_decision. By the time the last decision locks the spec files are near-complete. A STEP you have',
     '    fully investigated but not yet written as an execute-ready `#### N.M` block is unfinished work. The',
     '    `# <goal>` H1 may be revised until you submit.',
     '  • `/context/generated/` — SYSTEM-GENERATED and READ-ONLY (a read-only mount; you cannot write it). The',
-    '    decisions you lock via `log_decision` are rendered here as `decision-record.md`, live, on every call.',
+    '    decisions you lock via `create_decision` are rendered here as `decision-record.md`, live, on every call.',
     '    Do NOT try to author or edit anything here — it is maintained for you through your tool calls.',
     '  • `/context/artifacts/` — OUTPUTS for the human: preview HTML, screenshots, reports (never the repo).',
     'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
@@ -252,14 +260,14 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     '  stage selected by the track\'s TYPE; `## Validation` says what success looks like, not how it is reviewed.',
     '',
     '`submit_plan` does NOT author the plan; it FLIPS the thread to approval-awaiting and posts the approval',
-    'card. Ensure `/context/specs/plan.md` is complete and all always-ask decisions are logged via log_decision',
+    'card. Ensure `/context/specs/plan.md` is complete and all always-ask decisions are locked via create_decision',
     'FIRST, then call submit_plan with:',
     '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
     '  - overview: intent + stack + constraints',
     '  - tracks: the ordered tracks, each `{ title, type, steps: [{ title, brief }] }`. `type` = the track\'s',
     '    scope — backend | frontend | docs | testing | analytics | infra (or another short label if none fit);',
     '    it SELECTS the review agents. `brief` = the execute-ready step instruction (PLAN DEPTH). ≥1 step/track.',
-    '  (No `decisions` arg — submit_plan reads the decisions you logged via log_decision. Pass `decisions`',
+    '  (No `decisions` arg — submit_plan reads the decisions you locked via create_decision. Pass `decisions`',
     '   ONLY to authoritatively replace the whole set, e.g. after request-changes pruned some.)',
     'TRACK & STEP GRANULARITY: a TRACK is a SCOPE-TYPED layer that ends in a self-review/auto-fix pass — a',
     'slice you could demo or review on its own, and its `type` (backend/frontend/docs/testing/analytics/infra)',
@@ -267,7 +275,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'several tracks (backend is ONE track, not one per file). A STEP is one focused unit an engineer finishes',
     'in one sitting — GROUP naturally-related edits (a column + its DTO; a component + its hook) into one step;',
     'do NOT make a step per file. Prefer ~2–5 steps per track; a tiny track is ONE step.',
-    'SELF-CHECK before submit_plan: every applicable always-ask decision logged? does each track have a `type`?',
+    'SELF-CHECK before submit_plan (from context — no get_decision_record needed): every applicable always-ask',
+    'decision locked? does each track have a `type`?',
     'could a fresh engine turn build EACH STEP from its `#### N.M` brief ALONE — exact `path:line` anchors,',
     'concrete code/signatures for the hard edits, runnable verification — with ZERO further questions to you?',
     'is it grounded in files you actually opened (not guessed)? is the `goal` a single clear line? Do NOT add',
@@ -367,7 +376,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
    *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
   private async runChatTurnInner(stimulus: ChatStimulus): Promise<void> {
     // If this operator message answers an outstanding `ask_question` card typed in prose (rather than
-    // clicked), stamp that card answered so `log_decision` can auto-attach the Q&A. No-op when the answer
+    // clicked), stamp that card answered so `create_decision` can auto-attach the Q&A. No-op when the answer
     // came through `/answer-question` (it pre-stamps) or there is no pending question.
     await this.linkTypedQuestionAnswer(stimulus);
 
@@ -620,6 +629,46 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
    * Build the 6 tool impls for a chat turn, all scoped to the stimulus's thread/team/project.
    */
   buildTools(stimulus: ChatStimulus): Record<string, ToolImpl> {
+    // CREATE a decision (shared by `create_decision` and the deprecated `log_decision` alias). Auto-attaches
+    // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
+    // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
+    // record, and returns the FULLY-RESOLVED decision (id + attached Q&A) — so the brain holds ground truth
+    // in context and never needs a read-back before submit_plan.
+    const createDecision: ToolImpl = async (args) => {
+      const decisionClass = asDecisionClass(args['decisionClass']);
+      const ruling = String(args['ruling'] ?? '').trim();
+      if (!decisionClass) {
+        return {
+          ok: false,
+          reason:
+            'decisionClass must be one of: data_model | api_contract | dependency | infrastructure | ' +
+            'cross_cutting | one_way_door',
+        };
+      }
+      if (!ruling) return { ok: false, reason: 'ruling is required' };
+
+      const answeredId = await this.store.awaitingQuestionId(stimulus.threadId);
+      const answeredCard = answeredId
+        ? (await this.store.getQuestionCard(stimulus.threadId, answeredId)) ?? undefined
+        : undefined;
+      const hasAnswer = answeredCard?.answer != null;
+      const title =
+        String(args['title'] ?? '').trim() ||
+        deriveDecisionTitle(hasAnswer ? answeredCard!.question : ruling);
+      const { decision, all } = await this.store.createDecision(stimulus.threadId, {
+        decisionClass,
+        title,
+        ruling,
+        ...(hasAnswer && answeredCard!.question ? { question: answeredCard!.question } : {}),
+        ...(hasAnswer ? { answer: answeredCard!.answer } : {}),
+      });
+      if (answeredId && hasAnswer) {
+        await this.store.updateCardMessage(stimulus.threadId, answeredId, { loggedDecision: true });
+      }
+      await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
+      return { ok: true, decision, total: all.length };
+    };
+
     return {
       get_pipeline_state: async (_args) => {
         return this.driverStore.getPipelineState(stimulus.threadId, stimulus.orgId);
@@ -704,49 +753,63 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
           questionId,
           message:
             'Question posted to the operator as a card. Stop and wait for their answer — do not ask ' +
-            'anything else this turn. When their answer settles an always-ask decision, call log_decision.',
+            'anything else this turn. When their answer settles an always-ask decision, call create_decision.',
         };
       },
 
-      log_decision: async (args) => {
-        const decisionClass = asDecisionClass(args['decisionClass']);
-        const ruling = String(args['ruling'] ?? '').trim();
-        if (!decisionClass) {
-          return {
-            ok: false,
-            reason:
-              'decisionClass must be one of: data_model | api_contract | dependency | infrastructure | ' +
-              'cross_cutting | one_way_door',
-          };
+      create_decision: createDecision,
+      // Deprecated alias: a session resumed mid-grill (session_id persists across turns) may still emit
+      // the old name — keep it working so it doesn't fail with "No such tool". Drop once no live session
+      // references it. Not advertised in the prompt's tool list (the model should prefer create_decision).
+      log_decision: createDecision,
+
+      update_decision: async (args) => {
+        const id = String(args['id'] ?? '').trim();
+        if (!id) return { ok: false, reason: 'id is required' };
+        // Validate decisionClass when present — an unrecognized class would persist but then be silently
+        // dropped by the record renderer's class grouping. ruling/title are free text.
+        const patch: Partial<Pick<Decision, 'ruling' | 'title' | 'decisionClass'>> = {};
+        if (args['decisionClass'] !== undefined) {
+          const decisionClass = asDecisionClass(args['decisionClass']);
+          if (!decisionClass) {
+            return {
+              ok: false,
+              reason:
+                'decisionClass must be one of: data_model | api_contract | dependency | infrastructure | ' +
+                'cross_cutting | one_way_door',
+            };
+          }
+          patch.decisionClass = decisionClass;
         }
-        if (!ruling) return { ok: false, reason: 'ruling is required' };
+        if (args['ruling'] !== undefined) {
+          const ruling = String(args['ruling'] ?? '').trim();
+          if (!ruling) return { ok: false, reason: 'ruling cannot be blank' };
+          patch.ruling = ruling;
+        }
+        if (args['title'] !== undefined) {
+          const title = String(args['title'] ?? '').trim();
+          if (!title) return { ok: false, reason: 'title cannot be blank' };
+          patch.title = title;
+        }
 
-        // Auto-attach the question the operator just answered. Sourced AUTHORITATIVELY from the thread's
-        // human-input gate pointer (set when the question opened, still pointing at it through this
-        // delivery turn) rather than a "latest answered card" scan — no race when several questions exist.
-        // Durable: survives a host restart (the pointer + answer are both persisted).
-        const answeredId = await this.store.awaitingQuestionId(stimulus.threadId);
-        const answeredCard = answeredId
-          ? (await this.store.getQuestionCard(stimulus.threadId, answeredId)) ?? undefined
-          : undefined;
-        const hasAnswer = answeredCard?.answer != null;
-        const title =
-          String(args['title'] ?? '').trim() ||
-          deriveDecisionTitle(hasAnswer ? answeredCard!.question : ruling);
-        const decision: Decision = {
-          decisionClass,
-          title,
-          ruling,
-          ...(hasAnswer && answeredCard!.question ? { question: answeredCard!.question } : {}),
-          ...(hasAnswer ? { answer: answeredCard!.answer } : {}),
-        };
+        const result = await this.store.updateDecision(stimulus.threadId, id, patch);
+        if (!result) {
+          const pending = await this.store.pendingDecisions(stimulus.threadId);
+          return { ok: false, reason: `no decision with id "${id}"`, knownIds: pending.map((d) => d.id) };
+        }
+        await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, result.all);
+        return { ok: true, decision: result.decision, total: result.all.length };
+      },
 
-        const all = await this.store.appendDecision(stimulus.threadId, decision);
-        if (answeredId && hasAnswer) {
-          await this.store.updateCardMessage(stimulus.threadId, answeredId, { loggedDecision: true });
+      delete_decision: async (args) => {
+        const id = String(args['id'] ?? '').trim();
+        if (!id) return { ok: false, reason: 'id is required' };
+        const { removed, all } = await this.store.deleteDecision(stimulus.threadId, id);
+        if (!removed) {
+          return { ok: false, reason: `no decision with id "${id}"`, knownIds: all.map((d) => d.id) };
         }
         await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
-        return { ok: true, totalDecisions: all.length, title };
+        return { ok: true, removed: id, remainingIds: all.map((d) => d.id) };
       },
 
       submit_plan: async (args) => {
@@ -754,7 +817,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         // The one-line goal of the whole thread — the SAME text Atlas writes as plan.md's `# <H1>`.
         // Becomes the thread title (durable + live `thread_meta` frame, see requestApprovalAndAct).
         const goal = String(args['goal'] ?? '').trim();
-        // Decisions are LOGGED incrementally during grilling (log_decision → pending_decisions). Source
+        // Decisions are LOCKED incrementally during grilling (create_decision → pending_decisions). Source
         // them from the working set; an explicit `decisions` arg, if given, is an authoritative override.
         const decisions =
           args['decisions'] != null
@@ -889,7 +952,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
           : [];
-        // Honor decisions logged during grilling (log_decision → pending_decisions); an explicit arg overrides.
+        // Honor decisions locked during grilling (create_decision → pending_decisions); an explicit arg overrides.
         const decisions =
           args['decisions'] != null
             ? normalizeDecisions(args['decisions'])
@@ -1122,7 +1185,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
   /**
    * (Re)generate the thread's `decision-record.md` from its working-set decisions and write it to the
    * READ-ONLY `/context/generated/` bucket (host-side path; the container sees `/context/generated` as a
-   * read-only mount). Called on every `log_decision`, so the file stays incremental + in lockstep with
+   * read-only mount). Called on every decision mutation, so the file stays incremental + in lockstep with
    * the structured `pending_decisions` — coding agents read it for grounding but never author it.
    */
   private async writeDecisionRecordMd(
@@ -1138,7 +1201,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
   /**
    * Typed-reply fallback for formal questions: if the operator answered an outstanding `ask_question`
    * card in PROSE (the composer) rather than clicking it, stamp that card's durable answered state with
-   * the message text so `log_decision` can still auto-attach the Q&A. No-op when there is no pending
+   * the message text so `create_decision` can still auto-attach the Q&A. No-op when there is no pending
    * question or it was already answered (e.g. via the `/answer-question` endpoint, which pre-stamps).
    */
   private async linkTypedQuestionAnswer(stimulus: ChatStimulus): Promise<void> {
@@ -1417,16 +1480,25 @@ function bootDeliveryStimulus(q: {
 /** Normalize a raw `decisions` tool arg into typed locked decisions (drops malformed entries). */
 function normalizeDecisions(raw: unknown): Decision[] {
   const arr = Array.isArray(raw) ? raw : [];
-  return arr
-    .filter(
-      (d): d is { decisionClass: string; title: string; ruling: string } =>
-        typeof d === 'object' && d !== null && 'decisionClass' in d && 'title' in d && 'ruling' in d,
-    )
-    .map((d) => ({
-      decisionClass: d.decisionClass as Decision['decisionClass'],
-      title: d.title,
-      ruling: d.ruling,
-    }));
+  const candidates = arr.filter(
+    (d): d is Record<string, unknown> =>
+      typeof d === 'object' && d !== null && 'decisionClass' in d && 'title' in d && 'ruling' in d,
+  );
+  // Preserve id/question/answer (this override path otherwise regresses the "fully resolved decision"
+  // contract); assign a fresh stable id to any entry missing one, unique across the produced set.
+  const out: Decision[] = [];
+  for (const d of candidates) {
+    const id = typeof d['id'] === 'string' && d['id'] ? (d['id'] as string) : nextDecisionId(out);
+    out.push({
+      id,
+      decisionClass: d['decisionClass'] as Decision['decisionClass'],
+      title: String(d['title']),
+      ruling: String(d['ruling']),
+      ...(typeof d['question'] === 'string' ? { question: d['question'] } : {}),
+      ...(typeof d['answer'] === 'string' ? { answer: d['answer'] } : {}),
+    });
+  }
+  return out;
 }
 
 /** A short job title from a summary line. */

@@ -223,7 +223,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(row).toMatchObject({ status: 'open', origin: 'control', title: 'follow-up', base_branch: 'main' });
   }, 30_000);
 
-  it('logs decisions into the working set (upsert by class+title) and reads them back via the answered card', async () => {
+  it('CRUDs decisions in the working set by stable id and reads them back via the answered card', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
@@ -254,22 +254,41 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const answered = await store.latestAnsweredQuestionCard(threadId);
     expect((answered?.card as { answer?: string } | null)?.answer).toBe('Editable');
 
-    // Log a decision, then re-log the same (class, title) → REVISES (not duplicates).
-    await store.appendDecision(threadId, {
+    // CREATE two decisions → stable sequential ids d1, d2 (id-addressed, not class+title keyed).
+    const first = await store.createDecision(threadId, {
       decisionClass: 'data_model',
       title: 'Subdomain',
       ruling: 'fixed at checkout',
     });
-    const after = await store.appendDecision(threadId, {
+    expect(first.decision.id).toBe('d1');
+    const second = await store.createDecision(threadId, {
       decisionClass: 'data_model',
-      title: 'Subdomain',
+      title: 'Subdomain', // same class+title is allowed now (distinct ids)
       ruling: 'editable in Network tab',
       question: 'Editable or fixed?',
       answer: 'Editable',
     });
-    expect(after).toHaveLength(1);
-    expect(after[0]).toMatchObject({ ruling: 'editable in Network tab', answer: 'Editable' });
-    expect(await store.pendingDecisions(threadId)).toHaveLength(1);
+    expect(second.decision.id).toBe('d2');
+    expect(second.all).toHaveLength(2);
+
+    // UPDATE by id revises just that row.
+    const updated = await store.updateDecision(threadId, 'd1', { ruling: 'fixed (final)' });
+    expect(updated?.decision).toMatchObject({ id: 'd1', ruling: 'fixed (final)' });
+    expect(await store.updateDecision(threadId, 'd9', { ruling: 'x' })).toBeNull(); // unknown id
+
+    // DELETE by id; the next create does NOT reuse the freed id (max-based allocation).
+    const del = await store.deleteDecision(threadId, 'd1');
+    expect(del.removed).toBe(true);
+    expect(del.all.map((d) => d.id)).toEqual(['d2']);
+    expect((await store.deleteDecision(threadId, 'd1')).removed).toBe(false); // already gone
+    const third = await store.createDecision(threadId, {
+      decisionClass: 'api_contract',
+      title: 'Pagination',
+      ruling: 'cursor-based',
+    });
+    expect(third.decision.id).toBe('d3'); // not d1
+
+    expect(await store.pendingDecisions(threadId)).toHaveLength(2);
 
     // Consuming the card flags it so latestAnsweredQuestionCard skips it next time.
     await store.updateCardMessage(threadId, 'q-1', { loggedDecision: true });

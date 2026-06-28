@@ -4,8 +4,8 @@ import type { Decision } from '../domain/decision-record';
 /**
  * Renders the GENERATED `decision-record.md` from the thread's working-set decisions. This file lives in
  * the read-only `/context/generated/` bucket — it is a projection of the structured `pending_decisions`,
- * NOT a hand-authored doc, so coding agents read it for grounding but never edit it. `log_decision`
- * re-renders it on every call, so it stays incremental and always matches the structured truth.
+ * NOT a hand-authored doc, so coding agents read it for grounding but never edit it. Every decision
+ * mutation re-renders it, so it stays incremental and always matches the structured truth.
  */
 
 function renderDecision(d: Decision): string {
