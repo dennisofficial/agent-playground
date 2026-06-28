@@ -124,6 +124,16 @@ docker run --rm \
     ghcr.io/<owner>/atlas-backend-migrator:<tag>
 ```
 
+> **Migrations must be backward-compatible (expand-contract).** `deploy.sh` runs the migrator BEFORE
+> the blue/green swap, so during every deploy's drain window the **old** backend keeps serving in-flight
+> turns against the **already-migrated** schema (and a rollback restores the old image but never
+> down-migrates). A destructive change in a single deploy — dropping/renaming a column, adding a
+> `NOT NULL`, tightening a type — will break the draining old code and make rollback unsafe. Ship such
+> changes across **two deploys**: (1) additive migration + code that writes both old & new and reads
+> new-with-fallback; (2) after it's live, the contracting migration that removes the old. Generate
+> migrations the normal way (`pnpm db:migration:generate`, never hand-written — see the repo CLAUDE.md);
+> the deploy applies them with `db:migrate:deploy`.
+
 ### 8. Start all services
 
 ```bash
