@@ -371,16 +371,23 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     // came through `/answer-question` (it pre-stamps) or there is no pending question.
     await this.linkTypedQuestionAnswer(stimulus);
 
-    // Human-input gate delivery: if this thread's gate points at a now-ANSWERED, not-yet-DELIVERED
-    // question (the answer was stamped by the endpoint, the prose path just above, or persisted before a
-    // crash), THIS turn is its delivery turn. Capture it now; we stamp `deliveredAt` + clear the pointer
-    // ONLY on the successful tail below — never on an early return / error — so a failed turn re-delivers
-    // (at-least-once). Correctness keys off the durable gate, not which path triggered the turn.
-    let deliveredQuestionId: string | null = null;
+    // Human-input gate (durable HILT): if this thread's gate points at a now-ANSWERED, not-yet-DELIVERED
+    // question carrying its `deferredToolUseId` (the answer was stamped by the endpoint, the prose path
+    // just above, or persisted before a crash), THIS turn RESUMES the brain's session and feeds the
+    // answer back as that deferred tool's result — the model continues in the SAME logical turn. We
+    // finalize (stamp delivered + clear the gate) ONLY on the successful tail, so a failed/early-returned
+    // turn re-delivers (at-least-once). Keyed off durable state, not which path triggered the turn.
+    let delivering: { questionId: string; deferredToolUseId: string; answer: string } | null = null;
     const awaitingId = await this.store.awaitingQuestionId(stimulus.threadId);
     if (awaitingId) {
       const card = await this.store.getQuestionCard(stimulus.threadId, awaitingId);
-      if (card?.answer != null && card.deliveredAt == null) deliveredQuestionId = awaitingId;
+      if (card?.answer != null && card.deferredToolUseId && card.deliveredAt == null) {
+        delivering = {
+          questionId: awaitingId,
+          deferredToolUseId: card.deferredToolUseId,
+          answer: card.answer,
+        };
+      }
     }
 
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
@@ -437,7 +444,9 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     // delta, and PREPEND a clearly-passive summary so the brain knows where the build stands. SYNTHETIC
     // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpThread must not consume the
     // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
-    if (isOperatorAuthored(stimulus)) {
+    // Skip on a delivery turn: its prompt is the deferred tool's result (the operator's `task` body is
+    // unused), so draining the buffer here would consume milestones the operator never sees.
+    if (isOperatorAuthored(stimulus) && !delivering) {
       const awarenessPrefix = await this.buildAwarenessPrefix(stimulus.threadId, stimulus.orgId);
       if (awarenessPrefix) task = `${awarenessPrefix}\n\n${task}`;
     }
@@ -472,6 +481,13 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
+      // `ask_question` is a durable HILT gate — defer it (the bridge handler never runs; the turn ends
+      // with `deferredToolUse`). On a delivery turn, feed the stored answer back as that tool's result so
+      // the model continues in the same logical turn (resume is via the persisted `sessionId`).
+      deferToolNames: [ASK_QUESTION_TOOL],
+      ...(delivering
+        ? { deferredResult: { toolUseId: delivering.deferredToolUseId, result: delivering.answer } }
+        : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(sandbox.containerId
         ? { target: { containerId: sandbox.containerId, worktreeHost: sandbox.worktreePath } }
@@ -503,18 +519,83 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     // no text block), then signal turn end so the client reconciles its live buffer against /messages.
     await streamer.finish(result.result);
 
-    // SUCCESS TAIL ONLY: the brain consumed the answer this turn, so close the human-input gate — stamp
-    // `deliveredAt` (so the boot sweep won't re-deliver it) and clear the pointer (compare-and-clear, so a
-    // question opened DURING this turn isn't clobbered). Reached only on the happy path; every early return
-    // / error above leaves the question undelivered for the next turn or the boot sweep. Best-effort.
-    if (deliveredQuestionId) {
-      await this.store
-        .markQuestionDelivered(stimulus.threadId, deliveredQuestionId)
-        .catch((err) => this.logger.warn(`markQuestionDelivered failed: ${err}`));
-      await this.store
-        .clearAwaitingQuestion(stimulus.threadId, deliveredQuestionId)
-        .catch((err) => this.logger.warn(`clearAwaitingQuestion failed: ${err}`));
+    // SUCCESS TAIL ONLY (durable HILT finalize). Reached only on the happy path; every early return /
+    // error above leaves the gate as-is so the next turn / boot sweep re-delivers (at-least-once).
+    //  - If this was a DELIVERY turn, the answer is now consumed: stamp delivered, clear the gate, and
+    //    pair the deferred `ask_question` tool block in the transcript with the answer.
+    //  - If the turn ENDED ON A DEFERRED `ask_question` (the initial ask, OR a chained follow-up during a
+    //    delivery continuation), open the new gate from the deferred call's args (after finalizing any
+    //    delivery first, so the new pointer wins).
+    if (delivering) {
+      await this.finalizeDelivery(stimulus.threadId, delivering).catch((err) =>
+        this.logger.warn(`finalizeDelivery failed: ${err}`),
+      );
     }
+    const newDeferred = result.deferredToolUse;
+    if (newDeferred && isAskQuestionTool(newDeferred.name)) {
+      await this.openDeferredQuestion(stimulus, newDeferred).catch((err) =>
+        this.logger.warn(`openDeferredQuestion failed: ${err}`),
+      );
+    }
+  }
+
+  /**
+   * Open the durable HILT gate from a DEFERRED `ask_question` call. The bridge handler never ran (the
+   * PreToolUse `defer` hook suspended it), so the host builds the question card here from the deferred
+   * call's wrapped args (`input.args`) and stores the SDK `deferredToolUseId` on the card — the resume
+   * handle a later delivery turn feeds the answer back through.
+   */
+  private async openDeferredQuestion(
+    stimulus: ChatStimulus,
+    deferred: { id: string; name: string; input: unknown },
+  ): Promise<void> {
+    const args = ((deferred.input as { args?: Record<string, unknown> } | undefined)?.args ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const question = String(args['question'] ?? '').trim();
+    if (!question) {
+      this.logger.warn(`deferred ask_question with no question text (thread=${stimulus.threadId})`);
+      return;
+    }
+    const options = normalizeQuestionOptions(args['options']);
+    const decisionClass = asDecisionClass(args['decisionClass']);
+    const header = String(args['header'] ?? '').trim();
+    const questionId = `q-${randomUUID()}`;
+    const card = webQuestionCard({
+      threadId: stimulus.threadId,
+      questionId,
+      question,
+      ...(header ? { header } : {}),
+      ...(decisionClass ? { decisionClass } : {}),
+      options,
+      allowOther: args['allowOther'] !== false,
+    });
+    // Attach the resume handle (the SDK tool_use id) so the delivery turn can feed the answer back.
+    (card as WebQuestionCard).deferredToolUseId = deferred.id;
+    const opened = await this.store.openQuestion(stimulus.threadId, {
+      ts: questionId,
+      text: question,
+      card: card as unknown as Record<string, unknown>,
+    });
+    if (!opened.ok) {
+      this.logger.warn(`openQuestion refused (thread=${stimulus.threadId}, alreadyOpen=${opened.alreadyOpen})`);
+    }
+  }
+
+  /**
+   * Finalize a delivered question: stamp `deliveredAt` (so the boot sweep won't re-deliver), clear the
+   * gate pointer (compare-and-clear, so a question opened during the continuation isn't clobbered), and
+   * pair the deferred `ask_question` tool block in the durable transcript with the answer (the resume run
+   * can't auto-pair across runs).
+   */
+  private async finalizeDelivery(
+    threadId: string,
+    delivering: { questionId: string; deferredToolUseId: string; answer: string },
+  ): Promise<void> {
+    await this.store.markQuestionDelivered(threadId, delivering.questionId);
+    await this.store.clearAwaitingQuestion(threadId, delivering.questionId);
+    await this.store.pairDeferredToolResult(threadId, delivering.deferredToolUseId, delivering.answer);
   }
 
   /**
@@ -600,12 +681,16 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         // interleaved mid-turn user message sorts correctly), THEN signal turn end (so the client's
         // refetch sees it before the live buffer is cleared — no gap, no double-render).
         for (const b of blocks) {
+          // Persist the SDK tool_use id into `meta.toolId` for tool blocks, so a DEFERRED `ask_question`
+          // call (whose result arrives on a later resume run that can't auto-pair) can be paired by id.
+          const meta =
+            b.meta && b.kind === 'tool' && b.toolId ? { ...b.meta, toolId: b.toolId } : b.meta;
           await this.store
             .appendBlock(threadId, {
               kind: b.kind,
               createdAt: b.emittedAt,
               ...(b.text != null ? { text: b.text } : {}),
-              ...(b.meta ? { meta: b.meta } : {}),
+              ...(meta ? { meta } : {}),
             })
             .catch((err) => this.logger.warn(`appendBlock failed for thread=${threadId}: ${err}`));
         }
@@ -665,47 +750,16 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         }
       },
 
-      ask_question: async (args) => {
-        const question = String(args['question'] ?? '').trim();
-        if (!question) return { ok: false, reason: 'question is required' };
-        const options = normalizeQuestionOptions(args['options']);
-        const decisionClass = asDecisionClass(args['decisionClass']);
-        const header = String(args['header'] ?? '').trim();
-        const questionId = `q-${randomUUID()}`;
-        const card = webQuestionCard({
-          threadId: stimulus.threadId,
-          questionId,
-          question,
-          ...(header ? { header } : {}),
-          ...(decisionClass ? { decisionClass } : {}),
-          options,
-          allowOther: args['allowOther'] !== false,
-        });
-        // Open the durable human-input gate ATOMICALLY: persist the card row + point the thread's
-        // `awaiting_question_id` at it in one transaction (the surface `post` path does NOT persist
-        // `messages.card`; the card renders on the turn-end refetch). Refused if a question is already
-        // open, so the brain can't stack questions. The brain STOPS after asking and waits — the asking
-        // turn ends cleanly (async gate), the answer arrives on a later (delivery) turn.
-        const opened = await this.store.openQuestion(stimulus.threadId, {
-          ts: questionId,
-          text: question,
-          card: card as unknown as Record<string, unknown>,
-        });
-        if (!opened.ok) {
-          return {
-            ok: false,
-            reason: opened.alreadyOpen
-              ? 'A question is already awaiting the operator’s answer — wait for it before asking another.'
-              : 'Could not open the question (thread not found).',
-          };
-        }
-        return {
-          ok: true,
-          questionId,
-          message:
-            'Question posted to the operator as a card. Stop and wait for their answer — do not ask ' +
-            'anything else this turn. When their answer settles an always-ask decision, call log_decision.',
-        };
+      // `ask_question` is the durable HILT gate: a PreToolUse `defer` hook (see `deferToolNames`) SUSPENDS
+      // the call before this handler runs — the turn ends with `deferredToolUse`, and the host opens the
+      // question card from there (`openDeferredQuestion`). This handler stays only to keep the tool
+      // DECLARED to the model (the bridge declares one tool per key); reaching it means the defer hook
+      // didn't fire — surface that loudly instead of silently bypassing the gate.
+      ask_question: async () => {
+        this.logger.error(
+          `ask_question handler reached for thread=${stimulus.threadId} — the defer hook did not fire`,
+        );
+        return { ok: false, reason: 'internal: ask_question must be deferred, not executed' };
       },
 
       log_decision: async (args) => {
@@ -1373,16 +1427,19 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
   return stimulus.author.id !== ATLAS_AUTHOR_ID;
 }
 
-/** Frame a recovered answer explicitly so a boot-sweep delivery turn reads as the operator's answer. */
-function frameAnswer(question: string, answer: string): string {
-  return `The operator answered your question "${question}": ${answer}`;
+/** The UNQUALIFIED bridge tool name for the human-input gate (deferred, never run host-side). */
+const ASK_QUESTION_TOOL = 'ask_question';
+
+/** True when a deferred-tool name is `ask_question` (qualified `mcp__<bridge>__ask_question` or bare). */
+function isAskQuestionTool(name: string): boolean {
+  return name === ASK_QUESTION_TOOL || name.endsWith(`__${ASK_QUESTION_TOOL}`);
 }
 
 /**
- * Build the synthetic OPERATOR stimulus the boot sweep uses to re-deliver an answered-but-undelivered
- * question straight through `handleChatTurn` (bypassing the surface). Operator-authored (so it is treated
- * as the operator's reply and passive awareness still drains); the framed body restates the Q&A since
- * there is no natural inbound message to carry it.
+ * Build the synthetic OPERATOR stimulus the boot sweep uses to trigger a delivery turn straight through
+ * `handleChatTurn` (bypassing the surface). The turn's `runChatTurnInner` detects the answered-undelivered
+ * gate from durable state and RESUMES the deferred tool with the stored answer — so the `body` here is not
+ * used as a prompt; it only labels the synthetic turn.
  */
 function bootDeliveryStimulus(q: {
   threadId: string;
@@ -1395,7 +1452,7 @@ function bootDeliveryStimulus(q: {
     id: randomUUID(),
     orgId: q.orgId,
     repoId: q.repoId,
-    body: frameAnswer(q.question, q.answer),
+    body: q.answer,
     receivedAt: new Date(),
     kind: 'chat',
     trust: 'trusted',

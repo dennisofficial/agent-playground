@@ -21,6 +21,34 @@ export function qualifyBridgeToolNames(toolNames: string[]): string[] {
   return toolNames.map((name) => `mcp__${BRIDGE_SERVER_NAME}__${name}`);
 }
 
+/**
+ * Build the SDK `hooks` option that DEFERS the given (unqualified) bridge tools — the durable HILT gate.
+ * A PreToolUse `defer` decision suspends the matched tool call (its bridge handler never runs) and ends
+ * the turn carrying `deferred_tool_use`, so the host can answer it out-of-band and resume later. Pure
+ * data (plain callbacks) so it's testable without the SDK; spread into `Options` alongside `mcpServers`.
+ * Matchers are derived from `qualifyBridgeToolNames` — the SAME names the model sees — never hardcoded.
+ */
+export function buildDeferHookOptions(deferToolNames: string[]): {
+  hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<() => Promise<unknown>> }> };
+} {
+  return {
+    hooks: {
+      PreToolUse: qualifyBridgeToolNames(deferToolNames).map((matcher) => ({
+        matcher,
+        hooks: [
+          async () => ({
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'defer',
+              permissionDecisionReason: 'Atlas HILT: deferring for an out-of-band human answer.',
+            },
+          }),
+        ],
+      })),
+    },
+  };
+}
+
 export interface BridgeClaudeOptions {
   /** Spread verbatim into the SDK `Options` — sets `options.mcpServers` (correct shape). */
   extraClaudeOptions: { mcpServers: Record<string, unknown> };

@@ -44,6 +44,13 @@ export interface WebQuestionCard {
    * re-deliver any `answer != null && deliveredAt == null` card a crash left stranded (at-least-once).
    */
   deliveredAt?: string;
+  /**
+   * The SDK `tool_use` id of the DEFERRED `ask_question` call this card represents (the durable HILT
+   * resume handle). The brain stores it when the deferred call opens the gate; the delivery turn resumes
+   * the brain session and feeds the answer back as THIS tool's result (the model continues in the same
+   * logical turn). Absent only on legacy cards from before the deferred-tool model.
+   */
+  deferredToolUseId?: string;
   /** Set true once a `log_decision` has consumed this Q&A, so the same answer can't attach twice. */
   loggedDecision?: boolean;
 }
