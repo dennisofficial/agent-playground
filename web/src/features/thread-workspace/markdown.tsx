@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize2, RotateCcw, Send, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Check, Copy, Maximize2, RotateCcw, Send, X, ZoomIn, ZoomOut } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -122,6 +122,45 @@ function parseSvg(raw: string): { svg: string; w: number; h: number } {
   };
 }
 
+/** A header-bar action button shared by the diagram frame (copy / expand / fix). */
+function FrameBtn({
+  onClick,
+  title,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="inline-flex shrink-0 items-center gap-1 rounded-[5px] border border-border px-1.5 py-0.5 font-mono text-[10px] text-dim transition-colors hover:bg-surface-2 hover:text-text disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-dim"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** The card chrome shared by every mermaid state: a labelled header bar (with actions) over a body. */
+function MermaidFrame({ label, actions, children }: { label: string; actions?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="my-3 overflow-hidden rounded-[9px] border border-border bg-surface">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-[7px]">
+        <span className="font-mono text-[10px] lowercase text-faint">{label}</span>
+        <span className="flex-1" />
+        {actions}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function Mermaid({ chart }: { chart: string }) {
   // useId is colon-bearing; mermaid's render id must be a valid DOM/CSS id, so strip non-word chars.
   const renderId = `mmd-${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
@@ -129,6 +168,7 @@ function Mermaid({ chart }: { chart: string }) {
   const [error, setError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
   const actions = useContext(MarkdownActionsContext);
 
   useEffect(() => {
@@ -154,57 +194,84 @@ function Mermaid({ chart }: { chart: string }) {
     };
   }, [chart, renderId]);
 
-  // A malformed diagram still shows its source (with the parse error) rather than vanishing.
+  const copyButton = (
+    <FrameBtn
+      title="Copy mermaid source"
+      onClick={() => {
+        void navigator.clipboard?.writeText(chart);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      }}
+    >
+      {copied ? <Check size={10} /> : <Copy size={10} />}
+      {copied ? 'copied' : 'copy'}
+    </FrameBtn>
+  );
+
+  // A malformed diagram keeps the same card chrome — we just can't draw it. The source renders in the body
+  // (where the graph would be) and the header offers "fix with Atlas".
   if (error) {
     return (
-      <div className="my-3">
-        <div className="mb-1 flex items-center gap-2">
-          <p className="font-mono text-[10px] text-red">diagram failed to render — {error}</p>
-          {actions ? (
-            <button
-              type="button"
-              disabled={sent}
-              onClick={() => {
-                // Fence the source as plain text (no `mermaid` lang) so the operator's own message
-                // doesn't re-trigger a failed render — Atlas reads the raw source and fixes it.
-                actions.sendToThread(
-                  `This mermaid diagram failed to render. Please fix the syntax.\n\n` +
-                    `Parse error: ${error}\n\n` +
-                    '```\n' +
-                    chart +
-                    '\n```',
-                );
-                setSent(true);
-              }}
-              className="inline-flex shrink-0 items-center gap-1 rounded-[5px] border border-border px-1.5 py-0.5 font-mono text-[10px] text-dim transition-colors hover:bg-surface-2 disabled:opacity-60 disabled:hover:bg-transparent"
-            >
-              <Send size={10} />
-              {sent ? 'sent to Atlas' : 'send to Atlas'}
-            </button>
-          ) : null}
-        </div>
-        <CodeBlock lang="mermaid">{chart}</CodeBlock>
-      </div>
+      <MermaidFrame
+        label="mermaid"
+        actions={
+          <>
+            {copyButton}
+            {actions ? (
+              <FrameBtn
+                title="Send this broken diagram to Atlas to fix"
+                disabled={sent}
+                onClick={() => {
+                  // Fence the source as plain text (no `mermaid` lang) so the operator's own message
+                  // doesn't re-trigger a failed render — Atlas reads the raw source and fixes it.
+                  actions.sendToThread(
+                    `This mermaid diagram failed to render. Please fix the syntax.\n\n` +
+                      `Parse error: ${error}\n\n` +
+                      '```\n' +
+                      chart +
+                      '\n```',
+                  );
+                  setSent(true);
+                }}
+              >
+                <Send size={10} />
+                {sent ? 'sent to Atlas' : 'fix with Atlas'}
+              </FrameBtn>
+            ) : null}
+          </>
+        }
+      >
+        <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
+          failed to render — {error}
+        </p>
+        <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
+          {chart}
+        </pre>
+      </MermaidFrame>
     );
   }
   if (!result) {
     return (
-      <div className="my-3 flex items-center justify-center rounded-[9px] border border-border bg-surface-2 px-4 py-6 font-mono text-[10.5px] text-faint">
-        rendering diagram…
-      </div>
+      <MermaidFrame label="mermaid">
+        <div className="flex items-center justify-center px-4 py-6 font-mono text-[10.5px] text-faint">
+          rendering diagram…
+        </div>
+      </MermaidFrame>
     );
   }
   return (
     <>
-      <figure className="group relative my-3 overflow-hidden rounded-[9px] border border-border bg-surface">
-        <button
-          type="button"
-          onClick={() => setZoomed(true)}
-          title="Expand diagram"
-          className="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-border bg-panel/90 px-2 py-1 font-mono text-[10px] text-dim opacity-0 backdrop-blur transition hover:text-text group-hover:opacity-100"
-        >
-          <Maximize2 size={12} /> expand
-        </button>
+      <MermaidFrame
+        label="mermaid"
+        actions={
+          <>
+            {copyButton}
+            <FrameBtn title="Expand diagram" onClick={() => setZoomed(true)}>
+              <Maximize2 size={10} /> expand
+            </FrameBtn>
+          </>
+        }
+      >
         {/* Fit to width, but never upscale past the intrinsic size — so the diagram never breaks the doc
             layout, and the whole thing is click-to-expand for a readable view. */}
         <div
@@ -214,7 +281,7 @@ function Mermaid({ chart }: { chart: string }) {
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />
-      </figure>
+      </MermaidFrame>
       {zoomed ? (
         <MermaidLightbox svg={result.svg} w={result.w} h={result.h} onClose={() => setZoomed(false)} />
       ) : null}
