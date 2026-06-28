@@ -25,8 +25,11 @@ export class HealthController {
 
   @Public()
   @Get('ready')
-  ready(@Res() res: Response): void {
+  ready(@Res({ passthrough: true }) res: Response): { ready: boolean; state: string } {
+    // passthrough: set the status but still return the body through Nest's normal pipeline (so global
+    // interceptors apply, consistent with /live), rather than ending the response ourselves.
     const ready = this.election.isLeader();
-    res.status(ready ? 200 : 503).json({ ready, state: this.election.getState() });
+    res.status(ready ? 200 : 503);
+    return { ready, state: this.election.getState() };
   }
 }

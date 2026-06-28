@@ -22,6 +22,20 @@ export function resolveSsl(env: EnvService): false | { rejectUnauthorized: boole
 }
 
 /**
+ * A direct (non-pooled) libpq connection string from the same POSTGRES_* env the datasource uses.
+ * Shared by the raw `pg.Client` consumers (leader election, realtime engine admin) so the URL shape
+ * lives in one place.
+ */
+export function pgConnectionString(env: EnvService): string {
+  const user = encodeURIComponent(env.get('POSTGRES_USER'));
+  const pass = encodeURIComponent(env.get('POSTGRES_PASSWORD'));
+  const host = env.get('POSTGRES_HOST');
+  const port = env.get('POSTGRES_PORT') ?? 5432;
+  const db = encodeURIComponent(env.get('POSTGRES_DB'));
+  return `postgresql://${user}:${pass}@${host}:${port}/${db}`;
+}
+
+/**
  * Atlas v2's datasource — its OWN named connection ('atlas') loading ONLY the `app` entities and
  * its own migrations (`migrations/`), against the SAME Postgres as v1 (reuses the POSTGRES_*
  * env). Schema is managed exclusively through `pnpm db:migrate`; `synchronize` stays false. The

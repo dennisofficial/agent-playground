@@ -66,8 +66,11 @@ x-backend-common: &backend-common
       condition: service_healthy
     redis:
       condition: service_healthy
+  # Docker healthcheck = LIVENESS (is the process up). NOT /health/ready — only the leader passes that,
+  # so a healthy standby would be marked "unhealthy" forever (and would deadlock any future
+  # depends_on: service_healthy). Caddy's `health_uri /health/ready` does the leader-only routing.
   healthcheck:
-    test: ["CMD", "curl", "-sf", "http://localhost:4002/health/ready"]
+    test: ["CMD", "curl", "-sf", "http://localhost:4002/health/live"]
     interval: 10s
     timeout: 5s
     start_period: 60s
@@ -77,6 +80,9 @@ x-backend-common: &backend-common
 services:
   # ── Postgres (pgvector/pgvector:pg16) ──────────────────────────────────────────
   postgres:
+    # Fixed name so backups/pg-backup.sh (`docker exec atlas-postgres`) works regardless of the
+    # compose project name (which otherwise yields <project>-postgres-1). Service DNS stays `postgres`.
+    container_name: atlas-postgres
     image: pgvector/pgvector:pg16
     command:
       - postgres

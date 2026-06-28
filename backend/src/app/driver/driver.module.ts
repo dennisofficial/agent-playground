@@ -111,6 +111,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
   private reapTimer?: ReturnType<typeof setInterval>;
+  private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
 
   constructor(
     private readonly driver: TrackDriver,
@@ -139,11 +140,18 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     if (this.env.get('DISABLE_RESUME')) return;
 
     this.promoteSub = this.election.onPromote(async () => {
-      // Reconcile per-thread sandboxes (mark detached; next turn re-attaches) BEFORE resuming jobs —
-      // resumed drives call `ensureContainer`, which expects the reconciled state.
-      await this.lifecycle.reconcileOnBoot();
-      await this.driver.resume();
-      this.startReapTimer();
+      // Crash-recovery sweep runs ONCE per process (the first time this instance wins leadership, by
+      // the drain-then-release invariant any predecessor has already drained). A mid-life RE-promote
+      // (lost+regained the lock on a connection blip) must NOT re-run it: reconcileOnBoot nulls
+      // container_id and resume re-drives jobs — destructive while turns are still executing here.
+      if (!this.bootReconciled) {
+        this.bootReconciled = true;
+        // Mark per-thread sandboxes detached (next turn re-attaches) BEFORE resuming jobs — resumed
+        // drives call `ensureContainer`, which expects the reconciled state.
+        await this.lifecycle.reconcileOnBoot();
+        await this.driver.resume();
+      }
+      this.startReapTimer(); // transient: stopped on demote, restarted on every promote
     });
     this.demoteSub = this.election.onDemote(() => this.stopReapTimer());
   }

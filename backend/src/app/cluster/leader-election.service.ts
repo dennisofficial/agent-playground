@@ -8,7 +8,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { Subject, type Subscription } from 'rxjs';
-import { resolveSsl } from '../persistence/database.module';
+import { pgConnectionString, resolveSsl } from '../persistence/database.module';
 
 /**
  * Process-wide singleton-leadership key for `pg_advisory_lock`. ONE global leader per cluster — leader
@@ -42,6 +42,8 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
   private client?: pg.Client;
   private pollTimer?: ReturnType<typeof setInterval>;
   private connecting = false;
+  private acquiring = false; // re-entrancy guard so overlapping polls can't stack the advisory lock
+  private heldLock = false; // true only while THIS session actually holds the advisory lock
   private readonly promote$ = new Subject<void>();
   private readonly demote$ = new Subject<void>();
 
@@ -100,9 +102,12 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
 
   /** Release the advisory lock so a standby can promote. Called by the drain flow AFTER a clean drain. */
   async releaseLeadership(): Promise<void> {
-    if (!this.client) return;
+    // Only unlock when we actually hold the lock — a follower (or an already-released leader) must not
+    // run pg_advisory_unlock on a session that never locked (it would no-op + log misleadingly).
+    if (!this.heldLock || !this.client) return;
     try {
       await this.client.query('SELECT pg_advisory_unlock($1::bigint)', [LEADER_LOCK_KEY]);
+      this.heldLock = false;
       this.logger.log('released leadership (advisory lock unlocked)');
     } catch (err) {
       this.logger.warn(`advisory unlock failed (lock will release on disconnect): ${err}`);
@@ -126,7 +131,7 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
     this.connecting = true;
     try {
       const client = new pg.Client({
-        connectionString: this.connectionString(),
+        connectionString: pgConnectionString(this.env),
         ssl: resolveSsl(this.env),
         application_name: 'atlas-leader',
         // Detect a dead peer quickly so a half-open connection releases the lock sooner.
@@ -146,7 +151,11 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
   }
 
   private async tryAcquire(): Promise<void> {
-    if (this.state === 'draining' || !this.client) return;
+    if (this.state === 'draining' || !this.client || this.acquiring) return;
+    // `tryAcquire` is async and fired on a timer; without this guard a poll tick arriving while the
+    // previous query is still in flight (slow DB) would call pg_try_advisory_lock twice on the SAME
+    // session — session advisory locks STACK, so a single releaseLeadership() would leave the lock held.
+    this.acquiring = true;
     try {
       const res = await this.client.query<{ locked: boolean }>(
         'SELECT pg_try_advisory_lock($1::bigint) AS locked',
@@ -154,6 +163,7 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
       );
       const locked = res.rows[0]?.locked === true;
       if (locked) {
+        this.heldLock = true;
         this.stopPoll();
         if (this.state !== 'leader') {
           this.state = 'leader';
@@ -166,14 +176,18 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
       }
     } catch (err) {
       this.onConnectionLost(err);
+    } finally {
+      this.acquiring = false;
     }
   }
 
   /** Connection dropped: demote to follower (Postgres has freed our lock) and reconnect from scratch. */
   private onConnectionLost(err: unknown): void {
     if (this.state === 'draining') return; // shutting down — ignore
+    if (!this.client) return; // already handled (pg emits BOTH 'error' and 'end' for one drop)
     const wasLeader = this.state === 'leader';
     this.client = undefined;
+    this.heldLock = false; // Postgres releases session advisory locks on disconnect
     this.state = 'follower';
     if (wasLeader) {
       this.logger.warn(`lost leadership (connection lost): ${err}`);
@@ -201,16 +215,6 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
   }
 
   private pollMs(): number {
-    return Number(this.env.get('LEADER_POLL_INTERVAL_MS')) || 2000;
-  }
-
-  /** A direct (non-pooled) libpq connection string from the same POSTGRES_* env the datasource uses. */
-  private connectionString(): string {
-    const user = encodeURIComponent(this.env.get('POSTGRES_USER'));
-    const pass = encodeURIComponent(this.env.get('POSTGRES_PASSWORD'));
-    const host = this.env.get('POSTGRES_HOST');
-    const port = this.env.get('POSTGRES_PORT') ?? 5432;
-    const db = encodeURIComponent(this.env.get('POSTGRES_DB'));
-    return `postgresql://${user}:${pass}@${host}:${port}/${db}`;
+    return this.env.get('LEADER_POLL_INTERVAL_MS') ?? 2000;
   }
 }

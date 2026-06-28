@@ -77,6 +77,8 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
   /** Leader-only boot-sweep subscription (turn_active reset + answered-Q / plan-review re-delivery). */
   private leaderBootSub?: Subscription;
+  /** The boot sweeps run ONCE per process — never on a mid-life re-promote (would clear active turns). */
+  private bootSweepsDone = false;
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
@@ -419,8 +421,13 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     this.leaderBootSub?.unsubscribe();
   }
 
-  /** The leader-only boot sweeps, run on promotion. Each step is independently best-effort. */
+  /** The leader-only boot sweeps, run ONCE on first promotion. Each step is independently best-effort. */
   private async runLeaderBootSweeps(): Promise<void> {
+    // Guard against a mid-life re-promote (lock lost+regained on a blip): re-running resetAllTurnActive
+    // would clear `turn_active` for turns CURRENTLY executing on this process, making them look idle.
+    if (this.bootSweepsDone) return;
+    this.bootSweepsDone = true;
+
     // 1) Clear any `turn_active` flag left set by a crash mid-turn — no conversational turn survives a
     //    process restart, so a still-true flag is stale and would suppress the thread's "needs you" dot.
     try {

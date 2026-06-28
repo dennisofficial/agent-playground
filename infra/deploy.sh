@@ -164,14 +164,17 @@ log "Standby: backend-${STANDBY}"
 
 if [[ "$ROLLBACK" == "true" ]]; then
     log "=== ROLLBACK to $TAG ==="
-    # On rollback: start the standby at the old tag, stop the current active.
-    ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" pull "backend-${STANDBY}"
-    ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" up -d "backend-${STANDBY}"
-    wait_live  "$STANDBY"
-    wait_ready "$STANDBY"
+    # Best-effort recovery path: warn (don't abort) on each wait so we always reach record_state and
+    # leave the state files consistent with what we actually started.
+    ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" pull "backend-${STANDBY}" || true
+    ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" up -d "backend-${STANDBY}" || true
+    wait_live "$STANDBY" 90 || log "WARN(rollback): backend-${STANDBY} did not report live"
+    # Stop the active FIRST so it releases the advisory lock — the standby can only become leader
+    # (pass /health/ready) once the active has let go of the lock.
     log "Stopping active backend-${ACTIVE} (graceful drain) ..."
-    docker compose -f "$COMPOSE_FILE" stop -t 300 "backend-${ACTIVE}"
-    wait_health "$HEALTH_URL" 30 "public health endpoint after rollback"
+    docker compose -f "$COMPOSE_FILE" stop -t 300 "backend-${ACTIVE}" || true
+    wait_ready "$STANDBY" "$HEALTH_TIMEOUT" || log "WARN(rollback): backend-${STANDBY} did not acquire leadership"
+    wait_health "$HEALTH_URL" 30 "public health endpoint after rollback" || log "WARN(rollback): public endpoint not confirmed"
     record_state "$STANDBY" "$TAG"
     log "=== Rollback complete. Active: backend-${STANDBY} (${TAG}) ==="
     exit 0
@@ -183,6 +186,12 @@ ATLAS_IMAGE_TAG="$TAG" docker compose -f "$COMPOSE_FILE" pull \
     "backend-${STANDBY}" web
 
 # ── 2. Run migrator (one-shot, on the atlas network) ────────────────────────────
+# Ensure Postgres + Redis (and thus the `atlas` network) exist before the migrator joins it — on a
+# fresh box `docker compose up` may never have run, so `docker run --network atlas` would fail.
+# Idempotent: a no-op when they're already running.
+log "Ensuring postgres + redis are up ..."
+ATLAS_IMAGE_TAG="${PREV_TAG}" docker compose -f "$COMPOSE_FILE" up -d postgres redis
+
 log "Running database migrations ..."
 # Source the secrets env to get POSTGRES_* for the migrator container.
 # shellcheck disable=SC1090

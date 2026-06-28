@@ -25,6 +25,13 @@ GHA_RUNNER_ARCH="linux-x64"
 GHA_RUNNER_USER="gha-runner"
 GHA_RUNNER_HOME="/opt/actions-runner"
 
+# Fail fast with a clear message if the checksum placeholder wasn't filled in — otherwise the script
+# downloads ~100MB and then dies with a cryptic sha512sum mismatch.
+if [[ "$GHA_RUNNER_SHA512" == CHANGEME* ]]; then
+    echo "[install-runner] ERROR: set GHA_RUNNER_SHA512 to the SHA-512 from the runner release page first." >&2
+    exit 1
+fi
+
 # ── Create unprivileged runner user ──────────────────────────────────────────────
 if ! id "$GHA_RUNNER_USER" &>/dev/null; then
     useradd --system --create-home --shell /bin/bash "$GHA_RUNNER_USER"

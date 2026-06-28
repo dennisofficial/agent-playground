@@ -63,8 +63,10 @@ RUN pnpm --filter web run build
 # ─── runtime ─────────────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS runtime
 
+# curl is required by the docker-compose web healthcheck (curl -sf http://localhost:3000/).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
+      curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/atlas/web

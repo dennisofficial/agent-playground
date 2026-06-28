@@ -10,7 +10,7 @@ import { RealtimeEngine, type Logger as RealtimeLogger, type SubscriptionImpl } 
 import pg from 'pg';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
-import { resolveSsl } from '../persistence/database.module';
+import { pgConnectionString, resolveSsl } from '../persistence/database.module';
 import { THREADS_MODEL, type RealtimePrincipal } from './thread-realtime.model';
 
 const PUBLICATION_NAME = 'pg_realtime_pub';
@@ -32,6 +32,9 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
   private engine: RealtimeEngine | null = null;
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
+  // Serializes start/stop so a rapid demote→promote (e.g. a TCP blip) can't run two engines against
+  // the same per-instance slot concurrently.
+  private engineOp: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly env: EnvService,
@@ -66,13 +69,22 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
 
   // ── leader-gated lifecycle ──────────────────────────────────────────────────────────────────────
 
-  private async startEngine(): Promise<void> {
+  /** Serialized entry points — chained on `engineOp` so start/stop never overlap. */
+  private startEngine(): Promise<void> {
+    return (this.engineOp = this.engineOp.catch(() => undefined).then(() => this.doStartEngine()));
+  }
+
+  private stopEngine(): Promise<void> {
+    return (this.engineOp = this.engineOp.catch(() => undefined).then(() => this.doStopEngine()));
+  }
+
+  private async doStartEngine(): Promise<void> {
     if (this.engine) return;
     const slotName = this.slotName();
     try {
       await this.dropInactiveSlots(); // reclaim WAL from any SIGKILLed predecessor's leftover slot
       const engine = new RealtimeEngine({
-        connectionString: this.connectionString(),
+        connectionString: pgConnectionString(this.env),
         slotName,
         publicationName: PUBLICATION_NAME,
         models: [THREADS_MODEL],
@@ -90,7 +102,7 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     }
   }
 
-  private async stopEngine(): Promise<void> {
+  private async doStopEngine(): Promise<void> {
     const engine = this.engine;
     this.engine = null;
     if (engine) await engine.stop().catch(() => undefined);
@@ -134,7 +146,7 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
 
   private async withClient(fn: (client: pg.Client) => Promise<void>): Promise<void> {
     const client = new pg.Client({
-      connectionString: this.connectionString(),
+      connectionString: pgConnectionString(this.env),
       ssl: resolveSsl(this.env),
       application_name: 'atlas-realtime-admin',
     });
@@ -144,16 +156,6 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     } finally {
       await client.end().catch(() => undefined);
     }
-  }
-
-  /** Build a direct (non-pooled) libpq connection string from the same POSTGRES_* env the datasource uses. */
-  private connectionString(): string {
-    const user = encodeURIComponent(this.env.get('POSTGRES_USER'));
-    const pass = encodeURIComponent(this.env.get('POSTGRES_PASSWORD'));
-    const host = this.env.get('POSTGRES_HOST');
-    const port = this.env.get('POSTGRES_PORT') ?? 5432;
-    const db = encodeURIComponent(this.env.get('POSTGRES_DB'));
-    return `postgresql://${user}:${pass}@${host}:${port}/${db}`;
   }
 
   /** Bridge the engine's tiny logger interface to the Nest logger (kept quiet at debug). */

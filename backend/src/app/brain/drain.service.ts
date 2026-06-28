@@ -32,7 +32,9 @@ export class DrainService implements BeforeApplicationShutdown {
     if (signal !== 'SIGTERM' && signal !== 'SIGINT') return;
     this.logger.log(`drain start (signal ${signal})`);
     this.election.beginDrain();
-    const graceMs = Number(this.env.get('DRAIN_GRACE_MS')) || 120_000;
+    // `?? `, not `|| ` — DRAIN_GRACE_MS=0 (valid per Joi min(0)) means "cut over immediately"; `||`
+    // would treat the intentional 0 as falsy and wait the full default instead.
+    const graceMs = this.env.get('DRAIN_GRACE_MS') ?? 120_000;
     const drained = await this.sessions.drainInFlight(graceMs);
     if (drained) {
       this.logger.log('drained cleanly — releasing leadership');
