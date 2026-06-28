@@ -43,6 +43,9 @@ class ThreadOrgGuard extends RealtimeRuleGuard<RealtimePrincipal, ThreadRealtime
 function mapRow(raw: Row): ThreadRealtimeRow {
   const status = String(raw.status);
   const turnActive = raw.turn_active === true;
+  // The durable human-input gate (see `deriveNeedsYou`). `SELECT *` snapshots and the WAL new-row image
+  // both carry this small (never-TOASTed) column, so it is always present here.
+  const awaitingQuestion = raw.awaiting_question_id != null;
   const createdAt = raw.created_at;
   return {
     threadId: String(raw.id),
@@ -50,7 +53,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     origin: String(raw.origin),
     status,
     turnActive,
-    needsYou: deriveNeedsYou(status, turnActive),
+    needsYou: deriveNeedsYou(status, turnActive, awaitingQuestion),
     createdAt: createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
     repoId: String(raw.repo_id),

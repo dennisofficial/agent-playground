@@ -8,24 +8,39 @@ import { deriveNeedsYou } from './thread';
 describe('deriveNeedsYou', () => {
   it('is false while a conversational turn is streaming, regardless of status', () => {
     for (const status of ['open', 'scoping', 'awaiting_approval', 'running', 'paused', 'failed']) {
-      expect(deriveNeedsYou(status, true)).toBe(false);
+      expect(deriveNeedsYou(status, true, false)).toBe(false);
     }
   });
 
   it('is false when the build is running (AI working)', () => {
-    expect(deriveNeedsYou('running', false)).toBe(false);
+    expect(deriveNeedsYou('running', false, false)).toBe(false);
   });
 
   it('is false for terminal states (done / cancelled)', () => {
-    expect(deriveNeedsYou('done', false)).toBe(false);
-    expect(deriveNeedsYou('cancelled', false)).toBe(false);
+    expect(deriveNeedsYou('done', false, false)).toBe(false);
+    expect(deriveNeedsYou('cancelled', false, false)).toBe(false);
   });
 
   it('is true when idle and waiting on the operator', () => {
-    expect(deriveNeedsYou('awaiting_approval', false)).toBe(true);
-    expect(deriveNeedsYou('paused', false)).toBe(true);
-    expect(deriveNeedsYou('scoping', false)).toBe(true); // grilling, between turns
-    expect(deriveNeedsYou('open', false)).toBe(true);
-    expect(deriveNeedsYou('failed', false)).toBe(true); // failed run needs you to act
+    expect(deriveNeedsYou('awaiting_approval', false, false)).toBe(true);
+    expect(deriveNeedsYou('paused', false, false)).toBe(true);
+    expect(deriveNeedsYou('scoping', false, false)).toBe(true); // grilling, between turns
+    expect(deriveNeedsYou('open', false, false)).toBe(true);
+    expect(deriveNeedsYou('failed', false, false)).toBe(true); // failed run needs you to act
+  });
+
+  it('is true when blocked on the durable question gate, even when otherwise idle', () => {
+    // The brain asked via `ask_question` and the answering turn ended: status is back to an idle
+    // conversational state and no turn streams, but the operator still owes an answer.
+    expect(deriveNeedsYou('open', false, true)).toBe(true);
+    expect(deriveNeedsYou('scoping', false, true)).toBe(true);
+  });
+
+  it('the question gate overrides every other axis (turn streaming / running / terminal)', () => {
+    // A non-null `awaiting_question_id` is definitionally "needs you" — it wins over a stray live turn,
+    // a running build, and even a terminal status.
+    expect(deriveNeedsYou('scoping', true, true)).toBe(true);
+    expect(deriveNeedsYou('running', false, true)).toBe(true);
+    expect(deriveNeedsYou('done', false, true)).toBe(true);
   });
 });

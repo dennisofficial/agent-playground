@@ -41,10 +41,16 @@ export type ThreadStatus =
  * thread hasn't finished (`done`/`cancelled`). `turnActive` is a separate axis from `status` because
  * `status` alone can't tell "grilling, mid-turn" from "grilling, waiting on an answer" (both `scoping`).
  *
+ * `awaitingQuestion` is the third axis: a thread blocked on the durable human-input gate (a non-null
+ * `awaiting_question_id` — the brain asked via `ask_question` and the answering turn has ended cleanly)
+ * is DEFINITIONALLY waiting on the operator, so it overrides every other axis (the asking turn may have
+ * briefly left `turn_active` set; the gate still wins).
+ *
  * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
  * the realtime row mapper (they must never diverge).
  */
-export function deriveNeedsYou(status: string, turnActive: boolean): boolean {
+export function deriveNeedsYou(status: string, turnActive: boolean, awaitingQuestion: boolean): boolean {
+  if (awaitingQuestion) return true;
   if (turnActive) return false;
   return status !== 'running' && status !== 'done' && status !== 'cancelled';
 }

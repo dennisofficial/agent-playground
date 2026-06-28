@@ -235,7 +235,7 @@ export class WebSurfaceController {
         origin: t.origin,
         status: t.status,
         turnActive: t.turn_active,
-        needsYou: deriveNeedsYou(t.status, t.turn_active),
+        needsYou: deriveNeedsYou(t.status, t.turn_active, t.awaiting_question_id != null),
         createdAt: t.created_at,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: { id: t.repo_id, name: repoName.get(`${t.org_id}:${t.repo_id}`) ?? t.repo_id },
@@ -288,7 +288,7 @@ export class WebSurfaceController {
       origin: t.origin,
       status: t.status,
       turnActive: t.turn_active,
-      needsYou: deriveNeedsYou(t.status, t.turn_active),
+      needsYou: deriveNeedsYou(t.status, t.turn_active, t.awaiting_question_id != null),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
     }));
