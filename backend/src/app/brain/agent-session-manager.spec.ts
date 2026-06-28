@@ -44,9 +44,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     cancel: vi.fn(),
     reopenScoping: vi.fn(),
     loadJob: vi.fn(),
-    // Working-set decisions (log_decision / submit_plan source these); default to empty.
+    // Working-set decisions (create_decision / submit_plan source these); default to empty.
     pendingDecisions: vi.fn().mockResolvedValue([]),
-    appendDecision: vi.fn().mockResolvedValue([]),
+    createDecision: vi.fn().mockResolvedValue({ decision: { id: 'd1' }, all: [{ id: 'd1' }] }),
+    updateDecision: vi.fn().mockResolvedValue(null),
+    deleteDecision: vi.fn().mockResolvedValue({ removed: false, all: [] }),
     appendCardMessage: vi.fn(),
     updateCardMessage: vi.fn(),
     latestAnsweredQuestionCard: vi.fn().mockResolvedValue(null),
@@ -177,7 +179,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     // Working-set decisions default to empty; card lookups default to none (reset wiped inline defaults).
     (mockStore.pendingDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (mockStore.appendDecision as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1' },
+      all: [{ id: 'd1' }],
+    });
+    (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.deleteDecision as ReturnType<typeof vi.fn>).mockResolvedValue({ removed: false, all: [] });
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.latestUnansweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     // Human-input gate defaults: opening succeeds, no question currently open.
@@ -413,25 +420,37 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((result as { reason: string }).reason).toContain('already awaiting');
   });
 
-  it('(f) log_decision attaches the gate-pointed answered question and upserts the working set', async () => {
-    // log_decision now sources the Q&A authoritatively from the human-input gate pointer, not a scan.
+  it('(f) create_decision attaches the gate-pointed answered question and returns the resolved decision + id', async () => {
+    // create_decision sources the Q&A authoritatively from the human-input gate pointer, not a scan.
     (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-123');
     (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
       type: 'question_card',
       question: 'Editable or fixed after checkout?',
       answer: 'Editable in the Network tab',
     });
-    (mockStore.appendDecision as ReturnType<typeof vi.fn>).mockResolvedValue([{ decisionClass: 'data_model' }]);
+    const resolved = {
+      id: 'd1',
+      decisionClass: 'data_model',
+      title: 'Editable or fixed after checkout?',
+      ruling: 'Subdomain is editable; rename reconciles DNS.',
+      question: 'Editable or fixed after checkout?',
+      answer: 'Editable in the Network tab',
+    };
+    (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: resolved,
+      all: [resolved],
+    });
 
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['log_decision']({
+    const result = await tools['create_decision']({
       decisionClass: 'data_model',
       ruling: 'Subdomain is editable; rename reconciles DNS.',
     });
 
-    expect(result).toMatchObject({ ok: true, totalDecisions: 1 });
-    const decision = (mockStore.appendDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(decision).toMatchObject({
+    // The return carries the FULLY-RESOLVED decision (id + auto-attached Q&A) so the brain need not read back.
+    expect(result).toMatchObject({ ok: true, total: 1, decision: resolved });
+    const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(input).toMatchObject({
       decisionClass: 'data_model',
       ruling: 'Subdomain is editable; rename reconciles DNS.',
       question: 'Editable or fixed after checkout?',
@@ -441,11 +460,75 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.updateCardMessage).toHaveBeenCalledWith(THREAD_ID, 'q-123', { loggedDecision: true });
   });
 
-  it('(g) log_decision rejects an invalid decisionClass', async () => {
+  it('(f2) the deprecated log_decision alias still creates a decision', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    const result = await tools['log_decision']({ decisionClass: 'nonsense', ruling: 'x' });
+    expect(tools['log_decision']).toBe(tools['create_decision']);
+    const result = await tools['log_decision']({ decisionClass: 'data_model', ruling: 'x' });
+    expect(result).toMatchObject({ ok: true });
+    expect(mockStore.createDecision).toHaveBeenCalled();
+  });
+
+  it('(g) create_decision rejects an invalid decisionClass', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['create_decision']({ decisionClass: 'nonsense', ruling: 'x' });
     expect(result).toMatchObject({ ok: false });
-    expect(mockStore.appendDecision).not.toHaveBeenCalled();
+    expect(mockStore.createDecision).not.toHaveBeenCalled();
+  });
+
+  it('(g2) update_decision revises by id and returns the updated decision', async () => {
+    const updated = { id: 'd2', decisionClass: 'api_contract', title: 'Pagination', ruling: 'Cursor-based.' };
+    (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: updated,
+      all: [updated],
+    });
+
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['update_decision']({ id: 'd2', ruling: 'Cursor-based.' });
+
+    expect(result).toMatchObject({ ok: true, decision: updated });
+    expect(mockStore.updateDecision).toHaveBeenCalledWith(THREAD_ID, 'd2', { ruling: 'Cursor-based.' });
+  });
+
+  it('(g3) update_decision on an unknown id returns knownIds without a separate read', async () => {
+    (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.pendingDecisions as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 'd1' }, { id: 'd2' }]);
+
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['update_decision']({ id: 'd9', ruling: 'x' });
+
+    expect(result).toMatchObject({ ok: false, knownIds: ['d1', 'd2'] });
+  });
+
+  it('(g4) update_decision rejects an invalid decisionClass before touching the store', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['update_decision']({ id: 'd1', decisionClass: 'nonsense' });
+    expect(result).toMatchObject({ ok: false });
+    expect(mockStore.updateDecision).not.toHaveBeenCalled();
+  });
+
+  it('(g5) delete_decision removes by id and returns the remaining ids', async () => {
+    (mockStore.deleteDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      removed: true,
+      all: [{ id: 'd1' }],
+    });
+
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['delete_decision']({ id: 'd2' });
+
+    expect(result).toMatchObject({ ok: true, removed: 'd2', remainingIds: ['d1'] });
+    expect(mockStore.deleteDecision).toHaveBeenCalledWith(THREAD_ID, 'd2');
+  });
+
+  it('(g6) delete_decision on an unknown id returns knownIds', async () => {
+    (mockStore.deleteDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      removed: false,
+      all: [{ id: 'd1' }],
+    });
+
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['delete_decision']({ id: 'd9' });
+
+    expect(result).toMatchObject({ ok: false, knownIds: ['d1'] });
   });
 
   it('(d) approve buffers PASSIVE "approved" + "dispatched" milestones (no brain turn) after the durable approve/dispatch', async () => {

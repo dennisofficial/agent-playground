@@ -44,7 +44,7 @@ export interface WebQuestionCard {
    * re-deliver any `answer != null && deliveredAt == null` card a crash left stranded (at-least-once).
    */
   deliveredAt?: string;
-  /** Set true once a `log_decision` has consumed this Q&A, so the same answer can't attach twice. */
+  /** Set true once a `create_decision` has consumed this Q&A, so the same answer can't attach twice. */
   loggedDecision?: boolean;
 }
 

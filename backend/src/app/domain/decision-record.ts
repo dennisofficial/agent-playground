@@ -15,7 +15,7 @@
  * THIS IS THE SINGLE SOURCE OF TRUTH for the classes, their canonical order, and their human-facing
  * blurbs. Everything else derives from it: the {@link DecisionClass} union, the order + section
  * headings of the generated `decision-record.md`, the grilling-protocol enumeration and the
- * `log_decision` validation in the brain's system prompt, the runtime arg-coercion set, and the
+ * `create_decision` validation in the brain's system prompt, the runtime arg-coercion set, and the
  * classifier's Zod enum. Add or reorder a class HERE and every consumer follows — do not re-list
  * the classes anywhere else.
  */
@@ -37,8 +37,28 @@ export type DecisionClass = (typeof DECISION_CLASS_META)[number]['id'];
 /** The canonical ordered list of class ids — drives every derived enumeration (order, set, enum). */
 export const DECISION_CLASS_IDS: readonly DecisionClass[] = DECISION_CLASS_META.map((c) => c.id);
 
+/**
+ * Allocate the next stable decision id for a thread's working set: `d<max+1>` over the existing
+ * `d<n>` ids (`d1` when none). Max-based so ids are NEVER reused after a delete (a deleted id must
+ * not resurface and re-point a stale reference). Tolerates entries with no/legacy id.
+ */
+export function nextDecisionId(existing: Pick<Decision, 'id'>[]): string {
+  const max = existing.reduce((m, d) => {
+    const match = /^d(\d+)$/.exec(d.id ?? '');
+    return match ? Math.max(m, Number(match[1])) : m;
+  }, 0);
+  return `d${max + 1}`;
+}
+
 /** One locked decision inside the record — a class + the call that was made. */
 export interface Decision {
+  /**
+   * Server-issued stable id (`d1`, `d2`, …), the handle `update_decision`/`delete_decision` address.
+   * OPTIONAL by design: `BrainStoreService.createDecision` always populates it, but pre-existing
+   * working-set rows and explicit-override entries may lack one (and are then simply not addressable
+   * by id). Keeping it optional also lets the many `Decision` literals across specs compile unchanged.
+   */
+  id?: string;
   /** Which always-ask class this decision settles (so a track planner can skip parking on it). */
   decisionClass: DecisionClass;
   /** A short human label for the decision. */

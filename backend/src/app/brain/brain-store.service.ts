@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import type { Decision, Thread, ThreadKind } from '../domain';
+import { nextDecisionId } from '../domain';
 import type { WebQuestionCard } from '../surface';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/planner-llm';
@@ -178,9 +179,9 @@ export class BrainStoreService {
   }
 
   /**
-   * The newest ANSWERED question card not yet consumed by a `log_decision` — what `log_decision`
+   * The newest ANSWERED question card not yet consumed by a `create_decision` — what `create_decision`
    * auto-attaches (its `question` + `answer`) so the brain need not restate them. Durable (DB-backed),
-   * so it survives a host restart between the answer and the log.
+   * so it survives a host restart between the answer and the lock.
    */
   async latestAnsweredQuestionCard(threadId: string): Promise<MessageEntity | null> {
     const cards = await this.questionCards(threadId);
@@ -311,19 +312,57 @@ export class BrainStoreService {
   }
 
   /**
-   * Upsert a logged decision into the thread's `pending_decisions` working set, keyed by
-   * (decisionClass, title) so re-logging the same decision REVISES its ruling rather than duplicating.
-   * Returns the updated array. (The proposal record is created later, by `submit_plan` → `persistPlan`.)
+   * CREATE a decision in the thread's `pending_decisions` working set. Assigns a stable id
+   * ({@link nextDecisionId}) and appends — decisions are id-addressed, so two may share a class/title
+   * (e.g. several `cross_cutting` rulings). Returns the resolved decision AND the full updated array
+   * (the caller re-renders `decision-record.md` from `all`). (The proposal record is created later, by
+   * `submit_plan` → `persistPlan`.)
    */
-  async appendDecision(threadId: string, decision: Decision): Promise<Decision[]> {
+  async createDecision(
+    threadId: string,
+    input: Omit<Decision, 'id'>,
+  ): Promise<{ decision: Decision; all: Decision[] }> {
     const row = await this.threads.findOneOrFail({ where: { id: threadId } });
     const current = row.pending_decisions ?? [];
-    const idx = current.findIndex(
-      (d) => d.decisionClass === decision.decisionClass && d.title === decision.title,
-    );
-    const next = idx >= 0 ? current.map((d, i) => (i === idx ? decision : d)) : [...current, decision];
-    await this.threads.update({ id: threadId }, { pending_decisions: next });
-    return next;
+    const decision: Decision = { ...input, id: nextDecisionId(current) };
+    const all = [...current, decision];
+    await this.threads.update({ id: threadId }, { pending_decisions: all });
+    return { decision, all };
+  }
+
+  /**
+   * UPDATE a decision by id (revise its ruling/title/class). Returns the updated decision + the full
+   * array, or `null` if no decision with that id exists (the caller surfaces `knownIds`).
+   */
+  async updateDecision(
+    threadId: string,
+    id: string,
+    patch: Partial<Pick<Decision, 'ruling' | 'title' | 'decisionClass'>>,
+  ): Promise<{ decision: Decision; all: Decision[] } | null> {
+    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const current = row.pending_decisions ?? [];
+    const idx = current.findIndex((d) => d.id === id);
+    if (idx < 0) return null;
+    const decision: Decision = { ...current[idx], ...patch };
+    const all = current.map((d, i) => (i === idx ? decision : d));
+    await this.threads.update({ id: threadId }, { pending_decisions: all });
+    return { decision, all };
+  }
+
+  /**
+   * DELETE a decision by id. Returns whether a row was removed + the full remaining array (the caller
+   * re-renders from `all`). `removed:false` when the id is unknown.
+   */
+  async deleteDecision(
+    threadId: string,
+    id: string,
+  ): Promise<{ removed: boolean; all: Decision[] }> {
+    const row = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const current = row.pending_decisions ?? [];
+    const all = current.filter((d) => d.id !== id);
+    if (all.length === current.length) return { removed: false, all };
+    await this.threads.update({ id: threadId }, { pending_decisions: all });
+    return { removed: true, all };
   }
 
   /**

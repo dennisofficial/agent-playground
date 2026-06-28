@@ -156,11 +156,12 @@ export class ThreadEntity extends TimestampedEntity {
   pipeline_awareness!: ThreadPipelineAwareness;
 
   /**
-   * The WORKING SET of decisions logged during grilling via `log_decision`, BEFORE any proposal exists.
+   * The WORKING SET of decisions locked during grilling via `create_decision`, BEFORE any proposal exists.
    * Deliberately separate from `decision_records` so the proposal lifecycle (a fresh record + supersede
    * on every `submit_plan`) stays intact: `submit_plan` snapshots this set into a new decision record.
-   * Upserted by (decisionClass, title) so re-logging a decision revises its ruling. The generated
-   * `/context/generated/decision-record.md` is rendered from this array, live, on every `log_decision`.
+   * Each entry carries a stable `id` (`d1`, `d2`…); `update_decision`/`delete_decision` address it by id.
+   * The generated `/context/generated/decision-record.md` is rendered from this array, live, on every
+   * decision mutation.
    */
   @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })
   pending_decisions!: Decision[];
