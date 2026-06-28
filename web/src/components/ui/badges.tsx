@@ -72,6 +72,7 @@ export function KindBadge({ kind, className }: { kind: ThreadKind; className?: s
 const STATUS_STAGE: Record<ThreadStatus, 'raw' | 'open' | 'progress' | 'done'> = {
   scoping: 'raw',
   triaging: 'raw',
+  plan_review: 'progress',
   awaiting_approval: 'open',
   paused: 'open',
   failed: 'open',

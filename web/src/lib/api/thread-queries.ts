@@ -116,6 +116,7 @@ export function useSay(ref: ThreadRef) {
         authorName: 'You',
         text,
         kind: 'chat',
+        source: 'operator',
         postedAt: new Date().toISOString(),
         local: true,
         queued,

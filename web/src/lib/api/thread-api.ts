@@ -71,6 +71,11 @@ export interface RawThreadMessage {
   isAtlas: boolean;
   text: string;
   kind: string; // 'chat' | 'thinking' | 'tool' | 'card' | 'build_event'
+  /**
+   * Message provenance — present on new rows; absent on older rows (treat missing as default).
+   * `'harness'` = injected by the harness (e.g. Codex plan-review findings).
+   */
+  source?: 'operator' | 'atlas' | 'harness';
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -86,6 +91,12 @@ export interface ThreadMessage {
   authorName: string;
   text: string;
   kind: string;
+  /**
+   * Message provenance (may be absent on older rows — normalize applies a default).
+   * `'harness'` = injected by the harness (e.g. Codex plan-review findings); rendered as a
+   * distinct block, NOT as an operator or Atlas bubble.
+   */
+  source: 'operator' | 'atlas' | 'harness';
   card?: WebCard;
   meta?: Record<string, unknown>;
   postedAt: string;
@@ -93,6 +104,18 @@ export interface ThreadMessage {
   local?: boolean;
   /** Client-only: sent while a turn was streaming → queued behind it (rendered distinctly). */
   queued?: boolean;
+}
+
+/**
+ * Derive message provenance from the raw row. An explicit `source` wins; for older rows that lack it,
+ * the default is `'harness'` only if source is explicitly `'harness'` — otherwise fall back by
+ * `isAtlas`: `'atlas'` for assistant messages, `'operator'` for human ones.
+ */
+function deriveSource(r: RawThreadMessage): 'operator' | 'atlas' | 'harness' {
+  if (r.source === 'harness') return 'harness';
+  if (r.source === 'atlas' || r.source === 'operator') return r.source;
+  // Missing field → infer from isAtlas (backwards-compat with older rows).
+  return r.isAtlas ? 'atlas' : 'operator';
 }
 
 export function normalizeMessage(r: RawThreadMessage): ThreadMessage {
@@ -103,6 +126,7 @@ export function normalizeMessage(r: RawThreadMessage): ThreadMessage {
     authorName: r.author,
     text: r.text ?? '',
     kind: r.kind,
+    source: deriveSource(r),
     card: r.card ?? undefined,
     meta: r.meta ?? undefined,
     postedAt: r.postedAt,

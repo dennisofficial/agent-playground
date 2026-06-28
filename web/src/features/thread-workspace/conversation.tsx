@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { classifyMessage } from './classify';
 import {
   ClaudeBubble,
+  HarnessBubble,
   LiveIndicator,
   LiveTurnView,
   SystemEventPill,
@@ -183,6 +184,9 @@ function renderLog(log: ThreadMessage[], threadRef: ThreadRef, onOpenPlan?: () =
         break;
       case 'event':
         nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
+        break;
+      case 'harness':
+        nodes.push(<HarnessBubble key={message.ts} message={message} />);
         break;
       case 'claude':
       default:

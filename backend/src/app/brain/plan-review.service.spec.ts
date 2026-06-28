@@ -1,40 +1,25 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { PlanReviewService, parsePlanFindings, buildRevisionInstruction } from './plan-review.service';
+import { PlanReviewService, parsePlanFindings, renderFindingsDelivery } from './plan-review.service';
+import type { PlanReviewStartInput } from './plan-review.service';
 import type { EngineRunnerPort, RunEngineArgs } from '../engine/engine.types';
-import type { ChatStimulus } from '../domain';
-import type { BrainStoreService } from './brain-store.service';
-import type { DecisionApprovalService } from './decision-approval.service';
-import type { DriverStoreService } from '../driver/driver-store.service';
-import type { MemoryStore } from '../memory';
 import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
-import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
-import type { BuildShipService } from '../driver/build-ship.service';
-import type { DriverRepoResolver } from '../driver/repo-resolver';
-import type { DecisionClassifier } from '../decision-gate';
-import type { ChatSurface } from '../surface';
-import type { Repository } from 'typeorm';
-import type { ThreadSandboxEntity } from '../persistence/entities';
-import type { JobDispatcher } from './job-dispatcher';
-import { AgentSessionManager } from './agent-session-manager.service';
 import type { CredentialResolver } from '../onboarding';
+import type { Repository } from 'typeorm';
+import type { PlanReviewEntity } from '../persistence/entities';
 
 /** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
 const fakeCreds = { engineAuth: async () => undefined } as unknown as CredentialResolver;
 
 /**
- * R4 GATE TESTS — two assertions:
+ * R4 GATE TESTS — the ASYNC, durable PlanReviewService:
+ *   - parsePlanFindings extracts FINDING: lines / recognises NO_FINDINGS.
+ *   - start() opens a durable `plan_reviews` round (and enforces the round cap).
+ *   - runReview() (re-)attaches the sandbox, runs ONE read-only Codex turn, and stamps the row terminal
+ *     (complete / failed — failure is best-effort, never throws).
+ *   - the boot-reconciliation finders + markDelivered behave.
+ *   - renderFindingsDelivery frames the operator-visible + Atlas-facing body.
  *
- * (a) PlanReviewService unit tests:
- *   - parsePlanFindings correctly extracts FINDING: lines and recognises NO_FINDINGS.
- *   - review() returns { findings } on the FIRST call for a job (one Codex turn run).
- *   - review() returns null on the SECOND call for the SAME job (one-pass guard).
- *
- * (b) AgentSessionManager integration test (fake engine):
- *   - First submit_plan: Codex review fires, findings are returned in the tool response (no
- *     approval card yet).
- *   - Second submit_plan (same job, after revision): review guard fires, approval card raised
- *     exactly once.
- *   → Combined: EXACTLY one Codex review pass + one revision before the approval card.
+ * The submit_plan / finalize_plan tool wiring is covered in `agent-session-manager.spec.ts`.
  */
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────
@@ -63,25 +48,56 @@ function failingEngine(): EngineRunnerPort {
   };
 }
 
-const FAKE_SANDBOX = {
-  repoId: 'test-proj',
-  branch: 'main',
-  worktreePath: '/wt/test',
-  gitUrl: '',
-};
+const FAKE_SANDBOX = { repoId: 'test-proj', branch: 'main', worktreePath: '/wt/test', gitUrl: '' };
 
-const BASE_INPUT = {
-  jobId: 'job-r4-001',
+/** Lifecycle stub whose ensureContainer returns the given sandbox (or null = no sandbox). */
+function fakeLifecycle(sandbox: typeof FAKE_SANDBOX | (typeof FAKE_SANDBOX & { containerId: string }) | null) {
+  return {
+    ensureContainer: vi.fn(async () => (sandbox ? { sandbox, wasReset: false } : null)),
+  } as unknown as ThreadLifecycleService;
+}
+
+/** A tiny in-memory `plan_reviews` repository fake (only the methods the service uses). */
+function makeReviewsRepo() {
+  const rows: PlanReviewEntity[] = [];
+  let seq = 1;
+  const repo = {
+    count: vi.fn(async (opts: { where: { thread_id: string } }) =>
+      rows.filter((r) => r.thread_id === opts.where.thread_id).length,
+    ),
+    create: vi.fn((data: Partial<PlanReviewEntity>) => ({ ...data }) as PlanReviewEntity),
+    save: vi.fn(async (data: PlanReviewEntity) => {
+      const row = { ...data, id: data.id ?? `rev-${seq++}` } as PlanReviewEntity;
+      rows.push(row);
+      return row;
+    }),
+    findOne: vi.fn(async (opts: { where: { id: string } }) => rows.find((r) => r.id === opts.where.id) ?? null),
+    findOneOrFail: vi.fn(async (opts: { where: { id: string } }) => {
+      const r = rows.find((x) => x.id === opts.where.id);
+      if (!r) throw new Error(`review ${opts.where.id} not found`);
+      return r;
+    }),
+    update: vi.fn(async (where: { id: string }, patch: Partial<PlanReviewEntity>) => {
+      const r = rows.find((x) => x.id === where.id);
+      if (r) Object.assign(r, patch);
+    }),
+    find: vi.fn(async (opts?: { where?: { status?: string } }) =>
+      opts?.where?.status ? rows.filter((r) => r.status === opts.where!.status) : [...rows],
+    ),
+  };
+  return { repo: repo as unknown as Repository<PlanReviewEntity>, rows };
+}
+
+const START_INPUT: PlanReviewStartInput = {
+  threadId: 'th-r4-001',
   orgId: 'T-R4',
-  worktreePath: '/wt/test',
+  decisionRecordId: 'rec-1',
   overview: 'Add OAuth2 login to the API.',
-  decisions: [
-    { decisionClass: 'infrastructure' as const, title: 'Auth provider', ruling: 'Use Auth0.' },
-  ],
+  decisions: [{ decisionClass: 'infrastructure', title: 'Auth provider', ruling: 'Use Auth0.' }],
   trackTitles: ['Implement the OAuth2 callback handler.', 'Add JWT validation middleware.'],
 };
 
-// ── (a) PlanReviewService unit tests ─────────────────────────────────────────────────────────────
+// ── parsePlanFindings ──────────────────────────────────────────────────────────────────────────────
 
 describe('parsePlanFindings', () => {
   it('returns empty string when output contains NO_FINDINGS', () => {
@@ -99,7 +115,6 @@ describe('parsePlanFindings', () => {
     const result = parsePlanFindings(output);
     expect(result).toContain('Track 1 brief is too vague');
     expect(result).toContain('Missing error-handling decision');
-    // Each finding on its own bullet line
     expect(result.split('\n')).toHaveLength(2);
   });
 
@@ -113,360 +128,166 @@ describe('parsePlanFindings', () => {
   });
 });
 
-describe('PlanReviewService — one-pass guard + Codex turn', () => {
-  it('FIRST call: runs ONE Codex review turn and returns findings', async () => {
-    const { engine, calls } = fakeEngine(
-      'FINDING: The track briefs are too vague.\nFINDING: Missing dependency decision.',
-    );
-    const service = new PlanReviewService(engine, fakeCreds);
+// ── PlanReviewService.start ─────────────────────────────────────────────────────────────────────────
 
-    const result = await service.review(BASE_INPUT);
+describe('PlanReviewService.start', () => {
+  it('opens round 1 with a rendered prompt and a running row', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const service = new PlanReviewService(fakeEngine('').engine, fakeCreds, fakeLifecycle(FAKE_SANDBOX), repo);
 
-    // One Codex turn was run.
+    const started = await service.start(START_INPUT);
+
+    expect('reviewId' in started).toBe(true);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+    expect(started.round).toBe(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('running');
+    expect(rows[0].thread_id).toBe('th-r4-001');
+    // The prompt embeds the overview + tracks so a boot re-run needs no reconstruction.
+    expect(rows[0].prompt).toContain('Add OAuth2 login to the API.');
+    expect(rows[0].prompt).toContain('OAuth2 callback handler');
+  });
+
+  it('enforces the round cap (default 3): the 4th round on a thread is capped', async () => {
+    const { repo } = makeReviewsRepo();
+    const service = new PlanReviewService(fakeEngine('').engine, fakeCreds, fakeLifecycle(FAKE_SANDBOX), repo);
+
+    await service.start(START_INPUT); // round 1
+    await service.start(START_INPUT); // round 2
+    await service.start(START_INPUT); // round 3
+    const capped = await service.start(START_INPUT); // round 4 → capped
+
+    expect('capped' in capped).toBe(true);
+    expect((capped as { capped: true; round: number }).round).toBe(3);
+  });
+});
+
+// ── PlanReviewService.runReview ──────────────────────────────────────────────────────────────────────
+
+describe('PlanReviewService.runReview', () => {
+  it('runs ONE read-only Codex turn and stamps the row complete with findings', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const { engine, calls } = fakeEngine('FINDING: The callback track brief is too vague.');
+    const service = new PlanReviewService(engine, fakeCreds, fakeLifecycle(FAKE_SANDBOX), repo);
+
+    const started = await service.start(START_INPUT);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+    const out = await service.runReview(started.reviewId);
+
     expect(calls).toHaveLength(1);
     expect(calls[0].engine).toBe('codex');
     expect(calls[0].mode).toBe('review');
-
-    // Result is not null (first pass) and has findings.
-    expect(result).not.toBeNull();
-    expect(result!.findings).toContain('track briefs are too vague');
-    expect(result!.findings).toContain('Missing dependency decision');
+    expect(calls[0].task).toContain('OAuth2 callback handler'); // ran against the stored prompt
+    expect(out.status).toBe('complete');
+    expect(out.findings).toContain('callback track brief is too vague');
+    expect(rows[0].status).toBe('complete');
+    expect(rows[0].findings).toContain('callback track brief is too vague');
+    expect(rows[0].completed_at).toBeInstanceOf(Date);
   });
 
-  it('FIRST call with NO_FINDINGS: runs ONE Codex review turn, returns empty findings', async () => {
+  it('NO_FINDINGS → complete with empty findings', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const service = new PlanReviewService(fakeEngine('NO_FINDINGS').engine, fakeCreds, fakeLifecycle(FAKE_SANDBOX), repo);
+
+    const started = await service.start(START_INPUT);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+    const out = await service.runReview(started.reviewId);
+
+    expect(out).toEqual({ status: 'complete', findings: '' });
+    expect(rows[0].status).toBe('complete');
+  });
+
+  it('engine failure is best-effort: stamps failed + no findings, never throws', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const service = new PlanReviewService(failingEngine(), fakeCreds, fakeLifecycle(FAKE_SANDBOX), repo);
+
+    const started = await service.start(START_INPUT);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+    const out = await service.runReview(started.reviewId);
+
+    expect(out).toEqual({ status: 'failed', findings: '' });
+    expect(rows[0].status).toBe('failed');
+    expect(rows[0].completed_at).toBeInstanceOf(Date);
+  });
+
+  it('no sandbox (ensureContainer null): stamps failed, no findings', async () => {
+    const { repo, rows } = makeReviewsRepo();
     const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine, fakeCreds);
+    const service = new PlanReviewService(engine, fakeCreds, fakeLifecycle(null), repo);
 
-    const result = await service.review(BASE_INPUT);
+    const started = await service.start(START_INPUT);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+    const out = await service.runReview(started.reviewId);
 
-    expect(calls).toHaveLength(1);
-    expect(result).not.toBeNull();
-    expect(result!.findings).toBe('');
+    expect(calls).toHaveLength(0); // never reached the engine
+    expect(out.status).toBe('failed');
+    expect(rows[0].status).toBe('failed');
   });
 
-  it('SECOND call for same job: guard fires, returns null (no Codex turn, 0 calls on this call)', async () => {
-    const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine, fakeCreds);
-
-    // First call — runs review.
-    await service.review(BASE_INPUT);
-    expect(calls).toHaveLength(1);
-
-    // Second call for the SAME jobId — guard fires.
-    const result = await service.review(BASE_INPUT);
-    expect(result).toBeNull();
-    // No additional engine turn was run.
-    expect(calls).toHaveLength(1);
-  });
-
-  it('SECOND call for a DIFFERENT job: guard does NOT fire, runs another review', async () => {
-    const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine, fakeCreds);
-
-    await service.review({ ...BASE_INPUT, jobId: 'job-A' });
-    const result = await service.review({ ...BASE_INPUT, jobId: 'job-B' });
-
-    expect(calls).toHaveLength(2);
-    expect(result).not.toBeNull(); // not null — second call was for a different job
-  });
-
-  it('engine failure is best-effort: returns { findings: "" } and does not throw', async () => {
-    const service = new PlanReviewService(failingEngine(), fakeCreds);
-
-    // Should NOT throw.
-    const result = await service.review(BASE_INPUT);
-
-    expect(result).not.toBeNull();
-    expect(result!.findings).toBe('');
-  });
-
-  it('containerId is threaded through to the engine target when sandbox is docker', async () => {
-    const { engine, calls } = fakeEngine('NO_FINDINGS');
-    const service = new PlanReviewService(engine, fakeCreds);
-
-    await service.review({ ...BASE_INPUT, containerId: 'container-abc123' });
-
-    // The run args should include target.containerId.
-    const runArgs = (engine.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
-    expect(runArgs.target).toBeDefined();
-    expect(runArgs.target!.containerId).toBe('container-abc123');
-  });
-});
-
-// ── (b) AgentSessionManager integration: exactly one review pass + one revision + one card ─────
-
-describe('R4 gate: AgentSessionManager.submit_plan — one Codex review pass + one revision before approval card', () => {
-  let planReview: PlanReviewService;
-  let reviewEngine: EngineRunnerPort;
-  let reviewEngineCalls: Array<{ engine: string; mode: string }>;
-
-  const mockStore = {
-    openJobOnThread: vi.fn(),
-    openJob: vi.fn(),
-    persistPlan: vi.fn(),
-    route: vi.fn(),
-    appendAtlasMessage: vi.fn(),
-    approve: vi.fn(),
-    cancel: vi.fn(),
-    reopenScoping: vi.fn(),
-    loadJob: vi.fn(),
-  } as unknown as BrainStoreService;
-
-  const mockDriverStore = {
-    getPipelineState: vi.fn(),
-    getDecisionRecord: vi.fn(),
-  } as unknown as DriverStoreService;
-
-  const mockMemory = {
-    recall: vi.fn(),
-    remember: vi.fn(),
-  } as unknown as MemoryStore;
-
-  const mockApprovals = {
-    request: vi.fn(),
-  } as unknown as DecisionApprovalService;
-
-  const mockLifecycle = {
-    findSandbox: vi.fn(),
-  } as unknown as ThreadLifecycleService;
-
-  const mockDockerRunner = {} as unknown as DockerEngineRunner;
-
-  const mockDispatcher = {
-    dispatch: vi.fn(),
-  } as unknown as JobDispatcher;
-
-  const mockSurface = {
-    post: vi.fn(),
-    name: 'agent',
-  } as unknown as ChatSurface;
-
-  const mockSandboxRows = {
-    findOne: vi.fn(),
-    save: vi.fn(),
-  } as unknown as Repository<ThreadSandboxEntity>;
-
-  const TEAM_ID = 'T-R4GATE';
-  const PROJECT_ID = 'r4gate-proj';
-  const THREAD_ID = 'th-r4gate-001';
-  const FAKE_JOB_ID = 'job-r4gate-001';
-  const FAKE_RECORD_ID = 'rec-r4gate-001';
-
-  const fakeStimulus: ChatStimulus = {
-    kind: 'chat',
-    trust: 'trusted',
-    id: 'stim-r4gate-001',
-    receivedAt: new Date('2026-06-21T00:00:00Z'),
-    orgId: TEAM_ID,
-    repoId: PROJECT_ID,
-    threadId: THREAD_ID,
-    body: 'Add OAuth2 login',
-    author: { id: 'U-OP', displayName: 'Operator' },
-    replyRoute: { surfaceId: 'agent', threadRef: 'ts-r4gate-001' },
-  };
-
-  const planArgs = {
-    goal: 'Add OAuth2 login to the API',
-    overview: 'Add OAuth2 login to the API.',
-    decisions: [
-      {
-        decisionClass: 'infrastructure',
-        title: 'Auth provider',
-        ruling: 'Use Auth0 via the existing AuthModule.',
-      },
-    ],
-    tracks: [
-      {
-        title: 'OAuth2 callback handler',
-        steps: [{ title: 'Add callback route', brief: 'Add GET /auth/callback in auth.controller.ts:1 …' }],
-      },
-      {
-        title: 'JWT validation middleware',
-        steps: [{ title: 'Add JWT guard', brief: 'Add JwtGuard in src/auth/jwt.guard.ts:1 …' }],
-      },
-    ],
-  };
-
-  function makeManager(review: PlanReviewService) {
-    return new AgentSessionManager(
-      mockStore,
-      mockDriverStore,
-      mockMemory,
-      mockApprovals,
-      mockLifecycle,
-      mockDockerRunner,
-      review,
-      mockDispatcher,
-      mockSurface,
-      mockSandboxRows,
-      { push: () => undefined, end: () => undefined } as never,
-      {} as unknown as DecisionClassifier,
-      {} as unknown as BuildShipService,
-      {} as unknown as DriverRepoResolver,
-      {
-        appendMarker: async () => undefined,
-        drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
-      } as unknown as import('../driver/pipeline-awareness.store').PipelineAwarenessStore,
-      {} as unknown as import('../tickets').TicketService,
+  it('threads containerId through to the engine target when the sandbox is docker', async () => {
+    const { repo } = makeReviewsRepo();
+    const { engine } = fakeEngine('NO_FINDINGS');
+    const service = new PlanReviewService(
+      engine,
       fakeCreds,
+      fakeLifecycle({ ...FAKE_SANDBOX, containerId: 'container-abc123' }),
+      repo,
     );
-  }
 
-  beforeEach(() => {
-    vi.resetAllMocks();
+    const started = await service.start(START_INPUT);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+    await service.runReview(started.reviewId);
 
-    // No existing open job on the thread.
-    (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
-
-    (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
-      thread: {
-        id: FAKE_JOB_ID,
-        status: 'awaiting_approval',
-        title: 'Add OAuth2 login to the API.',
-        kind: 'feature',
-        org_id: TEAM_ID,
-        repo_id: PROJECT_ID,
-        thread_id: THREAD_ID,
-        decision_record_id: FAKE_RECORD_ID,
-        created_at: new Date(),
-        updated_at: new Date(),
-        pr_url: null,
-      },
-      decisionRecordId: FAKE_RECORD_ID,
-    });
-
-    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({
-      channel: 'C-R4GATE',
-      threadTs: 'ts-r4gate-001',
-    });
-    (mockStore.appendAtlasMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-
-    const neverResolves = new Promise(() => undefined);
-    (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
-      jobId: FAKE_JOB_ID,
-      verdict: neverResolves,
-    });
-
-    // sandbox available
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_SANDBOX);
-
-    // Build the fake review engine.
-    const { engine, calls } = fakeEngine(
-      'FINDING: The OAuth callback track brief is too vague — specify which library.',
-    );
-    reviewEngine = engine;
-    reviewEngineCalls = calls;
-    planReview = new PlanReviewService(reviewEngine, fakeCreds);
-  });
-
-  it('FIRST submit_plan: Codex review fires, findings returned in tool response, NO approval card', async () => {
-    const manager = makeManager(planReview);
-    const tools = manager.buildTools(fakeStimulus);
-
-    const result = await tools['submit_plan'](planArgs);
-
-    // One Codex review turn was run.
-    expect(reviewEngineCalls).toHaveLength(1);
-    expect(reviewEngineCalls[0].engine).toBe('codex');
-    expect(reviewEngineCalls[0].mode).toBe('review');
-
-    // Tool response carries the findings (so the session can revise).
-    // The message includes the bullet-formatted finding text + instruction to call submit_plan again.
-    expect(result).toMatchObject({ ok: true, pendingReview: true });
-    expect((result as { message: string }).message).toContain('OAuth callback track brief');
-    expect((result as { message: string }).message).toContain('submit_plan');
-
-    // Approval card NOT raised yet — the revision has not happened.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockApprovals.request).not.toHaveBeenCalled();
-  });
-
-  it('SECOND submit_plan (same job — revision call): guard fires, approval card raised EXACTLY ONCE', async () => {
-    const manager = makeManager(planReview);
-    const tools = manager.buildTools(fakeStimulus);
-
-    // First call: review runs, findings returned.
-    await tools['submit_plan'](planArgs);
-    expect(reviewEngineCalls).toHaveLength(1);
-
-    // openJobOnThread now returns the existing job so the second call reuses it.
-    (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
-
-    // Second call: the operator's session has revised the plan and calls submit_plan again.
-    const result2 = await tools['submit_plan'](planArgs);
-
-    // Guard fired — NO additional review turn.
-    expect(reviewEngineCalls).toHaveLength(1);
-
-    // This time, the approval card is raised.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockApprovals.request).toHaveBeenCalledOnce();
-
-    // Tool response is the standard "approval card sent" message (no pendingReview flag).
-    expect(result2).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-    expect((result2 as { pendingReview?: boolean }).pendingReview).toBeUndefined();
-  });
-
-  it('clean plan (NO_FINDINGS on first call): proceeds directly to approval card WITHOUT revision round', async () => {
-    // Replace the review engine with one that returns NO_FINDINGS.
-    const { engine: cleanEngine, calls: cleanCalls } = fakeEngine('NO_FINDINGS');
-    const cleanReview = new PlanReviewService(cleanEngine, fakeCreds);
-    const manager = makeManager(cleanReview);
-    const tools = manager.buildTools(fakeStimulus);
-
-    const result = await tools['submit_plan'](planArgs);
-
-    // One review turn ran.
-    expect(cleanCalls).toHaveLength(1);
-
-    // Approval card fires immediately (no revision needed).
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockApprovals.request).toHaveBeenCalledOnce();
-
-    // Tool response does NOT have pendingReview.
-    expect((result as { pendingReview?: boolean }).pendingReview).toBeUndefined();
-    expect(result).toMatchObject({ ok: true });
-  });
-
-  it('review engine failure: best-effort — approval card fires on first submit_plan (no blocking)', async () => {
-    const failReview = new PlanReviewService(failingEngine(), fakeCreds);
-    const manager = makeManager(failReview);
-    const tools = manager.buildTools(fakeStimulus);
-
-    const result = await tools['submit_plan'](planArgs);
-
-    // Approval card fires (review failure is non-blocking).
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockApprovals.request).toHaveBeenCalledOnce();
-    expect(result).toMatchObject({ ok: true });
-    expect((result as { pendingReview?: boolean }).pendingReview).toBeUndefined();
-  });
-
-  it('no sandbox: proceeds to approval card immediately (review skipped gracefully)', async () => {
-    // No sandbox found for the thread.
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-
-    const manager = makeManager(planReview);
-    const tools = manager.buildTools(fakeStimulus);
-
-    const result = await tools['submit_plan'](planArgs);
-
-    // No review turn (no sandbox to run in).
-    expect(reviewEngineCalls).toHaveLength(0);
-
-    // Approval card fires.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mockApprovals.request).toHaveBeenCalledOnce();
-    expect(result).toMatchObject({ ok: true });
+    const runArgs = (engine.run as ReturnType<typeof vi.fn>).mock.calls[0][0] as RunEngineArgs;
+    expect(runArgs.target?.containerId).toBe('container-abc123');
   });
 });
 
-describe('buildRevisionInstruction', () => {
-  it('includes the findings text and instructs to call submit_plan again', () => {
-    const instruction = buildRevisionInstruction('• Track 1 too vague.\n• Missing decision.');
-    expect(instruction).toContain('Track 1 too vague');
-    expect(instruction).toContain('Missing decision');
-    expect(instruction).toContain('submit_plan');
+// ── delivery bookkeeping + boot finders ──────────────────────────────────────────────────────────────
+
+describe('PlanReviewService — delivery + boot reconciliation', () => {
+  it('markDelivered stamps delivered_at', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const service = new PlanReviewService(fakeEngine('NO_FINDINGS').engine, fakeCreds, fakeLifecycle(FAKE_SANDBOX), repo);
+    const started = await service.start(START_INPUT);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+
+    await service.markDelivered(started.reviewId);
+    expect(rows[0].delivered_at).toBeInstanceOf(Date);
+  });
+
+  it('findIncompleteReviews returns rows still running (Codex turn lost to a restart)', async () => {
+    const { repo } = makeReviewsRepo();
+    const service = new PlanReviewService(fakeEngine('NO_FINDINGS').engine, fakeCreds, fakeLifecycle(FAKE_SANDBOX), repo);
+    await service.start(START_INPUT); // status 'running'
+
+    const incomplete = await service.findIncompleteReviews();
+    expect(incomplete).toHaveLength(1);
+    expect(incomplete[0].status).toBe('running');
+  });
+});
+
+// ── renderFindingsDelivery ───────────────────────────────────────────────────────────────────────────
+
+describe('renderFindingsDelivery', () => {
+  it('with findings: shows them + instructs submit_plan / finalize_plan', () => {
+    const body = renderFindingsDelivery('• Track 1 too vague.\n• Missing decision.', 1, false);
+    expect(body).toContain('Codex plan review');
+    expect(body).toContain('Track 1 too vague');
+    expect(body).toContain('Missing decision');
+    expect(body).toContain('submit_plan');
+    expect(body).toContain('finalize_plan');
+  });
+
+  it('clean (no findings): says no findings + points at finalize_plan', () => {
+    const body = renderFindingsDelivery('', 2, false);
+    expect(body).toContain('no findings');
+    expect(body).toContain('finalize_plan');
+  });
+
+  it('cap reached: tells Atlas to finalize over remaining findings', () => {
+    const body = renderFindingsDelivery('• Still vague.', 3, true);
+    expect(body).toContain('cap reached');
+    expect(body).toContain('finalize_plan');
   });
 });

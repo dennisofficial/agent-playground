@@ -1,41 +1,44 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
 import type { PlannedStep } from '../driver/planner-llm';
+import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { CredentialResolver } from '../onboarding';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { PlanReviewEntity } from '../persistence/entities';
 
 /**
- * R4 — PLAN-LEVEL CODEX PRE-REVIEW.
+ * R4 — ASYNC, DURABLE CODEX PLAN PRE-REVIEW.
  *
- * On `submit_plan` (before the operator sees the approval card): runs ONE Codex review turn in the
- * thread's sandbox against the persisted decision-record + track plan, parses the findings, and
- * returns them so `AgentSessionManager` can relay them back into the Claude session for a SINGLE
- * revision.  After that revision the session calls `submit_plan` again; the one-pass guard
- * (per-job `Set`) detects the second call and returns `null` — the caller proceeds directly to the
- * approval card.
+ * On `submit_plan` the thread enters `plan_review` and a `plan_reviews` ROW is created (`start`) with the
+ * rendered review `prompt`. A background Codex turn then runs in the thread's sandbox (`runReview`,
+ * 5-30 min) — NOT inside the `submit_plan` tool call (which returns immediately). On completion the row is
+ * stamped (`findings`, `completed_at`, `status`); `AgentSessionManager` delivers the findings to Atlas in
+ * a server-initiated turn and stamps `delivered_at`.
+ *
+ * Durability (mirrors the `ask_question` gate): the row is the at-least-once spine. A host restart mid-
+ * review leaves a `running` row (boot re-runs it) or a `complete`/`failed` row with `delivered_at = null`
+ * (boot re-delivers it). Each `submit_plan` is a new bounded `round`.
  *
  * Architecture notes:
- * - Uses `ENGINE_RUNNER` (the Docker engine runner) — NOT the bidirectional tool bridge. The review
- *   turn is read-only so it never needs the bridge.
- * - `mode: 'review'` → Codex read-only sandbox; the plan text is its only input (no side-effects).
- * - One-pass guard: the FIRST call for a jobId runs the review and returns findings (or '' if none).
- *   The SECOND call (the revision's re-propose) skips the review and returns `null` → "proceed to
- *   approval card".  The guard resets when the process restarts, which is intentional: a restarted
- *   server means the planning session is fresh too.
- * - Best-effort: a failed Codex turn is logged + treated as "no findings" so the build isn't blocked
- *   by a review-engine outage.
+ * - Uses `ENGINE_RUNNER` (the Docker engine runner) — NOT the bidirectional tool bridge. The review turn
+ *   is read-only so it never needs the bridge.
+ * - `mode: 'review'` → Codex read-only sandbox; the stored `prompt` is its only input (no side-effects).
+ * - Best-effort: a failed Codex turn is recorded as `failed` + treated as "no findings" so the build is
+ *   never blocked by a review-engine outage.
  */
 
-export interface PlanReviewInput {
-  /** Job the plan belongs to (used for the one-pass guard). */
-  jobId: string;
-  /** Team id (for credential resolution — threaded through from the stimulus). */
+/** What `start` needs to render + persist a review round. */
+export interface PlanReviewStartInput {
+  /** Thread the plan belongs to. */
+  threadId: string;
+  /** Tenant (for credential resolution + sandbox scoping). */
   orgId: string;
-  /** Worktree path the Codex review turn runs inside (read-only). */
-  worktreePath: string;
-  /** Container id when running in docker mode (absent → in-process local). */
-  containerId?: string;
+  /** The draft decision record this round grades (audit). */
+  decisionRecordId?: string | null;
   /** The overview text from the plan. */
   overview: string;
   /** The locked decisions from the plan. */
@@ -43,25 +46,17 @@ export interface PlanReviewInput {
   /** The high-level track briefs (titles) from the plan. */
   trackTitles: string[];
   /**
-   * The steps Atlas authored under each track, aligned by track index (`stepsByTrack[i]` =
-   * steps for `trackTitles[i]`). Present on the full-plan path so the reviewer grades the EXECUTION
-   * detail, not just titles. Absent on step-less paths (the reviewer then sees titles only).
+   * The steps Atlas authored under each track, aligned by track index (`stepsByTrack[i]` = steps for
+   * `trackTitles[i]`). Present on the full-plan path so the reviewer grades the EXECUTION detail, not
+   * just titles. Absent on step-less paths (the reviewer then sees titles only).
    */
   stepsByTrack?: PlannedStep[][];
-  /** Optional explicit subscription auth for the Codex turn; when absent it's resolved per-org from
-   * `orgId` (then the env fallback inside the engine). */
-  auth?: EngineAuth;
 }
 
-/**
- * The result of one review pass.
- * - `{ findings }` — FIRST call: the review ran; `findings` is non-empty text if the reviewer found
- *   issues, or `''` if the plan is clean.  The caller feeds `findings` back into the session for one
- *   revision (even on '' — the session can confirm the plan is final and re-call `submit_plan`).
- * - `null` — SECOND call (same jobId): the one-pass guard fired.  Proceed straight to the approval
- *   card, no review, no revision.
- */
-export type PlanReviewResult = { findings: string } | null;
+/** Outcome of `start`: a fresh review round, or the round cap was hit (no review run). */
+export type PlanReviewStart =
+  | { reviewId: string; round: number }
+  | { capped: true; round: number };
 
 /** System prompt for the Codex plan-review turn. */
 const REVIEW_SYSTEM =
@@ -87,7 +82,7 @@ const REVIEW_SYSTEM =
   'If the plan looks solid, output exactly: NO_FINDINGS';
 
 /** Render the plan as a compact review input. */
-function renderPlanForReview(input: PlanReviewInput): string {
+function renderPlanForReview(input: PlanReviewStartInput): string {
   const decisions = input.decisions.length
     ? input.decisions
         .map((d: Decision) => `  [${d.decisionClass}] ${d.title}: ${d.ruling}`)
@@ -140,105 +135,162 @@ export function parsePlanFindings(reviewerOutput: string): string {
 export class PlanReviewService {
   private readonly logger = new Logger(PlanReviewService.name);
 
-  /**
-   * Tracks which jobs have already had their plan reviewed this process lifetime.
-   * The second call for the same job returns `null` (one-pass guard).
-   */
-  private readonly reviewed = new Set<string>();
+  /** Max review ROUNDS per thread — each `submit_plan` is a round. Bounds Codex cost/latency. */
+  private readonly maxRounds = Number(process.env['PLAN_REVIEW_MAX_ROUNDS']) || 3;
 
   constructor(
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     private readonly creds: CredentialResolver,
+    private readonly lifecycle: ThreadLifecycleService,
+    @InjectRepository(PlanReviewEntity, DB_CONNECTION)
+    private readonly reviews: Repository<PlanReviewEntity>,
   ) {}
 
+  /** The round cap (so callers can phrase the "cap reached" message). */
+  get maxReviewRounds(): number {
+    return this.maxRounds;
+  }
+
   /**
-   * Run the plan pre-review for a job.
-   *
-   * FIRST call for `jobId` → runs ONE Codex review turn in-sandbox → returns `{ findings }`.
-   *   - `findings` is non-empty text when the reviewer flagged issues.
-   *   - `findings` is `''` when the plan is clean (the plan doc mandates we still relay empty
-   *     findings back so the session can confirm and re-call `submit_plan`).
-   *
-   * SECOND call for the same `jobId` → one-pass guard → returns `null` → caller raises the
-   * approval card immediately.
-   *
-   * On any Codex engine error: logs a warning + returns `{ findings: '' }` (best-effort; never
-   * blocks the build).
+   * Open a review round: render the prompt, persist a `running` row. Returns `{ reviewId, round }`, or
+   * `{ capped }` when the thread has already had `maxRounds` rounds (the caller then lets Atlas finalize
+   * over the existing findings rather than re-reviewing forever). Does NOT run the Codex turn — call
+   * `runReview(reviewId)` next (in the background).
    */
-  async review(input: PlanReviewInput): Promise<PlanReviewResult> {
-    // ── One-pass guard ──────────────────────────────────────────────────────────────────────────
-    if (this.reviewed.has(input.jobId)) {
-      this.logger.log(
-        `plan-review: job=${input.jobId} already reviewed — skipping (raising approval card)`,
-      );
-      return null;
+  async start(input: PlanReviewStartInput): Promise<PlanReviewStart> {
+    const prior = await this.reviews.count({ where: { thread_id: input.threadId } });
+    const round = prior + 1;
+    if (round > this.maxRounds) {
+      this.logger.log(`plan-review: thread=${input.threadId} hit round cap (${this.maxRounds}) — not reviewing`);
+      return { capped: true, round: prior };
     }
-    this.reviewed.add(input.jobId);
+    const prompt = renderPlanForReview(input);
+    const row = await this.reviews.save(
+      this.reviews.create({
+        thread_id: input.threadId,
+        org_id: input.orgId,
+        decision_record_id: input.decisionRecordId ?? null,
+        round,
+        status: 'running',
+        prompt,
+        findings: null,
+        completed_at: null,
+        delivered_at: null,
+      }),
+    );
+    this.logger.log(`plan-review: opened round ${round} (review=${row.id}) for thread=${input.threadId}`);
+    return { reviewId: row.id, round };
+  }
 
-    // ── Codex review turn ────────────────────────────────────────────────────────────────────────
-    const sandboxKey = `plan-review-${input.orgId}-${input.jobId}`;
-    const task = renderPlanForReview(input);
+  /**
+   * Run the Codex review turn for a `running` row: (re-)attach the thread's sandbox, run the read-only
+   * Codex turn against the stored prompt, parse the findings, and stamp the row `complete` (or `failed`
+   * on engine error → treated as no findings). Idempotent-ish: re-running a row simply re-stamps it.
+   * Returns the findings (''=clean) and the terminal status.
+   */
+  async runReview(reviewId: string): Promise<{ status: 'complete' | 'failed'; findings: string }> {
+    const row = await this.reviews.findOneOrFail({ where: { id: reviewId } });
 
-    this.logger.log(`plan-review: running Codex review turn for job=${input.jobId}`);
+    // (Re-)attach a live container against the durable worktree (the async/boot path can't assume one is
+    // warm). Returns null only if the thread has no sandbox row or is closed → record failed, no findings.
+    const ensured = await this.lifecycle.ensureContainer(row.thread_id, row.org_id).catch((err) => {
+      this.logger.warn(`plan-review: ensureContainer failed for review=${reviewId}: ${err}`);
+      return null;
+    });
+    if (!ensured) {
+      await this.stamp(row, 'failed', '');
+      return { status: 'failed', findings: '' };
+    }
+    const sandbox = ensured.sandbox;
 
-    // Per-org Codex subscription secret (deployed); undefined locally → the in-container engine falls
-    // back to CODEX_OAUTH_TOKEN. With neither set the turn throws and is caught below as "no findings".
-    const auth = input.auth ?? (await this.creds.engineAuth(input.orgId, 'codex'));
+    const sandboxKey = `plan-review-${row.org_id}-${reviewId}`;
+    // Per-org Codex subscription secret (deployed); undefined locally → the in-container engine falls back
+    // to CODEX_OAUTH_TOKEN. With neither set the turn throws and is caught below as "failed / no findings".
+    const auth: EngineAuth | undefined = await this.creds.engineAuth(row.org_id, 'codex');
 
+    this.logger.log(`plan-review: running Codex review turn for review=${reviewId} thread=${row.thread_id}`);
     let reviewerOutput: string;
     try {
       const result = await this.engine.run({
         engine: 'codex',
-        task,
-        cwd: input.worktreePath,
+        task: row.prompt,
+        cwd: sandbox.worktreePath,
         systemPrompt: REVIEW_SYSTEM,
         sandboxKey,
         mode: 'review',
         ...(auth ? { auth } : {}),
-        ...(input.containerId
-          ? { target: { containerId: input.containerId, worktreeHost: input.worktreePath } }
+        ...(sandbox.containerId
+          ? { target: { containerId: sandbox.containerId, worktreeHost: sandbox.worktreePath } }
           : {}),
       });
       reviewerOutput = result.result;
     } catch (err) {
-      this.logger.warn(
-        `plan-review: Codex turn failed for job=${input.jobId} — treating as no findings: ${err}`,
-      );
-      return { findings: '' };
+      this.logger.warn(`plan-review: Codex turn failed for review=${reviewId} — recording failed: ${err}`);
+      await this.stamp(row, 'failed', '');
+      return { status: 'failed', findings: '' };
     }
 
     const findings = parsePlanFindings(reviewerOutput);
+    await this.stamp(row, 'complete', findings);
     this.logger.log(
       findings
-        ? `plan-review: job=${input.jobId} — ${findings.split('\n').length} finding(s)`
-        : `plan-review: job=${input.jobId} — clean (no findings)`,
+        ? `plan-review: review=${reviewId} — ${findings.split('\n').length} finding(s)`
+        : `plan-review: review=${reviewId} — clean (no findings)`,
     );
+    return { status: 'complete', findings };
+  }
 
-    return { findings };
+  /** Stamp a review row terminal: findings + completed_at + status. */
+  private async stamp(row: PlanReviewEntity, status: 'complete' | 'failed', findings: string): Promise<void> {
+    await this.reviews.update({ id: row.id }, { status, findings, completed_at: new Date() });
+  }
+
+  /** Load one review row (for delivery). */
+  async load(reviewId: string): Promise<PlanReviewEntity | null> {
+    return this.reviews.findOne({ where: { id: reviewId } });
+  }
+
+  /** Stamp a review delivered (its findings reached Atlas in a turn that actually ran). */
+  async markDelivered(reviewId: string): Promise<void> {
+    await this.reviews.update({ id: reviewId }, { delivered_at: new Date() });
   }
 
   /**
-   * Expose for testing: reset the guard for a specific job (used in test teardowns when a single
-   * test exercises both the review pass and the guard pass).
-   * @internal
+   * Boot reconciliation: rows whose Codex turn was in flight when the host died (`running`). Each must be
+   * re-run. (`completed_at` is null on these.)
    */
-  _resetGuardForJob(jobId: string): void {
-    this.reviewed.delete(jobId);
+  async findIncompleteReviews(): Promise<PlanReviewEntity[]> {
+    return this.reviews.find({ where: { status: 'running' } });
+  }
+
+  /**
+   * Boot reconciliation: rows the Codex turn finished but whose delivery turn the host crash dropped
+   * (`complete`/`failed`, `delivered_at` null). Each must be re-delivered (at-least-once).
+   */
+  async findUndeliveredReviews(): Promise<PlanReviewEntity[]> {
+    return this.reviews.find({
+      where: { status: In(['complete', 'failed']), delivered_at: IsNull() },
+    });
   }
 }
 
 /**
- * Build the revision instruction that is injected into the Claude session's `submit_plan` tool
- * response when the plan reviewer finds issues.
+ * Build the operator-visible + Atlas-facing body for a delivered review round. Serves DOUBLE DUTY: it is
+ * the harness-seeded "Codex review" message the operator sees AND the input the brain's session receives,
+ * so the operator watches the exact same exchange Atlas reacts to.
  */
-export function buildRevisionInstruction(findings: string): string {
-  return (
-    'The plan was reviewed by a Codex reviewer before being shown to the operator. ' +
-    'The following issues were found — please revise your plan to address them, ' +
-    'then call `submit_plan` again with the updated plan:\n\n' +
-    findings +
-    '\n\n' +
-    'Address each finding above (or explicitly note why one does not apply). ' +
-    'After revising, call `submit_plan` again. The revised plan will go straight to the operator.'
-  );
+export function renderFindingsDelivery(findings: string, round: number, capReached: boolean): string {
+  const header = `🔍 **Codex plan review** (round ${round})`;
+  if (!findings) {
+    return (
+      `${header} — no findings. The plan looks solid.\n\n` +
+      'Atlas: call `finalize_plan` to send it to the operator for approval, or `submit_plan` to revise ' +
+      'further first.'
+    );
+  }
+  const capNote = capReached
+    ? '\n\n(Review-round cap reached — address these, then `finalize_plan`; the operator sees any you push back on.)'
+    : '\n\nAtlas: address each — APPLY it, or PUSH BACK with reasoning — then call `submit_plan` to ' +
+      're-review, or `finalize_plan` to send the reviewed plan to the operator for approval.';
+  return `${header} — ${findings.split('\n').length} finding(s):\n\n${findings}${capNote}`;
 }

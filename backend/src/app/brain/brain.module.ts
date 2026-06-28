@@ -7,6 +7,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
+  PlanReviewEntity,
   StepEntity,
   RepoEntity,
   TrackEntity,
@@ -61,6 +62,7 @@ import { PlanReviewService } from './plan-review.service';
       [
         ThreadEntity,
         MessageEntity,
+        PlanReviewEntity,
         DecisionRecordEntity,
         TrackEntity,
         StepEntity,

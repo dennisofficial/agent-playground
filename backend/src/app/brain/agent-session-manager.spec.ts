@@ -60,6 +60,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
     clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
     findUndeliveredAnsweredQuestions: vi.fn().mockResolvedValue([]),
+    // R4 async plan-review seam.
+    appendSystemEvent: vi.fn().mockResolvedValue(undefined),
+    markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
+    loadDecisionRecord: vi.fn(),
+    appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
     // The "needs you" turn-active flag is best-effort; the manager brackets every chat turn with it.
     setTurnActive: vi.fn().mockResolvedValue(undefined),
     resetAllTurnActive: vi.fn().mockResolvedValue(0),
@@ -106,12 +111,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   } as unknown as PipelineAwarenessStore;
 
   /**
-   * R4: mock PlanReviewService that immediately returns null (guard already fired) — so the R3 spec's
-   * assertions on persistPlan + approval card still hold.  The R4 spec separately exercises the review
-   * flow in full.
+   * R4: mock async PlanReviewService. `start` opens a round; `load` returns null by default so the
+   * fire-and-forget `runAndDeliverReview` no-ops cleanly in these submit_plan unit tests (the full
+   * run→deliver flow is exercised in the integration spec). `maxReviewRounds` is a plain property.
    */
   const mockPlanReview = {
-    review: vi.fn().mockResolvedValue(null),
+    start: vi.fn().mockResolvedValue({ reviewId: 'rev-r3gate-001', round: 1 }),
+    runReview: vi.fn().mockResolvedValue({ status: 'complete', findings: '' }),
+    load: vi.fn().mockResolvedValue(null),
+    markDelivered: vi.fn().mockResolvedValue(undefined),
+    findIncompleteReviews: vi.fn().mockResolvedValue([]),
+    findUndeliveredReviews: vi.fn().mockResolvedValue([]),
+    maxReviewRounds: 3,
   } as unknown as PlanReviewService;
 
   const mockDispatcher = {
@@ -194,6 +205,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.markQuestionDelivered as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockStore.clearAwaitingQuestion as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockLifecycle.contextDirHost as ReturnType<typeof vi.fn>).mockReturnValue('/tmp/atlas-test-ctx');
+
+    // R4 plan-review defaults (resetAllMocks wiped resolved values). appendSystemEvent MUST resolve a
+    // promise — submit_plan chains `.catch` on it.
+    (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.markAwaitingApproval as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockStore.appendReviewFindingsMessage as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (mockPlanReview.start as ReturnType<typeof vi.fn>).mockResolvedValue({ reviewId: 'rev-r3gate-001', round: 1 });
+    (mockPlanReview.runReview as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'complete', findings: '' });
+    (mockPlanReview.load as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockPlanReview.markDelivered as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockPlanReview.findIncompleteReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockPlanReview.findUndeliveredReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     // persistPlan returns the canonical shape BrainStoreService returns.
     (mockStore.persistPlan as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -282,7 +305,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     const result = await tools['submit_plan']({ goal, overview, decisions, tracks });
 
-    // 1. persistPlan gets the track titles AND the per-track authored steps + title=goal.
+    // 1. persistPlan gets the track titles AND the per-track authored steps + title=goal, and persists
+    //    as `plan_review` (NOT awaiting_approval — submit_plan requests a review, it does not post a card).
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.overview).toBe(overview);
@@ -295,19 +319,65 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.stepsByTrack[1]).toHaveLength(1);
     expect(persistArgs.orgId).toBe(TEAM_ID);
     expect(persistArgs.repoId).toBe(PROJECT_ID);
+    expect(persistArgs.status).toBe('plan_review');
 
-    // 2. The tool returns ok=true + the job and record ids.
-    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID });
+    // 2. The tool returns ok=true + the ids + the review round; an async Codex review was kicked.
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, reviewRound: 1 });
+    expect(mockPlanReview.start).toHaveBeenCalledOnce();
+    const reviewArgs = (mockPlanReview.start as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(reviewArgs.threadId).toBe(FAKE_JOB_ID);
+    expect(reviewArgs.trackTitles).toEqual(['RateLimiter guard', 'Integration tests']);
 
-    // 3. The approval card fires async with the PERSISTED short title (persistPlan titles the thread;
-    //    the card + the live thread_meta frame mirror it, not the raw goal), and §H publishes that frame.
+    // 3. submit_plan does NOT post the approval card (that is finalize_plan's job). It repaints the
+    //    title and drops a "reviewing" system-event pill.
     const persistedTitle = 'Add rate limiting to the API'; // what the persistPlan mock returns as job.title
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockApprovals.request).not.toHaveBeenCalled();
+    expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
+    expect(mockSurface.emitThreadMeta).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID, persistedTitle);
+  });
+
+  it('finalize_plan: posts the approval card from the persisted (plan_review) plan', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+
+    // The thread is in plan_review with a locked decision record (submit_plan ran earlier).
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'plan_review',
+      title: 'Add rate limiting to the API',
+      decisionRecordId: FAKE_RECORD_ID,
+      repoId: PROJECT_ID,
+      orgId: TEAM_ID,
+    });
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'Add token-bucket rate limiting.',
+      decisions: [{ decisionClass: 'infrastructure', title: 'Backend', ruling: 'Redis bucket' }],
+      trackTitles: ['RateLimiter guard', 'Integration tests'],
+    });
+
+    const result = await tools['finalize_plan']({});
+
+    // Flips to the operator gate, then posts the approval card async with the persisted title + tracks.
+    expect(mockStore.markAwaitingApproval).toHaveBeenCalledWith(FAKE_JOB_ID);
+    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(approvalArgs.title).toBe(persistedTitle);
+    expect(approvalArgs.title).toBe('Add rate limiting to the API');
     expect(approvalArgs.tracks).toEqual(['RateLimiter guard', 'Integration tests']);
-    expect(mockSurface.emitThreadMeta).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID, persistedTitle);
+    expect(approvalArgs.summary).toBe('Add token-bucket rate limiting.');
+  });
+
+  it('finalize_plan: refuses when there is no submitted plan', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      status: 'scoping',
+      decisionRecordId: null,
+    });
+    const result = await tools['finalize_plan']({});
+    expect(result).toMatchObject({ ok: false });
+    expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
   it('(a) submit_plan: returns error (no persist) if goal is missing', async () => {

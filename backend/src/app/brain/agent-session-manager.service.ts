@@ -51,7 +51,7 @@ import type { EngineRunnerPort, ToolImpl, RunEngineArgs, EngineEvent } from '../
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
-import { PlanReviewService, buildRevisionInstruction } from './plan-review.service';
+import { PlanReviewService, renderFindingsDelivery } from './plan-review.service';
 
 /**
  * R3 — the AGENT SESSION MANAGER (the chat brain).
@@ -64,7 +64,8 @@ import { PlanReviewService, buildRevisionInstruction } from './plan-review.servi
  *     resuming the persisted session_id for the thread.
  *   - The session runs with a custom system prompt (NOT the SDK's native ExitPlanMode) + 6 host-side
  *     tool impls dispatched through the tool bridge.
- *   - `submit_plan` → `BrainStoreService.persistPlan` → approval card via `DecisionApprovalService`.
+ *   - `submit_plan` → `persistPlan` (status `plan_review`) → async Codex review → findings delivered to
+ *     the session; `finalize_plan` → approval card via `DecisionApprovalService`.
  *   - On approve → `JOB_DISPATCHER.dispatch`; on deny/request_changes → keep talking.
  *   - session_id is persisted on the `thread_sandboxes` row so it survives host restarts.
  */
@@ -119,12 +120,12 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
-    `You have 18 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
+    `You have 19 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
     `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
     `ALWAYS call the qualified name (e.g. mcp__${BRIDGE_SERVER_NAME}__submit_plan); the bare name`,
     '(e.g. submit_plan) is NOT a registered tool and will fail with "No such tool available". The prose',
     `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
-    'form. The 18 tools:',
+    'form. The 19 tools:',
     `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator ONE formal question (renders as a card; see GRILLING)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (auto-attaches the last answered question); returns its stable id`,
     `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
@@ -133,7 +134,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read back the locked decisions (RECOVERY ONLY — see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — propose the full multi-track plan for approval (FULL PATH; see below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — submit the full multi-track plan for an async Codex review (FULL PATH; see below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__finalize_plan        — send the Codex-reviewed plan to the operator for approval (FULL PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
     `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
@@ -293,9 +295,16 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     '  sessions is decided downstream. Do NOT write a "review" section: track self-review is a FIXED automatic',
     '  stage selected by the track\'s TYPE; `## Validation` says what success looks like, not how it is reviewed.',
     '',
-    '`submit_plan` does NOT author the plan; it FLIPS the thread to approval-awaiting and posts the approval',
-    'card. Ensure `/context/specs/plan.md` is complete and all always-ask decisions are locked via create_decision',
-    'FIRST, then call submit_plan with:',
+    '`submit_plan` does NOT author the plan and does NOT post the approval card — it REQUESTS AN AUTOMATED',
+    'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your tracks + steps; the',
+    'review runs in the background (it can take several minutes). When it finishes I relay its findings to you',
+    'as a "Codex review" message. ADDRESS each finding — APPLY it (revise the specs + the structured plan), or',
+    'PUSH BACK with reasoning — then either call `submit_plan` AGAIN to re-review the revised plan, or call',
+    '`finalize_plan` to send the reviewed plan to the operator. Only `finalize_plan` posts the approval card;',
+    'the operator is the FINAL GATE before the build runs, and they see any findings you pushed back on. (The',
+    'review is bounded to a few rounds; after the cap, finalize_plan over the remaining findings.) Ensure',
+    '`/context/specs/plan.md` is complete and all always-ask decisions are locked via create_decision FIRST,',
+    'then call submit_plan with:',
     '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
     '  - overview: intent + stack + constraints',
     '  - tracks: the ordered tracks, each `{ title, type, steps: [{ title, brief }] }`. `type` = the track\'s',
@@ -355,16 +364,43 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
   async onApplicationBootstrap(): Promise<void> {
     try {
       const pending = await this.store.findUndeliveredAnsweredQuestions();
-      if (pending.length === 0) return;
-      this.logger.log(`Boot: re-delivering ${pending.length} answered-but-undelivered question(s)`);
-      for (const q of pending) {
-        const stimulus = bootDeliveryStimulus(q);
-        void this.handleChatTurn(stimulus).catch((err) =>
-          this.logger.warn(`boot re-delivery failed for thread=${q.threadId}: ${err}`),
-        );
+      if (pending.length > 0) {
+        this.logger.log(`Boot: re-delivering ${pending.length} answered-but-undelivered question(s)`);
+        for (const q of pending) {
+          const stimulus = bootDeliveryStimulus(q);
+          void this.handleChatTurn(stimulus).catch((err) =>
+            this.logger.warn(`boot re-delivery failed for thread=${q.threadId}: ${err}`),
+          );
+        }
       }
     } catch (err) {
       this.logger.warn(`Boot question-delivery reconciliation failed: ${err}`);
+    }
+
+    // Plan-review reconciliation (same at-least-once shape as the question gate): re-run any review whose
+    // Codex turn was in flight when the host died (`running`), and re-deliver any completed review whose
+    // delivery turn the crash dropped (`delivered_at` null). Fire-and-forget; the turn queue serializes
+    // the deliveries; `deliverReviewFindings` is idempotent on the visible message. Best-effort.
+    try {
+      const incomplete = await this.planReview.findIncompleteReviews();
+      const undelivered = await this.planReview.findUndeliveredReviews();
+      if (incomplete.length || undelivered.length) {
+        this.logger.log(
+          `Boot: reconciling ${incomplete.length} in-flight + ${undelivered.length} undelivered plan-review(s)`,
+        );
+      }
+      for (const r of incomplete) {
+        void this.runAndDeliverReview(r.id).catch((err) =>
+          this.logger.warn(`boot plan-review re-run failed for review=${r.id}: ${err}`),
+        );
+      }
+      for (const r of undelivered) {
+        void this.deliverReviewFindings(r.id).catch((err) =>
+          this.logger.warn(`boot plan-review re-delivery failed for review=${r.id}: ${err}`),
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Boot plan-review reconciliation failed: ${err}`);
     }
   }
 
@@ -409,16 +445,21 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
    *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
   private async runChatTurnInner(stimulus: ChatStimulus): Promise<void> {
-    // If this operator message answers an outstanding `ask_question` card typed in prose (rather than
-    // clicked), stamp that card answered so `create_decision` can auto-attach the Q&A. No-op when the answer
-    // came through `/answer-question` (it pre-stamps) or there is no pending question.
-    await this.linkTypedQuestionAnswer(stimulus);
+    // TYPED-ANSWER LINKAGE — operator-authored turns ONLY: if the operator answered an outstanding
+    // `ask_question` card in PROSE (composer) rather than clicking it, stamp that card answered so
+    // `create_decision` can auto-attach the Q&A. SYNTHETIC turns must NOT run this — a seed answer-delivery
+    // turn's card is already stamped by the endpoint (no-op anyway), and a harness plan-review delivery
+    // turn's body is the Codex findings, which must never be stamped onto a pending unanswered question.
+    if (isOperatorAuthored(stimulus)) {
+      await this.linkTypedQuestionAnswer(stimulus);
+    }
 
-    // Human-input gate delivery: if this thread's gate points at a now-ANSWERED, not-yet-DELIVERED
-    // question (the answer was stamped by the endpoint, the prose path just above, or persisted before a
-    // crash), THIS turn is its delivery turn. Capture it now; we stamp `deliveredAt` + clear the pointer
-    // ONLY on the successful tail below — never on an early return / error — so a failed turn re-delivers
-    // (at-least-once). Correctness keys off the durable gate, not which path triggered the turn.
+    // Human-input gate delivery: if this thread's gate points at a now-ANSWERED, not-yet-DELIVERED question
+    // (the answer was stamped by the endpoint, the prose path above, or persisted before a crash), THIS turn
+    // is its delivery turn — INCLUDING a SEED-authored answer-delivery turn (the `/answer-question` endpoint
+    // delivers via `seedSystemNotification`), so this capture is UNCONDITIONAL. We stamp `deliveredAt` + clear
+    // the pointer ONLY on the successful tail below — never on an early return / error — so a failed turn
+    // re-delivers (at-least-once). Correctness keys off the durable gate, not which path triggered the turn.
     let deliveredQuestionId: string | null = null;
     const awaitingId = await this.store.awaitingQuestionId(stimulus.threadId);
     if (awaitingId) {
@@ -884,6 +925,9 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         // Ensure there's an open scoping job on this thread.
         const jobId = await this.ensureJob(stimulus, overview, 'feature');
 
+        // Persist the plan as `plan_review` (NOT `awaiting_approval`): submit_plan REQUESTS a Codex
+        // review, it does NOT post the approval card. Decoupling persistence from approval-readiness is
+        // what lets the review run async without the thread looking like it's awaiting the operator.
         const { thread: job, decisionRecordId } = await this.store.persistPlan({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
@@ -895,73 +939,99 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
           trackTitles,
           trackTypes,
           stepsByTrack,
+          status: 'plan_review',
         });
 
-        // persistPlan retitled the thread to a short label (`job.title`). Repaint the open UI NOW —
-        // before the plan-review block, which can return early on findings (below) and never reach the
-        // card emit. Best-effort; the card path re-emits the same title (idempotent).
+        // persistPlan retitled the thread to a short label (`job.title`). Repaint the open UI now.
         this.surface.emitThreadMeta?.(stimulus.repoId, stimulus.threadId, job.title ?? goal);
 
-        // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
-        // First call: run a Codex review turn in the thread's sandbox → return findings to the
-        // session for ONE revision.  Second call (same job): skip review → straight to approval.
-        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
-        if (sandbox) {
-          const reviewResult = await this.planReview.review({
-            jobId: job.id,
-            orgId: stimulus.orgId,
-            worktreePath: sandbox.worktreePath,
-            ...(sandbox.containerId ? { containerId: sandbox.containerId } : {}),
-            overview,
-            decisions,
-            trackTitles,
-            // §E — Codex now grades the EXECUTION detail (the authored steps), not just titles.
-            stepsByTrack,
-          });
-
-          if (reviewResult !== null) {
-            // FIRST call: review ran.
-            if (reviewResult.findings) {
-              // Findings found — relay them back into the session for one revision.
-              // The session will call submit_plan again with an updated plan.
-              return {
-                ok: true,
-                jobId: job.id,
-                decisionRecordId,
-                pendingReview: true,
-                message:
-                  'Plan persisted and reviewed by Codex before sending to the operator. ' +
-                  buildRevisionInstruction(reviewResult.findings),
-              };
-            }
-            // No findings — fall through to the approval card immediately (clean plan).
-            this.logger.log(`plan-review: job=${job.id} clean — proceeding to approval card`);
-          }
-          // reviewResult === null → second call (one-pass guard fired) → fall through to approval.
-        }
-        // ── End R4 ─────────────────────────────────────────────────────────────────────────────
-
-        // Request approval — fire the approval card and await the verdict in the background.
-        // The tool response returns immediately; the approval flow is async.
-        void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
-          jobId: job.id,
+        // ── R4: async Codex plan review ────────────────────────────────────────────────────────
+        // Open a review round (renders + persists the durable `plan_reviews` row); the Codex turn runs
+        // in the BACKGROUND (5-30 min) and its findings are delivered to this session in a later,
+        // server-initiated turn. This tool returns immediately. Bounded by the round cap.
+        const started = await this.planReview.start({
+          threadId: job.id,
+          orgId: stimulus.orgId,
           decisionRecordId,
-          // The reloaded short title from persistPlan — keeps the card heading + its `thread_meta`
-          // emit consistent with the durable sidebar title (not the full-sentence goal).
-          title: job.title ?? goal,
-          summary: overview,
+          overview,
           decisions,
-          tracks: trackTitles,
+          trackTitles,
+          // Codex grades the EXECUTION detail (the authored steps), not just titles.
+          stepsByTrack,
         });
+
+        if ('capped' in started) {
+          return {
+            ok: true,
+            jobId: job.id,
+            decisionRecordId,
+            message:
+              `Plan persisted. The Codex review-round cap (${this.planReview.maxReviewRounds}) is reached ` +
+              `— call finalize_plan to send the plan to the operator for approval. They will see any review ` +
+              `findings you chose to push back on.`,
+          };
+        }
+
+        await this.store
+          .appendSystemEvent(
+            job.id,
+            "🔍 Codex is reviewing the plan — this can take a few minutes. I'll relay the findings when it's done.",
+          )
+          .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
+
+        // Fire-and-forget: run the review then deliver its findings (serialized by the turn queue).
+        void this.runAndDeliverReview(started.reviewId);
 
         return {
           ok: true,
           jobId: job.id,
           decisionRecordId,
+          reviewRound: started.round,
           message:
-            'Plan submitted — the approval card has been sent to the operator. ' +
-            'The build will start automatically if approved. ' +
-            'You can continue the conversation; if denied you will be told.',
+            "Plan submitted for Codex review. I'll relay the findings as a Codex message when the review " +
+            'completes (it can take a few minutes); then I can revise (submit_plan again) or send it to the ' +
+            'operator (finalize_plan). You do not need to do anything yet.',
+        };
+      },
+
+      finalize_plan: async (_args) => {
+        // The ONLY tool that posts the approval card — the operator is the final gate before the build.
+        // Valid only after submit_plan persisted a plan (`plan_review`); Atlas calls it once it has
+        // addressed (applied or pushed back on) the Codex review findings.
+        const job = await this.store.loadJob(stimulus.threadId).catch(() => null);
+        if (!job || !job.decisionRecordId) {
+          return { ok: false, reason: 'No plan to finalize — call submit_plan first.' };
+        }
+        if (job.status === 'awaiting_approval') {
+          return { ok: false, reason: 'This plan is already awaiting the operator’s approval.' };
+        }
+        if (job.status !== 'plan_review') {
+          return {
+            ok: false,
+            reason: `Finalize is only valid after submit_plan (status is '${job.status}'). Call submit_plan first.`,
+          };
+        }
+        const rec = await this.store.loadDecisionRecord(job.decisionRecordId);
+        if (!rec) return { ok: false, reason: 'No decision record found for this plan.' };
+
+        // Flip to the operator gate, then post the card + await the verdict in the background.
+        await this.store.markAwaitingApproval(job.id);
+        void this.requestApprovalAndAct(stimulus, job, job.decisionRecordId, {
+          jobId: job.id,
+          decisionRecordId: job.decisionRecordId,
+          title: job.title ?? '',
+          summary: rec.overview,
+          decisions: rec.decisions,
+          tracks: rec.trackTitles,
+        });
+
+        return {
+          ok: true,
+          jobId: job.id,
+          decisionRecordId: job.decisionRecordId,
+          message:
+            'Plan sent to the operator for approval — the build will start automatically if approved. ' +
+            'You can keep talking; if denied or changes are requested you will be told.',
         };
       },
 
@@ -1405,6 +1475,60 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     await this.handleChatTurn(stimulus);
   }
 
+  // ── Async Codex plan review: run + deliver findings ──────────────────────────────────────────────
+
+  /**
+   * Run a review round's Codex turn (in the sandbox, 5-30 min) then deliver its findings to Atlas. Kicked
+   * fire-and-forget from `submit_plan` and from boot reconciliation. `runReview` records the terminal
+   * status durably; `deliverReviewFindings` no-ops until the row is terminal, so an unexpected throw here
+   * simply leaves the row for the boot sweep.
+   */
+  private async runAndDeliverReview(reviewId: string): Promise<void> {
+    try {
+      await this.planReview.runReview(reviewId);
+    } catch (err) {
+      this.logger.warn(`plan-review run failed for review=${reviewId}: ${err}`);
+    }
+    await this.deliverReviewFindings(reviewId).catch((err) =>
+      this.logger.warn(`plan-review delivery failed for review=${reviewId}: ${err}`),
+    );
+  }
+
+  /**
+   * Deliver a COMPLETED review's findings to Atlas: (1) persist the operator-visible, harness-sourced
+   * "Codex review" message IDEMPOTENTLY (deterministic `ts` keyed by the review id — so a boot re-delivery
+   * can't duplicate the visible findings), then (2) hand the same text to the brain in a server-initiated
+   * HARNESS turn (serialized behind any in-flight turn by the turn queue). `delivered_at` is stamped ONLY
+   * after that turn completes — a crash before then re-delivers next boot (at-least-once). No-op if the
+   * review isn't terminal yet (boot will re-run it) or was already delivered.
+   */
+  private async deliverReviewFindings(reviewId: string): Promise<void> {
+    const review = await this.planReview.load(reviewId);
+    if (!review) return;
+    if (review.delivered_at) return; // already delivered
+    if (review.status === 'running') return; // not finished — boot reconciliation will re-run it
+    const job = await this.store.loadJob(review.thread_id).catch(() => null);
+    if (!job) return;
+
+    const capReached = review.round >= this.planReview.maxReviewRounds;
+    const body = renderFindingsDelivery(review.findings ?? '', review.round, capReached);
+
+    // (1) The single operator-visible artifact (idempotent on the review id).
+    await this.store.appendReviewFindingsMessage(review.thread_id, review.id, body);
+
+    // (2) Deliver to the brain via a synthetic harness turn (skips the operator-only paths).
+    const stimulus = harnessDeliveryStimulus({
+      threadId: review.thread_id,
+      orgId: review.org_id,
+      repoId: job.repoId,
+      body,
+    });
+    await this.handleChatTurn(stimulus);
+
+    // (3) Reached only when the delivery turn completed — stamp delivered so boot won't re-deliver.
+    await this.planReview.markDelivered(review.id);
+  }
+
   // ── Passive pipeline-milestone awareness ─────────────────────────────────────────────────────────
 
   /**
@@ -1485,6 +1609,34 @@ const ATLAS_AUTHOR_ID = 'atlas';
  *  gets the buffered milestones. */
 function isOperatorAuthored(stimulus: ChatStimulus): boolean {
   return stimulus.author.id !== ATLAS_AUTHOR_ID && stimulus.author.id !== SYSTEM_SEED_AUTHOR.id;
+}
+
+/**
+ * Build the synthetic SYSTEM-SEED stimulus that delivers a completed Codex review's findings to the brain
+ * straight through `handleChatTurn`. Reuses the canonical host-seed convention (SYSTEM_SEED_AUTHOR + `seed`
+ * + `<system_notification>` envelope, same as the `/answer-question` delivery) so it skips the operator-only
+ * paths (passive-awareness drain + typed-answer linkage). The wrapped body is what the brain reads; the
+ * operator sees the same findings as the durable, idempotent "Codex review" message.
+ */
+function harnessDeliveryStimulus(input: {
+  threadId: string;
+  orgId: string;
+  repoId: string;
+  body: string;
+}): ChatStimulus {
+  return {
+    id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
+    orgId: input.orgId,
+    repoId: input.repoId,
+    body: wrapSystemNotification(input.body),
+    receivedAt: new Date(),
+    kind: 'chat',
+    trust: 'trusted',
+    threadId: input.threadId,
+    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+    replyRoute: { surfaceId: 'web', threadRef: input.threadId },
+    seed: true,
+  };
 }
 
 /** Frame a delivered answer as a SYSTEM SEED (matches the live `/answer-question` path), not a chat line. */

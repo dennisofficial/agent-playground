@@ -352,6 +352,14 @@ export class WebSurfaceController {
       author: m.author,
       authorId: m.author_id,
       isAtlas: m.author_bot_id != null,
+      // Provenance for the web renderer: 'harness' (e.g. Codex plan-review findings, shown distinctly and
+      // never hidden) | 'atlas' | 'operator'. Only an explicit harness marker triggers harness rendering.
+      source:
+        (m.meta as { source?: unknown } | null)?.source === 'harness'
+          ? 'harness'
+          : m.author_bot_id != null
+            ? 'atlas'
+            : 'operator',
       text: m.text,
       kind: m.kind,
       ...(m.card ? { card: m.card } : {}),

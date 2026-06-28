@@ -19,6 +19,7 @@ import { useSelectedNode } from './use-selected-node';
 const FOOTERS: Record<ThreadStatus, string> = {
   running: 'One branch · each step a fresh session · one PR · the harness resumes on any halt.',
   scoping: 'Pure conversation — the plan you approve here is what creates the tracks.',
+  plan_review: 'Codex is reviewing the submitted plan — findings will appear in the conversation.',
   awaiting_approval: 'The approval card is inline in the conversation — that is the gate.',
   paused: 'Your paused session — reply to resume. The resume handle is yours.',
   done: 'One PR per feature · opened early as a draft, filled in live as tracks landed.',
@@ -126,7 +127,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
             threadRef={ref}
             messages={messages}
             isLoading={messagesLoading}
-            live={status === 'running'}
+            live={status === 'running' || status === 'plan_review'}
             onOpenPlan={onOpenPlan}
           />
         </Panel>

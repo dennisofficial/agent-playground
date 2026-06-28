@@ -21,6 +21,8 @@ export interface StatusMeta {
 export const STATUS_META: Record<ThreadStatus, StatusMeta> = {
   running: { label: 'Running', color: 'var(--accent)', pulse: true },
   scoping: { label: 'Scoping', color: 'var(--blue)', pulse: false },
+  // AI is working — Codex reviewing the plan in the background; not a "needs you" gate.
+  plan_review: { label: 'Reviewing', color: 'var(--accent)', pulse: true },
   // One muted slate covers every "needs you" gate (handoff: restrained palette).
   awaiting_approval: { label: 'Awaiting approval', color: 'var(--slate)', pulse: false },
   done: { label: 'Done', color: 'var(--green)', pulse: false },
@@ -48,6 +50,8 @@ export function toThreadStatus(status: JobStatus): ThreadStatus {
       return 'running';
     case 'scoping':
       return 'scoping';
+    case 'plan_review':
+      return 'plan_review';
     case 'awaiting_approval':
       return 'awaiting_approval';
     case 'done':

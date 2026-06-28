@@ -24,6 +24,9 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
 export type ThreadStatus =
   | 'open' // a conversation; no build scoped yet
   | 'scoping' // upfront grill in progress (no locked plan yet)
+  | 'plan_review' // plan submitted; Codex is reviewing it (async) and/or Atlas is addressing findings —
+  // the operator hasn't been asked to approve yet. NOT a needs-you state (it's Atlas/Codex's turn). The
+  // operator gate is `awaiting_approval`, reached only when Atlas calls `finalize_plan`.
   | 'awaiting_approval' // decision record + track list posted; waiting on the operator
   | 'running' // tracks executing
   | 'paused' // a turn hit a credential/401 error; the live session is saved, waiting on a re-ping to
@@ -37,8 +40,9 @@ export type ThreadStatus =
  * Whether a thread NEEDS THE OPERATOR — the single, server-owned definition of the sidebar "alert dot".
  *
  * A thread needs you when the AI is NOT actively working and is NOT in a terminal state: neither a live
- * conversational turn is streaming (`turnActive`) nor a build is running (`status='running'`), and the
- * thread hasn't finished (`done`/`cancelled`). `turnActive` is a separate axis from `status` because
+ * conversational turn is streaming (`turnActive`) nor a build is running (`status='running'`) nor a plan
+ * is under Codex review (`status='plan_review'`), and the thread hasn't finished (`done`/`cancelled`).
+ * `turnActive` is a separate axis from `status` because
  * `status` alone can't tell "grilling, mid-turn" from "grilling, waiting on an answer" (both `scoping`).
  *
  * `awaitingQuestion` is the third axis: a thread blocked on the durable human-input gate (a non-null
@@ -52,7 +56,12 @@ export type ThreadStatus =
 export function deriveNeedsYou(status: string, turnActive: boolean, awaitingQuestion: boolean): boolean {
   if (awaitingQuestion) return true;
   if (turnActive) return false;
-  return status !== 'running' && status !== 'done' && status !== 'cancelled';
+  return (
+    status !== 'running' &&
+    status !== 'plan_review' &&
+    status !== 'done' &&
+    status !== 'cancelled'
+  );
 }
 
 /** Whether the thread builds a multi-track feature or a single-track bugfix — both run the same driver. */

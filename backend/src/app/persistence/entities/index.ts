@@ -10,6 +10,7 @@ export * from './org-invite.entity';
 export * from './repo.entity';
 export * from './thread.entity';
 export * from './message.entity';
+export * from './plan-review.entity';
 export * from './stimulus.entity';
 export * from './track.entity';
 export * from './step.entity';
@@ -30,6 +31,7 @@ import { OrgInviteEntity } from './org-invite.entity';
 import { RepoEntity } from './repo.entity';
 import { ThreadEntity } from './thread.entity';
 import { MessageEntity } from './message.entity';
+import { PlanReviewEntity } from './plan-review.entity';
 import { StimulusEntity } from './stimulus.entity';
 import { TrackEntity } from './track.entity';
 import { StepEntity } from './step.entity';
@@ -52,6 +54,7 @@ export const ENTITIES = [
   RepoEntity,
   ThreadEntity,
   MessageEntity,
+  PlanReviewEntity,
   StimulusEntity,
   TrackEntity,
   StepEntity,

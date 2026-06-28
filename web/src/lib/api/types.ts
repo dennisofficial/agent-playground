@@ -10,6 +10,7 @@
 // ── Backend enums ──────────────────────────────────────────────────────────────────────────────
 export type JobStatus =
   | 'scoping'
+  | 'plan_review'
   | 'awaiting_approval'
   | 'running'
   | 'paused'
@@ -197,6 +198,7 @@ export interface ContextFileContent {
 export type ThreadStatus =
   | 'running'
   | 'scoping'
+  | 'plan_review'
   | 'awaiting_approval'
   | 'done'
   | 'triaging'

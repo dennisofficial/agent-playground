@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
-import type { Decision, Thread, ThreadKind } from '../domain';
+import type { Decision, Thread, ThreadKind, ThreadStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type { WebQuestionCard } from '../surface';
 import { renderPlan } from '../driver/render-plan';
@@ -130,6 +130,50 @@ export class BrainStoreService {
         ...(block.createdAt ? { created_at: block.createdAt } : {}),
       }),
     );
+  }
+
+  /**
+   * Append a SYSTEM-EVENT line to a thread (kind='build_event') — a calm operator-visible pill, e.g.
+   * "🔍 Codex is reviewing the plan…". Authored by Atlas so it renders on the agent side; the web renders
+   * `build_event` rows as a tinted pill (tone derived from the text).
+   */
+  async appendSystemEvent(threadId: string, text: string): Promise<void> {
+    await this.messages.save(
+      this.messages.create({
+        thread_id: threadId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text,
+        kind: 'build_event',
+      }),
+    );
+  }
+
+  /**
+   * Append the HARNESS-SEEDED Codex plan-review findings as a durable, operator-visible message —
+   * IDEMPOTENT on `ts = review-<reviewId>` (a deterministic key) so a boot re-delivery can't duplicate
+   * the visible findings. Distinct provenance: `author='Codex'`, `author_bot_id=null` (NOT Atlas), and
+   * `meta.source='harness'` (the seam the web keys its "Codex review" rendering off — shown, never
+   * hidden, unlike the seeded `ask_question` answer). Returns false if it already existed (no-op).
+   */
+  async appendReviewFindingsMessage(threadId: string, reviewId: string, text: string): Promise<boolean> {
+    const ts = `review-${reviewId}`;
+    const existing = await this.messages.findOne({ where: { thread_id: threadId, ts } });
+    if (existing) return false;
+    await this.messages.save(
+      this.messages.create({
+        thread_id: threadId,
+        author: 'Codex',
+        author_id: 'codex',
+        author_bot_id: null,
+        text,
+        kind: 'chat',
+        ts,
+        meta: { source: 'harness' },
+      }),
+    );
+    return true;
   }
 
   // ── card messages (durable; the surface `post` path does NOT write `messages.card`) ────────────────
@@ -445,6 +489,13 @@ export class BrainStoreService {
      * no step rows created, exactly as before — the driver JIT-plans those tracks.
      */
     stepsByTrack?: PlannedStep[][];
+    /**
+     * OPTIONAL — the thread status to flip to once the plan is persisted. Decouples plan PERSISTENCE
+     * from approval-readiness: the full path now persists with `'plan_review'` (Codex reviews before the
+     * operator is asked), while direct-build keeps the default `'awaiting_approval'` (its lightweight card
+     * is posted immediately). `finalize_plan` is what later flips a reviewed plan to `awaiting_approval`.
+     */
+    status?: ThreadStatus;
   }): Promise<PersistedPlan> {
     // Route the incoming title (the plan `goal` / build summary) through the shared titler so the
     // thread's sidebar label is a short, scannable title — NOT the raw full-sentence goal. Done before
@@ -532,7 +583,7 @@ export class BrainStoreService {
         {
           kind: input.kind,
           title,
-          status: 'awaiting_approval',
+          status: input.status ?? 'awaiting_approval',
           decision_record_id: record.id,
         },
       );
@@ -542,6 +593,23 @@ export class BrainStoreService {
 
     const thread = await this.loadJob(input.threadId);
     return { thread, decisionRecordId };
+  }
+
+  /**
+   * Flip a reviewed plan to `awaiting_approval` — the operator gate. Called by `finalize_plan` once
+   * Atlas has addressed the Codex review (the plan was persisted as `plan_review` by `submit_plan`).
+   */
+  async markAwaitingApproval(threadId: string): Promise<void> {
+    await this.threads.update({ id: threadId }, { status: 'awaiting_approval' });
+  }
+
+  /** Load a draft/approved decision record (overview + decisions + track titles) for the approval card. */
+  async loadDecisionRecord(
+    decisionRecordId: string,
+  ): Promise<{ overview: string; decisions: Decision[]; trackTitles: string[] } | null> {
+    const row = await this.records.findOne({ where: { id: decisionRecordId } });
+    if (!row) return null;
+    return { overview: row.overview, decisions: row.decisions ?? [], trackTitles: row.track_titles ?? [] };
   }
 
   /** Mark a decision record approved + flip its thread to `running` (the dispatch precondition). */
