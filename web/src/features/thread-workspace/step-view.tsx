@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { ArrowRight, Info, X } from 'lucide-react';
+import { ArrowRight, Info, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useContextFile, useSay } from '@/lib/api/thread-queries';
@@ -136,15 +136,6 @@ export function PhaseView({
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-5">
-        <button
-          type="button"
-          onClick={onConversation}
-          title="Close panel"
-          aria-label="Close panel"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border-2 text-dim transition hover:bg-surface-2 hover:text-text"
-        >
-          <X size={13} strokeWidth={2.2} />
-        </button>
         <div className="flex min-w-0 flex-col justify-center">
           <span className="truncate font-disp text-[13.5px] font-semibold leading-tight text-text">{title}</span>
           {subtitle ? (
@@ -594,8 +585,33 @@ function NodeNotFound({ node, onConversation }: { node: string; onConversation: 
         className="mt-5 inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-medium text-accent"
         style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
       >
-        Back to conversation <ArrowRight size={13} />
+        Clear this pane <ArrowRight size={13} />
       </button>
+    </div>
+  );
+}
+
+/**
+ * The detail pane's resting state. The right pane is a CONSTANT container that never closes — when no
+ * navigator node is selected it shows this instead of collapsing. Picking a file, track, or step from the
+ * navigator fills it. Matches the PhaseView shell (header bar + body) so the container looks consistent.
+ */
+export function EmptyPane() {
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      <div className="flex h-11 shrink-0 items-center border-b border-border px-5">
+        <span className="font-mono text-[9px] tracking-[0.14em] text-faint">DETAIL</span>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
+        <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg border border-border-2 text-faint">
+          <PanelRight size={18} strokeWidth={1.6} />
+        </div>
+        <p className="text-[14px] font-semibold text-text">Nothing selected</p>
+        <p className="mt-1.5 max-w-xs text-[12.5px] leading-relaxed text-dim">
+          Pick a file, track, or step from the navigator and it opens here. The conversation stays pinned on
+          the left.
+        </p>
+      </div>
     </div>
   );
 }

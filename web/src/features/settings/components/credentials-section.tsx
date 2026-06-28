@@ -64,6 +64,19 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
             maskedPrefix: 'sk-ant-api03-',
             tag: 'API key · prompts',
             serverValidated: true,
+            help: (
+              <HelpBlock>
+                <p>
+                  Create a key in the{' '}
+                  <HelpLink href="https://console.anthropic.com/settings/keys">Anthropic Console</HelpLink> under{' '}
+                  <strong>Settings → API keys</strong>. This powers one-shot prompts (thread titles, triage) — not the
+                  coding engine.
+                </p>
+                <p>
+                  Paste the <Code>sk-ant-api03-…</Code> key it shows (revealed only once).
+                </p>
+              </HelpBlock>
+            ),
             validate: (v) => {
               if (/^sk-ant-oat/.test(v))
                 return { ok: false, reason: 'That’s a subscription token — add it under “Coding engine” below.' };
@@ -90,6 +103,18 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
             placeholder: 'sk-…',
             maskedPrefix: 'sk-proj-',
             tag: 'embeddings',
+            help: (
+              <HelpBlock>
+                <p>
+                  Create a key on the{' '}
+                  <HelpLink href="https://platform.openai.com/api-keys">OpenAI API keys</HelpLink> page. It’s used only
+                  for semantic-memory embeddings.
+                </p>
+                <p>
+                  Paste the <Code>sk-…</Code> key it shows.
+                </p>
+              </HelpBlock>
+            ),
             validate: (v) => {
               if (/^sk-ant-/.test(v)) return { ok: false, reason: 'That’s an Anthropic key — paste your OpenAI key here.' };
               if (!/^sk-/.test(v)) return { ok: false, reason: 'OpenAI keys start with sk-.' };
@@ -194,6 +219,30 @@ export function CredentialsSection({ orgId }: { orgId: string }) {
             placeholder: 'ghp_ or github_pat_…',
             maskedPrefix: 'ghp_',
             tag: 'repo · read:org',
+            help: (
+              <HelpBlock>
+                <p>
+                  Atlas works the repo end-to-end: clone, push branches, and manage pull requests (open, update,
+                  comment, merge). It also reads CI / check results and PR comments so it can react to activity on a
+                  thread. Create a token at{' '}
+                  <HelpLink href="https://github.com/settings/tokens/new">github.com/settings/tokens</HelpLink>:
+                </p>
+                <p>
+                  <strong>Classic</strong> — tick the single <Code>repo</Code> scope; it covers contents, pull requests,
+                  commit statuses, checks and comments. For org repos behind SSO, click <em>Configure SSO</em> to
+                  authorize the token.
+                </p>
+                <p>
+                  <strong>Fine-grained</strong> — grant the repos <Code>Contents: Read and write</Code>,{' '}
+                  <Code>Pull requests: Read and write</Code>, <Code>Commit statuses: Read</Code> and{' '}
+                  <Code>Checks: Read</Code>.
+                </p>
+                <p>
+                  Paste the <Code>ghp_…</Code> or <Code>github_pat_…</Code> token. Live event delivery (webhooks that
+                  wake a thread on a comment or CI result) is configured separately.
+                </p>
+              </HelpBlock>
+            ),
             validate: (v) => {
               if (!/^(ghp_|github_pat_)/.test(v)) return { ok: false, reason: 'Expected ghp_ or github_pat_.' };
               if (v.length < 20) return { ok: false, reason: 'That token looks too short.' };
@@ -224,6 +273,20 @@ function HelpBlock({ children }: { children: ReactNode }) {
     <div className="space-y-2 rounded-md border border-border-2 bg-surface-2 p-3 text-[11.5px] leading-relaxed text-dim">
       {children}
     </div>
+  );
+}
+
+/** External link to a provider's token/key page inside help copy. */
+function HelpLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="font-medium text-accent underline-offset-2 hover:underline"
+    >
+      {children}
+    </a>
   );
 }
 
@@ -382,26 +445,30 @@ function CredentialCard({
       </div>
 
       {!editing ? (
-        <div className="mt-3.5 flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-2.5">
-          {present ? (
-            <>
-              <span className="flex-1 font-mono text-[12.5px] text-dim">
-                {mode.maskedPrefix}
-                {'•'.repeat(14)}
-              </span>
-              <span className="rounded-[3px] bg-surface-3 px-1.5 py-0.5 font-mono text-[9px] text-dim">{mode.tag}</span>
-            </>
-          ) : (
-            <span className="flex-1 font-mono text-[12px] text-faint">No key set.</span>
-          )}
-          <button
-            type="button"
-            onClick={startEdit}
-            className="rounded-sm border border-accent-line px-3 py-1.5 text-[11.5px] font-semibold text-accent transition hover:bg-accent-soft"
-          >
-            {present ? 'Rotate' : 'Add key'}
-          </button>
-        </div>
+        <>
+          <div className="mt-3.5 flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3.5 py-2.5">
+            {present ? (
+              <>
+                <span className="flex-1 font-mono text-[12.5px] text-dim">
+                  {mode.maskedPrefix}
+                  {'•'.repeat(14)}
+                </span>
+                <span className="rounded-[3px] bg-surface-3 px-1.5 py-0.5 font-mono text-[9px] text-dim">{mode.tag}</span>
+              </>
+            ) : (
+              <span className="flex-1 font-mono text-[12px] text-faint">No key set.</span>
+            )}
+            <button
+              type="button"
+              onClick={startEdit}
+              className="rounded-sm border border-accent-line px-3 py-1.5 text-[11.5px] font-semibold text-accent transition hover:bg-accent-soft"
+            >
+              {present ? 'Rotate' : 'Add key'}
+            </button>
+          </div>
+          {/* When no key is set yet, surface the "how to get this" guidance up front — that's when it's needed. */}
+          {!present && mode.help ? <div className="mt-3">{mode.help}</div> : null}
+        </>
       ) : (
         <div className="mt-3.5">
           {modes.length > 1 ? (

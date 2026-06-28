@@ -10,7 +10,6 @@ import {
   GitPullRequest,
   Image as ImageIcon,
   Lock,
-  MessageSquare,
   MoreHorizontal,
   Pause,
   Pencil,
@@ -49,7 +48,6 @@ export function Navigator({
   context,
   contextLoading,
   selectedNode,
-  convoActive,
   onConversation,
   onSelectNode,
   onRename,
@@ -62,7 +60,7 @@ export function Navigator({
   context: ThreadContext | undefined;
   contextLoading?: boolean;
   selectedNode: string | null;
-  convoActive: boolean;
+  /** Clears the detail-pane selection (used by the state banners' recovery actions). */
   onConversation: () => void;
   onSelectNode: (node: string) => void;
   onRename?: (title: string) => void;
@@ -81,7 +79,6 @@ export function Navigator({
     setCollapsed((m) => ({ ...m, [id]: currentlyExpanded }));
 
   const st = meta.status;
-  const needsYou = st === 'awaiting_approval' || st === 'triaging';
 
   return (
     <div
@@ -156,16 +153,6 @@ export function Navigator({
 
       {/* ── scroll body — the constant skeleton ─────────────────────────────────────────────── */}
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 py-3">
-        {/* Conversation — always present */}
-        <NavRow
-          icon={<MessageSquare size={13} className="text-accent" />}
-          active={convoActive}
-          onClick={onConversation}
-        >
-          <span className="flex-1 text-[12px] font-semibold">Conversation</span>
-          {needsYou ? <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: 'var(--slate)' }} /> : null}
-        </NavRow>
-
         <StateBanner status={st} job={job} onConversation={onConversation} />
 
         <SpecsRegion
@@ -631,32 +618,6 @@ function BannerBtn({
 }
 
 // ── small primitives ────────────────────────────────────────────────────────────────────────────
-
-function NavRow({
-  icon,
-  active,
-  onClick,
-  children,
-}: {
-  icon: ReactNode;
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex items-center gap-2.5 rounded-sm px-2 py-[7px] text-left hover:bg-surface-2 ${
-        active ? 'bg-[var(--accent-soft)]' : ''
-      }`}
-      style={active ? { border: '1px solid var(--accent-line)' } : { border: '1px solid transparent' }}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
 
 function FileRow({
   icon,

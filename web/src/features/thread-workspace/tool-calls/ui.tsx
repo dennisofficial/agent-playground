@@ -164,12 +164,18 @@ export function Badge({ badge, size = 'row' }: { badge: ToolBadge; size?: 'group
   }
   // diffstat — chip pills; the minus glyph is U+2212, not a hyphen.
   const chip = size === 'group' ? 'text-[10.5px] px-[7px] py-[1.5px] rounded-[5px]' : 'text-[9.5px] px-[5px] py-[0.5px] rounded-[4px]';
+  // Suppress a zero-count chip (a pure insertion shows just `+N`, a pure deletion just `−N`), but
+  // keep `+0` as a fallback for a genuine no-op edit so the badge is never empty.
+  const showDel = badge.removed != null && badge.removed > 0;
+  const showAdd = badge.added > 0 || !showDel;
   return (
     <span className="flex shrink-0 items-center gap-1 font-mono font-bold tabular-nums tracking-[-0.01em]">
-      <span className={chip} style={{ color: 'var(--add)', background: 'var(--add-bg)', border: '1px solid var(--add-gut)' }}>
-        +{badge.added}
-      </span>
-      {badge.removed != null ? (
+      {showAdd ? (
+        <span className={chip} style={{ color: 'var(--add)', background: 'var(--add-bg)', border: '1px solid var(--add-gut)' }}>
+          +{badge.added}
+        </span>
+      ) : null}
+      {showDel ? (
         <span className={chip} style={{ color: 'var(--del)', background: 'var(--del-bg)', border: '1px solid var(--del-gut)' }}>
           −{badge.removed}
         </span>

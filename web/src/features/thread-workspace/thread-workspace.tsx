@@ -13,10 +13,8 @@ import { pipelineJob, type ThreadRef } from '@/lib/api/thread-api';
 import type { ThreadKind, ThreadStatus, WebApprovalCard } from '@/lib/api/types';
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
-import { PhaseView } from './step-view';
+import { PhaseView, EmptyPane } from './step-view';
 import { useSelectedNode } from './use-selected-node';
-
-type WorkMode = 'conversation' | 'step';
 
 const FOOTERS: Record<ThreadStatus, string> = {
   running: 'One branch · each step a fresh session · one PR · the harness resumes on any halt.',
@@ -48,7 +46,6 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   // The selected node lives in `?node=` (single source of truth). A thread switch navigates to a fresh
   // clean `threadHref()` URL with no query, so the selection naturally resets — no reset effect needed.
   const { selectedNode, selectNode, openConversation } = useSelectedNode();
-  const workMode: WorkMode = selectedNode ? 'step' : 'conversation';
 
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
   // library remember the layout even though the detail panel is only conditionally mounted.
@@ -106,16 +103,16 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
         context={context}
         contextLoading={contextLoading}
         selectedNode={selectedNode}
-        convoActive={workMode === 'conversation'}
         onConversation={onConversation}
         onSelectNode={onSelectNode}
         onRename={onRename}
         onDelete={onDelete}
         deleting={del.isPending}
       />
-      {/* Work column — a horizontal split: the conversation is ALWAYS pinned on the left; selecting a
-          navigator node opens its content as a right split beside it (it no longer replaces the chat).
-          The divider is a draggable resize handle (react-resizable-panels); the ratio is persisted. */}
+      {/* Work column — a horizontal split: the conversation is ALWAYS pinned on the left and the detail
+          pane is a CONSTANT container on the right (never closes). Selecting a navigator node fills it;
+          with nothing selected it shows an empty state. The divider is a draggable resize handle
+          (react-resizable-panels); the ratio is persisted. */}
       <Group
         orientation="horizontal"
         id="thread-work-split"
@@ -133,29 +130,29 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
             onOpenPlan={onOpenPlan}
           />
         </Panel>
-        {workMode === 'step' && selectedNode ? (
-          <>
-            <Separator
-              disableDoubleClick
-              onDoubleClick={() => groupRef.current?.setLayout({ conversation: 50, detail: 50 })}
-              title="Drag to resize · double-click to center"
-              className="relative w-1.5 outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors hover:after:bg-border-2 active:after:bg-text/50"
+        <Separator
+          disableDoubleClick
+          onDoubleClick={() => groupRef.current?.setLayout({ conversation: 50, detail: 50 })}
+          title="Drag to resize · double-click to center"
+          className="relative w-1.5 outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors hover:after:bg-border-2 active:after:bg-text/50"
+        />
+        <Panel id="detail" defaultSize="50%" minSize="32%" className="flex min-w-0 flex-col">
+          {selectedNode ? (
+            <PhaseView
+              threadRef={ref}
+              pipeline={pipeline}
+              pipelineLoading={pipelineLoading}
+              pipelineError={pipelineError}
+              messages={messages}
+              approvalCard={approvalCard}
+              selectedNode={selectedNode}
+              onConversation={onConversation}
+              onSelectNode={(node) => selectNode(node, { push: true })}
             />
-            <Panel id="detail" defaultSize="50%" minSize="32%" className="flex min-w-0 flex-col">
-              <PhaseView
-                threadRef={ref}
-                pipeline={pipeline}
-                pipelineLoading={pipelineLoading}
-                pipelineError={pipelineError}
-                messages={messages}
-                approvalCard={approvalCard}
-                selectedNode={selectedNode}
-                onConversation={onConversation}
-                onSelectNode={(node) => selectNode(node, { push: true })}
-              />
-            </Panel>
-          </>
-        ) : null}
+          ) : (
+            <EmptyPane />
+          )}
+        </Panel>
       </Group>
     </div>
   );
