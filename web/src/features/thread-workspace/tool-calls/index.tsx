@@ -131,10 +131,22 @@ function ToolRow({ tool }: { tool: ToolItem }) {
  * A run of consecutive tool calls, collapsed into one group. Open by default while any tool is running.
  * A group of only file-edits reads as "N files changed" with a `+N −N` rollup chip — shown ONLY while
  * collapsed (open, each file row carries its own counts, so the rollup is redundant).
+ *
+ * A lone tool call is NOT wrapped in a group — it renders as a bare row (its own badge already carries
+ * the diffstat / NEW / lines tag, so a "1 tool called" header would be pure redundancy).
  */
 export function ToolGroup({ tools }: { tools: ToolItem[] }) {
   const anyRunning = tools.some((t) => t.running);
   const [open, setOpen] = useState(anyRunning);
+  // A lone tool call is NOT wrapped in a group — bare row (its badge already carries the tag). This
+  // returns AFTER the hooks above so hook order stays stable if a streaming segment grows 1→N.
+  if (tools.length === 1) {
+    return (
+      <div className="anim-fadeUp my-px">
+        <ToolRow tool={tools[0]} />
+      </div>
+    );
+  }
   const preview = tools
     .map((t) => resolveHandler(t.name, t.input).describe(t).preview)
     .filter(Boolean)
