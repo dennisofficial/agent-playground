@@ -6,10 +6,12 @@ import {
   Injectable,
   Logger,
   type OnApplicationBootstrap,
-  type OnModuleInit,
+  type OnApplicationShutdown,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import type { Subscription } from 'rxjs';
+import { LeaderElectionService } from '../cluster';
 import type { ChatStimulus, Thread, ThreadKind } from '../domain';
 import { MemoryStore } from '../memory';
 import {
@@ -70,8 +72,11 @@ import { PlanReviewService, renderFindingsDelivery } from './plan-review.service
  *   - session_id is persisted on the `thread_sandboxes` row so it survives host restarts.
  */
 @Injectable()
-export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap {
+export class AgentSessionManager implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(AgentSessionManager.name);
+
+  /** Leader-only boot-sweep subscription (turn_active reset + answered-Q / plan-review re-delivery). */
+  private leaderBootSub?: Subscription;
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
@@ -112,6 +117,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     private readonly tickets: TicketService,
     // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
     private readonly creds: CredentialResolver,
+    // Singleton-leadership gate: boot crash-recovery sweeps + new-turn intake run only on the leader.
+    private readonly election: LeaderElectionService,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -397,33 +404,39 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
   ].join('\n');
 
   /**
-   * Boot reconciliation: clear any `turn_active` flag left set by a crash mid-turn. No conversational
-   * turn survives a process restart, so a still-true flag is stale and would otherwise keep a thread
-   * looking "actively working" forever (suppressing its "needs you" dot). Best-effort.
+   * Register the leader-only boot crash-recovery sweeps. These are SINGLETON repair operations (they
+   * reset `turn_active` flags and re-drive dropped deliveries), so they must run ONLY on the instance
+   * that holds leadership — never on a standby that booted while another instance is still live. The
+   * drain-then-release invariant guarantees promotion happens only after any predecessor has fully
+   * drained, so the sweeps never collide with in-flight work. `onPromote` fires immediately if this
+   * instance is already leader.
    */
-  async onModuleInit(): Promise<void> {
-    try {
-      const reset = await this.store.resetAllTurnActive();
-      if (reset > 0) this.logger.log(`Boot: cleared stale turn_active on ${reset} thread(s)`);
-    } catch (err) {
-      this.logger.warn(`Boot turn_active reconciliation failed: ${err}`);
-    }
+  onApplicationBootstrap(): void {
+    this.leaderBootSub = this.election.onPromote(() => this.runLeaderBootSweeps());
   }
 
-  /**
-   * Boot reconciliation for the durable human-input gate: re-deliver any question the operator ANSWERED
-   * (durably stamped) but whose delivery turn the host crash dropped before it reached the brain. Runs in
-   * `onApplicationBootstrap` (NOT `onModuleInit`) so it fires AFTER all modules — incl. the surface/intake
-   * subscribers — are wired; and it bypasses the surface entirely, driving each delivery straight through
-   * the serialized `handleChatTurn` with a synthetic operator stimulus. Fire-and-forget (the turn queue
-   * serializes them); the turn stamps `deliveredAt` on success, so a re-crash simply re-delivers next boot
-   * (at-least-once). Best-effort — a sweep failure never blocks startup.
-   */
-  async onApplicationBootstrap(): Promise<void> {
+  onApplicationShutdown(): void {
+    this.leaderBootSub?.unsubscribe();
+  }
+
+  /** The leader-only boot sweeps, run on promotion. Each step is independently best-effort. */
+  private async runLeaderBootSweeps(): Promise<void> {
+    // 1) Clear any `turn_active` flag left set by a crash mid-turn — no conversational turn survives a
+    //    process restart, so a still-true flag is stale and would suppress the thread's "needs you" dot.
+    try {
+      const reset = await this.store.resetAllTurnActive();
+      if (reset > 0) this.logger.log(`Leader: cleared stale turn_active on ${reset} thread(s)`);
+    } catch (err) {
+      this.logger.warn(`turn_active reconciliation failed: ${err}`);
+    }
+
+    // 2) Re-deliver any question the operator ANSWERED (durably stamped) but whose delivery turn a host
+    //    crash dropped before it reached the brain. Drives each straight through the serialized
+    //    `handleChatTurn`; the turn stamps `deliveredAt` on success → at-least-once across restarts.
     try {
       const pending = await this.store.findUndeliveredAnsweredQuestions();
       if (pending.length > 0) {
-        this.logger.log(`Boot: re-delivering ${pending.length} answered-but-undelivered question(s)`);
+        this.logger.log(`Leader: re-delivering ${pending.length} answered-but-undelivered question(s)`);
         for (const q of pending) {
           const stimulus = bootDeliveryStimulus(q);
           void this.handleChatTurn(stimulus).catch((err) =>
@@ -432,19 +445,18 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         }
       }
     } catch (err) {
-      this.logger.warn(`Boot question-delivery reconciliation failed: ${err}`);
+      this.logger.warn(`question-delivery reconciliation failed: ${err}`);
     }
 
-    // Plan-review reconciliation (same at-least-once shape as the question gate): re-run any review whose
-    // Codex turn was in flight when the host died (`running`), and re-deliver any completed review whose
-    // delivery turn the crash dropped (`delivered_at` null). Fire-and-forget; the turn queue serializes
-    // the deliveries; `deliverReviewFindings` is idempotent on the visible message. Best-effort.
+    // 3) Plan-review reconciliation (same at-least-once shape): re-run any review whose Codex turn was in
+    //    flight when the host died (`running`), and re-deliver any completed review whose delivery turn the
+    //    crash dropped (`delivered_at` null). `deliverReviewFindings` is idempotent on the visible message.
     try {
       const incomplete = await this.planReview.findIncompleteReviews();
       const undelivered = await this.planReview.findUndeliveredReviews();
       if (incomplete.length || undelivered.length) {
         this.logger.log(
-          `Boot: reconciling ${incomplete.length} in-flight + ${undelivered.length} undelivered plan-review(s)`,
+          `Leader: reconciling ${incomplete.length} in-flight + ${undelivered.length} undelivered plan-review(s)`,
         );
       }
       for (const r of incomplete) {
@@ -458,7 +470,7 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         );
       }
     } catch (err) {
-      this.logger.warn(`Boot plan-review reconciliation failed: ${err}`);
+      this.logger.warn(`plan-review reconciliation failed: ${err}`);
     }
   }
 
@@ -471,6 +483,10 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
    * turn with the 6 host-side tools; the session is resumed across turns.
    */
   async handleChatTurn(stimulus: ChatStimulus): Promise<void> {
+    // Drain gate: once this instance is draining (SIGTERM), accept NO new turns. Operator turns are
+    // already rejected with 503 at the surface; this catches internal/boot re-delivery callers so the
+    // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
+    if (this.election.getState() === 'draining') return;
     const key = `${stimulus.orgId}:${stimulus.threadId}`;
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     // Chain after any in-flight turn (swallow its error so a failed turn doesn't break the queue).
@@ -483,6 +499,26 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       }),
     );
     return next;
+  }
+
+  /**
+   * Await all in-flight turns to finish, bounded by `graceMs`. Returns `true` if everything drained
+   * cleanly, `false` if the grace cap was hit (the caller then lets the process exit; over-cap turns die
+   * with it and cold-resume on the next leader). New turns are already blocked (drain gate above), so the
+   * current `turnQueues` snapshot is the complete in-flight set.
+   */
+  async drainInFlight(graceMs: number): Promise<boolean> {
+    const tails = [...this.turnQueues.values()].map((p) => p.catch(() => undefined));
+    if (tails.length === 0) return true;
+    this.logger.log(`Drain: awaiting ${tails.length} in-flight turn(s) (grace ${graceMs}ms)`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), graceMs);
+    });
+    const done = Promise.all(tails).then(() => 'done' as const);
+    const result = await Promise.race([done, timeout]);
+    if (timer) clearTimeout(timer);
+    return result === 'done';
   }
 
   /**

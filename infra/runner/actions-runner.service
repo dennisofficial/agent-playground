@@ -1,0 +1,37 @@
+[Unit]
+Description=GitHub Actions self-hosted runner (Atlas box)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=gha-runner
+Group=gha-runner
+WorkingDirectory=/opt/actions-runner
+
+# The runner binary handles reconnect/retry internally.
+ExecStart=/opt/actions-runner/run.sh
+ExecStop=/opt/actions-runner/run.sh --once
+
+Restart=always
+RestartSec=5s
+TimeoutStopSec=60s
+
+# ── Hardening ────────────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+# ProtectSystem=strict allows read-only system paths but the runner needs read-write
+# access to /opt/actions-runner (work dirs, _diag, etc.) and /srv/atlas (deploy state,
+# secrets). Use ReadWritePaths to carve out exactly what is needed.
+ProtectSystem=strict
+ReadWritePaths=/opt/actions-runner /srv/atlas /tmp /var/run/docker.sock
+PrivateTmp=true
+# The docker group gives access to /var/run/docker.sock — do not add PrivateDevices
+# or RestrictNamespaces since docker exec needs them.
+
+# Environment: ensure HOME is set so `docker login` and GHCR creds work.
+Environment="HOME=/home/gha-runner"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target

@@ -315,6 +315,22 @@ export interface IEnvConfig {
   MAX_CONCURRENT_SANDBOXES?: number;
   SANDBOX_IDLE_TTL_MS?: number;
   SANDBOX_REAP_INTERVAL_MS?: number;
+
+  // ── Atlas v2 clustering / rolling-update ─────────────────────────────────────────────────────────
+  //  The backend is a hard singleton (in-memory turn queues, provisioning lock, single realtime slot).
+  //  Graceful rolling deploys use a Postgres advisory-lock leader election + a SIGTERM drain.
+  //  - LEADER_POLL_INTERVAL_MS: how often a follower re-tries to acquire the advisory lock. Default 2000.
+  //  - DRAIN_GRACE_MS: on SIGTERM, how long the leader waits for in-flight turns to finish before it
+  //    stops waiting (over-cap turns die with the process → cold-resume next leader). Default 120000.
+  //    MUST be < the container stop_grace_period or Docker SIGKILLs mid-drain.
+  //  - ENGINE_BUNDLE_PATH: absolute path for the live-mounted engine bundle (a host-resolvable same-path
+  //    location when the backend is containerized). Read directly from process.env by bundle-engine.ts;
+  //    default <imageDir>/engine-entrypoint.mjs. Declared here for completeness.
+  //  - REALTIME_SLOT_PREFIX: prefix for the per-instance realtime replication slot. Default pg_realtime_slot.
+  LEADER_POLL_INTERVAL_MS?: number;
+  DRAIN_GRACE_MS?: number;
+  ENGINE_BUNDLE_PATH?: string;
+  REALTIME_SLOT_PREFIX?: string;
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -457,4 +473,9 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
   SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
   SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
+  // Atlas v2 clustering / rolling-update
+  LEADER_POLL_INTERVAL_MS: Joi.number().integer().min(250).optional(),
+  DRAIN_GRACE_MS: Joi.number().integer().min(0).optional(),
+  ENGINE_BUNDLE_PATH: Joi.string().optional(),
+  REALTIME_SLOT_PREFIX: Joi.string().optional(),
 });

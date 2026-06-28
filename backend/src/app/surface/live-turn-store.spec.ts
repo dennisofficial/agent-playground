@@ -64,6 +64,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // threadTitle
       { stream$: new Subject() } as never, // ticketEvents
       { available: false } as never, // realtime
+      { isLeader: () => true, getState: () => 'leader' } as never, // election
     );
   }
 

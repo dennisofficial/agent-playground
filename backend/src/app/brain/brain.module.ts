@@ -19,6 +19,7 @@ import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { STIMULUS_CONSUMER } from '../stimulus';
 import { BRAIN_LLM, AnthropicBrainLlm } from './brain-llm';
 import { AgentSessionManager } from './agent-session-manager.service';
+import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { EventTriageService } from './event-triage.service';
@@ -85,6 +86,7 @@ import { PlanReviewService } from './plan-review.service';
     EventTriageService,
     PlanReviewService,
     AgentSessionManager,
+    DrainService,
     StimulusRouter,
     // INPUT SEAM — the router IS the stimulus consumer (replaces the old TriageService binding).
     { provide: STIMULUS_CONSUMER, useExisting: StimulusRouter },

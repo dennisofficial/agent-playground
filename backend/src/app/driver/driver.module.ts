@@ -10,6 +10,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import type { Subscription } from 'rxjs';
 import { AutoFixModule } from '../autofix';
 import { JOB_DISPATCHER } from '../brain';
+import { LeaderElectionService } from '../cluster';
 import { DecisionGateModule } from '../decision-gate';
 import { CredentialResolver, OnboardingService } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -107,19 +108,28 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
 })
 export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
   private resumeSub?: Subscription;
+  private promoteSub?: Subscription;
+  private demoteSub?: Subscription;
   private reapTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly driver: TrackDriver,
     private readonly env: EnvService,
     private readonly lifecycle: ThreadLifecycleService,
+    private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
   ) {}
 
-  /** On boot, reconcile any in-flight jobs — re-enter the same straight drive at the persisted cursor. */
+  /**
+   * The boot reconcile + job resume + the idle reaper are LEADER-ONLY singleton duties — they tear down
+   * / re-drive sandboxes, which must never run in two processes at once. Gate them behind leadership: a
+   * follower stays quiet; on promotion (which, by the drain-then-release invariant, only happens once any
+   * predecessor has fully drained) it reconciles, resumes, and starts the reaper.
+   */
   async onApplicationBootstrap(): Promise<void> {
     // Operator resume requests (POST /web/resume) → re-drive the paused job. Subscribed unconditionally,
-    // independent of the boot reconcile sweep below (the agent test surface omits resumeRequests$).
+    // independent of leadership (the agent test surface omits resumeRequests$; Caddy routes /resume only
+    // to the leader anyway).
     this.resumeSub = this.surface.resumeRequests$?.subscribe(({ jobId }) => {
       void this.driver.resumePaused(jobId);
     });
@@ -128,13 +138,22 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     // prior runs' stale jobs (and skips the sandbox reaper/reconcile).
     if (this.env.get('DISABLE_RESUME')) return;
 
-    // Reconcile per-thread sandboxes (mark detached; next turn re-attaches) BEFORE resuming jobs —
-    // resumed drives call `ensureContainer`, which expects the reconciled state.
-    await this.lifecycle.reconcileOnBoot();
-    await this.driver.resume();
+    this.promoteSub = this.election.onPromote(async () => {
+      // Reconcile per-thread sandboxes (mark detached; next turn re-attaches) BEFORE resuming jobs —
+      // resumed drives call `ensureContainer`, which expects the reconciled state.
+      await this.lifecycle.reconcileOnBoot();
+      await this.driver.resume();
+      this.startReapTimer();
+    });
+    this.demoteSub = this.election.onDemote(() => this.stopReapTimer());
+  }
 
-    // Periodically reap idle thread-sandbox containers (worktrees survive) AND close threads whose PR
-    // has merged/closed (reclaims container + worktree). unref so it never keeps the process alive.
+  /**
+   * Periodically reap idle thread-sandbox containers (worktrees survive) AND close threads whose PR has
+   * merged/closed (reclaims container + worktree). unref so it never keeps the process alive.
+   */
+  private startReapTimer(): void {
+    if (this.reapTimer) return;
     const everyMs = Number(this.env.get('SANDBOX_REAP_INTERVAL_MS')) || 30 * 60 * 1000;
     this.reapTimer = setInterval(() => {
       void this.lifecycle.reapIdle().catch(() => undefined);
@@ -143,8 +162,17 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     this.reapTimer.unref?.();
   }
 
+  private stopReapTimer(): void {
+    if (this.reapTimer) {
+      clearInterval(this.reapTimer);
+      this.reapTimer = undefined;
+    }
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
-    if (this.reapTimer) clearInterval(this.reapTimer);
+    this.promoteSub?.unsubscribe();
+    this.demoteSub?.unsubscribe();
+    this.stopReapTimer();
   }
 }

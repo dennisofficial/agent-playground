@@ -274,6 +274,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockAwareness,
       {} as unknown as TicketService,
       { engineAuth: async () => undefined } as unknown as CredentialResolver,
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
     );
   });
 
@@ -848,6 +854,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       awareness,
       {} as unknown as TicketService,
       { engineAuth: async () => undefined } as unknown as CredentialResolver,
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, awareness };
   }
@@ -1062,6 +1074,12 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       } as unknown as PipelineAwarenessStore,
       {} as unknown as TicketService,
       { engineAuth: async () => undefined } as unknown as CredentialResolver,
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
     );
     return { manager, store };
   }

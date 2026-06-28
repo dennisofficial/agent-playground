@@ -11,6 +11,7 @@ import {
   PayloadTooLargeException,
   Post,
   Query,
+  ServiceUnavailableException,
   Sse,
   UseGuards,
 } from '@nestjs/common';
@@ -26,6 +27,7 @@ import {
   DENY_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
 } from './approval-blocks';
+import { LeaderElectionService } from '../cluster';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadTitleService } from './thread-title.service';
@@ -212,6 +214,7 @@ export class WebSurfaceController {
     private readonly threadTitle: ThreadTitleService,
     private readonly ticketEvents: TicketEventBus,
     private readonly realtime: RealtimeService,
+    private readonly election: LeaderElectionService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -390,6 +393,12 @@ export class WebSurfaceController {
     @Body() body: SayDto,
   ): Promise<{ ts: string }> {
     if (!body?.text) throw new BadRequestException('text is required');
+    // Only the leader processes turns. During a deploy's drain window this instance is draining (or is a
+    // standby), so reject new turns with 503 — the client retries and lands on the freshly-promoted
+    // leader within a poll interval. (isLeader() is false while draining or a follower.)
+    if (!this.election.isLeader()) {
+      throw new ServiceUnavailableException('Atlas is handing off — retry momentarily.');
+    }
     const thread = await this.requireThread(threadId, org.id);
     const ts = this.surface.receiveFromClient(thread.repo_id, body.text, {
       orgId: org.id,

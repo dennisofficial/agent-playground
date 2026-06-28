@@ -1,0 +1,54 @@
+# Atlas production Caddyfile.
+# Auto-HTTPS via Let's Encrypt. Caddy handles certificate provisioning automatically.
+#
+# TODO: replace the placeholder email with a real contact address for LE notifications.
+
+{
+    email admin@dltechnologies.co  # TODO: replace with a real email for Let's Encrypt
+}
+
+# ── Backend API ─────────────────────────────────────────────────────────────────
+# Blue/green with `lb_policy first`: Caddy tries backend-blue first; if it fails
+# the health check it falls through to backend-green. This means the active leader
+# (the one whose /health/ready returns 200) absorbs all traffic, while the standby
+# (follower, returns 503 on /health/ready) is skipped.
+#
+# During a deploy handoff:
+#  - Old leader goes into drain mode → /health/ready → 503 → Caddy routes to standby.
+#  - Standby acquires the advisory lock and becomes leader → /health/ready → 200.
+#  - Accepted tradeoff: there is a brief window while neither instance is "ready"
+#    (old leader draining, new leader waiting for lock). During this window new
+#    connections receive 502. In-flight SSE streams on the old leader survive
+#    (Caddy never drops established connections). Deploy at idle → ~zero gap.
+api.atlas.dltechnologies.co {
+    reverse_proxy backend-blue:4002 backend-green:4002 {
+        lb_policy first
+
+        # Health checks against /health/ready — only the current leader returns 200.
+        health_uri    /health/ready
+        health_interval 5s
+        health_status 200
+
+        # SSE-safe: flush every byte immediately, never buffer.
+        flush_interval -1
+
+        # Zero timeouts so long-running SSE streams and agentic engine turns are never
+        # cut off by Caddy's proxy transport layer.
+        transport http {
+            read_timeout           0
+            write_timeout          0
+            response_header_timeout 0
+        }
+    }
+
+    # CORS is handled in NestJS (credentialed, per-origin). Do not add Caddy CORS headers.
+}
+
+# ── Web operator console ────────────────────────────────────────────────────────
+atlas.dltechnologies.co {
+    reverse_proxy web:3000
+
+    # Compress responses. Next.js standalone already gzip-compresses JS/CSS, but
+    # encode handles any uncompressed responses (API routes, SSR HTML).
+    encode gzip zstd
+}
