@@ -22,7 +22,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import type { FeatureSandbox, ProjectRepo } from '../git';
@@ -44,6 +44,7 @@ import {
   ThreadSandboxEntity,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
+import { TicketService } from '../tickets';
 import { DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, WorktreeProvisioner, type ResolvedRepo } from '.';
 import { ProvisioningNotReadyError } from './thread-lifecycle.service';
 
@@ -137,6 +138,7 @@ class FakeSandboxProvider {
 
 let mod: TestingModule;
 let threadLifecycle: ThreadLifecycleService;
+let ticketStub: { revertForDeletedThread: ReturnType<typeof vi.fn> };
 let sandboxes: Repository<ThreadSandboxEntity>;
 let threads: Repository<ThreadEntity>;
 let ds: DataSource;
@@ -208,11 +210,13 @@ beforeEach(async () => {
           }),
         },
       },
+      { provide: TicketService, useValue: { revertForDeletedThread: vi.fn().mockResolvedValue(undefined) } },
       ThreadLifecycleService,
     ],
   }).compile();
 
   threadLifecycle = mod.get(ThreadLifecycleService);
+  ticketStub = mod.get(TicketService) as unknown as typeof ticketStub;
   sandboxes = mod.get(getRepositoryToken(ThreadSandboxEntity, DB_CONNECTION));
   threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
   ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
@@ -376,6 +380,9 @@ describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
     );
 
     await threadLifecycle.deleteThreadDeep(threadId, FAKE_TEAM_ID);
+
+    // The linked ticket (if any) is handed back to the board BEFORE the thread row is swept.
+    expect(ticketStub.revertForDeletedThread).toHaveBeenCalledWith({ orgId: FAKE_TEAM_ID, threadId });
 
     const count = async (table: string, col = 'thread_id') =>
       Number((await ds.query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${col} = $1`, [threadId]))[0].count);

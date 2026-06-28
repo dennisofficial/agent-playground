@@ -434,6 +434,73 @@ export class TicketService {
     return thread?.id ?? null;
   }
 
+  /**
+   * The INVERSE of `promote`: when a ticket's driving thread is deleted, hand the ticket back to the
+   * board so it doesn't strand "in progress" with no driver (the board's `in_progress`/`in_review` lanes
+   * are thread-driven — a deleted thread leaves nothing to advance them). Resolve the ticket via the
+   * thread's `ticket_id`, so this MUST run BEFORE the thread row is deleted.
+   *
+   * Only reverts a thread-driven, non-terminal status (`in_progress`/`in_review`) → `todo` (committed,
+   * not started — immediately re-promotable). `done`/`cancelled` are terminal and left alone; a ticket
+   * already manually parked in `todo`/`backlog` is a no-op. Idempotent and best-effort by design.
+   */
+  async revertForDeletedThread(args: { orgId: string; threadId: string }): Promise<void> {
+    const { orgId, threadId } = args;
+    const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+    const ticketId = thread?.ticket_id;
+    if (!ticketId) return; // thread gone, or never tied to a ticket → nothing to hand back.
+
+    const ticket = await this.tickets.findOne({ where: { id: ticketId, org_id: orgId } });
+    if (!ticket) return;
+    await this.revertStrandedTicket(ticket, `driving thread ${threadId} deleted`);
+  }
+
+  /**
+   * Boot-time backstop for the same invariant: a ticket parked in a thread-driven lane
+   * (`in_progress`/`in_review`) whose linked thread no longer exists is STRANDED — nothing can advance it
+   * (those lanes move only via a thread, and the board UI won't touch them by design). Hand each back to
+   * `todo`. Covers the gaps the inline `revertForDeletedThread` can't: a crash mid-delete, a thread row
+   * gone by some other path, or the PR-abandoned `closeThread` path we deliberately left out. Idempotent
+   * (a reverted ticket no longer matches). Org-wide (boot sweep). Returns how many were reverted.
+   */
+  async reconcileStrandedTickets(): Promise<number> {
+    // tickets in a thread-driven lane with NO row in `threads` pointing at them (LEFT JOIN … IS NULL).
+    const stranded = await this.tickets
+      .createQueryBuilder('t')
+      .leftJoin(ThreadEntity, 'th', 'th.ticket_id = t.id')
+      .where('t.status IN (:...statuses)', { statuses: ['in_progress', 'in_review'] })
+      .andWhere('th.id IS NULL')
+      .getMany();
+
+    let reverted = 0;
+    for (const ticket of stranded) {
+      if (await this.revertStrandedTicket(ticket, 'no linked thread at boot')) reverted++;
+    }
+    if (reverted) {
+      this.logger.log(`reconcileStrandedTickets: reverted ${reverted} stranded ticket(s) → todo`);
+    }
+    return reverted;
+  }
+
+  /**
+   * Flip a thread-driven ticket (`in_progress`/`in_review`) back to the board (`todo`) and announce it.
+   * No-op (returns false) for terminal/pre-work statuses — the shared core of both revert paths above.
+   */
+  private async revertStrandedTicket(ticket: TicketEntity, reason: string): Promise<boolean> {
+    if (ticket.status !== 'in_progress' && ticket.status !== 'in_review') return false;
+    ticket.status = 'todo';
+    await this.tickets.save(ticket);
+    this.events.publish({
+      type: 'ticket_event',
+      orgId: ticket.org_id,
+      repoId: ticket.repo_id,
+      ticketId: ticket.id,
+      kind: 'updated',
+    });
+    this.logger.log(`reverted ticket #${ticket.number} (${ticket.id}) → todo (${reason})`);
+    return true;
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────────────────────────
 
   /** Resolve a ticket scoped to org+repo or 404 — the guard for every ticket-keyed op. */

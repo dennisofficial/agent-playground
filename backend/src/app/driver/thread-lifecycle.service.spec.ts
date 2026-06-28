@@ -22,6 +22,7 @@ import type { CredentialResolver } from '../onboarding';
 import type { DriverRepoResolver } from './repo-resolver';
 import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { ThreadLifecycleService } from './thread-lifecycle.service';
+import type { TicketService } from '../tickets';
 import type { WorktreeProvisioner } from './worktree-provisioner.service';
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ function makeService(
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
+    { revertForDeletedThread: vi.fn() } as unknown as TicketService,
   );
 }
 

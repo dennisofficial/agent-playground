@@ -43,6 +43,7 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, ThreadLifecycleService, WorktreeProvisioner } from '../driver';
+import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
 
 function dbOpts() {
@@ -199,6 +200,7 @@ beforeEach(async () => {
       { provide: GithubPrService, useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' } },
       { provide: DRIVER_REPO, useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used'); } } as DriverRepoResolver },
       { provide: WorktreeProvisioner, useValue: { provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({ sandbox, hydrationSig: 'sig' }) } },
+      { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
       ThreadLifecycleService,
       OrganizationService,
     ],

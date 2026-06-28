@@ -9,6 +9,7 @@ import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, ThreadEntity, ThreadSandboxEntity } from '../persistence/entities';
 import { hostExecUser, SANDBOX_PROVIDER, SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
+import { TicketService } from '../tickets';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -88,6 +89,7 @@ export class ThreadLifecycleService {
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
     private readonly provisioner: WorktreeProvisioner,
+    private readonly tickets: TicketService,
   ) {}
 
   /**
@@ -312,7 +314,14 @@ export class ThreadLifecycleService {
     // 1. Reclaim the container + worktree (physical side effects — no DB cascade can do this).
     await this.closeThread(threadId, orgId);
 
-    // 2. Delete the thread row; the FK ON DELETE CASCADE removes every child row with it.
+    // 2. Hand any linked ticket back to the board BEFORE the thread row vanishes (its `ticket_id` is the
+    //    only way to resolve the ticket). The board's in_progress/in_review lanes are thread-driven, so a
+    //    deleted thread would otherwise strand its ticket with no driver. Best-effort — never block teardown.
+    await this.tickets.revertForDeletedThread({ orgId, threadId }).catch((err) => {
+      this.logger.warn(`deleteThreadDeep: ticket revert failed for thread ${threadId}: ${err}`);
+    });
+
+    // 3. Delete the thread row; the FK ON DELETE CASCADE removes every child row with it.
     const res = await this.threads.delete({ id: threadId, org_id: orgId });
     this.logger.log(`deleted thread ${threadId} (org ${orgId}); thread rows removed=${res.affected ?? 0}, children cascaded`);
   }
