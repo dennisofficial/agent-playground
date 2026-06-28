@@ -389,16 +389,35 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
-  it('(e) ask_question is a DEFERRED gate: the bridge handler is a defensive no-op (defer opens the card)', async () => {
-    // The tool stays DECLARED (so the model can call it) but a PreToolUse `defer` hook suspends it before
-    // the handler runs — the host opens the card from the deferred-tool outcome, not here. Reaching this
-    // handler means the hook didn't fire, so it must refuse rather than silently bypass the gate.
+  it('(e) ask_question opens the durable gate with a normalized question_card', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    expect(tools['ask_question']).toBeTypeOf('function'); // still declared
-    const result = await tools['ask_question']({ question: 'Should never run', options: [] });
+    const result = await tools['ask_question']({
+      question: 'Where does the customer pick the subdomain?',
+      decisionClass: 'data_model',
+      options: ['Auto-default at provision', { label: 'Pick in the wizard', description: 'first-run UX' }],
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    // ask_question opens the gate ATOMICALLY (card row + awaiting pointer in one tx), not a bare append.
+    expect(mockStore.openQuestion).toHaveBeenCalledOnce();
+    const call = (mockStore.openQuestion as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe(THREAD_ID);
+    const card = call[1].card;
+    expect(card).toMatchObject({ type: 'question_card', decisionClass: 'data_model', allowOther: true });
+    expect(card.options).toHaveLength(2);
+    expect(card.options[0]).toMatchObject({ label: 'Auto-default at provision' });
+    expect(card.options[0].id).toBeTruthy();
+  });
+
+  it('(e2) ask_question is refused while a question is already open (one-at-a-time gate)', async () => {
+    (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      alreadyOpen: true,
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['ask_question']({ question: 'Another one?', options: [] });
     expect(result).toMatchObject({ ok: false });
-    expect((result as { reason: string }).reason).toContain('deferred');
-    expect(mockStore.openQuestion).not.toHaveBeenCalled(); // the handler does NOT open the gate
+    expect((result as { reason: string }).reason).toContain('already awaiting');
   });
 
   it('(f) create_decision attaches the gate-pointed answered question and returns the resolved decision + id', async () => {
@@ -598,12 +617,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
-      openQuestion: vi.fn().mockResolvedValue({ ok: true }),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
-      pairDeferredToolResult: vi.fn().mockResolvedValue(undefined),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
@@ -698,64 +715,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     // The final reply is NOT also persisted as a separate say() — only the "setting up…" line is.
     expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');
-  });
-
-  it('DEFERRED ask_question: the turn ends on a deferred call → host opens the gate from input.args + the SDK tool_use id', async () => {
-    // The turn passes `deferToolNames:['ask_question']`, and the engine returns a deferred outcome.
-    const run = vi.fn(async (args: RunEngineArgs) => {
-      expect(args.deferToolNames).toEqual(['ask_question']); // ask_question is deferred
-      args.onEvent?.({ kind: 'tool_use', id: 'tu-ask', name: 'mcp__atlas-host-bridge__ask_question', input: {} });
-      return {
-        result: '',
-        sessionId: 's',
-        deferredToolUse: {
-          id: 'tu-ask',
-          name: 'mcp__atlas-host-bridge__ask_question',
-          input: { args: { question: 'Pick A or B?', options: ['A', 'B'], decisionClass: 'data_model' } },
-        },
-      };
-    });
-    const { manager, store } = makeManager({ findSandbox: { worktreePath: '/wt' }, run });
-
-    await manager.handleChatTurn(stimulus);
-
-    // The host opened the gate from the DEFERRED call (not the bridge handler), storing the SDK tool_use
-    // id on the card so a later delivery turn can resume and feed the answer back.
-    expect(store.openQuestion).toHaveBeenCalledOnce();
-    const card = (store.openQuestion as ReturnType<typeof vi.fn>).mock.calls[0][1].card;
-    expect(card).toMatchObject({
-      type: 'question_card',
-      question: 'Pick A or B?',
-      decisionClass: 'data_model',
-      deferredToolUseId: 'tu-ask',
-    });
-    expect(card.options).toHaveLength(2);
-  });
-
-  it('DELIVERY turn: an answered+undelivered gate resumes the deferred tool, then finalizes (delivered + paired)', async () => {
-    const run = vi.fn(async (args: RunEngineArgs) => {
-      // This turn RESUMES, feeding the answer back as the deferred tool result (not a fresh task prompt).
-      expect(args.deferredResult).toEqual({ toolUseId: 'tu-ask', result: 'A' });
-      args.onEvent?.({ kind: 'text', text: 'You chose A — proceeding.' });
-      return { result: 'You chose A — proceeding.', sessionId: 's' };
-    });
-    const { manager, store } = makeManager({ findSandbox: { worktreePath: '/wt' }, run });
-    // The gate points at an answered, not-yet-delivered question carrying its deferred tool_use id.
-    (store.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-1');
-    (store.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
-      type: 'question_card',
-      question: 'Pick A or B?',
-      answer: 'A',
-      deferredToolUseId: 'tu-ask',
-    });
-
-    await manager.handleChatTurn(stimulus);
-
-    // On the success tail: stamped delivered, gate cleared, and the deferred tool block paired with the answer.
-    expect(store.markQuestionDelivered).toHaveBeenCalledWith(THREAD_ID, 'q-1');
-    expect(store.clearAwaitingQuestion).toHaveBeenCalledWith(THREAD_ID, 'q-1');
-    expect(store.pairDeferredToolResult).toHaveBeenCalledWith(THREAD_ID, 'tu-ask', 'A');
-    expect(store.openQuestion).not.toHaveBeenCalled(); // no new question this turn
   });
 
   it('serializes concurrent turns for one thread — a follow-up queues, never two engine turns at once', async () => {

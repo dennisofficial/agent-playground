@@ -1,4 +1,4 @@
-import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, Options, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
 import { resolve as resolvePath } from 'node:path';
@@ -203,30 +203,8 @@ export class EngineCore {
     let result = '';
     let resolvedSession = sessionId;
     let usage: EngineUsage | undefined;
-    let deferredToolUse: EngineRunResult['deferredToolUse'];
-
-    // Durable HILT resume: when feeding a deferred tool's out-of-band result, drive the query with a
-    // STREAMING-INPUT user message that carries `parent_tool_use_id` + `tool_use_result` (+ a
-    // `tool_result` content block) — the encoding the spike confirmed continues the model in the SAME
-    // logical turn (resume is already set via `options.resume`). Otherwise a normal single-prompt turn.
-    let prompt: string | AsyncIterable<SDKUserMessage> = task;
-    if (args.deferredResult) {
-      const dr = args.deferredResult;
-      const text = typeof dr.result === 'string' ? dr.result : JSON.stringify(dr.result);
-      prompt = (async function* (): AsyncGenerator<SDKUserMessage> {
-        yield {
-          type: 'user',
-          parent_tool_use_id: dr.toolUseId,
-          tool_use_result: dr.result,
-          message: {
-            role: 'user',
-            content: [{ type: 'tool_result', tool_use_id: dr.toolUseId, content: text }],
-          },
-        } as SDKUserMessage;
-      })();
-    }
     try {
-      for await (const message of this.claudeSdk.query({ prompt, options })) {
+      for await (const message of this.claudeSdk.query({ prompt: task, options })) {
         if (message.type === 'system' && message.subtype === 'init') {
           resolvedSession = message.session_id;
           // Surface the resume handle the instant the session exists, so a mid-turn halt is recoverable.
@@ -284,17 +262,10 @@ export class EngineCore {
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;
-          // A DEFERRED tool ends the turn carrying `deferred_tool_use` (durable HILT gate). Capture it
-          // and DON'T treat it as a failure — its subtype is still `success`, but key off the field's
-          // presence (the terminal reason varies between `tool_deferred` and `completed`).
-          const deferred = (message as Record<string, unknown>)['deferred_tool_use'] as
-            | { id: string; name: string; input: unknown }
-            | undefined;
-          if (deferred && deferred.id) deferredToolUse = deferred;
           if (message.subtype === 'success') {
             result = message.result;
             usage = extractClaudeUsage(message as Record<string, unknown>, model);
-          } else if (!deferredToolUse) {
+          } else {
             throw new Error(`Claude engine ended: ${message.subtype}`);
           }
         }
@@ -316,7 +287,6 @@ export class EngineCore {
       sessionId: resolvedSession,
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
-      ...(deferredToolUse ? { deferredToolUse } : {}),
     };
   }
 

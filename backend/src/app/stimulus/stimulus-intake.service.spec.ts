@@ -150,4 +150,28 @@ describe('StimulusIntake.intakeChat', () => {
     expect(filter.admit).not.toHaveBeenCalled(); // chat bypasses the filter
     expect(seen[0]).toMatchObject({ kind: 'chat', id: 'chat-1' });
   });
+
+  it('SYSTEM SEED: consumes the brain turn WITHOUT persisting a chat row (no operator bubble)', async () => {
+    const seed: ChatStimulus = {
+      id: '',
+      orgId: 'T1',
+      repoId: 'web',
+      kind: 'chat',
+      trust: 'trusted',
+      body: '<system_notification>The operator answered your question "X": A</system_notification>',
+      threadId: 'thread-9',
+      author: { id: 'U-OPERATOR', displayName: 'Operator' },
+      replyRoute: { surfaceId: 'web', threadRef: 'thread-9' },
+      receivedAt: new Date(),
+      seed: true,
+    };
+    const store = { recordChatStimulus: vi.fn() } as unknown as StimulusStoreService;
+    const { consumer, seen } = collectConsumer();
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), consumer, fakeTitler());
+
+    await intake.intakeChat(seed);
+    expect(store.recordChatStimulus).not.toHaveBeenCalled(); // NOT persisted as a chat message
+    expect(seen[0]).toMatchObject({ kind: 'chat', seed: true }); // but the brain turn still runs
+    expect((seen[0] as ChatStimulus).id).toBeTruthy(); // a synthetic id was minted
+  });
 });

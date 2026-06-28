@@ -392,14 +392,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const mkCard = (id: string, q: string) => ({
       ts: id,
       text: q,
-      card: {
-        type: 'question_card',
-        threadId,
-        questionId: id,
-        question: q,
-        options: [],
-        deferredToolUseId: `tu-${id}`, // the SDK tool_use id (durable HILT resume handle)
-      },
+      card: { type: 'question_card', threadId, questionId: id, question: q, options: [] },
     });
 
     // open q-1 → card row + gate pointer commit together (atomic).
@@ -415,8 +408,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await awaitingId(dataSource, threadId)).toBe('q-1');
     expect(await store.getQuestionCard(threadId, 'q-2')).toBeNull(); // never persisted
 
-    // operator answers q-1 → it becomes an answered-but-undelivered question the boot sweep recovers
-    // (returned WITH its deferredToolUseId so the resume turn can feed the answer back to that tool call).
+    // operator answers q-1 → it becomes an answered-but-undelivered question the boot sweep recovers.
     await store.updateCardMessage(threadId, 'q-1', { answer: 'Editable', answeredAt: '2026-06-27T00:00:00Z' });
     expect(await store.findUndeliveredAnsweredQuestions()).toContainEqual({
       threadId,
@@ -425,7 +417,6 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       questionId: 'q-1',
       question: 'Editable or fixed?',
       answer: 'Editable',
-      deferredToolUseId: 'tu-q-1',
     });
 
     // a delivery turn stamps delivered; the pointer clear is compare-and-clear (a stale id no-ops).

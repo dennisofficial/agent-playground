@@ -504,14 +504,21 @@ export class WebSurfaceController {
     if (payload.answer != null) {
       return { ok: true, ts: '' };
     }
-    // First valid answer: stamp the durable answered state, then inject it as an operator reply → fires
-    // the delivery turn (which stamps `deliveredAt` + clears the gate on success).
+    // First valid answer: stamp the durable answered state (renders on the card), then deliver it to the
+    // brain as a SYSTEM SEED — a `<system_notification>` framed turn that is NOT persisted as a chat
+    // bubble (the answer lives on the card, not as a duplicate operator message). Fires the delivery turn,
+    // which stamps `deliveredAt` + clears the gate on success.
     card.card = { ...(card.card ?? {}), answer, answeredAt: new Date().toISOString() };
     await this.messages.save(card);
-    const ts = this.surface.receiveFromClient(thread.repo_id, answer, {
+    const question = (payload.question ?? '').trim();
+    const seed = `<system_notification>The operator answered your question ${JSON.stringify(
+      question,
+    )}: ${answer}</system_notification>`;
+    const ts = this.surface.receiveFromClient(thread.repo_id, seed, {
       orgId: org.id,
       threadTs: threadId,
       ...OPERATOR,
+      seed: true,
     });
     return { ok: true, ts };
   }

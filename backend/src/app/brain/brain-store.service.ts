@@ -271,22 +271,12 @@ export class BrainStoreService {
   }
 
   /**
-   * Boot reconciliation: threads whose gate points at an ANSWERED-but-UNDELIVERED question carrying its
-   * `deferredToolUseId` — the crash window where the operator answered (durably stamped) but the host died
-   * before the resume turn fed the answer back. The startup sweep re-delivers each so the answer is never
-   * silently dropped (at-least-once). Filtered to cards with a `deferredToolUseId` (the deferred-tool
-   * resume handle); a delivery turn can't resume without it.
+   * Boot reconciliation: threads whose gate points at an ANSWERED-but-UNDELIVERED question — the crash
+   * window where the operator answered (durably stamped) but the host died before a turn handed it to the
+   * brain. The startup sweep re-delivers each so the answer is never silently dropped (at-least-once).
    */
   async findUndeliveredAnsweredQuestions(): Promise<
-    {
-      threadId: string;
-      orgId: string;
-      repoId: string;
-      questionId: string;
-      question: string;
-      answer: string;
-      deferredToolUseId: string;
-    }[]
+    { threadId: string; orgId: string; repoId: string; questionId: string; question: string; answer: string }[]
   > {
     const rows = await this.threads.find({ where: { awaiting_question_id: Not(IsNull()) } });
     const out: {
@@ -296,11 +286,10 @@ export class BrainStoreService {
       questionId: string;
       question: string;
       answer: string;
-      deferredToolUseId: string;
     }[] = [];
     for (const t of rows) {
       const card = await this.getQuestionCard(t.id, t.awaiting_question_id!);
-      if (card?.answer != null && card.deliveredAt == null && card.deferredToolUseId) {
+      if (card?.answer != null && card.deliveredAt == null) {
         out.push({
           threadId: t.id,
           orgId: t.org_id,
@@ -308,29 +297,10 @@ export class BrainStoreService {
           questionId: t.awaiting_question_id!,
           question: card.question,
           answer: card.answer,
-          deferredToolUseId: card.deferredToolUseId,
         });
       }
     }
     return out;
-  }
-
-  /**
-   * Pair a DEFERRED `ask_question` tool block in the durable transcript with its answer. The asking turn
-   * persisted the `tool_use` block unpaired (the result was deferred); the delivery happens on a separate
-   * resume run that can't auto-pair across runs, so the brain calls this to stamp the prior block's
-   * `meta.result` (found by the `meta.toolId` persisted on the block). Best-effort; no-op if not found.
-   */
-  async pairDeferredToolResult(threadId: string, toolUseId: string, result: unknown): Promise<void> {
-    const row = await this.messages
-      .createQueryBuilder('m')
-      .where('m.thread_id = :threadId', { threadId })
-      .andWhere("m.kind = 'tool'")
-      .andWhere("m.meta ->> 'toolId' = :toolUseId", { toolUseId })
-      .getOne();
-    if (!row) return;
-    row.meta = { ...(row.meta ?? {}), result, isError: false };
-    await this.messages.save(row);
   }
 
   // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────

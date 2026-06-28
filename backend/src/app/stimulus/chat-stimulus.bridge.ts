@@ -95,6 +95,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
         threadRef: thread.id,
       },
       receivedAt: msg.ts,
+      ...(msg.seed ? { seed: true } : {}),
     };
     await this.intake.intakeChat(stimulus);
   }

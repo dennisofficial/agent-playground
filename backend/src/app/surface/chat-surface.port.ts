@@ -35,6 +35,12 @@ export interface InboundChatMessage {
    */
   threadTs?: string;
   ts: Date;
+  /**
+   * SYSTEM SEED: when true, this inbound is a system-injected context line (e.g. an `ask_question`
+   * answer framed as `<system_notification>`), NOT a human chat message. The intake runs the brain turn
+   * but does NOT persist it as a `messages` row, so it never renders as an operator chat bubble.
+   */
+  seed?: boolean;
 }
 
 /** Options for an outbound post. */

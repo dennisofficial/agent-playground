@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { ToolItem } from './types';
 import { resolveHandler } from './registry';
 import type { ToolBadge } from './types';
@@ -80,6 +80,38 @@ function PathArg({ arg, pathArg }: { arg: string; pathArg?: boolean }) {
   );
 }
 
+/**
+ * The single clickable shell shared by a lone tool row AND a group header: leading disclosure chevron,
+ * a flex content track (the `children`), and a trailing running-dot. Padding, gap, chevron size, and
+ * hover are defined ONCE here — change them in this one place and every tool-call row stays aligned.
+ * `group` is always set so a child can opt into `group-hover:` (the header label uses it; rows ignore it).
+ */
+function DisclosureRow({
+  open,
+  onToggle,
+  running,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  running?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="group flex w-full items-center gap-2 rounded-md py-[5px] pl-0.5 pr-2 text-left text-[12.5px] text-dim transition hover:bg-surface-3"
+    >
+      <Chevron size={12} className={`text-faint ${open ? 'rotate-90' : ''}`} />
+      {children}
+      {running ? (
+        <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
+      ) : null}
+    </button>
+  );
+}
+
 function ToolRow({ tool }: { tool: ToolItem }) {
   const [open, setOpen] = useState(false);
   const handler = resolveHandler(tool.name, tool.input);
@@ -88,11 +120,7 @@ function ToolRow({ tool }: { tool: ToolItem }) {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-[5px] text-left text-[12.5px] text-dim transition hover:bg-surface-3"
-      >
+      <DisclosureRow open={open} onToggle={() => setOpen((o) => !o)} running={tool.running}>
         <ToolIcon kind={d.icon} color={d.color} />
         {d.isMcp ? (
           <span className="flex-1 truncate font-mono text-[11.5px]" style={{ color: 'var(--blue)' }}>
@@ -107,11 +135,7 @@ function ToolRow({ tool }: { tool: ToolItem }) {
         )}
         {d.pill ? <NewPill text={d.pill} /> : null}
         <Badge badge={d.badge} />
-        {tool.running ? (
-          <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
-        ) : null}
-        <Chevron className={`text-faint ${open ? 'rotate-90' : ''}`} />
-      </button>
+      </DisclosureRow>
       {open ? (
         Body ? (
           <Body tool={tool} />
@@ -168,21 +192,13 @@ export function ToolGroup({ tools }: { tools: ToolItem[] }) {
 
   return (
     <div className="anim-fadeUp my-px">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="group flex w-full items-center gap-[7px] px-0.5 py-[5px] text-left text-[12.5px]"
-      >
-        <Chevron size={12} className={`text-faint ${open ? 'rotate-90' : ''}`} />
+      <DisclosureRow open={open} onToggle={() => setOpen((o) => !o)} running={anyRunning}>
         <span className="shrink-0 font-semibold text-dim transition group-hover:text-text">{label}</span>
         <span className="flex-1 truncate font-mono text-[11px] text-faint">{preview}</span>
         {showNew ? <NewPill text={newCount === count ? 'NEW' : `${newCount} NEW`} size="group" /> : null}
         {showStat ? <Badge badge={totalStat} size="group" /> : null}
         {showLines ? <Badge badge={totalLines} /> : null}
-        {anyRunning ? (
-          <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
-        ) : null}
-      </button>
+      </DisclosureRow>
       {open ? (
         <div
           className="ml-[5px] flex flex-col gap-px pl-[13px]"

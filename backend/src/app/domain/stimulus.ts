@@ -53,6 +53,12 @@ export interface ChatStimulus extends BaseStimulus {
   author: { id: string; displayName: string };
   /** Where the system replies: the surface id + the surface-native thread coordinate (the web thread ref). */
   replyRoute: { surfaceId: string; threadRef: string };
+  /**
+   * SYSTEM SEED: a system-injected context turn (e.g. an `ask_question` answer framed as
+   * `<system_notification>`), not a human chat message. Runs a brain turn but is NOT persisted as a
+   * `messages` row — so it never renders as an operator chat bubble.
+   */
+  seed?: boolean;
 }
 
 /**

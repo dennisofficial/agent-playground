@@ -209,21 +209,6 @@ export interface RunEngineArgs {
    * one-shot build turns (backward-compatible).
    */
   toolBridge?: ToolBridgeOptions;
-  /**
-   * UNQUALIFIED bridge tool names to DEFER via a PreToolUse `defer` hook (the durable HILT gate). When
-   * the model calls one of these, the SDK suspends the call (the bridge handler never runs) and the turn
-   * ends with `EngineRunResult.deferredToolUse`. The in-container entrypoint qualifies these to
-   * `mcp__<bridge>__<tool>` and builds the hook. Omit for normal turns.
-   */
-  deferToolNames?: string[];
-  /**
-   * RESUME a session that ended on a deferred tool, feeding the out-of-band result back in. When set,
-   * the run resumes `sessionId` and yields the result for `toolUseId` as the deferred tool's result, so
-   * the model continues in the SAME logical turn (no new task prompt). Encoding confirmed by spike:
-   * a streaming-input user message carrying `parent_tool_use_id` + `tool_use_result` (+ a `tool_result`
-   * content block). `result` is the human's answer (serialized to text for the content block).
-   */
-  deferredResult?: { toolUseId: string; result: unknown };
 }
 
 /** The result of one engine run — the report, the resume handle, and optional plan/usage. */
@@ -233,15 +218,6 @@ export interface EngineRunResult {
   /** The captured plan text on a Claude 'plan' turn (the substance is the plan, not the summary). */
   planText?: string;
   usage?: EngineUsage;
-  /**
-   * Set when the turn ended because a tool was DEFERRED (a PreToolUse `defer` hook — the durable HILT
-   * gate). The model emitted this tool call but the SDK suspended it instead of running the handler; the
-   * turn ends carrying the call's `id`/`name`/`input` so the host can act out-of-band (post a question
-   * card, get a human answer) and later RESUME the session with `RunEngineArgs.deferredResult` to feed
-   * the result back into the same logical turn. Keyed off the SDK's `deferred_tool_use` (its presence,
-   * not the terminal reason, which varies). The brain tool `input` is wrapped: `{ args: {...} }`.
-   */
-  deferredToolUse?: { id: string; name: string; input: unknown };
 }
 
 /**

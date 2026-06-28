@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ChatStimulus, ParsedEvent } from '../domain';
 import { EventFilterService } from './event-filter.service';
@@ -130,6 +131,13 @@ export class StimulusIntake {
    * filter). The caller (the chat bridge) has already resolved the thread + reply route.
    */
   async intakeChat(stimulus: ChatStimulus): Promise<void> {
+    // SYSTEM SEED: a system-injected context turn (e.g. an `ask_question` answer framed as
+    // `<system_notification>`) runs the brain but is NOT persisted as a `messages` row, so it never
+    // renders as an operator chat bubble. Consume it directly with a synthetic id.
+    if (stimulus.seed) {
+      await this.consumer.consume({ ...stimulus, id: stimulus.id || randomUUID() });
+      return;
+    }
     const recorded = await this.store.recordChatStimulus({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,

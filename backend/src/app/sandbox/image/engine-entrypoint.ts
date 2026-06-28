@@ -26,12 +26,7 @@
 import { randomUUID } from 'node:crypto';
 import { EngineCore, type EngineCoreConfig } from '../../engine/engine-core';
 import type { EngineEvent, EngineRunResult, RunEngineArgs } from '../../engine/engine.types';
-import {
-  BRIDGE_SERVER_NAME,
-  buildBridgeClaudeOptions,
-  buildDeferHookOptions,
-  type BridgeClaudeOptions,
-} from './bridge-options';
+import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
 
 /** The serialized turn — everything `RunEngineArgs` carries except host-only, non-serializable bits. */
 type TurnSpec = Omit<RunEngineArgs, 'onEvent' | 'signal' | 'target' | 'toolBridge'> & {
@@ -198,17 +193,10 @@ async function main(): Promise<void> {
     onEvent: (e: EngineEvent) => emit({ t: 'event', e }),
   };
 
-  // Merge the durable-HILT defer hook into the SDK options: a PreToolUse `defer` for each named tool
-  // suspends its call (the bridge handler never runs) and ends the turn with `deferred_tool_use`.
-  let extraClaudeOptions: Record<string, unknown> | undefined = bridge?.extraClaudeOptions;
-  if (spec.deferToolNames && spec.deferToolNames.length > 0) {
-    extraClaudeOptions = { ...(extraClaudeOptions ?? {}), ...buildDeferHookOptions(spec.deferToolNames) };
-  }
-
   // Register the bridge MCP server under the SDK's `mcpServers` option and auto-approve its tools.
   const result: EngineRunResult = await core.runWithExtras(
     runArgs,
-    extraClaudeOptions,
+    bridge?.extraClaudeOptions,
     bridge?.bridgeToolNames,
   );
   emit({ t: 'final', r: result });

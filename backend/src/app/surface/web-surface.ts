@@ -30,6 +30,8 @@ export interface WebInboundOptions {
   authorId?: string;
   authorName?: string;
   orgId?: string;
+  /** System seed — deliver to the brain but don't persist as a chat bubble (see `InboundChatMessage.seed`). */
+  seed?: boolean;
 }
 
 const DEFAULT_TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000001'; // sentinel org uuid (web default tenant)
@@ -146,6 +148,7 @@ export class WebSurface implements ChatSurface {
       orgId: opts.orgId ?? this.defaultTeamId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
+      ...(opts.seed ? { seed: true } : {}),
       ts: new Date(),
     };
     this.logger.debug(

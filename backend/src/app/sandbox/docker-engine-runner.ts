@@ -91,10 +91,6 @@ export class DockerEngineRunner implements EngineRunnerPort {
       ...(args.richStream ? { richStream: args.richStream } : {}),
       // Signal to the entrypoint that the tool bridge is active (tool names list).
       ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
-      // Durable HILT: which bridge tools to DEFER (entrypoint builds the PreToolUse hook), and — on a
-      // resume run — the out-of-band result to feed back into the deferred tool's same logical turn.
-      ...(args.deferToolNames?.length ? { deferToolNames: args.deferToolNames } : {}),
-      ...(args.deferredResult ? { deferredResult: args.deferredResult } : {}),
     };
 
     // Mark the container busy for the duration of the exec so the idle reaper never tears it down
