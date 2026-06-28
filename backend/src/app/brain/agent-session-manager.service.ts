@@ -142,6 +142,11 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     `  - mcp__${BRIDGE_SERVER_NAME}__link_ticket_dependency — record an advisory "blocked by" edge between tickets`,
     `  - mcp__${BRIDGE_SERVER_NAME}__promote_ticket       — turn a backlog ticket into a working follow-up thread`,
     '',
+    'ARGUMENTS — every host tool takes a SINGLE object parameter named `args`; put ALL fields inside it.',
+    'The shorthand below (e.g. `create_decision({ decisionClass, ruling })`) ALWAYS means the wrapped form',
+    '`create_decision({ args: { decisionClass, ruling } })`. A call that puts the fields at the TOP LEVEL',
+    '(no `args` wrapper) arrives EMPTY at the host and fails — always nest them under `args`.',
+    '',
     'CREATE_THREAD — when the work splits into a separate unit of its own AND should start NOW, create a',
     'follow-up thread rather than overloading this one. Args: { title, firstMessage }. `firstMessage` is the',
     'opening intent the new thread starts on (write it as you would brief a fresh session); the new thread',
@@ -182,8 +187,11 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     '  • ONE focused question per call; give 2–4 concrete `options` (the operator can also answer freely if',
     `    allowOther is true, the default). Set \`decisionClass\` when the question settles an always-ask class —`,
     `    it is EXACTLY one of (underscores, not hyphens): ${DECISION_CLASS_IDS.join(' | ')}.`,
-    '  • After calling it, STOP and wait — do not ask anything else that turn. The operator answers the card',
-    '    (or replies in prose); that fires your next turn with their answer.',
+    '  • `ask_question` is a BLOCKING gate: calling it ENDS your turn, and the operator’s answer comes back',
+    '    to you AS THE RESULT of this ask_question call — you continue from exactly there. So call it and',
+    '    write NOTHING after it: do not narrate, do not say "I posted the question", and NEVER report a tool',
+    '    error about it — any "no result" / "internal error" you might see for the call is just its pending',
+    '    state; ignore it. ONE question per turn; the answer returns as the tool result.',
     'LOCK EACH DECISION AS IT SETTLES: the moment an answer settles an always-ask decision, call',
     `\`create_decision({ decisionClass, ruling, title? })\` — decisionClass is EXACTLY one of (underscores, not`,
     `hyphens): ${DECISION_CLASS_IDS.join(' | ')}. It AUTO-ATTACHES the question you just asked and the`,
@@ -647,8 +655,22 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       return new Date(lastEmitMs);
     };
 
+    // Durable HILT: `ask_question` is DEFERRED — the turn should end at the tool call. But the SDK feeds
+    // the model a "[Tool result missing due to internal error]" placeholder and lets it take a confused
+    // second swing ("the tool returned an error…"). Once we see the deferred ask_question tool_use, drop
+    // everything after it (live + durable) so the transcript reads cleanly: `assistant: ask_question` →
+    // (the answer is paired onto this tool block on the delivery turn). Resets per turn.
+    let suppressingAfterAsk = false;
     return {
       onEvent: (e: EngineEvent) => {
+        // Past a deferred ask_question, swallow the trailing narration (assistant text / thinking) — do
+        // not fan it live and do not persist it. The tool call itself + later results still flow.
+        if (
+          suppressingAfterAsk &&
+          (e.kind === 'text' || e.kind === 'thinking' || e.kind === 'text_delta' || e.kind === 'thinking_delta')
+        ) {
+          return;
+        }
         // LIVE + RESUMABLE: the store fans the frame AND holds the cumulative turn for snapshot-on-connect.
         this.liveTurns.push(channel, threadId, e);
         switch (e.kind) {
@@ -666,6 +688,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
               meta: { name: e.name, input: e.input ?? null, result: null, isError: false },
               emittedAt: stamp(),
             });
+            // A deferred ask_question ends the meaningful turn — suppress any trailing placeholder narration.
+            if (isAskQuestionTool(e.name)) suppressingAfterAsk = true;
             break;
           case 'tool_result': {
             // Pair with the newest still-open tool block (preserving interleaved order with text/thinking).
@@ -685,7 +709,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       },
       finish: async (finalText?: string) => {
         // Fallback: a turn that emitted NO text block — keep the final summary so the reply isn't lost.
-        if (!blocks.some((b) => b.kind === 'chat') && finalText && finalText.trim()) {
+        // SKIP it on a deferred-ask turn: `finalText` is the suppressed placeholder narration, not a reply.
+        if (!suppressingAfterAsk && !blocks.some((b) => b.kind === 'chat') && finalText && finalText.trim()) {
           blocks.push({ kind: 'chat', text: finalText.trim(), emittedAt: stamp() });
         }
         // Persist the whole transcript in order (each row stamped with its emission time so an
@@ -722,6 +747,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     // record, and returns the FULLY-RESOLVED decision (id + attached Q&A) — so the brain holds ground truth
     // in context and never needs a read-back before submit_plan.
     const createDecision: ToolImpl = async (args) => {
+      const envelope = missingArgsEnvelope(args);
+      if (envelope) return envelope;
       const decisionClass = asDecisionClass(args['decisionClass']);
       const ruling = String(args['ruling'] ?? '').trim();
       if (!decisionClass) {
@@ -820,6 +847,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       log_decision: createDecision,
 
       update_decision: async (args) => {
+        const envelope = missingArgsEnvelope(args);
+        if (envelope) return envelope;
         const id = String(args['id'] ?? '').trim();
         if (!id) return { ok: false, reason: 'id is required' };
         // Validate decisionClass when present — an unrecognized class would persist but then be silently
@@ -858,6 +887,8 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
       },
 
       delete_decision: async (args) => {
+        const envelope = missingArgsEnvelope(args);
+        if (envelope) return envelope;
         const id = String(args['id'] ?? '').trim();
         if (!id) return { ok: false, reason: 'id is required' };
         const { removed, all } = await this.store.deleteDecision(stimulus.threadId, id);
@@ -1581,6 +1612,22 @@ function asDecisionClass(v: unknown): DecisionClass | undefined {
   if (typeof v !== 'string') return undefined;
   const norm = v.trim().toLowerCase().replace(/[\s-]+/g, '_');
   return DECISION_CLASSES.has(norm) ? (norm as DecisionClass) : undefined;
+}
+
+/**
+ * The bridge wraps every tool's parameters under a single `args` object (the SDK schema strips
+ * unrecognized top-level keys). When the model forgets the wrapper, the host receives `{}` and a
+ * field-specific error ("decisionClass must be one of…") MISLEADS it into fixing the wrong thing.
+ * Detect the empty-args case up front and return a hint that points at the real cause: the envelope.
+ */
+function missingArgsEnvelope(args: Record<string, unknown>): { ok: false; reason: string } | null {
+  if (args && Object.keys(args).length > 0) return null;
+  return {
+    ok: false,
+    reason:
+      'No arguments received — pass ALL parameters inside a single `args` object ' +
+      '(e.g. { args: { decisionClass, ruling, title } }), not at the top level.',
+  };
 }
 
 /**
