@@ -64,6 +64,19 @@ export interface PostOptions {
   meta?: Record<string, unknown>;
 }
 
+/** The author stamped on a SYSTEM SEED — a host-originated context turn, NOT a human (drives the
+ *  no-awareness-drain + no-bubble semantics; see `seedSystemNotification`). */
+export const SYSTEM_SEED_AUTHOR = { id: 'U-SYSTEM', name: 'System' } as const;
+
+/**
+ * Wrap host-originated context in the `<system_notification>` envelope the brain reads. The single place
+ * the framing lives — `seedSystemNotification` and the brain's boot-recovery sweep both use it, so the
+ * model sees one consistent shape for "this is system context, not a chat message".
+ */
+export function wrapSystemNotification(body: string): string {
+  return `<system_notification>${body}</system_notification>`;
+}
+
 /**
  * The thread-aware chat-surface port — duplex group-chat semantics. The brain/driver is agnostic to
  * WHERE the chat lives: the web adapter speaks to a web client over SSE/REST; an agent-facing adapter
@@ -103,4 +116,18 @@ export interface ChatSurface {
    * adapter emits on `threadMeta$`; the agent test surface omits this.
    */
   emitThreadMeta?(channel: string, threadId: string, title: string): void;
+  /**
+   * Seed the thread's brain with a SYSTEM NOTIFICATION — host-originated context the brain should react
+   * to (an answered `ask_question`, a pipeline milestone, an external event). Wraps `body` in
+   * `<system_notification>…</system_notification>`, runs ONE brain turn, and is NEVER persisted as a chat
+   * message (no operator bubble; it doesn't drain the passive pipeline-awareness buffer either). Returns
+   * the synthetic message ts. This ACTIVELY WAKES the brain — reserve it for events worth a turn; for
+   * low-priority "where the build stands" FYI prefer the passive `pipeline_awareness` buffer.
+   */
+  seedSystemNotification?(
+    channel: string,
+    threadId: string,
+    body: string,
+    opts?: { orgId?: string },
+  ): string;
 }

@@ -17,8 +17,10 @@ import {
   type ChatSurface,
   type DecisionApprovalCard,
   LiveTurnStore,
+  SYSTEM_SEED_AUTHOR,
   type WebQuestionCard,
   webQuestionCard,
+  wrapSystemNotification,
 } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadSandboxEntity } from '../persistence/entities';
@@ -1454,16 +1456,18 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
  *  the buffer before the operator sees it. */
 const ATLAS_AUTHOR_ID = 'atlas';
 
-/** True when a turn was authored by the operator (not a synthetic Atlas-authored turn). */
+/** True when a turn was authored by the operator — NOT a synthetic Atlas turn and NOT a host-originated
+ *  system seed. Both background kinds must skip the passive-awareness drain so a real operator turn still
+ *  gets the buffered milestones. */
 function isOperatorAuthored(stimulus: ChatStimulus): boolean {
-  return stimulus.author.id !== ATLAS_AUTHOR_ID;
+  return stimulus.author.id !== ATLAS_AUTHOR_ID && stimulus.author.id !== SYSTEM_SEED_AUTHOR.id;
 }
 
 /** Frame a delivered answer as a SYSTEM SEED (matches the live `/answer-question` path), not a chat line. */
 function frameAnswer(question: string, answer: string): string {
-  return `<system_notification>The operator answered your question ${JSON.stringify(
-    question,
-  )}: ${answer}</system_notification>`;
+  return wrapSystemNotification(
+    `The operator answered your question ${JSON.stringify(question)}: ${answer}`,
+  );
 }
 
 /**
@@ -1488,8 +1492,9 @@ function bootDeliveryStimulus(q: {
     kind: 'chat',
     trust: 'trusted',
     threadId: q.threadId,
-    author: { id: 'U-OPERATOR', displayName: 'Operator' },
+    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
     replyRoute: { surfaceId: 'web', threadRef: q.threadId },
+    seed: true,
   };
 }
 

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
+import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from './chat-surface.port';
 import { APPROVE_ACTION_ID } from './approval-blocks';
 import type { ApprovalDecision } from './approval-blocks';
 import { webApprovalCard } from './web-approval-card';
@@ -156,6 +157,26 @@ export class WebSurface implements ChatSurface {
     );
     this.inboundSubject.next(message);
     return ts;
+  }
+
+  /**
+   * Seed the thread's brain with a SYSTEM NOTIFICATION (see `ChatSurface.seedSystemNotification`). Wraps
+   * `body` in `<system_notification>…</system_notification>` and injects it as a NON-persisted, System-
+   * authored seed turn — the brain reacts to it, but it never renders as an operator chat bubble.
+   */
+  seedSystemNotification(
+    channel: string,
+    threadId: string,
+    body: string,
+    opts: { orgId?: string } = {},
+  ): string {
+    return this.receiveFromClient(channel, wrapSystemNotification(body), {
+      threadTs: threadId,
+      seed: true,
+      authorId: SYSTEM_SEED_AUTHOR.id,
+      authorName: SYSTEM_SEED_AUTHOR.name,
+      ...(opts.orgId ? { orgId: opts.orgId } : {}),
+    });
   }
 
   /**

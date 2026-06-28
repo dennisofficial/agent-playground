@@ -511,15 +511,12 @@ export class WebSurfaceController {
     card.card = { ...(card.card ?? {}), answer, answeredAt: new Date().toISOString() };
     await this.messages.save(card);
     const question = (payload.question ?? '').trim();
-    const seed = `<system_notification>The operator answered your question ${JSON.stringify(
-      question,
-    )}: ${answer}</system_notification>`;
-    const ts = this.surface.receiveFromClient(thread.repo_id, seed, {
-      orgId: org.id,
-      threadTs: threadId,
-      ...OPERATOR,
-      seed: true,
-    });
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      threadId,
+      `The operator answered your question ${JSON.stringify(question)}: ${answer}`,
+      { orgId: org.id },
+    );
     return { ok: true, ts };
   }
 

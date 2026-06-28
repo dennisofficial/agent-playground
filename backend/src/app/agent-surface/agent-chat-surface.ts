@@ -6,6 +6,7 @@ import type {
   InboundChatMessage,
   PostOptions,
 } from '../surface/chat-surface.port';
+import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from '../surface/chat-surface.port';
 import { APPROVE_ACTION_ID, type ApprovalActionMeta } from '../surface/approval-blocks';
 
 /** A message Atlas POSTED, captured for inspection by a programmatic driver. */
@@ -113,6 +114,23 @@ export class AgentChatSurface implements ChatSurface {
     };
     this.logger.debug(`sendFromHuman → ${channel}${opts.threadTs ? ` (thread ${opts.threadTs})` : ''}: ${text.slice(0, 80)}`);
     this.inboundSubject.next(message);
+    return ts;
+  }
+
+  /** Seed the thread's brain with a SYSTEM NOTIFICATION (see `ChatSurface.seedSystemNotification`). */
+  seedSystemNotification(channel: string, threadId: string, body: string, opts: { orgId?: string } = {}): string {
+    const ts = this.mintTs();
+    this.inboundSubject.next({
+      id: ts,
+      authorId: SYSTEM_SEED_AUTHOR.id,
+      authorName: SYSTEM_SEED_AUTHOR.name,
+      text: wrapSystemNotification(body),
+      orgId: opts.orgId ?? this.orgId,
+      channel,
+      threadTs: threadId,
+      ts: new Date(),
+      seed: true,
+    });
     return ts;
   }
 
