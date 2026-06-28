@@ -276,7 +276,7 @@ function Mermaid({ chart }: { chart: string }) {
             layout, and the whole thing is click-to-expand for a readable view. */}
         <div
           onClick={() => setZoomed(true)}
-          className="cursor-zoom-in p-4 [&>svg]:!h-auto [&>svg]:!w-full"
+          className="mx-auto cursor-zoom-in p-4 [&>svg]:!h-auto [&>svg]:!w-full"
           style={{ maxWidth: result.w || undefined }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
