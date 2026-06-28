@@ -1,8 +1,18 @@
 'use client';
 
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
-import { Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Maximize2, RotateCcw, Send, X, ZoomIn, ZoomOut } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -12,6 +22,17 @@ import rehypeHighlight from 'rehype-highlight';
  * handoff. Component overrides (not the typography plugin) so headings use the display font, code blocks
  * get the dark terminal treatment, and tables/blockquotes/lists match the mock pixel-for-pixel.
  */
+
+/**
+ * Optional actions a host (the Conversation) can expose to deeply-nested markdown content. Today it's just
+ * `sendToThread`, which lets a broken `mermaid` diagram offer a "Send to Atlas" button that posts its
+ * source into the current thread. Absent (null) in contexts with no thread — the buttons hide gracefully.
+ */
+export interface MarkdownActions {
+  sendToThread: (text: string) => void;
+}
+const MarkdownActionsContext = createContext<MarkdownActions | null>(null);
+export const MarkdownActionsProvider = MarkdownActionsContext.Provider;
 
 function CodeBlock({ lang, children }: { lang?: string; children: ReactNode }) {
   return (
@@ -55,6 +76,9 @@ function loadMermaid() {
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: 'strict',
+        // We catch render errors and show our own inline fallback; without this, mermaid ALSO
+        // injects its default "bomb" error SVG into the DOM. Suppress it so only our UI shows.
+        suppressErrorRendering: true,
         theme: 'base',
         fontFamily: v('--f-mono', 'ui-monospace, monospace'),
         themeVariables: {
@@ -104,13 +128,21 @@ function Mermaid({ chart }: { chart: string }) {
   const [result, setResult] = useState<{ svg: string; w: number; h: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
+  const [sent, setSent] = useState(false);
+  const actions = useContext(MarkdownActionsContext);
 
   useEffect(() => {
     let cancelled = false;
     setResult(null);
     setError(null);
     loadMermaid()
-      .then((mermaid) => mermaid.render(renderId, chart))
+      .then(async (mermaid) => {
+        // Validate BEFORE rendering: parse() throws on bad syntax but injects nothing, so mermaid's
+        // default "bomb" error SVG never lands in the DOM — independent of whether suppressErrorRendering
+        // took effect at init time (initialize runs once via a module singleton).
+        await mermaid.parse(chart);
+        return mermaid.render(renderId, chart);
+      })
       .then(({ svg }) => {
         if (!cancelled) setResult(parseSvg(svg));
       })
@@ -126,7 +158,31 @@ function Mermaid({ chart }: { chart: string }) {
   if (error) {
     return (
       <div className="my-3">
-        <p className="mb-1 font-mono text-[10px] text-red">diagram failed to render — {error}</p>
+        <div className="mb-1 flex items-center gap-2">
+          <p className="font-mono text-[10px] text-red">diagram failed to render — {error}</p>
+          {actions ? (
+            <button
+              type="button"
+              disabled={sent}
+              onClick={() => {
+                // Fence the source as plain text (no `mermaid` lang) so the operator's own message
+                // doesn't re-trigger a failed render — Atlas reads the raw source and fixes it.
+                actions.sendToThread(
+                  `This mermaid diagram failed to render. Please fix the syntax.\n\n` +
+                    `Parse error: ${error}\n\n` +
+                    '```\n' +
+                    chart +
+                    '\n```',
+                );
+                setSent(true);
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-[5px] border border-border px-1.5 py-0.5 font-mono text-[10px] text-dim transition-colors hover:bg-surface-2 disabled:opacity-60 disabled:hover:bg-transparent"
+            >
+              <Send size={10} />
+              {sent ? 'sent to Atlas' : 'send to Atlas'}
+            </button>
+          ) : null}
+        </div>
         <CodeBlock lang="mermaid">{chart}</CodeBlock>
       </div>
     );

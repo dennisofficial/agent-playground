@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-resizable-panels';
 import { useAllThreads } from '@/lib/api/inbox';
-import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread } from '@/lib/api/thread-queries';
+import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread, useSay } from '@/lib/api/thread-queries';
 import { useThreadEvents } from '@/lib/api/thread-events';
 import { toThreadStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
@@ -13,6 +13,7 @@ import { pipelineJob, type ThreadRef } from '@/lib/api/thread-api';
 import type { ThreadKind, ThreadStatus, WebApprovalCard } from '@/lib/api/types';
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
+import { MarkdownActionsProvider } from './markdown';
 import { PhaseView, EmptyPane } from './step-view';
 import { useSelectedNode } from './use-selected-node';
 
@@ -43,6 +44,12 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   const del = useDeleteThread(ref);
   const rename = useRenameThread(ref);
   useThreadEvents(ref);
+
+  // One send-into-this-thread action, shared by every `Markdown` in the workspace (conversation AND the
+  // detail-pane spec viewer) — that's why a broken mermaid diagram's "send to Atlas" button appears in
+  // both. `mutate` is referentially stable, so the context value doesn't churn.
+  const sayMutate = useSay(ref).mutate;
+  const markdownActions = useMemo(() => ({ sendToThread: (text: string) => sayMutate(text) }), [sayMutate]);
 
   // The selected node lives in `?node=` (single source of truth). A thread switch navigates to a fresh
   // clean `threadHref()` URL with no query, so the selection naturally resets — no reset effect needed.
@@ -97,6 +104,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     });
 
   return (
+    <MarkdownActionsProvider value={markdownActions}>
     <div className="flex h-full min-h-0">
       <Navigator
         meta={meta}
@@ -157,5 +165,6 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
         </Panel>
       </Group>
     </div>
+    </MarkdownActionsProvider>
   );
 }
