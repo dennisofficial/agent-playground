@@ -29,6 +29,13 @@ thread** and (intended) becomes that thread brain's opening message.
 
 ## 2. Product model — Organization → Repos → Threads  ✅
 
+> **Deployment model: private, not SaaS.** Atlas is a personal/private tool for Dennis and a small
+> circle of close friends — it is **not** sold or hosted as a commercial multi-tenant SaaS. The
+> org/sandbox isolation below exists to keep friends' work separate (and as defence-in-depth), not to
+> serve untrusted paying customers. Read "tenant"/"multi-tenant" throughout these docs as
+> *private multi-workspace*, never *commercial SaaS*. See the `saas-credential-compliance` note for
+> why selling was ruled out (subscription credentials can't back a sold product; API keys too costly to resell).
+
 The tenancy hierarchy (detail in `CLAUDE.md`):
 
 - **Organization** (`organizations`) — the tenant; `org_id` scopes every `app` table.

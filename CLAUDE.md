@@ -16,6 +16,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## The product model — Organization → Users → Repos → Threads
 
+> **Deployment model: private, not SaaS.** Atlas is a personal/private tool for Dennis and a small circle of close friends — it is **not** sold or hosted as a commercial multi-tenant SaaS. The org/membership model below provides *private multi-workspace isolation between trusted friends*, not a hardened boundary for untrusted paying customers. Read "tenant" throughout as *private workspace*. Selling was ruled out because the only economical model (each user on their own Claude subscription) isn't allowed in a sold product, and API keys are too expensive to resell — see the `saas-credential-compliance` memory.
+
 - An **Organization** (`organizations`) is the tenant; the `org_id` dimension scopes every `app` table.
 - **Users** (`users`, email/password via `@workspace/auth`) join orgs through **`organization_members`** (owner/admin/member). Registration is OPEN and immediately usable (no approval gate).
 - A **Repo** (`repos`, composite PK `(org_id, repo_id-slug)`) is a connected GitHub repo — the conversation container (the old 1:1 `channels` is gone).

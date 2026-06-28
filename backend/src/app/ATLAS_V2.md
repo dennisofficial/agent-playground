@@ -174,9 +174,14 @@ A coding agent hitting a **401 / expired credentials** mid-turn must NOT lose wo
 
 ---
 
-## 10. Atlas v2.1 redesign — web app + SDK-as-brain, multi-tenant-isolated (BUILT, R0–R6)
+## 10. Atlas v2.1 redesign — web app + SDK-as-brain, workspace-isolated (BUILT, R0–R6)
 
 > Plan: `/Users/dennis/.claude/plans/this-ai-orchestrator-is-greedy-parnas.md`. Completed in one session (R0–R6, all green).
+>
+> **Deployment model: private, not SaaS.** Atlas is a personal tool for Dennis + close friends, not a
+> sold/hosted commercial product. The isolation described below is *private multi-workspace separation
+> between trusted friends* (defence-in-depth on a family-only host), not a hardened boundary for
+> untrusted paying customers. See `saas-credential-compliance` for why selling was ruled out.
 
 ### 10.1 What changed
 
@@ -201,7 +206,7 @@ The session uses **custom plan mode** — the system prompt instructs the model 
 
 **Host-git policy** (`git/local-git.service.ts`) — all git invocations run with `core.hooksPath=/dev/null`, `core.fsmonitor=false`, LFS filters disabled (`filter.lfs.clean=`, `.smudge=`, `.process=`, `.required=false`), and `GIT_CONFIG_NOSYSTEM=1`. Flags are prepended unconditionally in the private `git()` method — no caller can accidentally omit them.
 
-### 10.2 Multi-tenancy invariant
+### 10.2 Workspace-isolation invariant
 
 The invariant: **the host runs no tenant agent turns and no tenant-controlled code**. Brain and build turns execute in-sandbox. The GitHub token never enters the sandbox (git/PR stay host-side). Host git runs with hooks/filters disabled. Two concurrent threads get two isolated sandboxes on separate networks; neither can invoke the other's tools (enforced by `ToolBridgeHost` thread-scope check).
 
