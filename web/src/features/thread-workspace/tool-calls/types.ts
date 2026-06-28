@@ -18,7 +18,7 @@ export interface ToolItem {
   running?: boolean;
 }
 
-export type IconKind = 'bash' | 'read' | 'edit' | 'write' | 'grep' | 'mcp';
+export type IconKind = 'bash' | 'read' | 'edit' | 'write' | 'grep' | 'mcp' | 'todo' | 'web' | 'task' | 'plan';
 
 /** Right-aligned badge on a tool row. */
 export type ToolBadge =

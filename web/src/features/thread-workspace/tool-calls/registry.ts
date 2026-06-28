@@ -2,6 +2,7 @@ import type { ToolHandler } from './types';
 import { nativeFileHandler } from './handlers/native-file';
 import { nativeShellHandler } from './handlers/native-shell';
 import { nativeSearchHandler } from './handlers/native-search';
+import { nativeMiscHandler } from './handlers/native-misc';
 import { mcpBridgeHandler } from './handlers/mcp-bridge';
 import { genericHandler } from './handlers/generic';
 
@@ -17,6 +18,7 @@ export const HANDLERS: readonly ToolHandler[] = [
   nativeFileHandler,
   nativeShellHandler,
   nativeSearchHandler,
+  nativeMiscHandler,
   mcpBridgeHandler,
   genericHandler,
 ];
