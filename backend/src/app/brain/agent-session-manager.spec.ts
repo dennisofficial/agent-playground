@@ -292,13 +292,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // 2. The tool returns ok=true + the job and record ids.
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID });
 
-    // 3. The approval card fires async with title=goal, and §H publishes a live thread_meta frame.
+    // 3. The approval card fires async with the PERSISTED short title (persistPlan titles the thread;
+    //    the card + the live thread_meta frame mirror it, not the raw goal), and §H publishes that frame.
+    const persistedTitle = 'Add rate limiting to the API'; // what the persistPlan mock returns as job.title
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     const approvalArgs = (mockApprovals.request as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(approvalArgs.title).toBe(goal);
+    expect(approvalArgs.title).toBe(persistedTitle);
     expect(approvalArgs.tracks).toEqual(['RateLimiter guard', 'Integration tests']);
-    expect(mockSurface.emitThreadMeta).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID, goal);
+    expect(mockSurface.emitThreadMeta).toHaveBeenCalledWith(PROJECT_ID, THREAD_ID, persistedTitle);
   });
 
   it('(a) submit_plan: returns error (no persist) if goal is missing', async () => {

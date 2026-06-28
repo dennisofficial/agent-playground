@@ -8,7 +8,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
  * The THREAD-TITLE chain — a tiny non-agentic LLM call that turns a thread's first message into a short,
  * human-readable title. Declarative LangChain composition (`prompt → llm → StringOutputParser`), the house
  * style: the chain is model-agnostic (`build(llm)`), so the per-org Anthropic key is resolved by the
- * provider factory (see `web-surface.module.ts`) and the same chain is unit-testable with a fake llm.
+ * provider factory (see `titling.module.ts`) and the same chain is unit-testable with a fake llm.
  *
  * Plain text out (a title is just a string) → `StringOutputParser`, no schema/tool-calling needed.
  */
@@ -74,4 +74,14 @@ export function sanitizeTitle(raw: string): string | undefined {
     .slice(0, 80)
     .trim();
   return cleaned || undefined;
+}
+
+/**
+ * The deterministic FALLBACK title: the first non-empty line of `text`, capped at 80 chars. Used when no
+ * title model is available (no key / LLM error / empty output). Previously duplicated as a private
+ * `jobTitle` in the brain — now the single shared source so every fallback looks identical.
+ */
+export function firstLineTitle(text: string): string {
+  const firstLine = text.split('\n').map((l) => l.trim()).find(Boolean) ?? text;
+  return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }

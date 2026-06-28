@@ -27,7 +27,9 @@ import {
   FakeGithubPrService,
   FakeLocalGitService,
   FakePlannerLlm,
+  FakeThreadTitler,
 } from './e2e-stubs';
+import { ThreadTitler } from '../titling';
 
 /** A single reported verification step. */
 export interface E2eStep {
@@ -134,6 +136,8 @@ export class E2eHarness {
         .useValue(new FakeLocalGitService())
         .overrideProvider(GithubPrService)
         .useValue(new FakeGithubPrService())
+        .overrideProvider(ThreadTitler)
+        .useValue(new FakeThreadTitler())
         .compile();
       this.app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
     }

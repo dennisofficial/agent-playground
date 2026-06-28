@@ -14,6 +14,7 @@ import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
 import { RealtimeModule } from './realtime';
 import { TicketsModule } from './tickets';
+import { TitlingModule } from './titling';
 import { TestBridgeModule } from './test-bridge';
 
 /**
@@ -45,6 +46,7 @@ import { TestBridgeModule } from './test-bridge';
     AuthModule,
     OnboardingModule,
     OrgModule,
+    TitlingModule,
     TicketsModule,
     SandboxModule,
     RealtimeModule,

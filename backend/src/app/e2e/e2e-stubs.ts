@@ -280,3 +280,14 @@ export class FakeGithubPrService {
     return null;
   }
 }
+
+/**
+ * A deterministic, OFFLINE thread titler — returns the source text unchanged instead of calling the title
+ * model. Int/e2e tests boot the real AppModule, which provides the live `ThreadTitler` (a Haiku call);
+ * override it with this so titling is network-free and titles stay equal to the input the test passed in.
+ */
+export class FakeThreadTitler {
+  async titleFor(text: string): Promise<string> {
+    return text;
+  }
+}

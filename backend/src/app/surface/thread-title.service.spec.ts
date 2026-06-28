@@ -4,7 +4,7 @@ import { ThreadTitleService } from './thread-title.service';
 import {
   sanitizeTitle,
   type ThreadTitleChainFactory,
-} from './thread-title.chain';
+} from '../titling/thread-title.chain';
 
 /**
  * Unit tests for the thread-title service. The LLM is faked behind the `THREAD_TITLE_CHAIN` factory (a

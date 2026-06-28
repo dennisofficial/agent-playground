@@ -11,6 +11,7 @@ import {
 } from './stimulus-store.service';
 import { SurfaceOrchestration } from './surface-orchestration.service';
 import { wrapUntrusted } from './untrusted-content';
+import { ThreadTitler } from '../titling';
 
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
 export type IntakeOutcome =
@@ -43,6 +44,7 @@ export class StimulusIntake {
     private readonly store: StimulusStoreService,
     private readonly orchestration: SurfaceOrchestration,
     @Inject(STIMULUS_CONSUMER) private readonly consumer: StimulusConsumer,
+    private readonly titler: ThreadTitler,
   ) {}
 
   /**
@@ -64,7 +66,11 @@ export class StimulusIntake {
     }
 
     try {
-      const title = deriveTitle(event);
+      // Route the derived headline through the shared titler so the seeded thread's sidebar label is a
+      // short, scannable title — critical because a parked/ignored event never reaches persistPlan, so
+      // this seeded title can stay the permanent label. Fail-soft (degrades to the trimmed first line);
+      // the SAME title is used for the timeline announcement so durable + headline stay consistent.
+      const title = await this.titler.titleFor(deriveTitle(event), event.orgId);
       const seeded = await this.store.seedEventThread({
         orgId: event.orgId,
         repoId: event.repoId,

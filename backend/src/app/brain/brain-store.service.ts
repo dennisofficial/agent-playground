@@ -14,6 +14,7 @@ import {
   StimulusEntity,
   ThreadEntity,
 } from '../persistence/entities';
+import { ThreadTitler } from '../titling';
 import type { TranscriptLine } from './brain.types';
 
 /** Where a thread lives on the surface — the channel coordinate + the thread root ts to reply into. */
@@ -61,6 +62,7 @@ export class BrainStoreService {
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
+    private readonly titler: ThreadTitler,
   ) {}
 
   /**
@@ -405,6 +407,11 @@ export class BrainStoreService {
      */
     stepsByTrack?: PlannedStep[][];
   }): Promise<PersistedPlan> {
+    // Route the incoming title (the plan `goal` / build summary) through the shared titler so the
+    // thread's sidebar label is a short, scannable title — NOT the raw full-sentence goal. Done before
+    // the transaction (one network call, fail-soft to a trimmed first line) so the txn stays fast.
+    const title = await this.titler.titleFor(input.title, input.orgId);
+
     // The whole persist runs in ONE transaction: delete prior draft tracks (their steps cascade),
     // supersede the prior draft record, write the new record + tracks (+ authored step rows), and
     // flip the thread — so a crash mid-write can never leave a half-proposed plan. A re-propose
@@ -485,7 +492,7 @@ export class BrainStoreService {
         { id: input.threadId },
         {
           kind: input.kind,
-          title: input.title,
+          title,
           status: 'awaiting_approval',
           decision_record_id: record.id,
         },
@@ -539,13 +546,16 @@ export class BrainStoreService {
     baseBranch: string | null;
     ticketId?: string | null;
   }): Promise<string> {
+    // Route a provided title through the shared titler so the new thread is born with a short, scannable
+    // sidebar label (fail-soft). A null title (no seed text) stays null.
+    const title = input.title ? await this.titler.titleFor(input.title, input.orgId) : null;
     const row = await this.threads.save(
       this.threads.create({
         org_id: input.orgId,
         repo_id: input.repoId,
         origin: 'control',
         surface_thread_ref: null,
-        title: input.title,
+        title,
         base_branch: input.baseBranch,
         ticket_id: input.ticketId ?? null,
       }),

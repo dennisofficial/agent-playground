@@ -20,6 +20,7 @@ import {
   TicketEntity,
   ThreadEntity,
 } from '../persistence/entities';
+import { ThreadTitler } from '../titling';
 import { TicketEventBus } from './ticket-event-bus';
 
 const MAX_TITLE = 200;
@@ -109,6 +110,7 @@ export class TicketService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly events: TicketEventBus,
+    private readonly titler: ThreadTitler,
   ) {}
 
   /** Create a ticket: allocate its per-repo number, snapshot provenance, attach any dependency edges. */
@@ -389,6 +391,10 @@ export class TicketService {
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
     const baseBranch = repo?.default_branch ?? null;
 
+    // The promoted thread gets a short, scannable sidebar title via the shared titler (fail-soft). The
+    // ticket's own `title` is untouched — the board keeps the user's wording; only the thread is shortened.
+    const threadTitle = await this.titler.titleFor(ticket.title, orgId);
+
     let threadId: string;
     try {
       const row = await this.threads.save(
@@ -397,7 +403,7 @@ export class TicketService {
           repo_id: repoId,
           origin: 'control',
           surface_thread_ref: null,
-          title: ticket.title,
+          title: threadTitle,
           base_branch: baseBranch,
           ticket_id: ticketId, // the link is written FIRST (in the insert)
         }),
@@ -419,7 +425,7 @@ export class TicketService {
     }
     this.events.publish({ type: 'ticket_event', orgId, repoId, ticketId, kind: 'updated' });
     this.logger.log(`promoted ticket #${ticket.number} (${ticketId}) → thread ${threadId}`);
-    return { threadId, created: true, seedText, title: ticket.title };
+    return { threadId, created: true, seedText, title: threadTitle };
   }
 
   /** The thread currently linked to a ticket (org-scoped), or null. */

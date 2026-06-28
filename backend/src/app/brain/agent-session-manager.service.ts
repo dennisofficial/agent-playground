@@ -794,6 +794,11 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
           stepsByTrack,
         });
 
+        // persistPlan retitled the thread to a short label (`job.title`). Repaint the open UI NOW —
+        // before the plan-review block, which can return early on findings (below) and never reach the
+        // card emit. Best-effort; the card path re-emits the same title (idempotent).
+        this.surface.emitThreadMeta?.(stimulus.repoId, stimulus.threadId, job.title ?? goal);
+
         // ── R4: Codex plan pre-review (one-shot) ──────────────────────────────────────────────
         // First call: run a Codex review turn in the thread's sandbox → return findings to the
         // session for ONE revision.  Second call (same job): skip review → straight to approval.
@@ -838,7 +843,9 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
         void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
           jobId: job.id,
           decisionRecordId,
-          title: goal,
+          // The reloaded short title from persistPlan — keeps the card heading + its `thread_meta`
+          // emit consistent with the durable sidebar title (not the full-sentence goal).
+          title: job.title ?? goal,
           summary: overview,
           decisions,
           tracks: trackTitles,
@@ -923,7 +930,9 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
           jobId: job.id,
           decisionRecordId,
           kind: 'direct',
-          title: jobTitle(summary),
+          // The reloaded short title from persistPlan — keeps the card + its live `thread_meta` emit
+          // consistent with the durable sidebar title.
+          title: job.title ?? jobTitle(summary),
           summary,
           decisions,
           tracks: changeOutline,

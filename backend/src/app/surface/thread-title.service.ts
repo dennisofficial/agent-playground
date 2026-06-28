@@ -8,7 +8,7 @@ import {
   THREAD_TITLE_CHAIN,
   type ThreadTitleChainFactory,
   sanitizeTitle,
-} from './thread-title.chain';
+} from '../titling/thread-title.chain';
 
 /**
  * Generates a concise title for a thread from its first message and applies it live. Runs fire-and-forget

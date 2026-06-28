@@ -9,10 +9,16 @@ import {
 } from './stimulus-store.service';
 import { StimulusIntake } from './stimulus-intake.service';
 import type { SurfaceOrchestration } from './surface-orchestration.service';
+import type { ThreadTitler } from '../titling';
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from './untrusted-content';
 
 function fakeFilter(verdict: FilterVerdict): EventFilterService {
   return { admit: () => verdict } as unknown as EventFilterService;
+}
+
+/** A passthrough titler — returns the source text unchanged so seeding behaviour is deterministic. */
+function fakeTitler(): ThreadTitler {
+  return { titleFor: async (text: string) => text } as unknown as ThreadTitler;
 }
 
 /** A no-op announcer (the announce-in-timeline seam) — records calls so the test can assert it ran. */
@@ -59,7 +65,7 @@ describe('StimulusIntake.intakeEvent', () => {
     const store = { seedEventThread: vi.fn(async () => seeded) } as unknown as StimulusStoreService;
     const { consumer, seen } = collectConsumer();
     const orchestration = fakeOrchestration();
-    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, orchestration, consumer);
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, orchestration, consumer, fakeTitler());
 
     const out = await intake.intakeEvent(EVENT);
     expect(out).toEqual({ admitted: true, stimulusId: 'stim-1', threadId: 'thread-1' });
@@ -80,7 +86,7 @@ describe('StimulusIntake.intakeEvent', () => {
     };
     const store = { seedEventThread: vi.fn(async () => seeded) } as unknown as StimulusStoreService;
     const { consumer, seen } = collectConsumer();
-    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), consumer);
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), consumer, fakeTitler());
 
     await intake.intakeEvent(EVENT);
     const body = seen[0].body;
@@ -98,6 +104,7 @@ describe('StimulusIntake.intakeEvent', () => {
       store,
       fakeOrchestration(),
       consumer,
+      fakeTitler(),
     );
     const out = await intake.intakeEvent(EVENT);
     expect(out).toMatchObject({ admitted: false, reason: 'duplicate' });
@@ -112,7 +119,7 @@ describe('StimulusIntake.intakeEvent', () => {
       }),
     } as unknown as StimulusStoreService;
     const { consumer, seen } = collectConsumer();
-    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), consumer);
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, fakeOrchestration(), consumer, fakeTitler());
     const out = await intake.intakeEvent(EVENT);
     expect(out).toMatchObject({ admitted: false, reason: 'duplicate' });
     expect(seen).toHaveLength(0);
@@ -136,7 +143,7 @@ describe('StimulusIntake.intakeChat', () => {
     const store = { recordChatStimulus: vi.fn(async () => recorded) } as unknown as StimulusStoreService;
     const filter = { admit: vi.fn() } as unknown as EventFilterService;
     const { consumer, seen } = collectConsumer();
-    const intake = new StimulusIntake(filter, store, fakeOrchestration(), consumer);
+    const intake = new StimulusIntake(filter, store, fakeOrchestration(), consumer, fakeTitler());
 
     await intake.intakeChat(recorded);
     expect(store.recordChatStimulus).toHaveBeenCalledOnce();
