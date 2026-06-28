@@ -475,6 +475,26 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.createDecision).not.toHaveBeenCalled();
   });
 
+  it('(g1b) create_decision normalizes a hyphenated/cased decisionClass to the canonical id', async () => {
+    // The model often guesses `api-contract` before self-correcting; asDecisionClass normalizes it.
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['create_decision']({ decisionClass: 'API-Contract', ruling: 'x' });
+    expect(result).toMatchObject({ ok: true });
+    const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(input.decisionClass).toBe('api_contract');
+  });
+
+  it('(g1c) update_decision normalizes a hyphenated decisionClass', async () => {
+    (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1', decisionClass: 'data_model' },
+      all: [{ id: 'd1', decisionClass: 'data_model' }],
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    const result = await tools['update_decision']({ id: 'd1', decisionClass: 'data-model' });
+    expect(result).toMatchObject({ ok: true });
+    expect(mockStore.updateDecision).toHaveBeenCalledWith(THREAD_ID, 'd1', { decisionClass: 'data_model' });
+  });
+
   it('(g2) update_decision revises by id and returns the updated decision', async () => {
     const updated = { id: 'd2', decisionClass: 'api_contract', title: 'Pagination', ruling: 'Cursor-based.' };
     (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue({

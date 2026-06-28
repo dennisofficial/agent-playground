@@ -39,7 +39,7 @@ import { TicketService } from '../tickets';
 import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../domain/ticket';
 import type { Decision } from '../domain';
-import { nextDecisionId } from '../domain';
+import { nextDecisionId, DECISION_CLASS_IDS } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
@@ -180,11 +180,13 @@ export class AgentSessionManager implements OnModuleInit, OnApplicationBootstrap
     'NEVER ask a question in your prose reply. Put your reasoning/analysis/recommendation in prose, then pose',
     'the actual question with `ask_question({ question, header?, decisionClass?, options:[{label,description?}], allowOther? })`:',
     '  • ONE focused question per call; give 2–4 concrete `options` (the operator can also answer freely if',
-    '    allowOther is true, the default). Set `decisionClass` when the question settles an always-ask class.',
+    `    allowOther is true, the default). Set \`decisionClass\` when the question settles an always-ask class —`,
+    `    it is EXACTLY one of (underscores, not hyphens): ${DECISION_CLASS_IDS.join(' | ')}.`,
     '  • After calling it, STOP and wait — do not ask anything else that turn. The operator answers the card',
     '    (or replies in prose); that fires your next turn with their answer.',
     'LOCK EACH DECISION AS IT SETTLES: the moment an answer settles an always-ask decision, call',
-    '`create_decision({ decisionClass, ruling, title? })`. It AUTO-ATTACHES the question you just asked and the',
+    `\`create_decision({ decisionClass, ruling, title? })\` — decisionClass is EXACTLY one of (underscores, not`,
+    `hyphens): ${DECISION_CLASS_IDS.join(' | ')}. It AUTO-ATTACHES the question you just asked and the`,
     'operator\'s answer — do NOT restate them. Lock it BEFORE asking your next question. The call RETURNS the',
     'fully-resolved decision — its stable `id` plus the attached Q&A — so you now hold the exact stored record',
     'in context. To change a ruling later call `update_decision({ id, ruling? / title? / decisionClass? })`; to',
@@ -1509,18 +1511,19 @@ function jobTitle(summary: string): string {
 
 // ── Question / decision tool arg coercion ──────────────────────────────────────────────────────────
 
-const DECISION_CLASSES: ReadonlySet<string> = new Set<DecisionClass>([
-  'data_model',
-  'api_contract',
-  'dependency',
-  'infrastructure',
-  'cross_cutting',
-  'one_way_door',
-]);
+// Derived from the SSOT (DECISION_CLASS_META → DECISION_CLASS_IDS) — do NOT re-list the classes here.
+const DECISION_CLASSES: ReadonlySet<string> = new Set<string>(DECISION_CLASS_IDS);
 
-/** Coerce a raw `decisionClass` arg into a valid {@link DecisionClass}, or undefined. */
+/**
+ * Coerce a raw `decisionClass` arg into a valid {@link DecisionClass}, or undefined. Tolerant: the SDK
+ * exposes a generic tool schema (no enum), so the model often guesses the token format — it sent
+ * `api-contract`/`data-model` (hyphens) before self-correcting. Normalize casing + hyphens/spaces to the
+ * canonical underscore id so a natural guess just works instead of costing a rejected round-trip.
+ */
 function asDecisionClass(v: unknown): DecisionClass | undefined {
-  return typeof v === 'string' && DECISION_CLASSES.has(v) ? (v as DecisionClass) : undefined;
+  if (typeof v !== 'string') return undefined;
+  const norm = v.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return DECISION_CLASSES.has(norm) ? (norm as DecisionClass) : undefined;
 }
 
 /**
