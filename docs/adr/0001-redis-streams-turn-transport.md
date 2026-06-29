@@ -68,7 +68,7 @@ Staged so no phase claims restart-survival before its spine exists, and one-shot
 - **Phase 1a — driver-FSM shutdown fix.** ✅ Landed (`LeaderElectionService.isDraining()`; guarded catches in `TrackDriver` + `PlanReviewService`; unit-tested).
 - **Phase 0 — foundation.** Pending-recovery `claimStale` on `RedisStreamPort` + ioredis adapter + in-memory fake ✅ landed (unit-tested). Remaining: wire `RedisModule`; `ENGINE_TRANSPORT=pipe|redis` flag; transport-aware runner factory (port the brain off the concrete `dockerRunner`); detached-exec contract; internal `atlas-bus` network; bundle `ioredis` into the engine bundle.
 - **Phase 1 — durability spine** (`active_turns`, incremental block persistence, boot re-attach, rehydrate-from-stream).
-- **Phase 2 — Redis transport for one-shot (non-tool-bridge) turns.**
+- **Phase 2 — Redis transport for one-shot (non-tool-bridge) turns.** ✅ Host (`RedisEngineRunner`) + container (entrypoint dual-mode, `ioredis` bundled) implemented + unit-tested, AND **real-validated end-to-end** (2026-06-29): a real Claude turn ran in a live sandbox over Redis — spec via `turn:{T}:spec`, frames `event:session/text/result` + `final` durably on `turn:{T}:events`, result `"pong"`. See `backend/scripts/redis-transport-smoke.mjs`. Dev networking confirmed: a sandbox reaches host Redis via `host.docker.internal` (prod uses `atlas-bus`, Phase 5).
 - **Phase 3 — Redis tool-bridge for brain turns + idempotency (`tool_executions`).**
 - **Phase 4 — watchdog + heartbeat finalize; retire JSONL recovery.**
 - **Phase 5 — per-turn ACL, retention, protocol versioning.**
