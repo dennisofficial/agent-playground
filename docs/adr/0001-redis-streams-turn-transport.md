@@ -62,6 +62,12 @@ A shutdown-aware catch keyed to `LeaderElectionService.isDraining()` (set at the
 - **Redis-driven in-container launcher (backend dispatches via `XADD`, a thin launcher spawns turns):** deferred — better multi-host story but adds a long-lived (if dumb) process now; revisit when going multi-host.
 - **Postgres `turn_events` + LISTEN/NOTIFY instead of Redis:** viable at small scale but poor fit for high-frequency token fanout and consumer-group at-least-once semantics; Redis Streams is purpose-built and already scaffolded in `backend/src/_lib/redis/`.
 
+## Validation (real Docker + real Claude + real Redis)
+Three end-to-end smoke tests against live sandboxes (`backend/scripts/redis-*-smoke.mjs`), all PASS:
+1. **One-shot turn** — spec via Redis → real engine → `event:session/text/result` + `final`, result `"pong"`.
+2. **Bidirectional tool-bridge** — engine called a host tool over `turn:{T}:tools`, host replied over `turn:{T}:replies`, the turn's final result was the tool's output.
+3. **Restart-survival** — host #1 read events then "crashed"; the detached engine kept streaming into Redis; host #2 re-attached from the saved cursor and received the remaining 19 events + `final`, **zero loss, zero duplication**. This is the core claim: the engine is decoupled from the host, events are durable, and re-attach resumes exactly from the cursor.
+
 ## Status & rollout
 Staged so no phase claims restart-survival before its spine exists, and one-shot turns prove the transport before the bidirectional brain tool-bridge:
 
