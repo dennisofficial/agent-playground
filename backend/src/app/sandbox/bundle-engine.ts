@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /**
  * Bundle the in-container engine entrypoint into a single self-contained ESM file. The two engine SDKs
@@ -21,12 +21,30 @@ function imageDir(): string {
   return join(__dirname, 'image');
 }
 
-/** The canonical path of the bundled engine entrypoint (baked into the image AND bind-mounted live). */
-export function engineBundlePath(): string {
+/**
+ * The bundle's home INSIDE the image build context (`<imageDir>/engine-entrypoint.mjs`). `bundleEngine`
+ * ALWAYS writes here, because the sandbox image Dockerfile `COPY`s it and the on-boot image build reads
+ * it from this dir. This is also the default bind-mount source when no override is set.
+ */
+function imageBundlePath(): string {
   return join(imageDir(), 'engine-entrypoint.mjs');
 }
 
-/** (Re)bundle the engine entrypoint to {@link engineBundlePath}. Returns the output path. */
+/**
+ * The bundle path bind-mounted live into every sandbox (the SOURCE handed to the Docker daemon).
+ * Honors `ENGINE_BUNDLE_PATH` so a containerized backend can point the live mount at a host-resolvable
+ * same-path location (e.g. `/srv/atlas/data/engine/engine-entrypoint.mjs`) while the image build still
+ * uses the in-context copy. Falls back to {@link imageBundlePath} (the original behavior).
+ */
+export function engineBundlePath(): string {
+  return process.env.ENGINE_BUNDLE_PATH ?? imageBundlePath();
+}
+
+/**
+ * (Re)bundle the engine entrypoint. Always writes the in-context copy ({@link imageBundlePath}); when
+ * `ENGINE_BUNDLE_PATH` points elsewhere, MIRRORS the result there too so the live bind mount sees the
+ * fresh bundle without breaking the image-build `COPY`. Returns the live mount path.
+ */
 export async function bundleEngine(): Promise<string> {
   const dir = imageDir();
   // Dev: bundle from the TS source. Built deployment: bundle from the compiled JS nest emits to dist.
@@ -36,7 +54,7 @@ export async function bundleEngine(): Promise<string> {
   if (!existsSync(entry)) {
     throw new Error(`no engine entrypoint source at ${tsEntry} or ${jsEntry}`);
   }
-  const outfile = engineBundlePath();
+  const outfile = imageBundlePath();
   await build({
     entryPoints: [entry],
     outfile,
@@ -51,5 +69,11 @@ export async function bundleEngine(): Promise<string> {
     banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
     logLevel: 'silent',
   });
-  return outfile;
+  // Mirror to the live bind-mount location when it differs (containerized backend → host-resolvable path).
+  const live = engineBundlePath();
+  if (live !== outfile) {
+    mkdirSync(dirname(live), { recursive: true });
+    copyFileSync(outfile, live);
+  }
+  return live;
 }

@@ -13,12 +13,26 @@ import { ENTITIES } from './entities';
 export const DB_CONNECTION = 'app';
 
 /** SSL: off in dev (`disable`), verify-full in prod by default; overridable via POSTGRES_SSL_MODE. */
-function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
+export function resolveSsl(env: EnvService): false | { rejectUnauthorized: boolean } {
   const mode =
     env.get('POSTGRES_SSL_MODE') ??
     (env.get('NODE_ENV') === 'production' ? 'verify-full' : 'disable');
   if (mode === 'disable') return false;
   return { rejectUnauthorized: mode === 'verify-full' };
+}
+
+/**
+ * A direct (non-pooled) libpq connection string from the same POSTGRES_* env the datasource uses.
+ * Shared by the raw `pg.Client` consumers (leader election, realtime engine admin) so the URL shape
+ * lives in one place.
+ */
+export function pgConnectionString(env: EnvService): string {
+  const user = encodeURIComponent(env.get('POSTGRES_USER'));
+  const pass = encodeURIComponent(env.get('POSTGRES_PASSWORD'));
+  const host = env.get('POSTGRES_HOST');
+  const port = env.get('POSTGRES_PORT') ?? 5432;
+  const db = encodeURIComponent(env.get('POSTGRES_DB'));
+  return `postgresql://${user}:${pass}@${host}:${port}/${db}`;
 }
 
 /**

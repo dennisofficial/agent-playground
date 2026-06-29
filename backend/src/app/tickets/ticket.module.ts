@@ -1,5 +1,13 @@
-import { Global, Logger, Module, type OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Global,
+  Logger,
+  Module,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import type { Subscription } from 'rxjs';
+import { LeaderElectionService } from '../cluster';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -42,15 +50,29 @@ import { TicketService } from './ticket.service';
   providers: [TicketService, TicketEventBus],
   exports: [TicketService, TicketEventBus],
 })
-export class TicketsModule implements OnApplicationBootstrap {
+export class TicketsModule implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(TicketsModule.name);
+  private promoteSub?: Subscription;
 
-  constructor(private readonly tickets: TicketService) {}
+  constructor(
+    private readonly tickets: TicketService,
+    private readonly election: LeaderElectionService,
+  ) {}
 
-  /** Fail-soft boot backstop — a reconcile hiccup must never block application startup. */
-  async onApplicationBootstrap(): Promise<void> {
-    await this.tickets.reconcileStrandedTickets().catch((err) => {
-      this.logger.warn(`stranded-ticket reconcile failed: ${err}`);
+  /**
+   * Stranded-ticket reconcile is a LEADER-ONLY crash-repair sweep (it moves tickets between lanes), so
+   * run it on promotion — not on every boot — so a follower/standby can't disturb the active leader's
+   * state. Fail-soft: a hiccup must never block startup.
+   */
+  onApplicationBootstrap(): void {
+    this.promoteSub = this.election.onPromote(() => {
+      void this.tickets.reconcileStrandedTickets().catch((err) => {
+        this.logger.warn(`stranded-ticket reconcile failed: ${err}`);
+      });
     });
+  }
+
+  onApplicationShutdown(): void {
+    this.promoteSub?.unsubscribe();
   }
 }

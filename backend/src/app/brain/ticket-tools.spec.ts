@@ -41,6 +41,12 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // awareness
     tickets as TicketService,
     { engineAuth: async () => undefined } as never, // creds
+    {
+      getState: () => 'leader',
+      isLeader: () => true,
+      onPromote: () => ({ unsubscribe() {} }),
+      onDemote: () => ({ unsubscribe() {} }),
+    } as never, // election
   );
   return { manager, store };
 }

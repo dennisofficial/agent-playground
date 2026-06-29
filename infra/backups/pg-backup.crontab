@@ -1,0 +1,10 @@
+# Atlas Postgres backup crontab.
+#
+# Install:
+#   sudo crontab -u atlas /srv/atlas/scripts/pg-backup.crontab
+#   (or: crontab -e as the atlas user and paste the line below)
+#
+# The script runs as the atlas user which has docker group membership.
+
+# Daily at 02:00 UTC
+0 2 * * * /srv/atlas/scripts/pg-backup.sh >> /var/log/atlas-backup.log 2>&1

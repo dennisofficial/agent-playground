@@ -1,0 +1,172 @@
+# Production Docker Compose for Atlas.
+#
+# Prerequisites:
+#   - /srv/atlas/secrets/atlas.env  (mode 600, see infra/.env.prod.example)
+#   - /srv/atlas/pgdata/            (Postgres data directory)
+#   - /srv/atlas/data/{repos,agent-home,refs,golden,engine}/
+#   - /srv/atlas/caddy/{data,config}/
+#   - /srv/atlas/state/             (blue/green active-color + tag)
+#   - /var/run/docker.sock          (the host Docker daemon socket)
+#
+# Sandboxes spawned by the backend do NOT join the `atlas` network — each gets its own
+# isolated per-sandbox `${name}-net` created by the sandbox manager. This network is
+# only for backend ↔ postgres ↔ redis ↔ web ↔ caddy communication.
+#
+# TODO: replace <owner> with the actual GHCR owner (e.g. dennisofficial).
+
+x-backend-common: &backend-common
+  # TODO: replace <owner> with the actual GHCR owner.
+  image: ghcr.io/<owner>/atlas-backend:${ATLAS_IMAGE_TAG:-latest}
+  init: true
+  stop_grace_period: "300s"   # must exceed DRAIN_GRACE_MS (default 120 s) so Docker
+  stop_signal: SIGTERM         # doesn't SIGKILL before the graceful drain finishes
+  env_file:
+    - /srv/atlas/secrets/atlas.env
+  environment:
+    # Internal compose network — postgres/redis reachable by service name
+    POSTGRES_HOST: postgres
+    POSTGRES_SSL_MODE: disable
+    REDIS_URL: "redis://redis:6379"
+    # Docker socket for sandbox management (same path on host and in container)
+    DOCKER_SOCKET_PATH: /var/run/docker.sock
+    # Sandbox base image (built on the box at first boot by SandboxImageBuilder)
+    SANDBOX_IMAGE: atlas-sandbox:latest
+    # Data roots — all under the same-path bind mount /srv/atlas/data:/srv/atlas/data
+    # so paths handed to the Docker daemon resolve identically on the host.
+    REPOS_ROOT: /srv/atlas/data/repos
+    AGENT_HOME_ROOT: /srv/atlas/data/agent-home
+    REFS_ROOT: /srv/atlas/data/refs
+    ATLAS_GOLDEN_ROOT: /srv/atlas/data/golden
+    # Engine bundle hot-reload path (under the same-path mount → host-resolvable).
+    # bundleEngine() writes here so running sandboxes pick up a fresh bundle without
+    # rebuilding the sandbox image.
+    ENGINE_BUNDLE_PATH: /srv/atlas/data/engine/engine-entrypoint.mjs
+    # CORS origin for the Atlas web console
+    FRONTEND_HOST: https://atlas.dltechnologies.co
+    # Clustering / rolling-update (Part A env vars added by parallel agent)
+    LEADER_POLL_INTERVAL_MS: "2000"
+    DRAIN_GRACE_MS: "120000"
+    REALTIME_SLOT_PREFIX: pg_realtime_slot
+    NODE_ENV: production
+    APP_ENV: production
+    # SANDBOX_REBUILD: if set in the deploy.sh shell environment, docker compose
+    # passes it through to the container (implicit passthrough when value is omitted).
+    # Set SANDBOX_REBUILD=1 when deploying a build that changes sandbox/image/**.
+    SANDBOX_REBUILD: "${SANDBOX_REBUILD:-}"
+  volumes:
+    # Docker socket — allows the backend to drive per-thread sandbox containers.
+    - /var/run/docker.sock:/var/run/docker.sock
+    # Same-path data mount — host paths handed to `docker run` resolve correctly
+    # because the container sees the exact same absolute path as the daemon does.
+    - /srv/atlas/data:/srv/atlas/data
+  networks:
+    - atlas
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  # Docker healthcheck = LIVENESS (is the process up). NOT /health/ready — only the leader passes that,
+  # so a healthy standby would be marked "unhealthy" forever (and would deadlock any future
+  # depends_on: service_healthy). Caddy's `health_uri /health/ready` does the leader-only routing.
+  healthcheck:
+    test: ["CMD", "curl", "-sf", "http://localhost:4002/health/live"]
+    interval: 10s
+    timeout: 5s
+    start_period: 60s
+    retries: 5
+  restart: unless-stopped
+
+services:
+  # ── Postgres (pgvector/pgvector:pg16) ──────────────────────────────────────────
+  postgres:
+    # Fixed name so backups/pg-backup.sh (`docker exec atlas-postgres`) works regardless of the
+    # compose project name (which otherwise yields <project>-postgres-1). Service DNS stays `postgres`.
+    container_name: atlas-postgres
+    image: pgvector/pgvector:pg16
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=20
+      - -c
+      - wal_sender_timeout=30s
+    volumes:
+      - /srv/atlas/pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - atlas
+    # No published ports — Postgres is internal-only in production.
+    restart: unless-stopped
+
+  # ── Redis ───────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - atlas
+    # No published ports — Redis is internal-only in production.
+    restart: unless-stopped
+
+  # ── Backend blue (the initial/even-deploy active instance) ──────────────────────
+  backend-blue:
+    <<: *backend-common
+    container_name: atlas-backend-blue
+
+  # ── Backend green (the standby instance, promoted on each deploy) ───────────────
+  backend-green:
+    <<: *backend-common
+    container_name: atlas-backend-green
+
+  # ── Web (Next.js standalone) ────────────────────────────────────────────────────
+  web:
+    # TODO: replace <owner> with the actual GHCR owner.
+    image: ghcr.io/<owner>/atlas-web:${ATLAS_IMAGE_TAG:-latest}
+    networks:
+      - atlas
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # ── Caddy (reverse proxy + auto-TLS) ───────────────────────────────────────────
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/atlas/caddy/data:/data
+      - /srv/atlas/caddy/config:/config
+    networks:
+      - atlas
+    restart: unless-stopped
+    depends_on:
+      - web
+      - backend-blue
+      - backend-green
+
+networks:
+  atlas:
+    name: atlas
+    driver: bridge
+    # Sandboxes are NOT added to this network — they get isolated per-sandbox nets.

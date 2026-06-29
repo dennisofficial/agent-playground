@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth';
+import { ClusterModule } from './cluster';
 import { AutoFixModule } from './autofix';
 import { BrainModule } from './brain';
 import { DecisionGateModule } from './decision-gate';
@@ -43,6 +44,7 @@ import { TestBridgeModule } from './test-bridge';
  */
 @Module({
   imports: [
+    ClusterModule,
     AuthModule,
     OnboardingModule,
     OrgModule,
