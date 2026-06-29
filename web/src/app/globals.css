@@ -31,9 +31,11 @@
   --red: #b65b51;
   --red-soft: rgba(182, 91, 81, 0.08);
   --red-line: rgba(182, 91, 81, 0.26);
-  --slate: #5d75a2;
-  --slate-soft: rgba(93, 117, 162, 0.1);
-  --slate-line: rgba(93, 117, 162, 0.3);
+  /* "Needs you" / untrusted-event indigo. Deliberately a muted lavender-slate so it reads DISTINCT
+     from --blue (#5d75a2, steel-blue used for planning + mcp rows + links) — the two were identical. */
+  --slate: #7a76a0;
+  --slate-soft: rgba(122, 118, 160, 0.1);
+  --slate-line: rgba(122, 118, 160, 0.3);
   /* Legacy hues — kept defined for the member-avatar palette (org-display ORG_COLORS); no longer used
      for status/kind signals (now slate/neutral). */
   --purple: #7c52d6;
@@ -278,6 +280,32 @@ body {
 }
 .cursor-blink {
   animation: atlas-blink 1s step-end infinite;
+}
+/* Status pie — a rotating arc for "AI is working" (running / plan_review). transform-box:fill-box
+   pins the rotation to the arc's own center so it spins in place inside the SVG. */
+@keyframes atlas-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.status-spin {
+  animation: atlas-spin 1.05s linear infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+/* Soft opacity breathe for the "triaging" dashed ring — pulses without scaling (scaling would clip
+   the ring against the SVG viewBox). */
+@keyframes atlas-status-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.status-breathe {
+  animation: atlas-status-breathe 1.5s ease-in-out infinite;
 }
 /* sweeping progress fill — the parent clips, this bar sweeps across */
 .prog-sweep {

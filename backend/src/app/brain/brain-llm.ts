@@ -5,6 +5,7 @@ import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/
 import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from '../stimulus';
+import { fence } from '../prompt-fence';
 import type { TriageAction } from './brain.types';
 
 /**
@@ -88,8 +89,9 @@ export namespace TriageChain {
 
   const renderUser = (i: Input): string =>
     i.kind === 'event'
-      ? `An untrusted ${i.source ?? 'notification'} event (severity ${i.severity ?? 'unknown'}):\n${i.body}`
-      : `A chat message from the operator:\n${i.body}`;
+      ? // The event body is ALREADY fenced as untrusted by the intake seam (wrapUntrusted); don't double-wrap.
+        `An untrusted ${i.source ?? 'notification'} event (severity ${i.severity ?? 'unknown'}):\n${i.body}`
+      : `A chat message from the operator:\n${fence('operator_message', i.body)}`;
 
   export const build = (llm: BaseChatModel): Runnable<Input, Output> =>
     RunnableSequence.from<Input, Output>([

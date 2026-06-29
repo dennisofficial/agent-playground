@@ -497,6 +497,17 @@ export class BrainStoreService {
   }
 
   /**
+   * The threads with a `turn_active` flag still set — i.e. a conversational turn was streaming when the
+   * process died. Captured on boot BEFORE {@link resetAllTurnActive} clears the flags, so crash recovery
+   * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to
+   * completion). Returns thread ids.
+   */
+  async threadsWithActiveTurn(): Promise<string[]> {
+    const rows = await this.threads.find({ where: { turn_active: true }, select: { id: true } });
+    return rows.map((r) => r.id);
+  }
+
+  /**
    * Boot reconciliation: no conversational turn can survive a process restart, so clear any `turn_active`
    * left set by a crash mid-turn — otherwise the thread would read as "working" forever and never show
    * the "needs you" dot. Returns the number of rows reset.
@@ -520,17 +531,17 @@ export class BrainStoreService {
   }
 
   /**
-   * If this thread is already being scoped (`status='scoping'`), return its id — so a multi-turn grill
+   * If this thread is already being scoped (`status='planning'`), return its id — so a multi-turn grill
    * continues ONE build rather than re-anchoring per message. Null otherwise.
    */
   async openJobOnThread(threadId: string): Promise<string | null> {
     const row = await this.threads.findOne({
-      where: { id: threadId, status: 'scoping' },
+      where: { id: threadId, status: 'planning' },
     });
     return row?.id ?? null;
   }
 
-  /** Anchor the upfront grill: flip the thread into the build lifecycle (`scoping`) + set intent/title. */
+  /** Anchor the upfront grill: flip the thread into the build lifecycle (`planning`) + set intent/title. */
   async openJob(input: {
     orgId: string;
     repoId: string;
@@ -540,7 +551,7 @@ export class BrainStoreService {
   }): Promise<string> {
     await this.threads.update(
       { id: input.threadId },
-      { kind: input.kind, status: 'scoping', title: input.title },
+      { kind: input.kind, status: 'planning', title: input.title },
     );
     return input.threadId;
   }
@@ -590,7 +601,7 @@ export class BrainStoreService {
     // The whole persist runs in ONE transaction: delete prior draft tracks (their steps cascade),
     // supersede the prior draft record, write the new record + tracks (+ authored step rows), and
     // flip the thread — so a crash mid-write can never leave a half-proposed plan. A re-propose
-    // (request_changes → reopenScoping → propose again) reuses the SAME thread, so prior DRAFT
+    // (request_changes → reopenPlanning → propose again) reuses the SAME thread, so prior DRAFT
     // tracks/record are cleared first; idempotent on the first proposal.
     const decisionRecordId = await this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(ThreadEntity);
@@ -723,9 +734,9 @@ export class BrainStoreService {
     return this.loadJob(threadId);
   }
 
-  /** Flip a thread back to `scoping` (a rejected / change-requested plan returns to the grill). */
-  async reopenScoping(threadId: string): Promise<void> {
-    await this.threads.update({ id: threadId }, { status: 'scoping' });
+  /** Flip a thread back to `planning` (a rejected / change-requested plan returns to the grill). */
+  async reopenPlanning(threadId: string): Promise<void> {
+    await this.threads.update({ id: threadId }, { status: 'planning' });
   }
 
   /** Cancel a thread's build (a denied plan). */

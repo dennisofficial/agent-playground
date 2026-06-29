@@ -1,25 +1,22 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { repoStateDir } from '../state-root';
 
 /**
  * The host-only record of which worktree-relative paths were HYDRATED as secrets/seed into a given
  * worktree — the source of truth for `LocalGitService.commitAll`'s leak-scan.
  *
- * It lives OUTSIDE the worktree (under `$ATLAS_HYDRATION_STATE`, default `~/.agent-playground/
- * atlas-hydration-state`), keyed by `sha256(worktreePath)`, so an in-sandbox agent can neither read nor
+ * It lives OUTSIDE the worktree (under `$ATLAS_HYDRATION_STATE`, default the repo-relative
+ * `.atlas-state/hydration-state`), keyed by `sha256(worktreePath)`, so an in-sandbox agent can neither read nor
  * mutate it. This is deliberately a STANDALONE helper with no Nest/DI surface: `commitAll` consults it
  * with a pure file read so the git layer takes no dependency on the driver/sandbox layers, and a member
  * who edits the in-worktree `.atlas/worktree.json` (or `git add -f`s a secret) cannot defeat the scan.
  */
 
 function stateRoot(): string {
-  return (
-    process.env.ATLAS_HYDRATION_STATE ??
-    join(homedir(), '.agent-playground', 'atlas-hydration-state')
-  );
+  return process.env.ATLAS_HYDRATION_STATE ?? repoStateDir('hydration-state');
 }
 
 /** Deterministic host path of the sidecar for a worktree. */

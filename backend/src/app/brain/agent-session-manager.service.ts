@@ -64,6 +64,7 @@ import { DecisionApprovalService } from './decision-approval.service';
 import type { ApprovalResolution, ApprovalVerdict } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
 import { PlanReviewService, renderFindingsDelivery } from './plan-review.service';
+import { TurnRecoveryService } from './turn-recovery.service';
 
 /**
  * R3 — the AGENT SESSION MANAGER (the chat brain).
@@ -136,6 +137,8 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     private readonly ledger: DecisionLedgerService,
     // Phase 2 manifest — the graph + freshness truth over the ledger (proposed→accepted, edit detection).
     private readonly manifest: RepoDecisionManifestService,
+    // Crash recovery: back-fill brain turns that completed in-container but never reached `finish()`.
+    private readonly turnRecovery: TurnRecoveryService,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -488,13 +491,45 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     if (this.bootSweepsDone) return;
     this.bootSweepsDone = true;
 
-    // 1) Clear any `turn_active` flag left set by a crash mid-turn — no conversational turn survives a
+    // 1) Capture the threads whose conversational turn was streaming when the process died (e.g. a deploy
+    //    mid-chat) — their `turn_active` is still set. Read BEFORE the reset below clears it; these are the
+    //    threads whose engine may still be finishing (orphaned) in the container, to be watched to completion.
+    let interrupted: string[] = [];
+    try {
+      interrupted = await this.store.threadsWithActiveTurn();
+    } catch (err) {
+      this.logger.warn(`mid-flight turn capture failed: ${err}`);
+    }
+
+    // 2) Clear any `turn_active` flag left set by a crash mid-turn — no conversational turn survives a
     //    process restart, so a still-true flag is stale and would suppress the thread's "needs you" dot.
     try {
       const reset = await this.store.resetAllTurnActive();
       if (reset > 0) this.logger.log(`Leader: cleared stale turn_active on ${reset} thread(s)`);
     } catch (err) {
       this.logger.warn(`turn_active reconciliation failed: ${err}`);
+    }
+
+    // 3) Recover any brain turn that COMPLETED inside the sandbox container but whose transcript a crash
+    //    dropped before `finish()` persisted it (the durable blocks are written only at turn END). Reads the
+    //    host-durable SDK session JSONL and back-fills the missing blocks. AWAITED and run BEFORE any turn is
+    //    dispatched below (question re-delivery) — so a recovered turn can't interleave with a new one
+    //    resuming the same session. Idempotent + fail-soft.
+    try {
+      const n = await this.turnRecovery.recoverInterruptedTurns();
+      if (n > 0) this.logger.log(`Leader: recovered ${n} interrupted brain turn(s) from the session transcript`);
+    } catch (err) {
+      this.logger.warn(`turn recovery failed: ${err}`);
+    }
+
+    // 3.5) For turns that were STILL GENERATING at restart (the deploy case), the immediate pass above sees
+    //    no `end_turn` yet. The engine's `docker exec` keeps running orphaned in the container, so watch those
+    //    threads in the BACKGROUND until each finishes, then back-fill it. Self-terminating (not a poll loop);
+    //    fire-and-forget so it never blocks the rest of boot.
+    if (interrupted.length > 0) {
+      void this.turnRecovery
+        .finishAndRecover(interrupted)
+        .catch((err) => this.logger.warn(`mid-flight turn watch failed: ${err}`));
     }
 
     // 2) Re-deliver any question the operator ANSWERED (durably stamped) but whose delivery turn a host
@@ -786,7 +821,24 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         threadId: stimulus.threadId,
         tools,
       },
-      onEvent: (e) => streamer.onEvent(e),
+      onEvent: (e) => {
+        // EAGER session-id persist: the engine emits `{kind:'session'}` at turn START (before any work), so
+        // a turn interrupted on its FIRST exchange — which never reaches the post-run persist below — still
+        // leaves a resolvable session id on the row (helps resume AND crash recovery locate the transcript).
+        // Fully defensive: a persistence hiccup here must NEVER break the live event stream.
+        if (e.kind === 'session' && e.sessionId && sandboxRow && sandboxRow.session_id !== e.sessionId) {
+          const sid = e.sessionId;
+          sandboxRow.session_id = sid;
+          try {
+            void Promise.resolve(
+              this.sandboxRows.update({ thread_id: stimulus.threadId, org_id: stimulus.orgId }, { session_id: sid }),
+            ).catch((err) => this.logger.warn(`eager session_id persist failed for thread=${stimulus.threadId}: ${err}`));
+          } catch (err) {
+            this.logger.warn(`eager session_id persist threw for thread=${stimulus.threadId}: ${err}`);
+          }
+        }
+        streamer.onEvent(e);
+      },
     };
 
     let result;
@@ -849,7 +901,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * Build the 6 tool impls for a chat turn, all scoped to the stimulus's thread/team/project.
    */
   buildTools(stimulus: ChatStimulus): Record<string, ToolImpl> {
-    // CREATE a decision (shared by `create_decision` and the deprecated `log_decision` alias). Auto-attaches
+    // CREATE a decision (the `create_decision` tool). Auto-attaches
     // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
     // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
     // record, and returns the FULLY-RESOLVED decision (id + attached Q&A) — so the brain holds ground truth
@@ -992,10 +1044,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       },
 
       create_decision: createDecision,
-      // Deprecated alias: a session resumed mid-grill (session_id persists across turns) may still emit
-      // the old name — keep it working so it doesn't fail with "No such tool". Drop once no live session
-      // references it. Not advertised in the prompt's tool list (the model should prefer create_decision).
-      log_decision: createDecision,
 
       update_decision: async (args) => {
         const envelope = missingArgsEnvelope(args);
@@ -1622,7 +1670,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * Apply a ruled approval verdict — the durable effect, shared by the live in-session await
    * ({@link requestApprovalAndAct}) and the restart-safe fallback ({@link resolveApprovalDurably}).
    * `approve` → flip the decision record + thread to `running` then dispatch (full plan) or implement
-   * directly (`isDirect`); `request_changes` → back to scoping; `deny` → cancel.
+   * directly (`isDirect`); `request_changes` → back to planning; `deny` → cancel.
    */
   private async actOnApprovalVerdict(
     stimulus: ChatStimulus,
@@ -1666,7 +1714,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     }
 
     if (resolution.verdict === 'request_changes') {
-      await this.store.reopenScoping(job.id);
+      await this.store.reopenPlanning(job.id);
       const note = resolution.note ? ` Noted: ${resolution.note}` : '';
       await this.say(
         stimulus,

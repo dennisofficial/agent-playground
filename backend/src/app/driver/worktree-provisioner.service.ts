@@ -7,10 +7,10 @@ import { WorktreeHydrator } from './worktree-hydrator.service';
 export interface ProvisionAndAttachInput {
   /** The cut worktree (base+feature already in place). */
   sandbox: FeatureSandbox;
-  /** Tenant org id (or the gate's synthetic `'gate'`). */
+  /** Tenant org id. */
   orgId: string;
-  /** Owning thread (R2 per-thread containers). Omit for the legacy/gate per-branch path. */
-  threadId?: string;
+  /** Owning thread — every provisioned sandbox is per-thread (the gate attaches directly, not here). */
+  threadId: string;
   /** The repo's uuid (`repos.id`) — required to resolve secret grants. Absent → no secrets. */
   repoDbId?: string;
   /** Last hydration signature (thread sandboxes persist it). Re-hydrate only when it changes. */
@@ -26,10 +26,10 @@ export interface ProvisionAndAttachResult {
 }
 
 /**
- * THE single seam that turns a cut worktree into an attached, hydrated sandbox. Every caller that
- * attaches a sandbox (`ThreadLifecycleService`, `TrackDriver`'s legacy path, `AcceptanceGateService`)
- * routes through here instead of calling `SANDBOX_PROVIDER.attach` directly, so worktree hydration +
- * cache mounts are applied uniformly and can never be forgotten on one path.
+ * THE single seam that turns a cut worktree into an attached, hydrated sandbox. `ThreadLifecycleService`
+ * routes thread sandboxes through here instead of calling `SANDBOX_PROVIDER.attach` directly, so worktree
+ * hydration + cache mounts are applied uniformly and can never be forgotten. (The acceptance gate attaches
+ * directly — it has no org/grants and can't hydrate a tenant secret, so it deliberately skips this seam.)
  *
  * It lives on the driver side (which already consumes `SANDBOX_PROVIDER` and can inject the git +
  * onboarding stores) so `SandboxManager` stays a low-level mount-applier that never resolves
@@ -65,8 +65,7 @@ export class WorktreeProvisioner {
       // Surface a bad/incomplete `.atlas/worktree.json` to the OPERATOR (it never errors the build). The
       // passive-awareness marker is drained into the next operator turn so the brain can relay it — no
       // wake, no spam (this only fires on a (re)hydration, i.e. at thread creation or a config change).
-      // Thread-scoped only; the gate/legacy paths have no threadId, so they stay server-log-only.
-      if (threadId && notices.length) {
+      if (notices.length) {
         await this.awareness
           .appendMarker(threadId, {
             id: 'worktree-hydration-issues',
@@ -81,7 +80,7 @@ export class WorktreeProvisioner {
       sandbox,
       orgId,
       mounts,
-      ...(threadId ? { threadId } : {}),
+      threadId,
       ...(repoDbId ? { repoDbId } : {}),
     });
     return { sandbox: attached, hydrationSig };

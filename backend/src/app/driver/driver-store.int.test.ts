@@ -143,6 +143,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         id: string;
         hasPlan: boolean;
         status: string;
+        reviewAgents: Array<{ id: string; label: string }>;
         steps: Array<{ ordinal: number; title: string | null; stage: string; status: string }>;
       }>;
     };
@@ -156,6 +157,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.tracks).toHaveLength(1);
     const [sec] = state.tracks;
     expect(sec.hasPlan).toBe(true);
+    // The review-agent run list is exposed per track (fixed set today; navigator renders it dynamically).
+    expect(sec.reviewAgents.map((a) => a.id)).toEqual(['best_practices', 'correctness', 'consistency']);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');

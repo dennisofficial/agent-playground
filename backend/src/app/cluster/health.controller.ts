@@ -2,6 +2,7 @@ import { Controller, Get, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { Public } from '@workspace/auth/server';
 import { LeaderElectionService } from './leader-election.service';
+import { SkipLogger } from '@workspace/nestjs-core';
 
 /**
  * Health probes for the reverse proxy + deploy script. `@Public()` so the global auth guard doesn't 401
@@ -24,8 +25,12 @@ export class HealthController {
   }
 
   @Public()
+  @SkipLogger()
   @Get('ready')
-  ready(@Res({ passthrough: true }) res: Response): { ready: boolean; state: string } {
+  ready(@Res({ passthrough: true }) res: Response): {
+    ready: boolean;
+    state: string;
+  } {
     // passthrough: set the status but still return the body through Nest's normal pipeline (so global
     // interceptors apply, consistent with /live), rather than ending the response ourselves.
     const ready = this.election.isLeader();

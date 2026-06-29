@@ -14,27 +14,14 @@
  * transcript sharing; one `messages` table is partitioned by `thread_id`.
  */
 
+// The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
+// `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
+// and re-exported as the domain's `ThreadStatus` so the brain/driver keep importing it from `../domain`.
+import type { ThreadStatus } from '@workspace/shared';
+export type { ThreadStatus };
+
 /** Why a thread exists — a human-started chat, a notification-seeded thread, or an operator control action. */
 export type ThreadOrigin = 'chat' | 'event' | 'control';
-
-/**
- * A thread's build lifecycle. EXPLICIT, resumable status — NOT an implicit FSM re-derived from sibling
- * rows. A thread starts `open` (a conversation) and enters the build lifecycle when an intent is scoped.
- */
-export type ThreadStatus =
-  | 'open' // a conversation; no build scoped yet
-  | 'scoping' // upfront grill in progress (no locked plan yet)
-  | 'plan_review' // plan submitted; Codex is reviewing it (async) and/or Atlas is addressing findings —
-  // the operator hasn't been asked to approve yet. NOT a needs-you state (it's Atlas/Codex's turn). The
-  // operator gate is `awaiting_approval`, reached only when Atlas calls `finalize_plan`.
-  | 'awaiting_approval' // decision record + track list posted; waiting on the operator
-  | 'running' // tracks executing
-  | 'paused' // a turn hit a credential/401 error; the live session is saved, waiting on a re-ping to
-  // resume (NOT auto-resumed on boot — it would just 401 again). Durable: the unfinished step keeps its
-  // `session_id`, so a ping continues the SAME session instead of starting from scratch.
-  | 'done' // one PR opened, all tracks handed off
-  | 'failed'
-  | 'cancelled';
 
 /**
  * Whether a thread NEEDS THE OPERATOR — the single, server-owned definition of the sidebar "alert dot".
@@ -43,7 +30,7 @@ export type ThreadStatus =
  * conversational turn is streaming (`turnActive`) nor a build is running (`status='running'`) nor a plan
  * is under Codex review (`status='plan_review'`), and the thread hasn't finished (`done`/`cancelled`).
  * `turnActive` is a separate axis from `status` because
- * `status` alone can't tell "grilling, mid-turn" from "grilling, waiting on an answer" (both `scoping`).
+ * `status` alone can't tell "grilling, mid-turn" from "grilling, waiting on an answer" (both `planning`).
  *
  * `awaitingQuestion` is the third axis: a thread blocked on the durable human-input gate (a non-null
  * `awaiting_question_id` — the brain asked via `ask_question` and the answering turn has ended cleanly)
@@ -53,7 +40,11 @@ export type ThreadStatus =
  * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
  * the realtime row mapper (they must never diverge).
  */
-export function deriveNeedsYou(status: string, turnActive: boolean, awaitingQuestion: boolean): boolean {
+export function deriveNeedsYou(
+  status: string,
+  turnActive: boolean,
+  awaitingQuestion: boolean,
+): boolean {
   if (awaitingQuestion) return true;
   if (turnActive) return false;
   return (
@@ -186,4 +177,11 @@ export interface Step {
    * batch re-groups identically.
    */
   batchOrdinal: number | null;
+  /**
+   * Set on the batch ANCHOR step when its batch commits — the resumable commit marker. Non-null means the
+   * batch's work is already committed, so a resume FAST-FORWARDS (marks steps done) instead of re-running
+   * against an already-committed tree. The sentinel `(nothing)` records "committed, empty diff". Null on
+   * non-anchor steps and before commit.
+   */
+  commitSha: string | null;
 }

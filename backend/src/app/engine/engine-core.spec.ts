@@ -128,6 +128,36 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(res.usage).toMatchObject({ inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
   });
 
+  it('writer subagents (implement/implement-fast) are spawnable ONLY on execute turns, not plan/review', async () => {
+    const run = async (mode: 'execute' | 'plan' | 'review') => {
+      const { sdk, captured } = fakeClaudeSdk();
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+      await core.run({ engine: 'claude', task: 't', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'a--b', mode, auth: { secret: 'tok' } });
+      return captured.options!.agents as Record<string, { tools: string[]; model: string }>;
+    };
+
+    const execAgents = await run('execute');
+    // Writers present, Opus/Sonnet, can Write/Edit/Bash, and have NO Task (no recursive fan-out).
+    expect(execAgents.implement).toBeDefined();
+    expect(execAgents['implement-fast']).toBeDefined();
+    expect(execAgents.implement.model).toBe('opus');
+    expect(execAgents['implement-fast'].model).toBe('sonnet');
+    for (const w of [execAgents.implement, execAgents['implement-fast']]) {
+      expect(w.tools).toEqual(expect.arrayContaining(['Write', 'Edit', 'Bash']));
+      expect(w.tools).not.toContain('Task');
+    }
+    // The advisory read-only subagent is still there.
+    expect(execAgents.explore).toBeDefined();
+
+    // Plan + review turns get ONLY the advisory set — no writers can be spawned.
+    for (const mode of ['plan', 'review'] as const) {
+      const agents = await run(mode);
+      expect(agents.explore).toBeDefined();
+      expect(agents.implement).toBeUndefined();
+      expect(agents['implement-fast']).toBeUndefined();
+    }
+  });
+
   it('execute mode: canUseTool allows Write inside cwd OR a writableRoot, denies elsewhere', async () => {
     const { sdk, captured } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });

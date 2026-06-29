@@ -98,7 +98,7 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
-  // 'open' | 'scoping' | 'awaiting_approval' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled'
+  // 'open' | 'planning' | 'awaiting_approval' | 'running' | 'paused' | 'done' | 'failed' | 'cancelled'
   @Column({ type: 'text', default: 'open' })
   status!: string;
 

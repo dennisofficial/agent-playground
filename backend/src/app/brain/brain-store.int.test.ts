@@ -24,7 +24,7 @@ import { BrainStoreService } from './brain-store.service';
 
 /**
  * Int test for the request-changes / RE-PROPOSE path (issue #0). A rejected plan flips the job back to
- * `scoping` (`reopenScoping`) and the grill proposes again, re-running `persistPlan` on the SAME job.
+ * `planning` (`reopenPlanning`) and the grill proposes again, re-running `persistPlan` on the SAME job.
  * Sections are gap-numbered from 10 each time, so without clearing the prior draft the second proposal
  * collides on `UNIQUE(job_id, ordinal)`. This proves `persistPlan` is now self-consistent: it deletes
  * the prior tracks and supersedes the prior draft record, so a re-propose succeeds cleanly.
@@ -78,7 +78,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     else process.env.SURFACE = prevSurface;
   });
 
-  it('a re-propose on the same scoping thread clears the prior draft instead of colliding', async () => {
+  it('a re-propose on the same planning thread clears the prior draft instead of colliding', async () => {
     // The thread IS the build unit; tracks/decision_records FK → threads.id, and threads.repo_id
     // FK → repos.id — so seed an org + repo, then anchor a real thread.
     await dataSource.query(
@@ -126,8 +126,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       'frontend banner',
     ]);
 
-    // Human requests changes → back to scoping.
-    await store.reopenScoping(threadId);
+    // Human requests changes → back to planning.
+    await store.reopenPlanning(threadId);
 
     // Second proposal on the SAME thread — fewer tracks, re-using ordinal 10. Must NOT throw.
     const second = await store.persistPlan({
@@ -351,7 +351,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // Re-propose WITHOUT stepsByTrack (e.g. a direct-build-style re-shape): prior step rows are
     // cascade-cleared with their tracks, and no new step rows are created.
-    await store.reopenScoping(threadId);
+    await store.reopenPlanning(threadId);
     await store.persistPlan({
       orgId: TEAM_ID,
       repoId,

@@ -7,16 +7,14 @@
  * The live message + request shapes are owned by `thread-api.ts` (the org → repo → thread client).
  */
 
+import type { ThreadStatus as WireThreadStatus } from '@workspace/shared';
+
 // ── Backend enums ──────────────────────────────────────────────────────────────────────────────
-export type JobStatus =
-  | 'scoping'
-  | 'plan_review'
-  | 'awaiting_approval'
-  | 'running'
-  | 'paused'
-  | 'done'
-  | 'failed'
-  | 'cancelled';
+/**
+ * The backend job/thread wire status — single-sourced in `@workspace/shared` so it can't drift from
+ * the backend's `ThreadStatus`. (The web's own UI-presentation status — below — is a separate type.)
+ */
+export type JobStatus = WireThreadStatus;
 
 export type JobKind = 'feature' | 'bugfix';
 
@@ -140,6 +138,12 @@ export interface PipelineStep {
   batchStepIds: string[];
 }
 
+/** One review agent the backend selected to run over a track's diff (id + human label). */
+export interface ReviewAgent {
+  id: string;
+  label: string;
+}
+
 export interface PipelineTrack {
   id: string;
   ordinal: number;
@@ -147,6 +151,11 @@ export interface PipelineTrack {
   /** The track's scope type (backend/frontend/docs/…) — selects the review agents. */
   type: string;
   status: TrackStatus;
+  /**
+   * The review agents selected to run over this track's diff (a fixed set today; backend-selected).
+   * The navigator's review folder renders one leaf per agent — never hard-code this list.
+   */
+  reviewAgents: ReviewAgent[];
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The track's steps (execute folder leaves), ordinal-sorted. */
@@ -209,7 +218,7 @@ export interface ContextFileContent {
 /** UI status set from handoff §7 (semantic dot colors). */
 export type ThreadStatus =
   | 'running'
-  | 'scoping'
+  | 'planning'
   | 'plan_review'
   | 'awaiting_approval'
   | 'done'

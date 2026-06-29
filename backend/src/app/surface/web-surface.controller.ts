@@ -164,12 +164,6 @@ interface RenameThreadDto {
 interface ApproveDto {
   actionId: string;
   value: string;
-  /**
-   * Legacy/cosmetic — IGNORED. The approver is stamped from the authenticated session (`@CurrentUser`),
-   * never the client: `decision_records.approved_by` is a uuid FK to `users`, so a client label like
-   * "U-OPERATOR" would fail the write. Kept optional for backward compatibility with older clients.
-   */
-  ruledBy?: string;
   note?: string;
 }
 interface AnswerQuestionDto {
@@ -183,12 +177,11 @@ interface AnswerQuestionDto {
 /** Operator-visible message provenance, by AUDIENCE. See the `/messages` mapping for the full rationale. */
 export type WebMessageSource = 'operator' | 'atlas' | 'system_operator' | 'system_shared';
 
-/** Map a row's stored `meta.source` (+ isAtlas fallback) to the web renderer's audience-explicit source.
- *  Legacy rows stamped the shared kind as `'harness'` — fold those into `'system_shared'`. */
+/** Map a row's stored `meta.source` to the web renderer's audience-explicit source. Only the `system_*`
+ *  kinds are stamped on the row; ordinary operator/atlas messages carry no `source` and derive from isAtlas. */
 export function mapMessageSource(stored: unknown, isAtlas: boolean): WebMessageSource {
   if (stored === 'system_operator') return 'system_operator';
-  if (stored === 'system_shared' || stored === 'harness') return 'system_shared';
-  if (stored === 'atlas' || stored === 'operator') return stored;
+  if (stored === 'system_shared') return 'system_shared';
   return isAtlas ? 'atlas' : 'operator';
 }
 
@@ -378,7 +371,6 @@ export class WebSurfaceController {
       //   'system_shared'   — system→operator AND Atlas (e.g. Codex plan-review findings; Atlas gets a
       //                       separate seed). Rendered as the "Codex review" panel.
       //   'atlas' | 'operator' — ordinary turns (inferred from author when no explicit source).
-      // Legacy rows stamped the shared kind as 'harness' → fold into 'system_shared'.
       source: mapMessageSource((m.meta as { source?: unknown } | null)?.source, m.author_bot_id != null),
       text: m.text,
       kind: m.kind,

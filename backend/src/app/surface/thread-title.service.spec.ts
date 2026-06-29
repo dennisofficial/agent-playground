@@ -90,4 +90,16 @@ describe('sanitizeTitle', () => {
     expect(sanitizeTitle('   ')).toBeUndefined();
     expect(sanitizeTitle('""')).toBeUndefined();
   });
+
+  it('rejects refusal / assistant-talking output so the caller can fall back', () => {
+    expect(
+      sanitizeTitle("I appreciate the question, but I'm designed to write task titles"),
+    ).toBeUndefined();
+    expect(sanitizeTitle("Sorry, I can't help with that")).toBeUndefined();
+    expect(sanitizeTitle("Sure, here's a title: Repo Overview")).toBeUndefined();
+    expect(sanitizeTitle('The title is Repo Overview')).toBeUndefined();
+    // A real noun-phrase title still passes.
+    expect(sanitizeTitle('Repo Overview')).toBe('Repo Overview');
+    expect(sanitizeTitle('Image Upload Pipeline')).toBe('Image Upload Pipeline');
+  });
 });

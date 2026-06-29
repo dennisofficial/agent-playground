@@ -49,6 +49,7 @@ function makeManager(tickets: Partial<TicketService>) {
     } as never, // election
     {} as never, // ledger
     {} as never, // manifest
+    {} as never, // turnRecovery
   );
   return { manager, store };
 }

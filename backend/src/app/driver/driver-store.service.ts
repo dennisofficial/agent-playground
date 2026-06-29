@@ -18,6 +18,7 @@ import {
   TrackEntity,
   ThreadEntity,
 } from '../persistence/entities';
+import { reviewAgentsForTrack } from '../autofix/autofix-lenses';
 import type { PlannedStep } from './planner-llm';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
@@ -234,6 +235,12 @@ export class DriverStoreService {
     await this.steps.update({ id: stepId }, { stage, status });
   }
 
+  /** Stamp the batch ANCHOR step's commit marker the instant its batch commits — written BEFORE the
+   *  per-step done writes so a crash in between fast-forwards on resume instead of re-running (#6). */
+  async setStepCommit(stepId: string, commitSha: string): Promise<void> {
+    await this.steps.update({ id: stepId }, { commit_sha: commitSha });
+  }
+
   /**
    * Persist the batch grouping for a track's steps — the resumable batching cursor. Assigned ONCE,
    * the first time a track executes (all its steps have null `batch_ordinal`); after this a restart
@@ -290,6 +297,9 @@ export class DriverStoreService {
         type: s.type,
         status: s.status,
         hasPlan: s.plan != null,
+        // The review agents selected to run over this track's diff (fixed set today; see
+        // reviewAgentsForTrack). Rendered by the navigator's review folder.
+        reviewAgents: reviewAgentsForTrack(s),
         steps: mapBatchedSteps(stepsByTrack.get(s.id) ?? []),
       })),
     };
@@ -411,6 +421,7 @@ function toStep(row: StepEntity): Step {
     status: row.status as StepStatus,
     sessionId: row.session_id,
     batchOrdinal: row.batch_ordinal ?? null,
+    commitSha: row.commit_sha ?? null,
   };
 }
 

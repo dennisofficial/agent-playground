@@ -20,7 +20,7 @@ import { useSelectedNode } from './use-selected-node';
 
 const FOOTERS: Record<ThreadStatus, string> = {
   running: 'One branch · each step a fresh session · one PR · the harness resumes on any halt.',
-  scoping: 'Pure conversation — the plan you approve here is what creates the tracks.',
+  planning: 'Pure conversation — the plan you approve here is what creates the tracks.',
   plan_review: 'Codex is reviewing the submitted plan — findings will appear in the conversation.',
   awaiting_approval: 'Approve the plan whenever you’re ready — here, the detail pane, or the conversation. Nothing’s blocked while it waits.',
   paused: 'Your paused session — reply to resume. The resume handle is yours.',
@@ -73,7 +73,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     ? toThreadStatus(job.status)
     : kind === 'event'
       ? 'triaging'
-      : 'scoping';
+      : 'planning';
 
   const approvalCard = useMemo<WebApprovalCard | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {

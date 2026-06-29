@@ -28,8 +28,9 @@ describe('atlasEngineHomeDir (isolated agent home, never ~/.claude)', () => {
     expect(a).not.toBe(b);
   });
 
-  it('atlasAgentHomeBase defaults under ~/.agent-playground when no root', () => {
-    expect(atlasAgentHomeBase(undefined)).toContain('.agent-playground');
+  it('atlasAgentHomeBase defaults under the repo-relative .atlas-state when no root', () => {
+    expect(atlasAgentHomeBase(undefined)).toContain(join('.atlas-state', 'agent-home'));
+    expect(atlasAgentHomeBase(undefined)).not.toContain('.agent-playground');
     expect(atlasAgentHomeBase('/custom')).toBe('/custom');
   });
 });

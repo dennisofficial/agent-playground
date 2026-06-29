@@ -35,6 +35,7 @@ import type { EventTriageService } from './event-triage.service';
 import type { EventStimulus } from '../domain';
 import { StimulusRouter } from './stimulus-router.service';
 import type { PlanReviewService } from './plan-review.service';
+import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver } from '../onboarding';
 
 /**
@@ -56,7 +57,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
     approve: vi.fn(),
     cancel: vi.fn(),
-    reopenScoping: vi.fn(),
+    reopenPlanning: vi.fn(),
     loadJob: vi.fn(),
     // Working-set decisions (create_decision / submit_plan source these); default to empty.
     pendingDecisions: vi.fn().mockResolvedValue([]),
@@ -155,6 +156,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockSandboxRows = {
     findOne: vi.fn(),
     save: vi.fn(),
+    update: vi.fn().mockResolvedValue(undefined),
   } as unknown as Repository<ThreadSandboxEntity>;
 
 
@@ -292,6 +294,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
         reposWithGit: async () => [],
       } as unknown as RepoDecisionManifestService,
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
     );
   });
 
@@ -396,7 +399,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
-      status: 'scoping',
+      status: 'planning',
       decisionRecordId: null,
     });
     const result = await tools['finalize_plan']({});
@@ -655,14 +658,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect((mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2]).toMatchObject({
       confirmedByOperator: false,
     });
-  });
-
-  it('(f2) the deprecated log_decision alias still creates a decision', async () => {
-    const tools = manager.buildTools(fakeStimulus);
-    expect(tools['log_decision']).toBe(tools['create_decision']);
-    const result = await tools['log_decision']({ decisionClass: 'data_model', ruling: 'x' });
-    expect(result).toMatchObject({ ok: true });
-    expect(mockStore.createDecision).toHaveBeenCalled();
   });
 
   it('(g) create_decision rejects an invalid decisionClass', async () => {
@@ -925,6 +920,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
         reposWithGit: async () => [],
       } as unknown as RepoDecisionManifestService,
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
@@ -1182,6 +1178,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
         reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
         reposWithGit: async () => [],
       } as unknown as RepoDecisionManifestService,
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
     );
     return { manager, store };
   }

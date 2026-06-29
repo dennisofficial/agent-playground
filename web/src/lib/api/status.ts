@@ -20,9 +20,10 @@ export interface StatusMeta {
 
 export const STATUS_META: Record<ThreadStatus, StatusMeta> = {
   running: { label: 'Running', color: 'var(--accent)', pulse: true },
-  scoping: { label: 'Scoping', color: 'var(--blue)', pulse: false },
-  // AI is working — Codex reviewing the plan in the background; not a "needs you" gate.
-  plan_review: { label: 'Reviewing', color: 'var(--accent)', pulse: true },
+  planning: { label: 'Planning', color: 'var(--blue)', pulse: false },
+  // Codex reviewing the submitted plan — still the pre-approval, you're-in-the-loop phase (NOT the
+  // autonomous post-approval build), so it reads blue like Planning, never the orange Running accent.
+  plan_review: { label: 'Reviewing', color: 'var(--blue)', pulse: true },
   // One muted slate covers every "needs you" gate (handoff: restrained palette).
   awaiting_approval: { label: 'Awaiting approval', color: 'var(--slate)', pulse: false },
   done: { label: 'Done', color: 'var(--green)', pulse: false },
@@ -48,8 +49,8 @@ export function toThreadStatus(status: JobStatus): ThreadStatus {
   switch (status) {
     case 'running':
       return 'running';
-    case 'scoping':
-      return 'scoping';
+    case 'planning':
+      return 'planning';
     case 'plan_review':
       return 'plan_review';
     case 'awaiting_approval':
@@ -62,7 +63,7 @@ export function toThreadStatus(status: JobStatus): ThreadStatus {
     case 'failed':
       return 'failed';
     default:
-      return 'scoping';
+      return 'planning';
   }
 }
 

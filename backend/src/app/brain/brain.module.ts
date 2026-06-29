@@ -29,6 +29,7 @@ import { RepoDecisionManifestService } from './repo-decision-manifest.service';
 import { EventTriageService } from './event-triage.service';
 import { StimulusRouter } from './stimulus-router.service';
 import { PlanReviewService } from './plan-review.service';
+import { TurnRecoveryService } from './turn-recovery.service';
 
 /**
  * R3 — the ATLAS BRAIN module (rebuilt). Wires the brain that decides WHETHER/WHAT (never HOW):
@@ -93,6 +94,7 @@ import { PlanReviewService } from './plan-review.service';
     RepoDecisionManifestService,
     EventTriageService,
     PlanReviewService,
+    TurnRecoveryService,
     AgentSessionManager,
     DrainService,
     StimulusRouter,

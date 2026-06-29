@@ -207,19 +207,42 @@ function SectionNode({
             onToggle={() => toggle(execId, execOpen)}
           />
           {execOpen &&
-            s.steps.map((p, pi) => {
-              const inFlight = p.status === 'building' || p.status === 'reviewing';
-              return (
-                <PhaseLeaf
-                  key={p.id}
-                  step={p}
-                  index={pi}
-                  live={isActive && !isHalt && !paused && inFlight}
-                  halted={isHalt && inFlight}
-                  selected={selectedNode === p.id}
-                  onClick={() => onSelectNode(p.id)}
-                />
-              );
+            groupBatches(s.steps).flatMap((g) => {
+              // A multi-step batch runs as ONE engine turn → ONE transcript (the anchor's). When it's
+              // in flight every step in it flips to `building` together, so render the whole batch as a
+              // SINGLE live card (clicking it opens the shared transcript) instead of N identical ones.
+              const liveBatch =
+                isActive &&
+                !isHalt &&
+                !paused &&
+                g.steps.length > 1 &&
+                g.steps.every((p) => p.status === 'building');
+              if (liveBatch) {
+                return [
+                  <LiveBatchLeaf
+                    key={g.anchorStepId}
+                    steps={g.steps}
+                    startIndex={g.startIndex}
+                    selected={g.steps.some((p) => p.id === selectedNode)}
+                    onClick={() => onSelectNode(g.anchorStepId)}
+                  />,
+                ];
+              }
+              return g.steps.map((p, k) => {
+                const pi = g.startIndex + k;
+                const inFlight = p.status === 'building' || p.status === 'reviewing';
+                return (
+                  <PhaseLeaf
+                    key={p.id}
+                    step={p}
+                    index={pi}
+                    live={isActive && !isHalt && !paused && inFlight}
+                    halted={isHalt && inFlight}
+                    selected={selectedNode === p.id}
+                    onClick={() => onSelectNode(p.id)}
+                  />
+                );
+              });
             })}
           {execOpen && s.steps.length === 0 && (
             <div className="py-1 pl-12 pr-2 font-mono text-[9.5px] text-faint">steps form when this track starts</div>
@@ -235,16 +258,16 @@ function SectionNode({
             onToggle={() => toggle(revId, revOpen)}
           />
           {revOpen &&
-            REVIEW_LENSES.map((lens) => (
+            (s.reviewAgents ?? []).map((agent) => (
               <LeafRow
-                key={lens}
+                key={agent.id}
                 level={3}
                 caret="none"
                 dotColor={s.status === 'done' ? 'var(--green)' : s.status === 'reviewing' ? 'var(--accent)' : 'var(--border-2)'}
                 dotPulse={s.status === 'reviewing'}
-                label={lens}
-                selected={selectedNode === `rev:${s.id}:${lens}`}
-                onClick={() => onSelectNode(`rev:${s.id}:${lens}`)}
+                label={agent.id}
+                selected={selectedNode === `rev:${s.id}:${agent.id}`}
+                onClick={() => onSelectNode(`rev:${s.id}:${agent.id}`)}
               />
             ))}
         </div>
@@ -252,8 +275,6 @@ function SectionNode({
     </div>
   );
 }
-
-const REVIEW_LENSES = ['best-practices', 'correctness', 'consistency'] as const;
 
 /** A sub-stage / leaf row. `level` drives the indent (2 → 26px, 3 → 48px); `caret` reserves the slot. */
 function LeafRow({
@@ -325,6 +346,71 @@ function FolderRow({
       <Caret expanded={expanded} />
       <Dot color={dotColor} pulse={dotPulse} size={5} />
       <span className="flex-1 truncate font-mono text-[10.5px] text-dim">{label}</span>
+    </button>
+  );
+}
+
+/** Group a track's ordered steps into execution batches by shared `anchorStepId` (a single un-batched
+ *  step is its own anchor → a one-element group). `startIndex` is the group's offset into `steps` so a
+ *  leaf can still label itself "step N". Membership is contiguous, so a single left-to-right pass. */
+function groupBatches(
+  steps: PipelineStep[],
+): { anchorStepId: string; startIndex: number; steps: PipelineStep[] }[] {
+  const groups: { anchorStepId: string; startIndex: number; steps: PipelineStep[] }[] = [];
+  steps.forEach((p, i) => {
+    const last = groups[groups.length - 1];
+    if (last && last.anchorStepId === p.anchorStepId) last.steps.push(p);
+    else groups.push({ anchorStepId: p.anchorStepId, startIndex: i, steps: [p] });
+  });
+  return groups;
+}
+
+/** The live card for an in-flight multi-step BATCH — one turn, one transcript (the anchor's). Mirrors
+ *  PhaseLeaf's live card but collapses the batch into a single row so it doesn't read as N duplicates. */
+function LiveBatchLeaf({
+  steps,
+  startIndex,
+  selected,
+  onClick,
+}: {
+  steps: PipelineStep[];
+  startIndex: number;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const first = startIndex + 1;
+  const last = startIndex + steps.length;
+  const titles = steps.map((p) => p.title).filter(Boolean).join(', ');
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'ml-12 mb-0.5 mr-2 flex flex-col rounded-sm border px-2.5 py-1.5 text-left transition',
+        selected ? 'bg-[var(--accent-soft)]' : 'bg-surface hover:bg-surface-2',
+      )}
+      style={{ borderColor: 'var(--accent-line)' }}
+    >
+      <div className="flex items-center gap-2">
+        <Dot color="var(--accent)" pulse size={5} />
+        <span className="flex-1 truncate font-mono text-[10px] font-semibold text-accent">
+          steps {first}–{last}
+        </span>
+        <span
+          className="rounded px-1 py-px font-mono text-[8px]"
+          style={{ color: 'var(--accent)', background: 'var(--accent-soft)' }}
+        >
+          {steps.length} steps
+        </span>
+        <span className="font-mono text-[8px] text-dim">live</span>
+      </div>
+      {titles ? <span className="mt-0.5 truncate font-mono text-[8.5px] text-faint">{titles}</span> : null}
+      <div className="mt-1.5 h-[3px] overflow-hidden rounded-full" style={{ background: 'var(--surface-3)' }}>
+        <div
+          className="prog-sweep h-full w-2/5 rounded-full"
+          style={{ background: 'linear-gradient(90deg, var(--accent), var(--accent-2))' }}
+        />
+      </div>
     </button>
   );
 }

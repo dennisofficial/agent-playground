@@ -99,10 +99,10 @@ describe('SandboxManager.reapOrphanedArtifacts', () => {
 });
 
 describe('SandboxManager.teardownByIdentity', () => {
-  // The deterministic name `attach` derives for a thread-keyed sandbox (branch-independent):
-  // `atlas-sbx-<org>-<project>-thread-<id>`. Terminal cleanup must resolve this WITHOUT a container_id,
+  // The deterministic name `attach` derives for a thread-keyed sandbox (keyed by threadId alone — the
+  // globally-unique PK): `atlas-sbx-thread-<id>`. Terminal cleanup must resolve this WITHOUT a container_id,
   // because a boot reconcile nulls the persisted id while the real container keeps running.
-  const NAME = 'atlas-sbx-team-proj-thread-abc';
+  const NAME = 'atlas-sbx-thread-abc';
   const sandbox = (): FeatureSandbox => ({
     repoId: 'proj',
     branch: 'atlas/thread-abc', // ignored for thread-keyed names; proves the name is keyed by threadId

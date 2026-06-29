@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { repoStateDir } from '../state-root';
 
 /**
  * Atlas v2's isolated agent-home resolver — a clean-room rewrite of v1's `engine-home.ts` with the
@@ -13,9 +13,9 @@ import { join } from 'node:path';
  *
  * Layout: `<base>/<sandboxKey>/<engine>`. The sandbox key (a per-feature scope) keeps two concurrent
  * features' engine state separate; passing a stable key (e.g. the project id) is fine when isolation
- * isn't needed. Default base is `~/.agent-playground/atlas-agent-home`; override with
- * `AGENT_HOME_ROOT` (or fall back to v1's `AGENT_HOME_ROOT`) — point it at a persistent volume
- * in deployment. The result is passed through as `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the subprocess env.
+ * isn't needed. Default base is the gitignored, repo-relative `.atlas-state/agent-home` (see
+ * {@link repoStateDir}); override with `AGENT_HOME_ROOT` — point it at a persistent volume in
+ * deployment. The result is passed through as `CLAUDE_CONFIG_DIR` / `CODEX_HOME` in the subprocess env.
  */
 export function atlasEngineHomeDir(
   root: string | undefined,
@@ -29,9 +29,9 @@ export function atlasEngineHomeDir(
 }
 
 /** The base under which all Atlas engine homes live — `AGENT_HOME_ROOT` when set, else the
- * v1 `AGENT_HOME_ROOT`, else `~/.agent-playground/atlas-agent-home`. */
+ * repo-relative `.atlas-state/agent-home`. */
 export function atlasAgentHomeBase(root: string | undefined): string {
-  return root ?? join(homedir(), '.agent-playground', 'atlas-agent-home');
+  return root ?? repoStateDir('agent-home');
 }
 
 /**

@@ -368,10 +368,10 @@ function PipelineRegion({
     );
   }
 
-  // Scoping / awaiting — draft tracks (locked in on approval). The plan is now authored in full up
+  // Planning / awaiting — draft tracks (locked in on approval). The plan is now authored in full up
   // front, so a proposed track already carries its steps — show them (expandable) so the operator can
   // review the whole shape before approving, not just the track titles. Older step-less drafts (and
-  // the scoping state, before any tracks exist) degrade to a plain title row.
+  // the planning state, before any tracks exist) degrade to a plain title row.
   const drafts = job?.tracks ?? [];
   const proposed = status === 'awaiting_approval';
   return (

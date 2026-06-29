@@ -192,6 +192,47 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
   },
 };
 
+// WRITER subagents — the ONLY subagents that can change files. Added to the spawnable set ONLY on
+// EXECUTE turns (see `run`), so an advisory plan/brain/review turn can NEVER fan out a file-mutating
+// subagent. Confinement: their Write/Edit go through the SAME global `canUseTool` worktree boundary as
+// the orchestrator's own writes; Bash is bounded by the per-thread Docker sandbox (the engine runs
+// boxed). They have NO `Task` tool — writers cannot recursively fan out (no nesting blowup). The
+// orchestrator owns the decomposition and runs writers ONE AT A TIME; file ownership between writers is
+// by serialization, not a hard lock (see ORCHESTRATE_EXECUTE_SYSTEM in the driver).
+const WRITER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', ...WEB_TOOLS];
+const WRITER_PROMPT =
+  'You are an implementation subagent. Implement EXACTLY the slice the orchestrator assigned — the ' +
+  'specific change to the specific files it named — and nothing else. Respect the locked decisions. ' +
+  'Stay strictly within the files you were told to touch: if the work genuinely needs a file outside ' +
+  'that set, STOP and report it rather than editing it (the orchestrator coordinates who owns what). ' +
+  'Always Read a file before you Edit it. If you make ANY change not called for by your assignment, ' +
+  "flag it on its own line starting with 'DEVIATION:' and a one-line why. When you finish, return a " +
+  'TIGHT summary — the files you changed and the key choices — NOT a transcript or the full diff. Do ' +
+  'NOT commit or otherwise change git state; the orchestrator integrates, verifies, and commits.';
+const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
+  implement: {
+    description:
+      'WRITER subagent (Opus) — delegate a concrete implementation slice here (e.g. "create file X ' +
+      'implementing …", "add method Y to Z per the brief"), NAMING the exact files it may touch. It ' +
+      'edits the worktree and returns a tight summary of what it changed. Use it for non-trivial code ' +
+      'that needs judgment. Run ONE writer at a time. For mechanical, fully-specified slices use ' +
+      '`implement-fast` instead (cheaper).',
+    tools: WRITER_TOOLS,
+    model: 'opus',
+    prompt: WRITER_PROMPT,
+  },
+  'implement-fast': {
+    description:
+      'WRITER subagent (Sonnet) — the cheaper/faster sibling of `implement` for MECHANICAL, ' +
+      'fully-specified slices (rote edits, boilerplate, repetitive changes with no design judgment ' +
+      'left to make). Same rules: it edits only the files you name and returns a tight summary; run ' +
+      'one writer at a time.',
+    tools: WRITER_TOOLS,
+    model: 'sonnet',
+    prompt: WRITER_PROMPT,
+  },
+};
+
 /** Is `path` inside `root` (after resolution)? Confines writes to the worktree. */
 function isInsideRoot(path: string, root: string): boolean {
   const r = resolvePath(root);
@@ -316,8 +357,10 @@ export class EngineCore {
       settingSources: [],
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
       // Programmatic subagent definitions (settingSources [] means none are read from disk) — the only
-      // spawnable Task subagents, all Sonnet-pinned + read-only. See SUBAGENTS.
-      agents: SUBAGENTS,
+      // spawnable Task subagents. Advisory subagents (read-only, Sonnet) are always available; the WRITER
+      // subagents (implement/implement-fast) are added ONLY on EXECUTE turns, so a plan/brain/review turn
+      // can never fan out a file-mutating subagent. See SUBAGENTS / WRITER_SUBAGENTS.
+      agents: mode === 'execute' ? { ...SUBAGENTS, ...WRITER_SUBAGENTS } : SUBAGENTS,
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
       // they're host-controlled, never a human prompt. Empty for non-bridge turns (workers).
@@ -354,13 +397,20 @@ export class EngineCore {
           if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
         } else if (richStream && message.type === 'stream_event') {
           // LIVE token-by-token deltas (partial-message stream). Authoritative full blocks still arrive
-          // on the `assistant` message below — these are for live rendering only, not persistence.
-          const ev = (message as { event?: { type?: string; delta?: { type?: string; text?: string; thinking?: string } } }).event;
+          // on the `assistant` message below — these are for live rendering only, not persistence. Carry
+          // the subagent parent id (same as the authoritative blocks) so live nested rendering matches.
+          const sev = message as {
+            parent_tool_use_id?: string | null;
+            event?: { type?: string; delta?: { type?: string; text?: string; thinking?: string } };
+          };
+          const parent = sev.parent_tool_use_id ?? undefined;
+          const sub = parent ? { parentToolUseId: parent } : {};
+          const ev = sev.event;
           if (ev?.type === 'content_block_delta') {
             if (ev.delta?.type === 'text_delta' && ev.delta.text)
-              onEvent?.({ kind: 'text_delta', text: ev.delta.text });
+              onEvent?.({ kind: 'text_delta', text: ev.delta.text, ...sub });
             else if (ev.delta?.type === 'thinking_delta' && ev.delta.thinking)
-              onEvent?.({ kind: 'thinking_delta', text: ev.delta.thinking });
+              onEvent?.({ kind: 'thinking_delta', text: ev.delta.thinking, ...sub });
           }
         } else if (message.type === 'assistant') {
           // `parent_tool_use_id` is UNSET for the brain's own blocks, SET to the spawning Task id for a

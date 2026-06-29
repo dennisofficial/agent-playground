@@ -64,7 +64,7 @@ text retained for history: `ChatSurface` (duplex: `inbound$`, threaded) vs `Noti
 
 Separate `'atlas'` TypeORM connection (NOT the shared global `ENTITIES`), own migrations dir `migrations/` + history table `migrations`, against the same Postgres. Tables: `atlas_teams`, `atlas_projects`, `channels` (1:1 project), `threads`, `messages` (by `thread_id`), `stimuli` (chat/event subtype + `dedupe_key`, partial-unique dedup index), `jobs`, `sections` (gap-numbered ordinal), `phases` (explicit `step`+`status`), `decision_records`, `memory` (pgvector `vector(1536)` + HNSW). No board/team-task tables.
 
-**Job lifecycle:** `scoping` → `awaiting_approval` → `running` → `done` (terminal PR state = `done` WITH `pr_url`, via `DriverStoreService.setPrReady`); plus `cancelled`, `failed`. Sections: `pending` → `done`. Phases: `step` (e.g. `build`) + `status` (`pending`→`building`→`done`).
+**Job lifecycle:** `planning` → `awaiting_approval` → `running` → `done` (terminal PR state = `done` WITH `pr_url`, via `DriverStoreService.setPrReady`); plus `cancelled`, `failed`. Sections: `pending` → `done`. Phases: `step` (e.g. `build`) + `status` (`pending`→`building`→`done`).
 
 > Note: `vitest.global-setup.ts` was extended to run the atlas migrations into the test DB (W4 needed it because boot-time `resume()` queries `jobs`).
 

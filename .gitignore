@@ -10,6 +10,12 @@ dist
 # transcripts + per-engine config, never committed. See backend/src/harness/engines/engine-home.ts
 .agent-home/
 
+# Atlas durable HOST-side runtime state, kept INSIDE the repo so the working set is self-contained
+# (delete the checkout → state goes with it). Holds engine homes, repo clones/worktrees, and the
+# hydration sidecar. Repo-relative defaults; override via AGENT_HOME_ROOT / REPOS_ROOT /
+# ATLAS_HYDRATION_STATE for a persistent volume in deployment. See backend/src/app/state-root.ts
+.atlas-state/
+
 # dotenvx — encrypted .env.*.enc files ARE committed; keys / personal / plaintext-local are NOT
 .env
 .env.local

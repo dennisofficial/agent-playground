@@ -72,12 +72,11 @@ export interface RawThreadMessage {
   text: string;
   kind: string; // 'chat' | 'thinking' | 'tool' | 'card' | 'build_event'
   /**
-   * Message provenance, by AUDIENCE — present on new rows; absent on older rows (treat missing as default).
+   * Message provenance, by AUDIENCE (always set by the `/messages` mapping).
    * `'system_operator'` = system→operator only (e.g. an unresumable-thread error; Atlas didn't author it
    * and never sees it). `'system_shared'` = system→operator AND Atlas (e.g. Codex plan-review findings).
-   * Legacy rows may still carry `'harness'` (folded into `system_shared`).
    */
-  source?: 'operator' | 'atlas' | 'system_operator' | 'system_shared' | 'harness';
+  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared';
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -109,19 +108,6 @@ export interface ThreadMessage {
   queued?: boolean;
 }
 
-/**
- * Derive message provenance from the raw row. An explicit `source` wins (legacy `'harness'` folds into
- * `'system_shared'`); for older rows that lack the field, fall back by `isAtlas`: `'atlas'` for assistant
- * messages, `'operator'` for human ones.
- */
-function deriveSource(r: RawThreadMessage): ThreadMessage['source'] {
-  if (r.source === 'system_operator') return 'system_operator';
-  if (r.source === 'system_shared' || r.source === 'harness') return 'system_shared';
-  if (r.source === 'atlas' || r.source === 'operator') return r.source;
-  // Missing field → infer from isAtlas (backwards-compat with older rows).
-  return r.isAtlas ? 'atlas' : 'operator';
-}
-
 export function normalizeMessage(r: RawThreadMessage): ThreadMessage {
   return {
     ts: r.ts ?? r.id ?? `srv-${r.postedAt}`,
@@ -130,7 +116,7 @@ export function normalizeMessage(r: RawThreadMessage): ThreadMessage {
     authorName: r.author,
     text: r.text ?? '',
     kind: r.kind,
-    source: deriveSource(r),
+    source: r.source,
     card: r.card ?? undefined,
     meta: r.meta ?? undefined,
     postedAt: r.postedAt,
@@ -222,10 +208,10 @@ export interface RepoView {
   gitUrl: string;
   defaultBranch: string;
   accessOk: boolean;
-  /** When access was last validated (ISO), or null if never checked. Absent on older cache shapes. */
-  accessCheckedAt?: string | null;
-  /** Threads living on this repo — gates whether it can be disconnected. Absent → treat as 0. */
-  threadCount?: number;
+  /** When access was last validated (ISO), or null if never checked. */
+  accessCheckedAt: string | null;
+  /** Threads living on this repo — gates whether it can be disconnected. */
+  threadCount: number;
 }
 
 export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {

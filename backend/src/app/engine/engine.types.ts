@@ -33,12 +33,14 @@ export type EngineEvent =
   // `parentToolUseId` (authoritative blocks only): the SDK message's `parent_tool_use_id`. UNSET for the
   // main agent (the brain); SET to the spawning `Task` tool_use id for blocks produced by a SUBAGENT. The
   // caller uses it to peel subagent activity out of the main transcript into its own sub-page.
-  /** A live assistant-text token chunk (not persisted; reconciled by the final `text` block). */
-  | { kind: 'text_delta'; text: string }
+  /** A live assistant-text token chunk (not persisted; reconciled by the final `text` block).
+   *  `parentToolUseId` is SET when the chunk belongs to a SUBAGENT, so live rendering nests it the same
+   *  way the authoritative `text` block does. */
+  | { kind: 'text_delta'; text: string; parentToolUseId?: string }
   /** A complete thinking block (authoritative — persisted). */
   | { kind: 'thinking'; text: string; parentToolUseId?: string }
-  /** A live thinking token chunk (not persisted). */
-  | { kind: 'thinking_delta'; text: string }
+  /** A live thinking token chunk (not persisted). `parentToolUseId` SET for subagent chunks. */
+  | { kind: 'thinking_delta'; text: string; parentToolUseId?: string }
   /** A tool call with its input (authoritative). Pairs with `tool_result` by `id`. */
   | {
       kind: 'tool_use';

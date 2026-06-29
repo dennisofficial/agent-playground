@@ -79,4 +79,13 @@ export class StepEntity extends TimestampedEntity {
    */
   @Column({ type: 'int', nullable: true })
   batch_ordinal!: number | null;
+
+  /**
+   * Set on the batch ANCHOR step the instant its batch commits, BEFORE the per-step `status='done'`
+   * writes — the atomic-resume marker. Non-null ⇒ the batch already committed, so a resume fast-forwards
+   * (marks steps done) instead of re-running against an already-committed tree. Sentinel `(nothing)` =
+   * "committed, empty diff". Null on non-anchor steps and before commit.
+   */
+  @Column({ type: 'text', nullable: true })
+  commit_sha!: string | null;
 }

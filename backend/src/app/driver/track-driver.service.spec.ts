@@ -119,6 +119,10 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
         if (p) p.batchOrdinal = batchOrdinal;
       }
     }),
+    setStepCommit: vi.fn(async (id: string, commitSha: string) => {
+      const p = state.steps.find((x) => x.id === id);
+      if (p) p.commitSha = commitSha;
+    }),
     route: vi.fn(async () => state.route),
   } as unknown as DriverStoreService;
   return { store, state };
@@ -343,7 +347,15 @@ function track(id: string, ordinal: number, brief: string, status: TrackStatus =
 }
 
 /** Assemble a driver over a given store-state + collaborators; returns everything the tests assert on. */
-function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'proceed' | 'ask'; parkAnswer?: Promise<ParkResolution>; env?: Record<string, string>; turn?: TurnRunnerService } = {}) {
+function assemble(
+  state: StoreState,
+  opts: {
+    classifierVerdict?: 'covered' | 'proceed' | 'ask';
+    parkAnswer?: Promise<ParkResolution>;
+    env?: Record<string, string>;
+    turn?: TurnRunnerService;
+  } = {},
+) {
   const { store } = makeStore(state);
   const repos = makeRepoResolver();
   const { git, pushed, commits } = makeGit();
@@ -382,8 +394,14 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     autofix.autofix,
     surface,
     env,
-    // local SANDBOX_PROVIDER: a no-op attach (host-local execution; no containerId).
-    { attach: async ({ sandbox }) => sandbox, teardown: async () => undefined, teardownByIdentity: async () => undefined, contextDirHost: () => '/ctx' },
+    // SANDBOX_PROVIDER: host-local no-op attach (the host never runs commands in the sandbox).
+    {
+      attach: async ({ sandbox }: { sandbox: FeatureSandbox }) => sandbox,
+      teardown: async () => undefined,
+      teardownByIdentity: async () => undefined,
+      contextDirHost: () => '/ctx',
+      brainTranscriptProjectsDir: () => null,
+    },
     // CredentialResolver: env-fallback shape (no tenant rows) — api_key auth, no token.
     {
       anthropicKey: async () => undefined,
@@ -391,9 +409,19 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
-    // ThreadLifecycleService: no pre-provisioned sandbox → falls back to legacy per-feature path.
+    // ThreadLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
+    // (the brain provisions every thread before any build runs). Its branch is the source of truth.
     {
-      ensureContainer: async () => null,
+      ensureContainer: async () => ({
+        sandbox: {
+          repoId: 'proj',
+          branch: 'atlas/feature-job-abcd',
+          worktreePath: '/wt/atlas/feature-job-abcd',
+          gitUrl: REPO.gitUrl,
+          token: 'ghtok',
+        },
+        wasReset: false,
+      }),
       findSandbox: async () => null,
       recordPr: async () => undefined,
     } as unknown as import('./thread-lifecycle.service').ThreadLifecycleService,
@@ -402,13 +430,6 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     new BuildShipService(autofix.autofix, git, pr, store),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     { appendMarker: async () => undefined, drainAndAdvance: async () => ({ markers: [], stateChanged: false }) } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
-    // WorktreeProvisioner: pass-through (host-local) — returns the sandbox unchanged, like the no-op attach.
-    {
-      provisionAndAttach: async ({ sandbox }: { sandbox: import('../git').FeatureSandbox }) => ({
-        sandbox,
-        hydrationSig: 'test-sig',
-      }),
-    } as unknown as import('./worktree-provisioner.service').WorktreeProvisioner,
     turnHarness,
     blockSink,
     // ModuleRef: the lazy brain lookup → a stub promoter (the ledger turn is exercised in the brain specs).
@@ -433,11 +454,12 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // Both tracks planned (one plan turn each) + each ran its 2 steps (execute turns).
+    // Both tracks planned (one plan turn each). Orchestrate mode (default): each track runs as ONE
+    // orchestrator execute turn that fans its steps out to writer subagents → 2 execute turns, not 4.
     const planTurns = h.calls.filter((c) => c.mode === 'plan');
     const execTurns = h.calls.filter((c) => c.mode === 'execute');
     expect(planTurns).toHaveLength(2);
-    expect(execTurns).toHaveLength(4); // 2 tracks × 2 steps
+    expect(execTurns).toHaveLength(2); // 2 tracks × 1 orchestrator session
 
     // Per-track auto-fix ran once per track; PR-tail ran exactly once.
     expect(h.autofix.autofixTrack).toHaveBeenCalledTimes(2);
@@ -537,7 +559,7 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
   it('packs authored steps into batches: 5 steps → 2 sessions, one commit per batch, NO JIT plan turn', async () => {
     const state = authoredState(5);
-    const h = assemble(state);
+    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } }); // legacy LLM-batcher path
     (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2], [3, 4]]);
 
     await h.driver.dispatch(state.job);
@@ -559,7 +581,7 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
   it('guardrail: an INVALID partition falls back to one batch per step', async () => {
     const state = authoredState(3);
-    const h = assemble(state);
+    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } }); // legacy LLM-batcher path
     (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 2]]); // not covering [0,1,2]
 
     await h.driver.dispatch(state.job);
@@ -571,7 +593,7 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
   it('guardrail: caps a too-large group at MAX_PHASES_PER_BATCH', async () => {
     const state = authoredState(5);
-    const h = assemble(state, { env: { MAX_PHASES_PER_BATCH: '2' } });
+    const h = assemble(state, { env: { MAX_PHASES_PER_BATCH: '2', ORCHESTRATE_TRACKS: 'off' } });
     (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2, 3, 4]]);
 
     await h.driver.dispatch(state.job);
@@ -596,7 +618,7 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
-  it('every step ran in the SAME feature branch (tracks share one sandbox)', async () => {
+  it('every step ran in the SAME feature branch (tracks share one thread sandbox)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -608,11 +630,12 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    // The feature branch was set once and the worktree cut once per drive (idempotent reuse otherwise).
+    // All tracks build on the thread's single durable sandbox, so the job adopts that one branch and
+    // never cuts a per-feature worktree of its own.
     expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
-    const createCalls = (h.git.createFeatureSandbox as ReturnType<typeof vi.fn>).mock.calls;
-    const branches = new Set(createCalls.map((c) => c[1]));
-    expect(branches).toEqual(new Set(['atlas/feature-job-abcd']));
+    expect(h.git.createFeatureSandbox).not.toHaveBeenCalled();
+    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(1);
+    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
   it('an uncovered always-ask decision PARKS the track and resumes on the human answer', async () => {
@@ -659,7 +682,8 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
     };
-    const h = assemble(state);
+    // Legacy per-step path: asserts the interleaved building→done cursor (orchestrate runs one batch/track).
+    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } });
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
@@ -690,7 +714,8 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
-    const h = assemble(state);
+    // Legacy per-step path: the pre-locked Backend steps were batched 1-per-ordinal; Frontend runs 2 steps.
+    const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } });
 
     await h.driver.resume();
     await flushUntil(() => state.job.status === 'done');
@@ -703,6 +728,31 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     expect(state.tracks[1].handoffIn).toBe('handoff from Backend');
     // Still ONE PR.
     expect(h.opened).toHaveLength(1);
+    expect(state.job.status).toBe('done');
+  });
+
+  it('orchestrate resume: a batch whose anchor already has a commit_sha FAST-FORWARDS (no re-run) (issue #6)', async () => {
+    // Crash AFTER the batch committed (commit_sha stamped on the anchor) but BEFORE the step rows flipped
+    // to done. Resume must NOT re-run the orchestrator against the already-committed tree.
+    const state: StoreState = {
+      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
+      record: makeRecord(),
+      tracks: [track('sec-be', 10, 'Backend', 'executing')],
+      steps: [
+        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'build', status: 'building', sessionId: 's', batchOrdinal: 1, commitSha: 'abc123' },
+        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'build', status: 'building', sessionId: 's', batchOrdinal: 1, commitSha: null },
+      ],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state); // orchestrate default
+
+    await h.driver.resume();
+    await flushUntil(() => state.job.status === 'done');
+
+    // The committed batch fast-forwarded: NO execute turn, NO new commit, both steps marked done.
+    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
+    expect(h.commits.filter((m) => m.startsWith('Backend —'))).toHaveLength(0);
+    expect(state.steps.every((p) => p.status === 'done')).toBe(true);
     expect(state.job.status).toBe('done');
   });
 
@@ -816,34 +866,6 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
     expect(state.job.status).toBe('failed');
     expect(h.posts.some((p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'))).toBe(true);
-  });
-
-  it('fails the step when VERIFY_CMD exits non-zero, before any commit (issue #4)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      tracks: [track('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-    };
-    const h = assemble(state, { env: { VERIFY_CMD: 'exit 1' } });
-    // The verify command runs in the worktree cwd — point it at a real existing dir so exec can spawn.
-    (h.git.createFeatureSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
-      repoId: 'proj',
-      branch: 'atlas/feature-job-abcd',
-      worktreePath: tmpdir(),
-      gitUrl: REPO.gitUrl,
-      token: 'ghtok',
-    });
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'failed');
-
-    expect(state.job.status).toBe('failed');
-    expect(h.posts.some((p) => p.includes('Verification failed'))).toBe(true);
-    // The step failed at verification → nothing was committed for it.
-    expect(h.commits).toHaveLength(0);
-    expect(h.opened).toHaveLength(0);
   });
 
   it('relays off-spec DEVIATION lines a step flags in its report (issue #7)', async () => {

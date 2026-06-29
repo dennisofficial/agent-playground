@@ -64,64 +64,130 @@ export function KindBadge({ kind, className }: { kind: ThreadKind; className?: s
 }
 
 /**
- * Status "pie" — a ring whose fill encodes the thread's stage (ported from the design's `pie()`):
- * raw (scoping/triaging) = dashed ring, open (approval/paused/failed) = solid ring, progress
- * (running) = ring + half arc, done = filled accent disc. `status` undefined → a neutral hollow ring
- * (the cross-org inbox carries no status for most rows yet — see `inbox.ts`).
+ * Status "pie" — a 14px glyph whose SHAPE encodes the thread's stage and whose COLOR (from
+ * {@link STATUS_META}) names the specific status. Every status is visually distinct:
+ *   forming  (planning / triaging)  → dashed ring          · triaging breathes
+ *   reviewing(plan_review)          → faint dashed base + a solid arc scanning around it
+ *   working  (running)              → spinning arc          · the autonomous "build is churning" spinner
+ *   waiting  (awaiting_approval)    → ring + center dot      · bullseye = your move
+ *   paused                          → ring + pause bars
+ *   failed                          → ring + ✕
+ *   done                            → filled disc + ✓
+ *
+ * `plan_review` stays in the cool, pre-approval family (blue, like Planning) — it's the
+ * you're-in-the-loop phase (Codex reviewing a plan you haven't approved yet), NOT the autonomous
+ * post-approval build. Its scanning arc reads as "reviewing" without borrowing `running`'s orange
+ * spinner. `status` undefined → a neutral hollow ring (the cross-org inbox carries no status for
+ * most rows yet — see `inbox.ts`).
  */
-const STATUS_STAGE: Record<ThreadStatus, 'raw' | 'open' | 'progress' | 'done'> = {
-  scoping: 'raw',
-  triaging: 'raw',
-  plan_review: 'progress',
-  awaiting_approval: 'open',
-  paused: 'open',
-  failed: 'open',
-  running: 'progress',
+const STATUS_SHAPE: Record<ThreadStatus, 'forming' | 'reviewing' | 'working' | 'waiting' | 'paused' | 'failed' | 'done'> = {
+  planning: 'forming',
+  triaging: 'forming',
+  plan_review: 'reviewing',
+  running: 'working',
+  awaiting_approval: 'waiting',
+  paused: 'paused',
+  failed: 'failed',
   done: 'done',
 };
 
 export function StatusPie({ status, size = 14 }: { status?: ThreadStatus; size?: number }) {
-  const stage = status ? STATUS_STAGE[status] : 'open';
-  const r = 8;
+  const shape = status ? STATUS_SHAPE[status] : null;
+  const color = status ? STATUS_META[status].color : 'var(--border-2)';
+  const r = 7.5;
   const circ = 2 * Math.PI * r;
-  const ring = (color: string, dashed = false) => (
-    <circle
-      cx={10}
-      cy={10}
-      r={r}
-      fill="none"
-      stroke={color}
-      strokeWidth={2.4}
-      strokeDasharray={dashed ? '2.2 3' : undefined}
-      strokeLinecap={dashed ? 'round' : undefined}
-    />
+  const ring = (stroke: string, extra?: React.SVGProps<SVGCircleElement>) => (
+    <circle cx={10} cy={10} r={r} fill="none" stroke={stroke} strokeWidth={2} {...extra} />
   );
+
   let kids: React.ReactNode;
-  if (stage === 'raw') {
-    kids = ring('var(--border-2)', true);
-  } else if (stage === 'progress') {
+  if (shape === 'forming') {
+    // Dashed ring — pre-approval "forming". Planning is static, waiting on you to talk; triaging
+    // breathes (the model is actively triaging an untrusted event).
+    kids = ring(color, {
+      strokeDasharray: '2 2.8',
+      strokeLinecap: 'round',
+      className: status === 'triaging' ? 'status-breathe' : undefined,
+    });
+  } else if (shape === 'reviewing') {
+    // Faint dashed base (still "forming") + a solid arc scanning around it — Codex reviewing the plan.
     kids = (
       <>
-        {ring('var(--border-2)')}
-        <circle
-          cx={10}
-          cy={10}
-          r={r}
-          fill="none"
-          stroke="var(--text)"
-          strokeWidth={2.4}
-          strokeDasharray={circ}
-          strokeDashoffset={circ * 0.5}
+        {ring(color, { strokeDasharray: '2 2.8', strokeLinecap: 'round', opacity: 0.4 })}
+        <g className="status-spin">
+          <circle
+            cx={10}
+            cy={10}
+            r={r}
+            fill="none"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeDasharray={`${circ * 0.19} ${circ}`}
+          />
+        </g>
+      </>
+    );
+  } else if (shape === 'working') {
+    // Faint track + a rotating accent arc — a true spinner for "AI is working".
+    kids = (
+      <>
+        {ring('var(--border-2)', { opacity: 0.5 })}
+        <g className="status-spin">
+          <circle
+            cx={10}
+            cy={10}
+            r={r}
+            fill="none"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeDasharray={`${circ * 0.3} ${circ}`}
+          />
+        </g>
+      </>
+    );
+  } else if (shape === 'waiting') {
+    // Bullseye — solid ring with a filled center: parked, waiting on you.
+    kids = (
+      <>
+        {ring(color)}
+        <circle cx={10} cy={10} r={2.7} fill={color} />
+      </>
+    );
+  } else if (shape === 'paused') {
+    kids = (
+      <>
+        {ring(color)}
+        <rect x={8.1} y={7} width={1.4} height={6} rx={0.6} fill={color} />
+        <rect x={10.5} y={7} width={1.4} height={6} rx={0.6} fill={color} />
+      </>
+    );
+  } else if (shape === 'failed') {
+    kids = (
+      <>
+        {ring(color)}
+        <path
+          d="M7.6 7.6 L12.4 12.4 M12.4 7.6 L7.6 12.4"
+          stroke={color}
+          strokeWidth={1.8}
           strokeLinecap="round"
-          transform="rotate(-90 10 10)"
         />
       </>
     );
-  } else if (stage === 'done') {
+  } else if (shape === 'done') {
+    // Filled disc + a checkmark knocked out in the panel color.
     kids = (
       <>
-        {ring('var(--accent)')}
-        <circle cx={10} cy={10} r={5.4} fill="var(--accent)" />
+        <circle cx={10} cy={10} r={r + 1} fill={color} />
+        <path
+          d="M6.7 10.3 L9 12.5 L13.3 7.7"
+          fill="none"
+          stroke="var(--panel)"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </>
     );
   } else {

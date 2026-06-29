@@ -20,12 +20,12 @@ export interface SandboxMount {
 export interface SandboxAttachInput {
   /** The per-feature worktree the driver already cut (LocalGitService.createFeatureSandbox). */
   sandbox: FeatureSandbox;
-  /** The tenant (Slack workspace / org_id) — scopes the container name, network, and labels. */
+  /** The tenant org_id — scopes the gate sandbox's container name, network, and labels. */
   orgId: string;
   /**
-   * The owning thread (R2 per-thread sandboxes). When set, the container is keyed by thread so it is
-   * STABLE across the thread's branch and across re-attach. Omit for the legacy per-feature path and
-   * gate sandboxes, which stay keyed by branch (one container per branch — unchanged behavior).
+   * The owning thread. When set (every product sandbox), the container is keyed by thread alone
+   * (`atlas-sbx-thread-<id>`) so it is STABLE across the thread's branch and across re-attach. Omitted
+   * only by the acceptance gate, whose sandbox stays keyed by org+repo+branch (one container per branch).
    */
   threadId?: string;
   /**
@@ -60,6 +60,13 @@ export interface SandboxProvider {
    * recreate. The brain authors plan/track specs here and reads them back via this path.
    */
   contextDirHost(orgId: string, threadId: string): string;
+  /**
+   * The HOST path of a thread BRAIN session's Claude transcript root (`<brainHome>/claude/projects`),
+   * located by `threadId`. Survives container reaping (host side of the agent-home bind), so crash
+   * recovery can read a turn that completed in the container but was never persisted to `messages`.
+   * Null when nothing is on disk for the thread yet.
+   */
+  brainTranscriptProjectsDir(threadId: string): string | null;
   /**
    * Reclaim a container by its DETERMINISTIC identity (the same `orgId · repo · thread/branch` key
    * `attach` uses to name it) even when its concrete id isn't known. This is the terminal-cleanup

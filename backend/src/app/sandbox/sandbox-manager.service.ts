@@ -2,10 +2,10 @@ import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chownSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { chownSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
+import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { FeatureSandbox } from '../git';
 import { engineBundlePath } from './bundle-engine';
 import {
@@ -206,7 +206,7 @@ export class SandboxManager implements SandboxProvider {
 
   /**
    * Reclaim a thread's container by its DETERMINISTIC NAME — the terminal-cleanup counterpart to
-   * {@link attach}, which resolves the SAME name (`atlas-sbx-<org>-<project>-thread-<id>`) regardless of
+   * {@link attach}, which resolves the SAME name (`atlas-sbx-thread-<id>`) regardless of
    * whether a `container_id` is currently known. This matters because `ThreadLifecycleService.reconcileOnBoot`
    * nulls a row's `container_id` on every restart while the real container keeps running; a close/delete
    * that happened before the thread's next turn would skip the id-gated {@link teardown} and LEAK the
@@ -312,10 +312,44 @@ export class SandboxManager implements SandboxProvider {
   }
 
   private agentHomeRootHost(): string {
-    return (
-      this.env.get('AGENT_HOME_ROOT') ??
-      join(homedir(), '.agent-playground', 'atlas-agent-home')
-    );
+    return atlasAgentHomeBase(this.env.get('AGENT_HOME_ROOT'));
+  }
+
+  /**
+   * The HOST path of a thread BRAIN session's Claude transcript root — `<brainHome>/claude/projects`, under
+   * which the SDK writes `<cwd-slug>/<sessionId>.jsonl` (one file per session). This dir survives container
+   * reaping (it is the host side of the {@link CONTAINER_AGENT_HOME} bind), so the backend can read a
+   * completed-but-unpersisted turn after a restart (crash recovery).
+   *
+   * Located by threadId alone: the container dir is `atlas-sbx-thread-<threadId>`, so we GLOB the sandbox
+   * dir whose `-thread-<…>` suffix is a prefix of `threadId` (tolerates the 40-char `part()` cap truncating
+   * the tail), then the single `brain_*` home under it (verified: at most one per sandbox). Null when nothing
+   * is on disk yet.
+   */
+  brainTranscriptProjectsDir(threadId: string): string | null {
+    const sandboxesRoot = join(this.agentHomeRootHost(), 'sandboxes');
+    let dirs: string[];
+    try {
+      dirs = readdirSync(sandboxesRoot);
+    } catch {
+      return null; // no sandboxes provisioned yet
+    }
+    const sandboxDir = dirs.find((d) => {
+      const i = d.lastIndexOf('-thread-');
+      if (i < 0) return false; // gate sandbox keyed by branch — not a thread sandbox
+      const suffix = d.slice(i + '-thread-'.length);
+      return suffix.length > 0 && threadId.startsWith(suffix);
+    });
+    if (!sandboxDir) return null;
+    const sandboxHome = join(sandboxesRoot, sandboxDir);
+    let entries: string[];
+    try {
+      entries = readdirSync(sandboxHome);
+    } catch {
+      return null;
+    }
+    const brainHome = entries.find((d) => d.startsWith('brain_'));
+    return brainHome ? join(sandboxHome, brainHome, 'claude', 'projects') : null;
   }
 
   /**
@@ -323,8 +357,8 @@ export class SandboxManager implements SandboxProvider {
    * container at {@link CONTAINER_CONTEXT}. Keyed by `threadId` so it is STABLE across the container's
    * lifecycle (recreate, idle-reap, cold re-attach) and never deleted by container teardown (only by a
    * deep thread delete). The brain authors plan/track specs here and reads them back via this path;
-   * the build sessions read it as shared context. Sandboxes WITHOUT a thread (legacy per-feature + gate
-   * runs) fall back to a name-keyed dir — never resolved by the brain, just keeps the mount uniform.
+   * the build sessions read it as shared context. Sandboxes WITHOUT a thread (gate runs) fall back to a
+   * name-keyed dir — never resolved by the brain, just keeps the mount uniform.
    */
   contextDirHost(orgId: string, threadId?: string, name?: string): string {
     const root = join(this.agentHomeRootHost(), 'contexts');
@@ -335,7 +369,7 @@ export class SandboxManager implements SandboxProvider {
   /**
    * Build the bind strings for the per-repo cache mounts AND pre-create their host dirs + in-worktree
    * mountpoints (chowned to the host uid so docker doesn't create them root-owned). per-thread caches get
-   * their own host dir keyed by thread (or branch, for the legacy threadId-less path); shared-ro caches
+   * their own host dir keyed by thread (or branch, for the threadId-less gate path); shared-ro caches
    * share one read-only host dir per repo. The bind target is /workspace/<path>.
    */
   private cacheMountBinds(input: SandboxAttachInput): string[] {
@@ -449,14 +483,20 @@ export class SandboxManager implements SandboxProvider {
   }
 
   /**
-   * Container name = `atlas-sbx-<team>-<project>-<key>`. For R2 threads the key is `thread-<id>` so the
-   * container is STABLE across the thread's branch + re-attach (1 thread = 1 container). For the legacy
-   * per-feature path + gate sandboxes (no `threadId`), the key is the branch — one container per branch,
-   * unchanged.
+   * Thread sandboxes: `atlas-sbx-thread-<threadId>`. The thread uuid is the globally-unique PK, so it alone
+   * IS the stable identity (1 thread = 1 container, across branch + re-attach) — org and repo add no
+   * uniqueness and only bloated the name, so they're dropped. The `-thread-` token is kept (not just for
+   * readability): crash recovery ({@link brainTranscriptProjectsDir}) uses it both to distinguish thread
+   * sandboxes from the gate path and to extract the threadId, and the FULL uuid stays so its
+   * `threadId.startsWith(suffix)` prefix-match holds.
+   *
+   * The acceptance gate (synthetic `orgId:'gate'`, no thread) has no `threadId`: `atlas-sbx-<org>-<repo>-
+   * <branch>` (one container per branch). Branch names aren't globally unique, so org + repo + branch
+   * together are what make those names unique.
    */
   private containerName(orgId: string, repoId: string, branch: string, threadId?: string): string {
     const part = (s: string) => s.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 40);
-    const key = threadId ? `thread-${part(threadId)}` : part(branch);
-    return `atlas-sbx-${part(orgId)}-${part(repoId)}-${key}`.slice(0, 120);
+    if (threadId) return `atlas-sbx-thread-${part(threadId)}`;
+    return `atlas-sbx-${part(orgId)}-${part(repoId)}-${part(branch)}`.slice(0, 120);
   }
 }

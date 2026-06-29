@@ -28,6 +28,8 @@ export interface PhaseAnchor {
   batchOrdinal: number | null;
   /** Every step id packed into this batch (one transcript serves them all). */
   batchStepIds: string[];
+  /** The instruction the engine received — the build turn's "first message" (rendered like a Task prompt). */
+  prompt?: string;
   /** `message.ts` of the `build_anchor` row (its chronological position in the conversation). */
   ts: string;
 }
@@ -59,6 +61,7 @@ export function indexPhaseBlocks(messages: ThreadMessage[]): PhaseIndex {
         label: typeof m.meta?.label === 'string' ? (m.meta.label as string) : m.text || 'Build step',
         batchOrdinal: typeof m.meta?.batchOrdinal === 'number' ? (m.meta.batchOrdinal as number) : null,
         batchStepIds: Array.isArray(m.meta?.batchStepIds) ? (m.meta.batchStepIds as string[]) : [phaseId],
+        prompt: typeof m.meta?.prompt === 'string' ? (m.meta.prompt as string) : undefined,
         ts: m.ts,
       });
       continue;

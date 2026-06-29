@@ -40,7 +40,8 @@ export const DECISION_CLASS_IDS: readonly DecisionClass[] = DECISION_CLASS_META.
 /**
  * Allocate the next stable decision id for a thread's working set: `d<max+1>` over the existing
  * `d<n>` ids (`d1` when none). Max-based so ids are NEVER reused after a delete (a deleted id must
- * not resurface and re-point a stale reference). Tolerates entries with no/legacy id.
+ * not resurface and re-point a stale reference). Tolerates entries with no id (explicit-override
+ * decisions are not id-addressed).
  */
 export function nextDecisionId(existing: Pick<Decision, 'id'>[]): string {
   const max = existing.reduce((m, d) => {

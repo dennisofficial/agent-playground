@@ -7,6 +7,7 @@
  *
  * Zero imports from `harness/**` / the v1 surface — pure strings + this subfolder's types.
  */
+import { fence } from '../prompt-fence';
 import type {
   AutoFixContext,
   FindingSeverity,
@@ -49,6 +50,24 @@ export const DEFAULT_LENSES: ReviewLens[] = [
   },
 ];
 
+/** One review agent as the `/pipeline` read-model surfaces it: a stable id + a human label. */
+export interface ReviewAgentInfo {
+  id: string;
+  label: string;
+}
+
+/**
+ * The review agents SELECTED TO RUN over a track's diff — the list the navigator renders. Seam-only
+ * today: every track gets the fixed `DEFAULT_LENSES` set (the auto-fix fan-out runs exactly these), so
+ * the rendered list matches what actually executes. The `track` arg is the future hook point for
+ * scope-/condition-based selection (review agents chosen like skills, gated per track); it is
+ * intentionally unused now. This is the SELECTED RUN LIST, not a public catalog — the lens definitions,
+ * focuses, and any future gating metadata stay private to the backend.
+ */
+export function reviewAgentsForTrack(_track?: { type?: string }): ReviewAgentInfo[] {
+  return DEFAULT_LENSES.map((l) => ({ id: l.id, label: l.label }));
+}
+
 /** Severity rank for thresholds + sort (high first). */
 const SEVERITY_RANK: Record<FindingSeverity, number> = { low: 0, medium: 1, high: 2 };
 
@@ -83,7 +102,7 @@ export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): string
   return [
     `You are a focused code reviewer. LENS: ${lens.label}.`,
     `\nFocus of THIS pass: ${lens.focus}`,
-    `\nWhat the change was meant to do (intent):\n${ctx.intent}`,
+    `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
     files,
     diffBlock,
     'This is a READ-ONLY review turn — do not modify any files. You may read files for context.',
@@ -104,8 +123,8 @@ export function buildFixPrompt(findings: ReviewFinding[], ctx: AutoFixContext): 
     'changes that resolve each finding below. Do NOT do unrelated refactors, do NOT touch files',
     'outside this worktree, and do NOT change behavior beyond what the finding calls for. If a finding',
     'is wrong or unsafe to apply, SKIP it and note why — never invent work.',
-    `\nWhat the change was meant to do (intent):\n${ctx.intent}`,
-    `\nFindings to address:\n${list}`,
+    `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
+    `\nFindings to address:\n${fence('findings', list)}`,
     '\nWhen done, end with a short summary of exactly which findings you fixed and which you skipped',
     '(and why). Do not commit — the harness commits your changes.',
   ].join('\n');

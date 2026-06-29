@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { ArrowRight, Info, PanelRight } from 'lucide-react';
+import { ArrowRight, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useContextFile, useSay } from '@/lib/api/thread-queries';
@@ -142,14 +142,13 @@ export function PhaseView({
     subtitle = 'track plan';
     body = <SectionPlanDoc />;
   } else if (selectedNode.startsWith('rev:')) {
-    const lens = selectedNode.split(':')[2] ?? 'review';
-    title = lens;
-    subtitle = 'review lens · over the track diff';
-    body = <ReviewView lens={lens} />;
-  } else if (selectedNode.startsWith('autofix:')) {
-    title = 'Auto-fix';
-    subtitle = '3-lens self-review · over the track diff';
-    body = <AutoFixView />;
+    const [, trackId, lensId = 'review'] = selectedNode.split(':');
+    const revTrack = job?.tracks.find((s) => s.id === trackId) ?? null;
+    const agent = revTrack?.reviewAgents?.find((a) => a.id === lensId) ?? null;
+    const lensLabel = agent?.label ?? lensId;
+    title = lensLabel;
+    subtitle = 'review agent · over the track diff';
+    body = <ReviewView lens={lensLabel} />;
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
     subtitle = 'Claude · execute';
@@ -205,6 +204,10 @@ function BuildView({
   const live = useLiveTurn(threadRef.threadId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
   const active = Boolean(live?.active);
 
+  // The build instruction the engine received — the turn's "first message". Persisted on the `build_anchor`
+  // row at batch start, so it's available throughout the build (mirrors a subagent run's Task prompt).
+  const prompt = anchorStepId ? index.anchorByPhase.get(anchorStepId)?.prompt : undefined;
+
   let blocks: SubBlock[];
   if (anchorStepId) {
     const durable = durablePhaseBlocks(index, anchorStepId);
@@ -236,10 +239,14 @@ function BuildView({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {tab === 'transcript' ? (
           <div className="mx-auto max-w-[820px]">
+            {/* The build instruction that kicked off the turn — its "first message", like a subagent's prompt. */}
+            {prompt ? <UserBubble text={prompt} /> : null}
             {blocks.length === 0 ? (
-              <p className="text-[12.5px] text-faint">
-                {active ? 'Building…' : 'No build activity yet — this step hasn’t run.'}
-              </p>
+              prompt ? null : (
+                <p className="text-[12.5px] text-faint">
+                  {active ? 'Building…' : 'No build activity yet — this step hasn’t run.'}
+                </p>
+              )
             ) : (
               <SubagentTranscript blocks={blocks} active={active} />
             )}
@@ -564,30 +571,6 @@ function SectionPlanDoc() {
   );
 }
 
-function AutoFixView() {
-  const lenses = [
-    { name: 'best-practices', note: 'A self-review lens over the track diff.' },
-    { name: 'correctness', note: 'A self-review lens over the track diff.' },
-    { name: 'consistency', note: 'A self-review lens over the track diff.' },
-  ];
-  return (
-    <div className="h-full overflow-y-auto px-6 py-5">
-      <div className="flex max-w-[760px] flex-col gap-3">
-        <Banner text="The 3-lens auto-fix runs over the track diff, then commits the fixes. Per-lens results aren't exposed by the web surface yet." />
-        {lenses.map((l) => (
-          <div key={l.name} className="rounded-md border border-border bg-surface px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--faint)' }} />
-              <span className="text-[12.5px] font-semibold text-text">{l.name}</span>
-            </div>
-            <p className="mt-1.5 font-mono text-[10.5px] text-dim">{l.note}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function DiffView() {
   return (
     <div className="h-full overflow-y-auto px-8 py-7">
@@ -715,7 +698,7 @@ type NodeResolution = 'loading' | 'found' | 'not_found';
 const ID_FREE_NODES = new Set(['plan', 'decision', 'diff']);
 
 /**
- * Classify a `?node=` token against the live job. Job-derived tokens (`secplan:`/`rev:`/`autofix:` carry a
+ * Classify a `?node=` token against the live job. Job-derived tokens (`secplan:`/`rev:` carry a
  * track id; a bare token is a track or step id) become `not_found` when their id is gone — otherwise a
  * stale URL would render a misleading generic placeholder or a silently-empty build view. `spec:`/`artifact:`
  * self-handle a missing file inside `FileView`, so they stay `found` here.
@@ -730,9 +713,15 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (error || !job) return 'not_found';
 
   if (node.startsWith('secplan:')) return hasSection(job, node.slice('secplan:'.length)) ? 'found' : 'not_found';
-  if (node.startsWith('rev:')) return hasSection(job, node.split(':')[1] ?? '') ? 'found' : 'not_found';
-  if (node.startsWith('autofix:')) return hasSection(job, node.slice('autofix:'.length)) ? 'found' : 'not_found';
-
+  // `rev:<trackId>:<agentId>` — found only when the track still exists AND still selects that review
+  // agent. With the agent list now dynamic, a stale agent id must not render a plausible-but-wrong page.
+  if (node.startsWith('rev:')) {
+    const [, trackId, lensId] = node.split(':');
+    const revTrack = trackId ? job.tracks.find((s) => s.id === trackId) : undefined;
+    return revTrack && lensId && (revTrack.reviewAgents ?? []).some((a) => a.id === lensId)
+      ? 'found'
+      : 'not_found';
+  }
   // Bare token — a track or a step leaf.
   const matches = job.tracks.some((s) => s.id === node || s.steps.some((p) => p.id === node));
   return matches ? 'found' : 'not_found';
@@ -795,15 +784,6 @@ function Placeholder({ title, body }: { title: string; body: string }) {
     <div className="flex h-full flex-col items-center justify-center text-center">
       <p className="text-[14px] font-semibold text-text">{title}</p>
       <p className="mt-1.5 max-w-md text-[12.5px] leading-relaxed text-dim">{body}</p>
-    </div>
-  );
-}
-
-function Banner({ text }: { text: string }) {
-  return (
-    <div className="flex items-start gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[11px] text-dim">
-      <Info size={13} className="mt-px shrink-0 text-faint" />
-      <span>{text}</span>
     </div>
   );
 }

@@ -3,9 +3,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { repoStateDir } from '../state-root';
 import { gitAuthEnv } from './git-auth';
 import { readForbiddenPaths } from './hydration-sidecar';
 
@@ -68,12 +68,9 @@ export class LocalGitService {
 
   constructor(private readonly env: EnvService) {}
 
-  /** The root every project clones into — REPOS_ROOT, else v1's REPOS_ROOT, else the default. */
+  /** The root every project clones into — `REPOS_ROOT`, else the repo-relative `.atlas-state/repos`. */
   reposRoot(): string {
-    return (
-      this.env.get('REPOS_ROOT') ??
-      join(homedir(), '.agent-playground', 'atlas-repos')
-    );
+    return this.env.get('REPOS_ROOT') ?? repoStateDir('repos');
   }
 
   /**

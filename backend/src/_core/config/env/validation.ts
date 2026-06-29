@@ -91,19 +91,20 @@ export interface IEnvConfig {
   // Slack user id allowed to rule on approval cards when the workspace has no OAuth installer
   // (tenant.installed_by is null on env-token dev workspaces). installed_by wins when set.
   APPROVAL_BOSS_USER_ID?: string;
-  // Root for per-project repo clones (code default: ~/.agent-playground/repos)
+  // Root for per-project repo clones (code default: the repo-relative, gitignored
+  // <repoRoot>/.atlas-state/repos — see backend/src/app/state-root.ts).
   REPOS_ROOT?: string;
   // Root for the worker engines' OWN config/state homes — CLAUDE_CONFIG_DIR (<root>/claude) and
   // CODEX_HOME (<root>/codex) are pinned here so subprocesses never read the developer's personal
   // ~/.claude / ~/.codex (deterministic across dev and deploy) and their session transcripts land
-  // in a stable, durable location. Code default: <repoRoot>/.agent-home (gitignored). Point at a
-  // persistent volume in deployment.
+  // in a stable, durable location. Code default: the repo-relative, gitignored
+  // <repoRoot>/.atlas-state/agent-home. Point at a persistent volume in deployment.
   AGENT_HOME_ROOT?: string;
   // Root for the shared READ-ONLY reference library — one clone per registered project (per team),
   // bind-mounted read-only into every sandbox at /refs so a worker can read the team's OTHER projects
   // ambiently (the "all my repos sit in ~/Developer" model). Host path: must be visible to BOTH the
   // slack-app (the writer) and the Docker daemon (the bind source), exactly like REPO_ROOT in DooD.
-  // Code default: <homedir>/.agent-playground/refs. Point at a persistent volume in deployment.
+  // No code default — unset → the /refs library is disabled. Point at a persistent volume in deployment.
   REFS_ROOT?: string;
   // Root for the operator GOLDEN-SEED dirs — non-secret gitignored files the worktree hydrator copies
   // into a fresh worktree, laid out as <ATLAS_GOLDEN_ROOT>/<orgId>/<slug>/<path>. Optional; unset → the
@@ -111,7 +112,8 @@ export interface IEnvConfig {
   ATLAS_GOLDEN_ROOT?: string;
   // Host-only dir for the worktree hydration sidecar (the forbidden-paths record commitAll's leak-scan
   // reads). Read directly from process.env by git/hydration-sidecar.ts; declared here for completeness.
-  // Code default: <homedir>/.agent-playground/atlas-hydration-state. Never under a worktree.
+  // Code default: the repo-relative, gitignored <repoRoot>/.atlas-state/hydration-state. Never under a
+  // managed worktree.
   ATLAS_HYDRATION_STATE?: string;
   // ⚠️ DEPRECATED (v1 harness sandbox stack, removed in commit f82a748). The Atlas v2 Docker layer
   // (src/app/sandbox/) REUSES only `DOCKER_SOCKET_PATH` (via DOCKER_SOCKET_PATH ?? this),
@@ -270,10 +272,9 @@ export interface IEnvConfig {
   // PARK_TIMEOUT_MS: how long a mid-build park waits for the human before it fails + relays
   // (a park is between phases, so the phase/job timeouts don't cover it). Default 3600000 (60 min).
   PARK_TIMEOUT_MS?: number;
-  // VERIFY_CMD (issue #4): an optional repo verify command (e.g. "pnpm typecheck") the driver runs
-  // in the worktree after each phase, BEFORE the commit — a non-zero exit fails the phase so broken
-  // output never advances. Unset → rely on the engine's prompt-enforced in-turn verification.
-  VERIFY_CMD?: string;
+  // ORCHESTRATE_TRACKS: run each track as ONE orchestrator session that fans implementation out to
+  // writer subagents (default ON). Set to "off" to fall back to the legacy LLM-batched per-step path.
+  ORCHESTRATE_TRACKS?: string;
   // ── Atlas v2 scoping / grill (W3 — issue #1 tuning) ──────────────────────────────────────────
   // SCOPING_MODE: how the brain investigates the repo to GROUND the grill. 'read_only_tools'
   // (default) runs a strict read-only engine pass (Read/Glob/Grep, no Bash) over the clone; 'native_plan'
@@ -460,7 +461,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   PHASE_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   JOB_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
   PARK_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),
-  VERIFY_CMD: Joi.string().optional(),
+  ORCHESTRATE_TRACKS: Joi.string().optional(),
   // Atlas v2 scoping / grill (W3 — issue #1)
   SCOPING_MODE: Joi.string().valid('read_only_tools', 'native_plan').optional(),
   SCOPING_TIMEOUT_MS: Joi.number().integer().min(1000).optional(),

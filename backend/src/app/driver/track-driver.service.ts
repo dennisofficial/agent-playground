@@ -37,7 +37,6 @@ import {
   type ResolvedRepo,
 } from './repo-resolver';
 import { ThreadLifecycleService } from './thread-lifecycle.service';
-import { WorktreeProvisioner } from './worktree-provisioner.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -80,7 +79,6 @@ export class TrackDriver implements JobDispatcher {
     private readonly threadLifecycle: ThreadLifecycleService,
     private readonly ship: BuildShipService,
     private readonly awareness: PipelineAwarenessStore,
-    private readonly provisioner: WorktreeProvisioner,
     // The shared transcript spine — a build turn rides it on a `phase:<stepId>` lane so the step sub-page
     // renders a full transcript (thinking/prose/tool calls), exactly like a subagent run.
     private readonly turnHarness: TurnHarnessFactory,
@@ -119,10 +117,19 @@ export class TrackDriver implements JobDispatcher {
     return Number.isFinite(raw) && raw > 0 ? raw : 5;
   }
 
-  /** Per-step wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m. */
+  /** ORCHESTRATE mode (default ON): run each track as ONE Opus orchestrator session that fans the
+   *  implementation out to writer subagents, instead of the old programmatic per-step batching. Set
+   *  `ORCHESTRATE_TRACKS=off` to fall back to the legacy LLM-batched per-step path. */
+  private get orchestrate(): boolean {
+    return (this.env.get('ORCHESTRATE_TRACKS') ?? '').toLowerCase() !== 'off';
+  }
+
+  /** Per-step wall-clock budget — a single engine turn that runs away is aborted + relayed. Default 20m.
+   *  In orchestrate mode one turn spans the WHOLE track + its writer fan-out, so the budget is larger. */
   private get phaseTimeoutMs(): number {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
-    return Number.isFinite(raw) && raw > 0 ? raw : 20 * 60_000;
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    return this.orchestrate ? 60 * 60_000 : 20 * 60_000;
   }
 
   /** Per-job wall-clock budget (checked at track boundaries) — backstop against an unbounded build. Default 60m. */
@@ -136,13 +143,6 @@ export class TrackDriver implements JobDispatcher {
   private get parkTimeoutMs(): number {
     const raw = Number(this.env.get('PARK_TIMEOUT_MS'));
     return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000;
-  }
-
-  /** A repo-specific verify command (e.g. `pnpm typecheck`); when set, a step must pass it before it
-   *  commits + is marked done. Unset → rely on the engine's own in-turn verification (prompt-enforced). */
-  private get verifyCmd(): string | undefined {
-    const raw = this.env.get('VERIFY_CMD');
-    return raw && raw.trim() ? raw.trim() : undefined;
   }
 
   /**
@@ -287,7 +287,7 @@ export class TrackDriver implements JobDispatcher {
     const record = await this.store.decisionRecord(job.decisionRecordId);
     const route = await this.store.route(job);
     const repo = await this.repos.resolve(job);
-    const sandbox = await this.ensureSandbox(job, repo);
+    const sandbox = await this.ensureSandbox(job);
 
     this.logger.log(
       `job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`,
@@ -696,22 +696,29 @@ export class TrackDriver implements JobDispatcher {
     // ALL steps. On resume every step already has a batch_ordinal → skip the LLM and re-group from the
     // stored values (stable membership — the in-flight engine session keeps the same task on restart).
     if (steps.some((p) => p.status !== 'done' && p.batchOrdinal == null)) {
-      const groups = this.groupSteps(
-        steps,
-        await this.planner
-          .batchSteps({
-            steps: steps.map(asPlannedStep),
-            overview: record?.overview ?? '',
-            brief: track.brief,
-            orgId: job.orgId,
-          })
-          .catch(() => undefined),
-      );
+      // ORCHESTRATE: the whole track is ONE batch (one orchestrator session that owns the fan-out) — no
+      // LLM batcher, no per-step split. LEGACY: ask the planner how to pack the ordered steps, run it
+      // through the deterministic guardrail. Either way the grouping is PERSISTED over ALL steps so a
+      // resume re-groups identically.
+      const groups = this.orchestrate
+        ? [steps.map((_, i) => i)]
+        : this.groupSteps(
+            steps,
+            await this.planner
+              .batchSteps({
+                steps: steps.map(asPlannedStep),
+                overview: record?.overview ?? '',
+                brief: track.brief,
+                orgId: job.orgId,
+              })
+              .catch(() => undefined),
+          );
       const assignments: Array<[string, number]> = [];
       groups.forEach((g, bi) => g.forEach((idx) => assignments.push([steps[idx].id, bi + 1])));
       await this.store.setBatchOrdinals(assignments);
       this.logger.log(
-        `track ${track.ordinal}: ${steps.length} step(s) packed into ${groups.length} batch(es)`,
+        `track ${track.ordinal}: ${steps.length} step(s) packed into ${groups.length} batch(es)` +
+          (this.orchestrate ? ' (orchestrate)' : ''),
       );
       steps = await this.store.stepsForTrack(track.id);
     }
@@ -731,7 +738,16 @@ export class TrackDriver implements JobDispatcher {
 
     const reports: string[] = [];
     for (const key of [...byBatch.keys()].sort((a, b) => a - b)) {
-      reports.push(await this.runBatch(job, route, sandbox, track, record, byBatch.get(key)!));
+      const batch = byBatch.get(key)!;
+      // Atomic-resume fast-forward (#6): if the batch's anchor already carries a commit_sha, the batch
+      // committed before a crash interrupted the done-status writes — re-running would redo work against
+      // an already-committed tree. Mark the steps done and skip the session instead.
+      if (batch[0].commitSha) {
+        this.logger.log(`batch [${batch.map((p) => p.ordinal).join(',')}] already committed — fast-forward`);
+        for (const p of batch) await this.store.setStepState(p.id, 'done', 'done');
+        continue;
+      }
+      reports.push(await this.runBatch(job, route, sandbox, track, record, batch));
     }
     return reports;
   }
@@ -784,6 +800,10 @@ export class TrackDriver implements JobDispatcher {
     const channel = route.channel ?? job.repoId;
     const lane = `phase:${anchor.id}`;
     const batchOrdinal = anchor.batchOrdinal ?? null;
+    // The instruction the engine receives — the build turn's "first message". Computed once here so it
+    // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
+    // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
+    const task = renderBatchTask(record, track, steps, this.orchestrate);
     // Synthetic anchor row at batch START — the in-conversation `BuildStepCard` latches onto this (a phase
     // has no spawning Task tool block), and it sorts the card at the batch's chronological position.
     await this.blockSink
@@ -795,6 +815,7 @@ export class TrackDriver implements JobDispatcher {
           ...(batchOrdinal != null ? { batchOrdinal } : {}),
           batchStepIds: steps.map((p) => p.id),
           label,
+          prompt: task,
         },
       })
       .catch((err) => this.logger.warn(`build_anchor append failed for thread=${job.id}: ${err}`));
@@ -817,8 +838,12 @@ export class TrackDriver implements JobDispatcher {
           sandbox,
           engine: 'claude',
           mode: 'execute',
-          systemPrompt: steps.length === 1 ? STEP_EXECUTE_SYSTEM : BATCH_EXECUTE_SYSTEM,
-          task: renderBatchTask(record, track, steps),
+          systemPrompt: this.orchestrate
+            ? ORCHESTRATE_EXECUTE_SYSTEM
+            : steps.length === 1
+              ? STEP_EXECUTE_SYSTEM
+              : BATCH_EXECUTE_SYSTEM,
+          task,
           auth: await this.creds.engineAuth(job.orgId, 'claude'),
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
           onEvent: (e) => {
@@ -845,9 +870,9 @@ export class TrackDriver implements JobDispatcher {
       );
     }
 
-    // Verify BEFORE committing (#4): an optional repo verify command must pass, else fail the batch so
-    // broken output never commits or advances the cursor. Unset → rely on the engine's in-turn verify.
-    await this.verifyPhase(route, sandbox, label);
+    // Verification is the ORCHESTRATOR'S job, in-turn: ORCHESTRATE_EXECUTE_SYSTEM mandates it discover and
+    // run the repo's OWN typecheck/build/test (and fix failures) before finishing, and report rather than
+    // claim success on a guess. The host does NOT reach into the sandbox to run commands.
 
     // ONE commit for the whole batch onto the shared feature branch.
     const sha = await this.git.commitAll(
@@ -856,31 +881,13 @@ export class TrackDriver implements JobDispatcher {
     );
     this.logger.log(`batch committed ${sha ? sha.slice(0, 8) : '(nothing)'}`);
 
+    // Atomic-resume marker (#6): stamp the commit on the ANCHOR step FIRST, then flip the steps to done.
+    // A crash between the two ⇒ resume sees the commit_sha and fast-forwards (executeSteps) instead of
+    // re-running the whole track against an already-committed tree. Empty sha (nothing changed) still
+    // marks complete so the batch never re-runs. `NOTHING` is the sentinel for an empty commit.
+    await this.store.setStepCommit(anchor.id, sha || NOTHING_COMMITTED);
     for (const p of steps) await this.store.setStepState(p.id, 'done', 'done');
     return result.report;
-  }
-
-  /** Run VERIFY_CMD in the worktree (when set); a non-zero exit fails the step (caught → relayed).
-   *  Repo-agnostic by being opt-in: the operator points it at their own typecheck/test/build. */
-  private async verifyPhase(
-    route: JobRoute,
-    sandbox: FeatureSandbox,
-    label: string,
-  ): Promise<void> {
-    const cmd = this.verifyCmd;
-    if (!cmd) return;
-    this.logger.log(`step "${label}" — verifying: ${cmd}`);
-    try {
-      await execShell(cmd, sandbox.worktreePath, this.phaseTimeoutMs);
-    } catch (err) {
-      await this.post(
-        route,
-        `:warning: Verification failed after *${label}* (\`${cmd}\`) — failing the step.`,
-      );
-      throw new Error(
-        `verify command "${cmd}" failed after step "${label}": ${shortReason(err)}`,
-      );
-    }
   }
 
   /**
@@ -951,38 +958,21 @@ export class TrackDriver implements JobDispatcher {
    * re-attach the returned sandbox carries `warm: false`, so the turn-runner prepends the reset notice to
    * the first resumed turn.
    *
-   * Legacy path (per-feature sandbox): if no thread sandbox exists (inbound-message-derived threads,
-   * or pre-R2 jobs), fall back to the old job-derived branch + `createFeatureSandbox` + `attach` — branch
-   * keyed (one container per branch), byte-identical to before R2.
+   * Every thread is lazily provisioned by the brain (`ensureProvisioned`) on its first chat turn, long
+   * before any build runs, so `ensureContainer` always finds the row by the time the driver gets here —
+   * a null is a real bug (a build dispatched against an unprovisioned/closed thread), so we throw.
    */
-  private async ensureSandbox(
-    job: Thread,
-    repo: ResolvedRepo,
-  ): Promise<FeatureSandbox> {
-    // ── R2: per-thread sandbox path ──────────────────────────────────────────────────────────────
+  private async ensureSandbox(job: Thread): Promise<FeatureSandbox> {
     const ensured = await this.threadLifecycle.ensureContainer(job.id, job.orgId);
-    if (ensured) {
-      const branch = ensured.sandbox.branch; // the thread's feature branch is the source of truth
-      if (job.featureBranch !== branch) await this.store.setFeatureBranch(job.id, branch);
-      this.logger.log(
-        `job=${job.id} using thread sandbox on ${branch}${ensured.wasReset ? ' (cold re-attach)' : ''}`,
-      );
-      return ensured.sandbox;
+    if (!ensured) {
+      throw new Error(`job=${job.id}: thread has no sandbox (unprovisioned or closed) — cannot build`);
     }
-
-    // ── Legacy path: per-feature worktree + attach ───────────────────────────────────────────────
-    const branch = job.featureBranch ?? `atlas/${job.kind}-${job.id.slice(0, 8)}`;
-    const sandbox = await this.git.createFeatureSandbox(repo.projectRepo, branch);
-    if (!job.featureBranch) await this.store.setFeatureBranch(job.id, branch);
-    // Route through the provisioner so this non-thread path gets the same hydration + mounts. No sandbox
-    // row here, so re-hydrate every time (forceHydrate). repoDbId = the thread's repo uuid (for grants).
-    const { sandbox: attached } = await this.provisioner.provisionAndAttach({
-      sandbox,
-      orgId: job.orgId,
-      repoDbId: job.repoId,
-      forceHydrate: true,
-    });
-    return attached;
+    const branch = ensured.sandbox.branch; // the thread's feature branch is the source of truth
+    if (job.featureBranch !== branch) await this.store.setFeatureBranch(job.id, branch);
+    this.logger.log(
+      `job=${job.id} using thread sandbox on ${branch}${ensured.wasReset ? ' (cold re-attach)' : ''}`,
+    );
+    return ensured.sandbox;
   }
 
   /** Summarize a track's handoff (LLM, with a terse rule-based fallback). */
@@ -1069,6 +1059,37 @@ const BATCH_EXECUTE_SYSTEM =
   'you cannot fix it within scope, say so explicitly rather than reporting success.' +
   WORKER_SUBAGENTS_NOTE;
 
+/** Sentinel `commit_sha` for a batch that completed but changed nothing (empty commit) — distinguishes
+ *  "done, no diff" from "never committed" (null) so a resume fast-forwards instead of re-running. */
+const NOTHING_COMMITTED = '(nothing)';
+
+// Orchestrator note — adds the WRITER subagents to the read-only set. Used by ORCHESTRATE_EXECUTE_SYSTEM.
+const ORCHESTRATOR_SUBAGENTS_NOTE =
+  ' You have subagents (Task tool). WRITERS that change files: `implement` (Opus, for code needing ' +
+  'judgment) and `implement-fast` (Sonnet, for mechanical/fully-specified slices) — give each a ' +
+  'concrete slice and the EXACT files it may touch; it edits and returns a tight summary. Run writers ' +
+  'ONE AT A TIME (they share one worktree — concurrent writers corrupt it). Read-only helpers: ' +
+  '`explore` (trace the code/own docs), `docs` (external library docs), `review` (a second pass on a ' +
+  'diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw logs).';
+
+// The PER-TRACK ORCHESTRATOR system prompt (orchestrate mode): one Opus session owns the whole track and
+// fans the implementation out to writer subagents, integrating + verifying as it goes.
+const ORCHESTRATE_EXECUTE_SYSTEM =
+  'You are Atlas, the ORCHESTRATOR for ONE track of an approved plan, working in a feature worktree. The ' +
+  'steps below are your plan and your suggested decomposition — YOU own the fan-out. For each step (or a ' +
+  'cluster of tightly-related steps), DELEGATE the actual file changes to a writer subagent via the Task ' +
+  'tool — `implement` (Opus) for code that needs judgment, `implement-fast` (Sonnet) for mechanical, ' +
+  'fully-specified work — telling it the exact files it may touch. You MAY make small edits yourself ' +
+  'directly when spawning a subagent would be overkill. Steps are ORDERED and build on each other: ' +
+  'delegate them IN ORDER and run writers ONE AT A TIME (they share this worktree; concurrent writers ' +
+  'corrupt it). After each writer returns, sanity-check its work before moving on. When every step is ' +
+  "implemented, VERIFY: discover and run the repository's OWN typecheck/build/test tooling and FIX any " +
+  'failures (use `debug`/`test` subagents) — do NOT claim done on a guess. If a step REMOVES code, prove ' +
+  'it is genuinely unreferenced first. Flag ANY change not called for by the plan, or any departure from a ' +
+  "locked decision, on its own line starting with 'DEVIATION:' and a one-line why — off-spec work is " +
+  'never silent. If verification fails and you cannot fix it within scope, say so explicitly.' +
+  ORCHESTRATOR_SUBAGENTS_NOTE;
+
 /** A locked step row → the `PlannedStep` view the gate/visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {
   return { title: step.title ?? step.brief, brief: step.brief };
@@ -1092,17 +1113,19 @@ function renderPlanTask(input: {
     `Feature overview:\n${input.overview}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nPlan THIS track:\n${input.brief}${handoff}`,
-    '\nThe plan is in /context/specs — read THIS track\'s `sections/*.md` file (+ `data-model.md` and the' +
-      ' `plan.md` index) before planning steps.',
+    '\nYour grounding is the READ-ONLY directory `/context/specs/` (a folder, not a file): read its' +
+      ' `plan.md` index, this track\'s `sections/NN-*.md` file, and `data-model.md` before planning steps.',
     '\nProduce an ordered list of steps. Do not write files.',
   ].join('\n');
 }
 
-/** Render the execute task for a BATCH of 1+ ordered steps (the unit a single fresh session runs). */
+/** Render the execute task for a BATCH of 1+ ordered steps (the unit a single fresh session runs).
+ *  In orchestrate mode the batch is the WHOLE track and the steps are the orchestrator's fan-out menu. */
 function renderBatchTask(
   record: DecisionRecord | null,
   track: DriverTrack,
   steps: Step[],
+  orchestrate = false,
 ): string {
   const decisions = record?.decisions.length
     ? record.decisions
@@ -1112,15 +1135,20 @@ function renderBatchTask(
   const blocks = steps
     .map((p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`)
     .join('\n\n');
-  const intro =
-    steps.length === 1
+  const intro = orchestrate
+    ? `Implement this track. The ${steps.length} step(s) below are your plan + suggested decomposition` +
+      ' — delegate them IN ORDER to writer subagents (one at a time), making small edits yourself where' +
+      ' a subagent would be overkill, then verify the whole track:'
+    : steps.length === 1
       ? 'Implement this step:'
       : `Implement these ${steps.length} steps IN ORDER (each builds on the previous):`;
   return [
     `Feature overview:\n${record?.overview ?? ''}`,
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nTrack: ${track.brief}`,
-    `\nThe plan is in /context/specs — read THIS track's \`sections/*.md\` file (+ \`data-model.md\`) for grounding.`,
+    `\nYour grounding is the READ-ONLY directory \`/context/specs/\` (a folder): read its \`plan.md\`` +
+      ` index, this track's \`sections/NN-*.md\` file, and \`data-model.md\`. Make ALL code changes under` +
+      ` \`/workspace\` — never edit anything in \`/context\`.`,
     `\n${intro}\n\n${blocks}`,
   ].join('\n');
 }
@@ -1178,29 +1206,3 @@ function shortReason(err: unknown): string {
   return firstLine.length > 300 ? `${firstLine.slice(0, 297)}...` : firstLine;
 }
 
-const execAsync = promisify(exec);
-
-/** Run a shell command string in `cwd` with a wall-clock timeout; throws (with captured stderr) on a
- *  non-zero exit or timeout. Used by the optional VERIFY_CMD step gate. */
-async function execShell(
-  cmd: string,
-  cwd: string,
-  timeoutMs: number,
-): Promise<void> {
-  try {
-    await execAsync(cmd, {
-      cwd,
-      timeout: timeoutMs,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-  } catch (err) {
-    const e = err as { stderr?: string; stdout?: string; message?: string };
-    const detail = (e.stderr || e.stdout || e.message || '')
-      .toString()
-      .trim()
-      .split('\n')
-      .slice(-3)
-      .join(' ');
-    throw new Error(detail || 'command failed');
-  }
-}

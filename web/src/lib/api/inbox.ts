@@ -21,7 +21,7 @@ export interface RawInboxThread {
   threadId: string;
   title: string | null;
   origin: string; // 'chat' | 'event' | 'control'
-  /** Raw backend thread status ('open' | 'scoping' | … | 'cancelled'). */
+  /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
   status: string;
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
   needsYou: boolean;
@@ -50,7 +50,7 @@ function kindFromOrigin(origin: string): ThreadKind {
 
 /** Backend status (incl. `open`, which `toThreadStatus` doesn't cover) → UI status for the pie. */
 export function uiStatus(backend: string, origin: string): ThreadStatus {
-  if (backend === 'open') return origin === 'event' ? 'triaging' : 'scoping';
+  if (backend === 'open') return origin === 'event' ? 'triaging' : 'planning';
   return toThreadStatus(backend as JobStatus);
 }
 
