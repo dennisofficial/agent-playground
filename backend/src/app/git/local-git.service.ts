@@ -2,7 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { repoStateDir } from '../state-root';
@@ -131,6 +131,126 @@ export class LocalGitService {
       if ((err as { code?: number }).code === 1) return false;
       throw err;
     }
+  }
+
+  /**
+   * Package-manager / build CACHE dirs that an in-sandbox engine turn may drop at the worktree ROOT
+   * but the connected repo's `.gitignore` does NOT cover. The proven culprit: `pnpm install` creating
+   * a ~1.7 GB `.pnpm-store/` (when pnpm can't hardlink into `/workspace` it falls back to a project-
+   * local store), which then made `commitAll`'s `git add -A` stage 1.7 GB and throw — failing the
+   * build at the commit step with no PR. These are categorically caches no sane repo commits.
+   */
+  static readonly BUILD_JUNK_PATTERNS = [
+    '.pnpm-store/',
+    '.npm/',
+    '.yarn/cache/',
+    '.yarn/unplugged/',
+    '.turbo/',
+    'node_modules/', // defensive — virtually always already ignored, so this is a no-op there
+  ];
+
+  private static readonly EXCLUDE_HEADER = '# atlas build-junk (managed)';
+
+  /**
+   * Ensure the clone's git ignores Atlas build-junk (see {@link BUILD_JUNK_PATTERNS}) so `commitAll`'s
+   * `git add -A` can never sweep a multi-GB package store into a PR — WITHOUT touching the connected
+   * repo's tracked `.gitignore`. Patterns are appended to the clone's COMMON-dir `info/exclude`
+   * (`<repo>/.git/info/exclude`): git honors ONLY the common-dir exclude, not a per-worktree
+   * `$GIT_DIR/info/exclude` (verified), and it is shared by every linked worktree of the clone — which
+   * is exactly right, since the same junk patterns apply to every thread of a repo.
+   *
+   * Idempotent + locked (concurrent threads of one clone race on this shared file): appends the block
+   * once, keyed off {@link EXCLUDE_HEADER}, and never clobbers existing exclude content. Fail-soft — a
+   * resolution error never blocks provisioning.
+   */
+  async ensureBuildJunkExcluded(worktreePath: string): Promise<void> {
+    let commonDir: string;
+    try {
+      commonDir = await this.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+        cwd: worktreePath,
+      });
+    } catch (err) {
+      this.logger.debug(`ensureBuildJunkExcluded: could not resolve common dir (skipping): ${err}`);
+      return;
+    }
+    if (!commonDir) return;
+    const excludePath = join(commonDir, 'info', 'exclude');
+
+    await this.withLock(commonDir, async () => {
+      let current = '';
+      try {
+        current = await readFile(excludePath, 'utf8');
+      } catch {
+        /* absent — we'll create it */
+      }
+      if (current.includes(LocalGitService.EXCLUDE_HEADER)) return; // already applied
+      const block = [LocalGitService.EXCLUDE_HEADER, ...LocalGitService.BUILD_JUNK_PATTERNS, ''].join('\n');
+      const sep = current && !current.endsWith('\n') ? '\n' : '';
+      await mkdir(join(commonDir, 'info'), { recursive: true });
+      await writeFile(excludePath, `${current}${sep}${block}`, 'utf8');
+    });
+  }
+
+  /**
+   * Initialize + check out the repo's git submodules INTO a freshly cut/restored worktree, so an
+   * in-sandbox build can resolve submodule-provided packages (e.g. cubix-infra's `@workspace/*`).
+   *
+   * Why this is needed: `git worktree add` does NOT populate submodules, and a LINKED worktree keeps
+   * its OWN per-worktree submodule git dirs under `<common>/.git/worktrees/<wt>/modules/…`. So the init
+   * must run IN the worktree (not the main clone) and after the branch is checked out (the gitlink is
+   * branch-specific). Running it here lands the submodule git dir at exactly that per-worktree path.
+   *
+   * No-op for repos without a `.gitmodules` (the overwhelming common case — cheap fs check, no
+   * subprocess). Auth rides the SAME per-invocation `GIT_CONFIG_*` extraheader as the clone: that config
+   * key is host-scoped (`http.https://github.com/.extraheader`), so passing the superproject's token
+   * authenticates private github.com submodule fetches too. Idempotent: a healthy re-run does no network.
+   *
+   * Self-heals the "cleared + re-cut" corruption — a dangling per-worktree submodule gitdir that makes
+   * plain `--init` fail with `fatal: not a git repository … /modules/…` — by deregistering every
+   * submodule (`deinit -f --all`) and re-cloning once. Serialized on the clone's common dir because
+   * submodule registration lives in the SHARED `.git/config` (concurrent threads of one repo would race).
+   *
+   * Fail-soft: a submodule that still can't initialize is logged loudly but never throws — provisioning
+   * proceeds and the resulting build failure surfaces the precise error to the operator. Deliberately
+   * does NOT enable `protocol.file.allow` (keeps `file://` submodule transport disabled for tenant repos).
+   */
+  async ensureSubmodules(
+    worktreePath: string,
+    repo: { gitUrl: string; token?: string },
+  ): Promise<void> {
+    if (!existsSync(join(worktreePath, '.gitmodules'))) return; // repo has no submodules
+
+    let commonDir: string;
+    try {
+      commonDir = await this.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+        cwd: worktreePath,
+      });
+    } catch {
+      commonDir = worktreePath; // fall back to per-worktree serialization
+    }
+
+    await this.withLock(commonDir, async () => {
+      const auth = { cwd: worktreePath, gitUrl: repo.gitUrl, token: repo.token };
+      try {
+        await this.git(['submodule', 'update', '--init', '--recursive'], auth);
+        return;
+      } catch (err) {
+        this.logger.warn(
+          `submodule init failed in ${worktreePath} — attempting deinit+reclone recovery: ${err}`,
+        );
+      }
+      // Recovery: a re-cut worktree can leave a dangling submodule gitdir that plain `--init` can't
+      // repair. Deregister every submodule (clears the stale gitlinks + working trees), then re-clone.
+      try {
+        await this.git(['submodule', 'deinit', '-f', '--all'], { cwd: worktreePath });
+        await this.git(['submodule', 'update', '--init', '--recursive'], auth);
+      } catch (err) {
+        this.logger.error(
+          `submodule init still failing after recovery in ${worktreePath} — the in-sandbox build will ` +
+            `likely fail to resolve submodule packages (e.g. TS2307 on @workspace/*): ${err}`,
+        );
+      }
+    });
   }
 
   /** Worktree-relative names of files currently staged in the index. */

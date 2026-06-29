@@ -75,8 +75,9 @@ export interface RawThreadMessage {
    * Message provenance, by AUDIENCE (always set by the `/messages` mapping).
    * `'system_operator'` = system→operator only (e.g. an unresumable-thread error; Atlas didn't author it
    * and never sees it). `'system_shared'` = system→operator AND Atlas (e.g. Codex plan-review findings).
+   * `'system_event'` = an automated notification that opened this thread (Atlas got a harness delivery).
    */
-  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared';
+  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared' | 'system_event';
   card?: WebCard | null;
   meta?: Record<string, unknown> | null;
   postedAt: string;
@@ -93,12 +94,13 @@ export interface ThreadMessage {
   text: string;
   kind: string;
   /**
-   * Message provenance, by AUDIENCE (normalize applies a default for older rows). Both `system_*` kinds
-   * render as their own distinct block, NOT as an operator or Atlas bubble:
+   * Message provenance, by AUDIENCE (normalize applies a default for older rows). The `system_*` kinds
+   * each render as their own distinct block, NOT as an operator or Atlas bubble:
    * `'system_operator'` = system→operator only (e.g. an unresumable-thread error);
-   * `'system_shared'`   = system→operator AND Atlas (e.g. Codex plan-review findings).
+   * `'system_shared'`   = system→operator AND Atlas (e.g. Codex plan-review findings);
+   * `'system_event'`    = an automated notification that opened this thread (a harness delivery to Atlas).
    */
-  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared';
+  source: 'operator' | 'atlas' | 'system_operator' | 'system_shared' | 'system_event';
   card?: WebCard;
   meta?: Record<string, unknown>;
   postedAt: string;
@@ -164,6 +166,11 @@ export function answerQuestion(
   body: AnswerQuestionBody,
 ): Promise<{ ok: boolean; ts: string }> {
   return webJson(threadPath(ref, '/answer-question'), { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
+export function retryThread(ref: ThreadRef): Promise<{ ok: boolean; status: string }> {
+  return webJson(threadPath(ref, '/retry'), { method: 'POST' });
 }
 
 // ── Pipeline ───────────────────────────────────────────────────────────────────────────────────

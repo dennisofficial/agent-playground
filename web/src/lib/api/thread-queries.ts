@@ -14,6 +14,7 @@ import {
   fetchPipeline,
   fetchThreadContext,
   renameThread,
+  retryThread,
   sayMessage,
   type AnswerQuestionBody,
   type ApproveBody,
@@ -141,6 +142,20 @@ export function useApprove(ref: ThreadRef) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+    },
+  });
+}
+
+/** Re-drive a halted (failed/paused) build — the navigator "Retry"/"Re-ping" buttons. Refreshes the
+ *  pipeline + conversation + inbox so the thread flips back to running. */
+export function useRetryThread(ref: ThreadRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => retryThread(ref),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allThreads() });
     },
   });
 }

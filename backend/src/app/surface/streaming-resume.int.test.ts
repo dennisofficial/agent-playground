@@ -5,7 +5,6 @@ import type { MessageEvent } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from '../app.module';
-import { BRAIN_LLM } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
@@ -18,7 +17,6 @@ import { AgentChatSurface } from '../agent-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { WebSurfaceController } from './web-surface.controller';
 import {
-  FakeBrainLlm,
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeGithubPrService,
@@ -81,8 +79,6 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
   async function bootApp() {
     runner = new FakeStreamingRunner();
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(BRAIN_LLM)
-      .useValue(new FakeBrainLlm())
       .overrideProvider(PLANNER_LLM)
       .useValue(new FakePlannerLlm())
       .overrideProvider(CLASSIFIER_LLM)

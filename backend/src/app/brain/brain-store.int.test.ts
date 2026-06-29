@@ -3,7 +3,6 @@ import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
-import { BRAIN_LLM } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
@@ -11,7 +10,6 @@ import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  FakeBrainLlm,
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeGithubPrService,
@@ -46,8 +44,6 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     process.env.SURFACE = 'agent';
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(BRAIN_LLM)
-      .useValue(new FakeBrainLlm())
       .overrideProvider(PLANNER_LLM)
       .useValue(new FakePlannerLlm())
       .overrideProvider(CLASSIFIER_LLM)

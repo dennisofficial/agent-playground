@@ -6,14 +6,12 @@ import { AppModule } from './app.module';
 import {
   AgentSessionManager,
   DecisionApprovalService,
-  EventTriageService,
   JOB_DISPATCHER,
-  StimulusRouter,
   type JobDispatcher,
 } from './brain';
 import { TrackDriver } from './driver';
 import { GithubIngressController, WebhookIngressController } from './ingress';
-import { STIMULUS_CONSUMER, StimulusIntake, type StimulusConsumer } from './stimulus';
+import { BRAIN_SINK, StimulusIntake, type BrainSink } from './stimulus';
 import { WebSurface, CHAT_SURFACE, type ChatSurface } from './surface';
 import { TestBridgeController } from './test-bridge';
 
@@ -46,17 +44,16 @@ describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
     expect(app.get(GithubIngressController)).toBeDefined();
     expect(app.get(WebhookIngressController)).toBeDefined();
 
-    // R3 brain services resolved — proves the brain graph (LLM port, store, classifier + memory deps)
-    // is DI-complete, the guard against shipping a typecheck-only DI bug.
-    const router = app.get(StimulusRouter);
-    expect(router).toBeDefined();
+    // R3 brain services resolved — proves the brain graph (store, classifier + memory deps) is
+    // DI-complete, the guard against shipping a typecheck-only DI bug.
     expect(app.get(AgentSessionManager)).toBeDefined();
-    expect(app.get(EventTriageService)).toBeDefined();
     expect(app.get(DecisionApprovalService)).toBeDefined();
 
-    // The INPUT seam: STIMULUS_CONSUMER is the brain's StimulusRouter (NOT W2's logging no-op).
-    const consumer = app.get<StimulusConsumer>(STIMULUS_CONSUMER);
-    expect(consumer).toBe(router);
+    // The INPUT seam: BRAIN_SINK is the brain adapter (chat → its session, event → a harness delivery).
+    // There is no more StimulusRouter demux / EventTriageService — one brain per thread.
+    const sink = app.get<BrainSink>(BRAIN_SINK);
+    expect(typeof sink.handleChat).toBe('function');
+    expect(typeof sink.deliverEvent).toBe('function');
 
     // The OUTPUT seam: JOB_DISPATCHER resolves to W4's real TrackDriver (the no-op is OVERRIDDEN —
     // BrainModule no longer binds it; DriverModule's @Global useExisting: TrackDriver wins). This is
@@ -113,7 +110,7 @@ describe('AppModule boot with SURFACE=agent (the programmatic surface)', () => {
     expect(bound.name).toBe('agent');
 
     // The brain + dispatcher still resolve — the surface swap doesn't disturb the rest of the graph.
-    expect(app.get(StimulusRouter)).toBeDefined();
+    expect(app.get(AgentSessionManager)).toBeDefined();
     expect(app.get(TrackDriver)).toBeDefined();
 
     await app.close();

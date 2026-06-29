@@ -34,6 +34,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // dispatcher
     {} as never, // surface
     {} as never, // sandboxRows
+    {} as never, // stimulusRows
     {} as never, // liveTurns
     {} as never, // classifier
     {} as never, // ship

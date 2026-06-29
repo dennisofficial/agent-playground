@@ -10,7 +10,7 @@ import { fence } from '../prompt-fence';
 
 /**
  * W4 — the SECTION PLANNER's chat-model port. Isolated behind an interface + DI token (mirroring the
- * brain's `BRAIN_LLM` and the gate's `CLASSIFIER_LLM`) so the driver is unit-testable
+ * brain's `BRAIN_SINK` and the gate's `CLASSIFIER_LLM`) so the driver is unit-testable
  * WITHOUT a real LLM call — the driver tests bind a fake that returns a fixed step list.
  *
  * The planner runs at most ONE structured call per track: take the track brief + the locked

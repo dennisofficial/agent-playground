@@ -64,6 +64,64 @@ function fakeRichClaudeSdk() {
   return { sdk, captured };
 }
 
+/**
+ * A fake Claude SDK that streams MULTIPLE main-agent round-trips (each `assistant` message carries its
+ * OWN per-call usage), one interleaved SUBAGENT message (parent_tool_use_id set, helper model), then a
+ * `result` whose usage is the CUMULATIVE sum. Used to prove context occupancy reads the last MAIN call's
+ * per-call size, not the cumulative billing total.
+ */
+function fakeMultiTurnClaudeSdk() {
+  const sdk = {
+    query: () =>
+      (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+        // Round-trip 1 (main): context = 50 + 10000 + 2000 = 12050.
+        yield {
+          type: 'assistant',
+          message: {
+            model: 'claude-opus-4-8',
+            usage: { input_tokens: 50, cache_read_input_tokens: 10000, cache_creation_input_tokens: 2000 },
+            content: [{ type: 'tool_use', id: 'tu1', name: 'Task', input: {} }],
+          },
+        };
+        // A SUBAGENT round-trip (helper model, parent set) — MUST be ignored for occupancy.
+        yield {
+          type: 'assistant',
+          parent_tool_use_id: 'tu1',
+          message: {
+            model: 'claude-haiku-4-5',
+            usage: { input_tokens: 5, cache_read_input_tokens: 999999 },
+            content: [{ type: 'text', text: 'sub' }],
+          },
+        };
+        // Round-trip 2 (main, LAST): context = 80 + 23000 + 1000 = 24080.
+        yield {
+          type: 'assistant',
+          message: {
+            model: 'claude-opus-4-8',
+            usage: { input_tokens: 80, cache_read_input_tokens: 23000, cache_creation_input_tokens: 1000 },
+            content: [{ type: 'text', text: 'done' }],
+          },
+        };
+        // Cumulative billing usage (sums every round-trip's cache re-reads): inputTokens = 100+180000+6000.
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          result: 'done',
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 180000,
+            cache_creation_input_tokens: 6000,
+          },
+          total_cost_usd: 0.21,
+        };
+      })(),
+  } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+  return { sdk };
+}
+
 /** A fake Codex SDK capturing constructor opts + thread options. */
 function fakeCodexSdk() {
   const ctorCalls: Array<Record<string, unknown>> = [];
@@ -267,6 +325,29 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(kinds).not.toContain('tool_use');
     expect(kinds).not.toContain('thinking');
     expect(kinds).not.toContain('tool_result');
+  });
+
+  it('surfaces per-call context occupancy (NOT the cumulative billing sum) across multiple round-trips', async () => {
+    const { sdk } = fakeMultiTurnClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'o', codexOauthToken: 'c' });
+    const res = await core.run({
+      engine: 'claude',
+      task: 'x',
+      cwd: '/tmp/wt',
+      systemPrompt: 'p',
+      sandboxKey: 'k',
+      mode: 'execute',
+      auth: { secret: 'tok' },
+    });
+    const usage = res.usage!;
+    // Billing stays the CUMULATIVE total (fresh + all cache reads/writes across every round-trip).
+    expect(usage.inputTokens).toBe(100 + 180000 + 6000); // 186100
+    // Occupancy is the LAST MAIN round-trip's single-call context size — NOT the cumulative sum, and
+    // NOT the interleaved subagent's bloated cache read.
+    expect(usage.contextTokens).toBe(80 + 23000 + 1000); // 24080
+    expect(usage.contextTokens).not.toBe(usage.inputTokens);
+    // The occupancy model is the MAIN agent's (opus), never the helper subagent (haiku).
+    expect(usage.contextModel).toBe('claude-opus-4-8');
   });
 
   it('falls back to the env subscription token and strips any ambient API key', async () => {

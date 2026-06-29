@@ -131,6 +131,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
       <Navigator
         meta={meta}
         pipeline={pipeline}
+        messages={messages}
         context={context}
         contextLoading={contextLoading}
         selectedNode={selectedNode}

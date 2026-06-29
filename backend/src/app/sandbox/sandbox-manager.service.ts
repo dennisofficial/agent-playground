@@ -12,6 +12,7 @@ import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
   CONTAINER_GIT_COMMON,
+  CONTAINER_PNPM_STORE,
   CONTAINER_WORKTREE,
 } from './docker-engine-runner';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
@@ -41,12 +42,13 @@ function realpathSafe(p: string): string {
  * do NOT bump this: the engine bundle is bind-mounted live, so they're served on the next turn with no
  * recreate. (rev 2 = added the live engine-bundle mount. rev 3 = worktree mounted at /workspace + git common
  * dir at /repo.git, was same-path host paths. rev 4 = added the durable per-thread /context shared mount.
- * rev 6 = added per-repo worktree cache mounts from `.atlas/worktree.json`, folded into the fingerprint.)
+ * rev 6 = added per-repo worktree cache mounts from `.atlas/worktree.json`, folded into the fingerprint.
+ * rev 7 = added the system-wide shared pnpm store bind at /workspace/.pnpm-store.)
  *
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 6;
+const CONFIG_REV = 7;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -170,6 +172,17 @@ export class SandboxManager implements SandboxProvider {
     // shared-ro mounts one immutable host dir read-only. Host dirs + the in-worktree mountpoint are
     // pre-created (+chowned to the host uid) so docker doesn't create them root-owned.
     binds.push(...this.cacheMountBinds(input));
+
+    // SYSTEM-WIDE shared pnpm STORE — ONE host dir for every org/repo/thread (not keyed), bound at the
+    // path pnpm forces the store onto (`/workspace/.pnpm-store`; pnpm ignores store-dir pointing
+    // elsewhere — verified live). A dependency is fetched ONCE globally and copied from the store by
+    // every later install (cross-device → copy, not hardlink). The in-worktree mountpoint is pre-created
+    // (+chowned) so docker doesn't make it root-owned; the store is git-excluded by the
+    // WorktreeProvisioner so `commitAll` never stages it (the `.pnpm-store/` commit-failure cause).
+    const pnpmStore = join(this.agentHomeRootHost(), 'pnpm-store');
+    this.ensureHostOwnedDir(pnpmStore);
+    this.ensureHostOwnedDir(join(sandbox.worktreePath, '.pnpm-store'));
+    binds.push(`${pnpmStore}:${CONTAINER_PNPM_STORE}`);
 
     this.logger.log(`creating sandbox ${name} (image ${image}, net ${network})`);
     const id = await this.engine.createContainer({

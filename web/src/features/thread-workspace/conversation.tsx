@@ -5,6 +5,7 @@ import { classifyMessage } from './classify';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import {
   ClaudeBubble,
+  EventBubble,
   HarnessBubble,
   LiveIndicator,
   LiveTurnView,
@@ -226,6 +227,9 @@ function renderLog(
         break;
       case 'system_shared':
         nodes.push(<HarnessBubble key={message.ts} message={message} />);
+        break;
+      case 'system_event':
+        nodes.push(<EventBubble key={message.ts} message={message} />);
         break;
       case 'system_operator':
         nodes.push(<SystemOperatorNotice key={message.ts} message={message} />);

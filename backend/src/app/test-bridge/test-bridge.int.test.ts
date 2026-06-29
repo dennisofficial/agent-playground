@@ -3,7 +3,6 @@ import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
-import { BRAIN_LLM } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
@@ -11,7 +10,6 @@ import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  FakeBrainLlm,
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeGithubPrService,
@@ -24,10 +22,10 @@ import { TestBridgeController } from './test-bridge.controller';
 
 /**
  * ROUND-TRIP int test for the HTTP test-bridge. Boots the REAL `AppModule` (SURFACE=agent +
- * TEST_BRIDGE=on) against live Postgres, mocking ONLY the three external boundaries (brain LLM,
- * planner, classifier + engine/git/PR — reusing the e2e stubs) so NO network is touched. Then drives the
- * bridge end-to-end through the controller:
- *   seed → say → (FakeBrainLlm asks a clarifying question) → the question is captured as an outbound reply
+ * TEST_BRIDGE=on) against live Postgres, mocking ONLY the external boundaries (planner, classifier +
+ * engine/git/PR — reusing the e2e stubs) so NO network is touched. Then drives the bridge end-to-end
+ * through the controller:
+ *   seed → say → (the fake engine drives the brain turn) → the reply is captured as an outbound message
  *   and persisted in the thread transcript; the job + thread read endpoints reflect the conversation.
  *
  * This proves the bridge's wiring + the seed/say/thread/job seams for real (channel routing,
@@ -50,8 +48,6 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
     process.env.TEST_BRIDGE = 'on';
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(BRAIN_LLM)
-      .useValue(new FakeBrainLlm())
       .overrideProvider(PLANNER_LLM)
       .useValue(new FakePlannerLlm())
       .overrideProvider(CLASSIFIER_LLM)

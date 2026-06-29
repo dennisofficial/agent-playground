@@ -3,15 +3,14 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ChatStimulus, ParsedEvent } from '../domain';
 import { EventFilterService } from './event-filter.service';
 import {
-  STIMULUS_CONSUMER,
-  type StimulusConsumer,
+  BRAIN_SINK,
+  type BrainSink,
 } from './stimulus-consumer';
 import {
   DuplicateStimulusError,
   StimulusStoreService,
 } from './stimulus-store.service';
 import { SurfaceOrchestration } from './surface-orchestration.service';
-import { wrapUntrusted } from './untrusted-content';
 import { ThreadTitler } from '../titling';
 
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
@@ -27,14 +26,15 @@ export type IntakeOutcome =
  *    then hands the `EventStimulus` to the consumer. On a filter drop OR a DB unique-violation
  *    backstop, nothing is consumed (the firehose pays no engine turn).
  *  - `intakeChat(ChatStimulus)` — the `ChatSurface` path. Persists the chat message + row (no filter —
- *    chat bypasses it), then hands the `ChatStimulus` to the consumer.
+ *    chat bypasses it), then hands the `ChatStimulus` to the brain.
  *
- * The consumer is a port (`STIMULUS_CONSUMER`), bound to `StimulusRouter`, which demuxes chat → the
- * thread's brain session and event → `EventTriageService`. The untrusted-content fence is applied to the
- * EVENT body before it reaches the consumer — the contract lives at this single seam.
+ * The downstream is the brain (`BRAIN_SINK`): chat → the thread's session (`handleChat`); event →
+ * delivered to the seeded thread's brain as a harness message (`deliverEvent`). The untrusted-content
+ * fence is applied to the EVENT body before delivery — the contract lives at this single seam.
  *
- * NOTE — slated for rework: this `Stimulus`-union + consumer-port indirection is a leftover from the
- * single-central-brain era. See `../ARCHITECTURE.md` §7 (event → opening message to the thread brain).
+ * Event delivery is deliberately NOT awaited (the webhook 202 must stay fast — a full engine turn can
+ * lazily provision a sandbox); durability is the brain's at-least-once boot sweep + `stimuli.delivered_at`.
+ * See `../ARCHITECTURE.md` §7.
  */
 @Injectable()
 export class StimulusIntake {
@@ -44,7 +44,7 @@ export class StimulusIntake {
     private readonly filter: EventFilterService,
     private readonly store: StimulusStoreService,
     private readonly orchestration: SurfaceOrchestration,
-    @Inject(STIMULUS_CONSUMER) private readonly consumer: StimulusConsumer,
+    @Inject(BRAIN_SINK) private readonly sink: BrainSink,
     private readonly titler: ThreadTitler,
   ) {}
 
@@ -97,16 +97,15 @@ export class StimulusIntake {
         })
         .catch((err) => this.logger.warn(`announce failed (continuing): ${err}`));
 
-      // The brain triages the FENCED body — untrusted data, never instructions. The contract lives
-      // here so every consumer (W3 triage today, anything later) gets the same fenced text.
-      await this.consumer.consume({
-        ...seeded.stimulus,
-        body: wrapUntrusted({
-          source: event.source,
-          severity: event.severity,
-          body: seeded.stimulus.body,
-        }),
-      });
+      // Deliver to the seeded thread's brain as a HARNESS message. NOT awaited: the webhook 202 must not
+      // wait on an engine turn (which can provision a sandbox). Durability is the brain's at-least-once
+      // boot sweep keyed on `stimuli.delivered_at` — a crash mid-delivery re-delivers on next boot. The
+      // seeded message row is the operator-visible artifact regardless of whether this turn lands.
+      // `deliverEvent` owns the untrusted fence (so it + the boot sweep fence identically), so we hand it
+      // the clean `EventStimulus` as seeded.
+      void this.sink
+        .deliverEvent(seeded.stimulus)
+        .catch((err) => this.logger.error(`event delivery failed for ${seeded.stimulus.id}: ${err}`));
 
       this.logger.log(
         `event admitted: ${seeded.stimulus.id} seeded thread ${seeded.thread.id} ` +
@@ -135,7 +134,7 @@ export class StimulusIntake {
     // `<system_notification>`) runs the brain but is NOT persisted as a `messages` row, so it never
     // renders as an operator chat bubble. Consume it directly with a synthetic id.
     if (stimulus.seed) {
-      await this.consumer.consume({ ...stimulus, id: stimulus.id || randomUUID() });
+      await this.sink.handleChat({ ...stimulus, id: stimulus.id || randomUUID() });
       return;
     }
     const recorded = await this.store.recordChatStimulus({
@@ -146,7 +145,7 @@ export class StimulusIntake {
       replyRoute: stimulus.replyRoute,
       body: stimulus.body,
     });
-    await this.consumer.consume(recorded);
+    await this.sink.handleChat(recorded);
   }
 }
 

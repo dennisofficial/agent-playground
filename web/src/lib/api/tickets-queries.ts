@@ -9,8 +9,7 @@ import {
 } from '@tanstack/react-query';
 import { env } from '@/lib/env';
 import { qk } from './query-keys';
-import { connectivity } from './connectivity';
-import { refreshSession } from './refresh';
+import { subscribeSse } from './sse-manager';
 import { useOrgs } from './me';
 import { fetchOrgRepos, type RepoView } from './thread-api';
 import {
@@ -156,9 +155,6 @@ export function useRepoTicketEvents(orgId: string, repoId: string): void {
   const qc = useQueryClient();
   useEffect(() => {
     if (!orgId || !repoId) return;
-    let es: EventSource | null = null;
-    let closed = false;
-    let refreshedOnce = false;
     let debounce: ReturnType<typeof setTimeout> | null = null;
 
     const refetch = () => {
@@ -179,37 +175,12 @@ export function useRepoTicketEvents(orgId: string, repoId: string): void {
       if (frame?.type === 'ticket_event') refetch();
     };
 
-    const connect = () => {
-      if (closed) return;
-      es = new EventSource(`${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`, {
-        withCredentials: true,
-      });
-      es.onopen = () => {
-        refreshedOnce = false;
-        connectivity.reportReachable();
-      };
-      es.onmessage = (e: MessageEvent) => {
-        connectivity.reportReachable();
-        onFrame(e.data as string);
-      };
-      es.onerror = () => {
-        connectivity.reportUnreachable();
-        if (!es || es.readyState !== EventSource.CLOSED || refreshedOnce) return;
-        refreshedOnce = true;
-        void refreshSession().then((ok) => {
-          if (ok && !closed) {
-            es?.close();
-            connect();
-          }
-        });
-      };
-    };
-
-    connect();
+    // Shares the ONE repo-events connection with `useThreadEvents` (same URL) via the SSE manager.
+    const url = `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`;
+    const unsubscribe = subscribeSse(url, { onFrame });
     return () => {
-      closed = true;
       if (debounce) clearTimeout(debounce);
-      es?.close();
+      unsubscribe();
     };
   }, [orgId, repoId, qc]);
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
 /**
  * LIVE engine-stream store — the in-flight turn of a thread's in-sandbox Claude Code session, made
@@ -59,7 +59,6 @@ type StreamPayload = {
   active?: boolean;
 };
 
-const EMPTY: ReadonlyMap<string, LiveTurn> = new Map();
 let blockSeq = 0;
 
 /** The default lane — the thread brain's conversational turn (vs `phase:<stepId>` for a build turn). */
@@ -70,8 +69,13 @@ const laneKey = (threadId: string, lane: string): string => `${threadId}::${lane
 class ThreadStreamStore {
   /** key: `${threadId}::${lane}` → that lane's in-flight turn. */
   private map = new Map<string, LiveTurn>();
-  private snapshot: ReadonlyMap<string, LiveTurn> = EMPTY;
-  private readonly listeners = new Set<() => void>();
+  /**
+   * Per-key listeners. The repo SSE feeds frames for EVERY in-flight turn in the repo into this one store
+   * (so switching to a sibling thread mid-stream is instant — its snapshot+deltas are already here). To
+   * keep that cheap, a `useLiveTurn(threadId, lane)` subscriber re-renders ONLY when ITS key changes, not
+   * on every other thread's token — so a busy sibling never churns the open conversation.
+   */
+  private readonly keyListeners = new Map<string, Set<() => void>>();
 
   /** Apply a `{type:'stream'}` frame's event (snapshot or delta) for a turn lane, deduped by `seq`. */
   apply(threadId: string, lane: string, seq: number, ev: StreamPayload | null | undefined): void {
@@ -87,7 +91,7 @@ class ThreadStreamStore {
         active: ev.active ?? true,
         lastSeq: seq,
       });
-      this.bump();
+      this.notify(key);
       return;
     }
 
@@ -148,38 +152,48 @@ class ThreadStreamStore {
       default:
         // session / result — advance seq but don't change rendered blocks.
         this.map.set(key, { blocks, active: true, lastSeq: seq });
-        this.bump();
+        this.notify(key);
         return;
     }
 
     this.map.set(key, { blocks, active: true, lastSeq: seq });
-    this.bump();
+    this.notify(key);
   }
 
   end(threadId: string, lane: string): void {
     const key = laneKey(threadId, lane);
     if (!this.map.has(key)) return;
     this.map.delete(key);
-    this.bump();
+    this.notify(key);
+  }
+
+  /** Current turn for a key — a stable object ref until that key next changes (safe for useSyncExternalStore). */
+  getByKey(key: string): LiveTurn | undefined {
+    return this.map.get(key);
   }
 
   get(threadId: string, lane: string): LiveTurn | undefined {
-    return this.snapshot.get(laneKey(threadId, lane));
+    return this.map.get(laneKey(threadId, lane));
   }
 
-  private bump(): void {
-    this.snapshot = new Map(this.map);
-    this.listeners.forEach((l) => l());
+  private notify(key: string): void {
+    this.keyListeners.get(key)?.forEach((l) => l());
   }
 
-  subscribe = (cb: () => void): (() => void) => {
-    this.listeners.add(cb);
+  subscribeKey(key: string, cb: () => void): () => void {
+    let set = this.keyListeners.get(key);
+    if (!set) {
+      set = new Set();
+      this.keyListeners.set(key, set);
+    }
+    set.add(cb);
     return () => {
-      this.listeners.delete(cb);
+      const s = this.keyListeners.get(key);
+      if (!s) return;
+      s.delete(cb);
+      if (s.size === 0) this.keyListeners.delete(key);
     };
-  };
-  getSnapshot = (): ReadonlyMap<string, LiveTurn> => this.snapshot;
-  getServerSnapshot = (): ReadonlyMap<string, LiveTurn> => EMPTY;
+  }
 }
 
 const store = new ThreadStreamStore();
@@ -209,7 +223,8 @@ export function isLiveTurnActive(threadId: string): boolean {
  * conversation reads `main`; a step sub-page reads its `phase:<stepId>` lane.
  */
 export function useLiveTurn(threadId: string, lane: string = MAIN_LANE): LiveTurn | undefined {
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot).get(
-    laneKey(threadId, lane),
-  );
+  const key = laneKey(threadId, lane);
+  const subscribe = useCallback((cb: () => void) => store.subscribeKey(key, cb), [key]);
+  const getByKey = useCallback(() => store.getByKey(key), [key]);
+  return useSyncExternalStore(subscribe, getByKey, () => undefined);
 }

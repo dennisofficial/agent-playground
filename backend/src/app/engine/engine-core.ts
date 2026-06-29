@@ -389,6 +389,13 @@ export class EngineCore {
     let result = '';
     let resolvedSession = sessionId;
     let usage: EngineUsage | undefined;
+    // Live context-window occupancy (distinct from the cumulative billing total): each `assistant`
+    // message is ONE model round-trip whose own `usage` reports the input size of THAT call (fresh +
+    // cache read + cache creation) — the real context size at that moment. We keep the MAIN agent's
+    // LAST round-trip (turn-end occupancy) + its model. Subagent messages (parent_tool_use_id set) run
+    // in their OWN context on cheaper models, so they're excluded.
+    let contextTokens: number | undefined;
+    let contextModel: string | undefined;
     try {
       for await (const message of this.claudeSdk.query({ prompt: task, options })) {
         if (message.type === 'system' && message.subtype === 'init') {
@@ -417,6 +424,22 @@ export class EngineCore {
           // subagent's blocks (forwardSubagentText forwards subagent text/thinking the same way).
           const parent = message.parent_tool_use_id ?? undefined;
           const sub = parent ? { parentToolUseId: parent } : {};
+          // Context occupancy: only the MAIN agent's round-trips (parent unset). This message's OWN
+          // usage is the single-call input size (NOT the cumulative turn total) — keep the latest as
+          // the turn-end occupancy, with the call's model so the ring resolves the right window.
+          if (!parent) {
+            const amsg = (message as { message?: { model?: string; usage?: {
+              input_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            } } }).message;
+            const cu = amsg?.usage;
+            if (cu) {
+              contextTokens =
+                (cu.input_tokens ?? 0) + (cu.cache_read_input_tokens ?? 0) + (cu.cache_creation_input_tokens ?? 0);
+              if (amsg?.model) contextModel = amsg.model;
+            }
+          }
           for (const block of message.message.content as Array<{
             type: string;
             id?: string;
@@ -466,6 +489,12 @@ export class EngineCore {
           if (message.subtype === 'success') {
             result = message.result;
             usage = extractClaudeUsage(message as Record<string, unknown>, model);
+            // Attach the per-call context occupancy (+ its model) onto the billing usage. The cumulative
+            // `inputTokens` stays the billing number; `contextTokens` is the real window occupancy.
+            if (usage && contextTokens !== undefined) {
+              usage.contextTokens = contextTokens;
+              if (contextModel) usage.contextModel = contextModel;
+            }
           } else {
             throw new Error(`Claude engine ended: ${message.subtype}`);
           }

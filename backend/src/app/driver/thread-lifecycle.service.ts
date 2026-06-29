@@ -500,6 +500,11 @@ export class ThreadLifecycleService {
       const baseSandboxInput = await this.git.createBaseWorktree(projectRepo, thread.id);
       const branched = await this.git.switchBranch(baseSandboxInput, projectRepo, featureBranch);
 
+      // Populate git submodules into the freshly cut worktree (no-op without a `.gitmodules`) so the
+      // in-sandbox build can resolve submodule-provided packages (e.g. `@workspace/*`). `git worktree add`
+      // does NOT do this; auth rides the org PAT just like the clone. Fail-soft.
+      await this.git.ensureSubmodules(branched.worktreePath, projectRepo);
+
       // Hydrate the freshly-cut worktree (granted secrets + golden seed + cache mounts) and attach the
       // execution environment (thread-keyed container). forceHydrate: the worktree is brand new.
       const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
@@ -559,6 +564,8 @@ export class ThreadLifecycleService {
     const sb = thread?.feature_branch
       ? await this.git.switchBranch(base, projectRepo, thread.feature_branch)
       : base;
+    // A restored worktree is freshly cut → re-populate its submodules (no-op without a `.gitmodules`).
+    await this.git.ensureSubmodules(sb.worktreePath, projectRepo);
     row.worktree_path = sb.worktreePath;
     this.logger.log(`restored missing worktree for thread ${row.thread_id} at ${sb.worktreePath}`);
   }

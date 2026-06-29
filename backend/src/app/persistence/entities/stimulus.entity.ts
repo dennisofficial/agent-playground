@@ -80,4 +80,12 @@ export class StimulusEntity extends TimestampedEntity {
   /** Severity the adapter mapped: 'info' | 'warning' | 'critical' (events only). */
   @Column({ type: 'text', nullable: true })
   severity!: string | null;
+
+  /**
+   * When this event was delivered to its thread's brain as a harness message (events only). Null until
+   * the delivery turn completes — the at-least-once boot sweep re-delivers any seeded-but-undelivered
+   * event so a crash between seed and the brain turn can't lose it. Chat rows never set it.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  delivered_at!: Date | null;
 }

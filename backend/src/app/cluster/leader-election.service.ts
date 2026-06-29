@@ -58,6 +58,17 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
   }
 
   /**
+   * True once this process has begun shutting down (SIGTERM/SIGINT drain or `onApplicationShutdown`).
+   * The canonical "we're going away" signal: set at the very START of the drain, BEFORE in-flight turns
+   * are cut off. Terminal-error catches (the driver/plan-review/autofix/gate) check this to distinguish a
+   * shutdown-induced abort (leave the job resumable) from a real failure or a local watchdog/timeout abort
+   * (which fire while still `leader`/`follower` and must stay terminal).
+   */
+  isDraining(): boolean {
+    return this.state === 'draining';
+  }
+
+  /**
    * Run `fn` whenever this instance BECOMES leader — and IMMEDIATELY if it already is (module bootstrap
    * order is non-deterministic, so a late subscriber must not miss an earlier promotion).
    */

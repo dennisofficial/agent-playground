@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { FeatureSandbox } from '../git';
+import { LocalGitService, type FeatureSandbox } from '../git';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
@@ -42,12 +42,18 @@ export class WorktreeProvisioner {
   constructor(
     private readonly hydrator: WorktreeHydrator,
     private readonly awareness: PipelineAwarenessStore,
+    private readonly git: LocalGitService,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
   ) {}
 
   async provisionAndAttach(input: ProvisionAndAttachInput): Promise<ProvisionAndAttachResult> {
     const { sandbox, orgId, threadId, repoDbId } = input;
     const worktreePath = sandbox.worktreePath;
+
+    // Ignore package-manager / build caches at the clone level so `commitAll`'s `git add -A` can never
+    // sweep a multi-GB package store into a PR (a safety net beneath the relocated shared store).
+    // Idempotent + fail-soft.
+    await this.git.ensureBuildJunkExcluded(worktreePath);
 
     // Mounts are cheap to (re)compute and must be passed on EVERY attach (a cold recreate needs them).
     const mounts = this.hydrator.resolveMounts(worktreePath);

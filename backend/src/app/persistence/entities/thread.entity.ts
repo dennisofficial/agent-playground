@@ -151,7 +151,11 @@ export class ThreadEntity extends TimestampedEntity {
    */
   @Column({
     type: 'jsonb',
-    default: () => `'{"markerQueue":[],"conveyedStateSig":null}'::jsonb`,
+    // Plain-literal default (NOT a `() => '...'::jsonb` expression): only a non-function
+    // default routes TypeORM's `defaultEqual` through its jsonb-aware deepCompare branch.
+    // A function default falls back to naive string compare, which never matches the
+    // cast-stripped, whitespace-normalized value Postgres reads back → migration regenerates forever.
+    default: { markerQueue: [], conveyedStateSig: null },
   })
   pipeline_awareness!: ThreadPipelineAwareness;
 
@@ -163,7 +167,7 @@ export class ThreadEntity extends TimestampedEntity {
    * The generated `/context/generated/decision-record.md` is rendered from this array, live, on every
    * decision mutation.
    */
-  @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })
+  @Column({ type: 'jsonb', default: [] })
   pending_decisions!: Decision[];
 
   /**

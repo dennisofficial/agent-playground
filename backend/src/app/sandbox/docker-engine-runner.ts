@@ -25,6 +25,17 @@ export const CONTAINER_WORKTREE = '/workspace';
 export const CONTAINER_GIT_COMMON = '/repo.git';
 
 /**
+ * The in-sandbox path of the SHARED pnpm content-addressable store. pnpm forces its store onto the
+ * PROJECT's device — it ignores `store-dir`/`.npmrc` pointing at another mount and always uses
+ * `<project-mount>/.pnpm-store` (verified live). So the only way to share the store across every
+ * thread is to bind ONE host dir at exactly this path; a dependency is then fetched ONCE globally and
+ * copied from the store on every later install (cross-device → copy, not hardlink). The store is
+ * git-excluded by the `WorktreeProvisioner`, so `commitAll`'s `git add -A` never stages it — which is
+ * what previously failed the build when a ~1.7 GB `.pnpm-store/` landed in the worktree.
+ */
+export const CONTAINER_PNPM_STORE = `${CONTAINER_WORKTREE}/.pnpm-store`;
+
+/**
  * The thread's durable SHARED CONTEXT folder INSIDE the sandbox — a per-thread scratch/working space
  * that lives OUTSIDE the git worktree (so plan/spec artifacts never pollute the repo diff). Every
  * in-sandbox session for the thread (the brain AND the plan/step/review/auto-fix turns) reads & writes

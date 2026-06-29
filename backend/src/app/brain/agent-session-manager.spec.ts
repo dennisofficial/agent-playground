@@ -31,9 +31,8 @@ import { AgentSessionManager } from './agent-session-manager.service';
 import { ProvisioningNotReadyError } from '../driver/thread-lifecycle.service';
 import { UNRESUMABLE_SESSION_MARKER } from '../engine/engine.types';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
-import type { EventTriageService } from './event-triage.service';
 import type { EventStimulus } from '../domain';
-import { StimulusRouter } from './stimulus-router.service';
+import { UNTRUSTED_OPEN } from '../stimulus';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type { CredentialResolver } from '../onboarding';
@@ -42,7 +41,9 @@ import type { CredentialResolver } from '../onboarding';
  * R3 GATE TESTS — two assertions:
  *   (a) A chat turn's `submit_plan` tool call persists a detailed decision record + tracks
  *       (offline-deterministic, fake bridge — drives `buildTools()` directly, no real engine).
- *   (b) An EVENT still parks/dispatches via `EventTriageService` (the event lane is UNCHANGED).
+ *   (b) An EVENT is delivered to the SAME thread brain as a harness message (`deliverEvent`) — there is
+ *       no second triage brain; the seed turn carries the framed + UNTRUSTED-fenced body, then stamps
+ *       `delivered_at` (at-least-once).
  */
 describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fake bridge)', () => {
   let manager: AgentSessionManager;
@@ -275,6 +276,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockDispatcher,
       mockSurface,
       mockSandboxRows,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
       noopTurnHarness,
       mockClassifier,
       mockShip,
@@ -901,6 +903,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as JobDispatcher,
       surface,
       sandboxRows,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
       turnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
@@ -980,11 +983,16 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         result: 'Reply.',
         sessionId: 'sess-1',
         usage: {
-          inputTokens: 12_500,
+          // `inputTokens` is the CUMULATIVE billing total (sums every round-trip's cache re-reads).
+          inputTokens: 187_795,
           outputTokens: 420,
-          cacheReadTokens: 11_000,
-          costUsd: 0.03,
+          cacheReadTokens: 180_932,
+          costUsd: 0.21,
           model: 'claude-opus-4-8',
+          // Occupancy = the per-call context size (the brain's real window usage), NOT the cumulative
+          // billing total — read straight from the engine's per-call tracking.
+          contextTokens: 23_100,
+          contextModel: 'claude-opus-4-8',
         },
       };
     });
@@ -996,9 +1004,31 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     // The turn_meta block is appended LAST in the turn.
     expect(blocks.at(-1)?.kind).toBe('turn_meta');
     const meta = blocks.at(-1)?.meta as Record<string, unknown>;
-    expect(meta.usage).toMatchObject({ inputTokens: 12_500, outputTokens: 420, costUsd: 0.03, model: 'claude-opus-4-8' });
-    expect(meta.contextTokens).toBe(12_500);
+    expect(meta.usage).toMatchObject({ inputTokens: 187_795, outputTokens: 420, costUsd: 0.21, model: 'claude-opus-4-8' });
+    // Occupancy reads the per-call `contextTokens`, NOT the cumulative billing `inputTokens` (the bug).
+    expect(meta.contextTokens).toBe(23_100);
+    expect(meta.contextTokens).not.toBe(187_795);
     expect(meta.contextLimit).toBe(1_000_000); // opus → 1M window
+  });
+
+  it('turn_meta context occupancy is null when the engine surfaces no per-call usage (no wrong ring)', async () => {
+    const run = vi.fn(async (args: RunEngineArgs) => {
+      args.onEvent?.({ kind: 'text', text: 'Reply.' });
+      return {
+        result: 'Reply.',
+        sessionId: 'sess-1',
+        // Billing usage only — no `contextTokens`/`contextModel` (e.g. an engine without per-call usage).
+        usage: { inputTokens: 187_795, outputTokens: 420, cacheReadTokens: 180_932, model: 'claude-opus-4-8' },
+      };
+    });
+    const { manager, blockSink } = makeManager({ run });
+
+    await manager.handleChatTurn(stimulus);
+
+    const blocks = (blockSink.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    const meta = blocks.at(-1)?.meta as Record<string, unknown>;
+    // Falls back to null (blank ring) rather than the wrong cumulative ~94%.
+    expect(meta.contextTokens).toBeNull();
   });
 
   it('routes an unresumable-session error to a system→operator notice (own box), not an Atlas reply', async () => {
@@ -1156,6 +1186,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       {} as unknown as JobDispatcher,
       { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
       { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<ThreadSandboxEntity>,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
       noopTurnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
@@ -1227,76 +1258,76 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
   });
 });
 
-describe('R3 gate: StimulusRouter — (b) event lane still parks/dispatches via EventTriageService', () => {
-  it('routes an event stimulus to EventTriageService.triageEvent, NOT the chat brain', async () => {
-    const mockBrain = {
-      handleChatTurn: vi.fn(),
-    };
-    const mockEvents = {
-      triageEvent: vi.fn().mockResolvedValue(undefined),
-    } as unknown as EventTriageService;
+describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the ONE brain as a harness message', () => {
+  const eventStimulus: EventStimulus = {
+    kind: 'event',
+    trust: 'untrusted',
+    id: 'stim-evt-001',
+    threadId: 'th-evt-001',
+    receivedAt: new Date('2026-06-21T00:00:00Z'),
+    orgId: 'T-EVT',
+    repoId: 'evt-proj',
+    body: 'CI job #42 failed on the main branch.',
+    source: 'github',
+    dedupeKey: 'ci-run-42',
+    severity: 'warning',
+  };
 
-    const router = new StimulusRouter(
-      mockBrain as unknown as AgentSessionManager,
-      mockEvents,
+  /** A manager wired with only the two deps `deliverEvent` touches; everything else is an inert stub. */
+  function makeManager() {
+    const stimulusRows = {
+      findOne: vi.fn().mockResolvedValue(null), // not yet delivered
+      update: vi.fn().mockResolvedValue(undefined),
+      find: vi.fn().mockResolvedValue([]),
+    };
+    const inert = {} as never;
+    const manager = new AgentSessionManager(
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, // store … surface (9)
+      inert, // sandboxRows (10)
+      stimulusRows as never, // stimulusRows (11)
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 12 … 22
     );
+    return { manager, stimulusRows };
+  }
 
-    const eventStimulus: EventStimulus = {
-      kind: 'event',
-      trust: 'untrusted',
-      id: 'stim-router-evt-001',
-      receivedAt: new Date('2026-06-21T00:00:00Z'),
-      orgId: 'T-ROUTER',
-      repoId: 'router-proj',
-      body: 'CI job #42 failed on the main branch.',
-      source: 'github',
-      dedupeKey: 'ci-run-42',
-      severity: 'warning',
-    };
+  it('runs ONE harness turn with the framed + UNTRUSTED-fenced body, then stamps delivered_at', async () => {
+    const { manager, stimulusRows } = makeManager();
+    const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
 
-    await router.consume(eventStimulus);
+    await manager.deliverEvent(eventStimulus);
 
-    // EventTriageService received the event.
-    expect(mockEvents.triageEvent).toHaveBeenCalledOnce();
-    expect(mockEvents.triageEvent).toHaveBeenCalledWith(eventStimulus);
-
-    // The chat brain was NOT touched.
-    expect(mockBrain.handleChatTurn).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledOnce();
+    const delivered = spy.mock.calls[0][0] as ChatStimulus;
+    expect(delivered.threadId).toBe('th-evt-001');
+    expect(delivered.seed).toBe(true); // a seed turn → no duplicate operator bubble
+    // Trusted framing OUTSIDE the fence, the untrusted event body INSIDE it.
+    expect(delivered.body).toMatch(/no human sent it/i);
+    expect(delivered.body).toContain(UNTRUSTED_OPEN);
+    expect(delivered.body).toContain('CI job #42 failed');
+    // delivered_at stamped ONLY after the turn completed (at-least-once).
+    expect(stimulusRows.update).toHaveBeenCalledWith(
+      { id: 'stim-evt-001' },
+      expect.objectContaining({ delivered_at: expect.any(Date) }),
+    );
   });
 
-  it('routes a chat stimulus to AgentSessionManager.handleChatTurn, NOT EventTriageService', async () => {
-    const mockBrain = {
-      handleChatTurn: vi.fn().mockResolvedValue(undefined),
-    };
-    const mockEvents = {
-      triageEvent: vi.fn(),
-    } as unknown as EventTriageService;
+  it('is idempotent: an already-delivered event runs no second turn', async () => {
+    const { manager, stimulusRows } = makeManager();
+    stimulusRows.findOne.mockResolvedValue({ delivered_at: new Date() });
+    const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
 
-    const router = new StimulusRouter(
-      mockBrain as unknown as AgentSessionManager,
-      mockEvents,
-    );
+    await manager.deliverEvent(eventStimulus);
 
-    const chatStimulus: ChatStimulus = {
-      kind: 'chat',
-      trust: 'trusted',
-      id: 'stim-router-chat-001',
-      receivedAt: new Date('2026-06-21T00:00:00Z'),
-      orgId: 'T-ROUTER',
-      repoId: 'router-proj',
-      threadId: 'th-router-001',
-      body: 'Add a README track',
-      author: { id: 'U-OP', displayName: 'Op' },
-      replyRoute: { surfaceId: 'agent', threadRef: 'ts-router-001' },
-    };
+    expect(spy).not.toHaveBeenCalled();
+    expect(stimulusRows.update).not.toHaveBeenCalled();
+  });
 
-    await router.consume(chatStimulus);
+  it('a FAILED delivery turn leaves delivered_at unstamped (so the boot sweep re-delivers)', async () => {
+    const { manager, stimulusRows } = makeManager();
+    vi.spyOn(manager, 'handleChatTurn').mockRejectedValue(new Error('turn crashed mid-delivery'));
 
-    // The chat brain received the chat stimulus.
-    expect(mockBrain.handleChatTurn).toHaveBeenCalledOnce();
-    expect(mockBrain.handleChatTurn).toHaveBeenCalledWith(chatStimulus);
-
-    // EventTriageService was NOT touched.
-    expect(mockEvents.triageEvent).not.toHaveBeenCalled();
+    await expect(manager.deliverEvent(eventStimulus)).rejects.toThrow('turn crashed');
+    // The stamp is AFTER the awaited turn → a crash never reaches it; the row stays null → re-deliverable.
+    expect(stimulusRows.update).not.toHaveBeenCalled();
   });
 });

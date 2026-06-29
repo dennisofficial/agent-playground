@@ -139,24 +139,25 @@ threading, so they **stay** regardless of the rework below:
 - **repo routing** — a webhook carries no `org_id`, so `owner/repo` → connected repo
   (`stimulus/project-routing.service.ts`).
 - **untrusted fence** — the body is DATA, never instructions (`stimulus/untrusted-content.ts`).
-- **seed a thread** + first message + stimulus row, with a DB unique-index dedupe backstop
-  (`stimulus/stimulus-store.service.ts:69`).
+- **seed a thread** + first message (stamped `meta.source='system_event'` → the operator-visible **EVENT
+  bubble**) + stimulus row, with a DB unique-index dedupe backstop (`stimulus/stimulus-store.service.ts:69`).
 
-**Today (slated for rework):** events route through a unified `Stimulus` currency + a `StimulusRouter`
-demux + a *second, event-only LLM brain*, `EventTriageService` (ignore / park / auto-dispatch). This is a
-leftover from when Atlas was one central brain — and `StimulusRouter`'s only job is to immediately demux
-the union back apart by `kind`, which is the tell that the union earns nothing.
+**The model (delivered):** there is only **one brain per thread — its session**. After the four guards, an
+event is delivered to the seeded thread's brain as a **harness message** — a server-initiated turn
+(`AgentSessionManager.deliverEvent` → `handleChatTurn`, the same seam the Codex plan-review delivery uses).
+The brain reads a trusted framing ("an automated {source} notification opened this thread — no human sent
+it…") wrapped around the `wrapUntrusted`-fenced event body, then triages it **in-session**: it scopes the
+work with the operator and proposes a plan like any other thread. There is **no** `Stimulus` union, no
+`StimulusRouter` demux, and no second event-only brain — those were deleted. The intake downstream is the
+typed `BRAIN_SINK` port (`handleChat` / `deliverEvent`).
 
-⛔ **Intended direction:** there is only **one brain per thread — its session**. An event should be just the
-**opening message** to a freshly-spawned thread's brain, mechanically identical to a human's first message.
-Keep the four mechanical guards; **drop** the `Stimulus` union + router + the second brain. The security
-control then becomes the **same approval card** every plan already passes through (untrusted → the brain
-proposes → a human approves before the harness builds).
-
-**Open decision (deferred — why triage still exists):** today a "clean" event **self-approves** and
-dispatches an autonomous bugfix with **no human** (`brain/event-triage.service.ts:138`). The rework must
-decide whether to keep an autonomous (no-human) lane or require approval for *every* event-spawned plan.
-Until that's settled, the triage lane stays.
+- **Async + at-least-once.** Intake does NOT await the engine turn (the webhook 202 must stay fast); it
+  schedules `deliverEvent` and returns. Durability is `stimuli.delivered_at` (stamped only after the turn)
+  + a leader boot sweep that re-delivers any seeded event still `null` — so a crash between seed and the
+  turn can't lose it (a webhook retry would be dropped by the dedupe index).
+- **Security = the approval card.** Resolved open decision: **every** event-spawned plan goes through the
+  same human approval gate — there is no autonomous self-approve/dispatch lane. Untrusted → the brain
+  proposes → a human approves before the harness builds.
 
 ## 8. Known divergences & tech debt
 

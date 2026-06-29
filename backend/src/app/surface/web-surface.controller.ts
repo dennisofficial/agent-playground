@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   Logger,
   NotFoundException,
   Param,
@@ -28,6 +29,7 @@ import {
   REQUEST_CHANGES_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
+import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadTitleService } from './thread-title.service';
@@ -175,13 +177,19 @@ interface AnswerQuestionDto {
 }
 
 /** Operator-visible message provenance, by AUDIENCE. See the `/messages` mapping for the full rationale. */
-export type WebMessageSource = 'operator' | 'atlas' | 'system_operator' | 'system_shared';
+export type WebMessageSource =
+  | 'operator'
+  | 'atlas'
+  | 'system_operator'
+  | 'system_shared'
+  | 'system_event';
 
 /** Map a row's stored `meta.source` to the web renderer's audience-explicit source. Only the `system_*`
  *  kinds are stamped on the row; ordinary operator/atlas messages carry no `source` and derive from isAtlas. */
 export function mapMessageSource(stored: unknown, isAtlas: boolean): WebMessageSource {
   if (stored === 'system_operator') return 'system_operator';
   if (stored === 'system_shared') return 'system_shared';
+  if (stored === 'system_event') return 'system_event';
   return isAtlas ? 'atlas' : 'operator';
 }
 
@@ -213,6 +221,7 @@ export class WebSurfaceController {
     private readonly ticketEvents: TicketEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
+    @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -370,6 +379,8 @@ export class WebSurfaceController {
       //                       it and never sees it. Rendered as a dedicated system-notice box.
       //   'system_shared'   — system→operator AND Atlas (e.g. Codex plan-review findings; Atlas gets a
       //                       separate seed). Rendered as the "Codex review" panel.
+      //   'system_event'    — an automated notification that opened this thread (Atlas got a harness
+      //                       delivery). Rendered as the "Event" panel; `meta.eventSource`/`severity` head it.
       //   'atlas' | 'operator' — ordinary turns (inferred from author when no explicit source).
       source: mapMessageSource((m.meta as { source?: unknown } | null)?.source, m.author_bot_id != null),
       text: m.text,
@@ -496,6 +507,27 @@ export class WebSurfaceController {
     // uuid, which previously made `store.approve` throw and the verdict silently no-op).
     this.surface.receiveApprovalClick(actionId, value, user.id, note);
     return { ok: true, jobId: meta.jobId };
+  }
+
+  /**
+   * `POST …/threads/:threadId/retry` — the halted-build "Retry" button. Re-drives a `failed`/`paused`
+   * build through the deterministic, resumable driver (`JOB_DISPATCHER.retry` → flips back to `running`,
+   * fast-forwards finished work, continues at the first unfinished step). No-op if the thread isn't in a
+   * retryable state. Scoped to the caller's org via the membership guard + `requireThread`.
+   */
+  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/retry')
+  @UseGuards(OrgMembershipGuard)
+  async retry(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('threadId') threadId: string,
+  ): Promise<{ ok: boolean; status: string }> {
+    const thread = await this.requireThread(threadId, org.id);
+    if (thread.status !== 'failed' && thread.status !== 'paused') {
+      // Idempotent / not-applicable: nothing to retry (already running, done, or pre-build).
+      return { ok: false, status: thread.status };
+    }
+    await this.dispatcher.retry(threadId);
+    return { ok: true, status: 'running' };
   }
 
   /**

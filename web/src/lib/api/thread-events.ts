@@ -1,11 +1,10 @@
 'use client';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { env } from '@/lib/env';
-import { connectivity } from './connectivity';
 import { qk } from './query-keys';
-import { refreshSession } from './refresh';
+import { subscribeSse } from './sse-manager';
 import type { InboxThread } from './inbox';
 import type { ThreadRef } from './thread-api';
 import { applyStreamFrame, endLiveTurn } from './thread-stream';
@@ -47,32 +46,41 @@ const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
  *    fed into the live-turn store (`thread-stream.ts`); on `turn_end` we refetch `/messages` (now holding
  *    the persisted blocks) and THEN clear the live buffer (no flicker).
  *
- * `EventSource` self-heals transient drops; a FATAL close (401 on an expired cookie, which EventSource
- * never retries) triggers one session refresh + reconnect so the stream survives token rotation.
+ * Resilience (transient self-heal + a one-shot 401 refresh/reconnect) lives in the shared `sse-manager`.
+ *
+ * The stream is REPO-scoped, so this hook subscribes per `(orgId, repoId)` — NOT per thread — and reads
+ * the currently-open thread from a ref. That keeps ONE standing connection across thread switches within a
+ * repo (a thread switch no longer tears the SSE down + reopens it), which is what used to churn the
+ * HTTP/1.1 connection pool and stall every fetch in dev.
  */
 export function useThreadEvents(ref: ThreadRef): void {
   const qc = useQueryClient();
   const { orgId, repoId, threadId } = ref;
 
+  // The open thread, read live by the frame handlers — so the standing subscription always targets the
+  // CURRENT thread without re-subscribing when it changes.
+  const openThreadRef = useRef(threadId);
+  openThreadRef.current = threadId;
+
   useEffect(() => {
-    if (!orgId || !repoId || !threadId) return;
-    const liveRef: ThreadRef = { orgId, repoId, threadId };
-    let es: EventSource | null = null;
-    let closed = false;
-    let refreshedOnce = false;
+    if (!orgId || !repoId) return;
     let debounce: ReturnType<typeof setTimeout> | null = null;
     let ctxDebounce: ReturnType<typeof setTimeout> | null = null;
 
-    // The 4-element prefix matches every open `/context` file for this thread (the 5th element is the path).
-    const contextFilesKey = qk.threadContextFile(liveRef, '').slice(0, 4);
+    // Built from the open thread at call time (not captured once) so the standing connection's debounced
+    // invalidations always target whichever thread is open now.
+    const liveRef = (): ThreadRef => ({ orgId, repoId, threadId: openThreadRef.current });
+    // The 4-element prefix matches every open `/context` file for a thread (the 5th element is the path).
+    const contextFilesKey = (r: ThreadRef) => qk.threadContextFile(r, '').slice(0, 4);
 
     const refetch = () => {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
-        void qc.invalidateQueries({ queryKey: qk.threadMessages(liveRef) });
-        void qc.invalidateQueries({ queryKey: qk.threadPipeline(liveRef) });
-        void qc.invalidateQueries({ queryKey: qk.threadContext(liveRef) });
-        void qc.invalidateQueries({ queryKey: contextFilesKey });
+        const r = liveRef();
+        void qc.invalidateQueries({ queryKey: qk.threadMessages(r) });
+        void qc.invalidateQueries({ queryKey: qk.threadPipeline(r) });
+        void qc.invalidateQueries({ queryKey: qk.threadContext(r) });
+        void qc.invalidateQueries({ queryKey: contextFilesKey(r) });
       }, 250);
     };
 
@@ -81,17 +89,18 @@ export function useThreadEvents(ref: ThreadRef): void {
     const refetchContext = () => {
       if (ctxDebounce) clearTimeout(ctxDebounce);
       ctxDebounce = setTimeout(() => {
-        void qc.invalidateQueries({ queryKey: qk.threadContext(liveRef) });
-        void qc.invalidateQueries({ queryKey: contextFilesKey });
+        const r = liveRef();
+        void qc.invalidateQueries({ queryKey: qk.threadContext(r) });
+        void qc.invalidateQueries({ queryKey: contextFilesKey(r) });
       }, 250);
     };
 
-    const reconcileNow = () =>
+    const reconcileNow = (r: ThreadRef) =>
       Promise.all([
-        qc.invalidateQueries({ queryKey: qk.threadMessages(liveRef) }),
-        qc.invalidateQueries({ queryKey: qk.threadPipeline(liveRef) }),
-        qc.invalidateQueries({ queryKey: qk.threadContext(liveRef) }),
-        qc.invalidateQueries({ queryKey: contextFilesKey }),
+        qc.invalidateQueries({ queryKey: qk.threadMessages(r) }),
+        qc.invalidateQueries({ queryKey: qk.threadPipeline(r) }),
+        qc.invalidateQueries({ queryKey: qk.threadContext(r) }),
+        qc.invalidateQueries({ queryKey: contextFilesKey(r) }),
       ]);
 
     const onFrame = (data: string) => {
@@ -103,7 +112,12 @@ export function useThreadEvents(ref: ThreadRef): void {
         return;
       }
       if (frame?.type === 'stream') {
-        if (frame.threadId !== threadId) return; // only the open thread's live turn
+        // The repo stream carries the live turn for EVERY thread in the repo. We feed them ALL into the
+        // (thread-keyed) live-turn store — NOT just the open thread — so switching to a sibling thread that
+        // is mid-stream is instant, with its already-streamed output present. (Before, this connection
+        // re-opened per thread to re-trigger the snapshot; now it stands, so we must not drop siblings.)
+        const fThread = frame.threadId;
+        if (!fThread) return;
         // Which lane (the brain `main` turn, or a `phase:<stepId>` build turn). Lanes are independent
         // in-flight turns on the same thread; the conversation reads `main`, the step sub-page reads its phase.
         const lane = frame.lane ?? 'main';
@@ -111,17 +125,19 @@ export function useThreadEvents(ref: ThreadRef): void {
           // Reconcile: refetch durable messages, THEN clear THIS lane's live buffer (so no gap/flicker). The
           // queued-sends tags belong to the brain's serialized queue, so only the `main` turn ending clears
           // them; a build (phase) turn ending must not drop a follow-up the operator queued for the brain.
-          void reconcileNow().then(() => {
-            endLiveTurn(threadId, lane);
-            if (lane === 'main') clearQueuedSends(threadId);
+          // For a non-open thread the invalidations just mark its (unobserved) queries stale — no fetch.
+          void reconcileNow({ orgId, repoId, threadId: fThread }).then(() => {
+            endLiveTurn(fThread, lane);
+            if (lane === 'main') clearQueuedSends(fThread);
           });
         } else {
           // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store, per lane.
-          applyStreamFrame(threadId, lane, frame.seq ?? 0, frame.event);
-          // In-turn freshness: the brain just wrote a `/context` file via Write/Edit → refresh the
-          // SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the turn's durable reconcile.
+          applyStreamFrame(fThread, lane, frame.seq ?? 0, frame.event);
+          // In-turn freshness for the OPEN thread only: the brain just wrote a `/context` file via Write/Edit
+          // → refresh the SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the durable reconcile.
           const ev = frame.event;
           if (
+            fThread === openThreadRef.current &&
             ev?.kind === 'tool_use' &&
             ev.name != null &&
             FILE_WRITE_TOOLS.has(ev.name) &&
@@ -155,41 +171,16 @@ export function useThreadEvents(ref: ThreadRef): void {
       refetch();
     };
 
-    const connect = () => {
-      if (closed) return;
-      es = new EventSource(`${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`, {
-        withCredentials: true,
-      });
-      es.onopen = () => {
-        refreshedOnce = false;
-        connectivity.reportReachable();
-        // Catch a title generated before this stream subscribed: pull the durable title from `allThreads`
-        // (a `thread_meta` frame could have fired during the connect gap).
-        void qc.invalidateQueries({ queryKey: qk.allThreads() });
-      };
-      es.onmessage = (e: MessageEvent) => {
-        connectivity.reportReachable();
-        onFrame(e.data as string);
-      };
-      es.onerror = () => {
-        connectivity.reportUnreachable();
-        if (!es || es.readyState !== EventSource.CLOSED || refreshedOnce) return;
-        refreshedOnce = true;
-        void refreshSession().then((ok) => {
-          if (ok && !closed) {
-            es?.close();
-            connect();
-          }
-        });
-      };
-    };
+    // Catch a title generated before this stream subscribed: pull the durable title from `allThreads` on
+    // every (re)connect (a `thread_meta` frame could have fired during the connect gap).
+    const onOpen = () => void qc.invalidateQueries({ queryKey: qk.allThreads() });
 
-    connect();
+    const url = `${env.NEXT_PUBLIC_HTTP_URL}/web/orgs/${orgId}/repos/${repoId}/events`;
+    const unsubscribe = subscribeSse(url, { onFrame, onOpen });
     return () => {
-      closed = true;
       if (debounce) clearTimeout(debounce);
       if (ctxDebounce) clearTimeout(ctxDebounce);
-      es?.close();
+      unsubscribe();
     };
-  }, [orgId, repoId, threadId, qc]);
+  }, [orgId, repoId, qc]);
 }

@@ -48,8 +48,8 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
  *     keyed off `ANTHROPIC_API_KEY`; key-less → the driver falls back to a single-step plan).
  *
  * THE DISPATCH SEAM OVERRIDE: `BrainModule` no longer binds the `JOB_DISPATCHER` no-op (it kept
- * `LoggingJobDispatcher` only as an exported fallback) — exactly the precedent W3 set when it removed
- * W2's local `STIMULUS_CONSUMER` no-op. This @Global module provides + exports the REAL binding
+ * `LoggingJobDispatcher` only as an exported fallback) — exactly the precedent W3 set with the
+ * `BRAIN_SINK` binding over W2's no-op. This @Global module provides + exports the REAL binding
  * (`useExisting: TrackDriver`), so the brain's `@Inject(JOB_DISPATCHER)` resolves to the driver with
  * ZERO changes anywhere else.
  *

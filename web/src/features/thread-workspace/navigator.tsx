@@ -22,10 +22,11 @@ import { formatBytes } from '@/lib/format';
 import { trackTitle } from '@/lib/track-title';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/thread-api';
+import { useRetryThread } from '@/lib/api/thread-queries';
 import { Caret, Divider, PipelineTree, haltTrackIdx } from './pipeline-tree';
 import { NavigatorApprovalCallout } from './spec-approval';
 import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
-import type { ThreadRef } from '@/lib/api/thread-api';
+import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
 
 export interface ThreadMeta {
   title: string;
@@ -47,6 +48,7 @@ export interface ThreadMeta {
 export function Navigator({
   meta,
   pipeline,
+  messages,
   context,
   contextLoading,
   selectedNode,
@@ -60,6 +62,9 @@ export function Navigator({
 }: {
   meta: ThreadMeta;
   pipeline: PipelineState | undefined;
+  /** The thread's durable transcript — the pipeline tree derives each track-session's writer-subagent runs
+   *  from it (the `/pipeline` read model doesn't carry them; see `track-subagents.ts`). */
+  messages: ThreadMessage[];
   /** The thread's `/context` files (specs + artifacts) — feeds the SPECS + ARTIFACTS panels. */
   context: ThreadContext | undefined;
   contextLoading?: boolean;
@@ -81,7 +86,7 @@ export function Navigator({
   const [editing, setEditing] = useState(false);
 
   // Per-folder expand/collapse — explicit user overrides over the status-derived defaults. Keyed by
-  // folder id (sec:<id>, sec:<id>.exec, sec:<id>.rev); stale keys from a previous thread never match.
+  // folder id (sec:<id>, sec:<id>.plan, sec:<id>.runs); stale keys from a previous thread never match.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const isExpanded = (id: string, fallback: boolean) => (id in collapsed ? !collapsed[id] : fallback);
   const toggle = (id: string, currentlyExpanded: boolean) =>
@@ -165,7 +170,7 @@ export function Navigator({
         {st === 'awaiting_approval' && approveValue ? (
           <NavigatorApprovalCallout threadRef={threadRef} value={approveValue} />
         ) : (
-          <StateBanner status={st} job={job} onConversation={onConversation} />
+          <StateBanner status={st} job={job} threadRef={threadRef} onConversation={onConversation} />
         )}
 
         <SpecsRegion
@@ -186,6 +191,8 @@ export function Navigator({
         <PipelineRegion
           status={st}
           job={job}
+          messages={messages}
+          threadId={threadRef.threadId}
           selectedNode={selectedNode}
           onSelectNode={onSelectNode}
           isExpanded={isExpanded}
@@ -309,6 +316,8 @@ function GeneratedRegion({
 function PipelineRegion({
   status,
   job,
+  messages,
+  threadId,
   selectedNode,
   onSelectNode,
   isExpanded,
@@ -316,6 +325,8 @@ function PipelineRegion({
 }: {
   status: ThreadStatus;
   job: PipelineJob | null;
+  messages: ThreadMessage[];
+  threadId: string;
   selectedNode: string | null;
   onSelectNode: (node: string) => void;
   isExpanded: (id: string, fallback: boolean) => boolean;
@@ -359,6 +370,8 @@ function PipelineRegion({
         <PipelineTree
           job={job}
           status={status}
+          messages={messages}
+          threadId={threadId}
           selectedNode={selectedNode}
           onSelectNode={onSelectNode}
           isExpanded={isExpanded}
@@ -518,12 +531,19 @@ function ArtifactsRegion({
 function StateBanner({
   status,
   job,
+  threadRef,
   onConversation,
 }: {
   status: ThreadStatus;
   job: PipelineJob | null;
+  threadRef: ThreadRef;
   onConversation: () => void;
 }) {
+  const retry = useRetryThread(threadRef);
+  // Re-drive the halted build, then drop to the conversation to watch it resume.
+  const onRetry = () => {
+    retry.mutate(undefined, { onSuccess: onConversation });
+  };
   if (status === 'failed') {
     const haltNo = job ? haltSectionNo(job) : null;
     return (
@@ -541,7 +561,13 @@ function StateBanner({
           The run stopped — read the conversation for the halt, then steer or retry.
         </p>
         <div className="mt-2 flex gap-1.5">
-          <BannerBtn tone="red" icon={<RotateCw size={10} />} label="Retry" onClick={onConversation} />
+          <BannerBtn
+            tone="red"
+            icon={<RotateCw size={10} />}
+            label={retry.isPending ? 'Retrying…' : 'Retry'}
+            onClick={onRetry}
+            disabled={retry.isPending}
+          />
           <BannerBtn tone="neutral" label="Revert" onClick={onConversation} />
         </div>
       </div>
@@ -561,7 +587,13 @@ function StateBanner({
           The live session is held — reply to resume the same session.
         </p>
         <div className="mt-2 flex gap-1.5">
-          <BannerBtn tone="accent" icon={<RotateCw size={10} />} label="Re-ping" onClick={onConversation} />
+          <BannerBtn
+            tone="accent"
+            icon={<RotateCw size={10} />}
+            label={retry.isPending ? 'Resuming…' : 'Re-ping'}
+            onClick={onRetry}
+            disabled={retry.isPending}
+          />
         </div>
       </div>
     );
@@ -605,11 +637,13 @@ function BannerBtn({
   icon,
   label,
   onClick,
+  disabled,
 }: {
   tone: 'red' | 'accent' | 'neutral';
   icon?: ReactNode;
   label: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   const style =
     tone === 'red'
@@ -621,7 +655,8 @@ function BannerBtn({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[10px] font-semibold"
+      disabled={disabled}
+      className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[10px] font-semibold disabled:opacity-50"
       style={style}
     >
       {icon}

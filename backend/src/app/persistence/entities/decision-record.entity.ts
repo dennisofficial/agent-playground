@@ -53,7 +53,7 @@ export class DecisionRecordEntity extends TimestampedEntity {
   overview!: string;
 
   /** The locked architecture/system calls (a `Decision[]` from the domain types). */
-  @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })
+  @Column({ type: 'jsonb', default: [] })
   decisions!: Decision[];
 
   /** The high-level track briefs approved upfront — drives the thread's track rows. */

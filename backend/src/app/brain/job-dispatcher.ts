@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import type { Thread } from '../domain';
 
 /**
- * The DISPATCH SEAM — the brain's "hands" edge, the exact mirror of W2's `STIMULUS_CONSUMER` on the
+ * The DISPATCH SEAM — the brain's "hands" edge, the exact mirror of the `BRAIN_SINK` port on the
  * intake edge. The conversational brain produces a fully-scoped `Thread` (a locked decision record + its
  * high-level track list, all persisted) and calls `JOB_DISPATCHER.dispatch(thread)`. What runs the
  * tracks is on the OTHER side of this token. (The thread IS the build unit — the former `jobs` layer.)
@@ -23,13 +23,21 @@ import type { Thread } from '../domain';
  */
 export const JOB_DISPATCHER = Symbol('JOB_DISPATCHER');
 
-/** The downstream of the dispatch seam: a single `dispatch(thread)` the brain hands an approved build to. */
+/** The downstream of the dispatch seam: `dispatch(thread)` the brain hands an approved build to, plus
+ *  `retry(jobId)` the operator triggers to re-drive a halted (failed/paused) build. */
 export interface JobDispatcher {
   /**
    * Take ownership of a persisted, ready-to-run `Thread` (status `running`, tracks persisted). Kick
    * off the deterministic track/step drive; do not block the brain on the whole build.
    */
   dispatch(thread: Thread): Promise<void>;
+  /**
+   * Re-drive a HALTED build (status `failed` or `paused`) from the operator's Retry button. Flips the
+   * job back to `running` and re-enters the SAME resumable drive — fast-forwarding done tracks/steps and
+   * already-committed batches, continuing at the first unfinished one. Idempotent / safe: a no-op when
+   * the job isn't in a retryable state. Returns promptly (async drive).
+   */
+  retry(jobId: string): Promise<void>;
 }
 
 /**
@@ -47,5 +55,9 @@ export class LoggingJobDispatcher implements JobDispatcher {
         `repo=${thread.repoId} ` +
         `decisionRecord=${thread.decisionRecordId ?? '(none)'} — W4 TrackDriver will run this`,
     );
+  }
+
+  async retry(jobId: string): Promise<void> {
+    this.logger.log(`[no-op retry] THREAD ${jobId} — W4 TrackDriver will re-drive this`);
   }
 }

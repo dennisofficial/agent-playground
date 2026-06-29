@@ -6,6 +6,7 @@ import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
 import type { PlannedStep } from '../driver/planner-llm';
 import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
+import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { PlanReviewEntity } from '../persistence/entities';
@@ -246,6 +247,8 @@ export class PlanReviewService {
     private readonly lifecycle: ThreadLifecycleService,
     @InjectRepository(PlanReviewEntity, DB_CONNECTION)
     private readonly reviews: Repository<PlanReviewEntity>,
+    // Lets the turn catch tell a shutdown-induced abort (leave the row resumable) from a real failure.
+    private readonly election: LeaderElectionService,
   ) {}
 
   /** The round cap (so callers can phrase the "cap reached" message). */
@@ -380,6 +383,16 @@ export class PlanReviewService {
       reviewerOutput = result.result;
     } catch (err) {
       const error = summarizeEngineError(err);
+      if (!timedOut && this.election.isDraining()) {
+        // PROCESS SHUTDOWN (not a local timeout, not a real failure): the drain cut off the review turn.
+        // Leave the row 'running' so the boot reconcile (`findReviewsToReconcile`, status:'running')
+        // re-runs it; stamping 'failed' would strand it (terminal, never reconciled). `timedOut` aborts
+        // fire while still leader/follower, so they still fall through to the 'failed' stamp below.
+        this.logger.warn(
+          `plan-review: review=${reviewId} left 'running' — aborted by shutdown drain; boot reconcile will re-run`,
+        );
+        return { status: 'failed', findings: '', error };
+      }
       this.logger.warn(
         `plan-review: Codex turn ${timedOut ? 'timed out' : 'failed'} for review=${reviewId} — recording failed: ${err}`,
       );

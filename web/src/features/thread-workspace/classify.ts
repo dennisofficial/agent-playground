@@ -19,6 +19,8 @@ export type ClassifiedMessage =
   | { kind: 'event'; message: ThreadMessage; tone: SystemTone }
   /** System→operator+Atlas review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
   | { kind: 'system_shared'; message: ThreadMessage }
+  /** An automated notification that opened this thread (a harness delivery to Atlas). Its own panel. */
+  | { kind: 'system_event'; message: ThreadMessage }
   /** System→operator-only notice (e.g. an unresumable-thread error). Its own dedicated box. */
   | { kind: 'system_operator'; message: ThreadMessage };
 
@@ -41,6 +43,9 @@ export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
   }
   if (message.source === 'system_shared') {
     return { kind: 'system_shared', message };
+  }
+  if (message.source === 'system_event') {
+    return { kind: 'system_event', message };
   }
 
   if (message.author === 'user' || message.local) {

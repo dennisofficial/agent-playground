@@ -27,7 +27,6 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { BRAIN_LLM } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { PLANNER_LLM } from '../driver';
 import { ENGINE_RUNNER } from '../engine';
@@ -35,7 +34,6 @@ import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  FakeBrainLlm,
   FakeClassifierLlm,
   FakeEngineRunner,
   FakeLocalGitService,
@@ -118,8 +116,6 @@ beforeAll(async () => {
   process.env.SURFACE = 'agent';
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(BRAIN_LLM)
-    .useValue(new FakeBrainLlm())
     .overrideProvider(PLANNER_LLM)
     .useValue(new FakePlannerLlm())
     .overrideProvider(CLASSIFIER_LLM)

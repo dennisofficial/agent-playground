@@ -3,7 +3,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DecisionGateModule } from '../decision-gate';
 import { GitModule } from '../git';
 import { MemoryModule } from '../memory';
-import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -17,39 +16,29 @@ import {
   ThreadEntity,
   ThreadSandboxEntity,
 } from '../persistence/entities';
-import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
-import { STIMULUS_CONSUMER } from '../stimulus';
-import { BRAIN_LLM, AnthropicBrainLlm } from './brain-llm';
+import { BRAIN_SINK, type BrainSink } from '../stimulus';
 import { AgentSessionManager } from './agent-session-manager.service';
 import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { DecisionLedgerService } from './decision-ledger.service';
 import { RepoDecisionManifestService } from './repo-decision-manifest.service';
-import { EventTriageService } from './event-triage.service';
-import { StimulusRouter } from './stimulus-router.service';
 import { PlanReviewService } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 
 /**
  * R3 — the ATLAS BRAIN module (rebuilt). Wires the brain that decides WHETHER/WHAT (never HOW):
  *
- *  - `StimulusRouter` — bound as the `STIMULUS_CONSUMER`: routes chat → `AgentSessionManager`,
- *    event → `EventTriageService`.
- *  - `AgentSessionManager` — the new chat brain: per-thread Claude Agent SDK session running
- *    IN the thread's sandbox via the R1 tool bridge. 6 host-side tools: get_pipeline_state,
- *    get_decision_record, recall, remember, submit_plan, dispatch_build.
- *  - `EventTriageService` — the UNCHANGED event triage lane (verbatim extract from the old
- *    TriageService): untrusted-notification security gate + park-and-ask + autonomous bugfix dispatch.
+ *  - `AgentSessionManager` — the chat brain: per-thread Claude Agent SDK session running IN the
+ *    thread's sandbox via the R1 tool bridge. It is the ONE brain per thread; chat continues its
+ *    session and an event is delivered to it as a harness message (`deliverEvent`, server-initiated turn).
  *  - `DecisionApprovalService` — the human gate: posts the proposal card, awaits a verdict.
  *  - `BrainStoreService` — the brain's reads/writes on the 'app' connection.
- *  - `BRAIN_LLM` — the triage chat-model port (events only; grill deleted in R3).
- *
- * DELETED in R3: `ConversationalBrainService`, `ScopingInvestigatorService`, the chat half of
- * `TriageService`, the grill half of `brain-llm.ts`. The in-sandbox AgentSessionManager replaces them.
  *
  * THE TWO SEAMS:
- *  - INPUT: `STIMULUS_CONSUMER` ⟵ `StimulusRouter` (replaces the old TriageService binding).
+ *  - INPUT: `BRAIN_SINK` ⟵ a thin adapter over `AgentSessionManager` (chat → `handleChatTurn`,
+ *    event → `deliverEvent`). The old `StimulusRouter` demux + the second event-only brain
+ *    (`EventTriageService` / `BRAIN_LLM`) are deleted — there is only one brain per thread (ARCHITECTURE §7).
  *  - OUTPUT: `JOB_DISPATCHER` — bound by W4's @Global `DriverModule` (`useExisting: TrackDriver`).
  *
  * Imports `DecisionGateModule` (classifier + park-and-ask), `MemoryModule` (recall), `DriverModule`
@@ -57,7 +46,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
  * @Global `SurfaceModule`. `DockerEngineRunner` comes from the @Global `SandboxModule`.
  * Composed into the app by `FeaturesModule`. Zero v1 imports.
  *
- * @Global so the `STIMULUS_CONSUMER` it binds is the one `StimulusIntake` resolves.
+ * @Global so the `BRAIN_SINK` it binds is the one `StimulusIntake` resolves.
  */
 @Global()
 @Module({
@@ -82,35 +71,31 @@ import { TurnRecoveryService } from './turn-recovery.service';
     ),
   ],
   providers: [
-    {
-      provide: BRAIN_LLM,
-      inject: [CredentialResolver],
-      useFactory: (creds: CredentialResolver) =>
-        new AnthropicBrainLlm((orgId) => creds.anthropicKey(orgId)),
-    },
     BrainStoreService,
     DecisionApprovalService,
     DecisionLedgerService,
     RepoDecisionManifestService,
-    EventTriageService,
     PlanReviewService,
     TurnRecoveryService,
     AgentSessionManager,
     DrainService,
-    StimulusRouter,
-    // INPUT SEAM — the router IS the stimulus consumer (replaces the old TriageService binding).
-    { provide: STIMULUS_CONSUMER, useExisting: StimulusRouter },
+    // INPUT SEAM — the brain IS the sink (chat → its session, event → a harness-message delivery).
+    {
+      provide: BRAIN_SINK,
+      inject: [AgentSessionManager],
+      useFactory: (brain: AgentSessionManager): BrainSink => ({
+        handleChat: (s) => brain.handleChatTurn(s),
+        deliverEvent: (s) => brain.deliverEvent(s),
+      }),
+    },
     // OUTPUT SEAM (`JOB_DISPATCHER`) is bound by W4's @Global DriverModule (useExisting: TrackDriver).
   ],
   exports: [
-    StimulusRouter,
-    EventTriageService,
     AgentSessionManager,
     DecisionApprovalService,
     RepoDecisionManifestService,
     BrainStoreService,
-    STIMULUS_CONSUMER,
-    BRAIN_LLM,
+    BRAIN_SINK,
   ],
 })
 export class BrainModule {}

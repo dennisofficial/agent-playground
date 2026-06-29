@@ -4,7 +4,6 @@ import { QueryFailedError, Repository } from 'typeorm';
 import type {
   ChatStimulus,
   EventStimulus,
-  Stimulus,
 } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -92,6 +91,10 @@ export class StimulusStoreService {
         author_id: input.source,
         author_bot_id: null,
         text: input.body,
+        // Operator-visible provenance: renders as a distinct EVENT bubble (not an operator/atlas line).
+        // `eventSource`/`severity` drive the bubble's header. The body stays the clean human-readable
+        // text — the untrusted fence is applied only to the copy delivered to the brain.
+        meta: { source: 'system_event', eventSource: input.source, severity: input.severity },
       }),
     );
 
@@ -129,6 +132,7 @@ export class StimulusStoreService {
       repoId: input.repoId,
       kind: 'event',
       trust: 'untrusted',
+      threadId: thread.id,
       body: input.body,
       source: input.source,
       dedupeKey: input.dedupeKey,
@@ -190,10 +194,6 @@ export class StimulusStoreService {
     };
   }
 
-  /** Persist any already-built `Stimulus` (test/utility helper). */
-  describe(stimulus: Stimulus): string {
-    return `${stimulus.kind}:${stimulus.id}`;
-  }
 }
 
 function isUniqueViolation(err: unknown): boolean {

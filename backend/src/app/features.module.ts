@@ -29,7 +29,7 @@ import { TestBridgeModule } from './test-bridge';
  *    bound until W3 plugs in real triage;
  *  - `IngressModule` (W2) — the HTTP edge: per-gateway `NotificationSource` adapters + controllers
  *    (`POST /ingress/github`, `POST /ingress/webhook`).
- *  - `BrainModule` (W3) — the brain: triage (the real `STIMULUS_CONSUMER`, replacing W2's no-op), the
+ *  - `BrainModule` (W3) — the brain: the `BRAIN_SINK` binding (chat → its session, event → a harness-message delivery), the
  *    conversational grill, the decision-record approval gate. It injects `JOB_DISPATCHER` (bound by W4).
  *  - `DriverModule` (W4) — the deterministic, resumable track/step driver. Binds the REAL
  *    `JOB_DISPATCHER` (`useExisting: TrackDriver`, @Global), so the brain's dispatch reaches the driver

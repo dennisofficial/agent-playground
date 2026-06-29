@@ -3,9 +3,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { env } from '@/lib/env';
-import { connectivity } from './connectivity';
 import { qk } from './query-keys';
-import { refreshSession } from './refresh';
+import { subscribeSse, type SseHandle } from './sse-manager';
 import { uiStatus, type InboxThread } from './inbox';
 
 /**
@@ -39,17 +38,12 @@ type RowDelta =
  * it refetches. If realtime is unavailable (engine off / `wal_level` not logical) the stream errors and we
  * fall back to the query's normal polling — the dots stay correct on refetch, just not instant.
  *
- * Resilience mirrors `thread-events.ts`: `EventSource` self-heals transient drops; a FATAL close (a 401
- * on an expired cookie, which `EventSource` never retries) triggers one session refresh + reconnect.
+ * Resilience (transient self-heal + a one-shot 401 refresh/reconnect) lives in the shared `sse-manager`.
  */
 export function useAllThreadsRealtime(): void {
   const qc = useQueryClient();
 
   useEffect(() => {
-    let es: EventSource | null = null;
-    let closed = false;
-    let refreshedOnce = false;
-
     const invalidate = () => void qc.invalidateQueries({ queryKey: qk.allThreads() });
 
     const patchUpdate = (row: RealtimeRow) => {
@@ -71,7 +65,7 @@ export function useAllThreadsRealtime(): void {
       if (!found) invalidate(); // a thread we don't have cached yet → refetch the enriched list
     };
 
-    const onFrame = (data: string) => {
+    const onFrame = (data: string, handle: SseHandle) => {
       let delta: RowDelta | null = null;
       try {
         delta = JSON.parse(data) as RowDelta;
@@ -80,48 +74,15 @@ export function useAllThreadsRealtime(): void {
       }
       if (!delta) return;
       if (delta.kind === 'disabled') {
-        // Realtime is off on the server — stop for good and let the query's polling keep dots fresh.
-        closed = true;
-        es?.close();
+        // Realtime is off on the server — stop this stream for good (no reconnect storm) and let the
+        // query's normal polling keep the dots fresh.
+        handle.closePermanently();
         return;
       }
       if (delta.kind === 'update') patchUpdate(delta.row);
       else invalidate(); // snapshot / add / remove → refetch the enriched list
     };
 
-    const connect = () => {
-      if (closed) return;
-      es = new EventSource(`${env.NEXT_PUBLIC_HTTP_URL}/web/threads/realtime`, {
-        withCredentials: true,
-      });
-      es.onopen = () => {
-        refreshedOnce = false;
-        connectivity.reportReachable();
-      };
-      es.onmessage = (e: MessageEvent) => {
-        connectivity.reportReachable();
-        onFrame(e.data as string);
-      };
-      es.onerror = () => {
-        connectivity.reportUnreachable();
-        // Let EventSource self-heal transient drops (readyState CONNECTING). Only act on a FATAL close,
-        // and only once — a refresh+reconnect for an expired cookie. When realtime is simply unavailable
-        // this bounds us to a couple of attempts, then we rely on the query's polling refetch.
-        if (!es || es.readyState !== EventSource.CLOSED || refreshedOnce) return;
-        refreshedOnce = true;
-        void refreshSession().then((ok) => {
-          if (ok && !closed) {
-            es?.close();
-            connect();
-          }
-        });
-      };
-    };
-
-    connect();
-    return () => {
-      closed = true;
-      es?.close();
-    };
+    return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/threads/realtime`, { onFrame });
   }, [qc]);
 }

@@ -400,3 +400,46 @@ export function HarnessBubble({ message }: { message: ThreadMessage }) {
     </div>
   );
 }
+
+/**
+ * An automated NOTIFICATION that opened this thread (`source='system_event'`) — a GitHub/CI/webhook event
+ * delivered to Atlas as a harness message and shown to the operator. Distinct from operator bubbles, Atlas
+ * prose, and the (neutral) Codex `HarnessBubble`: a full-width accent-toned panel whose header names the
+ * source + severity (read off `meta.eventSource` / `meta.severity`), so it reads as "not human-sent."
+ */
+export function EventBubble({ message }: { message: ThreadMessage }) {
+  const meta = message.meta ?? {};
+  const source = typeof meta.eventSource === 'string' ? meta.eventSource : 'event';
+  const severity = typeof meta.severity === 'string' ? meta.severity : null;
+  return (
+    <div
+      className="anim-fadeUp rounded-[9px] border"
+      style={{ borderColor: 'var(--accent-line)', background: 'var(--accent-soft)' }}
+    >
+      {/* Header strip */}
+      <div
+        className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
+        style={{
+          borderBottom: '1px solid var(--accent-line)',
+          background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+        }}
+      >
+        <span aria-hidden style={{ color: 'var(--accent)', fontSize: 11, lineHeight: 1 }}>
+          ◈
+        </span>
+        <span
+          className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
+          style={{ color: 'var(--accent)' }}
+        >
+          Event · {source}
+        </span>
+        <span className="flex-1" />
+        {severity ? <span className="font-mono text-[10px] text-faint">{severity}</span> : null}
+      </div>
+      {/* Markdown body */}
+      <div className="px-3.5 py-3">
+        <Markdown>{message.text}</Markdown>
+      </div>
+    </div>
+  );
+}

@@ -20,8 +20,14 @@ import type { LiveBlock } from '@/lib/api/thread-stream';
 export const SUBAGENT_NODE_PREFIX = 'subagent:';
 export const subagentNode = (parentId: string): string => `${SUBAGENT_NODE_PREFIX}${parentId}`;
 
-/** Known subagent types → display model (the engine pins these; mirrors `SUBAGENTS` in engine-core.ts). */
-const SUBAGENT_MODELS: Record<string, string> = { explore: 'Sonnet' };
+/** Known subagent types → display model (the engine pins these; mirrors `SUBAGENTS` / `WRITER_SUBAGENTS`
+ *  in engine-core.ts). The writer subagents fan out on execute turns: `implement` (Opus) does substantive
+ *  slices, `implement-fast` (Sonnet) the mechanical ones. */
+const SUBAGENT_MODELS: Record<string, string> = {
+  explore: 'Sonnet',
+  implement: 'Opus',
+  'implement-fast': 'Sonnet',
+};
 export const subagentModel = (type: string): string | undefined => SUBAGENT_MODELS[type];
 
 /** A normalized transcript block — produced from a durable message OR a live block. `postedAt` is set only

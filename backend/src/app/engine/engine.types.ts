@@ -60,7 +60,12 @@ export type EngineEvent =
 
 /** Vendor-neutral token-usage counts (all optional — engines populate what their SDK reports). */
 export interface EngineUsage {
-  /** Grand-total input INCLUDING cache (fresh + cacheRead + cacheWrite). */
+  /**
+   * Grand-total input INCLUDING cache, SUMMED across every model round-trip in the turn (fresh +
+   * cacheRead + cacheWrite). This is the BILLING number — correct for cost ("N in · M cache · $X"),
+   * but WRONG as context occupancy: a multi-round-trip turn re-reads the same context from cache each
+   * round, so this balloons far past the window. For occupancy use {@link contextTokens}.
+   */
   inputTokens?: number;
   /** Grand-total output INCLUDING reasoning. */
   outputTokens?: number;
@@ -69,8 +74,22 @@ export interface EngineUsage {
   reasoningTokens?: number;
   /** Exact cost when the SDK provides it (Claude); absent for Codex (priced server-side). */
   costUsd?: number;
-  /** The real model id the run used. */
+  /** The real model id the run used (for billing — sourced from the cumulative usage, may be a helper). */
   model?: string;
+  /**
+   * The CONTEXT-WINDOW OCCUPANCY proxy: the input-token size of a SINGLE model round-trip (fresh +
+   * cacheRead + cacheWrite for that one call), NOT the cumulative {@link inputTokens} sum. This is how
+   * full the context window actually is — render the occupancy ring against this. Tracked from the
+   * MAIN agent's last round-trip only (subagents run in their own context on cheaper models). Absent
+   * when the engine doesn't surface per-call usage (e.g. Codex).
+   */
+  contextTokens?: number;
+  /**
+   * The model id of the round-trip {@link contextTokens} came from — the MAIN agent's real model, so
+   * the occupancy ring resolves the right window even when {@link model} reflects a helper. Absent
+   * when no per-call model was seen.
+   */
+  contextModel?: string;
 }
 
 /**

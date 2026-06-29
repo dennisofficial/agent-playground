@@ -15,6 +15,7 @@ import { EngineAuthError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { CHAT_SURFACE, type ChatSurface, BLOCK_SINK, type BlockSink, TurnHarnessFactory } from '../surface';
 import { CredentialResolver } from '../onboarding';
+import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
@@ -79,6 +80,9 @@ export class TrackDriver implements JobDispatcher {
     private readonly threadLifecycle: ThreadLifecycleService,
     private readonly ship: BuildShipService,
     private readonly awareness: PipelineAwarenessStore,
+    // Lets the terminal-error catch tell a shutdown-induced abort (leave the job resumable) apart from a
+    // real failure — so a graceful restart mid-build no longer self-marks the job `failed`.
+    private readonly election: LeaderElectionService,
     // The shared transcript spine — a build turn rides it on a `phase:<stepId>` lane so the step sub-page
     // renders a full transcript (thinking/prose/tool calls), exactly like a subagent run.
     private readonly turnHarness: TurnHarnessFactory,
@@ -206,6 +210,36 @@ export class TrackDriver implements JobDispatcher {
     });
   }
 
+  /**
+   * Operator RETRY (the halted-build "Retry" button). Re-drive a `failed` OR `paused` build: flip it back
+   * to `running` and re-enter the SAME resumable drive — `runJob` fast-forwards `done` tracks/steps and
+   * batches that already carry a `commit_sha`, then continues at the first unfinished one (the interrupted
+   * step resumes its persisted engine `session_id` rather than restarting). Idempotent: a no-op when the
+   * job isn't retryable (already running/done) or is being driven right now. Returns promptly.
+   */
+  async retry(jobId: string): Promise<void> {
+    if (this.active.has(jobId)) {
+      this.logger.warn(`retry job=${jobId}: already being driven — ignoring`);
+      return;
+    }
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    if (!job) {
+      this.logger.warn(`retry job=${jobId}: thread not found — ignoring`);
+      return;
+    }
+    if (job.status !== 'failed' && job.status !== 'paused') {
+      this.logger.warn(`retry job=${jobId}: not retryable (status=${job.status}) — ignoring`);
+      return;
+    }
+    this.logger.log(`retry job=${jobId} — re-driving from ${job.status}`);
+    await this.store.setJobStatus(jobId, 'running');
+    void this.drive(jobId).catch((err) => {
+      this.logger.error(
+        `retry job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
+      );
+    });
+  }
+
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
 
   /** Guard the job against a concurrent drive, then run it to a PR (or `failed`). */
@@ -220,6 +254,18 @@ export class TrackDriver implements JobDispatcher {
     try {
       await this.runJob(jobId);
     } catch (err) {
+      if (this.election.isDraining()) {
+        // PROCESS SHUTDOWN, not a failure: the drain cut off the in-flight turn's host-side await (the
+        // container keeps running, reparented to init). Leave the job `running` so boot-resume re-drives
+        // it (`runningJobs()` filters `status:'running'`) and fast-forwards completed steps. Marking it
+        // `failed` here would strand the build forever — boot-resume never re-drives a `failed` job. This
+        // is keyed to the drain state specifically, NOT to AbortError, so a local watchdog/PHASE_TIMEOUT
+        // abort (which fires while still leader/follower) still falls through to the `failed` branch below.
+        this.logger.warn(
+          `job=${jobId} left running — aborted by shutdown drain; will resume on next boot`,
+        );
+        return;
+      }
       if (err instanceof EngineAuthError) {
         // A credential/401 halt — PAUSE (don't fail): the unfinished step's session_id is persisted, so
         // a ping (`resumePaused`) continues the SAME session once creds are fixed. Re-driving now would
