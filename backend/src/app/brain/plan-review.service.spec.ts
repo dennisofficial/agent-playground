@@ -6,7 +6,7 @@ import {
   summarizeEngineError,
 } from './plan-review.service';
 import type { PlanReviewStartInput } from './plan-review.service';
-import type { EngineRunnerPort, RunEngineArgs } from '../engine/engine.types';
+import type { EngineRunnerPort, EngineRunResult, RunEngineArgs } from '../engine/engine.types';
 import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
@@ -64,7 +64,7 @@ function hangingEngine(): EngineRunnerPort {
   return {
     run: vi.fn(
       (args: RunEngineArgs) =>
-        new Promise((_resolve, reject) => {
+        new Promise<EngineRunResult>((_resolve, reject) => {
           args.signal?.addEventListener(
             'abort',
             () => reject(new Error('aborted')),
@@ -110,9 +110,9 @@ function makeReviewsRepo() {
     ),
     save: vi.fn(async (data: PlanReviewEntity) => {
       const row = {
-        created_at: new Date(),
-        updated_at: new Date(),
         ...data,
+        created_at: data.created_at ?? new Date(),
+        updated_at: data.updated_at ?? new Date(),
         id: data.id ?? `rev-${seq++}`,
       } as PlanReviewEntity;
       rows.push(row);

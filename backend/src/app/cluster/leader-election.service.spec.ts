@@ -1,5 +1,8 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
+// `vi.mock('pg', …)` below is HOISTED above every import by vitest, so a normal static import here still
+// resolves the mocked `pg` (a top-level `await import` is illegal under the repo's nodenext/CJS tsconfig).
+import { LeaderElectionService } from './leader-election.service';
 
 // Shared, test-controllable lock state + a record of every mock pg.Client built.
 const h = vi.hoisted(() => ({
@@ -30,9 +33,6 @@ vi.mock('pg', () => {
   }
   return { default: { Client }, Client };
 });
-
-// Imported AFTER the mock is registered.
-const { LeaderElectionService } = await import('./leader-election.service');
 
 function envMock(overrides: Record<string, unknown> = {}): EnvService {
   const values: Record<string, unknown> = {
