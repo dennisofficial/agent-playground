@@ -845,6 +845,16 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         threadId: stimulus.threadId,
         tools,
       },
+      // Registry context for restart-survival (only acted on by the Redis runner): records an
+      // `active_turns` row so a fresh backend can re-attach to this turn after a restart. See ADR 0001.
+      turnMeta: {
+        threadId: stimulus.threadId,
+        orgId: stimulus.orgId,
+        channel,
+        lane: 'main',
+        kind: 'brain',
+        ctx: { repoId: stimulus.repoId, sandboxKey },
+      },
       onEvent: (e) => {
         // EAGER session-id persist: the engine emits `{kind:'session'}` at turn START (before any work), so
         // a turn interrupted on its FIRST exchange — which never reaches the post-run persist below — still

@@ -72,4 +72,4 @@ Staged so no phase claims restart-survival before its spine exists, and one-shot
 - **Phase 3 — Redis tool-bridge for brain turns + idempotency (`tool_executions`).**
 - **Phase 4 — watchdog + heartbeat finalize; retire JSONL recovery.**
 - **Phase 5 — per-turn ACL, retention, protocol versioning.**
-- **Phase 6 — cutover (default `redis`; extend to driver/review/gate/autofix).**
+- **Phase 6 — cutover, then REMOVE the seam.** (1) Flip the default to `ENGINE_TRANSPORT=redis` and let it bake on real traffic (the flag stays as the instant rollback path). (2) Once proven, go **Redis-only**: bind `ENGINE_RUNNER` directly to `RedisEngineRunner`, and **delete the pipe transport** — `DockerEngineRunner`, the entrypoint's stdin/stdout branch (`readFirstLine`/`startStdinFrameReader`), `ToolBridgeHost` (the shared `dispatchToolRequest` stays), and the `ENGINE_TRANSPORT` env var + Joi entry. Same retirement the codebase did for `SANDBOX_MODE=local`. Do NOT flip-and-delete in one step — that removes the rollback escape hatch.
