@@ -290,6 +290,25 @@ export interface RunEngineArgs {
    * one-shot build turns (backward-compatible).
    */
   toolBridge?: ToolBridgeOptions;
+  /**
+   * Optional registry context for a RESTART-SURVIVABLE Redis-transport turn. When set (and
+   * `ENGINE_TRANSPORT=redis`), the runner records an `active_turns` row so a fresh backend can
+   * re-attach to this turn after a restart. Ignored by the pipe runner. See ADR 0001.
+   */
+  turnMeta?: TurnMeta;
+}
+
+/** Registry context carried on a Redis-transport turn (rebuilds the harness + brain tool closure on re-attach). */
+export interface TurnMeta {
+  threadId: string;
+  orgId: string;
+  /** SSE fan-out channel (repo id). */
+  channel: string;
+  /** Transcript lane: 'main' | 'phase:<stepId>'. */
+  lane: string;
+  kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix';
+  /** Per-kind params needed to rebuild the turn on re-attach (author, prompt, route, timeouts, …). */
+  ctx?: Record<string, unknown>;
 }
 
 /** The result of one engine run — the report, the resume handle, and optional plan/usage. */

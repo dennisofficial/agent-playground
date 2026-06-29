@@ -319,7 +319,10 @@ export interface IEnvConfig {
   //  - ENGINE_TRANSPORT: how an in-container turn talks to the host. 'pipe' (default) = today's `docker
   //    exec` stdin/stdout NDJSON (dies with the backend). 'redis' = durable Redis Streams (the turn
   //    survives a backend restart; the backend re-attaches to the stream). See ADR 0001.
+  //  - SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (reachable over the internal
+  //    atlas-bus net, e.g. redis://redis:6379). Falls back to REDIS_URL. Only used when ENGINE_TRANSPORT=redis.
   ENGINE_TRANSPORT?: 'pipe' | 'redis';
+  SANDBOX_REDIS_URL?: string;
 
   // ── Atlas v2 clustering / rolling-update ─────────────────────────────────────────────────────────
   //  The backend is a hard singleton (in-memory turn queues, provisioning lock, single realtime slot).
@@ -479,6 +482,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
   SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
   ENGINE_TRANSPORT: Joi.string().valid('pipe', 'redis').optional().default('pipe'),
+  SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   // Atlas v2 clustering / rolling-update
   LEADER_POLL_INTERVAL_MS: Joi.number().integer().min(250).optional(),
   DRAIN_GRACE_MS: Joi.number().integer().min(0).optional(),

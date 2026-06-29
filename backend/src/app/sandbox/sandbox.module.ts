@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EnvService } from '@core/config/env/env.service';
 import { ENGINE_RUNNER, EngineModule } from '../engine';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ActiveTurnEntity } from '../persistence/entities';
@@ -7,6 +8,7 @@ import { TurnRegistry } from './turn-registry.service';
 import { CONTAINER_ENGINE } from './container-engine.port';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { DockerEngineRunner } from './docker-engine-runner';
+import { RedisEngineRunner } from './redis-engine-runner';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
 import { SandboxManager } from './sandbox-manager.service';
@@ -37,8 +39,16 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
     SandboxActivityRegistry,
     TurnRegistry,
     DockerEngineRunner,
+    RedisEngineRunner,
     SandboxManager,
-    { provide: ENGINE_RUNNER, useExisting: DockerEngineRunner },
+    // ENGINE_TRANSPORT selects the transport: 'pipe' (default) = docker-exec stdin/stdout, 'redis' =
+    // durable Redis Streams (restart-survivable). Both run the same in-container EngineCore. See ADR 0001.
+    {
+      provide: ENGINE_RUNNER,
+      useFactory: (env: EnvService, pipe: DockerEngineRunner, redis: RedisEngineRunner) =>
+        env.get('ENGINE_TRANSPORT') === 'redis' ? redis : pipe,
+      inject: [EnvService, DockerEngineRunner, RedisEngineRunner],
+    },
     { provide: SANDBOX_PROVIDER, useExisting: SandboxManager },
   ],
   exports: [
