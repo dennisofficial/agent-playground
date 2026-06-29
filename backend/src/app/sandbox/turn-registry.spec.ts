@@ -1,0 +1,85 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { Repository } from 'typeorm';
+import { TurnRegistry } from './turn-registry.service';
+import type { ActiveTurnEntity } from '../persistence/entities';
+
+/** A vi-mock repo capturing the calls TurnRegistry makes (no real Postgres). */
+function makeRepo(rows: Partial<ActiveTurnEntity>[] = []) {
+  const repo = {
+    create: vi.fn((d: Partial<ActiveTurnEntity>) => d as ActiveTurnEntity),
+    save: vi.fn(async (d: ActiveTurnEntity) => d),
+    update: vi.fn(async () => ({ affected: 1 })),
+    delete: vi.fn(async () => ({ affected: 1 })),
+    findOne: vi.fn(async () => rows[0] ?? null),
+    find: vi.fn(async () => rows as ActiveTurnEntity[]),
+    count: vi.fn(async () => rows.length),
+  };
+  return repo as unknown as Repository<ActiveTurnEntity> & typeof repo;
+}
+
+const REGISTER = {
+  turnId: 't1',
+  threadId: 'th1',
+  orgId: 'org1',
+  channel: 'repo1',
+  lane: 'main',
+  kind: 'brain' as const,
+  containerId: 'c1',
+  ctx: { orgId: 'org1', repoId: 'repo1', threadId: 'th1', author: 'U1' },
+};
+
+describe('TurnRegistry', () => {
+  it('register persists a running row with a 0-0 cursor and no heartbeat yet', async () => {
+    const repo = makeRepo();
+    await new TurnRegistry(repo).register(REGISTER);
+    expect(repo.save).toHaveBeenCalledOnce();
+    const saved = repo.save.mock.calls[0][0];
+    expect(saved).toMatchObject({
+      turn_id: 't1',
+      thread_id: 'th1',
+      status: 'running',
+      events_last_id: '0-0',
+      last_heartbeat_at: null,
+      kind: 'brain',
+      ctx: REGISTER.ctx,
+    });
+  });
+
+  it('heartbeat stamps last_heartbeat_at and advances the cursor when an id is given', async () => {
+    const repo = makeRepo();
+    const at = new Date('2026-06-29T00:00:00Z');
+    await new TurnRegistry(repo).heartbeat('t1', '5-0', at);
+    expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { last_heartbeat_at: at, events_last_id: '5-0' });
+  });
+
+  it('heartbeat without an id only stamps liveness (cursor untouched)', async () => {
+    const repo = makeRepo();
+    const at = new Date('2026-06-29T00:00:00Z');
+    await new TurnRegistry(repo).heartbeat('t1', undefined, at);
+    expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { last_heartbeat_at: at });
+  });
+
+  it('finalize stamps the terminal status then deletes the live row', async () => {
+    const repo = makeRepo();
+    await new TurnRegistry(repo).finalize('t1', 'done');
+    expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { status: 'done' });
+    expect(repo.delete).toHaveBeenCalledWith({ turn_id: 't1' });
+  });
+
+  it('listRunning queries status=running', async () => {
+    const repo = makeRepo([{ turn_id: 't1', status: 'running' }]);
+    const out = await new TurnRegistry(repo).listRunning();
+    expect(repo.find).toHaveBeenCalledWith({ where: { status: 'running' } });
+    expect(out).toHaveLength(1);
+  });
+
+  it('findStale merges stale-heartbeat + never-beat rows, de-duped by turn_id', async () => {
+    const repo = makeRepo();
+    // First find() = stale-heartbeat rows; second = never-beat rows (one overlaps t1).
+    repo.find
+      .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't2' }] as ActiveTurnEntity[])
+      .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't3' }] as ActiveTurnEntity[]);
+    const out = await new TurnRegistry(repo).findStale(60_000);
+    expect(out.map((t) => t.turn_id).sort()).toEqual(['t1', 't2', 't3']); // t1 not duplicated
+  });
+});

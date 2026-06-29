@@ -1,5 +1,9 @@
 import { Global, Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ENGINE_RUNNER, EngineModule } from '../engine';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { ActiveTurnEntity } from '../persistence/entities';
+import { TurnRegistry } from './turn-registry.service';
 import { CONTAINER_ENGINE } from './container-engine.port';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { DockerEngineRunner } from './docker-engine-runner';
@@ -25,12 +29,13 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
  */
 @Global()
 @Module({
-  imports: [EngineModule],
+  imports: [EngineModule, TypeOrmModule.forFeature([ActiveTurnEntity], DB_CONNECTION)],
   providers: [
     { provide: CONTAINER_ENGINE, useClass: DockerodeContainerEngine },
     SandboxImageBuilder,
     SandboxRefsService,
     SandboxActivityRegistry,
+    TurnRegistry,
     DockerEngineRunner,
     SandboxManager,
     { provide: ENGINE_RUNNER, useExisting: DockerEngineRunner },
@@ -42,6 +47,7 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
     CONTAINER_ENGINE,
     SandboxRefsService,
     SandboxActivityRegistry,
+    TurnRegistry,
     DockerEngineRunner,
   ],
 })
