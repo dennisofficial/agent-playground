@@ -56,9 +56,8 @@ import {
   RepoDecisionManifestService,
   type PromotedManifestInput,
 } from './repo-decision-manifest.service';
-import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
-import { isUnresumableSessionMessage, resolveContextLimit, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
+import { ENGINE_RUNNER, isUnresumableSessionMessage, resolveContextLimit, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
@@ -74,8 +73,8 @@ import { TurnRecoveryService } from './turn-recovery.service';
  * Claude Agent SDK session that runs INSIDE the thread's sandbox via the R1 tool bridge.
  *
  * Architecture:
- *   - On a chat stimulus: run an in-sandbox engine turn via `DockerEngineRunner` (always Docker),
- *     resuming the persisted session_id for the thread.
+ *   - On a chat stimulus: run an in-sandbox engine turn via the `ENGINE_RUNNER` (Docker by default;
+ *     Redis-Streams transport when ENGINE_TRANSPORT=redis), resuming the persisted session_id for the thread.
  *   - The session runs with a custom system prompt (NOT the SDK's native ExitPlanMode) + 6 host-side
  *     tool impls dispatched through the tool bridge.
  *   - `submit_plan` → `persistPlan` (status `plan_review`) → async Codex review → findings delivered to
@@ -114,7 +113,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     private readonly memory: MemoryStore,
     private readonly approvals: DecisionApprovalService,
     private readonly lifecycle: ThreadLifecycleService,
-    private readonly dockerRunner: DockerEngineRunner,
+    // The engine runner is resolved through the ENGINE_RUNNER token (not the concrete DockerEngineRunner)
+    // so the ENGINE_TRANSPORT=pipe|redis factory governs the brain's conversational turns too. See ADR 0001.
+    @Inject(ENGINE_RUNNER) private readonly engineRunner: EngineRunnerPort,
     private readonly planReview: PlanReviewService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
@@ -809,7 +810,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     const tools = this.buildTools(stimulus);
 
     // All turns run inside the Docker sandbox container.
-    const runner: EngineRunnerPort = this.dockerRunner;
+    const runner: EngineRunnerPort = this.engineRunner;
 
     // The thread is a live web wrapper over this in-sandbox session: stream every engine event to the web
     // AND persist the authoritative blocks (text/thinking/tool) as the durable transcript.

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RedisModule } from '../_lib/redis/redis.module';
 import { AuthModule } from './auth';
 import { ClusterModule } from './cluster';
 import { AutoFixModule } from './autofix';
@@ -44,6 +45,7 @@ import { TestBridgeModule } from './test-bridge';
  */
 @Module({
   imports: [
+    RedisModule,
     ClusterModule,
     AuthModule,
     OnboardingModule,
