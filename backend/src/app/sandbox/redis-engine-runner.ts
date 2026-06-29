@@ -8,6 +8,8 @@ import {
   type EngineRunnerPort,
   type RunEngineArgs,
 } from '../engine';
+import { dispatchToolRequest } from '../engine/tool-bridge-host';
+import type { ToolBridgeOptions, ToolRequestFrame } from '../engine/engine.types';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import {
@@ -17,7 +19,7 @@ import {
 } from './docker-engine-runner';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
 import { TurnRegistry } from './turn-registry.service';
-import { turnKeys } from './redis-turn-keys';
+import { turnKeys, TOOLS_GROUP } from './redis-turn-keys';
 
 /** A frame the in-container engine appends to `turn:{T}:events` (mirrors the pipe runner's NDJSON frames). */
 type EventFrame =
@@ -56,13 +58,6 @@ export class RedisEngineRunner implements EngineRunnerPort {
     if (!target?.containerId) {
       throw new Error('RedisEngineRunner requires args.target.containerId (docker sandbox mode)');
     }
-    if (args.toolBridge) {
-      // Brain turns set toolBridge; the bidirectional bridge over Redis is Phase 3. Fail loudly so a
-      // misconfigured redis-mode brain turn errors instead of hanging on a reply that never comes.
-      throw new Error(
-        'RedisEngineRunner: tool-bridge turns over Redis are not yet implemented (Phase 3). Use ENGINE_TRANSPORT=pipe for brain turns.',
-      );
-    }
 
     const turnId = randomUUID();
     const keys = turnKeys(turnId);
@@ -89,14 +84,24 @@ export class RedisEngineRunner implements EngineRunnerPort {
 
     // 3) Kick the engine detached — it reads the spec from Redis and writes events back to Redis.
     return this.activity.track(target.containerId, async () => {
+      const done = { value: false };
       try {
+        // Tool-bridge turns: create the host consumer group up front so no tool_request is missed.
+        if (args.toolBridge) await this.redis.ensureGroup(keys.tools, TOOLS_GROUP);
         await this.containers.execDetached(target.containerId, ['atlas-engine-turn'], {
           ...(target.user ? { user: target.user } : {}),
           env: this.execEnv(turnId),
           cwd: CONTAINER_WORKTREE,
         });
-        return await this.tailEvents(turnId, keys, args);
+        // The tools loop (bidirectional bridge) runs CONCURRENTLY with the events tail; it stops when the
+        // tail flips `done`. The tail produces the result; the tools loop never throws (errors → tool_error).
+        const toolsLoop = args.toolBridge
+          ? this.consumeTools(turnId, keys, args.toolBridge, done)
+          : Promise.resolve();
+        const [result] = await Promise.all([this.tailEvents(turnId, keys, args, done), toolsLoop]);
+        return result;
       } finally {
+        done.value = true;
         await this.registry
           .finalize(turnId, 'done')
           .catch((err) => this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`));
@@ -104,11 +109,45 @@ export class RedisEngineRunner implements EngineRunnerPort {
     });
   }
 
+  /**
+   * Drain `turn:{T}:tools` (host-bridge tool_requests) via the consumer group + pending recovery,
+   * dispatch each to the in-memory tool impls, and XADD the reply to `turn:{T}:replies`. Runs until the
+   * events tail flips `done`. Never throws — a failed tool becomes a `tool_error` reply.
+   */
+  private async consumeTools(
+    turnId: string,
+    keys: ReturnType<typeof turnKeys>,
+    bridge: ToolBridgeOptions,
+    done: { value: boolean },
+  ): Promise<void> {
+    const consumer = `host-${turnId.slice(0, 8)}`;
+    let claimedPending = false;
+    while (!done.value) {
+      try {
+        // On (re)attach, first reclaim any delivered-but-unacked request a dead host left behind.
+        const pending = claimedPending
+          ? []
+          : await this.redis.claimStale({ group: TOOLS_GROUP, consumer, stream: keys.tools, minIdleMs: 0, count: 16 });
+        claimedPending = true;
+        const fresh = await this.redis.xreadGroup({ group: TOOLS_GROUP, consumer, stream: keys.tools, count: 16, blockMs: 500 });
+        for (const entry of [...pending, ...fresh]) {
+          const req = entry.data as ToolRequestFrame;
+          const reply = await dispatchToolRequest(bridge, req);
+          await this.redis.xadd(keys.replies, reply);
+          await this.redis.ack(keys.tools, TOOLS_GROUP, [entry.id]);
+        }
+      } catch (err) {
+        this.logger.debug(`turn ${turnId}: tools loop iteration failed (continuing): ${err}`);
+      }
+    }
+  }
+
   /** Tail `turn:{T}:events` until `final`/`error`, feeding `onEvent` + advancing the resume cursor. */
   private async tailEvents(
     turnId: string,
     keys: ReturnType<typeof turnKeys>,
     args: RunEngineArgs,
+    done: { value: boolean },
   ): Promise<EngineRunResult> {
     let lastId = '0-0';
     let lastActivity = Date.now();
@@ -161,6 +200,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
       }
     } finally {
       args.signal?.removeEventListener('abort', onAbort);
+      done.value = true; // stop the concurrent tools loop
     }
 
     if (errorMsg) {
@@ -190,6 +230,8 @@ export class RedisEngineRunner implements EngineRunnerPort {
       ...(args.auth ? { auth: args.auth } : {}),
       ...(args.model ? { model: args.model } : {}),
       ...(args.richStream ? { richStream: args.richStream } : {}),
+      // Tool-bridge: tell the entrypoint which host tools exist so it builds the MCP proxy for each.
+      ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
     };
   }
 

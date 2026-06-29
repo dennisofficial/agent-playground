@@ -101,11 +101,52 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     await expect(runner.run(baseArgs(() => {}))).rejects.toBeInstanceOf(EngineAuthError);
   });
 
-  it('rejects a tool-bridge turn (Phase 3 not yet implemented) instead of hanging', async () => {
+  it('tool-bridge: dispatches a tool_request over redis and feeds the reply back to the engine', async () => {
     const redis = new InMemoryRedisStream();
-    const runner = new RedisEngineRunner(fakeContainers(redis, []), redis, fakeEnv, fakeActivity, fakeRegistry());
-    await expect(
-      runner.run({ ...baseArgs(() => {}), toolBridge: { tools: {} } as never }),
-    ).rejects.toThrow(/tool-bridge turns over Redis are not yet implemented/);
+    const events: EngineEvent[] = [];
+    const toolCalls: Array<{ name: string; args: unknown }> = [];
+
+    // Simulated engine: emit a tool_request on the tools stream, await its reply on the replies stream,
+    // then emit a text event + final on the events stream.
+    const containers = {
+      execDetached: vi.fn(async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
+        const turnId = opts?.env?.TURN_ID;
+        if (!turnId) return {};
+        const k = turnKeys(turnId);
+        void (async () => {
+          const callId = 'call-xyz';
+          await redis.xadd(k.tools, { t: 'tool_request', id: callId, name: 'submit_plan', args: { foo: 'bar' } });
+          let lastId = '0-0';
+          for (let i = 0; i < 50; i++) {
+            const r = await redis.xread({ stream: k.replies, lastId, count: 10, blockMs: 50 });
+            const hit = r.find((e) => (e.data as { id?: string }).id === callId);
+            if (hit) {
+              const d = hit.data as { t: string };
+              await redis.xadd(k.events, { t: 'event', e: { kind: 'text', text: d.t === 'tool_response' ? 'tool-ok' : 'tool-err' } });
+              break;
+            }
+            if (r.length) lastId = r[r.length - 1].id;
+          }
+          await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
+        })();
+        return {};
+      }),
+    } as unknown as ContainerEngine;
+
+    const bridge = {
+      threadId: 'th1',
+      tools: {
+        submit_plan: async (args: Record<string, unknown>) => {
+          toolCalls.push({ name: 'submit_plan', args });
+          return { ok: true };
+        },
+      },
+    };
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+    const out = await runner.run({ ...baseArgs((e) => events.push(e)), toolBridge: bridge as never });
+
+    expect(toolCalls).toEqual([{ name: 'submit_plan', args: { foo: 'bar' } }]);
+    expect(out).toEqual({ result: 'DONE' });
+    expect(events.some((e) => (e as { kind?: string; text?: string }).text === 'tool-ok')).toBe(true);
   });
 });

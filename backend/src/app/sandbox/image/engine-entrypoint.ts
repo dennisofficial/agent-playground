@@ -122,23 +122,27 @@ function startStdinFrameReader(
 /**
  * REDIS TRANSPORT (`ENGINE_TRANSPORT=redis`, additive): instead of stdin/stdout the engine reads its
  * spec from `turn:{T}:spec` and appends event frames to `turn:{T}:events` (+ periodic heartbeats), so
- * the turn survives a host restart (the host re-attaches to the durable stream). The tool-bridge over
- * Redis is Phase 3 — a redis-mode spec with `toolBridgeTools` is rejected here. Mirrors the pipe path's
- * frame shapes exactly so the host runner is transport-symmetric.
+ * the turn survives a host restart (the host re-attaches to the durable stream). The tool-bridge runs
+ * over `turn:{T}:tools` (engine→host requests) + `turn:{T}:replies` (host→engine responses). Mirrors the
+ * pipe path's frame shapes exactly so the host runner is transport-symmetric.
  */
 async function runOverRedis(turnId: string): Promise<void> {
   const { Redis } = await import('ioredis');
   const url = process.env.REDIS_URL ?? 'redis://redis:6379';
   const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: null });
-  const events = `turn:${turnId}:events`;
-  const xadd = (frame: unknown): Promise<unknown> =>
-    client.xadd(events, '*', 'data', JSON.stringify(frame));
+  const eventsKey = `turn:${turnId}:events`;
+  const toolsKey = `turn:${turnId}:tools`;
+  const repliesKey = `turn:${turnId}:replies`;
+  const xadd = (stream: string, frame: unknown): Promise<unknown> =>
+    client.xadd(stream, '*', 'data', JSON.stringify(frame));
 
   // A periodic heartbeat so the host watchdog can tell a live (but quiet) turn from a dead engine.
   const heartbeat = setInterval(() => {
-    void xadd({ t: 'heartbeat', ts: Date.now() }).catch(() => undefined);
+    void xadd(eventsKey, { t: 'heartbeat', ts: Date.now() }).catch(() => undefined);
   }, 5_000);
   if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
+  let stopReplies: (() => void) | undefined;
 
   try {
     // The spec is a single-entry stream the host XADDed before the kick.
@@ -149,9 +153,6 @@ async function runOverRedis(turnId: string): Promise<void> {
     const dataIdx = fields.indexOf('data');
     if (dataIdx < 0) throw new Error(`engine-entrypoint: no spec for turn ${turnId}`);
     const spec = JSON.parse(fields[dataIdx + 1]) as TurnSpec;
-    if (spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
-      throw new Error('engine-entrypoint: tool-bridge over Redis is not yet supported (Phase 3)');
-    }
 
     const claudeSdk = await import('@anthropic-ai/claude-agent-sdk');
     const codexSdk = await import('@openai/codex-sdk');
@@ -166,15 +167,85 @@ async function runOverRedis(turnId: string): Promise<void> {
       { warn: (m) => process.stderr.write(`[engine-core] ${m}\n`) },
     );
 
+    // ── Tool bridge over Redis (additive) ──────────────────────────────────────────────────────
+    let bridge: BridgeClaudeOptions | undefined;
+    if (spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
+      const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
+      // A SEPARATE connection blocks on the replies stream (a blocking read can't share the main client).
+      const sub = client.duplicate();
+      let stop = false;
+      stopReplies = () => {
+        stop = true;
+      };
+      void (async () => {
+        let lastId = '0-0';
+        while (!stop) {
+          const r = (await sub.xread('BLOCK', 1000, 'STREAMS', repliesKey, lastId)) as
+            | Array<[string, Array<[string, string[]]>]>
+            | null;
+          if (!r) continue;
+          for (const [, entries] of r) {
+            for (const [eid, f] of entries) {
+              lastId = eid;
+              const di = f.indexOf('data');
+              if (di < 0) continue;
+              const frame = JSON.parse(f[di + 1]) as HostFrame;
+              const entry = pending.get(frame.id);
+              if (!entry) continue;
+              pending.delete(frame.id);
+              if (frame.t === 'tool_response') entry.resolve(frame.result);
+              else entry.reject(new Error(frame.message));
+            }
+          }
+        }
+      })().catch(() => undefined);
+
+      const z = (await import('zod/v4')).z;
+      const mcpTools = spec.toolBridgeTools.map((toolName: string) =>
+        claudeSdk.tool(
+          toolName,
+          `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
+          { args: z.record(z.string(), z.unknown()).optional().describe('Tool arguments') },
+          async (input: { args?: Record<string, unknown> }) => {
+            const id = randomUUID();
+            const resultPromise = new Promise<unknown>((resolve, reject) => {
+              pending.set(id, { resolve, reject });
+            });
+            await xadd(toolsKey, { t: 'tool_request', id, name: toolName, args: input.args ?? {} });
+            try {
+              const result = await resultPromise;
+              const text = typeof result === 'string' ? result : JSON.stringify(result);
+              return { content: [{ type: 'text' as const, text }] };
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true };
+            }
+          },
+        ),
+      );
+      const server = claudeSdk.createSdkMcpServer({
+        name: BRIDGE_SERVER_NAME,
+        version: '1.0.0',
+        instructions: 'Atlas host tools. Call these to interact with the host harness.',
+        tools: mcpTools,
+        alwaysLoad: true,
+      });
+      bridge = buildBridgeClaudeOptions(server, spec.toolBridgeTools);
+    }
+
     const runArgs: RunEngineArgs = {
       ...spec,
-      onEvent: (e: EngineEvent) => void xadd({ t: 'event', e }).catch(() => undefined),
+      onEvent: (e: EngineEvent) => void xadd(eventsKey, { t: 'event', e }).catch(() => undefined),
     };
-    const result = await core.runWithExtras(runArgs, undefined, undefined);
-    await xadd({ t: 'final', r: result });
+    const result = await core.runWithExtras(
+      runArgs,
+      bridge?.extraClaudeOptions,
+      bridge?.bridgeToolNames,
+    );
+    await xadd(eventsKey, { t: 'final', r: result });
   } catch (err) {
     const e = err as { isAuthError?: boolean; sessionId?: string; stack?: string; message?: string };
-    await xadd({
+    await xadd(eventsKey, {
       t: 'error',
       message: err instanceof Error ? (err.stack ?? err.message) : String(err),
       ...(e?.isAuthError ? { auth: true } : {}),
@@ -182,6 +253,7 @@ async function runOverRedis(turnId: string): Promise<void> {
     }).catch(() => undefined);
     process.exitCode = 1;
   } finally {
+    stopReplies?.();
     clearInterval(heartbeat);
     client.disconnect();
   }
