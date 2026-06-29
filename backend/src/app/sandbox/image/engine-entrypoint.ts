@@ -119,7 +119,83 @@ function startStdinFrameReader(
   // Don't call process.stdin.resume() — it was already resumed by readFirstLine.
 }
 
+/**
+ * REDIS TRANSPORT (`ENGINE_TRANSPORT=redis`, additive): instead of stdin/stdout the engine reads its
+ * spec from `turn:{T}:spec` and appends event frames to `turn:{T}:events` (+ periodic heartbeats), so
+ * the turn survives a host restart (the host re-attaches to the durable stream). The tool-bridge over
+ * Redis is Phase 3 — a redis-mode spec with `toolBridgeTools` is rejected here. Mirrors the pipe path's
+ * frame shapes exactly so the host runner is transport-symmetric.
+ */
+async function runOverRedis(turnId: string): Promise<void> {
+  const { Redis } = await import('ioredis');
+  const url = process.env.REDIS_URL ?? 'redis://redis:6379';
+  const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: null });
+  const events = `turn:${turnId}:events`;
+  const xadd = (frame: unknown): Promise<unknown> =>
+    client.xadd(events, '*', 'data', JSON.stringify(frame));
+
+  // A periodic heartbeat so the host watchdog can tell a live (but quiet) turn from a dead engine.
+  const heartbeat = setInterval(() => {
+    void xadd({ t: 'heartbeat', ts: Date.now() }).catch(() => undefined);
+  }, 5_000);
+  if (typeof heartbeat.unref === 'function') heartbeat.unref();
+
+  try {
+    // The spec is a single-entry stream the host XADDed before the kick.
+    const specEntries = (await client.xread('COUNT', 1, 'STREAMS', `turn:${turnId}:spec`, '0')) as
+      | Array<[string, Array<[string, string[]]>]>
+      | null;
+    const fields = specEntries?.[0]?.[1]?.[0]?.[1] ?? [];
+    const dataIdx = fields.indexOf('data');
+    if (dataIdx < 0) throw new Error(`engine-entrypoint: no spec for turn ${turnId}`);
+    const spec = JSON.parse(fields[dataIdx + 1]) as TurnSpec;
+    if (spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
+      throw new Error('engine-entrypoint: tool-bridge over Redis is not yet supported (Phase 3)');
+    }
+
+    const claudeSdk = await import('@anthropic-ai/claude-agent-sdk');
+    const codexSdk = await import('@openai/codex-sdk');
+    const core = new EngineCore(
+      claudeSdk,
+      codexSdk,
+      {
+        homeRoot: process.env.AGENT_HOME_ROOT,
+        claudeOauthToken: process.env.CLAUDE_OAUTH_TOKEN,
+        codexOauthToken: process.env.CODEX_OAUTH_TOKEN,
+      },
+      { warn: (m) => process.stderr.write(`[engine-core] ${m}\n`) },
+    );
+
+    const runArgs: RunEngineArgs = {
+      ...spec,
+      onEvent: (e: EngineEvent) => void xadd({ t: 'event', e }).catch(() => undefined),
+    };
+    const result = await core.runWithExtras(runArgs, undefined, undefined);
+    await xadd({ t: 'final', r: result });
+  } catch (err) {
+    const e = err as { isAuthError?: boolean; sessionId?: string; stack?: string; message?: string };
+    await xadd({
+      t: 'error',
+      message: err instanceof Error ? (err.stack ?? err.message) : String(err),
+      ...(e?.isAuthError ? { auth: true } : {}),
+      ...(typeof e?.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
+    }).catch(() => undefined);
+    process.exitCode = 1;
+  } finally {
+    clearInterval(heartbeat);
+    client.disconnect();
+  }
+}
+
 async function main(): Promise<void> {
+  // Redis transport: the host kicks us detached with TURN_ID + ENGINE_TRANSPORT=redis; we read the spec
+  // from / write events to Redis instead of stdin/stdout. See ADR 0001.
+  const turnId = process.env.TURN_ID;
+  if (process.env.ENGINE_TRANSPORT === 'redis' && turnId) {
+    await runOverRedis(turnId);
+    return;
+  }
+
   const raw = await readFirstLine();
   if (!raw) throw new Error('engine-entrypoint: empty turn spec on stdin');
   const spec = JSON.parse(raw) as TurnSpec;
