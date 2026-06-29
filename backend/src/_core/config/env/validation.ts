@@ -323,6 +323,9 @@ export interface IEnvConfig {
   //    atlas-bus net, e.g. redis://redis:6379). Falls back to REDIS_URL. Only used when ENGINE_TRANSPORT=redis.
   ENGINE_TRANSPORT?: 'pipe' | 'redis';
   SANDBOX_REDIS_URL?: string;
+  //  - TURN_STALE_MS: how long an `active_turns` heartbeat may go quiet before the leader watchdog
+  //    finalizes the turn 'failed' (engine container died). Default 90000.
+  TURN_STALE_MS?: number;
 
   // ── Atlas v2 clustering / rolling-update ─────────────────────────────────────────────────────────
   //  The backend is a hard singleton (in-memory turn queues, provisioning lock, single realtime slot).
@@ -483,6 +486,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
   ENGINE_TRANSPORT: Joi.string().valid('pipe', 'redis').optional().default('pipe'),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
+  TURN_STALE_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 clustering / rolling-update
   LEADER_POLL_INTERVAL_MS: Joi.number().integer().min(250).optional(),
   DRAIN_GRACE_MS: Joi.number().integer().min(0).optional(),
