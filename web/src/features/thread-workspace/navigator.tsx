@@ -23,7 +23,9 @@ import { trackTitle } from '@/lib/track-title';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { Caret, Divider, PipelineTree, haltTrackIdx } from './pipeline-tree';
+import { NavigatorApprovalCallout } from './spec-approval';
 import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
+import type { ThreadRef } from '@/lib/api/thread-api';
 
 export interface ThreadMeta {
   title: string;
@@ -48,6 +50,8 @@ export function Navigator({
   context,
   contextLoading,
   selectedNode,
+  threadRef,
+  approveValue,
   onConversation,
   onSelectNode,
   onRename,
@@ -60,6 +64,11 @@ export function Navigator({
   context: ThreadContext | undefined;
   contextLoading?: boolean;
   selectedNode: string | null;
+  /** The open thread — for the in-place "Approve plan" callout. */
+  threadRef: ThreadRef;
+  /** The approval card's verbatim approve `value`, when the thread is awaiting approval (else ''). Drives
+   *  the navigator approval callout. */
+  approveValue: string;
   /** Clears the detail-pane selection (used by the state banners' recovery actions). */
   onConversation: () => void;
   onSelectNode: (node: string) => void;
@@ -153,7 +162,11 @@ export function Navigator({
 
       {/* ── scroll body — the constant skeleton ─────────────────────────────────────────────── */}
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 py-3">
-        <StateBanner status={st} job={job} onConversation={onConversation} />
+        {st === 'awaiting_approval' && approveValue ? (
+          <NavigatorApprovalCallout threadRef={threadRef} value={approveValue} />
+        ) : (
+          <StateBanner status={st} job={job} onConversation={onConversation} />
+        )}
 
         <SpecsRegion
           status={st}

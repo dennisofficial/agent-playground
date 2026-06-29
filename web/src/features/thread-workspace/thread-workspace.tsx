@@ -10,18 +10,19 @@ import { toThreadStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
 import { pipelineJob, type ThreadRef } from '@/lib/api/thread-api';
-import type { ThreadKind, ThreadStatus, WebApprovalCard } from '@/lib/api/types';
+import { APPROVE_ACTION_ID, type ThreadKind, type ThreadStatus, type WebApprovalCard } from '@/lib/api/types';
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
 import { MarkdownActionsProvider } from './markdown';
 import { PhaseView, EmptyPane } from './step-view';
+import { PersistentApprovalBar } from './spec-approval';
 import { useSelectedNode } from './use-selected-node';
 
 const FOOTERS: Record<ThreadStatus, string> = {
   running: 'One branch · each step a fresh session · one PR · the harness resumes on any halt.',
   scoping: 'Pure conversation — the plan you approve here is what creates the tracks.',
   plan_review: 'Codex is reviewing the submitted plan — findings will appear in the conversation.',
-  awaiting_approval: 'The approval card is inline in the conversation — that is the gate.',
+  awaiting_approval: 'Approve the plan whenever you’re ready — here, the detail pane, or the conversation. Nothing’s blocked while it waits.',
   paused: 'Your paused session — reply to resume. The resume handle is yours.',
   done: 'One PR per feature · opened early as a draft, filled in live as tracks landed.',
   triaging: 'Autonomous lane — the agent parked one decision for you to answer.',
@@ -82,6 +83,27 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     return null;
   }, [messages]);
 
+  // The async spec-approval surfaces (navigator callout + persistent detail-pane bar) render only while
+  // the thread awaits approval AND we have a valid approve `value` to POST. The backend value is just
+  // `{ jobId, decisionRecordId? }` (see `approval-blocks.ts`): prefer the inline approval card's verbatim
+  // value when one is in the log, but reconstruct it from the pipeline otherwise — an awaiting thread
+  // always carries its job + decision record on the pipeline even when no `approval_card` message exists.
+  const approveValue = useMemo<string>(() => {
+    const fromCard =
+      approvalCard?.actions.find((a) => a.actionId === APPROVE_ACTION_ID)?.value ?? approvalCard?.actions[0]?.value;
+    if (fromCard) return fromCard;
+    if (job && status === 'awaiting_approval') {
+      return JSON.stringify({
+        jobId: job.threadId,
+        ...(job.decisionRecordId ? { decisionRecordId: job.decisionRecordId } : {}),
+      });
+    }
+    return '';
+  }, [approvalCard, job, status]);
+  const awaitingApproval = status === 'awaiting_approval' && Boolean(approveValue);
+  const specCount = context?.specs?.length ?? 0;
+  const stepCount = job?.tracks.reduce((n, t) => n + (t.steps?.length ?? 0), 0) ?? 0;
+
   const meta: ThreadMeta = {
     title: inboxThread?.title ?? job?.title ?? 'Thread',
     kind,
@@ -112,6 +134,8 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
         context={context}
         contextLoading={contextLoading}
         selectedNode={selectedNode}
+        threadRef={ref}
+        approveValue={awaitingApproval ? approveValue : ''}
         onConversation={onConversation}
         onSelectNode={onSelectNode}
         onRename={onRename}
@@ -140,28 +164,38 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
             onSelectNode={(node) => selectNode(node, { push: true })}
           />
         </Panel>
+        {/* A 1px divider line, NOT a 6px reserved strip — so both panes (and the detail-pane footers like
+            the approval bar) sit flush against it. The resizable hit target is widened by the library's
+            `resizeTargetMinimumSize` (10px mouse / 20px touch), so dragging stays easy despite the thin line. */}
         <Separator
           disableDoubleClick
           onDoubleClick={() => groupRef.current?.setLayout({ conversation: 50, detail: 50 })}
           title="Drag to resize · double-click to center"
-          className="relative w-1.5 outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors hover:after:bg-border-2 active:after:bg-text/50"
+          className="relative w-px bg-border outline-none transition-colors hover:bg-border-2 active:bg-text/50"
         />
         <Panel id="detail" defaultSize="50%" minSize="32%" className="flex min-w-0 flex-col">
-          {selectedNode ? (
-            <PhaseView
-              threadRef={ref}
-              pipeline={pipeline}
-              pipelineLoading={pipelineLoading}
-              pipelineError={pipelineError}
-              messages={messages}
-              approvalCard={approvalCard}
-              selectedNode={selectedNode}
-              onConversation={onConversation}
-              onSelectNode={(node) => selectNode(node, { push: true })}
-            />
-          ) : (
-            <EmptyPane />
-          )}
+          {/* The detail pane content fills the column; the persistent approval bar (when awaiting) pins to
+              its base as a `flex:none` footer — present no matter what the pane is showing. */}
+          <div className="flex min-h-0 flex-1 flex-col">
+            {selectedNode ? (
+              <PhaseView
+                threadRef={ref}
+                pipeline={pipeline}
+                pipelineLoading={pipelineLoading}
+                pipelineError={pipelineError}
+                messages={messages}
+                approvalCard={approvalCard}
+                selectedNode={selectedNode}
+                onConversation={onConversation}
+                onSelectNode={(node) => selectNode(node, { push: true })}
+              />
+            ) : (
+              <EmptyPane />
+            )}
+          </div>
+          {awaitingApproval ? (
+            <PersistentApprovalBar threadRef={ref} value={approveValue} specCount={specCount} stepCount={stepCount} />
+          ) : null}
         </Panel>
       </Group>
     </div>

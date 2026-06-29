@@ -783,6 +783,49 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(markerIds).toContain(`approved:${FAKE_RECORD_ID}`);
     expect(markerIds).toContain(`dispatched:${FAKE_RECORD_ID}`);
   });
+
+  it('(d2) resolveApprovalDurably: restart-safe approve (no live handle) dispatches the full build from durable state', async () => {
+    const awaitingJob = {
+      id: FAKE_JOB_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
+      status: 'awaiting_approval',
+      decisionRecordId: FAKE_RECORD_ID,
+      kind: 'feature',
+      title: 'rate limiting',
+    };
+    const runningJob = { ...awaitingJob, status: 'running' };
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingJob);
+    (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
+      overview: 'x',
+      decisions: [],
+      trackTitles: ['Backend'], // non-empty ⇒ full plan ⇒ dispatch (not direct)
+    });
+    (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(runningJob);
+    (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+
+    const acted = await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
+
+    expect(acted).toBe(true);
+    expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, FAKE_RECORD_ID, 'U-OP');
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(runningJob);
+  });
+
+  it('(d3) resolveApprovalDurably: no-op (returns false) when the job is no longer awaiting_approval', async () => {
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: FAKE_JOB_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
+      status: 'running', // already handled by the live path / a prior click
+      decisionRecordId: FAKE_RECORD_ID,
+    });
+
+    const acted = await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
+
+    expect(acted).toBe(false);
+    expect(mockStore.approve).not.toHaveBeenCalled();
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
 });
 
 describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {

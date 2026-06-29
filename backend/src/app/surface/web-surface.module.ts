@@ -1,6 +1,7 @@
 import { Module, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
+import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity, RepoEntity, ThreadEntity } from '../persistence/entities';
@@ -21,7 +22,9 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
  *
  *  - `WebSurface.approval$` emits when the web client clicks an approval button.
  *  - This module subscribes to `approval$` in `onApplicationBootstrap` and calls
- *    `DecisionApprovalService.resolve` — the surface never imports the brain.
+ *    `DecisionApprovalService.resolve` — the surface never imports the brain. When no live in-memory
+ *    handle exists (e.g. a restart dropped it), it falls back to `AgentSessionManager.resolveApprovalDurably`
+ *    so the gate still resolves from durable state. Both are resolved ambiently from the `@Global` BrainModule.
  *  - `DecisionApprovalService` lives in `BrainModule` which is `@Global`, so it resolves ambiently.
  *
  * Circular-dep safety: `WebSurface` imports nothing from `brain/`; `DecisionApprovalService`
@@ -48,6 +51,7 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
   constructor(
     private readonly surface: WebSurface,
     private readonly approvals: DecisionApprovalService,
+    private readonly asm: AgentSessionManager,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -60,7 +64,11 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
 
       const resolved = this.approvals.resolve(meta.jobId, verdict, ruledBy, note);
       if (!resolved) {
-        // Stale click (double-click, already resolved, or no pending gate) — silently drop.
+        // No LIVE in-memory handle. Either a genuinely stale/double click, OR the in-memory pending map
+        // was dropped by a restart while the thread stayed durably `awaiting_approval` (the documented
+        // durability gap). Fall back to the restart-safe durable resolver, which acts only if the job is
+        // still awaiting — so a true stale click remains a no-op. Fire-and-forget; errors are logged.
+        void this.asm.resolveApprovalDurably(meta.jobId, verdict, ruledBy, note).catch(() => undefined);
       }
     });
   }

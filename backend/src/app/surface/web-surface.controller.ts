@@ -164,7 +164,12 @@ interface RenameThreadDto {
 interface ApproveDto {
   actionId: string;
   value: string;
-  ruledBy: string;
+  /**
+   * Legacy/cosmetic — IGNORED. The approver is stamped from the authenticated session (`@CurrentUser`),
+   * never the client: `decision_records.approved_by` is a uuid FK to `users`, so a client label like
+   * "U-OPERATOR" would fail the write. Kept optional for backward compatibility with older clients.
+   */
+  ruledBy?: string;
   note?: string;
 }
 interface AnswerQuestionDto {
@@ -480,11 +485,12 @@ export class WebSurfaceController {
   @UseGuards(OrgMembershipGuard)
   async approve(
     @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
     @Body() body: ApproveDto,
   ): Promise<{ ok: boolean; jobId?: string }> {
-    const { actionId, value, ruledBy, note } = body;
-    if (!actionId || !value || !ruledBy) {
-      throw new BadRequestException('actionId, value, and ruledBy are required');
+    const { actionId, value, note } = body;
+    if (!actionId || !value) {
+      throw new BadRequestException('actionId and value are required');
     }
     if (!VALID_ACTION_IDS.has(actionId)) {
       throw new BadRequestException(`Unknown actionId: ${actionId}`);
@@ -493,7 +499,10 @@ export class WebSurfaceController {
     if (!meta) throw new BadRequestException('value is not a valid ApprovalActionMeta JSON');
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     await this.requireThread(meta.jobId, org.id);
-    this.surface.receiveApprovalClick(actionId, value, ruledBy, note);
+    // Stamp the AUTHENTICATED operator (a real user uuid, FK-valid for `decision_records.approved_by`) as
+    // the approver — never the client-sent `ruledBy` (untrusted, and a label like "U-OPERATOR" is not a
+    // uuid, which previously made `store.approve` throw and the verdict silently no-op).
+    this.surface.receiveApprovalClick(actionId, value, user.id, note);
     return { ok: true, jobId: meta.jobId };
   }
 

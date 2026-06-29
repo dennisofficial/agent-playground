@@ -61,6 +61,7 @@ import { isUnresumableSessionMessage, resolveContextLimit, SANDBOX_RESET_NOTICE 
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
+import type { ApprovalResolution, ApprovalVerdict } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
 import { PlanReviewService, renderFindingsDelivery } from './plan-review.service';
 
@@ -1614,9 +1615,25 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       return;
     }
 
+    await this.actOnApprovalVerdict(stimulus, job, decisionRecordId, card.kind === 'direct', resolution);
+  }
+
+  /**
+   * Apply a ruled approval verdict — the durable effect, shared by the live in-session await
+   * ({@link requestApprovalAndAct}) and the restart-safe fallback ({@link resolveApprovalDurably}).
+   * `approve` → flip the decision record + thread to `running` then dispatch (full plan) or implement
+   * directly (`isDirect`); `request_changes` → back to scoping; `deny` → cancel.
+   */
+  private async actOnApprovalVerdict(
+    stimulus: ChatStimulus,
+    job: Thread,
+    decisionRecordId: string,
+    isDirect: boolean,
+    resolution: ApprovalResolution,
+  ): Promise<void> {
     if (resolution.verdict === 'approve') {
       const running = await this.store.approve(job.id, decisionRecordId, resolution.ruledBy);
-      if (card.kind === 'direct') {
+      if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
         await this.store.appendAtlasMessage(
           stimulus.threadId,
@@ -1661,6 +1678,45 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     // deny
     await this.store.cancel(job.id);
     await this.say(stimulus, "Understood — I'll drop this one.");
+  }
+
+  /**
+   * RESTART-SAFE approval fallback. The web bridge calls this when {@link DecisionApprovalService.resolve}
+   * finds no live in-memory handle for the clicked job — the canonical case being a backend restart AFTER
+   * the plan was submitted, which drops the in-memory pending map (`DecisionApprovalService` keeps it in
+   * RAM by design) while the thread stays durably `awaiting_approval`. Without this, the click POSTs 200
+   * but nothing happens — the gate never resolves.
+   *
+   * Reconstructs the verdict effect from durable state alone: the job row + its decision record. Idempotent
+   * — it only acts while the job is still `awaiting_approval`, so a stale/double click (or one that raced
+   * the live path) is a no-op. `isDirect` is derived from the decision record (a direct build persists no
+   * track titles; the driver needs tracks to dispatch). Returns whether it acted.
+   */
+  async resolveApprovalDurably(
+    jobId: string,
+    verdict: ApprovalVerdict,
+    ruledBy: string,
+    note?: string,
+  ): Promise<boolean> {
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    if (!job || job.status !== 'awaiting_approval' || !job.decisionRecordId) return false;
+    const rec = await this.store.loadDecisionRecord(job.decisionRecordId);
+    if (!rec) return false;
+    const stimulus = harnessDeliveryStimulus({
+      threadId: job.id,
+      orgId: job.orgId,
+      repoId: job.repoId,
+      body: '',
+    });
+    const isDirect = (rec.trackTitles?.length ?? 0) === 0;
+    this.logger.log(`durable approval fallback for job ${jobId}: "${verdict}" by ${ruledBy} (direct=${isDirect})`);
+    await this.actOnApprovalVerdict(stimulus, job, job.decisionRecordId, isDirect, {
+      jobId,
+      verdict,
+      ruledBy,
+      ...(note ? { note } : {}),
+    });
+    return true;
   }
 
   // ── Direct-build (fast path) ─────────────────────────────────────────────────────────────────────
