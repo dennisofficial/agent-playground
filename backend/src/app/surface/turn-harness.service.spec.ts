@@ -68,6 +68,32 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(persisted[1].block.meta).toEqual({ parentToolUseId: 'tu1' });
   });
 
+  it('finish turn_meta: appends a turn_meta block LAST carrying usage + context occupancy when usage is given', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ threadId: 'T', channel: 'R' });
+    h.onEvent({ kind: 'text', text: 'reply' });
+    await h.finish('reply', {
+      usage: { inputTokens: 1200, outputTokens: 340, cacheReadTokens: 1100, costUsd: 0.02, model: 'claude-opus-4-8' },
+      contextTokens: 1200,
+      contextLimit: 1_000_000,
+    });
+
+    const kinds = persisted.map((p) => p.block.kind);
+    expect(kinds).toEqual(['chat', 'turn_meta']); // turn_meta sorts last
+    const meta = persisted.at(-1)!.block.meta!;
+    expect(meta.usage).toMatchObject({ inputTokens: 1200, outputTokens: 340, costUsd: 0.02, model: 'claude-opus-4-8' });
+    expect(meta.contextTokens).toBe(1200);
+    expect(meta.contextLimit).toBe(1_000_000);
+  });
+
+  it('finish without usage: no turn_meta block is written', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ threadId: 'T', channel: 'R' });
+    h.onEvent({ kind: 'text', text: 'reply' });
+    await h.finish('reply');
+    expect(persisted.map((p) => p.block.kind)).toEqual(['chat']);
+  });
+
   it('finish text fallback: a turn that emitted no text persists the final report as a chat block', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({ threadId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });

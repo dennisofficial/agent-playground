@@ -9,7 +9,7 @@ import { useContextFile, useSay } from '@/lib/api/thread-queries';
 import { trackTitle } from '@/lib/track-title';
 import { VerdictButtons } from './approval-card';
 import { Markdown } from './markdown';
-import { StreamTextBubble, ThinkingBlock, UserBubble } from './bubbles';
+import { MessageTime, StreamTextBubble, ThinkingBlock, UserBubble } from './bubbles';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import {
@@ -367,8 +367,20 @@ function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: bo
     }
     flush();
     if (b.kind === 'text')
-      items.push({ key: b.key, node: <StreamTextBubble text={b.text} streaming={Boolean(b.running) && active} /> });
-    else items.push({ key: b.key, node: <ThinkingBlock text={b.text} streaming={Boolean(b.running) && active} /> });
+      items.push({
+        key: b.key,
+        node: (
+          <div className="group flex flex-col gap-0.5">
+            <StreamTextBubble text={b.text} streaming={Boolean(b.running) && active} />
+            <MessageTime iso={b.postedAt} tone="muted" />
+          </div>
+        ),
+      });
+    else
+      items.push({
+        key: b.key,
+        node: <ThinkingBlock text={b.text} streaming={Boolean(b.running) && active} time={b.postedAt} />,
+      });
   }
   flush();
   return (

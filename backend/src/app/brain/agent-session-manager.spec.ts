@@ -8,6 +8,8 @@ import type { MemoryStore } from '../memory';
 import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import type { BuildShipService } from '../driver/build-ship.service';
+import { DecisionLedgerService } from './decision-ledger.service';
+import type { RepoDecisionManifestService } from './repo-decision-manifest.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { TicketService } from '../tickets';
@@ -284,6 +286,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
+      new DecisionLedgerService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoDecisionManifestService,
     );
   });
 
@@ -868,6 +876,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
+      new DecisionLedgerService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoDecisionManifestService,
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
@@ -918,6 +932,34 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     // The final reply is NOT also persisted as a separate say() — only the "setting up…" line is.
     expect((store.appendAtlasMessage as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
     expect((surface.post as ReturnType<typeof vi.fn>).mock.calls[0][1]).toContain('Setting up');
+  });
+
+  it('persists a turn_meta block LAST when the engine reports usage (per-turn tokens + context occupancy)', async () => {
+    const run = vi.fn(async (args: RunEngineArgs) => {
+      args.onEvent?.({ kind: 'text', text: 'Reply.' });
+      return {
+        result: 'Reply.',
+        sessionId: 'sess-1',
+        usage: {
+          inputTokens: 12_500,
+          outputTokens: 420,
+          cacheReadTokens: 11_000,
+          costUsd: 0.03,
+          model: 'claude-opus-4-8',
+        },
+      };
+    });
+    const { manager, blockSink } = makeManager({ run });
+
+    await manager.handleChatTurn(stimulus);
+
+    const blocks = (blockSink.appendBlock as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    // The turn_meta block is appended LAST in the turn.
+    expect(blocks.at(-1)?.kind).toBe('turn_meta');
+    const meta = blocks.at(-1)?.meta as Record<string, unknown>;
+    expect(meta.usage).toMatchObject({ inputTokens: 12_500, outputTokens: 420, costUsd: 0.03, model: 'claude-opus-4-8' });
+    expect(meta.contextTokens).toBe(12_500);
+    expect(meta.contextLimit).toBe(1_000_000); // opus → 1M window
   });
 
   it('routes an unresumable-session error to a system→operator notice (own box), not an Atlas reply', async () => {
@@ -1091,6 +1133,12 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
         onPromote: () => ({ unsubscribe() {} }),
         onDemote: () => ({ unsubscribe() {} }),
       } as never, // election
+      new DecisionLedgerService(),
+      {
+        recordPromoted: async () => undefined,
+        reconcileFromBaseCheckout: async () => ({ reconciled: 0, accepted: 0, flagged: 0 }),
+        reposWithGit: async () => [],
+      } as unknown as RepoDecisionManifestService,
     );
     return { manager, store };
   }

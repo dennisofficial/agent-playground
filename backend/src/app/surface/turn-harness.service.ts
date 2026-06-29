@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { EngineEvent } from '../engine';
+import type { EngineEvent, EngineUsage } from '../engine';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
@@ -52,12 +52,28 @@ export class MessageBlockSink implements BlockSink {
   }
 }
 
+/**
+ * Turn-end accounting, rendered as a durable `turn_meta` block (the per-turn divider + context ring in the
+ * web). All optional — pass nothing (or no `usage`) and no block is written.
+ */
+export interface TurnEndMeta {
+  /** The turn's token usage as the engine reported it (in/out/cache/cost/model). */
+  usage?: EngineUsage;
+  /** Context-window occupancy proxy — the last request's input tokens (incl. cache). */
+  contextTokens?: number | null;
+  /** The model's context-window size, for the occupancy ring. */
+  contextLimit?: number;
+}
+
 /** One live turn's harness — the object a producer feeds engine events into. */
 export interface TurnHarness {
   /** Feed one engine event: fans it live (LiveTurnStore) AND accumulates the authoritative durable block. */
   onEvent(e: EngineEvent): void;
-  /** Persist the accumulated transcript (+ a text fallback if none emitted), then end the live lane. */
-  finish(finalText?: string): Promise<void>;
+  /**
+   * Persist the accumulated transcript (+ a text fallback if none emitted), append a `turn_meta` block when
+   * `turnMeta.usage` is present, then end the live lane.
+   */
+  finish(finalText?: string, turnMeta?: TurnEndMeta): Promise<void>;
   /** Persist whatever partials accumulated (no fallback) and end the live lane — for error/timeout paths. */
   abort(): Promise<void>;
 }
@@ -202,7 +218,7 @@ export class TurnHarnessFactory {
         }
       },
 
-      finish: async (finalText?: string) => {
+      finish: async (finalText?: string, turnMeta?: TurnEndMeta) => {
         if (closed) return;
         closed = true;
         // Fallback: a turn that emitted NO text block — keep the final summary so the reply isn't lost.
@@ -212,6 +228,21 @@ export class TurnHarnessFactory {
             text: finalText.trim(),
             emittedAt: stamp(),
             ...(metaTag ? { meta: { ...metaTag } } : {}),
+          });
+        }
+        // Per-turn accounting: a `turn_meta` block carrying usage + context occupancy, stamped LAST (the
+        // monotonic `stamp()` sorts it after every transcript block) so the web renders it as the turn-end
+        // divider and reads the latest one for the context ring. Only when usage is actually present.
+        if (turnMeta?.usage) {
+          blocks.push({
+            kind: 'turn_meta',
+            emittedAt: stamp(),
+            meta: {
+              ...(metaTag ?? {}),
+              usage: turnMeta.usage as unknown as Record<string, unknown>,
+              contextTokens: turnMeta.contextTokens ?? null,
+              contextLimit: turnMeta.contextLimit ?? null,
+            },
           });
         }
         await persistAll();

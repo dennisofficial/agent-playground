@@ -72,6 +72,33 @@ export interface EngineUsage {
 }
 
 /**
+ * Per-model context-window size (max input tokens), keyed by a substring of the real model id the turn
+ * reported in {@link EngineUsage.model}. The web renders a context-occupancy ring against this, so it
+ * tracks whatever model the brain runs — never hardcoded on the client.
+ *
+ * Current official windows (Anthropic docs): Opus 4.x and Sonnet 4.x are 1M, Haiku is 200k. The
+ * authoritative long-term source is the Models API `max_input_tokens`; this static map is the v1 proxy
+ * and is the single place to edit if a window changes. Order matters — first matching substring wins.
+ */
+const MODEL_CONTEXT_LIMITS: ReadonlyArray<readonly [match: string, limit: number]> = [
+  ['opus', 1_000_000],
+  ['sonnet', 1_000_000],
+  ['haiku', 200_000],
+];
+
+/** Fallback window when the model id is unknown/absent — the conservative 200k floor. */
+export const DEFAULT_CONTEXT_LIMIT = 200_000;
+
+/** Resolve a model's context-window size (max input tokens) from its reported id. */
+export function resolveContextLimit(model?: string): number {
+  const id = (model ?? '').toLowerCase();
+  for (const [match, limit] of MODEL_CONTEXT_LIMITS) {
+    if (id.includes(match)) return limit;
+  }
+  return DEFAULT_CONTEXT_LIMIT;
+}
+
+/**
  * WHERE a turn executes. Absent (the default) → run in-process on the host (the `local` runner). When
  * present, the `docker` runner `docker exec`s the engine entrypoint inside `containerId` as `user`.
  * Passed explicitly through the port so the runner never has to derive a container from a string.

@@ -1,5 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
@@ -17,7 +18,7 @@ import { CredentialResolver } from '../onboarding';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
-import { BuildShipService } from './build-ship.service';
+import { BuildShipService, LEDGER_COMMIT_MESSAGE } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
   DriverStoreService,
@@ -50,6 +51,11 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
  * `await`-each-step loop. Explicit `status`/`step` rows exist ONLY for resumability — the live path is a
  * straight function. Bound as the real `JOB_DISPATCHER` (overriding W3's logging no-op). Zero v1 imports.
  */
+/** The narrow brain surface the driver needs at ship — resolved lazily to avoid the module cycle. */
+interface LedgerPromoter {
+  promoteDurableDecisionsAtShip(threadId: string, orgId: string, repoId: string): Promise<void>;
+}
+
 @Injectable()
 export class TrackDriver implements JobDispatcher {
   private readonly logger = new Logger(TrackDriver.name);
@@ -79,6 +85,9 @@ export class TrackDriver implements JobDispatcher {
     // renders a full transcript (thinking/prose/tool calls), exactly like a subagent run.
     private readonly turnHarness: TurnHarnessFactory,
     @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
+    // Lazily resolves the brain (AgentSessionManager) for the server-initiated ledger-promotion turn,
+    // dodging the brain⇄driver constructor cycle.
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
@@ -886,14 +895,47 @@ export class TrackDriver implements JobDispatcher {
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
   ): Promise<void> {
-    this.logger.log(`job=${job.id} all tracks done — shipping`);
+    this.logger.log(`job=${job.id} all tracks done — promoting decisions + shipping`);
+    // Promote durable decisions into `.atlas/decisions/` BEFORE shipping, so they ride the build commit.
+    // Resumable + idempotent: a re-entered `finishWithPr` (driver resume) just re-promotes/overwrites.
+    const promoted = await this.promoteLedger(job);
     await this.ship.ship({
       job,
       record,
       repo,
       sandbox,
+      // Sweep the freshly-written ledger files into one commit (a no-op when nothing was promoted).
+      commitMessage: LEDGER_COMMIT_MESSAGE,
       notify: (m) => this.post(route, m),
     });
+    // Mark COMPLETE only when the promotion turn actually ran — a failed promotion stays non-complete so
+    // the boot backstop retries it onto the (now open) PR. Never blocks the PR on the ledger.
+    if (promoted) await this.store.markLedgerPromoted(job.id);
+  }
+
+  /**
+   * Run the SERVER-INITIATED ledger promotion turn (full path). Claims the spine (`running`), then asks
+   * the brain — lazily, to avoid the brain⇄driver module cycle — to distill THIS thread's durable
+   * decisions into the worktree's `.atlas/decisions/`. Best-effort: a failure marks the spine `failed`
+   * (boot backstop retries) and returns false so the PR ships regardless.
+   */
+  private async promoteLedger(job: Thread): Promise<boolean> {
+    try {
+      await this.store.claimLedgerPromotion(job.id);
+      const brain = await this.brain();
+      await brain.promoteDurableDecisionsAtShip(job.id, job.orgId, job.repoId);
+      return true;
+    } catch (err) {
+      this.logger.warn(`ledger promotion turn failed for ${job.id} (shipping anyway): ${err}`);
+      await this.store.setLedgerPromotionStatus(job.id, 'failed').catch(() => undefined);
+      return false;
+    }
+  }
+
+  /** Lazily resolve the brain — a dynamic import keeps the brain⇄driver dependency out of module load. */
+  private async brain(): Promise<LedgerPromoter> {
+    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
+    return this.moduleRef.get(AgentSessionManager, { strict: false });
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────

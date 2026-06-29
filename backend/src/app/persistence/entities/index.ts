@@ -15,6 +15,7 @@ export * from './stimulus.entity';
 export * from './track.entity';
 export * from './step.entity';
 export * from './decision-record.entity';
+export * from './repo-decision.entity';
 export * from './memory.entity';
 export * from './org-credentials.entity';
 export * from './org-worktree-secret.entity';
@@ -36,6 +37,7 @@ import { StimulusEntity } from './stimulus.entity';
 import { TrackEntity } from './track.entity';
 import { StepEntity } from './step.entity';
 import { DecisionRecordEntity } from './decision-record.entity';
+import { RepoDecisionEntity } from './repo-decision.entity';
 import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
 import { OrgWorktreeSecretEntity } from './org-worktree-secret.entity';
@@ -59,6 +61,7 @@ export const ENTITIES = [
   TrackEntity,
   StepEntity,
   DecisionRecordEntity,
+  RepoDecisionEntity,
   MemoryEntity,
   OrgCredentialsEntity,
   OrgWorktreeSecretEntity,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { classifyMessage } from './classify';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import {
@@ -11,6 +11,7 @@ import {
   SystemEventPill,
   SystemOperatorNotice,
   ThinkingBlock,
+  TurnMetaDivider,
   UserBubble,
 } from './bubbles';
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
@@ -65,6 +66,10 @@ export function Conversation({
   const log = messages.filter((m) => !isQueued(m));
   const queued = messages.filter(isQueued);
 
+  // The context-window ring reads the MOST RECENT `turn_meta` block (the brain appends one per turn with
+  // the last request's occupancy + the model's window). Refreshes each turn end via the durable refetch.
+  const contextMeta = useMemo(() => latestContextMeta(messages), [messages]);
+
   const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow([
     messages.length,
     live,
@@ -102,7 +107,7 @@ export function Conversation({
           </div>
         </div>
         {showJump ? <JumpToLatestButton onClick={jumpToLatest} style={{ bottom: composerHeight + 8 }} /> : null}
-        <Composer threadRef={threadRef} onHeightChange={setComposerHeight} />
+        <Composer threadRef={threadRef} onHeightChange={setComposerHeight} context={contextMeta} />
       </div>
     </div>
   );
@@ -174,6 +179,15 @@ function renderLog(
       continue;
     }
 
+    // A per-turn accounting block (token usage + context occupancy) — rendered as a turn-end divider.
+    // Handled raw, BEFORE classifyMessage (which would otherwise fall this unknown kind through to a
+    // plain Claude bubble). Flush any open tool run first so the divider lands after the turn's tools.
+    if (message.kind === 'turn_meta') {
+      flush();
+      nodes.push(<TurnMetaDivider key={message.ts} message={message} />);
+      continue;
+    }
+
     const c = classifyMessage(message);
     if (c.kind === 'tool') {
       const m = message.meta ?? {};
@@ -193,10 +207,10 @@ function renderLog(
 
     switch (c.kind) {
       case 'user':
-        nodes.push(<UserBubble key={message.ts} text={message.text} />);
+        nodes.push(<UserBubble key={message.ts} text={message.text} time={message.postedAt} />);
         break;
       case 'thinking':
-        nodes.push(<ThinkingBlock key={message.ts} text={message.text} />);
+        nodes.push(<ThinkingBlock key={message.ts} text={message.text} time={message.postedAt} />);
         break;
       case 'approval':
         nodes.push(<ApprovalCardView key={message.ts} card={c.card} threadRef={threadRef} onOpenPlan={onOpenPlan} />);
@@ -227,9 +241,28 @@ function renderLog(
   return nodes;
 }
 
+/** The most recent `turn_meta` block's context occupancy (null until a turn has reported usage). */
+function latestContextMeta(messages: ThreadMessage[]): { tokens: number; limit: number; model?: string } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.kind !== 'turn_meta') continue;
+    const meta = (m.meta ?? {}) as {
+      contextTokens?: number | null;
+      contextLimit?: number | null;
+      usage?: { model?: string };
+    };
+    if (typeof meta.contextTokens === 'number' && typeof meta.contextLimit === 'number' && meta.contextLimit > 0) {
+      return { tokens: meta.contextTokens, limit: meta.contextLimit, model: meta.usage?.model };
+    }
+    return null; // latest turn_meta lacked usable numbers — don't keep scanning older turns
+  }
+  return null;
+}
+
 /**
  * The conversation top bar — a `CONVERSATION` label plus search / copy-transcript / view-diff / resume
- * shortcuts. The action buttons are static design-parity placeholders for now (no backend wiring).
+ * shortcuts. The action buttons are static design-parity placeholders for now (no backend wiring). (The
+ * context-window ring lives in the composer's bottom-right, Claude-Code style.)
  */
 function ConversationTopBar() {
   return (

@@ -28,7 +28,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadSandboxEntity } from '../persistence/entities';
 import { ProvisioningNotReadyError, ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
-import { BuildShipService } from '../driver/build-ship.service';
+import { BuildShipService, LEDGER_COMMIT_MESSAGE } from '../driver/build-ship.service';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -46,9 +46,18 @@ import type { Decision } from '../domain';
 import { nextDecisionId, DECISION_CLASS_IDS } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
+import {
+  DecisionLedgerService,
+  LedgerValidationError,
+  type LedgerEntryInput,
+} from './decision-ledger.service';
+import {
+  RepoDecisionManifestService,
+  type PromotedManifestInput,
+} from './repo-decision-manifest.service';
 import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
-import { isUnresumableSessionMessage, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
+import { isUnresumableSessionMessage, resolveContextLimit, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
@@ -122,6 +131,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     private readonly creds: CredentialResolver,
     // Singleton-leadership gate: boot crash-recovery sweeps + new-turn intake run only on the leader.
     private readonly election: LeaderElectionService,
+    // Durable decision ledger — writes promoted cross-cutting decisions into `.atlas/decisions/`.
+    private readonly ledger: DecisionLedgerService,
+    // Phase 2 manifest — the graph + freshness truth over the ledger (proposed→accepted, edit detection).
+    private readonly manifest: RepoDecisionManifestService,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -130,12 +143,12 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
     'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     '',
-    `You have 19 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
+    `You have 20 host tools, all served by the "${BRIDGE_SERVER_NAME}" MCP server. The SDK exposes each one`,
     `under its fully-qualified name "mcp__${BRIDGE_SERVER_NAME}__<tool>" — that is the ONLY name that works.`,
     `ALWAYS call the qualified name (e.g. mcp__${BRIDGE_SERVER_NAME}__submit_plan); the bare name`,
     '(e.g. submit_plan) is NOT a registered tool and will fail with "No such tool available". The prose',
     `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
-    'form. The 19 tools:',
+    'form. The 20 tools:',
     `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator ONE formal question (renders as a card; see GRILLING)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (auto-attaches the last answered question; set confirmedByOperator when the operator chose it, see GRILLING); returns its stable id`,
     `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
@@ -148,6 +161,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_plan        — send the Codex-reviewed plan to the operator for approval (FULL PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__promote_decisions    — write durable cross-cutting decisions to the .atlas/decisions ledger (AT SHIP; see DECISION LEDGER)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
     `  - mcp__${BRIDGE_SERVER_NAME}__create_thread        — spin off a NEW thread on this same repo (see CREATE_THREAD below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__create_ticket        — capture work on this repo's board/backlog for later (see TICKETS below)`,
@@ -308,6 +322,18 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
     'write to `/context/specs` (or `/context/artifacts`) instead.',
     '',
+    'DECISION LEDGER — `/workspace/.atlas/decisions/` is the DURABLE, repo-level record of the cross-cutting',
+    'architecture calls that OUTLIVE one feature ("money-out requires SUPER_ADMIN", "credits via Stripe',
+    'balance, no internal ledger"). It is committed in the repo, so every thread inherits it.',
+    '  • WHILE GRILLING: read `/workspace/.atlas/decisions/` FIRST (and its `index.md`). Any decision file',
+    '    present there is ALREADY SETTLED — it is on this thread\'s base branch. Do NOT relitigate it; build',
+    '    on it. If your new work genuinely CONTRADICTS one, say so to the operator and supersede it',
+    '    explicitly at promotion (do not silently diverge).',
+    '  • AT SHIP (after approval, when the build is committing): call `promote_decisions` to write the',
+    '    DURABLE subset of THIS thread\'s decisions into the ledger. This is SELECTIVE and DISTILLED — see',
+    '    `promote_decisions` below. It is separate from `/context/generated/decision-record.md`, which keeps',
+    '    the full per-feature record; the ledger holds only the distilled durable invariant.',
+    '',
     'TWO PATHS — choose based on size/risk:',
     '',
     'FULL PATH — submit_plan (multi-track build run by the deterministic driver). Use for anything beyond',
@@ -333,15 +359,16 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '    /context/specs/plan.md  — the INDEX:',
     '        # <one-line goal>          (the `goal` arg, verbatim)',
     '        ## Overview                (intent · stack · constraints · out of scope)',
-    '        ## Architecture            (OPTIONAL — mermaid / data flow / the moving parts)',
+    '        ## Architecture            (a mermaid diagram of the moving parts — default to one; see DIAGRAMS)',
     '        ## Decisions               (one line: "see decision-record.md" — generated; do not duplicate)',
     '        ## Tracks                  (ordered list; each links its file + 1-line goal + type, e.g.',
     '                                    "1. [Backend](sections/01-backend.md) — <slice> · type: backend")',
-    '    /context/specs/data-model.md — cross-cutting schema/migrations/ER mermaid (only if schema changes)',
+    '    /context/specs/data-model.md — cross-cutting schema/migrations + an ER mermaid (whenever the schema changes)',
     '    /context/specs/sections/NN-<slug>.md — ONE per track:',
     '        # Track N — <title>',
     '        ## Goal                    (the demo-able slice, 1–2 lines)',
     '        ## Context                 (what exists today + EXACT path:line anchors + which decisions shaped it)',
+    '        ## Flow                    (PREFERRED — a mermaid sequence/flowchart of THIS track\'s behavior; see DIAGRAMS)',
     '        ## Steps',
     '        #### N.M — <step title>    (the body is the step brief — PLAN DEPTH above)',
     '        ## Validation              (the demo-able outcome that closes the track)',
@@ -351,6 +378,20 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '  ORDERING inline ("N.2 needs N.1\'s migration"); do NOT author concurrency/grouping — how steps pack into',
     '  sessions is decided downstream. Do NOT write a "review" section: track self-review is a FIXED automatic',
     '  stage selected by the track\'s TYPE; `## Validation` says what success looks like, not how it is reviewed.',
+    '',
+    'DIAGRAMS — LEAN ON THEM. A plan the operator can SEE beats one they have to decode. Mermaid code fences',
+    'render inline in the spec files and in the approval card, so a good diagram is the FASTEST way for the',
+    'operator to grasp what you are building — default to including them, do not treat them as a nicety. Reach',
+    'for the type that fits the thing you are explaining:',
+    '  • `flowchart` — control flow / the moving parts of a feature / how a request threads through the system;',
+    '  • `sequenceDiagram` — interactions over time across components or services (who calls whom, in what order);',
+    '  • `erDiagram` — entities + relations whenever the schema changes (goes in data-model.md);',
+    '  • `stateDiagram-v2` — a lifecycle or status machine (a thread/job/order moving through its states).',
+    'Put the system-level picture in plan.md `## Architecture`; put a track\'s own behavior in its section file',
+    '`## Flow`. Keep each diagram FOCUSED — the 5–12 nodes that matter, not every edge — and GROUND it in the',
+    'real components you found while grilling (label nodes with the actual files/services/tables, never',
+    'placeholders). A diagram is CONTEXT that illustrates the plan; it never replaces the execute-ready steps or',
+    'a logged decision. For a trivial localized change (the DIRECT PATH below), skip them.',
     '',
     '`submit_plan` does NOT author the plan and does NOT post the approval card — it REQUESTS AN AUTOMATED',
     'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your tracks + steps; the',
@@ -389,7 +430,24 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'changeOutline = a few bullet lines of the concrete edits. This posts a lightweight approval card. If it',
     'trips an uncovered always-ask decision it is refused — lock that decision first or use submit_plan.',
     'AFTER the operator approves, you will be asked (autonomously) to implement it: make the edits in',
-    '`/workspace`, verify them, then call `finalize_build` to commit, review, and open the PR.',
+    '`/workspace`, verify them, then — if this change settled any DURABLE cross-cutting decision — call',
+    '`promote_decisions` (see below) BEFORE `finalize_build` so the ledger lands in the same commit. Then',
+    'call `finalize_build` to commit, review, and open the PR.',
+    '',
+    'PROMOTE_DECISIONS — write durable decisions into `/workspace/.atlas/decisions/`. Call it AT SHIP (direct',
+    'path: right before `finalize_build`; full path: I will ask you to in a dedicated turn after the build).',
+    'Args: { decisions: [{ slug, title, context, decision, consequences?, alternatives?, tags?,',
+    '  confirmedByOperator?, sourceDecision?, supersedes?: string[], governsPaths?: string[] }] }.',
+    '  • THE BAR — promote ONLY a decision that OUTLIVES this feature: it establishes/changes a reusable',
+    '    primitive or shared mechanism, is a data-model / source-of-truth call, is a one-way door, or sets a',
+    '    scope boundary another effort depends on. Do NOT promote feature shape, this-build scope, or pure',
+    '    implementation mechanics — those stay in the per-feature decision record. Most threads promote 0–3.',
+    '  • DISTILL, don\'t copy: the ledger entry is the durable INVARIANT in your own words (Context/Decision/',
+    '    Consequences/Alternatives), not a paste of the decision-record entry. `slug` = a stable kebab topic',
+    '    id (the filename). `sourceDecision` = the `dN` id it distills. `confirmedByOperator` = true only if',
+    '    the operator actually chose it. `governsPaths` = globs the decision constrains. To replace an',
+    '    existing ledger entry, list its slug in `supersedes`. Calling with an empty list is fine (nothing',
+    '    durable to record). Idempotent — re-promoting the same slug overwrites.',
     '',
     'SANDBOX RUNTIME: your sandbox can be restarted between turns (idle reaps, crashes, restarts). Never',
     'assume a server or background process you started in a previous turn is still running — verify it is',
@@ -480,6 +538,66 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     } catch (err) {
       this.logger.warn(`plan-review reconciliation failed: ${err}`);
     }
+
+    // Decision-ledger reconciliation: SHIPPED threads whose durable decisions never finished promoting
+    // (crash after ship but before the ledger commit/stamp, or a direct build that skipped it). The
+    // driver's own resume covers a crash WHILE building (status still `running`); this covers the
+    // post-ship window. Re-promote each while its worktree is still live. Best-effort, fail-soft.
+    try {
+      const awaiting = await this.store.threadsAwaitingLedgerPromotion();
+      if (awaiting.length > 0) {
+        this.logger.log(`Boot: reconciling ledger promotion for ${awaiting.length} shipped thread(s)`);
+      }
+      for (const thread of awaiting) {
+        void this.reconcileLedgerPromotion(thread).catch((err) =>
+          this.logger.warn(`boot ledger reconcile failed for thread=${thread.id}: ${err}`),
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Boot ledger reconciliation failed: ${err}`);
+    }
+
+    // Phase 2 manifest reconcile: re-derive every repo's `repo_decisions` from its MERGED base checkout —
+    // flips merged proposed→accepted (a merge the host missed) + flags any human edits. Best-effort.
+    try {
+      const repos = await this.manifest.reposWithGit();
+      for (const { orgId, repoId } of repos) {
+        void this.manifest
+          .reconcileFromBaseCheckout(orgId, repoId)
+          .catch((err) => this.logger.warn(`boot manifest reconcile failed for repo=${repoId}: ${err}`));
+      }
+    } catch (err) {
+      this.logger.warn(`Boot manifest reconciliation failed: ${err}`);
+    }
+  }
+
+  /**
+   * SERVER-INITIATED ledger promotion (the full-path + boot-recovery seam). Runs a HARNESS turn that asks
+   * the brain to distill THIS thread's durable, cross-cutting decisions into `.atlas/decisions/` via
+   * `promote_decisions`. The brain reconstructs them from `/context/generated/decision-record.md` (so it
+   * is cold-resume safe) and writes the files into the worktree; the CALLER commits them. Idempotent.
+   */
+  async promoteDurableDecisionsAtShip(threadId: string, orgId: string, repoId: string): Promise<void> {
+    const stimulus = harnessDeliveryStimulus({ threadId, orgId, repoId, body: LEDGER_PROMOTION_PROMPT });
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * Boot-recovery for one shipped-but-unpromoted thread: re-run the promotion turn, then commit + push the
+   * ledger onto the EXISTING PR branch (ship is idempotent — it finds the open PR). Skips silently when the
+   * worktree is gone (the PR already merged + the thread closed), since there's nothing left to write.
+   */
+  private async reconcileLedgerPromotion(thread: Thread): Promise<void> {
+    const sandbox = await this.lifecycle.findSandbox(thread.id, thread.orgId);
+    if (!sandbox) return; // worktree torn down (merged/closed) — nothing to promote
+    await this.promoteDurableDecisionsAtShip(thread.id, thread.orgId, thread.repoId);
+    const repo = await this.repos.resolve(thread);
+    const rec = (await this.driverStore
+      .getDecisionRecord(thread.id)
+      .catch(() => null)) as { overview: string; decisions: Decision[] } | null;
+    // No `notify` — a silent recovery commit must not re-post "PR ready".
+    await this.ship.ship({ job: thread, record: rec, repo, sandbox, commitMessage: LEDGER_COMMIT_MESSAGE });
+    await this.store.markLedgerPromoted(thread.id);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
@@ -697,8 +815,18 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     }
 
     // Flush the durable transcript (persists any unpaired tool call + a text fallback if the turn emitted
-    // no text block), then signal turn end so the client reconciles its live buffer against /messages.
-    await streamer.finish(result.result);
+    // no text block) + a `turn_meta` block (per-turn token usage + context-window occupancy, when the SDK
+    // reported usage), then signal turn end so the client reconciles its live buffer against /messages.
+    await streamer.finish(
+      result.result,
+      result.usage
+        ? {
+            usage: result.usage,
+            contextTokens: result.usage.inputTokens ?? null,
+            contextLimit: resolveContextLimit(result.usage.model),
+          }
+        : undefined,
+    );
 
     // SUCCESS TAIL ONLY: the brain consumed the answer this turn, so close the human-input gate — stamp
     // `deliveredAt` (so the boot sweep won't re-deliver it) and clear the pointer (compare-and-clear, so a
@@ -1213,10 +1341,67 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           notify: (m) => this.say(stimulus, m),
         });
 
+        // The build (incl. any `.atlas/decisions/` the brain promoted before finalizing) is now committed —
+        // mark the ledger promotion complete so the boot backstop won't re-run it.
+        await this.store.markLedgerPromoted(jobId).catch((err) =>
+          this.logger.debug(`markLedgerPromoted failed for ${jobId} (boot backstop will retry): ${err}`),
+        );
+
         if (!result) {
           return { ok: true, jobId, message: 'Committed, but no GitHub token is configured — PR not opened.' };
         }
         return { ok: true, jobId, prUrl: result.url, prNumber: result.number, message: `PR opened: ${result.url}` };
+      },
+
+      promote_decisions: async (args) => {
+        // Distill the DURABLE, cross-cutting decisions from this thread into the committed
+        // `.atlas/decisions/` ledger (the host writes the files into the worktree; the next ship commit
+        // sweeps them). The brain decides WHAT is durable + authors the prose; the host only writes +
+        // validates + keeps the supersession graph consistent. Idempotent on stable slugs.
+        const rawList = Array.isArray(args['decisions']) ? args['decisions'] : [];
+        if (rawList.length === 0) {
+          // Not an error: a thread may have no durable, cross-cutting calls worth promoting.
+          return { ok: true, written: [], message: 'No durable decisions to promote — nothing written.' };
+        }
+        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
+        if (!sandbox) return { ok: false, reason: 'No sandbox for this thread — cannot write the ledger' };
+
+        let entries: LedgerEntryInput[];
+        try {
+          entries = rawList.map((r) => normalizeLedgerEntry(r, stimulus.threadId));
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+        try {
+          const result = await this.ledger.promote(sandbox.worktreePath, entries);
+          // Phase 2: record the promotion-time baseline in the manifest (proposed rows) so the merge hook
+          // can flip them to accepted + detect later human edits. Best-effort — the files are the truth.
+          const manifestRows: PromotedManifestInput[] = entries.map((e) => ({
+            slug: e.slug,
+            title: e.title,
+            contentHash: result.hashes[e.slug] ?? '',
+            tags: e.tags ?? [],
+            sourceThread: e.sourceThread ?? stimulus.threadId,
+            supersedes: e.supersedes ?? [],
+            supersededBy: null,
+            governsPaths: e.governsPaths ?? [],
+          }));
+          await this.manifest
+            .recordPromoted(stimulus.orgId, stimulus.repoId, manifestRows)
+            .catch((err) => this.logger.warn(`manifest recordPromoted failed (continuing): ${err}`));
+          return {
+            ok: true,
+            written: result.written,
+            superseded: result.superseded,
+            message:
+              `Promoted ${result.written.length} decision(s) to .atlas/decisions/` +
+              (result.superseded.length ? ` (superseded ${result.superseded.join(', ')})` : '') +
+              '. They will be committed with the build.',
+          };
+        } catch (err) {
+          if (err instanceof LedgerValidationError) return { ok: false, reason: err.message };
+          return { ok: false, reason: errText(err) };
+        }
       },
 
       create_thread: async (args) => {
@@ -1714,6 +1899,24 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
  *  the buffer before the operator sees it. */
 const ATLAS_AUTHOR_ID = 'atlas';
 
+/** The HARNESS-turn task that drives a server-initiated `promote_decisions` (full path + boot recovery). */
+const LEDGER_PROMOTION_PROMPT = [
+  'It is SHIP TIME for this thread. Record the DURABLE, cross-cutting decisions from this work into the',
+  '`.atlas/decisions/` ledger so future threads inherit them — this is a build step, not a conversation.',
+  '',
+  '1. Read `/context/generated/decision-record.md` (your locked decisions) and the existing',
+  '   `/workspace/.atlas/decisions/` (and its `index.md`).',
+  '2. Select ONLY the decisions that OUTLIVE this feature — the bar: a reusable primitive / shared',
+  '   mechanism, a data-model / source-of-truth call, a one-way door, or a scope boundary another effort',
+  '   depends on. SKIP feature shape, this-build scope, and pure implementation mechanics. Most threads',
+  '   have 0–3.',
+  '3. Call `promote_decisions` ONCE with the distilled durable subset (Context / Decision / Consequences /',
+  '   Alternatives in your OWN words — the invariant, not a paste of the decision record). If a new entry',
+  '   replaces an existing ledger file, list its slug in `supersedes`. If NOTHING qualifies, call',
+  '   `promote_decisions` with an empty `decisions: []`. Do NOT call any other tool and do NOT reply with',
+  '   prose — just promote.',
+].join('\n');
+
 /** True when a turn was authored by the operator — NOT a synthetic Atlas turn and NOT a host-originated
  *  system seed. Both background kinds must skip the passive-awareness drain so a real operator turn still
  *  gets the buffered milestones. */
@@ -1808,6 +2011,53 @@ function normalizeDecisions(raw: unknown): Decision[] {
     });
   }
   return out;
+}
+
+/**
+ * Coerce one raw `promote_decisions` entry into a {@link LedgerEntryInput}. Tolerant of the model's slug
+ * format (the SDK exposes a generic tool schema, so it guesses) — normalize to strict kebab-case so a
+ * natural guess just works; the same normalization applies to `supersedes` so back-links resolve. Throws
+ * on a missing required field (surfaced as a tool error). `sourceThread` defaults to the current thread.
+ */
+function normalizeLedgerEntry(raw: unknown, threadId: string): LedgerEntryInput {
+  if (typeof raw !== 'object' || raw === null) throw new Error('each promoted decision must be an object');
+  const r = raw as Record<string, unknown>;
+  const slug = ledgerSlug(String(r['slug'] ?? ''));
+  const title = String(r['title'] ?? '').trim();
+  const context = String(r['context'] ?? '').trim();
+  const decision = String(r['decision'] ?? '').trim();
+  if (!slug || !title || !context || !decision) {
+    throw new Error('each promoted decision needs slug, title, context, and decision');
+  }
+  const authored = String(r['authoredBy'] ?? '').trim();
+  const supersedes = (strArray(r['supersedes']) ?? []).map(ledgerSlug).filter(Boolean);
+  return {
+    slug,
+    title,
+    context,
+    decision,
+    ...(optStr(r['consequences']) ? { consequences: String(r['consequences']) } : {}),
+    ...(optStr(r['alternatives']) ? { alternatives: String(r['alternatives']) } : {}),
+    ...(strArray(r['tags']) ? { tags: strArray(r['tags']) } : {}),
+    authoredBy: authored === 'operator' || authored === 'human-edit' ? authored : 'atlas',
+    confirmedByOperator: r['confirmedByOperator'] === true,
+    sourceThread:
+      typeof r['sourceThread'] === 'string' && r['sourceThread'].trim()
+        ? String(r['sourceThread']).trim()
+        : threadId,
+    ...(optStr(r['sourceDecision']) ? { sourceDecision: String(r['sourceDecision']).trim() } : {}),
+    ...(supersedes.length ? { supersedes } : {}),
+    ...(strArray(r['governsPaths']) ? { governsPaths: strArray(r['governsPaths']) } : {}),
+  };
+}
+
+/** Normalize a free-form slug to strict kebab-case (a-z, 0-9, single hyphens; trimmed). */
+function ledgerSlug(v: string): string {
+  return v
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 /** A short job title from a summary line. */

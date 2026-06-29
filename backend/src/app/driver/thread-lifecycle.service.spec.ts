@@ -10,6 +10,7 @@
  */
 
 import type { EnvService } from '@core/config/env/env.service';
+import type { ModuleRef } from '@nestjs/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type {
@@ -72,6 +73,7 @@ function makeService(
     { attach: vi.fn(), teardown: vi.fn(), teardownByIdentity: vi.fn() } as unknown as SandboxProvider,
     { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
     { revertForDeletedThread: vi.fn() } as unknown as TicketService,
+    { get: vi.fn() } as unknown as ModuleRef,
   );
 }
 

@@ -103,6 +103,41 @@ export class DriverStoreService {
     );
   }
 
+  // ── decision-ledger promotion spine ──────────────────────────────────────────────────────────
+  // Two markers (mirrors the plan_reviews spine): a CLAIM (`ledger_promotion_status`) and the
+  // proof-of-completion (`ledger_promoted_at`, stamped only after the promotion turn AND the commit).
+
+  /**
+   * Atomically CLAIM the ledger promotion: `null | pending | failed` → `running`. Returns true when THIS
+   * caller won the claim (so the boot backstop can't race a live driver run). A row already `running` or
+   * `complete` is NOT re-claimed here — but the resumable `finishWithPr` re-runs `running` idempotently.
+   */
+  async claimLedgerPromotion(threadId: string): Promise<boolean> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ ledger_promotion_status: 'running' })
+      .where('id = :id', { id: threadId })
+      .andWhere(
+        "(ledger_promotion_status IS NULL OR ledger_promotion_status IN ('pending', 'failed'))",
+      )
+      .execute();
+    return (res.affected ?? 0) > 0;
+  }
+
+  /** Set the promotion lifecycle status (e.g. `failed` on a caught promotion error, retried later). */
+  async setLedgerPromotionStatus(threadId: string, status: string): Promise<void> {
+    await this.threads.update({ id: threadId }, { ledger_promotion_status: status });
+  }
+
+  /** Mark the ledger promotion COMPLETE — stamped ONLY after the promotion turn AND the commit succeed. */
+  async markLedgerPromoted(threadId: string): Promise<void> {
+    await this.threads.update(
+      { id: threadId },
+      { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
+    );
+  }
+
   // ── decision record ────────────────────────────────────────────────────────────────────────────
 
   /** The locked decision record for a thread — the planner + gate's grounding. Null if none. */

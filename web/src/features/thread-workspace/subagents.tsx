@@ -24,11 +24,12 @@ export const subagentNode = (parentId: string): string => `${SUBAGENT_NODE_PREFI
 const SUBAGENT_MODELS: Record<string, string> = { explore: 'Sonnet' };
 export const subagentModel = (type: string): string | undefined => SUBAGENT_MODELS[type];
 
-/** A normalized transcript block — produced from a durable message OR a live block. */
+/** A normalized transcript block — produced from a durable message OR a live block. `postedAt` is set only
+ *  on durable blocks (live blocks have no emission time yet). */
 export type SubBlock =
-  | { kind: 'text'; key: string; text: string; running?: boolean }
-  | { kind: 'thinking'; key: string; text: string; running?: boolean }
-  | { kind: 'tool'; key: string; name: string; input?: unknown; result?: unknown; isError?: boolean; running?: boolean };
+  | { kind: 'text'; key: string; text: string; running?: boolean; postedAt?: string }
+  | { kind: 'thinking'; key: string; text: string; running?: boolean; postedAt?: string }
+  | { kind: 'tool'; key: string; name: string; input?: unknown; result?: unknown; isError?: boolean; running?: boolean; postedAt?: string };
 
 export interface SubagentSummary {
   /** The spawning Task tool_use id (== the `subagent:` node suffix). */
@@ -104,7 +105,7 @@ export function durableSubagentPrompt(messages: ThreadMessage[], parentId: strin
 
 export function durableSubBlocks(children: ThreadMessage[]): SubBlock[] {
   return children.map((m): SubBlock => {
-    if (m.kind === 'thinking') return { kind: 'thinking', key: m.ts, text: m.text };
+    if (m.kind === 'thinking') return { kind: 'thinking', key: m.ts, text: m.text, postedAt: m.postedAt };
     if (m.kind === 'tool') {
       const mm = m.meta ?? {};
       return {
@@ -114,9 +115,10 @@ export function durableSubBlocks(children: ThreadMessage[]): SubBlock[] {
         input: mm.input,
         result: mm.result,
         isError: Boolean(mm.isError),
+        postedAt: m.postedAt,
       };
     }
-    return { kind: 'text', key: m.ts, text: m.text };
+    return { kind: 'text', key: m.ts, text: m.text, postedAt: m.postedAt };
   });
 }
 

@@ -5,6 +5,13 @@ import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
 
+/**
+ * Commit message for the ledger-only commit that records durable decisions into `.atlas/decisions/`
+ * (passed as `ShipInput.commitMessage` on the full path + boot recovery; the direct path uses its own).
+ * Shared so the driver and the brain don't drift on the string.
+ */
+export const LEDGER_COMMIT_MESSAGE = 'Atlas: record durable decisions in .atlas/decisions';
+
 /** The opened (or pre-existing) pull request. */
 export interface ShipResult {
   url: string;

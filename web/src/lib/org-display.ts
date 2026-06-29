@@ -51,6 +51,34 @@ export function timeAgo(iso: string): string {
   return new Date(then).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+/**
+ * A clock time for a conversation message ("2:34 PM"), prefixed with the date ("Jun 28, 2:34 PM") when
+ * the timestamp is not from today. Empty string for an unparseable input.
+ */
+export function formatClockTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return '';
+  const d = new Date(t);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (sameDay) return time;
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
+/** Format a token count compactly ("340", "1.2k", "1.3M") for the per-turn counter + context ring. */
+export function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '0';
+  if (n < 1000) return String(Math.round(n));
+  if (n < 1_000_000) {
+    const k = n / 1000;
+    return `${k < 10 ? k.toFixed(1) : Math.round(k)}k`;
+  }
+  const m = n / 1_000_000;
+  return `${m < 10 ? m.toFixed(1) : Math.round(m)}M`;
+}
+
 /** Slugify an org name into a URL-safe handle (mirrors the backend's `slugifyName`). */
 export function slugify(name: string): string {
   return (

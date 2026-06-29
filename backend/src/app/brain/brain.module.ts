@@ -1,11 +1,13 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DecisionGateModule } from '../decision-gate';
+import { GitModule } from '../git';
 import { MemoryModule } from '../memory';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
+  RepoDecisionEntity,
   MessageEntity,
   PlanReviewEntity,
   StepEntity,
@@ -22,6 +24,8 @@ import { AgentSessionManager } from './agent-session-manager.service';
 import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
+import { DecisionLedgerService } from './decision-ledger.service';
+import { RepoDecisionManifestService } from './repo-decision-manifest.service';
 import { EventTriageService } from './event-triage.service';
 import { StimulusRouter } from './stimulus-router.service';
 import { PlanReviewService } from './plan-review.service';
@@ -58,6 +62,7 @@ import { PlanReviewService } from './plan-review.service';
 @Module({
   imports: [
     DecisionGateModule,
+    GitModule,
     MemoryModule,
     TypeOrmModule.forFeature(
       [
@@ -65,6 +70,7 @@ import { PlanReviewService } from './plan-review.service';
         MessageEntity,
         PlanReviewEntity,
         DecisionRecordEntity,
+        RepoDecisionEntity,
         TrackEntity,
         StepEntity,
         StimulusEntity,
@@ -83,6 +89,8 @@ import { PlanReviewService } from './plan-review.service';
     },
     BrainStoreService,
     DecisionApprovalService,
+    DecisionLedgerService,
+    RepoDecisionManifestService,
     EventTriageService,
     PlanReviewService,
     AgentSessionManager,
@@ -97,6 +105,7 @@ import { PlanReviewService } from './plan-review.service';
     EventTriageService,
     AgentSessionManager,
     DecisionApprovalService,
+    RepoDecisionManifestService,
     BrainStoreService,
     STIMULUS_CONSUMER,
     BRAIN_LLM,

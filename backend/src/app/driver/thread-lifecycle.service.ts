@@ -1,5 +1,6 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync } from 'node:fs';
 import { IsNull, Not, Repository } from 'typeorm';
@@ -90,6 +91,8 @@ export class ThreadLifecycleService {
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
     private readonly provisioner: WorktreeProvisioner,
     private readonly tickets: TicketService,
+    // Lazily resolves the brain-module decision-ledger manifest for merge-time reconcile (avoids cycle).
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   /**
@@ -351,6 +354,12 @@ export class ThreadLifecycleService {
         });
         if (state !== 'open') {
           this.logger.log(`thread ${thread.id} PR #${thread.pr_number} is ${state} — closing thread`);
+          // On MERGE, the thread's promoted decisions are now canonical on the default branch: reconcile
+          // the repo's ledger manifest (proposed→accepted + human-edit detection). Reads the base checkout,
+          // not this thread's worktree, so it's safe to run before closeThread tears the worktree down.
+          if (state === 'merged') {
+            await this.reconcileLedgerOnMerge(thread.org_id, thread.repo_id);
+          }
           await this.closeThread(thread.id, thread.org_id);
           closed++;
         }
@@ -360,6 +369,23 @@ export class ThreadLifecycleService {
     }
     if (closed) this.logger.log(`pollPrClosures: closed ${closed} merged/closed thread(s)`);
     return closed;
+  }
+
+  /**
+   * Reconcile a repo's decision-ledger manifest after one of its threads' PRs merged — flips merged
+   * `proposed` decisions to `accepted` and flags any human edits. Lazily resolved (the manifest lives in
+   * the brain module; a dynamic import keeps it out of the driver's module-load cycle). Best-effort.
+   */
+  private async reconcileLedgerOnMerge(orgId: string, repoId: string): Promise<void> {
+    try {
+      const { RepoDecisionManifestService } = await import(
+        '../brain/repo-decision-manifest.service.js'
+      );
+      const manifest = this.moduleRef.get(RepoDecisionManifestService, { strict: false });
+      await manifest.reconcileFromBaseCheckout(orgId, repoId);
+    } catch (err) {
+      this.logger.debug(`ledger merge-reconcile failed for repo=${repoId} (continuing): ${err}`);
+    }
   }
 
   /**

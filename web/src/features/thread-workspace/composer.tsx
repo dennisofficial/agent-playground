@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, ChevronDown, Plus } from 'lucide-react';
 import { useSay } from '@/lib/api/thread-queries';
 import type { ThreadRef } from '@/lib/api/thread-api';
+import { ContextMeter } from './bubbles';
 
 /**
  * The conversation composer — talks to the thread's brain. Posts to `…/threads/:threadId/say`. Typed
@@ -17,11 +18,14 @@ export function Composer({
   threadRef,
   placeholder = 'Message Atlas — ask, plan, or steer…',
   onHeightChange,
+  context,
 }: {
   threadRef: ThreadRef;
   placeholder?: string;
   /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
   onHeightChange?: (height: number) => void;
+  /** The thread's context-window occupancy (latest turn) — rendered as the bottom-right ring, Claude-Code style. */
+  context?: { tokens: number; limit: number; model?: string } | null;
 }) {
   const say = useSay(threadRef);
   const [text, setText] = useState('');
@@ -104,6 +108,12 @@ export function Composer({
             </span>
             <div className="flex-1" />
             <span className="font-mono text-[11px] text-dim">Opus 4.8 · Fast</span>
+            {context ? (
+              <>
+                <span className="h-3.5 w-px bg-border" />
+                <ContextMeter tokens={context.tokens} limit={context.limit} model={context.model} />
+              </>
+            ) : null}
           </div>
         </div>
       </div>

@@ -745,6 +745,33 @@ export class BrainStoreService {
     return toThread(row);
   }
 
+  // ── decision-ledger promotion spine (boot backstop + direct-path stamp) ──────────────────────────
+
+  /** Mark a thread's ledger promotion COMPLETE — stamped only after the promotion turn + commit succeed. */
+  async markLedgerPromoted(threadId: string): Promise<void> {
+    await this.threads.update(
+      { id: threadId },
+      { ledger_promotion_status: 'complete', ledger_promoted_at: new Date() },
+    );
+  }
+
+  /**
+   * Boot backstop: SHIPPED threads (PR opened) whose ledger promotion never reached `complete` — the
+   * crash window after ship but before the ledger commit/stamp, plus a direct build whose brain skipped
+   * promotion. The startup sweep re-promotes each (idempotent) while its worktree is still live; once the
+   * PR merges + the worktree is torn down, there's nothing to write and the sweep skips it.
+   */
+  async threadsAwaitingLedgerPromotion(): Promise<Thread[]> {
+    const rows = await this.threads.find({
+      where: { pr_url: Not(IsNull()), ledger_promotion_status: Not('complete') },
+    });
+    // `Not('complete')` excludes NULLs in SQL, so add the never-started rows explicitly.
+    const nullRows = await this.threads.find({
+      where: { pr_url: Not(IsNull()), ledger_promotion_status: IsNull() },
+    });
+    return [...rows, ...nullRows].map(toThread);
+  }
+
   // ── create_thread tool ───────────────────────────────────────────────────────────────────────────
 
   /**

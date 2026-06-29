@@ -187,6 +187,30 @@ export class LocalGitService {
     });
   }
 
+  /**
+   * List the files under `subdir` at a git ref (e.g. `origin/main`) — a READ against the base clone with
+   * no working tree needed. Returns repo-relative paths; empty when the dir doesn't exist at that ref.
+   */
+  async listFilesAtRef(repoPath: string, ref: string, subdir: string): Promise<string[]> {
+    try {
+      const out = await this.git(['ls-tree', '-r', '--name-only', ref, '--', subdir], {
+        cwd: repoPath,
+      });
+      return out ? out.split('\n').filter(Boolean) : [];
+    } catch {
+      return []; // ref or subdir absent — treat as empty
+    }
+  }
+
+  /** Read one file's contents at a git ref (`git show <ref>:<path>`); null when the path is absent there. */
+  async readFileAtRef(repoPath: string, ref: string, path: string): Promise<string | null> {
+    try {
+      return await this.git(['show', `${ref}:${path}`], { cwd: repoPath });
+    } catch {
+      return null;
+    }
+  }
+
   /** Resolve the repo's default branch from origin/HEAD; fall back to `main`. */
   private async detectDefaultBranch(repoPath: string): Promise<string> {
     try {

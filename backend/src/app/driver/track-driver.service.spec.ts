@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
 import { TrackDriver } from './track-driver.service';
 import { BuildShipService } from './build-ship.service';
@@ -63,6 +64,10 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
       state.job.prUrl = prUrl;
       state.job.status = 'done';
     }),
+    // Decision-ledger promotion spine (no-op fakes — the ledger turn itself is stubbed via ModuleRef).
+    claimLedgerPromotion: vi.fn(async () => true),
+    setLedgerPromotionStatus: vi.fn(async () => undefined),
+    markLedgerPromoted: vi.fn(async () => undefined),
     decisionRecord: vi.fn(async () => state.record),
     tracksForJob: vi.fn(async () => state.tracks.map((s) => ({ ...s }))),
     setTrackStatus: vi.fn(async (id: string, status: TrackStatus) => {
@@ -406,6 +411,8 @@ function assemble(state: StoreState, opts: { classifierVerdict?: 'covered' | 'pr
     } as unknown as import('./worktree-provisioner.service').WorktreeProvisioner,
     turnHarness,
     blockSink,
+    // ModuleRef: the lazy brain lookup → a stub promoter (the ledger turn is exercised in the brain specs).
+    { get: () => ({ promoteDurableDecisionsAtShip: async () => undefined }) } as unknown as ModuleRef,
   );
   return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts, liveTurns, blockSink, sunk };
 }

@@ -165,4 +165,24 @@ export class ThreadEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })
   pending_decisions!: Decision[];
+
+  /**
+   * DURABLE DECISION-LEDGER PROMOTION SPINE — the lifecycle marker for promoting this thread's durable
+   * decisions into the committed `.atlas/decisions/` ledger at ship time. SEPARATE from
+   * {@link ledger_promoted_at} on purpose: a single field can't both CLAIM the work and PROVE it
+   * finished (a crash after claim, before the ledger commit, would look done forever). Mirrors the
+   * `plan_reviews` spine (status + a completion timestamp). Values: `pending | running | complete |
+   * failed`; null = never started. Claimed atomically (null/pending/failed → `running`); the resumable
+   * driver (`finishWithPr`) + a fail-soft boot backstop re-run anything stuck in `running`.
+   */
+  @Column({ type: 'text', nullable: true })
+  ledger_promotion_status!: string | null;
+
+  /**
+   * Stamped ONLY after the promotion turn AND the ledger commit both succeed — the proof-of-completion
+   * half of the spine (see {@link ledger_promotion_status}). Null until then; its presence is what tells
+   * recovery the ledger is already written so it must not re-run.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  ledger_promoted_at!: Date | null;
 }

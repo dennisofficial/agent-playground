@@ -8,6 +8,48 @@ import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { SubagentCard, indexLiveSubagents, subagentNode } from './subagents';
 import type { ThreadMessage } from '@/lib/api/thread-api';
 import type { LiveBlock, LiveTurn } from '@/lib/api/thread-stream';
+import { formatClockTime, formatTokens } from '@/lib/org-display';
+
+/** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
+ *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */
+export type TimeTone = 'muted' | 'user' | 'thinking' | 'turn';
+
+const TIME_TONE_COLOR: Record<TimeTone, string> = {
+  muted: 'var(--faint)',
+  user: 'var(--accent)',
+  thinking: 'var(--faint)',
+  turn: 'var(--accent-2)',
+};
+
+/**
+ * A small, muted timestamp shown beside a conversation block. `tone` colors it by message type. Always
+ * rendered for now so the operator can judge the density; flip an individual call site to `hoverOnly`
+ * (reveals on parent `.group` hover) once we decide which types should be quiet — a one-prop change.
+ */
+export function MessageTime({
+  iso,
+  tone = 'muted',
+  align = 'left',
+  hoverOnly = false,
+}: {
+  iso?: string;
+  tone?: TimeTone;
+  align?: 'left' | 'right';
+  hoverOnly?: boolean;
+}) {
+  if (!iso) return null;
+  const label = formatClockTime(iso);
+  if (!label) return null;
+  return (
+    <span
+      className={`select-none font-mono text-[9.5px] tabular-nums tracking-[0.04em] ${align === 'right' ? 'self-end pr-0.5' : 'pl-0.5'} ${hoverOnly ? 'opacity-0 transition-opacity group-hover:opacity-100' : 'opacity-70'}`}
+      style={{ color: TIME_TONE_COLOR[tone] }}
+      title={new Date(iso).toLocaleString()}
+    >
+      {label}
+    </span>
+  );
+}
 
 /** Small Atlas/Claude avatar — the brand mark, mini (the rotated rounded square). */
 export function ClaudeAvatar({ size = 24 }: { size?: number }) {
@@ -36,9 +78,9 @@ export function ClaudeAvatar({ size = 24 }: { size?: number }) {
  * stand in for any operator-authored instruction, including a subagent's Task prompt (the "user message"
  * that kicked the run off), rendered identically to the main transcript.
  */
-export function UserBubble({ text, queued = false }: { text: string; queued?: boolean }) {
+export function UserBubble({ text, queued = false, time }: { text: string; queued?: boolean; time?: string }) {
   return (
-    <div className="anim-fadeUp flex flex-col items-end gap-1">
+    <div className="group anim-fadeUp flex flex-col items-end gap-1">
       <div
         className="max-w-[72%] whitespace-pre-wrap px-[13px] py-2 text-[13.5px] leading-relaxed text-text"
         style={{
@@ -55,12 +97,16 @@ export function UserBubble({ text, queued = false }: { text: string; queued?: bo
           <Clock size={10} className="shrink-0" />
           queued · sends when the current turn finishes
         </span>
-      ) : null}
+      ) : (
+        <MessageTime iso={time} tone="user" align="right" />
+      )}
     </div>
   );
 }
 
 export function ClaudeBubble({ message }: { message: ThreadMessage }) {
+  // No per-bubble timestamp on assistant prose — the end-of-turn `TurnMetaDivider` line carries the
+  // turn's time (next to its token counter), so a timestamp here would just duplicate it.
   return <StreamTextBubble text={message.text} />;
 }
 
@@ -84,18 +130,21 @@ export function StreamTextBubble({ text, streaming = false }: { text: string; st
 }
 
 /** A collapsible thinking block (the model's reasoning) — dimmed + italic, like Claude Code. */
-export function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export function ThinkingBlock({ text, streaming = false, time }: { text: string; streaming?: boolean; time?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="anim-fadeUp">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-left font-mono text-[11px] italic text-faint hover:text-dim"
-      >
-        <ChevronRight size={11} strokeWidth={2.6} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
-        {streaming ? 'thinking…' : 'thought'}
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-1.5 text-left font-mono text-[11px] italic text-faint hover:text-dim"
+        >
+          <ChevronRight size={11} strokeWidth={2.6} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+          {streaming ? 'thinking…' : 'thought'}
+        </button>
+        <MessageTime iso={time} tone="thinking" />
+      </div>
       {open ? (
         <p
           className="mt-1.5 whitespace-pre-wrap pl-[18px] text-[12.5px] italic leading-relaxed text-dim"
@@ -175,6 +224,81 @@ export function SystemEventPill({ message, tone }: { message: ThreadMessage; ton
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
       <span className="truncate">{message.text}</span>
+    </div>
+  );
+}
+
+/** The shape of a `turn_meta` block's `meta` — per-turn token usage + context occupancy (see the brain). */
+interface TurnMeta {
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    costUsd?: number;
+    model?: string;
+  };
+  contextTokens?: number | null;
+  contextLimit?: number | null;
+}
+
+/** Format a USD cost: sub-cent as 4dp ($0.0042), otherwise 2dp ($0.03). */
+function formatCost(n: number): string {
+  return `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
+}
+
+/**
+ * The end-of-turn line — the turn's timestamp with its detailed token usage (in / out / cache / cost)
+ * sitting right beside it, left-aligned like a message timestamp (NOT an isolated full-width divider).
+ * Renders the durable `turn_meta` block the brain appends at each turn end.
+ */
+export function TurnMetaDivider({ message }: { message: ThreadMessage }) {
+  const meta = (message.meta ?? {}) as TurnMeta;
+  const u = meta.usage ?? {};
+  const parts: string[] = [];
+  if (u.inputTokens != null) parts.push(`${formatTokens(u.inputTokens)} in`);
+  if (u.outputTokens != null) parts.push(`${formatTokens(u.outputTokens)} out`);
+  if (u.cacheReadTokens) parts.push(`${formatTokens(u.cacheReadTokens)} cache`);
+  if (u.costUsd != null) parts.push(formatCost(u.costUsd));
+  return (
+    <div className="anim-fadeUp flex items-center gap-1.5 pl-0.5">
+      <MessageTime iso={message.postedAt} tone="turn" />
+      {parts.length ? (
+        <span className="font-mono text-[9.5px] tabular-nums text-faint">· {parts.join(' · ')}</span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A context-window occupancy ring (Claude-Code style) — a small SVG arc + center %. `tokens` is the last
+ * turn's input-token count (≈ what's resident in context); `limit` is the model's window. Turns amber/red
+ * as it fills. The model/limit come from the latest `turn_meta` block, so it tracks whatever model ran.
+ */
+export function ContextMeter({ tokens, limit, model }: { tokens: number; limit: number; model?: string }) {
+  const pct = limit > 0 ? Math.min(1, Math.max(0, tokens / limit)) : 0;
+  const r = 7;
+  const circ = 2 * Math.PI * r;
+  const stroke = pct >= 0.9 ? 'var(--red)' : pct >= 0.7 ? 'var(--accent-2)' : 'var(--accent)';
+  return (
+    <div
+      className="flex items-center gap-1.5 px-1"
+      title={`Context · ${formatTokens(tokens)} / ${formatTokens(limit)} (${Math.round(pct * 100)}%)${model ? ` · ${model}` : ''}`}
+    >
+      <svg width="17" height="17" viewBox="0 0 18 18" className="-rotate-90">
+        <circle cx="9" cy="9" r={r} fill="none" stroke="var(--border)" strokeWidth="2.2" />
+        <circle
+          cx="9"
+          cy="9"
+          r={r}
+          fill="none"
+          stroke={stroke}
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeDasharray={`${circ * pct} ${circ}`}
+        />
+      </svg>
+      <span className="font-mono text-[10px] tabular-nums text-dim">{Math.round(pct * 100)}%</span>
     </div>
   );
 }
