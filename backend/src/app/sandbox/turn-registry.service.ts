@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, Not, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ActiveTurnEntity } from '../persistence/entities';
+import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
 
 /** The context a fresh host needs to rebuild a turn's harness (+ brain `buildTools` closure) on re-attach. */
 export interface TurnContext {
@@ -35,7 +35,29 @@ export class TurnRegistry {
   constructor(
     @InjectRepository(ActiveTurnEntity, DB_CONNECTION)
     private readonly turns: Repository<ActiveTurnEntity>,
+    @InjectRepository(ToolExecutionEntity, DB_CONNECTION)
+    private readonly toolExecs: Repository<ToolExecutionEntity>,
   ) {}
+
+  /** The cached reply for an already-executed tool call, or null (idempotency on redelivery). */
+  async getToolReply(turnId: string, toolCallId: string): Promise<Record<string, unknown> | null> {
+    const row = await this.toolExecs.findOne({
+      where: { turn_id: turnId, tool_call_id: toolCallId },
+    });
+    return row ? row.reply : null;
+  }
+
+  /** Record a tool call's reply BEFORE acking, so a redelivery re-posts it instead of re-executing. */
+  async recordToolReply(
+    turnId: string,
+    toolCallId: string,
+    toolName: string,
+    reply: Record<string, unknown>,
+  ): Promise<void> {
+    await this.toolExecs.save(
+      this.toolExecs.create({ turn_id: turnId, tool_call_id: toolCallId, tool_name: toolName, reply }),
+    );
+  }
 
   /** Record a newly-started turn as `running` (idempotent on turn_id — re-register overwrites). */
   async register(input: RegisterTurnInput): Promise<void> {

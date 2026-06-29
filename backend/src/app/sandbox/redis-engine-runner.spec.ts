@@ -17,6 +17,8 @@ function fakeRegistry() {
     register: vi.fn(async () => undefined),
     heartbeat: vi.fn(async () => undefined),
     finalize: vi.fn(async () => undefined),
+    getToolReply: vi.fn(async () => null),
+    recordToolReply: vi.fn(async () => undefined),
   } as unknown as TurnRegistry & { register: ReturnType<typeof vi.fn>; finalize: ReturnType<typeof vi.fn> };
 }
 

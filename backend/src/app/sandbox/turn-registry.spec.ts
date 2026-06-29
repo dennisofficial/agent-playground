@@ -31,7 +31,7 @@ const REGISTER = {
 describe('TurnRegistry', () => {
   it('register persists a running row with a 0-0 cursor and no heartbeat yet', async () => {
     const repo = makeRepo();
-    await new TurnRegistry(repo).register(REGISTER);
+    await new TurnRegistry(repo, makeRepo() as never).register(REGISTER);
     expect(repo.save).toHaveBeenCalledOnce();
     const saved = repo.save.mock.calls[0][0];
     expect(saved).toMatchObject({
@@ -48,29 +48,50 @@ describe('TurnRegistry', () => {
   it('heartbeat stamps last_heartbeat_at and advances the cursor when an id is given', async () => {
     const repo = makeRepo();
     const at = new Date('2026-06-29T00:00:00Z');
-    await new TurnRegistry(repo).heartbeat('t1', '5-0', at);
+    await new TurnRegistry(repo, makeRepo() as never).heartbeat('t1', '5-0', at);
     expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { last_heartbeat_at: at, events_last_id: '5-0' });
   });
 
   it('heartbeat without an id only stamps liveness (cursor untouched)', async () => {
     const repo = makeRepo();
     const at = new Date('2026-06-29T00:00:00Z');
-    await new TurnRegistry(repo).heartbeat('t1', undefined, at);
+    await new TurnRegistry(repo, makeRepo() as never).heartbeat('t1', undefined, at);
     expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { last_heartbeat_at: at });
   });
 
   it('finalize stamps the terminal status then deletes the live row', async () => {
     const repo = makeRepo();
-    await new TurnRegistry(repo).finalize('t1', 'done');
+    await new TurnRegistry(repo, makeRepo() as never).finalize('t1', 'done');
     expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { status: 'done' });
     expect(repo.delete).toHaveBeenCalledWith({ turn_id: 't1' });
   });
 
   it('listRunning queries status=running', async () => {
     const repo = makeRepo([{ turn_id: 't1', status: 'running' }]);
-    const out = await new TurnRegistry(repo).listRunning();
+    const out = await new TurnRegistry(repo, makeRepo() as never).listRunning();
     expect(repo.find).toHaveBeenCalledWith({ where: { status: 'running' } });
     expect(out).toHaveLength(1);
+  });
+
+  it('tool dedup: records a reply and reads it back by (turn_id, tool_call_id)', async () => {
+    const turns = makeRepo();
+    const execs = makeRepo();
+    const reg = new TurnRegistry(turns, execs as never);
+
+    await reg.recordToolReply('t1', 'call-1', 'submit_plan', { t: 'tool_response', id: 'call-1', result: { ok: true } });
+    expect(execs.save).toHaveBeenCalledOnce();
+    expect(execs.save.mock.calls[0][0]).toMatchObject({
+      turn_id: 't1',
+      tool_call_id: 'call-1',
+      tool_name: 'submit_plan',
+      reply: { t: 'tool_response', id: 'call-1', result: { ok: true } },
+    });
+
+    // getToolReply returns the row's reply when present, else null.
+    execs.findOne.mockResolvedValueOnce({ reply: { t: 'tool_response', id: 'call-1', result: 42 } } as never);
+    expect(await reg.getToolReply('t1', 'call-1')).toEqual({ t: 'tool_response', id: 'call-1', result: 42 });
+    execs.findOne.mockResolvedValueOnce(null as never);
+    expect(await reg.getToolReply('t1', 'nope')).toBeNull();
   });
 
   it('findStale merges stale-heartbeat + never-beat rows, de-duped by turn_id', async () => {
@@ -79,7 +100,7 @@ describe('TurnRegistry', () => {
     repo.find
       .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't2' }] as ActiveTurnEntity[])
       .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't3' }] as ActiveTurnEntity[]);
-    const out = await new TurnRegistry(repo).findStale(60_000);
+    const out = await new TurnRegistry(repo, makeRepo() as never).findStale(60_000);
     expect(out.map((t) => t.turn_id).sort()).toEqual(['t1', 't2', 't3']); // t1 not duplicated
   });
 });

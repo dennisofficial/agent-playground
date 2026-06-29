@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { EnvService } from '@core/config/env/env.service';
 import { ENGINE_RUNNER, EngineModule } from '../engine';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ActiveTurnEntity } from '../persistence/entities';
+import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
 import { TurnRegistry } from './turn-registry.service';
 import { CONTAINER_ENGINE } from './container-engine.port';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
@@ -31,7 +31,10 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
  */
 @Global()
 @Module({
-  imports: [EngineModule, TypeOrmModule.forFeature([ActiveTurnEntity], DB_CONNECTION)],
+  imports: [
+    EngineModule,
+    TypeOrmModule.forFeature([ActiveTurnEntity, ToolExecutionEntity], DB_CONNECTION),
+  ],
   providers: [
     { provide: CONTAINER_ENGINE, useClass: DockerodeContainerEngine },
     SandboxImageBuilder,

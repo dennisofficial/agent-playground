@@ -132,7 +132,16 @@ export class RedisEngineRunner implements EngineRunnerPort {
         const fresh = await this.redis.xreadGroup({ group: TOOLS_GROUP, consumer, stream: keys.tools, count: 16, blockMs: 500 });
         for (const entry of [...pending, ...fresh]) {
           const req = entry.data as ToolRequestFrame;
-          const reply = await dispatchToolRequest(bridge, req);
+          // Idempotency: a redelivered request (crash after execute, before ack) re-posts the cached
+          // reply instead of re-running the (often side-effecting) tool.
+          const cached = await this.registry.getToolReply(turnId, req.id).catch(() => null);
+          const reply = cached ?? (await dispatchToolRequest(bridge, req));
+          if (!cached) {
+            // Record the reply BEFORE acking so the dedup row exists if we die before the ack lands.
+            await this.registry
+              .recordToolReply(turnId, req.id, req.name, reply as unknown as Record<string, unknown>)
+              .catch(() => undefined);
+          }
           await this.redis.xadd(keys.replies, reply);
           await this.redis.ack(keys.tools, TOOLS_GROUP, [entry.id]);
         }
