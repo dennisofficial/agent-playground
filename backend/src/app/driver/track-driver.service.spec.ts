@@ -20,6 +20,7 @@ import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
+import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
 import type {
   DecisionRecord,
@@ -102,6 +103,7 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
         status: 'pending' as StepStatus,
         sessionId: null,
         batchOrdinal: null,
+        commitSha: null,
       }));
       state.steps.push(...rows);
       return rows.map((p) => ({ ...p }));
@@ -381,6 +383,8 @@ function assemble(
     }),
   } as unknown as BlockSink;
   const turnHarness = new TurnHarnessFactory(liveTurns, blockSink);
+  // LeaderElectionService stub: `draining` is flippable so the shutdown-guard test can simulate SIGTERM.
+  const electionState = { draining: false };
   const driver = new TrackDriver(
     store,
     repos,
@@ -430,12 +434,15 @@ function assemble(
     new BuildShipService(autofix.autofix, git, pr, store),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     { appendMarker: async () => undefined, drainAndAdvance: async () => ({ markers: [], stateChanged: false }) } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
+    // LeaderElectionService: reads the flippable `electionState.draining` so the shutdown-guard test can
+    // assert that a drain-induced abort leaves the job `running` instead of `failed`.
+    { isDraining: () => electionState.draining } as unknown as LeaderElectionService,
     turnHarness,
     blockSink,
     // ModuleRef: the lazy brain lookup → a stub promoter (the ledger turn is exercised in the brain specs).
     { get: () => ({ promoteDurableDecisionsAtShip: async () => undefined }) } as unknown as ModuleRef,
   );
-  return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts, liveTurns, blockSink, sunk };
+  return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts, liveTurns, blockSink, sunk, electionState };
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
@@ -547,6 +554,7 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       status: 'pending' as StepStatus,
       sessionId: null,
       batchOrdinal: null,
+      commitSha: null,
     }));
     return {
       job: makeJob(),
@@ -709,8 +717,8 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       record: makeRecord(),
       tracks: [doneBackend, track('sec-fe', 20, 'Frontend')],
       steps: [
-        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
-        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 2 },
+        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1, commitSha: null },
+        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 2, commitSha: null },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -763,8 +771,8 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       record: makeRecord(),
       tracks: [track('sec-be', 10, 'Backend', 'executing')],
       steps: [
-        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1 },
-        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'build', status: 'building', sessionId: 's2', batchOrdinal: 2 },
+        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1, commitSha: null },
+        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'build', status: 'building', sessionId: 's2', batchOrdinal: 2, commitSha: null },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -841,6 +849,38 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     expect(state.job.status).toBe('failed');
     expect(h.posts.some((p) => p.includes('Build failed') && p.includes('engine exploded mid-step'))).toBe(true);
     expect(h.opened).toHaveLength(0); // no PR opened on a failed build
+  });
+
+  it('shutdown drain: a step error WHILE DRAINING leaves the job running (resumable on boot), never failed', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      tracks: [track('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+    };
+    const h = assemble(state);
+    // The process is shutting down: the in-flight turn's host-side await is cut off → it throws like a
+    // generic abort. Without the guard this would flip the job `failed` and boot-resume would never
+    // re-drive it (`runningJobs()` only re-drives `status:'running'`).
+    h.electionState.draining = true;
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string }) => {
+      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
+      throw new Error('aborted: backend draining');
+    });
+
+    await h.driver.dispatch(state.job);
+    // Wait until the execute turn has been attempted (so the drive catch has run), then drain a few ticks.
+    await flushUntil(() =>
+      (h.turn.runTurn as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[0].mode !== 'plan'),
+    );
+    await flushUntil(() => false, 20);
+
+    expect(state.job.status).toBe('running'); // LEFT running — boot-resume continues it
+    expect(
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[1] === 'failed'),
+    ).toBe(false); // never stamped failed
+    expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no failure relay on shutdown
   });
 
   it('aborts + relays a step that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {

@@ -35,7 +35,8 @@ function makeController(threadOrgId: string) {
     {} as never, // threadTitle
     {} as never, // ticketEvents
     { available: false } as never, // realtime
-    { isLeader: () => true, getState: () => 'leader' } as never, // election
+    { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
+    { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
   );
   return { controller, threads, threadLifecycle };
 }

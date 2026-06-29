@@ -48,8 +48,24 @@ export interface RedisStreamPort {
     blockMs: number;
   }): Promise<StreamEntry[]>;
 
-  /** Acknowledge processed entries back to their consumer group. */
+  /** Acknowledge processed entries back to their consumer group (removes them from the pending list). */
   ack(stream: string, group: string, ids: string[]): Promise<void>;
+
+  /**
+   * PENDING RECOVERY (wraps XAUTOCLAIM, Redis ≥6.2). Claim entries in `group` that were delivered but
+   * never `ack`ed AND have been idle at least `minIdleMs`, reassigning them to `consumer` and returning
+   * them (id + decoded data). This is what un-strands a tool_request whose consumer DIED after delivery
+   * but before `ack`: on (re)attach a fresh consumer drains the dead one's in-flight entries instead of
+   * losing them. Drains the WHOLE pending set in one call (internally pages XAUTOCLAIM's cursor, bounded);
+   * returns [] when nothing is reclaimable. `count` bounds each internal page.
+   */
+  claimStale(args: {
+    group: string;
+    consumer: string;
+    stream: string;
+    minIdleMs: number;
+    count: number;
+  }): Promise<StreamEntry[]>;
 
   /**
    * Blocking tail read of a single stream from AFTER `lastId` (exclusive), up to `count` entries,

@@ -76,3 +76,36 @@ describe('InMemoryRedisStream xread resume semantics', () => {
     expect(none).toEqual([]);
   });
 });
+
+describe('InMemoryRedisStream pending recovery (XAUTOCLAIM / ack)', () => {
+  it('claimStale re-delivers a delivered-but-un-acked entry to a fresh consumer (dead-consumer recovery)', async () => {
+    const r = new InMemoryRedisStream();
+    await r.ensureGroup('tools', 'host');
+    await r.xadd('tools', { tool: 'submit_plan', id: 'call-1' });
+
+    // c1 receives it but DIES before ack (simulates a backend crash mid-tool).
+    const delivered = await r.xreadGroup({ group: 'host', consumer: 'c1', stream: 'tools', count: 10, blockMs: 0 });
+    expect(delivered.map((e) => e.data)).toEqual([{ tool: 'submit_plan', id: 'call-1' }]);
+
+    // A '>' read by the new consumer sees nothing new (cursor already advanced) — it would be STRANDED
+    // without pending recovery.
+    const fresh = await r.xreadGroup({ group: 'host', consumer: 'c2', stream: 'tools', count: 10, blockMs: 0 });
+    expect(fresh).toEqual([]);
+
+    // c2 claims the stale pending entry (minIdleMs 0 → claim immediately on re-attach).
+    const claimed = await r.claimStale({ group: 'host', consumer: 'c2', stream: 'tools', minIdleMs: 0, count: 10 });
+    expect(claimed.map((e) => e.data)).toEqual([{ tool: 'submit_plan', id: 'call-1' }]);
+  });
+
+  it('an acked entry is NOT reclaimable (no double-processing once handled)', async () => {
+    const r = new InMemoryRedisStream();
+    await r.ensureGroup('tools', 'host');
+    const id = await r.xadd('tools', { id: 'call-2' });
+
+    await r.xreadGroup({ group: 'host', consumer: 'c1', stream: 'tools', count: 10, blockMs: 0 });
+    await r.ack('tools', 'host', [id]); // processed + acknowledged
+
+    const claimed = await r.claimStale({ group: 'host', consumer: 'c2', stream: 'tools', minIdleMs: 0, count: 10 });
+    expect(claimed).toEqual([]); // nothing left pending
+  });
+});

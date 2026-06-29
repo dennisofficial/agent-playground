@@ -8,8 +8,9 @@ import type { RedisStreamPort, StreamEntry } from './redis.port';
  *  - streams are append-only ordered logs with monotonic `<seq>-0` ids;
  *  - `xadd` wakes any blocked `xread`/`xreadGroup` waiting on that stream (so a daemon consumer loop
  *    and a host event-tail interleave correctly within one process/event-loop);
- *  - consumer groups track a per-group cursor (last delivered id) so `'>'` reads only NEW entries, and
- *    `ack` is accepted (the fake doesn't model a pending-entries list — at-least-once is enough here);
+ *  - consumer groups track a per-group cursor (last delivered id) so `'>'` reads only NEW entries, a
+ *    pending-entries list (PEL) holds delivered-but-un-acked entries, `ack` removes them, and
+ *    `claimStale` reassigns idle ones (XAUTOCLAIM) — the crash-recovery slice the tool-bridge needs;
  *  - `xread` resumes strictly AFTER `lastId`, exactly like real Redis, so the host's resume-after-
  *    transient-read logic is exercised faithfully;
  *  - pub/sub `publish`/`subscribe` deliver synchronously to current subscribers.
@@ -21,6 +22,15 @@ export class InMemoryRedisStream implements RedisStreamPort {
   private readonly streams = new Map<string, StreamEntry[]>();
   /** stream → group → last-delivered entry id (the group cursor). */
   private readonly groups = new Map<string, Map<string, string>>();
+  /**
+   * Pending-entries list (PEL): stream → group → id → {consumer, deliveredAt}. An entry enters on
+   * `xreadGroup` delivery and leaves on `ack`; `claimStale` reassigns idle ones. Models exactly the
+   * crash-recovery slice of XAUTOCLAIM the tool-bridge relies on.
+   */
+  private readonly pending = new Map<
+    string,
+    Map<string, Map<string, { consumer: string; deliveredAt: number }>>
+  >();
   /** Wake callbacks registered by blocked readers, keyed by stream. */
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly subscribers = new Map<
@@ -77,15 +87,63 @@ export class InMemoryRedisStream implements RedisStreamPort {
         this.groups
           .get(args.stream)
           ?.set(args.group, fresh[fresh.length - 1].id);
+        // Record each delivered entry in the PEL (un-acked, owned by this consumer) for crash recovery.
+        const pel = this.pelFor(args.stream, args.group);
+        for (const e of fresh) {
+          pel.set(e.id, { consumer: args.consumer, deliveredAt: Date.now() });
+        }
       }
       return fresh.map((e) => ({ id: e.id, data: clone(e.data) }));
     };
     return this.blockingRead(args.stream, args.blockMs, take);
   }
 
-  ack(): Promise<void> {
-    // No pending-entries list modeled — the group cursor already advanced on delivery.
+  ack(stream: string, group: string, ids: string[]): Promise<void> {
+    const pel = this.pending.get(stream)?.get(group);
+    if (pel) for (const id of ids) pel.delete(id);
     return Promise.resolve();
+  }
+
+  claimStale(args: {
+    group: string;
+    consumer: string;
+    stream: string;
+    minIdleMs: number;
+    count: number;
+  }): Promise<StreamEntry[]> {
+    const pel = this.pelFor(args.stream, args.group);
+    const log = this.streams.get(args.stream) ?? [];
+    const now = Date.now();
+    const out: StreamEntry[] = [];
+    // Oldest-first (insertion order) so recovery drains the longest-stranded entries first.
+    for (const [id, meta] of pel) {
+      if (out.length >= args.count) break;
+      if (now - meta.deliveredAt < args.minIdleMs) continue;
+      const entry = log.find((e) => e.id === id);
+      if (!entry) {
+        pel.delete(id); // entry trimmed away — drop the dangling PEL record
+        continue;
+      }
+      // Reassign ownership + reset idle (mirrors XAUTOCLAIM), then hand it back for reprocessing.
+      meta.consumer = args.consumer;
+      meta.deliveredAt = now;
+      out.push({ id, data: clone(entry.data) });
+    }
+    return Promise.resolve(out);
+  }
+
+  /** Get (creating if absent) the PEL map for a stream+group. */
+  private pelFor(
+    stream: string,
+    group: string,
+  ): Map<string, { consumer: string; deliveredAt: number }> {
+    const byGroup =
+      this.pending.get(stream) ??
+      new Map<string, Map<string, { consumer: string; deliveredAt: number }>>();
+    this.pending.set(stream, byGroup);
+    const pel = byGroup.get(group) ?? new Map();
+    byGroup.set(group, pel);
+    return pel;
   }
 
   async xread(args: {

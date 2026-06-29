@@ -72,6 +72,37 @@ export class IoredisStreamAdapter implements RedisStreamPort {
     await this.client.xack(stream, group, ...ids);
   }
 
+  async claimStale(args: {
+    group: string;
+    consumer: string;
+    stream: string;
+    minIdleMs: number;
+    count: number;
+  }): Promise<StreamEntry[]> {
+    const out: StreamEntry[] = [];
+    let cursor = '0-0'; // XAUTOCLAIM start cursor; advances each page, wraps to '0-0' when drained
+    // Bound the paging so a pathological PEL can't spin forever (a turn's pending set is normally 0–1).
+    for (let page = 0; page < 100; page++) {
+      // XAUTOCLAIM key group consumer min-idle-time start COUNT n → [nextCursor, entries, deletedIds].
+      const res = (await this.client.xautoclaim(
+        args.stream,
+        args.group,
+        args.consumer,
+        args.minIdleMs,
+        cursor,
+        'COUNT',
+        args.count,
+      )) as [string, Array<[string, string[]]>, string[]?];
+      const [next, entries] = res;
+      for (const [id, fields] of entries ?? []) {
+        out.push({ id, data: decodeFields(fields) });
+      }
+      cursor = next;
+      if (cursor === '0-0') break; // scanned the whole pending list
+    }
+    return out;
+  }
+
   async xread(args: {
     stream: string;
     lastId: string;

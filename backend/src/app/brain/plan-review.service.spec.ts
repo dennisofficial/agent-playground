@@ -17,6 +17,12 @@ const fakeCreds = {
   engineAuth: async () => undefined,
 } as unknown as CredentialResolver;
 
+/** Leader-election stub: not draining (the default) — so the turn catch stamps `failed` as before.
+ *  The shutdown-aware branch (isDraining → leave 'running') is exercised by a dedicated test below. */
+const fakeElection = {
+  isDraining: () => false,
+} as unknown as import('../cluster').LeaderElectionService;
+
 /**
  * R4 GATE TESTS — the ASYNC, durable PlanReviewService:
  *   - parsePlanFindings extracts FINDING: lines / recognises NO_FINDINGS.
@@ -221,6 +227,7 @@ describe('PlanReviewService.start', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
 
     const started = await service.start(START_INPUT);
@@ -249,6 +256,7 @@ describe('PlanReviewService.start', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
 
     await service.start({
@@ -273,6 +281,7 @@ describe('PlanReviewService.start', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
 
     await service.start(START_INPUT); // round 1
@@ -294,6 +303,7 @@ describe('PlanReviewService.runningReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
 
   it('returns the in-flight round while a Codex turn is running', async () => {
@@ -355,6 +365,7 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
 
     const started = await service.start(START_INPUT);
@@ -379,6 +390,7 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
 
     const started = await service.start(START_INPUT);
@@ -396,6 +408,7 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
 
     const started = await service.start(START_INPUT);
@@ -410,6 +423,28 @@ describe('PlanReviewService.runReview', () => {
     expect(rows[0].completed_at).toBeInstanceOf(Date);
   });
 
+  it('shutdown drain: a turn aborted while draining is LEFT running (not stamped failed) so boot reconcile re-runs it', async () => {
+    const { repo, rows } = makeReviewsRepo();
+    const drainingElection = {
+      isDraining: () => true,
+    } as unknown as import('../cluster').LeaderElectionService;
+    const service = new PlanReviewService(
+      failingEngine(), // throws immediately (timedOut=false) — same as a drain-induced abort
+      fakeCreds,
+      fakeLifecycle(FAKE_SANDBOX),
+      repo,
+      drainingElection,
+    );
+
+    const started = await service.start(START_INPUT);
+    if (!('reviewId' in started)) throw new Error('expected a started round');
+    const out = await service.runReview(started.reviewId);
+
+    expect(out.status).toBe('failed'); // the return shape is type-only; the DURABLE row is what matters
+    expect(rows[0].status).toBe('running'); // NOT stamped failed — stays resumable
+    expect(rows[0].completed_at).toBeNull(); // never stamped terminal
+  });
+
   it('watchdog: a HUNG Codex turn is stamped failed (never left stuck running)', async () => {
     const { repo, rows } = makeReviewsRepo();
     // A 30ms ceiling so the test doesn't wait the real 45m. Read at construction → set before `new`.
@@ -421,6 +456,7 @@ describe('PlanReviewService.runReview', () => {
         fakeCreds,
         fakeLifecycle(FAKE_SANDBOX),
         repo,
+        fakeElection,
       );
       const started = await service.start(START_INPUT);
       if (!('reviewId' in started)) throw new Error('expected a started round');
@@ -445,6 +481,7 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle(null),
       repo,
+      fakeElection,
     );
 
     const started = await service.start(START_INPUT);
@@ -466,6 +503,7 @@ describe('PlanReviewService.runReview', () => {
       fakeCreds,
       fakeLifecycle({ ...FAKE_SANDBOX, containerId: 'container-abc123' }),
       repo,
+      fakeElection,
     );
 
     const started = await service.start(START_INPUT);
@@ -488,6 +526,7 @@ describe('PlanReviewService — delivery + boot reconciliation', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
     const started = await service.start(START_INPUT);
     if (!('reviewId' in started)) throw new Error('expected a started round');
@@ -503,6 +542,7 @@ describe('PlanReviewService — delivery + boot reconciliation', () => {
       fakeCreds,
       fakeLifecycle(FAKE_SANDBOX),
       repo,
+      fakeElection,
     );
     await service.start(START_INPUT); // status 'running'
 
