@@ -27,6 +27,8 @@ function fakeEngine(state: {
   const removedVolumes: string[] = [];
   const engine: ContainerEngine = {
     ensureNetwork: vi.fn(),
+    connectNetwork: vi.fn(),
+    execDetached: vi.fn(),
     imageExists: vi.fn(),
     imageId: vi.fn(),
     buildImage: vi.fn(),
@@ -118,6 +120,8 @@ describe('SandboxManager.teardownByIdentity', () => {
     const container: ContainerInfo = { id: 'cid-1', name: NAME, state: 'running', labels: {} };
     const engine: ContainerEngine = {
       ensureNetwork: vi.fn(),
+      connectNetwork: vi.fn(),
+      execDetached: vi.fn(),
       imageExists: vi.fn(),
       imageId: vi.fn(),
       buildImage: vi.fn(),

@@ -8,6 +8,7 @@ import type {
   ContainerEngine,
   ContainerInfo,
   CreateContainerSpec,
+  DetachedExecOptions,
   ExecOptions,
   ExecResult,
   NetworkInfo,
@@ -186,6 +187,42 @@ export class DockerodeContainerEngine implements ContainerEngine {
 
     const info = await exec.inspect();
     return { exitCode: info.ExitCode ?? 0, stdout, stderr };
+  }
+
+  async connectNetwork(id: string, network: string): Promise<void> {
+    try {
+      await this.docker.getNetwork(network).connect({ Container: id });
+    } catch (err) {
+      // Already attached → Docker 403 "endpoint ... already exists" / "already exists in network".
+      if (!/already exists|already connected/i.test(String(err))) throw err;
+    }
+  }
+
+  async execDetached(
+    id: string,
+    argv: string[],
+    opts: DetachedExecOptions = {},
+  ): Promise<{ pid?: number }> {
+    const exec = await this.docker.getContainer(id).exec({
+      Cmd: argv,
+      AttachStdout: true,
+      AttachStderr: true,
+      AttachStdin: false,
+      Tty: false,
+      ...(opts.user ? { User: opts.user } : {}),
+      ...(opts.env ? { Env: toEnvList(opts.env) } : {}),
+      ...(opts.cwd ? { WorkingDir: opts.cwd } : {}),
+    });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    // Drain-and-discard so an unconsumed stdout can't backpressure the engine. We do NOT await exit —
+    // the process runs detached (reparented to init if the host dies) and reports over Redis.
+    const sink = new Writable({ write: (_c, _e, cb) => cb() });
+    this.docker.modem.demuxStream(stream, sink, sink);
+    stream.on('error', (e) =>
+      this.logger.debug(`detached exec stream error (ignored): ${String(e)}`),
+    );
+    const info = await exec.inspect().catch(() => undefined);
+    return { pid: info?.Pid && info.Pid > 0 ? info.Pid : undefined };
   }
 
   async stop(id: string, opts: { timeoutSec?: number } = {}): Promise<void> {

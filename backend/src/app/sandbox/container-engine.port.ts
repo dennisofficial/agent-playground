@@ -83,6 +83,16 @@ export interface ExecOptions {
   signal?: AbortSignal;
 }
 
+/** Options for a detached (fire-and-forget) exec — no stdin/stdout wiring; the engine talks over Redis. */
+export interface DetachedExecOptions {
+  /** Run as this user (`uid` or `uid:gid`). */
+  user?: string;
+  /** Per-exec env — SECRETS (Redis creds, OAuth tokens, TURN_ID) pass here, never on the container. */
+  env?: Record<string, string>;
+  /** Working directory for the exec. */
+  cwd?: string;
+}
+
 /** The result of a finished exec. `stdout`/`stderr` accumulate the full streams for convenience. */
 export interface ExecResult {
   exitCode: number;
@@ -132,6 +142,13 @@ export interface ContainerEngine {
   /** Create the named network if it doesn't exist (idempotent). */
   ensureNetwork(name: string): Promise<void>;
 
+  /**
+   * Attach an already-running container to an ADDITIONAL network (idempotent — an already-connected
+   * container resolves quietly). Used to put a sandbox on the internal `atlas-bus` net so the engine can
+   * reach Redis, without disturbing its isolated primary network. See ADR 0001.
+   */
+  connectNetwork(id: string, network: string): Promise<void>;
+
   /** True if an image with this tag exists locally. */
   imageExists(tag: string): Promise<boolean>;
 
@@ -150,6 +167,14 @@ export interface ContainerEngine {
 
   /** Run a one-shot streamed exec inside a running container; resolves when it exits. */
   exec(id: string, argv: string[], opts?: ExecOptions): Promise<ExecResult>;
+
+  /**
+   * Launch an exec and RESOLVE ONCE IT'S STARTED, without awaiting its exit (the Redis-transport "kick":
+   * the in-container engine reads its spec from / writes events to Redis, so the host hands off to the
+   * Redis tail and the exec runs detached — surviving a backend restart, reparented to init). The stream
+   * is drained-and-discarded so it can't backpressure. Returns the engine PID when Docker reports one.
+   */
+  execDetached(id: string, argv: string[], opts?: DetachedExecOptions): Promise<{ pid?: number }>;
 
   /** Stop a running container (SIGTERM then SIGKILL after `timeoutSec`). */
   stop(id: string, opts?: { timeoutSec?: number }): Promise<void>;
