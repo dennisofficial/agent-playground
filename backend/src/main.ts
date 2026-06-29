@@ -1,10 +1,12 @@
 import '@core/tracing'; // MUST be first: starts the Langfuse OTEL SDK before any LangChain run
 
 import { EnvService } from '@core/config/env/env.service';
+import { ENodeEnv } from '@core/config/env/validation';
 import { setupLogger } from '@core/setup-logger';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { installShutdownGuard } from '@workspace/nestjs-core';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app/app.module';
 
@@ -49,6 +51,14 @@ async function bootstrap() {
 
   const port = env.get('HTTP_PORT') ?? 4002;
   await app.listen(port);
+
+  // Guarantee SIGTERM/SIGINT exits within a bounded time (the operator console's SSE streams otherwise pin
+  // http.Server.close() forever — wedging every `nest start --watch` restart). The graceful drain still
+  // runs via enableShutdownHooks; this just closes the lingering sockets + force-exits as a backstop. Cap:
+  // generous in prod (drain grace + buffer, so the graceful blue/green handoff always wins), tight in dev.
+  const isProd = env.get('NODE_ENV') === ENodeEnv.PROD;
+  const drainGraceMs = env.get('DRAIN_GRACE_MS') ?? 120_000;
+  installShutdownGuard(app, { forceExitAfterMs: isProd ? drainGraceMs + 15_000 : 4_000 });
 
   log.log(
     `Atlas v2 booted on :${port} — own "app" Postgres connection (app schema), ingress ` +
