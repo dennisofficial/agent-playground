@@ -203,24 +203,22 @@ export class DockerodeContainerEngine implements ContainerEngine {
     argv: string[],
     opts: DetachedExecOptions = {},
   ): Promise<{ pid?: number }> {
+    // TRUE detachment: AttachStd*:false + Detach:true runs the command in the BACKGROUND inside the
+    // container (owned by the daemon), NOT tied to this client connection — so it keeps running when the
+    // backend process dies. (An attached `hijack` start would be KILLED when the backend's socket drops,
+    // which defeats restart-survival.) The engine reads its spec from / reports over Redis, so it needs
+    // no stdio from us. See ADR 0001.
     const exec = await this.docker.getContainer(id).exec({
       Cmd: argv,
-      AttachStdout: true,
-      AttachStderr: true,
+      AttachStdout: false,
+      AttachStderr: false,
       AttachStdin: false,
       Tty: false,
       ...(opts.user ? { User: opts.user } : {}),
       ...(opts.env ? { Env: toEnvList(opts.env) } : {}),
       ...(opts.cwd ? { WorkingDir: opts.cwd } : {}),
     });
-    const stream = await exec.start({ hijack: true, stdin: false });
-    // Drain-and-discard so an unconsumed stdout can't backpressure the engine. We do NOT await exit —
-    // the process runs detached (reparented to init if the host dies) and reports over Redis.
-    const sink = new Writable({ write: (_c, _e, cb) => cb() });
-    this.docker.modem.demuxStream(stream, sink, sink);
-    stream.on('error', (e) =>
-      this.logger.debug(`detached exec stream error (ignored): ${String(e)}`),
-    );
+    await exec.start({ Detach: true });
     const info = await exec.inspect().catch(() => undefined);
     return { pid: info?.Pid && info.Pid > 0 ? info.Pid : undefined };
   }

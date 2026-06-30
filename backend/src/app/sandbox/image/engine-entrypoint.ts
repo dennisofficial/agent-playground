@@ -143,6 +143,7 @@ async function runOverRedis(turnId: string): Promise<void> {
   if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
   let stopReplies: (() => void) | undefined;
+  let sub: typeof client | undefined; // the tool-bridge replies-reader connection (must be closed)
 
   try {
     // The spec is a single-entry stream the host XADDed before the kick.
@@ -172,15 +173,16 @@ async function runOverRedis(turnId: string): Promise<void> {
     if (spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
       const pending = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
       // A SEPARATE connection blocks on the replies stream (a blocking read can't share the main client).
-      const sub = client.duplicate();
+      sub = client.duplicate();
       let stop = false;
       stopReplies = () => {
         stop = true;
       };
+      const subConn = sub;
       void (async () => {
         let lastId = '0-0';
         while (!stop) {
-          const r = (await sub.xread('BLOCK', 1000, 'STREAMS', repliesKey, lastId)) as
+          const r = (await subConn.xread('BLOCK', 1000, 'STREAMS', repliesKey, lastId)) as
             | Array<[string, Array<[string, string[]]>]>
             | null;
           if (!r) continue;
@@ -255,6 +257,7 @@ async function runOverRedis(turnId: string): Promise<void> {
   } finally {
     stopReplies?.();
     clearInterval(heartbeat);
+    sub?.disconnect(); // the replies-reader's separate connection — leaks the process if left open
     client.disconnect();
   }
 }
@@ -265,7 +268,8 @@ async function main(): Promise<void> {
   const turnId = process.env.TURN_ID;
   if (process.env.ENGINE_TRANSPORT === 'redis' && turnId) {
     await runOverRedis(turnId);
-    return;
+    // Force a clean exit — the SDK/ioredis can leave lingering handles that would hang this one-shot.
+    process.exit(process.exitCode ?? 0);
   }
 
   const raw = await readFirstLine();
