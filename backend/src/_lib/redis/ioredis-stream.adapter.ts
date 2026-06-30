@@ -35,6 +35,11 @@ export class IoredisStreamAdapter implements RedisStreamPort {
     return id ?? '0-0';
   }
 
+  async del(...keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    await this.client.del(...keys);
+  }
+
   async ensureGroup(stream: string, group: string): Promise<void> {
     try {
       await this.client.xgroup('CREATE', stream, group, '0', 'MKSTREAM');

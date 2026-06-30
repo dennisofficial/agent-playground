@@ -30,6 +30,9 @@ export interface RedisStreamPort {
   /** Append one frame (JSON-encoded under the `data` field) to a stream; resolves the new entry id. */
   xadd(stream: string, data: unknown): Promise<string>;
 
+  /** Delete keys (idempotent — missing keys are ignored). Used to reclaim a turn's streams once it ends. */
+  del(...keys: string[]): Promise<void>;
+
   /**
    * Create a consumer group on a stream, idempotently (MKSTREAM creates the stream if absent; a
    * pre-existing group is swallowed). Safe to call on every consumer-loop boot.

@@ -61,6 +61,15 @@ export class InMemoryRedisStream implements RedisStreamPort {
     return Promise.resolve(id);
   }
 
+  del(...keys: string[]): Promise<void> {
+    for (const k of keys) {
+      this.streams.delete(k);
+      this.groups.delete(k);
+      this.pending.delete(k);
+    }
+    return Promise.resolve();
+  }
+
   ensureGroup(stream: string, group: string): Promise<void> {
     const byGroup = this.groups.get(stream) ?? new Map<string, string>();
     if (!byGroup.has(group)) byGroup.set(group, '0-0'); // deliver from the start

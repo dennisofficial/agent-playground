@@ -144,6 +144,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
         await this.registry
           .finalize(turnId, 'done')
           .catch((err) => this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`));
+        // Reclaim the turn's Redis streams — the turn is done + its transcript persisted, and the
+        // registry row is gone, so a re-attach will never need them again (retention; no MAXLEN needed).
+        await this.redis
+          .del(keys.spec, keys.events, keys.tools, keys.replies)
+          .catch((err) => this.logger.debug(`turn ${turnId}: stream cleanup failed (ignored): ${err}`));
       }
     });
   }
@@ -185,7 +190,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
           await this.redis.ack(keys.tools, TOOLS_GROUP, [entry.id]);
         }
       } catch (err) {
-        this.logger.debug(`turn ${turnId}: tools loop iteration failed (continuing): ${err}`);
+        // A transient redis error (e.g. the connection closing on shutdown) would otherwise tight-spin —
+        // back off briefly so we don't busy-loop + spam logs while the process drains.
+        this.logger.debug(`turn ${turnId}: tools loop iteration failed (retrying): ${err}`);
+        await new Promise((r) => setTimeout(r, 250));
       }
     }
   }
