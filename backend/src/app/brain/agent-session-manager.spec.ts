@@ -68,7 +68,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     appendCardMessage: vi.fn(),
     updateCardMessage: vi.fn(),
     latestAnsweredQuestionCard: vi.fn().mockResolvedValue(null),
-    latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
     // Durable human-input gate (ask_question lifecycle); default to "no question open".
     openQuestion: vi.fn().mockResolvedValue({ ok: true }),
     awaitingQuestionId: vi.fn().mockResolvedValue(null),
@@ -219,7 +218,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.updateDecision as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.deleteDecision as ReturnType<typeof vi.fn>).mockResolvedValue({ removed: false, all: [] });
     (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    (mockStore.latestUnansweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     // Human-input gate defaults: opening succeeds, no question currently open.
     (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -870,11 +868,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
-      latestUnansweredQuestionCard: vi.fn().mockResolvedValue(opts.pendingCard ?? null),
       updateCardMessage: vi.fn().mockResolvedValue(undefined),
       loadJob: vi.fn().mockResolvedValue({ kind: null }),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
-      getQuestionCard: vi.fn().mockResolvedValue(null),
+      // `pendingCard` simulates an open `ask_question` card (the live "currently-open card" reader).
+      getQuestionCard: vi.fn().mockResolvedValue(opts.pendingCard ?? null),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
       awaitingSecretId: vi.fn().mockResolvedValue(null),
@@ -1221,7 +1219,6 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
       createFollowUpThread: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
-      latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
