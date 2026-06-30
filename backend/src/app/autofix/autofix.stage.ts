@@ -16,6 +16,7 @@ import type {
   AutoFixOptions,
   AutoFixSummary,
   FindingSeverity,
+  LensStatus,
   ReviewFinding,
   ReviewLens,
 } from './autofix.types';
@@ -109,6 +110,9 @@ export class AutoFixStage {
     // Deterministic short-circuit: skip the lens fan-out + fix turn and return a clean summary.
     if (!ctx.changedFiles?.length) {
       this.logger.log(`Auto-fix (${mode}) "${label}": 0 changed files — skipping review`);
+      // The lenses never run, but a status hook may have seeded them `pending` — resolve them so the
+      // navigator's review folder doesn't show agents stuck pending forever.
+      for (const lens of lenses) this.notifyLensStatus(options, lens.id, 'skipped');
       return {
         mode,
         lensesRun: [],
@@ -185,6 +189,7 @@ export class AutoFixStage {
     engine: AutoFixOptions['engine'],
     options: AutoFixOptions,
   ): Promise<ReviewFinding[]> {
+    this.notifyLensStatus(options, lens.id, 'running');
     try {
       const target = this.targetFor(ctx);
       const res = await this.engine.run({
@@ -200,10 +205,27 @@ export class AutoFixStage {
       });
       const found = parseFindings(lens.id, res.result);
       this.logger.debug(`Lens "${lens.id}": ${found.length} finding(s)`);
+      this.notifyLensStatus(options, lens.id, 'passed', found.length);
       return found;
     } catch (err) {
       this.logger.warn(`Lens "${lens.id}" review pass failed (dropped): ${err}`);
+      this.notifyLensStatus(options, lens.id, 'failed');
       return [];
+    }
+  }
+
+  /** Fire the optional per-lens status hook, swallowing any error (display-only, never sinks a pass). */
+  private notifyLensStatus(
+    options: AutoFixOptions,
+    lensId: string,
+    status: LensStatus,
+    findings?: number,
+  ): void {
+    if (!options.onLensStatus) return;
+    try {
+      options.onLensStatus(lensId, status, findings);
+    } catch (err) {
+      this.logger.warn(`onLensStatus hook threw (ignored) for "${lensId}": ${err}`);
     }
   }
 

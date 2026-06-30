@@ -63,4 +63,22 @@ export class TrackEntity extends TimestampedEntity {
   // 'pending' | 'planning' | 'reviewing' | 'awaiting_approval' | 'executing' | 'auto_fixing' | 'done' | 'failed'
   @Column({ type: 'text', default: 'pending' })
   status!: string;
+
+  /**
+   * The post-build review agents (lenses) and their per-agent status — seeded when the track enters
+   * `auto_fixing`, transitioned by the auto-fix stage, surfaced by `getPipelineState` so the navigator's
+   * review folder can show each agent's state. `[]` until the track is reviewed (getPipelineState falls
+   * back to the default lens set for an empty array). LITERAL default — a `() => '[]'::jsonb` function
+   * default makes `migration:generate` loop forever (see the jsonb-default-loop memory).
+   */
+  @Column({ type: 'jsonb', default: [] })
+  review_agents!: ReviewAgentState[];
+}
+
+/** One post-build review agent's persisted state on a track. */
+export interface ReviewAgentState {
+  id: string;
+  label: string;
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+  findings?: number;
 }

@@ -27,6 +27,11 @@ function todoSummary(i: Record<string, unknown>): string {
 
 const NATIVE: Record<string, NativeSpec> = {
   todowrite: { label: 'Todos', icon: 'todo', color: 'var(--accent)', arg: todoSummary },
+  // The SDK task tools (the orchestrator's live task list) — distinct from the subagent-spawning `task`.
+  taskcreate: { label: 'Add task', icon: 'todo', color: 'var(--accent)', arg: (i) => str(i.subject) },
+  taskupdate: { label: 'Update task', icon: 'todo', color: 'var(--accent)', arg: (i) => str(i.status) || str(i.subject) },
+  tasklist: { label: 'Tasks', icon: 'todo', color: 'var(--accent)', arg: () => '' },
+  taskget: { label: 'Task', icon: 'todo', color: 'var(--accent)', arg: (i) => str(i.taskId) },
   task: { label: 'Task', icon: 'task', color: 'var(--blue)', arg: (i) => str(i.description) || str(i.subagent_type) },
   webfetch: { label: 'Fetch', icon: 'web', color: 'var(--blue)', arg: (i) => str(i.url) },
   websearch: { label: 'Search', icon: 'web', color: 'var(--blue)', arg: (i) => str(i.query) },

@@ -147,7 +147,7 @@ export function PhaseView({
     const agent = revTrack?.reviewAgents?.find((a) => a.id === lensId) ?? null;
     const lensLabel = agent?.label ?? lensId;
     title = lensLabel;
-    subtitle = 'review agent · over the track diff';
+    subtitle = agent ? `review agent · ${agent.status}` : 'review agent · over the track diff';
     body = <ReviewView lens={lensLabel} />;
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;

@@ -424,8 +424,20 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       mode: 'execute',
     });
     const opts = captured.options!;
-    // Auto-approve: safe reads + web + subagent spawning. Writes/Bash still fall through to canUseTool.
-    expect(opts.allowedTools).toEqual(['Read', 'Glob', 'Grep', 'Task', 'WebSearch', 'WebFetch']);
+    // Auto-approve: safe reads + subagent spawning + the task tools (live task list) + web. Writes/Bash
+    // still fall through to canUseTool.
+    expect(opts.allowedTools).toEqual([
+      'Read',
+      'Glob',
+      'Grep',
+      'Task',
+      'TaskCreate',
+      'TaskUpdate',
+      'TaskList',
+      'TaskGet',
+      'WebSearch',
+      'WebFetch',
+    ]);
     expect(opts.mcpServers).toBeUndefined();
   });
 });

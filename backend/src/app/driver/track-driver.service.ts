@@ -9,7 +9,7 @@ import {
   PlanVisibilityService,
   type DecisionClassification,
 } from '../decision-gate';
-import { AutoFixStage } from '../autofix';
+import { AutoFixStage, reviewAgentsForTrack } from '../autofix';
 import type { DecisionRecord, Step, Thread } from '../domain';
 import { EngineAuthError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
@@ -458,23 +458,46 @@ export class TrackDriver implements JobDispatcher {
 
     // f. AUTO-FIX — fan-out review → fix over this track's diff.
     await this.store.setTrackStatus(track.id, 'auto_fixing');
-    await this.autofix
-      .autofixTrack({
-        worktreePath: sandbox.worktreePath,
-        sandboxKey: sandboxKey(sandbox),
-        ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
-        intent: `${record?.overview ?? ''}\n\nSection: ${track.brief}`.trim(),
-        label: track.brief,
-        ...(sandbox.containerId
-          ? {
-              containerId: sandbox.containerId,
-              ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
-            }
-          : {}),
-      })
-      .catch((err) =>
-        this.logger.warn(`track auto-fix failed (continuing): ${err}`),
+    // Seed the review agents at `pending` so the navigator shows them queued; the stage's onLensStatus hook
+    // transitions each as it runs, and the `finally` resolves any left pending/running (empty diff / throw).
+    // `reviewAgentsForTrack` selects by track type; the domain `DriverTrack` doesn't carry it, and the
+    // selection is a fixed set today, so call it argless (it ignores the arg).
+    const reviewAgents = reviewAgentsForTrack().map((a) => ({ ...a, status: 'pending' as const }));
+    await this.store.seedReviewAgents(track.id, reviewAgents);
+    let lensesRun: string[] = [];
+    try {
+      const summary = await this.autofix.autofixTrack(
+        {
+          worktreePath: sandbox.worktreePath,
+          sandboxKey: sandboxKey(sandbox),
+          ...(sectionStartSha ? { gitRange: `${sectionStartSha}..HEAD` } : {}),
+          intent: `${record?.overview ?? ''}\n\nSection: ${track.brief}`.trim(),
+          label: track.brief,
+          ...(sandbox.containerId
+            ? {
+                containerId: sandbox.containerId,
+                ...(sandbox.execUser ? { execUser: sandbox.execUser } : {}),
+              }
+            : {}),
+        },
+        {
+          onLensStatus: (lensId, status, findings) => {
+            void this.store
+              .setReviewAgentStatus(track.id, lensId, status, findings)
+              .catch((err) => this.logger.warn(`review-agent status write failed (ignored): ${err}`));
+          },
+        },
       );
+      lensesRun = summary.lensesRun;
+    } catch (err) {
+      this.logger.warn(`track auto-fix failed (continuing): ${err}`);
+    } finally {
+      // Resolve any agent still pending/running: passed if its lens ran, else skipped. Never leave a stuck
+      // pending/running agent once the track leaves auto_fixing.
+      await this.store
+        .finalizeReviewAgents(track.id, lensesRun)
+        .catch((err) => this.logger.warn(`review-agent finalize failed (ignored): ${err}`));
+    }
     // Passive milestone: auto-fix is a transient stage (track status is overwritten to `done` next), so
     // the net-state snapshot can't reconstruct that it ran — record it explicitly for the brain.
     await this.recordMilestone(
@@ -1109,6 +1132,15 @@ const BATCH_EXECUTE_SYSTEM =
  *  "done, no diff" from "never committed" (null) so a resume fast-forwards instead of re-running. */
 const NOTHING_COMMITTED = '(nothing)';
 
+// Orchestrator note — the LIVE task list. The orchestrator maintains its decomposition via the task tools
+// so the operator can watch progress in the navigator (which derives the per-track checklist from these
+// calls). Used by ORCHESTRATE_EXECUTE_SYSTEM.
+const ORCHESTRATOR_TASKLIST_NOTE =
+  ' Maintain a LIVE TASK LIST as your visible decomposition: at kickoff `TaskCreate` one task per unit of ' +
+  'work (seed from the steps below, splitting/merging as the real work demands), `TaskUpdate` it to ' +
+  "`in_progress` when you start it and `completed` when it's done, and `TaskUpdate` with `status:'deleted'` " +
+  'to drop a task the plan abandons. Keep it current as you go — it is how the operator follows the build.';
+
 // Orchestrator note — adds the WRITER subagents to the read-only set. Used by ORCHESTRATE_EXECUTE_SYSTEM.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
   ' You have subagents (Task tool). WRITERS that change files: `implement` (Opus, for code needing ' +
@@ -1134,6 +1166,7 @@ const ORCHESTRATE_EXECUTE_SYSTEM =
   'it is genuinely unreferenced first. Flag ANY change not called for by the plan, or any departure from a ' +
   "locked decision, on its own line starting with 'DEVIATION:' and a one-line why — off-spec work is " +
   'never silent. If verification fails and you cannot fix it within scope, say so explicitly.' +
+  ORCHESTRATOR_TASKLIST_NOTE +
   ORCHESTRATOR_SUBAGENTS_NOTE;
 
 /** A locked step row → the `PlannedStep` view the gate/visibility/render read (title null → brief). */

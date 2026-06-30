@@ -143,7 +143,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         id: string;
         hasPlan: boolean;
         status: string;
-        reviewAgents: Array<{ id: string; label: string }>;
+        reviewAgents: Array<{ id: string; label: string; status: string; findings?: number }>;
         steps: Array<{ ordinal: number; title: string | null; stage: string; status: string }>;
       }>;
     };
@@ -158,10 +158,54 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const [sec] = state.tracks;
     expect(sec.hasPlan).toBe(true);
     // The review-agent run list is exposed per track (fixed set today; navigator renders it dynamically).
+    // An un-reviewed track (empty `review_agents`) falls back to the default lens set at `pending`.
     expect(sec.reviewAgents.map((a) => a.id)).toEqual(['best_practices', 'correctness', 'consistency']);
+    expect(sec.reviewAgents.every((a) => a.status === 'pending')).toBe(true);
     expect(sec.steps.map((p) => p.title)).toEqual(['replay', 'sync']); // ordinal-sorted
     expect(sec.steps[0].status).toBe('building');
     expect(sec.steps[1].status).toBe('pending');
+  });
+
+  it('seeds, transitions, and finalizes per-agent review status (surfaced by getPipelineState)', async () => {
+    const thread = await threads.save(
+      threads.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'review status',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    const track = await tracks.save(
+      tracks.create({
+        thread_id: thread.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — review status',
+        status: 'auto_fixing',
+      }),
+    );
+
+    // Seed at pending → run + pass one lens (with a finding count) → finalize the rest.
+    await store.seedReviewAgents(track.id, [
+      { id: 'best_practices', label: 'BP', status: 'pending' },
+      { id: 'correctness', label: 'C', status: 'pending' },
+      { id: 'consistency', label: 'Cs', status: 'pending' },
+    ]);
+    await store.setReviewAgentStatus(track.id, 'best_practices', 'running');
+    await store.setReviewAgentStatus(track.id, 'best_practices', 'passed', 2);
+    // correctness ran (in lensesRun) but never reached terminal → passed; consistency didn't run → skipped.
+    await store.finalizeReviewAgents(track.id, ['best_practices', 'correctness']);
+
+    const state = (await store.getPipelineState(thread.id, ORG_ID)) as {
+      tracks: Array<{ reviewAgents: Array<{ id: string; status: string; findings?: number }> }>;
+    };
+    const byId = new Map(state.tracks[0].reviewAgents.map((a) => [a.id, a]));
+    expect(byId.get('best_practices')).toMatchObject({ status: 'passed', findings: 2 });
+    expect(byId.get('correctness')?.status).toBe('passed');
+    expect(byId.get('consistency')?.status).toBe('skipped');
   });
 
   it('still reports `no_job` for a thread that has not entered the build lifecycle', async () => {

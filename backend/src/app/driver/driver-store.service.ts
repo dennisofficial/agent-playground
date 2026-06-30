@@ -18,6 +18,7 @@ import {
   TrackEntity,
   ThreadEntity,
 } from '../persistence/entities';
+import type { ReviewAgentState } from '../persistence/entities';
 import { reviewAgentsForTrack } from '../autofix/autofix-lenses';
 import type { PlannedStep } from './planner-llm';
 
@@ -188,6 +189,44 @@ export class DriverStoreService {
     await this.tracks.update({ id: trackId }, { handoff_out: handoffOut });
   }
 
+  // ── review agents (post-build review fan-out, per-agent status) ────────────────────────────────
+
+  /** Seed the track's review agents at `pending` from the selected lens set — call before the auto-fix
+   *  pass so the navigator can show the agents queued, then transitioned as each lens runs. */
+  async seedReviewAgents(trackId: string, agents: ReviewAgentState[]): Promise<void> {
+    await this.tracks.update({ id: trackId }, { review_agents: agents });
+  }
+
+  /** Transition ONE review agent's status (read-modify-write the jsonb array). A no-op if the track or the
+   *  lens id isn't found (best-effort display state, never sinks the build). */
+  async setReviewAgentStatus(
+    trackId: string,
+    lensId: string,
+    status: ReviewAgentState['status'],
+    findings?: number,
+  ): Promise<void> {
+    const track = await this.tracks.findOne({ where: { id: trackId } });
+    if (!track) return;
+    const agents = (track.review_agents ?? []).map((a) =>
+      a.id === lensId ? { ...a, status, ...(findings != null ? { findings } : {}) } : a,
+    );
+    await this.tracks.update({ id: trackId }, { review_agents: agents });
+  }
+
+  /** Resolve any review agent still `pending`/`running` once the pass is over — `passed` if its lens ran,
+   *  else `skipped` (e.g. the pass threw before reaching it, or the diff was empty). Idempotent. */
+  async finalizeReviewAgents(trackId: string, lensesRun: string[]): Promise<void> {
+    const track = await this.tracks.findOne({ where: { id: trackId } });
+    if (!track) return;
+    const ran = new Set(lensesRun);
+    const agents = (track.review_agents ?? []).map((a) =>
+      a.status === 'pending' || a.status === 'running'
+        ? { ...a, status: ran.has(a.id) ? ('passed' as const) : ('skipped' as const) }
+        : a,
+    );
+    await this.tracks.update({ id: trackId }, { review_agents: agents });
+  }
+
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
 
   /** A track's steps in execution order. */
@@ -297,9 +336,14 @@ export class DriverStoreService {
         type: s.type,
         status: s.status,
         hasPlan: s.plan != null,
-        // The review agents selected to run over this track's diff (fixed set today; see
-        // reviewAgentsForTrack). Rendered by the navigator's review folder.
-        reviewAgents: reviewAgentsForTrack(s),
+        // The review agents that run over this track's diff, with per-agent status. Once the track is
+        // reviewed `review_agents` carries the live state; before that (the `[]` default for an unseeded /
+        // pre-feature track) fall back to the selected lens set at `pending` so the folder still lists them.
+        // Emptiness check (not nullish) — `[]` is the column default.
+        reviewAgents:
+          Array.isArray(s.review_agents) && s.review_agents.length > 0
+            ? s.review_agents
+            : reviewAgentsForTrack(s).map((a) => ({ ...a, status: 'pending' as const })),
         steps: mapBatchedSteps(stepsByTrack.get(s.id) ?? []),
       })),
     };

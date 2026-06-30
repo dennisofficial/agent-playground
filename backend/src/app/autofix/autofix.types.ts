@@ -96,7 +96,16 @@ export interface AutoFixOptions {
   model?: string;
   /** Auth override for the turns (else derived from env by the EngineRunner). */
   auth?: EngineAuth;
+  /**
+   * Optional per-lens status hook — fired `running` before each review pass and `passed`/`failed` (with the
+   * finding count) after it. Lets the driver persist live per-agent review status onto the track so the
+   * navigator's review folder can show each agent's state. Best-effort: the stage swallows hook errors.
+   */
+  onLensStatus?: (lensId: string, status: LensStatus, findings?: number) => void;
 }
+
+/** A review lens's live status as the auto-fix stage reports it (`pending` is the driver's seed state). */
+export type LensStatus = 'running' | 'passed' | 'failed' | 'skipped';
 
 /**
  * The CONTEXT one auto-fix run needs: the worktree to review/fix inside, the change set, and light

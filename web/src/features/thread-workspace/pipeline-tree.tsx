@@ -8,9 +8,10 @@ import { trackTitle } from '@/lib/track-title';
 import { useLiveTurn } from '@/lib/api/thread-stream';
 import { phaseLane } from './phases';
 import { durableSessionToolCounts, durableSubagentRunsByPhase, liveSubagentRunsForPhase } from './track-subagents';
+import { durableTaskListByPhase, liveTaskListForPhase, type TaskItem } from './track-todos';
 import { subagentModel, subagentNode, type SubagentSummary } from './subagents';
 import type { ThreadMessage } from '@/lib/api/thread-api';
-import type { PipelineJob, PipelineStep, PipelineTrack, StepStatus, TrackStatus, ThreadStatus } from '@/lib/api/types';
+import type { PipelineJob, PipelineStep, PipelineTrack, ReviewAgent, TrackStatus, ThreadStatus } from '@/lib/api/types';
 
 // The orchestrator session is always Opus (one Opus session per track fans implementation out to writer
 // subagents) — shown as a chip on the track row.
@@ -137,8 +138,9 @@ export function PipelineTree({ job, status, messages, threadId, selectedNode, on
   // stopped; later `pending` tracks were never reached. Fall back to the last non-`done` track.
   const haltIdx = status === 'failed' ? haltTrackIdx(tracks) : -1;
 
-  // Per-track writer runs + session tool counts, derived once from the transcript.
+  // Per-track writer runs + task lists + session tool counts, derived once from the transcript.
   const runsByPhase = useMemo(() => durableSubagentRunsByPhase(messages), [messages]);
+  const tasksByPhase = useMemo(() => durableTaskListByPhase(messages), [messages]);
   const sessionTools = useMemo(() => durableSessionToolCounts(messages), [messages]);
 
   // Only ONE track executes at a time, so a single live subscription (the active track's phase lane) covers
@@ -150,6 +152,10 @@ export function PipelineTree({ job, status, messages, threadId, selectedNode, on
   const liveActive = Boolean(live?.active);
   const liveRuns = useMemo(
     () => (activeAnchor && live ? liveSubagentRunsForPhase(live.blocks) : []),
+    [activeAnchor, live],
+  );
+  const liveTasks = useMemo(
+    () => (activeAnchor && live ? liveTaskListForPhase(live.blocks) : []),
     [activeAnchor, live],
   );
   const liveToolCount =
@@ -167,6 +173,11 @@ export function PipelineTree({ job, status, messages, threadId, selectedNode, on
         const anchors = trackAnchorIds(s);
         const durableRuns = anchors.flatMap((a) => runsByPhase.get(a) ?? []);
         const runs = mergeRuns(durableRuns, isActive ? liveRuns : []);
+        // The session transcript node + the task list's join key (a track is one batch → one anchor).
+        const sessionAnchor = anchors[0] ?? null;
+        const durableTasks = anchors.flatMap((a) => tasksByPhase.get(a) ?? []);
+        // Live wins for the active track (the mid-turn list before the durable rows persist at turn end).
+        const tasks = isActive && liveTasks.length > 0 ? liveTasks : durableTasks;
         const toolCount =
           isLiveTrack && liveToolCount > 0
             ? liveToolCount
@@ -182,6 +193,8 @@ export function PipelineTree({ job, status, messages, threadId, selectedNode, on
             notReached={haltIdx !== -1 && i > haltIdx}
             paused={status === 'paused'}
             runs={runs}
+            tasks={tasks}
+            sessionAnchor={sessionAnchor}
             sessionToolCount={toolCount}
             selectedNode={selectedNode}
             onSelectNode={onSelectNode}
@@ -203,6 +216,8 @@ function TrackSession({
   notReached,
   paused,
   runs,
+  tasks,
+  sessionAnchor,
   sessionToolCount,
   selectedNode,
   onSelectNode,
@@ -218,6 +233,10 @@ function TrackSession({
   notReached: boolean;
   paused: boolean;
   runs: SubagentSummary[];
+  /** The orchestrator's live task list (folded from its task-tool calls); falls back to steps below. */
+  tasks: TaskItem[];
+  /** The batch anchor step id = the session transcript node (null until the track has steps). */
+  sessionAnchor: string | null;
   sessionToolCount: number;
   selectedNode: string | null;
   onSelectNode: (node: string) => void;
@@ -225,16 +244,22 @@ function TrackSession({
   toggle: TreeProps['toggle'];
 }) {
   const folderId = `sec:${s.id}`;
-  const planId = `${folderId}.plan`;
-  const runsId = `${folderId}.runs`;
+  const tasksId = `${folderId}.tasks`;
+  const agentsId = `${folderId}.agents`;
+  const reviewId = `${folderId}.review`;
   const dot = isHalt ? { color: 'var(--red)', pulse: false } : trackColor(s.status);
   const expanded = isExpanded(folderId, isActive || isHalt);
-  // The two axes default-open only on the active/halt session; everything else folds to one row.
-  const planOpen = isExpanded(planId, isActive || isHalt);
-  const runsOpen = isExpanded(runsId, isActive || isHalt);
+  // The axes default-open only on the active/halt session; everything else folds to one row.
+  const tasksOpen = isExpanded(tasksId, isActive || isHalt);
+  const agentsOpen = isExpanded(agentsId, isActive || isHalt);
+  const reviewOpen = isExpanded(reviewId, isActive || isHalt);
   const dim = (s.status === 'pending' && !isActive) || notReached;
-  const steps = s.steps;
-  const planExpected = s.status !== 'pending';
+  // The checklist: the orchestrator's live task list when it has one, else the pre-planned steps as a
+  // fallback (older threads / sessions that edited directly without maintaining a task list).
+  const taskItems = tasks.length > 0 ? tasks : stepsAsTasks(s.steps);
+  const liveTasks = tasks.length > 0;
+  const reviewAgents = s.reviewAgents ?? [];
+  const taskExpected = s.status !== 'pending';
   const runDotColor = isHalt
     ? 'var(--red)'
     : runs.length === 0
@@ -244,6 +269,7 @@ function TrackSession({
         : s.status === 'done'
           ? 'var(--green)'
           : 'var(--accent)';
+  const openSession = sessionAnchor ? () => onSelectNode(sessionAnchor) : undefined;
 
   return (
     <div className="flex flex-col">
@@ -273,58 +299,54 @@ function TrackSession({
 
       {expanded && (
         <div className={cn('flex flex-col gap-px', paused && 'opacity-70')}>
-          {/* the session caption — one line about the orchestrator run */}
-          <div className="pl-[26px] pr-2 pt-0.5 font-mono text-[8.5px] text-faint">
+          {/* the session caption — one line about the orchestrator run (opens the session transcript) */}
+          <button
+            type="button"
+            onClick={openSession}
+            disabled={!openSession}
+            className="pl-[26px] pr-2 pt-0.5 text-left font-mono text-[8.5px] text-faint enabled:hover:text-dim"
+          >
             {sessionCaption(s.status, isHalt, isLiveTrack, sessionToolCount)}
-          </div>
+          </button>
 
-          {steps.length === 0 ? (
-            <div className="py-1 pl-[26px] pr-2 font-mono text-[9.5px] text-faint">
-              the checklist forms when this track starts
+          {taskItems.length === 0 ? (
+            <div className="py-1 pl-[26px] pr-2 font-mono text-[9.5px] italic text-faint">
+              {taskExpected ? 'no task list yet — the session edited directly' : 'the task list forms when this track starts'}
             </div>
           ) : (
             <>
-              {/* plan — the checklist axis (what was asked); items open the one session transcript */}
-              <div className="group flex items-center gap-[7px] rounded-sm py-1 pl-[26px] pr-2 hover:bg-surface-2">
-                <button type="button" onClick={() => toggle(planId, planOpen)} className="flex flex-1 items-center gap-[7px] text-left">
-                  <Caret expanded={planOpen} />
-                  <Dot
-                    color={planExpected ? (s.status === 'done' ? 'var(--green)' : isActive ? 'var(--accent)' : 'var(--green)') : 'var(--border-2)'}
-                    pulse={isActive && !isHalt}
-                    size={5}
-                  />
-                  <span className="flex-1 truncate font-mono text-[10.5px] text-dim">plan · {steps.length}</span>
-                </button>
-                {s.hasPlan ? (
-                  <button
-                    type="button"
-                    onClick={() => onSelectNode(`secplan:${s.id}`)}
-                    className="shrink-0 rounded border px-1.5 py-px font-mono text-[8px]"
-                    style={{ color: 'var(--accent)', background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
-                  >
-                    📄 plan.md
-                  </button>
-                ) : null}
-              </div>
-              {planOpen &&
-                steps.map((p, k) => (
-                  <ChecklistRow
-                    key={p.id}
-                    step={p}
-                    index={k}
-                    isHalt={isHalt}
-                    selected={selectedNode === p.id}
-                    onClick={() => onSelectNode(p.id)}
+              {/* task list — the orchestrator's live decomposition; items open the one session transcript */}
+              <button
+                type="button"
+                onClick={() => toggle(tasksId, tasksOpen)}
+                className="group flex w-full items-center gap-[7px] rounded-sm py-1 pl-[26px] pr-2 text-left hover:bg-surface-2"
+              >
+                <Caret expanded={tasksOpen} />
+                <Dot
+                  color={taskExpected ? (s.status === 'done' ? 'var(--green)' : isActive ? 'var(--accent)' : 'var(--green)') : 'var(--border-2)'}
+                  pulse={isActive && !isHalt}
+                  size={5}
+                />
+                <span className="flex-1 truncate font-mono text-[10.5px] text-dim">task list</span>
+                <span className="font-mono text-[8px] text-faint">{taskCount(taskItems, liveTasks && isActive)}</span>
+              </button>
+              {tasksOpen &&
+                taskItems.map((t) => (
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    selected={Boolean(sessionAnchor) && selectedNode === sessionAnchor}
+                    onClick={openSession}
                   />
                 ))}
 
-              {/* runs — the fan-out axis (what executed); each opens its own subagent transcript */}
+              {/* agents — the writer fan-out axis (what executed); each opens its own subagent transcript */}
               <button
                 type="button"
-                onClick={() => toggle(runsId, runsOpen)}
+                onClick={() => toggle(agentsId, agentsOpen)}
                 className="group flex items-center gap-[7px] rounded-sm py-1 pl-[26px] pr-2 text-left hover:bg-surface-2"
               >
-                {runs.length === 0 && !isActive ? <Caret expanded={false} /> : <Caret expanded={runsOpen} />}
+                {runs.length === 0 && !isActive ? <Caret expanded={false} /> : <Caret expanded={agentsOpen} />}
                 {runs.length === 0 ? (
                   <span
                     className="inline-block shrink-0 rounded-full"
@@ -335,7 +357,7 @@ function TrackSession({
                   <Dot color={runDotColor} pulse={isLiveTrack} size={5} />
                 )}
                 <span className={cn('flex-1 truncate font-mono text-[10.5px]', runs.length === 0 ? 'text-faint' : 'text-dim')}>
-                  {runs.length === 0 ? 'runs' : `runs · ${runs.length}`}
+                  {runs.length === 0 ? 'agents' : `agents · ${runs.length}`}
                 </span>
                 {runs.length === 0 ? (
                   <span className="font-mono text-[8px] text-faint">
@@ -343,16 +365,16 @@ function TrackSession({
                   </span>
                 ) : null}
               </button>
-              {runsOpen && runs.length === 0 ? (
+              {agentsOpen && runs.length === 0 ? (
                 <p className="py-0.5 pl-11 pr-2 font-mono text-[9px] italic leading-relaxed text-faint">
                   {isActive
                     ? 'Writer runs appear here as the session fans implementation out.'
                     : s.status === 'done'
                       ? 'This session made its edits directly — no writer subagents were spawned.'
-                      : 'Runs form when this track’s session starts — the checklist is its decomposition.'}
+                      : 'Agents form when this track’s session starts — the task list is its decomposition.'}
                 </p>
               ) : null}
-              {runsOpen &&
+              {agentsOpen &&
                 runs.map((run) => {
                   const state = runState(run, isHalt);
                   return (
@@ -367,14 +389,46 @@ function TrackSession({
                   );
                 })}
 
-              {/* verify — the self-verification line that replaces the old review folder */}
-              <VerifyLine status={s.status} isHalt={isHalt} />
+              {/* review — the post-build fan-out; one leaf per review agent, each its own sub-page */}
+              <ReviewFolder
+                trackId={s.id}
+                agents={reviewAgents}
+                isHalt={isHalt}
+                notReached={notReached}
+                open={reviewOpen}
+                onToggle={() => toggle(reviewId, reviewOpen)}
+                selectedNode={selectedNode}
+                onSelectNode={onSelectNode}
+              />
             </>
           )}
         </div>
       )}
     </div>
   );
+}
+
+/** The task list's count chip: "N/M" completed of non-dropped, with a `live` prefix while streaming. */
+function taskCount(tasks: TaskItem[], live: boolean): string {
+  const active = tasks.filter((t) => t.status !== 'dropped');
+  const done = active.filter((t) => t.status === 'completed').length;
+  return `${live ? 'live · ' : ''}${done}/${active.length}`;
+}
+
+/** Map the pre-planned steps onto task items — the fallback checklist when the session kept no task list. */
+function stepsAsTasks(steps: PipelineStep[]): TaskItem[] {
+  return steps.map((p): TaskItem => {
+    const subject = p.title || p.brief || p.id;
+    const status: TaskItem['status'] =
+      p.status === 'done'
+        ? 'completed'
+        : p.status === 'skipped'
+          ? 'dropped'
+          : p.status === 'building' || p.status === 'reviewing'
+            ? 'in_progress'
+            : 'pending';
+    return { id: p.id, subject, status };
+  });
 }
 
 /** The session caption under a track row — one honest line about the orchestrator run. */
@@ -389,76 +443,74 @@ function sessionCaption(status: TrackStatus, isHalt: boolean, isLiveTrack: boole
   return 'orchestrator session';
 }
 
-/** One checklist item — a CHECKBOX (the plan, not a run). Clicking opens the shared session transcript. */
-function ChecklistRow({
-  step: p,
-  index,
-  isHalt,
+/** One task-list item — a CHECKBOX (the live decomposition, not a run). Clicking opens the session
+ *  transcript (the whole session is one thread). A `dropped` task is struck through; a `new` one is badged. */
+function TaskRow({
+  task: t,
   selected,
   onClick,
 }: {
-  step: PipelineStep;
-  index: number;
-  isHalt: boolean;
+  task: TaskItem;
   selected: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 }) {
-  const name = p.title || p.brief || `Step ${index + 1}`;
-  const skipped = p.status === 'skipped';
+  const dropped = t.status === 'dropped';
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={!onClick}
       className={cn(
-        'flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left hover:bg-surface-2',
+        'flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left enabled:hover:bg-surface-2',
         selected && 'bg-[var(--accent-soft)]',
-        p.status === 'pending' && 'opacity-80',
+        dropped && 'opacity-60',
       )}
     >
-      <StepCheckbox status={p.status} isHalt={isHalt} />
+      <TaskCheckbox status={t.status} />
       <span
         className={cn(
           'flex-1 truncate font-mono text-[10px]',
-          skipped
+          dropped
             ? 'text-faint line-through'
-            : p.status === 'failed' || (isHalt && p.status === 'building')
-              ? 'text-red'
-              : p.status === 'building' || p.status === 'reviewing'
-                ? 'text-text'
-                : 'text-dim',
+            : t.status === 'in_progress'
+              ? 'text-text'
+              : 'text-dim',
         )}
       >
-        {name}
+        {t.subject}
       </span>
+      {t.isNew ? (
+        <span
+          className="shrink-0 rounded border px-1 font-mono text-[7.5px]"
+          style={{ color: 'var(--accent)', background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
+        >
+          new
+        </span>
+      ) : dropped ? (
+        <span className="shrink-0 font-mono text-[7.5px] text-faint">dropped</span>
+      ) : null}
     </button>
   );
 }
 
-/** The 11px checkbox glyph for a checklist item, by step status. */
-function StepCheckbox({ status, isHalt }: { status: StepStatus; isHalt: boolean }) {
+/** The 11px checkbox glyph for a task item, by task status. */
+function TaskCheckbox({ status }: { status: TaskItem['status'] }) {
   const base = 'grid h-[11px] w-[11px] shrink-0 place-items-center rounded-[2px] text-[7px]';
-  if (status === 'done') {
+  if (status === 'completed') {
     return (
       <span className={base} style={{ border: '1px solid var(--green)', background: 'var(--green-soft)', color: 'var(--green)' }}>
         ✓
       </span>
     );
   }
-  if (status === 'failed' || (isHalt && status === 'building')) {
-    return (
-      <span className={base} style={{ border: '1px solid var(--red-line)', background: 'var(--red-soft)', color: 'var(--red)' }}>
-        ✕
-      </span>
-    );
-  }
-  if (status === 'building' || status === 'reviewing') {
+  if (status === 'in_progress') {
     return (
       <span className={cn(base, 'pulse-dot')} style={{ border: '1px solid var(--accent)', background: 'var(--accent-soft)' }}>
         <span className="h-1 w-1 rounded-full" style={{ background: 'var(--accent)' }} />
       </span>
     );
   }
-  // pending / skipped → empty box
+  // pending / dropped → empty box
   return <span className={base} style={{ border: '1px solid var(--border-2)', background: 'transparent' }} />;
 }
 
@@ -552,30 +604,105 @@ function RunDiamond({ state, glow }: { state: RunState; glow?: boolean }) {
   );
 }
 
-/** The single self-verify line that folds in the old review phase — the session verifies its own work
- *  in-turn (build + tests), so there's no separate review folder. */
-function VerifyLine({ status, isHalt }: { status: TrackStatus; isHalt: boolean }) {
-  if (isHalt) return null;
-  if (status === 'done') {
-    return (
-      <div className="flex items-center gap-2 pl-[26px] pr-2 py-1">
-        <span className="w-[5px] shrink-0 text-center text-[11px] text-green">✓</span>
-        <span className="flex-1 font-mono text-[10px] text-green">verified in-turn</span>
-        <span className="font-mono text-[8px] text-faint">build · tests</span>
-      </div>
-    );
-  }
-  if (status === 'executing' || status === 'reviewing' || status === 'auto_fixing') {
-    return (
-      <div className="flex items-center gap-2 pl-[26px] pr-2 py-1 opacity-65">
-        <span className="w-[5px] shrink-0 text-center text-[10px] text-faint">○</span>
-        <span className="flex-1 font-mono text-[10px] text-faint">verify in-turn</span>
-        <span className="font-mono text-[8px] text-faint">pending</span>
-      </div>
-    );
-  }
-  return null;
+/** The review fan-out folder — the post-build programmatic review agents, one leaf per agent. A folded row
+ *  when collapsed; expanded it lists each agent with its per-agent status. Each leaf opens its own
+ *  `rev:<trackId>:<agentId>` sub-page (resolved in step-view.tsx). */
+function ReviewFolder({
+  trackId,
+  agents,
+  isHalt,
+  notReached,
+  open,
+  onToggle,
+  selectedNode,
+  onSelectNode,
+}: {
+  trackId: string;
+  agents: ReviewAgent[];
+  isHalt: boolean;
+  notReached: boolean;
+  open: boolean;
+  onToggle: () => void;
+  selectedNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  if (agents.length === 0) return null;
+  const anyRunning = agents.some((a) => a.status === 'running');
+  const anyFailed = agents.some((a) => a.status === 'failed');
+  const allResolved = agents.every((a) => a.status === 'passed' || a.status === 'skipped' || a.status === 'failed');
+  const headColor = isHalt || notReached
+    ? 'var(--border-2)'
+    : anyFailed
+      ? 'var(--red)'
+      : anyRunning
+        ? 'var(--accent)'
+        : allResolved
+          ? 'var(--green)'
+          : 'var(--border-2)';
+  const note = isHalt || notReached
+    ? 'not reached'
+    : anyRunning
+      ? 'running'
+      : anyFailed
+        ? 'issues'
+        : allResolved
+          ? 'passed'
+          : 'after build';
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn('group flex items-center gap-[7px] rounded-sm py-1 pl-[26px] pr-2 text-left hover:bg-surface-2', (isHalt || notReached) && 'opacity-60')}
+      >
+        <Caret expanded={open} />
+        <Dot color={headColor} pulse={anyRunning} size={5} />
+        <span className="flex-1 truncate font-mono text-[10.5px] text-dim">review · {agents.length}</span>
+        <span className="font-mono text-[8px] text-faint">{note}</span>
+      </button>
+      {open &&
+        agents.map((a) => (
+          <ReviewAgentRow
+            key={a.id}
+            agent={a}
+            selected={selectedNode === `rev:${trackId}:${a.id}`}
+            onClick={() => onSelectNode(`rev:${trackId}:${a.id}`)}
+          />
+        ))}
+    </>
+  );
 }
+
+/** One review-agent leaf — a round dot colored by its per-agent status, opening its review sub-page. */
+function ReviewAgentRow({ agent, selected, onClick }: { agent: ReviewAgent; selected: boolean; onClick: () => void }) {
+  const meta = REVIEW_STATUS[agent.status];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn('flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left hover:bg-surface-2', selected && 'bg-[var(--accent-soft)]')}
+    >
+      <Dot color={meta.color} pulse={agent.status === 'running'} size={6} />
+      <span className={cn('flex-1 truncate font-mono text-[10px]', agent.status === 'failed' ? 'text-red' : 'text-dim')}>
+        {agent.label}
+      </span>
+      <span className={cn('font-mono text-[8px]', agent.status === 'failed' ? 'text-red' : 'text-faint')}>
+        {agent.status === 'passed' && agent.findings != null && agent.findings > 0
+          ? `${agent.findings} finding${agent.findings === 1 ? '' : 's'}`
+          : meta.label}
+      </span>
+    </button>
+  );
+}
+
+/** Per review-agent status → dot color + label. */
+const REVIEW_STATUS: Record<ReviewAgent['status'], { color: string; label: string }> = {
+  pending: { color: 'var(--border-2)', label: 'queued' },
+  running: { color: 'var(--accent)', label: 'running' },
+  passed: { color: 'var(--green)', label: 'passed' },
+  failed: { color: 'var(--red)', label: 'failed' },
+  skipped: { color: 'var(--border-2)', label: 'skipped' },
+};
 
 /** A model chip — `Opus` (darker border) or `Sonnet` (lighter), mono, hairline border. */
 function ModelChip({ model, strong }: { model: string; strong?: boolean }) {

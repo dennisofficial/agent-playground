@@ -86,6 +86,10 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
       const s = state.tracks.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
     }),
+    // Review-agent status writes — no-ops for the driver flow tests (display state only).
+    seedReviewAgents: vi.fn(async () => undefined),
+    setReviewAgentStatus: vi.fn(async () => undefined),
+    finalizeReviewAgents: vi.fn(async () => undefined),
     stepsForTrack: vi.fn(async (trackId: string) =>
       state.steps.filter((p) => p.trackId === trackId).map((p) => ({ ...p })),
     ),

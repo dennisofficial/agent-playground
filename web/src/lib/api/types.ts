@@ -138,10 +138,14 @@ export interface PipelineStep {
   batchStepIds: string[];
 }
 
-/** One review agent the backend selected to run over a track's diff (id + human label). */
+/** One post-build review agent over a track's diff: id + human label + its per-agent status. `pending`
+ *  before the track is reviewed, transitioned by the auto-fix stage, `skipped` when the diff was empty. */
 export interface ReviewAgent {
   id: string;
   label: string;
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+  /** Findings the agent surfaced (set once it has run). */
+  findings?: number;
 }
 
 export interface PipelineTrack {

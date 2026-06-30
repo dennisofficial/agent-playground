@@ -84,7 +84,12 @@ export function claudeSessionExists(configDir: string, sessionId: string): boole
 // pull current docs / latest versions. This is a personal, trusted deployment — see `agents/web` notes.
 const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 // `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
-const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...WEB_TOOLS];
+// The task tools (TaskCreate/TaskUpdate/TaskList/TaskGet — the SDK 0.3.x successors to the legacy
+// TodoWrite) let the orchestrator maintain a LIVE task list as its visible decomposition; the navigator
+// derives the per-track checklist from these calls (see web `track-todos.ts`). `tools` is an allowlist, so
+// they must be named even though task-mode is default-on. They have no FS/git side effects.
+const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'];
+const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...TASK_TOOLS, ...WEB_TOOLS];
 // A plan turn adds ExitPlanMode — native plan mode's turn-ender and the one place the FULL plan text
 // reaches canUseTool headlessly (the CLI auto-writes the plan file, then calls ExitPlanMode with the
 // plan in its input).
@@ -94,7 +99,7 @@ const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
 const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS];
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
 // boundary is re-applied.
-const AUTO_APPROVE = ['Read', 'Glob', 'Grep', 'Task', ...WEB_TOOLS];
+const AUTO_APPROVE = ['Read', 'Glob', 'Grep', 'Task', ...TASK_TOOLS, ...WEB_TOOLS];
 
 // Subagent types the engine can spawn via `Task`. With `settingSources: []` there are NO on-disk agent
 // definitions, so this map is the ONLY set of spawnable subagents — every subagent is Sonnet-pinned by
