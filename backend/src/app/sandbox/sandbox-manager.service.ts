@@ -109,6 +109,7 @@ export class SandboxManager implements SandboxProvider {
         if (!warm) {
           this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
           await this.engine.start(existing.id);
+          await this.attachRedisBus(existing.id); // idempotent — re-ensure the redis bus after a restart
           await this.waitReady(existing.id);
         } else {
           this.logger.log(`reusing running sandbox ${name}`);
@@ -202,8 +203,22 @@ export class SandboxManager implements SandboxProvider {
       },
     });
     await this.engine.start(id);
+    await this.attachRedisBus(id);
     await this.waitReady(id);
     return this.augment(sandbox, id, false); // freshly created → cold
+  }
+
+  /**
+   * Attach a started sandbox to the internal Redis bus (`SANDBOX_BUS_NETWORK`) so the in-container engine
+   * can reach Redis — its only transport (ADR 0001). The bus is `internal: true`, so the sandbox reaches
+   * ONLY Redis off it, never the host or internet. Unset in dev (the sandbox reaches Redis via
+   * `host.docker.internal`), so this is a no-op there; set to `atlas-bus` in prod compose. Idempotent.
+   */
+  private async attachRedisBus(containerId: string): Promise<void> {
+    const bus = this.env.get('SANDBOX_BUS_NETWORK');
+    if (!bus) return;
+    await this.engine.ensureNetwork(bus);
+    await this.engine.connectNetwork(containerId, bus);
   }
 
   async teardown(sandbox: FeatureSandbox): Promise<void> {

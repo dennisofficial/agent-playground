@@ -8,9 +8,12 @@
 #   - /srv/atlas/state/             (blue/green active-color + tag)
 #   - /var/run/docker.sock          (the host Docker daemon socket)
 #
-# Sandboxes spawned by the backend do NOT join the `atlas` network — each gets its own
-# isolated per-sandbox `${name}-net` created by the sandbox manager. This network is
-# only for backend ↔ postgres ↔ redis ↔ web ↔ caddy communication.
+# Sandboxes spawned by the backend do NOT join the `atlas` network (no access to postgres/web/caddy).
+# Each gets its own isolated per-sandbox `${name}-net`, PLUS the internal `atlas-bus` network — the
+# only thing reachable there is redis (the engine reads its turn spec from / streams events to Redis;
+# Redis is the sole engine transport, ADR 0001). `atlas-bus` is `internal: true` (no internet egress),
+# so a sandbox gets redis and nothing else off it. The sandbox manager attaches each container to
+# `atlas-bus` when `SANDBOX_BUS_NETWORK` is set.
 #
 # TODO: replace <owner> with the actual GHCR owner (e.g. dennisofficial).
 
@@ -27,6 +30,10 @@ x-backend-common: &backend-common
     POSTGRES_HOST: postgres
     POSTGRES_SSL_MODE: disable
     REDIS_URL: "redis://redis:6379"
+    # The in-container engine reaches Redis over the internal `atlas-bus` net (service name `redis`).
+    SANDBOX_REDIS_URL: "redis://redis:6379"
+    # The network the sandbox manager attaches each sandbox to so it can reach Redis (and ONLY Redis).
+    SANDBOX_BUS_NETWORK: atlas-bus
     # Docker socket for sandbox management (same path on host and in container)
     DOCKER_SOCKET_PATH: /var/run/docker.sock
     # Sandbox base image (built on the box at first boot by SandboxImageBuilder)
@@ -119,7 +126,9 @@ services:
       timeout: 5s
       retries: 10
     networks:
+      # `atlas` so the backend reaches it; `atlas-bus` so per-thread sandboxes reach it (and nothing else).
       - atlas
+      - atlas-bus
     # No published ports — Redis is internal-only in production.
     restart: unless-stopped
 
@@ -169,4 +178,11 @@ networks:
   atlas:
     name: atlas
     driver: bridge
-    # Sandboxes are NOT added to this network — they get isolated per-sandbox nets.
+    # Sandboxes are NOT added to this network — they get isolated per-sandbox nets + `atlas-bus` (redis).
+  # The sandbox↔redis bus: `internal: true` = no gateway/internet egress, so a sandbox attached here can
+  # reach ONLY the services on it (redis), never the host or the internet. The sandbox manager attaches
+  # each per-thread container to it (see SANDBOX_BUS_NETWORK). Created here so redis can join it on boot.
+  atlas-bus:
+    name: atlas-bus
+    driver: bridge
+    internal: true

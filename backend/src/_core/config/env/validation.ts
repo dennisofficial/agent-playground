@@ -319,7 +319,11 @@ export interface IEnvConfig {
   //  - SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses to read its spec + stream events
   //    (reachable from the sandbox, e.g. redis://host.docker.internal:6380 in dev, redis://redis:6379 in
   //    prod over the internal bus). Falls back to REDIS_URL. Redis is the only engine transport (ADR 0001).
+  //  - SANDBOX_BUS_NETWORK: the internal Docker network the sandbox manager attaches each per-thread
+  //    container to so it can reach Redis (and ONLY Redis — the net is `internal: true`). Set to
+  //    `atlas-bus` in prod compose; UNSET in dev (the sandbox reaches Redis via host.docker.internal).
   SANDBOX_REDIS_URL?: string;
+  SANDBOX_BUS_NETWORK?: string;
   //  - TURN_STALE_MS: how long an `active_turns` heartbeat may go quiet before the leader watchdog
   //    finalizes the turn 'failed' (engine container died). Default 90000.
   TURN_STALE_MS?: number;
@@ -482,6 +486,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
   SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
+  SANDBOX_BUS_NETWORK: Joi.string().optional(),
   TURN_STALE_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 clustering / rolling-update
   LEADER_POLL_INTERVAL_MS: Joi.number().integer().min(250).optional(),
