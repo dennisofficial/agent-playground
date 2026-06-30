@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk } from './query-keys';
 import {
   answerQuestion,
+  provideSecret,
   approveThread,
   createThread,
   deleteThread,
@@ -17,6 +18,7 @@ import {
   retryThread,
   sayMessage,
   type AnswerQuestionBody,
+  type ProvideSecretBody,
   type ApproveBody,
   type CreateThreadBody,
   type ThreadMessage,
@@ -166,6 +168,18 @@ export function useAnswerQuestion(ref: ThreadRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: AnswerQuestionBody) => answerQuestion(ref, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/** Provide a secret value for a `request_secret` card (repo onboarding). The value goes straight to the
+ *  encrypted store; the card flips to "provided" and the brain continues. */
+export function useProvideSecret(ref: ThreadRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ProvideSecretBody) => provideSecret(ref, body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
     },

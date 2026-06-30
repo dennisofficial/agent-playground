@@ -248,6 +248,8 @@ export class ThreadLifecycleService {
     if (!row.container_id) await this.evictForCapacity();
 
     // Hydrate (granted secrets/seed) only when stale or the worktree was just restored, then attach.
+    // Onboarding threads skip secret rendering (their worktree must never hold a real secret value).
+    const kindRow = await this.threads.findOne({ where: { id: threadId }, select: { id: true, kind: true } });
     const { sandbox: attached, hydrationSig } = await this.provisioner.provisionAndAttach({
       sandbox: await this.rowToSandbox(row),
       orgId,
@@ -255,6 +257,7 @@ export class ThreadLifecycleService {
       repoDbId: row.repo_id,
       knownSig: row.hydration_sig ?? undefined,
       forceHydrate: worktreeRestored,
+      isOnboarding: kindRow?.kind === 'onboarding',
     });
 
     const wasReset = attached.warm === false;
@@ -324,6 +327,12 @@ export class ThreadLifecycleService {
       this.logger.warn(`deleteThreadDeep: ticket revert failed for thread ${threadId}: ${err}`);
     });
 
+    // 2b. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
+    //     (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
+    await this.projects
+      .update({ org_id: orgId, onboarding_thread_id: threadId }, { onboarding_thread_id: null })
+      .catch(() => undefined);
+
     // 3. Delete the thread row; the FK ON DELETE CASCADE removes every child row with it.
     const res = await this.threads.delete({ id: threadId, org_id: orgId });
     this.logger.log(`deleted thread ${threadId} (org ${orgId}); thread rows removed=${res.affected ?? 0}, children cascaded`);
@@ -359,6 +368,11 @@ export class ThreadLifecycleService {
           // not this thread's worktree, so it's safe to run before closeThread tears the worktree down.
           if (state === 'merged') {
             await this.reconcileLedgerOnMerge(thread.org_id, thread.repo_id);
+            // An onboarding thread's PR adds `.atlas/worktree.json` to the default branch — its merge is
+            // what makes the repo's worktree config LIVE, so stamp the repo onboarded now (Codex #4).
+            if (thread.kind === 'onboarding') {
+              await this.markRepoOnboarded(thread.org_id, thread.repo_id);
+            }
           }
           await this.closeThread(thread.id, thread.org_id);
           closed++;
@@ -513,6 +527,7 @@ export class ThreadLifecycleService {
         threadId: thread.id,
         repoDbId: project.id,
         forceHydrate: true,
+        isOnboarding: thread.kind === 'onboarding',
       });
 
       row.worktree_path = attached.worktreePath;
@@ -537,6 +552,19 @@ export class ThreadLifecycleService {
     }
 
     return row;
+  }
+
+  /**
+   * Stamp a repo's `onboarded_at` — proof its worktree provisioning config is live. Called by the brain's
+   * `finish_onboarding` (secrets-only / nothing to commit) and by `pollPrClosures` when an onboarding
+   * thread's `.atlas/worktree.json` PR merges. Idempotent (only stamps when currently null).
+   */
+  async markRepoOnboarded(orgId: string, repoId: string): Promise<void> {
+    await this.projects.update(
+      { id: repoId, org_id: orgId, onboarded_at: IsNull() },
+      { onboarded_at: new Date() },
+    );
+    this.logger.log(`repo ${repoId} (org ${orgId}) marked onboarded`);
   }
 
   /** Resolve the `ProjectRepo` (clone path + token) for a sandbox row — keyed by the repo's SLUG. */

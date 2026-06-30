@@ -2,7 +2,7 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { GithubPrService, parseGithubRepoUrl } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -155,6 +155,15 @@ export class OnboardingService {
     );
     this.logger.log(`connected repo ${slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`);
 
+    // Once a repo is reachable AND the org can actually run Atlas, kick a one-off repo-onboarding thread
+    // (idempotent — won't re-spawn). Fire-and-forget so connect returns immediately. Covers re-connecting a
+    // new repo to an already-active org; the first repo on a not-yet-runnable org is covered by tryActivate.
+    if (validation.ok) {
+      void this.maybeStartRepoOnboarding(orgId, repo.id).catch((err) =>
+        this.logger.warn(`repo onboarding spawn failed for ${repo.id}: ${err}`),
+      );
+    }
+
     return {
       id: repo.id,
       slug,
@@ -164,6 +173,51 @@ export class OnboardingService {
       accessOk: validation.ok,
       ...(validation.reason ? { reason: validation.reason } : {}),
     };
+  }
+
+  /**
+   * Spawn the one-off repo-ONBOARDING thread (Atlas-run `claude init`) for a connected repo — but only when
+   * (a) the org is RUNNABLE (keys + engine auth + GitHub PAT present, so the brain can actually run), (b)
+   * the repo's access is validated, and (c) it hasn't been onboarded already. Idempotency + the
+   * re-spawn guard are the `repos.onboarding_thread_id` marker, set under a conditional UPDATE so two
+   * concurrent triggers (connectRepo + tryActivate) can't double-spawn. Best-effort + fire-and-forget by
+   * the callers. The brain/store + session manager are resolved LAZILY (the same module-cycle avoidance
+   * `disconnectRepo` uses — onboarding → brain would otherwise close an ES module cycle).
+   */
+  async maybeStartRepoOnboarding(orgId: string, repoId: string): Promise<void> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo || !repo.access_ok || repo.onboarding_thread_id) return; // gone / not validated / already done
+    const status = await this.status(orgId);
+    if (!(status.steps.llmKey && status.steps.engineAuth && status.steps.githubPat)) {
+      return; // org can't run Atlas yet — tryActivate will re-trigger once the credentials land
+    }
+
+    const { BrainStoreService } = await import('../brain/brain-store.service.js');
+    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
+    const store = this.moduleRef.get(BrainStoreService, { strict: false });
+    const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
+
+    const threadId = await store.createFollowUpThread({
+      orgId,
+      repoId,
+      title: `Onboarding ${repo.name}`,
+      baseBranch: repo.default_branch ?? 'main',
+      kind: 'onboarding',
+    });
+
+    // Claim the spawn: only the trigger that flips `onboarding_thread_id` from NULL wins; a loser deletes
+    // its orphan thread row and bails (no double onboarding).
+    const claim = await this.repos.update(
+      { id: repoId, org_id: orgId, onboarding_thread_id: IsNull() },
+      { onboarding_thread_id: threadId },
+    );
+    if (!claim.affected) {
+      await this.threads.delete({ id: threadId, org_id: orgId }).catch(() => undefined);
+      return;
+    }
+
+    this.logger.log(`spawned repo-onboarding thread ${threadId} for ${orgId}/${repo.slug}`);
+    await sessions.startOnboardingThread(threadId, orgId, repoId);
   }
 
   /**
@@ -363,8 +417,27 @@ export class OnboardingService {
     if (status.missing.length === 0 && status.lifecycle !== 'active') {
       await this.orgs.update({ id: orgId }, { status: 'active' });
       this.logger.log(`org ${orgId} fully configured → active`);
+      // The org just became runnable — kick onboarding for any connected-but-not-yet-onboarded repo (this
+      // is the path that covers the FIRST repo, connected before the credentials were in place). Idempotent
+      // + fire-and-forget; never blocks activation.
+      void this.spawnOnboardingForPendingRepos(orgId).catch((err) =>
+        this.logger.warn(`post-activation onboarding spawn failed for org ${orgId}: ${err}`),
+      );
       return { ...status, lifecycle: 'active' };
     }
     return status;
+  }
+
+  /** Trigger `maybeStartRepoOnboarding` for every access_ok repo of an org that hasn't been onboarded yet. */
+  private async spawnOnboardingForPendingRepos(orgId: string): Promise<void> {
+    const repos = await this.repos.find({
+      where: { org_id: orgId, access_ok: true, onboarding_thread_id: IsNull() },
+      select: { id: true },
+    });
+    for (const r of repos) {
+      await this.maybeStartRepoOnboarding(orgId, r.id).catch((err) =>
+        this.logger.warn(`repo onboarding spawn failed for ${r.id}: ${err}`),
+      );
+    }
   }
 }

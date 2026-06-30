@@ -114,7 +114,24 @@ export interface WebQuestionCard {
   loggedDecision?: boolean;
 }
 
-export type WebCard = WebApprovalCard | WebVerdictCard | WebQuestionCard;
+/**
+ * A secure SECRET request the onboarding brain posed via `request_secret` — rendered as a masked input.
+ * The operator's value POSTs to `…/threads/:threadId/provide-secret`, which stores it ENCRYPTED + grants
+ * it; the value is NEVER part of this card. When `provided_at` is set the card renders a compact "provided"
+ * state. Mirrors the backend `WebSecretInputCard` (deliberately value-free).
+ */
+export interface WebSecretInputCard {
+  type: 'secret_input_card';
+  threadId: string;
+  requestId: string;
+  name: string;
+  path: string;
+  description: string;
+  provided_at?: string;
+  delivered_at?: string;
+}
+
+export type WebCard = WebApprovalCard | WebVerdictCard | WebQuestionCard | WebSecretInputCard;
 
 // ── Pipeline (`…/threads/:threadId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a track's locked plan — the execute folder's leaf (a Claude Code session). */

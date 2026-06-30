@@ -37,6 +37,7 @@ function makeController(threadOrgId: string) {
     { available: false } as never, // realtime
     { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
     { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
+    { write: async () => undefined, grant: async () => undefined } as never, // secrets (WorktreeSecretStore)
   );
   return { controller, threads, threadLifecycle };
 }

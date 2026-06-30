@@ -18,6 +18,7 @@ import {
 import { ToolGroup, segmentToolRun, type ToolItem } from './tool-calls';
 import { ApprovalCardView, VerdictCardView } from './approval-card';
 import { QuestionCardView } from './question-card';
+import { SecretCardView } from './secret-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildStepCard, indexPhaseBlocks } from './phases';
 import { Composer } from './composer';
@@ -221,6 +222,9 @@ function renderLog(
         break;
       case 'question':
         nodes.push(<QuestionCardView key={message.ts} card={c.card} threadRef={threadRef} />);
+        break;
+      case 'secret':
+        nodes.push(<SecretCardView key={message.ts} card={c.card} threadRef={threadRef} />);
         break;
       case 'event':
         nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);

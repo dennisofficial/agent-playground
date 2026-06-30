@@ -35,7 +35,7 @@ import type { EventStimulus } from '../domain';
 import { UNTRUSTED_OPEN } from '../stimulus';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
-import type { CredentialResolver } from '../onboarding';
+import type { CredentialResolver, WorktreeSecretStore } from '../onboarding';
 
 /**
  * R3 GATE TESTS — two assertions:
@@ -76,6 +76,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
     clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
     findUndeliveredAnsweredQuestions: vi.fn().mockResolvedValue([]),
+    // Secure secret-request gate (request_secret lifecycle); default to "no request open".
+    openSecretRequest: vi.fn().mockResolvedValue({ ok: true }),
+    awaitingSecretId: vi.fn().mockResolvedValue(null),
+    getSecretCard: vi.fn().mockResolvedValue(null),
+    markSecretProvided: vi.fn().mockResolvedValue(undefined),
+    markSecretDelivered: vi.fn().mockResolvedValue(undefined),
+    clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
+    findUndeliveredProvidedSecrets: vi.fn().mockResolvedValue([]),
     // R4 async plan-review seam.
     appendSystemEvent: vi.fn().mockResolvedValue(undefined),
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
@@ -298,6 +306,12 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         reposWithGit: async () => [],
       } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {
+        write: async () => undefined,
+        grant: async () => undefined,
+        listGrants: async () => [],
+        read: async () => null,
+      } as unknown as WorktreeSecretStore,
     );
   });
 
@@ -856,10 +870,15 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
       latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
+      loadJob: vi.fn().mockResolvedValue({ kind: null }),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
+      awaitingSecretId: vi.fn().mockResolvedValue(null),
+      getSecretCard: vi.fn().mockResolvedValue(null),
+      markSecretDelivered: vi.fn().mockResolvedValue(undefined),
+      clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
@@ -926,6 +945,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         reposWithGit: async () => [],
       } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {
+        write: async () => undefined,
+        grant: async () => undefined,
+        listGrants: async () => [],
+        read: async () => null,
+      } as unknown as WorktreeSecretStore,
     );
     return { manager, store, lifecycle, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness };
   }
@@ -1174,6 +1199,10 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       getQuestionCard: vi.fn().mockResolvedValue(null),
       markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingQuestion: vi.fn().mockResolvedValue(undefined),
+      awaitingSecretId: vi.fn().mockResolvedValue(null),
+      getSecretCard: vi.fn().mockResolvedValue(null),
+      markSecretDelivered: vi.fn().mockResolvedValue(undefined),
+      clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
       setTurnActive: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
@@ -1213,6 +1242,12 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
         reposWithGit: async () => [],
       } as unknown as RepoDecisionManifestService,
       { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {
+        write: async () => undefined,
+        grant: async () => undefined,
+        listGrants: async () => [],
+        read: async () => null,
+      } as unknown as WorktreeSecretStore,
     );
     return { manager, store };
   }
@@ -1288,7 +1323,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // store … surface + turnRegistry (10)
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 13 … 23
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 13 … 24 (incl. secretStore)
     );
     return { manager, stimulusRows };
   }

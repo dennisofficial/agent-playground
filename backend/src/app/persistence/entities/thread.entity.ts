@@ -123,6 +123,18 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   awaiting_question_id!: string | null;
 
+  /**
+   * The durable SECURE-SECRET gate — the `requestId` of a `request_secret` card this thread is awaiting an
+   * operator value for, or null. Parallel to {@link awaiting_question_id} but kept SEPARATE so the two
+   * human-input lanes don't collide and so secret delivery keeps its own crash-safe lifecycle. Set
+   * atomically with the secret card by `request_secret` (`BrainStoreService.openSecretRequest`). The value
+   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorktreeSecretStore`
+   * via the `provide-secret` endpoint, which stamps the card `provided_at`; this gate is cleared only once
+   * the masked-confirmation delivery turn succeeds (so a crash mid-delivery re-delivers on boot).
+   */
+  @Column({ type: 'text', nullable: true })
+  awaiting_secret_id!: string | null;
+
   /** The locked decision record (FK → decision_records.id); null until the upfront grill produces one. */
   @Column({ type: 'uuid', nullable: true })
   decision_record_id!: string | null;

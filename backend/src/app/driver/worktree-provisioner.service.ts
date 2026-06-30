@@ -17,6 +17,11 @@ export interface ProvisionAndAttachInput {
   knownSig?: string;
   /** Force a (re-)hydration regardless of `knownSig` — e.g. a freshly cut / restored worktree. */
   forceHydrate?: boolean;
+  /**
+   * The owning thread is an ONBOARDING thread (`kind='onboarding'`) → skip secret rendering so its
+   * worktree never holds a real secret value (mounts/seed still apply). See {@link WorktreeHydrator}.
+   */
+  isOnboarding?: boolean;
 }
 
 export interface ProvisionAndAttachResult {
@@ -67,6 +72,7 @@ export class WorktreeProvisioner {
         slug: sandbox.repoId,
         orgId,
         repoDbId,
+        ...(input.isOnboarding ? { skipSecrets: true } : {}),
       });
       // Surface a bad/incomplete `.atlas/worktree.json` to the OPERATOR (it never errors the build). The
       // passive-awareness marker is drained into the next operator turn so the brain can relay it — no

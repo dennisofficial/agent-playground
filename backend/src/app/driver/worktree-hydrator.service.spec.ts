@@ -67,8 +67,8 @@ describe('WorktreeHydrator', () => {
     writeFileSync(join(wt, '.atlas', 'worktree.json'), JSON.stringify(obj));
   }
 
-  it('renders a GRANTED, gitignored secret atomically at 0600 and records it in the sidecar', async () => {
-    writeManifest({ secrets: [{ path: '.env.keys', from: 'dotenvxPrivateKeys' }] });
+  it('renders a GRANTED, gitignored secret (NO manifest needed) atomically at 0600 + sidecar', async () => {
+    // Grant-driven: no `.atlas/worktree.json` secrets[] entry — the owner grant alone drives rendering.
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
       fakeSecrets({
@@ -87,7 +87,7 @@ describe('WorktreeHydrator', () => {
     expect(readForbiddenPaths(wt)).toEqual(['.env.keys']);
   });
 
-  it('does NOT render an UNGRANTED secret', async () => {
+  it('renders NOTHING when there are no grants (a manifest secrets[] entry is not authority)', async () => {
     writeManifest({ secrets: [{ path: '.env.keys', from: 'dotenvxPrivateKeys' }] });
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
@@ -99,8 +99,20 @@ describe('WorktreeHydrator', () => {
     expect(existsSync(join(wt, '.env.keys'))).toBe(false);
   });
 
+  it('skips ALL secret rendering for an onboarding thread (skipSecrets), even when granted', async () => {
+    const h = new WorktreeHydrator(
+      fakeGit(new Set(['.env.keys'])),
+      fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: '.env.keys' }] }),
+      fakeEnv(),
+    );
+    const { forbiddenPaths: forbidden } = await h.hydrateFiles({
+      worktreePath: wt, slug: SLUG, orgId: ORG, repoDbId: REPO, skipSecrets: true,
+    });
+    expect(forbidden).toEqual([]);
+    expect(existsSync(join(wt, '.env.keys'))).toBe(false);
+  });
+
   it('refuses a granted secret whose target is NOT gitignored (PR-leak guard)', async () => {
-    writeManifest({ secrets: [{ path: 'config.json', from: 's' }] });
     const h = new WorktreeHydrator(
       fakeGit(new Set()), // nothing ignored
       fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: 'config.json' }] }),
@@ -112,7 +124,6 @@ describe('WorktreeHydrator', () => {
   });
 
   it('yields no secrets when repoDbId is absent (gate/legacy path)', async () => {
-    writeManifest({ secrets: [{ path: '.env.keys', from: 's' }] });
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
       fakeSecrets({ values: { s: 'v' }, grants: [{ name: 's', path: '.env.keys' }] }),
@@ -152,17 +163,23 @@ describe('WorktreeHydrator', () => {
     expect(h.resolveMounts(wt)).toEqual([{ path: '.cocoindex', mode: 'per-thread' }]);
   });
 
-  it('computeSig changes when a referenced secret version changes', async () => {
-    writeManifest({ secrets: [{ path: '.env.keys', from: 'k' }] });
-    const h1 = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({ versions: { k: 1 } }), fakeEnv());
-    const h2 = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({ versions: { k: 2 } }), fakeEnv());
-    const a = await h1.computeSig(wt, ORG);
-    const b = await h2.computeSig(wt, ORG);
+  it('computeSig changes when a GRANTED secret version changes (rotation re-triggers hydration)', async () => {
+    const h1 = new WorktreeHydrator(
+      fakeGit(new Set()),
+      fakeSecrets({ grants: [{ name: 'k', path: '.env.keys' }], versions: { k: 1 } }),
+      fakeEnv(),
+    );
+    const h2 = new WorktreeHydrator(
+      fakeGit(new Set()),
+      fakeSecrets({ grants: [{ name: 'k', path: '.env.keys' }], versions: { k: 2 } }),
+      fakeEnv(),
+    );
+    const a = await h1.computeSig(wt, ORG, REPO);
+    const b = await h2.computeSig(wt, ORG, REPO);
     expect(a).not.toBe(b);
   });
 
   it('computeSig changes when a grant is added (so granting re-triggers hydration)', async () => {
-    writeManifest({ secrets: [{ path: '.env.keys', from: 'k' }] });
     const ungranted = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({ grants: [] }), fakeEnv());
     const granted = new WorktreeHydrator(
       fakeGit(new Set()),
@@ -174,15 +191,16 @@ describe('WorktreeHydrator', () => {
     expect(a).not.toBe(b);
   });
 
-  it('returns an operator-facing notice for an ungranted secret', async () => {
+  it('notices that a legacy manifest secrets[] is ignored (renders from grants instead)', async () => {
     writeManifest({ secrets: [{ path: '.env.keys', from: 'dotenvxPrivateKeys' }] });
     const h = new WorktreeHydrator(
       fakeGit(new Set(['.env.keys'])),
       fakeSecrets({ values: { dotenvxPrivateKeys: 'v' }, grants: [] }),
       fakeEnv(),
     );
-    const { notices } = await h.hydrateFiles({ worktreePath: wt, slug: SLUG, orgId: ORG, repoDbId: REPO });
-    expect(notices.some((n) => /not granted/i.test(n))).toBe(true);
+    const { forbiddenPaths, notices } = await h.hydrateFiles({ worktreePath: wt, slug: SLUG, orgId: ORG, repoDbId: REPO });
+    expect(forbiddenPaths).toEqual([]); // secrets[] alone renders nothing
+    expect(notices.some((n) => /ignored/i.test(n) && /grant/i.test(n))).toBe(true);
   });
 
   it('surfaces a malformed manifest as a notice (never throws)', async () => {

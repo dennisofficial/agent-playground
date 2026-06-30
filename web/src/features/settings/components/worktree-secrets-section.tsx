@@ -13,11 +13,12 @@ import {
 import { useOrgRepos } from '@/lib/api/thread-queries';
 
 /**
- * Worktree secrets — named, encrypted secret files (`.env.keys`, a service-account JSON, …) the worktree
- * hydrator renders into a thread's sandbox. The list is names-only (values are never returned). A secret
- * is INERT until an owner GRANTS it for a specific repo + destination path: a repo's committed
- * `.atlas/worktree.json` only requests a secret, the grant here is what authorizes it. Owner-only writes
- * (the server enforces it; members get a read-only view).
+ * Worktree secrets — named, encrypted secret files (`.env`, `.env.keys`, a service-account JSON, …) the
+ * worktree hydrator renders into a thread's sandbox. The list is names-only (values are never returned). A
+ * secret is INERT until an owner GRANTS it to a specific repo + destination path — the grant IS the render
+ * instruction (the committed `.atlas/worktree.json` carries mounts/seed only, never secrets). Grants are
+ * created here, or during repo onboarding by the secure secret prompt. Owner-only writes (the server
+ * enforces it; members get a read-only view).
  */
 export function WorktreeSecretsSection({ orgId, role }: { orgId: string; role: string }) {
   const { data, isLoading, isError } = useWorktreeSecrets(orgId);
@@ -32,8 +33,8 @@ export function WorktreeSecretsSection({ orgId, role }: { orgId: string; role: s
       <p className="mb-7 mt-1.5 text-[13px] leading-relaxed text-dim">
         Named secret files the build renders into a thread’s sandbox (e.g. <code className="font-mono text-[12px]">.env.keys</code>).
         Encrypted at rest — values are never shown. A secret only takes effect once you <strong>grant</strong> it
-        to a repo and path; the repo’s <code className="font-mono text-[12px]">.atlas/worktree.json</code> can request it but
-        can’t authorize itself.
+        to a repo and path — the grant is what renders it (the repo’s <code className="font-mono text-[12px]">.atlas/worktree.json</code> carries
+        mounts and seed only, never secrets). Atlas also creates grants for you during repo onboarding.
       </p>
 
       {!isOwner ? (
@@ -80,7 +81,7 @@ function SecretsCard({ orgId, names, canManage }: { orgId: string; names: string
         </span>
         <div className="flex-1">
           <div className="text-[13.5px] font-semibold text-text">Secret values</div>
-          <div className="mt-0.5 text-[11px] text-faint">Named, encrypted — referenced by a manifest’s <code className="font-mono">from</code></div>
+          <div className="mt-0.5 text-[11px] text-faint">Named, encrypted — rendered to a repo + path by a grant</div>
         </div>
         {canManage && !adding ? (
           <button

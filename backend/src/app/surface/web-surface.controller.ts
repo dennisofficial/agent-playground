@@ -35,12 +35,15 @@ import { LiveTurnStore } from './live-turn-store';
 import { ThreadTitleService } from './thread-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebQuestionCard } from './web-question-card';
+import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
+import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
+import { WorktreeSecretStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity, RepoEntity, ThreadEntity, UserEntity } from '../persistence/entities';
 import { deriveNeedsYou } from '../domain/thread';
@@ -175,6 +178,12 @@ interface AnswerQuestionDto {
   answer: string;
   answeredBy?: string;
 }
+interface ProvideSecretDto {
+  /** The secret card's id (its message `ts`). */
+  requestId: string;
+  /** The plaintext secret value — written to the encrypted store + granted, NEVER persisted in the card. */
+  value: string;
+}
 
 /** Operator-visible message provenance, by AUDIENCE. See the `/messages` mapping for the full rationale. */
 export type WebMessageSource =
@@ -222,6 +231,9 @@ export class WebSurfaceController {
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
+    // Repo onboarding: the ONLY place a `request_secret` plaintext value lands — straight to the
+    // encrypted store + a grant, never the transcript (owner-gated; see `provideSecret`).
+    private readonly secrets: WorktreeSecretStore,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -578,6 +590,58 @@ export class WebSurfaceController {
       thread.repo_id,
       threadId,
       `The operator answered your question ${JSON.stringify(question)}: ${answer}`,
+      { orgId: org.id },
+    );
+    return { ok: true, ts };
+  }
+
+  /**
+   * `POST …/threads/:threadId/provide-secret` — provide the value for a brain `request_secret` card during
+   * repo onboarding. THE ONLY PLACE A SECRET VALUE LIVES: it goes straight to the encrypted
+   * `WorktreeSecretStore` + an owner grant, and is NEVER written to the card, the transcript, or any brain
+   * tool I/O. OWNER-ONLY (`OrgOwnerGuard`) — writing a secret + grant is an Administer action everywhere
+   * else. Gated on the thread's durable `awaiting_secret_id`; stamps the card `provided_at` (not the value)
+   * and delivers a MASKED confirmation to the brain, whose success tail stamps delivered + clears the gate.
+   */
+  @Post('orgs/:orgId/repos/:repoId/threads/:threadId/provide-secret')
+  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
+  async provideSecret(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('threadId') threadId: string,
+    @Body() body: ProvideSecretDto,
+  ): Promise<{ ok: boolean; ts: string }> {
+    const value = body?.value;
+    if (!body?.requestId || value == null || value === '') {
+      throw new BadRequestException('requestId and a non-empty value are required');
+    }
+    const thread = await this.requireThread(threadId, org.id);
+    const card = await this.messages.findOne({
+      where: { thread_id: threadId, ts: body.requestId, kind: 'card' },
+    });
+    const payload = card?.card as WebSecretInputCard | undefined;
+    if (!card || payload?.type !== 'secret_input_card') {
+      throw new BadRequestException('no such secret request on this thread');
+    }
+    // Gate against stale / already-handled cards (idempotent — e.g. a double submit): only the thread's
+    // currently-open secret request is fillable, and only once.
+    if (thread.awaiting_secret_id !== body.requestId || payload.delivered_at) {
+      return { ok: false, ts: '' };
+    }
+    if (payload.provided_at != null) {
+      return { ok: true, ts: '' }; // already provided; a delivery turn is in flight / queued
+    }
+    // Write the value to the ENCRYPTED store + create the owner grant (name → repo → path). This is the
+    // value's only resting place; everything downstream is masked.
+    await this.secrets.write(org.id, payload.name, value);
+    await this.secrets.grant(org.id, thread.repo_id, payload.name, payload.path);
+    // Stamp the card PROVIDED (no value), then deliver a MASKED confirmation. The gate clears only on the
+    // delivery turn's success tail, so a crash before it re-delivers on boot (at-least-once).
+    card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
+    await this.messages.save(card);
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      threadId,
+      `The operator provided the secret \`${payload.name}\` (stored encrypted, granted to \`${payload.path}\`). Continue onboarding.`,
       { orgId: org.id },
     );
     return { ok: true, ts };

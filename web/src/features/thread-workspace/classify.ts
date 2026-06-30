@@ -1,4 +1,4 @@
-import type { WebApprovalCard, WebQuestionCard, WebVerdictCard } from '@/lib/api/types';
+import type { WebApprovalCard, WebQuestionCard, WebSecretInputCard, WebVerdictCard } from '@/lib/api/types';
 import type { ThreadMessage } from '@/lib/api/thread-api';
 
 /**
@@ -16,6 +16,8 @@ export type ClassifiedMessage =
   | { kind: 'approval'; message: ThreadMessage; card: WebApprovalCard }
   | { kind: 'verdict'; message: ThreadMessage; card: WebVerdictCard }
   | { kind: 'question'; message: ThreadMessage; card: WebQuestionCard }
+  /** A secure secret request (repo onboarding) — rendered as a masked input card. */
+  | { kind: 'secret'; message: ThreadMessage; card: WebSecretInputCard }
   | { kind: 'event'; message: ThreadMessage; tone: SystemTone }
   /** System→operator+Atlas review block (e.g. Codex plan-review findings). Rendered as a distinct panel. */
   | { kind: 'system_shared'; message: ThreadMessage }
@@ -64,6 +66,9 @@ export function classifyMessage(message: ThreadMessage): ClassifiedMessage {
   }
   if (message.card?.type === 'question_card') {
     return { kind: 'question', message, card: message.card };
+  }
+  if (message.card?.type === 'secret_input_card') {
+    return { kind: 'secret', message, card: message.card };
   }
 
   // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source.

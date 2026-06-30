@@ -52,4 +52,24 @@ export class RepoEntity extends TimestampedEntity {
   /** When access was last validated; null until first checked. */
   @Column({ type: 'timestamptz', nullable: true })
   access_checked_at!: Date | null;
+
+  /**
+   * The id of the repo-onboarding thread (`kind='onboarding'`) spawned when this repo was connected on a
+   * runnable org — the RE-SPAWN SUPPRESSION marker. Set the moment the onboarding thread is created (NOT
+   * waiting for it to finish), so a reconnect/revalidate never spawns a second one. Null = never onboarded
+   * (eligible to spawn). Distinct from {@link onboarded_at} on purpose: this marks "started", that marks
+   * "the worktree config is live". Cleared if the onboarding thread is deleted before finishing, so a
+   * re-connect can re-spawn. Not a real FK (the thread may be deleted out from under it).
+   */
+  @Column({ type: 'uuid', nullable: true })
+  onboarding_thread_id!: string | null;
+
+  /**
+   * PROOF the repo's worktree provisioning config is live — stamped only when the onboarding thread's
+   * `.atlas/worktree.json` PR MERGES (or immediately at `finish_onboarding` when there was nothing to
+   * commit, e.g. secrets-only). NOT a spawn gate (that's {@link onboarding_thread_id}); a closed/unmerged
+   * config PR must never leave a repo falsely marked onboarded. Null until then.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  onboarded_at!: Date | null;
 }

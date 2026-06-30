@@ -179,6 +179,20 @@ export class FakeLocalGitService {
     return { ...sandbox, branch };
   }
 
+  /** Provision-path no-ops (real impls touch git/cache/submodules; nothing to do in the fake). */
+  async ensureBuildJunkExcluded(): Promise<void> {
+    // no-op
+  }
+
+  async ensureSubmodules(): Promise<void> {
+    // no-op
+  }
+
+  /** In the fake world every hydrated path is treated as gitignored (no real index to consult). */
+  async isIgnored(): Promise<boolean> {
+    return true;
+  }
+
   async hasChanges(): Promise<boolean> {
     return true;
   }

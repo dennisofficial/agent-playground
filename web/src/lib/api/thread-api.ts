@@ -168,6 +168,21 @@ export function answerQuestion(
   return webJson(threadPath(ref, '/answer-question'), { method: 'POST', body: JSON.stringify(body) });
 }
 
+// ── Secure secret intake (repo onboarding) ─────────────────────────────────────────────────────────
+export interface ProvideSecretBody {
+  /** The secret card's id (its message ts). */
+  requestId: string;
+  /** The plaintext value — sent once over HTTPS to the encrypted store; never round-tripped back. */
+  value: string;
+}
+
+export function provideSecret(
+  ref: ThreadRef,
+  body: ProvideSecretBody,
+): Promise<{ ok: boolean; ts: string }> {
+  return webJson(threadPath(ref, '/provide-secret'), { method: 'POST', body: JSON.stringify(body) });
+}
+
 /** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
 export function retryThread(ref: ThreadRef): Promise<{ ok: boolean; status: string }> {
   return webJson(threadPath(ref, '/retry'), { method: 'POST' });

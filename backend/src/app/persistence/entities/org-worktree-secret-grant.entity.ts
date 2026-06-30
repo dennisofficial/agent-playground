@@ -4,10 +4,15 @@ import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
 
 /**
- * The AUTHORITY that turns a {@link OrgWorktreeSecretEntity} value into a file in a sandbox. An org
- * OWNER grants "secret `name` may be rendered to `path` in repo `repo_id`". The worktree hydrator only
- * materialises a manifest `secrets[]` entry when a matching grant exists — so a repo-controlled
- * `.atlas/worktree.json` (which any org member can commit) cannot self-authorise reading an org secret.
+ * The owner-authored RENDER INSTRUCTION that turns a {@link OrgWorktreeSecretEntity} value into a file in
+ * a sandbox: an org OWNER declares "secret `name` is rendered to `path` in repo `repo_id`". The worktree
+ * hydrator materialises a granted secret directly — the grant is BOTH the declaration and the authority,
+ * so a repo-controlled `.atlas/worktree.json` (which any org member can commit) plays no part in secret
+ * rendering at all (it carries mounts/seed only). Grants are created either in the Worktree-secrets
+ * settings tab or, during repo onboarding, by the secure `provide-secret` flow (also owner-gated).
+ *
+ * (Historically the grant only *authorised* a manifest `secrets[]` *request*; the manifest is no longer
+ * consulted for secrets — the grant alone drives rendering. See `WorktreeHydrator`.)
  *
  * Keyed by `repo_id` (the `repos.id` uuid — the FK identity), NOT the slug. Composite PK
  * (org_id, repo_id, name, path) makes a grant the exact (secret → repo → destination) triple.

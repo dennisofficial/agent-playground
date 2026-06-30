@@ -3,7 +3,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import type { Decision, Thread, ThreadKind, ThreadStatus } from '../domain';
 import { nextDecisionId } from '../domain';
-import type { WebQuestionCard } from '../surface';
+import type { WebQuestionCard, WebSecretInputCard } from '../surface';
 import { renderPlan } from '../driver/render-plan';
 import type { PlannedStep } from '../driver/planner-llm';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -425,6 +425,110 @@ export class BrainStoreService {
     return out;
   }
 
+  // ── secure secret-request gate (request_secret lifecycle: requested → provided → delivered) ──────────
+  // Parallel to the ask_question gate but on its OWN pointer (`awaiting_secret_id`). The VALUE never lands
+  // here or in the transcript — only the request metadata + lifecycle timestamps. The `provide-secret`
+  // endpoint writes the value to the encrypted store + stamps `provided_at`; the gate clears only once a
+  // masked-confirmation delivery turn runs (so a crash mid-delivery re-delivers on boot, at-least-once).
+
+  /**
+   * Open the secure-secret gate ATOMICALLY: persist the value-free secret card row AND point the thread's
+   * `awaiting_secret_id` at it in ONE transaction. Refuses (`alreadyOpen`) if an un-provided secret request
+   * is already open, so the brain can't stack requests.
+   */
+  async openSecretRequest(
+    threadId: string,
+    input: { requestId: string; card: WebSecretInputCard },
+  ): Promise<{ ok: boolean; alreadyOpen?: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const threads = m.getRepository(ThreadEntity);
+      const messages = m.getRepository(MessageEntity);
+      const thread = await threads.findOne({ where: { id: threadId } });
+      if (!thread) return { ok: false };
+      if (thread.awaiting_secret_id) {
+        const open = await messages.findOne({
+          where: { thread_id: threadId, ts: thread.awaiting_secret_id, kind: 'card' },
+        });
+        const card = open?.card as WebSecretInputCard | undefined;
+        if (card && card.provided_at == null) return { ok: false, alreadyOpen: true };
+      }
+      await messages.save(
+        messages.create({
+          thread_id: threadId,
+          author: 'Atlas',
+          author_id: 'atlas',
+          author_bot_id: 'atlas',
+          text: `Requested secret \`${input.card.name}\` → \`${input.card.path}\``,
+          kind: 'card',
+          ts: input.requestId,
+          card: input.card as unknown as Record<string, unknown>,
+        }),
+      );
+      await threads.update({ id: threadId }, { awaiting_secret_id: input.requestId });
+      return { ok: true };
+    });
+  }
+
+  /** The requestId this thread is awaiting a secret value for (the gate pointer), or null. */
+  async awaitingSecretId(threadId: string): Promise<string | null> {
+    const row = await this.threads.findOne({ where: { id: threadId } });
+    return row?.awaiting_secret_id ?? null;
+  }
+
+  /** Fetch one thread's secret-input card by id (the card's `ts`); null if absent / not a secret card. */
+  async getSecretCard(threadId: string, requestId: string): Promise<WebSecretInputCard | null> {
+    const row = await this.messages.findOne({
+      where: { thread_id: threadId, ts: requestId, kind: 'card' },
+    });
+    const card = row?.card as WebSecretInputCard | undefined;
+    return card?.type === 'secret_input_card' ? card : null;
+  }
+
+  /** Stamp a secret card PROVIDED (the operator submitted the value → encrypted store). No value stored. */
+  async markSecretProvided(threadId: string, requestId: string): Promise<void> {
+    await this.updateCardMessage(threadId, requestId, { provided_at: new Date().toISOString() });
+  }
+
+  /** Stamp a secret card DELIVERED (the masked confirmation reached the brain in a turn that ran). */
+  async markSecretDelivered(threadId: string, requestId: string): Promise<void> {
+    await this.updateCardMessage(threadId, requestId, { delivered_at: new Date().toISOString() });
+  }
+
+  /** Clear the secret gate iff it still equals `requestId` (compare-and-clear; ignores a superseded gate). */
+  async clearAwaitingSecret(threadId: string, requestId: string): Promise<void> {
+    await this.threads.update(
+      { id: threadId, awaiting_secret_id: requestId },
+      { awaiting_secret_id: null },
+    );
+  }
+
+  /**
+   * Boot reconciliation: threads whose gate points at a PROVIDED-but-UNDELIVERED secret card — the crash
+   * window where the operator submitted the value (durably stored + granted) but the host died before a
+   * turn handed the masked confirmation to the brain. The startup sweep re-delivers each (at-least-once).
+   * The VALUE is not returned (it's not stored on the card) — only the name/path for the masked notice.
+   */
+  async findUndeliveredProvidedSecrets(): Promise<
+    { threadId: string; orgId: string; repoId: string; requestId: string; name: string; path: string }[]
+  > {
+    const rows = await this.threads.find({ where: { awaiting_secret_id: Not(IsNull()) } });
+    const out: { threadId: string; orgId: string; repoId: string; requestId: string; name: string; path: string }[] = [];
+    for (const t of rows) {
+      const card = await this.getSecretCard(t.id, t.awaiting_secret_id!);
+      if (card?.provided_at != null && card.delivered_at == null) {
+        out.push({
+          threadId: t.id,
+          orgId: t.org_id,
+          repoId: t.repo_id,
+          requestId: t.awaiting_secret_id!,
+          name: card.name,
+          path: card.path,
+        });
+      }
+    }
+    return out;
+  }
+
   // ── pending decisions (the grilling working set; snapshotted into a record by submit_plan) ──────────
 
   /** Read a thread's working-set decisions logged so far (the `pending_decisions` jsonb). */
@@ -796,12 +900,16 @@ export class BrainStoreService {
     title: string | null;
     baseBranch: string | null;
     ticketId?: string | null;
+    /** Born-with kind — e.g. `'onboarding'` for an Atlas-run repo init thread. Default null. */
+    kind?: ThreadKind | null;
   }): Promise<string> {
     // Route a provided title through the shared titler so the new thread is born with a short, scannable
-    // sidebar label (fail-soft). A null title (no seed text) stays null.
-    const title = input.title
-      ? await this.titler.titleFor(input.title, input.orgId)
-      : null;
+    // sidebar label (fail-soft). A null title (no seed text) stays null. An onboarding thread keeps its
+    // explicit title verbatim (no LLM round-trip).
+    const title =
+      input.title && input.kind !== 'onboarding'
+        ? await this.titler.titleFor(input.title, input.orgId)
+        : input.title;
     const row = await this.threads.save(
       this.threads.create({
         org_id: input.orgId,
@@ -811,6 +919,7 @@ export class BrainStoreService {
         title,
         base_branch: input.baseBranch,
         ticket_id: input.ticketId ?? null,
+        ...(input.kind ? { kind: input.kind } : {}),
       }),
     );
     return row.id;

@@ -23,6 +23,7 @@ import {
   SYSTEM_SEED_AUTHOR,
   type WebQuestionCard,
   webQuestionCard,
+  webSecretInputCard,
   wrapSystemNotification,
 } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -39,7 +40,8 @@ import {
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/planner-llm';
 import { DecisionClassifier } from '../decision-gate';
-import { CredentialResolver } from '../onboarding';
+import { CredentialResolver, WorktreeSecretStore } from '../onboarding';
+import { loadWorktreeManifest, type MountMode } from '../driver/worktree-manifest';
 import { TicketService } from '../tickets';
 import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
 import { isTicketKind, isTicketPriority, isTicketStatus } from '../domain/ticket';
@@ -147,6 +149,8 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     private readonly manifest: RepoDecisionManifestService,
     // Crash recovery: back-fill brain turns that completed in-container but never reached `finish()`.
     private readonly turnRecovery: TurnRecoveryService,
+    // Repo onboarding: the encrypted per-org secret store + grants the secure `request_secret` flow writes.
+    private readonly secretStore: WorktreeSecretStore,
   ) {}
 
   // ── System prompt for the custom plan mode ──────────────────────────────────────────────────────
@@ -477,6 +481,56 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
   ].join('\n');
 
   /**
+   * The system prompt for an ONBOARDING thread (`kind='onboarding'`) — a one-off "init this repo" mission.
+   * Self-contained (NOT spliced onto {@link SYSTEM_PROMPT}, whose feature/plan/build framing is wrong here).
+   * The brain has only the onboarding toolset (`buildTools` omits the build/PR tools); the secrets guardrail
+   * is load-bearing — a real value must never enter the transcript or any tool I/O.
+   */
+  private static readonly ONBOARDING_SYSTEM_PROMPT = [
+    'You are Atlas, initialising a newly-connected repository — a ONE-OFF onboarding session, like',
+    '`claude init` for this repo. Your goal: discover everything a future build needs to compile, test, and',
+    'run this repo in a fresh sandbox, and RECORD it so every later thread starts ready-to-build.',
+    '',
+    'You work in /workspace (a real checkout). Investigate with your native tools (Bash, Read, Glob, Grep):',
+    '  - Install dependencies the way the repo expects (e.g. pnpm install) and note the exact command.',
+    '  - Read .env.example / .env.sample / README / framework configs to learn which ENV FILES + keys the',
+    '    app needs to build and run. Attempt a build/typecheck to see what is actually missing.',
+    '  - Note setup/build/test commands and any cache directories worth persisting between threads.',
+    'NEVER ask the operator anything the repo already answers — investigate first.',
+    '',
+    `All host tools are served by the "${BRIDGE_SERVER_NAME}" MCP server; call the FULLY-QUALIFIED name`,
+    `"mcp__${BRIDGE_SERVER_NAME}__<tool>" (the bare name fails). Every host tool takes a SINGLE object`,
+    'parameter named `args` — put ALL fields inside it (e.g. request_secret({ args: { name, path, description } })).',
+    'Your host tools this session:',
+    `  - mcp__${BRIDGE_SERVER_NAME}__ask_question        — ask/verify ONE thing with the operator (renders as a card)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__recall              — retrieve relevant memory facts`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__remember            — store a durable memory fact about this repo`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__request_secret      — securely ask the operator for a SECRET VALUE (see SECRETS)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__write_worktree_config — author .atlas/worktree.json (mounts + seed; NOT secrets)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: summarise + (if needed) open the config PR`,
+    '',
+    'SECRETS — env-file values (DATABASE_URL, API keys, …) are SECRET. NEVER ask for a secret value in chat,',
+    'and NEVER print, cat, echo, or repeat a secret value (do not read a real .env back to the operator). To',
+    'obtain one, call request_secret({ name, path, description }): the operator enters it through a secure',
+    'field that stores it ENCRYPTED and grants it to `path` for future build threads — you only ever see a',
+    'masked "✓ NAME provided" confirmation. Refer to secrets by NAME only. Request ONE secret at a time and',
+    'wait for the confirmation before continuing. The onboarding worktree has NO real secrets rendered — work',
+    'against .env.example / placeholders only.',
+    '',
+    'CONFIG — non-secret provisioning goes in .atlas/worktree.json via write_worktree_config({ mounts, seed }):',
+    '  - mounts: cache dirs to persist across threads (e.g. [{ path: ".next/cache", mode: "per-thread" }]).',
+    '  - seed: operator golden files to copy in (rare). Secrets do NOT go here — use request_secret.',
+    'Most repos need NO mounts/seed — only call write_worktree_config when there is something real to record.',
+    '',
+    'FINISH — when the repo is ready (deps install, required secrets registered, config recorded), call',
+    'finish_onboarding({ summary }) with a short plain-language summary of what you set up and what you asked',
+    'the operator for. If you wrote a .atlas/worktree.json it is committed and opened as a small PR to merge.',
+    '',
+    'You do NOT plan, grill for decisions, or build features here, and you have NO build/PR tools — this',
+    'session only initialises the repo. Investigate, register required secrets, record config, finish.',
+  ].join('\n');
+
+  /**
    * Register the leader-only boot crash-recovery sweeps. These are SINGLETON repair operations (they
    * reset `turn_active` flags and re-drive dropped deliveries), so they must run ONLY on the instance
    * that holds leadership — never on a standby that booted while another instance is still live. The
@@ -534,6 +588,29 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       }
     } catch (err) {
       this.logger.warn(`question-delivery reconciliation failed: ${err}`);
+    }
+
+    // 2b) Re-deliver any secret the operator PROVIDED (value durably stored + granted) but whose masked
+    //     confirmation turn a crash dropped before it reached the brain. Same at-least-once shape as the
+    //     answered-question sweep. The value is NOT carried — only the masked name/path notice.
+    try {
+      const pendingSecrets = await this.store.findUndeliveredProvidedSecrets();
+      if (pendingSecrets.length > 0) {
+        this.logger.log(`Leader: re-delivering ${pendingSecrets.length} provided-but-undelivered secret(s)`);
+        for (const s of pendingSecrets) {
+          const stimulus = harnessDeliveryStimulus({
+            threadId: s.threadId,
+            orgId: s.orgId,
+            repoId: s.repoId,
+            body: maskedSecretNotice(s.name, s.path),
+          });
+          void this.handleChatTurn(stimulus).catch((err) =>
+            this.logger.warn(`boot secret re-delivery failed for thread=${s.threadId}: ${err}`),
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`secret-delivery reconciliation failed: ${err}`);
     }
 
     // 3) Plan-review reconciliation (same at-least-once shape): re-run any review whose Codex turn was in
@@ -816,6 +893,16 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       if (card?.answer != null && card.deliveredAt == null) deliveredQuestionId = awaitingId;
     }
 
+    // Secret-gate delivery (same at-least-once shape): if the gate points at a PROVIDED, not-yet-DELIVERED
+    // secret card, THIS turn is its masked-confirmation delivery turn. Stamped + cleared only on the success
+    // tail below, so a failed turn re-delivers. The VALUE is never read here (it isn't on the card).
+    let deliveredSecretId: string | null = null;
+    const awaitingSecret = await this.store.awaitingSecretId(stimulus.threadId);
+    if (awaitingSecret) {
+      const card = await this.store.getSecretCard(stimulus.threadId, awaitingSecret);
+      if (card?.provided_at != null && card.delivered_at == null) deliveredSecretId = awaitingSecret;
+    }
+
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
     // we're setting up so the first turn isn't a silent ~30s wait while we clone + start a container.
@@ -875,8 +962,12 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       if (awarenessPrefix) task = `${awarenessPrefix}\n\n${task}`;
     }
 
+    // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
+    // toolset (the gating is enforced here, not just in prose — omitted tool names aren't registered).
+    const isOnboarding = (await this.store.loadJob(stimulus.threadId).catch(() => null))?.kind === 'onboarding';
+
     // Build the host-side tool dispatch table, scoped to this thread.
-    const tools = this.buildTools(stimulus);
+    const tools = this.buildTools(stimulus, isOnboarding);
 
     // All turns run inside the Docker sandbox container.
     const runner: EngineRunnerPort = this.engineRunner;
@@ -900,7 +991,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       engine: 'claude',
       task,
       cwd: sandbox.worktreePath,
-      systemPrompt: AgentSessionManager.SYSTEM_PROMPT,
+      systemPrompt: isOnboarding
+        ? AgentSessionManager.ONBOARDING_SYSTEM_PROMPT
+        : AgentSessionManager.SYSTEM_PROMPT,
       sandboxKey,
       ...(auth ? { auth } : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
@@ -1001,14 +1094,27 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         .clearAwaitingQuestion(stimulus.threadId, deliveredQuestionId)
         .catch((err) => this.logger.warn(`clearAwaitingQuestion failed: ${err}`));
     }
+
+    // SUCCESS TAIL — same for the secure-secret gate: the masked confirmation reached the brain this turn.
+    if (deliveredSecretId) {
+      await this.store
+        .markSecretDelivered(stimulus.threadId, deliveredSecretId)
+        .catch((err) => this.logger.warn(`markSecretDelivered failed: ${err}`));
+      await this.store
+        .clearAwaitingSecret(stimulus.threadId, deliveredSecretId)
+        .catch((err) => this.logger.warn(`clearAwaitingSecret failed: ${err}`));
+    }
   }
 
   // ── Host-side tool impls ───────────────────────────────────────────────────────────────────────
 
   /**
-   * Build the 6 tool impls for a chat turn, all scoped to the stimulus's thread/team/project.
+   * Build the host tool impls for a chat turn, all scoped to the stimulus's thread/team/project. When
+   * `onboarding` is true the thread is a repo-init thread (`kind='onboarding'`): it gets a CURATED,
+   * build-free toolset (explore + ask + the secure config tools) and NONE of the plan/build/PR tools —
+   * the omission is enforced (the in-container SDK only registers names present in the returned map).
    */
-  buildTools(stimulus: ChatStimulus): Record<string, ToolImpl> {
+  buildTools(stimulus: ChatStimulus, onboarding = false): Record<string, ToolImpl> {
     // CREATE a decision (the `create_decision` tool). Auto-attaches
     // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
     // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
@@ -1063,7 +1169,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       };
     };
 
-    return {
+    const tools: Record<string, ToolImpl> = {
       get_pipeline_state: async (_args) => {
         return this.driverStore.getPipelineState(stimulus.threadId, stimulus.orgId);
       },
@@ -1695,6 +1801,149 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         }
       },
     };
+
+    // Normal threads get the full toolset above. Onboarding threads get a curated, build-free subset.
+    if (!onboarding) return tools;
+    return {
+      ask_question: tools.ask_question,
+      recall: tools.recall,
+      remember: tools.remember,
+      request_secret: this.buildRequestSecretTool(stimulus),
+      write_worktree_config: this.buildWriteWorktreeConfigTool(stimulus),
+      finish_onboarding: this.buildFinishOnboardingTool(stimulus),
+    };
+  }
+
+  // ── Repo-onboarding tools (only handed to `kind='onboarding'` threads; see ONBOARDING_SYSTEM_PROMPT) ──
+
+  /**
+   * `request_secret({ name, path, description })` — securely request an env-file SECRET VALUE from the
+   * operator. Mirrors `ask_question`: posts a value-FREE card + opens the durable `awaiting_secret_id`
+   * gate, then the brain stops and waits. The value never passes through this tool — it arrives only at the
+   * owner-gated `provide-secret` endpoint, which writes it to the encrypted store + grants it; the brain
+   * later sees a masked confirmation. org/repo come from the closure (never tool args) — tenant safety.
+   */
+  private buildRequestSecretTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const name = String(args['name'] ?? '').trim();
+      const path = String(args['path'] ?? '').trim();
+      const description = String(args['description'] ?? '').trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        return { ok: false, reason: 'name must be an env-var-style identifier (e.g. DATABASE_URL)' };
+      }
+      if (!path || path.startsWith('/') || path.split('/').includes('..')) {
+        return { ok: false, reason: 'path must be a worktree-relative file path (e.g. .env), no leading / or ..' };
+      }
+      if (!description) return { ok: false, reason: 'description is required (why the secret is needed)' };
+      const requestId = `s-${randomUUID()}`;
+      const card = webSecretInputCard({ threadId: stimulus.threadId, requestId, name, path, description });
+      const opened = await this.store.openSecretRequest(stimulus.threadId, { requestId, card });
+      if (!opened.ok) {
+        return {
+          ok: false,
+          reason: opened.alreadyOpen
+            ? 'A secret request is already awaiting the operator — wait for it before requesting another.'
+            : 'Could not open the secret request (thread not found).',
+        };
+      }
+      return {
+        ok: true,
+        requestId,
+        message:
+          `Secure secret card posted for "${name}". Stop and wait — the operator's value goes straight to ` +
+          'encrypted storage; you will only see a masked confirmation. Never ask for the value in chat.',
+      };
+    };
+  }
+
+  /**
+   * `write_worktree_config({ mounts, seed })` — author the repo's committed `.atlas/worktree.json` (the
+   * NON-secret half: cache mounts + golden-seed files). Secrets are NEVER written here (they live as
+   * encrypted grants); a `secrets` field is rejected. Validated against the manifest schema before write.
+   */
+  private buildWriteWorktreeConfigTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      if (args['secrets'] !== undefined) {
+        return { ok: false, reason: 'secrets do not go in .atlas/worktree.json — use request_secret instead' };
+      }
+      const mounts = this.normalizeMounts(args['mounts']);
+      const seed = this.normalizeSeed(args['seed']);
+      const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
+      if (!sandbox) return { ok: false, reason: 'no sandbox for this thread yet' };
+      const dir = join(sandbox.worktreePath, '.atlas');
+      await mkdir(dir, { recursive: true });
+      const body = JSON.stringify({ mounts, seed }, null, 2) + '\n';
+      await writeFile(join(dir, 'worktree.json'), body, 'utf8');
+      // Re-parse through the loader to surface any limit/shape warnings to the brain.
+      const { warnings } = loadWorktreeManifest(sandbox.worktreePath);
+      return { ok: true, mounts: mounts.length, seed: seed.length, ...(warnings.length ? { warnings } : {}) };
+    };
+  }
+
+  /**
+   * `finish_onboarding({ summary })` — conclude the onboarding session. Posts the operator-visible summary.
+   * If a `.atlas/worktree.json` with mounts/seed was authored, commit it + open a small PR (the repo's
+   * `onboarded_at` is stamped when that PR MERGES, via `pollPrClosures`). Otherwise (secrets-only / nothing
+   * to commit) stamp `onboarded_at` immediately — secrets are already live in the backend.
+   */
+  private buildFinishOnboardingTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const summary = String(args['summary'] ?? '').trim();
+      const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
+      if (!sandbox) return { ok: false, reason: 'no sandbox for this thread yet' };
+      const { manifest } = loadWorktreeManifest(sandbox.worktreePath);
+      const hasConfig = manifest.mounts.length > 0 || manifest.seed.length > 0;
+
+      if (summary) await this.store.appendSystemEvent(stimulus.threadId, `🎉 Onboarding complete — ${summary}`);
+
+      if (!hasConfig) {
+        // Nothing to commit → the repo is provisioned purely by backend grants; mark it onboarded now.
+        await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
+        return { ok: true, prOpened: false, message: 'Onboarding complete. Repo marked ready.' };
+      }
+
+      // Commit `.atlas/worktree.json` and open a PR for the operator to merge (reuses the shared ship path:
+      // commit → autofix → push → open ONE PR → record pr_url/pr_number on the thread → flips it done).
+      try {
+        const job = await this.store.loadJob(stimulus.threadId);
+        const repo = await this.repos.resolve(job);
+        const result = await this.ship.ship({
+          job,
+          record: null,
+          repo,
+          sandbox,
+          commitMessage: 'Atlas: add .atlas/worktree.json (repo onboarding)',
+          notify: (m) => this.store.appendSystemEvent(stimulus.threadId, m),
+        });
+        return result
+          ? { ok: true, prOpened: true, prUrl: result.url, message: 'Opened a PR with the worktree config. Merge it to activate the config for future threads.' }
+          : { ok: true, prOpened: false, message: 'Wrote the config but no GitHub token is set — connect one to open the PR.' };
+      } catch (err) {
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  /** Coerce `write_worktree_config` mounts arg into validated {path, mode} specs (drops malformed entries). */
+  private normalizeMounts(raw: unknown): { path: string; mode: MountMode }[] {
+    if (!Array.isArray(raw)) return [];
+    const out: { path: string; mode: MountMode }[] = [];
+    for (const e of raw) {
+      const o = e as Record<string, unknown>;
+      const path = String(o?.['path'] ?? '').trim();
+      if (!path || path.startsWith('/') || path.split('/').includes('..')) continue;
+      const mode: MountMode = o?.['mode'] === 'shared-ro' ? 'shared-ro' : 'per-thread';
+      out.push({ path, mode });
+    }
+    return out;
+  }
+
+  /** Coerce `write_worktree_config` seed arg into a list of worktree-relative paths (drops malformed). */
+  private normalizeSeed(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((e) => String(e ?? '').trim())
+      .filter((p) => p && !p.startsWith('/') && !p.split('/').includes('..'));
   }
 
   /**
@@ -1925,6 +2174,33 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       orgId,
       repoId,
       body: firstMessage,
+      receivedAt: new Date(),
+      kind: 'chat',
+      trust: 'trusted',
+      threadId,
+      author: { id: 'atlas', displayName: 'Atlas' },
+      replyRoute: { surfaceId: 'web', threadRef: threadId },
+    };
+    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * Kick a repo-ONBOARDING thread's first turn (spawned by `OnboardingService` when a repo is connected on
+   * a runnable org). The thread is born `kind='onboarding'`; this seeds a synthetic Atlas-authored stimulus
+   * so the brain starts initialising the repo immediately (no human first message). The detailed mission +
+   * tool list live in `ONBOARDING_SYSTEM_PROMPT`; the seed body is just the opening nudge. The sandbox is
+   * lazily provisioned on this first turn.
+   */
+  async startOnboardingThread(threadId: string, orgId: string, repoId: string): Promise<void> {
+    const body =
+      'Begin onboarding this repository. Investigate how it builds and runs, register any required ' +
+      'secrets via request_secret, record non-secret config with write_worktree_config, then call ' +
+      'finish_onboarding. Verify anything uncertain with the operator.';
+    const stimulus: ChatStimulus = {
+      id: randomUUID(),
+      orgId,
+      repoId,
+      body,
       receivedAt: new Date(),
       kind: 'chat',
       trust: 'trusted',
@@ -2186,6 +2462,15 @@ const LEDGER_PROMOTION_PROMPT = [
  *  gets the buffered milestones. */
 function isOperatorAuthored(stimulus: ChatStimulus): boolean {
   return stimulus.author.id !== ATLAS_AUTHOR_ID && stimulus.author.id !== SYSTEM_SEED_AUTHOR.id;
+}
+
+/**
+ * The MASKED confirmation body delivered to the brain after the operator provides a secret — names only
+ * the secret + destination, NEVER the value. Used by both the live `provide-secret` delivery and the boot
+ * re-delivery sweep so the two read identically.
+ */
+function maskedSecretNotice(name: string, path: string): string {
+  return `The operator provided the secret \`${name}\` (stored encrypted, granted to \`${path}\`). Continue onboarding.`;
 }
 
 /**

@@ -17,15 +17,22 @@ export interface HydrateInput {
   orgId: string;
   /** The repo's uuid (`repos.id`) — grants are keyed by this. Absent → no secrets (gate/legacy). */
   repoDbId?: string;
+  /**
+   * Skip secret rendering entirely (mounts/seed still apply). Set for ONBOARDING threads: their worktree
+   * must never hold a real secret value (the brain has Bash and could `cat` it). Onboarding works against
+   * `.env.example`/placeholders; real secrets render only into BUILD threads.
+   */
+  skipSecrets?: boolean;
 }
 
 /**
- * Resolves a repo's committed `.atlas/worktree.json` into a hydrated worktree: renders GRANTED per-org
- * secrets to files, copies operator golden-seed files, and returns the validated cache mounts for the
- * sandbox to bind. Every materialized path is gitignore-guarded (so `commitAll`'s `git add -A` can't
- * sweep it into a PR) and traversal/symlink-guarded. The set of materialized paths is persisted to a
- * host-only sidecar so `commitAll`'s leak-scan can reject them even if the in-worktree manifest is later
- * edited.
+ * Hydrates a worktree from two sources: owner GRANTS (the authority for per-org secrets — see
+ * {@link WorktreeSecretStore}) and the repo's committed `.atlas/worktree.json` (mounts + golden seed
+ * ONLY; the manifest is NOT consulted for secrets). It renders each granted secret to its destination,
+ * copies operator golden-seed files, and returns the validated cache mounts for the sandbox to bind.
+ * Every materialized path is gitignore-guarded (so `commitAll`'s `git add -A` can't sweep it into a PR)
+ * and traversal/symlink-guarded; the set is persisted to a host-only sidecar so `commitAll`'s leak-scan
+ * can reject them even if the in-worktree manifest is later edited.
  *
  * Stateless and idempotent: callers decide WHEN to (re-)hydrate (thread paths gate on {@link computeSig};
  * gate/legacy paths re-hydrate every attach). This service never touches the container — the
@@ -67,12 +74,12 @@ export class WorktreeHydrator {
   async computeSig(worktreePath: string, orgId: string, repoDbId?: string): Promise<string> {
     const { manifest } = loadWorktreeManifest(worktreePath);
     const versions = await this.secrets.secretVersions(orgId);
-    const referenced = manifest.secrets
-      .map((s) => `${s.from}:${versions[s.from] ?? 0}`)
-      .sort();
-    const grants = repoDbId
-      ? (await this.secrets.listGrants(orgId, repoDbId)).map((g) => `${g.name}:${g.path}`).sort()
-      : [];
+    const grantList = repoDbId ? await this.secrets.listGrants(orgId, repoDbId) : [];
+    // Rendering is grant-driven, so the sig must track the GRANTED secrets' versions (a rotated value
+    // bumps `updated_at` → the sig changes → the next attach re-renders it) plus the grant set itself
+    // (name → path), NOT the manifest's legacy `secrets[]`.
+    const referenced = grantList.map((g) => `${g.name}:${versions[g.name] ?? 0}`).sort();
+    const grants = grantList.map((g) => `${g.name}:${g.path}`).sort();
     return createHash('sha256')
       .update(JSON.stringify({ manifest, referenced, grants }))
       .digest('hex');
@@ -96,34 +103,39 @@ export class WorktreeHydrator {
       this.logger.warn(`${msg} (${worktreePath})`);
     };
 
-    // ── secrets (category 1) ──────────────────────────────────────────────────────────────────
-    for (const s of manifest.secrets) {
-      let target: string;
-      try {
-        target = resolveSafeTarget(worktreePath, s.path);
-      } catch (err) {
-        note(`worktree secret "${s.path}" rejected (unsafe path): ${(err as Error).message}`);
-        continue;
-      }
-      // The manifest is a request, not authority: only an owner GRANT (keyed by repos.id) authorizes it.
-      if (!repoDbId || !(await this.secrets.isGranted(orgId, repoDbId, s.from, s.path))) {
+    // ── secrets (category 1) — rendered from owner GRANTS, not the manifest ─────────────────────
+    // The grant IS the render instruction AND the authority (owner-authored). The committed manifest is
+    // never consulted for secrets — so a repo-controlled `.atlas/worktree.json` can't read an org secret.
+    // Skipped wholesale for onboarding threads (their worktree must never hold a real secret value).
+    if (input.skipSecrets) {
+      this.logger.debug(`skipping secret hydration for ${worktreePath} (onboarding thread)`);
+    } else if (repoDbId) {
+      if (manifest.secrets.length) {
         note(
-          `worktree secret "${s.from}" → "${s.path}" is not granted for this repo — ` +
-            `grant it under Settings → Worktree secrets, or remove it from .atlas/worktree.json`,
+          `.atlas/worktree.json lists secrets[] — these are ignored. Secrets render from owner grants ` +
+            `(Settings → Worktree secrets); the manifest is mounts/seed only.`,
         );
-        continue;
       }
-      const value = await this.secrets.read(orgId, s.from);
-      if (value == null) {
-        note(`worktree secret "${s.from}" is granted but has no stored value — set it in Settings → Worktree secrets`);
-        continue;
+      for (const g of await this.secrets.listGrants(orgId, repoDbId)) {
+        let target: string;
+        try {
+          target = resolveSafeTarget(worktreePath, g.path);
+        } catch (err) {
+          note(`worktree secret "${g.path}" rejected (unsafe path): ${(err as Error).message}`);
+          continue;
+        }
+        const value = await this.secrets.read(orgId, g.name);
+        if (value == null) {
+          note(`worktree secret "${g.name}" is granted but has no stored value — set it in Settings → Worktree secrets`);
+          continue;
+        }
+        if (!(await this.git.isIgnored(worktreePath, g.path))) {
+          note(`worktree secret target "${g.path}" is NOT gitignored — refusing to render (it would leak into the PR); add it to .gitignore`);
+          continue;
+        }
+        await this.writeAtomic(target, value, 0o600);
+        forbidden.push(g.path);
       }
-      if (!(await this.git.isIgnored(worktreePath, s.path))) {
-        note(`worktree secret target "${s.path}" is NOT gitignored — refusing to render (it would leak into the PR); add it to .gitignore`);
-        continue;
-      }
-      await this.writeAtomic(target, value, 0o600);
-      forbidden.push(s.path);
     }
 
     // ── seed (category 3) ─────────────────────────────────────────────────────────────────────
