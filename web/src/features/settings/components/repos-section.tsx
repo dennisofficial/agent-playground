@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   AlertCircle,
   Check,
@@ -10,9 +11,10 @@ import {
   Plus,
   Power,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import type { SettingsSection } from '@/lib/routes';
+import { threadHref, type SettingsSection } from '@/lib/routes';
 import { BranchPicker } from '@/components/branch-picker';
 import { Spinner } from '@/components/ui/spinner';
 import { useOrgRepos } from '@/lib/api/thread-queries';
@@ -21,6 +23,7 @@ import {
   useOrgCredentials,
   useConnectRepo,
   useRevalidateRepo,
+  useReonboardRepo,
   useUpdateRepo,
   useDisconnectRepo,
 } from '@/lib/api/orgs';
@@ -62,6 +65,8 @@ export function ReposSection({
   const [disconnectTarget, setDisconnectTarget] = useState<RepoView | null>(null);
 
   const revalidate = useRevalidateRepo(orgId);
+  const reonboard = useReonboardRepo(orgId);
+  const router = useRouter();
 
   // Auto-clear the success/error flash.
   useEffect(() => {
@@ -76,6 +81,18 @@ export function ReposSection({
     if (revalidate.isPending) return;
     revalidate.mutate(repoId, {
       onError: (e) => setFlash({ tone: 'red', text: (e as Error)?.message || 'Re-validation failed.' }),
+    });
+  }
+
+  function onReonboard(repo: RepoView) {
+    if (reonboard.isPending) return;
+    reonboard.mutate(repo.id, {
+      onSuccess: ({ threadId }) => {
+        setFlash({ tone: 'green', text: `Atlas is onboarding ${repo.name} — opening the thread…` });
+        router.push(threadHref({ orgId, repoId: repo.id, threadId }));
+      },
+      onError: (e) =>
+        setFlash({ tone: 'red', text: (e as Error)?.message || 'Could not start onboarding.' }),
     });
   }
 
@@ -171,7 +188,9 @@ export function ReposSection({
                     repo={r}
                     canManage={canManage}
                     revalidating={revalidate.isPending && revalidate.variables === r.id}
+                    reonboarding={reonboard.isPending && reonboard.variables === r.id}
                     onRevalidate={() => onRevalidate(r.id)}
+                    onReonboard={() => onReonboard(r)}
                     onEdit={() => setEditingId(r.id)}
                     onDisconnect={() => setDisconnectTarget(r)}
                   />
@@ -533,14 +552,18 @@ function RepoRow({
   repo,
   canManage,
   revalidating,
+  reonboarding,
   onRevalidate,
+  onReonboard,
   onEdit,
   onDisconnect,
 }: {
   repo: RepoView;
   canManage: boolean;
   revalidating: boolean;
+  reonboarding: boolean;
   onRevalidate: () => void;
+  onReonboard: () => void;
   onEdit: () => void;
   onDisconnect: () => void;
 }) {
@@ -608,6 +631,23 @@ function RepoRow({
         {canManage ? (
           <>
             <div className="mt-0.5 flex items-center gap-1.5">
+              {repo.accessOk ? (
+                <button
+                  type="button"
+                  onClick={onReonboard}
+                  disabled={reonboarding}
+                  title={
+                    repo.onboardedAt
+                      ? 'Re-run Atlas onboarding — re-derive this repo’s setup (env files, build commands, cache)'
+                      : 'Onboard this repo with Atlas — it learns how to build/run the repo and records the setup'
+                  }
+                  className="flex items-center gap-1.5 rounded-sm border px-2.5 py-[5px] text-[11px] font-semibold text-accent transition hover:bg-surface-2 disabled:opacity-60"
+                  style={{ borderColor: 'var(--accent-line)' }}
+                >
+                  {reonboarding ? <Spinner className="h-3 w-3 text-accent" /> : <Sparkles size={12} />}
+                  {repo.onboardedAt ? 'Re-run setup' : 'Set up with Atlas'}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={onRevalidate}

@@ -221,6 +221,50 @@ export class OnboardingService {
   }
 
   /**
+   * Operator-initiated (RE-)ONBOARD of an already-connected repo — the explicit counterpart to the
+   * automatic {@link maybeStartRepoOnboarding}. Unlike the auto path it does NOT bail on the
+   * `onboarding_thread_id` re-spawn guard: it spawns a FRESH onboarding thread and overwrites the marker,
+   * so it works for repos connected before onboarding existed, repos already onboarded (re-derive config
+   * after the repo changed), or repos whose prior onboarding thread is gone. Requires the org to be
+   * runnable (keys + engine auth + GitHub PAT) and the repo's access validated. Returns the new thread id
+   * so the UI can deep-link straight into it. Org-scoped (404 on a cross-tenant id).
+   */
+  async reonboardRepo(orgId: string, repoId: string): Promise<{ threadId: string }> {
+    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    if (!repo) throw new NotFoundException('repo not found');
+    if (!repo.access_ok) {
+      throw new BadRequestException(
+        'This repo isn’t validated — re-validate GitHub access before running onboarding.',
+      );
+    }
+    const status = await this.status(orgId);
+    if (!(status.steps.llmKey && status.steps.engineAuth && status.steps.githubPat)) {
+      throw new BadRequestException(
+        'Finish org setup (Anthropic key, engine auth, GitHub PAT) before onboarding a repo.',
+      );
+    }
+
+    const { BrainStoreService } = await import('../brain/brain-store.service.js');
+    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
+    const store = this.moduleRef.get(BrainStoreService, { strict: false });
+    const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
+
+    const threadId = await store.createFollowUpThread({
+      orgId,
+      repoId,
+      title: `Onboarding ${repo.name}`,
+      baseBranch: repo.default_branch ?? 'main',
+      kind: 'onboarding',
+    });
+    // Explicit operator action — overwrite the marker (no first-time guard); the prior onboarding thread,
+    // if any, stays as history.
+    await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_thread_id: threadId });
+    this.logger.log(`re-onboarding thread ${threadId} for ${orgId}/${repo.slug} (operator-initiated)`);
+    await sessions.startOnboardingThread(threadId, orgId, repoId);
+    return { threadId };
+  }
+
+  /**
    * Re-probe a connected repo's GitHub access with the org's current token and persist the result
    * (`access_ok` + `access_checked_at`). Surfaces a rotated/expired PAT without a full reconnect; tries
    * to activate the org in case access just came good. Scoped to the org (404 on a cross-tenant id).

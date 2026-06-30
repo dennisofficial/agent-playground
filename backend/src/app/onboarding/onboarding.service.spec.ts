@@ -320,6 +320,29 @@ describe('OnboardingService', () => {
     });
   });
 
+  describe('reonboardRepo (operator-initiated re-onboard)', () => {
+    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+
+    it('404s when the repo does not exist', async () => {
+      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      await expect(svc.reonboardRepo('T1', 'nope')).rejects.toThrow(/not found/i);
+    });
+
+    it('rejects when the repo access is not validated', async () => {
+      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      await repos.repo.update({ id: connected.id }, { access_ok: false });
+      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(/validated/i);
+    });
+
+    it('rejects when the org cannot run Atlas yet (missing credentials)', async () => {
+      // access_ok repo, but the org has no LLM key / engine auth → not runnable.
+      const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(/finish org setup/i);
+    });
+  });
+
   describe('disconnectRepo', () => {
     const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
 

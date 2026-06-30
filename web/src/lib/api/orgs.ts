@@ -291,6 +291,22 @@ export function useRevalidateRepo(orgId: string) {
   });
 }
 
+/**
+ * (Re-)run the Atlas onboarding thread for a repo (owner only). Spawns a fresh onboarding thread even if
+ * the repo was onboarded before; returns its id so the caller can deep-link into it. Invalidates the repo
+ * list so the onboarding state (`onboardingThreadId`) refreshes.
+ */
+export function useReonboardRepo(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (repoId: string) =>
+      webJson<{ threadId: string }>(`/orgs/${orgId}/repos/${repoId}/onboard`, { method: 'POST' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgRepos(orgId) });
+    },
+  });
+}
+
 /** Body for `PATCH /web/orgs/:orgId/repos/:repoId` — metadata only (no GitHub call). */
 export interface UpdateRepoBody {
   name?: string;

@@ -43,6 +43,10 @@ interface RepoView {
   accessCheckedAt: string | null;
   /** How many threads live on this repo — gates whether it can be disconnected. */
   threadCount: number;
+  /** The id of the repo's current onboarding thread (`kind='onboarding'`), or null if never started. */
+  onboardingThreadId: string | null;
+  /** When onboarding completed (worktree config live), ISO; null until then — drives "Set up" vs "Re-run". */
+  onboardedAt: string | null;
 }
 
 /**
@@ -102,6 +106,8 @@ export class RepoController {
       accessOk: r.access_ok,
       accessCheckedAt: r.access_checked_at ? r.access_checked_at.toISOString() : null,
       threadCount: countByRepo.get(r.id) ?? 0,
+      onboardingThreadId: r.onboarding_thread_id,
+      onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
     }));
   }
 
@@ -125,6 +131,20 @@ export class RepoController {
     @Param('repoId') repoId: string,
   ): Promise<ConnectedRepo> {
     return this.onboarding.revalidateRepo(org.id, repoId);
+  }
+
+  /**
+   * `POST …/repos/:repoId/onboard` — (re-)run the Atlas onboarding thread for this repo (the operator-
+   * initiated counterpart to the automatic spawn on connect). Spawns a fresh onboarding thread even if the
+   * repo was onboarded before. Owner only. Returns the new thread id so the UI can deep-link into it.
+   */
+  @Post(':repoId/onboard')
+  @UseGuards(OrgOwnerGuard)
+  async onboard(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('repoId') repoId: string,
+  ): Promise<{ threadId: string }> {
+    return this.onboarding.reonboardRepo(org.id, repoId);
   }
 
   /** `PATCH …/repos/:repoId` — update display name / base branch (metadata only). Owner only. */
