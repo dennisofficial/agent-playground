@@ -304,6 +304,32 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(toolResult).toMatchObject({ id: 'tu1', result: 'file contents', isError: false });
   });
 
+  it('richStream: forwards an Edit `tool_use_result.structuredPatch` (real file offsets) onto tool_result', async () => {
+    const hunks = [{ oldStart: 79, oldLines: 7, newStart: 79, newLines: 8, lines: [' a', '-b', '+c', '+d'] }];
+    const sdk = {
+      query: () =>
+        (async function* () {
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: 'x.md' } }] },
+          };
+          yield {
+            type: 'user',
+            tool_use_result: { structuredPatch: hunks },
+            message: { content: [{ type: 'tool_result', tool_use_id: 'e1', content: 'updated', is_error: false }] },
+          };
+          yield { type: 'result', subtype: 'success', session_id: 's', result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } };
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });
+    const events: EngineEvent[] = [];
+    await core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: 'k', mode: 'execute', richStream: true, onEvent: (e) => events.push(e) });
+
+    const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
+    expect(toolResult.structuredPatch).toEqual(hunks);
+  });
+
   it('without richStream: no partial stream; tool stays name-only; no thinking/tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, claudeOauthToken: 'cfg-oauth', codexOauthToken: 'cfg-codex' });

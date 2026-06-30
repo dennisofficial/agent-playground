@@ -1,7 +1,7 @@
 'use client';
 
 import { diffLines } from 'diff';
-import type { IconKind, ToolBadge } from './types';
+import type { DiffHunk, IconKind, ToolBadge } from './types';
 import { highlightLine } from './highlight';
 
 /** Shared presentational primitives for the tool-call renderers. */
@@ -289,6 +289,9 @@ const NBSP = ' ';
 
 type DiffRow = { key: number; type: 'context' | 'add' | 'del'; oldNo?: number; newNo?: number; code: string };
 
+/** A renderable diff block: a hunk header line + its numbered rows. */
+type DiffBlock = { header: string; rows: DiffRow[] };
+
 /** Walk a jsdiff line-diff into numbered rows + the old/new line totals for the hunk header. */
 function computeDiffRows(before: string, after: string): { rows: DiffRow[]; oldCount: number; newCount: number } {
   const rows: DiffRow[] = [];
@@ -304,6 +307,23 @@ function computeDiffRows(before: string, after: string): { rows: DiffRow[]; oldC
     }
   }
   return { rows, oldCount: oldNo - 1, newCount: newNo - 1 };
+}
+
+/** Walk one structured-patch hunk into numbered rows, seeding line numbers from its real file offsets. */
+function rowsFromHunk(hunk: DiffHunk, keyBase: number): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let oldNo = hunk.oldStart;
+  let newNo = hunk.newStart;
+  let key = keyBase;
+  for (const raw of hunk.lines) {
+    const sign = raw[0];
+    const code = raw.slice(1);
+    if (sign === '+') rows.push({ key: key++, type: 'add', newNo: newNo++, code });
+    else if (sign === '-') rows.push({ key: key++, type: 'del', oldNo: oldNo++, code });
+    else if (sign === '\\') continue; // "\ No newline at end of file" marker — not a real line
+    else rows.push({ key: key++, type: 'context', oldNo: oldNo++, newNo: newNo++, code });
+  }
+  return rows;
 }
 
 /** A syntax-highlighted code span for the dark frame. `dim` softens context/non-changed lines. */
@@ -346,27 +366,50 @@ function DiffLine({ row, lang }: { row: DiffRow; lang: string | null }) {
 }
 
 /**
- * A unified line-diff view, computed from `before`/`after` with jsdiff — renders the body of an Edit
- * tool row. Dark code frame (like the Read/terminal block) with a purple `@@` hunk header, syntax
- * highlighting via `lang`, and a fixed ~14-line ({@link CODE_MAX_HEIGHT}) scroll window so a large edit
- * stays compact. Line numbers are relative to the edit fragment (1-based) — the tool input carries only
- * the changed snippet, not its file offset.
+ * A unified line-diff view — renders the body of an Edit tool row. Dark code frame (like the
+ * Read/terminal block) with a purple `@@` hunk header per hunk, syntax highlighting via `lang`, and a
+ * fixed ~14-line ({@link CODE_MAX_HEIGHT}) scroll window so a large edit stays compact.
+ *
+ * Prefers `hunks` (a structured patch off the tool RESULT) so the gutter shows REAL file line numbers.
+ * Falls back to `before`/`after` (the tool INPUT, just the changed snippet) — numbered 1-based relative
+ * to the fragment, since the input carries no file offset.
  */
-export function DiffView({ before, after, lang = null }: { before: string; after: string; lang?: string | null }) {
-  const { rows, oldCount, newCount } = computeDiffRows(before, after);
+export function DiffView({
+  hunks,
+  before,
+  after,
+  lang = null,
+}: {
+  hunks?: DiffHunk[];
+  before?: string;
+  after?: string;
+  lang?: string | null;
+}) {
+  const blocks: DiffBlock[] =
+    hunks && hunks.length
+      ? hunks.map((h, i) => ({
+          header: `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`,
+          rows: rowsFromHunk(h, i * 100_000),
+        }))
+      : (() => {
+          const { rows, oldCount, newCount } = computeDiffRows(before ?? '', after ?? '');
+          return [{ header: `@@ -1,${oldCount} +1,${newCount} @@`, rows }];
+        })();
   return (
     <div className="my-[3px] overflow-hidden rounded-[7px]" style={{ background: 'var(--term)', border: '1px solid var(--term-border)' }}>
-      <div
-        className="flex items-center gap-[7px] px-[11px] py-[5px] font-mono text-[10px]"
-        style={{ background: 'var(--term-strip)', borderBottom: '1px solid var(--term-border)', color: 'var(--term-dim)' }}
-      >
-        <span style={{ color: 'var(--term-purple)' }}>
-          @@ -1,{oldCount} +1,{newCount} @@
-        </span>
-      </div>
       <div className="overflow-auto py-[6px] font-mono text-[11px]" style={{ lineHeight: 1.75, maxHeight: CODE_MAX_HEIGHT }}>
-        {rows.map((r) => (
-          <DiffLine key={r.key} row={r} lang={lang} />
+        {blocks.map((block, bi) => (
+          <div key={bi}>
+            <div
+              className="flex items-center gap-[7px] px-[11px] py-[3px] font-mono text-[10px]"
+              style={{ color: 'var(--term-purple)' }}
+            >
+              {block.header}
+            </div>
+            {block.rows.map((r) => (
+              <DiffLine key={r.key} row={r} lang={lang} />
+            ))}
+          </div>
         ))}
       </div>
     </div>

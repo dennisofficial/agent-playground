@@ -15,6 +15,8 @@ export interface LiveTurnBlock {
   input?: unknown;
   result?: unknown;
   isError?: boolean;
+  /** Edit/MultiEdit only: structured patch (real file offsets) for an accurate diff gutter on reconnect. */
+  structuredPatch?: unknown;
   done: boolean;
   /**
    * Set only for SUBAGENT blocks (the spawning Task tool_use id). Carried through the snapshot so a
@@ -198,6 +200,7 @@ export class LiveTurnStore {
           if (b.kind === 'tool' && !b.done && (b.toolId === id || id === '')) {
             b.result = ev['result'];
             b.isError = Boolean(ev['isError']);
+            if (ev['structuredPatch'] !== undefined) b.structuredPatch = ev['structuredPatch'];
             b.done = true;
             break;
           }

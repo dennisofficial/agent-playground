@@ -201,6 +201,7 @@ function renderLog(
           input: m.input,
           result: m.result,
           isError: Boolean(m.isError),
+          structuredPatch: m.structuredPatch as ToolItem['structuredPatch'],
         },
       });
       continue;

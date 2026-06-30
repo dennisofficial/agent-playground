@@ -82,7 +82,7 @@ export function UserBubble({ text, queued = false, time }: { text: string; queue
   return (
     <div className="group anim-fadeUp flex flex-col items-end gap-1">
       <div
-        className="max-w-[72%] whitespace-pre-wrap px-[13px] py-2 text-[13.5px] leading-relaxed text-text"
+        className="max-w-[72%] whitespace-pre-wrap [overflow-wrap:anywhere] px-[13px] py-2 text-[13.5px] leading-relaxed text-text"
         style={{
           background: 'var(--accent-soft)',
           border: '1px solid var(--accent-line)',
@@ -188,7 +188,7 @@ export function LiveTurnView({ turn, onSelectNode }: { turn: LiveTurn; onSelectN
       continue;
     }
     if (b.kind === 'tool') {
-      pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, running: !b.done });
+      pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, structuredPatch: b.structuredPatch as ToolItem['structuredPatch'], running: !b.done });
       continue;
     }
     flush();

@@ -32,6 +32,8 @@ export type LiveBlock =
       input?: unknown;
       result?: unknown;
       isError?: boolean;
+      /** Edit/MultiEdit only: structured patch (real file offsets) for the diff body. */
+      structuredPatch?: unknown;
       done: boolean;
       parentToolUseId?: string;
     };
@@ -52,6 +54,8 @@ type StreamPayload = {
   input?: unknown;
   result?: unknown;
   isError?: boolean;
+  /** present on a `tool_result` for an Edit/MultiEdit — real file offsets for the diff gutter. */
+  structuredPatch?: unknown;
   /** set only for subagent blocks (the spawning Task id) — peeled into a sub-page by consumers. */
   parentToolUseId?: string;
   /** present on `kind:'snapshot'` */
@@ -143,7 +147,13 @@ class ThreadStreamStore {
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i];
           if (b.kind === 'tool' && !b.done && (b.toolId === id || id === '')) {
-            blocks[i] = { ...b, result: ev.result, isError: Boolean(ev.isError), done: true };
+            blocks[i] = {
+              ...b,
+              result: ev.result,
+              isError: Boolean(ev.isError),
+              ...(ev.structuredPatch !== undefined ? { structuredPatch: ev.structuredPatch } : {}),
+              done: true,
+            };
             break;
           }
         }

@@ -134,6 +134,9 @@ export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
       }
     } else if (m.type === 'user') {
       const content = Array.isArray(m.message?.content) ? (m.message!.content as Array<Record<string, unknown>>) : [];
+      // Edit/MultiEdit carry a `structuredPatch` (real file offsets) on the line's `toolUseResult` — mirror
+      // engine-core and attach it so a recovered turn's diff gutter shows true line numbers, not 1-based.
+      const patch = (m.toolUseResult as { structuredPatch?: unknown } | undefined)?.structuredPatch;
       for (const block of content) {
         if (block.type !== 'tool_result') continue;
         const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
@@ -143,6 +146,7 @@ export function parseSessionTranscriptTail(jsonl: string): TranscriptTail {
           if (b.kind === 'tool' && b.meta.result == null && (b.meta.toolUseId === toolUseId || toolUseId === '')) {
             b.meta.result = block.content ?? null;
             b.meta.isError = Boolean(block.is_error);
+            if (Array.isArray(patch) && patch.length) b.meta.structuredPatch = patch;
             break;
           }
         }

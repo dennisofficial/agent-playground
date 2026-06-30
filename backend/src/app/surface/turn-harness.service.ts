@@ -207,7 +207,12 @@ export class TurnHarnessFactory {
               const b = blocks[i];
               if (b.kind === 'tool' && !b.done && (b.toolId === e.id || !e.id)) {
                 b.done = true;
-                b.meta = { ...b.meta, result: e.result ?? null, isError: e.isError ?? false };
+                b.meta = {
+                  ...b.meta,
+                  result: e.result ?? null,
+                  isError: e.isError ?? false,
+                  ...(e.structuredPatch ? { structuredPatch: e.structuredPatch } : {}),
+                };
                 break;
               }
             }

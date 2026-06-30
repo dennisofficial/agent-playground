@@ -15,7 +15,33 @@ import {
   type EngineRunResult,
   type EngineUsage,
   type RunEngineArgs,
+  type StructuredPatchHunk,
 } from './engine.types';
+
+/**
+ * Pull a well-formed `structuredPatch` (real file offsets) off an Edit/MultiEdit `tool_use_result`.
+ * Returns undefined for any other tool, or when the shape doesn't match — so the caller simply omits it.
+ */
+function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] | undefined {
+  if (!toolUseResult || typeof toolUseResult !== 'object') return undefined;
+  const raw = (toolUseResult as { structuredPatch?: unknown }).structuredPatch;
+  if (!Array.isArray(raw)) return undefined;
+  const hunks: StructuredPatchHunk[] = [];
+  for (const h of raw) {
+    if (!h || typeof h !== 'object') continue;
+    const r = h as Record<string, unknown>;
+    if (!Array.isArray(r.lines)) continue;
+    const num = (v: unknown, fallback: number): number => (typeof v === 'number' ? v : fallback);
+    hunks.push({
+      oldStart: num(r.oldStart, 1),
+      oldLines: num(r.oldLines, 0),
+      newStart: num(r.newStart, 1),
+      newLines: num(r.newLines, 0),
+      lines: (r.lines as unknown[]).map(String),
+    });
+  }
+  return hunks.length ? hunks : undefined;
+}
 
 /**
  * The Atlas v2 ENGINE CORE — the vendor logic for running ONE Claude/Codex turn, with **zero Nest and
@@ -468,9 +494,16 @@ export class EngineCore {
         } else if (richStream && message.type === 'user') {
           // Tool results are fed back to the model as a `user` message — surface them so the UI can pair
           // each result with its `tool_use` by id. A subagent's tool results carry the same parent id.
-          const userMsg = message as { parent_tool_use_id?: string | null; message?: { content?: unknown } };
+          const userMsg = message as {
+            parent_tool_use_id?: string | null;
+            message?: { content?: unknown };
+            tool_use_result?: unknown;
+          };
           const parent = userMsg.parent_tool_use_id ?? undefined;
           const sub = parent ? { parentToolUseId: parent } : {};
+          // Edit/MultiEdit results carry a `structuredPatch` (real file line offsets) on the message's
+          // `tool_use_result` — forward it so the web diff gutter shows true line numbers, not 1-based.
+          const patch = extractStructuredPatch(userMsg.tool_use_result);
           const content = userMsg.message?.content;
           if (Array.isArray(content)) {
             for (const block of content as Array<{
@@ -485,6 +518,7 @@ export class EngineCore {
                   id: block.tool_use_id ?? '',
                   result: block.content,
                   isError: block.is_error,
+                  ...(patch ? { structuredPatch: patch } : {}),
                   ...sub,
                 });
             }

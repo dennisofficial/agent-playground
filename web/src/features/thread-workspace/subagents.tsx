@@ -35,7 +35,7 @@ export const subagentModel = (type: string): string | undefined => SUBAGENT_MODE
 export type SubBlock =
   | { kind: 'text'; key: string; text: string; running?: boolean; postedAt?: string }
   | { kind: 'thinking'; key: string; text: string; running?: boolean; postedAt?: string }
-  | { kind: 'tool'; key: string; name: string; input?: unknown; result?: unknown; isError?: boolean; running?: boolean; postedAt?: string };
+  | { kind: 'tool'; key: string; name: string; input?: unknown; result?: unknown; isError?: boolean; structuredPatch?: unknown; running?: boolean; postedAt?: string };
 
 export interface SubagentSummary {
   /** The spawning Task tool_use id (== the `subagent:` node suffix). */
@@ -121,6 +121,7 @@ export function durableSubBlocks(children: ThreadMessage[]): SubBlock[] {
         input: mm.input,
         result: mm.result,
         isError: Boolean(mm.isError),
+        structuredPatch: mm.structuredPatch,
         postedAt: m.postedAt,
       };
     }
@@ -185,7 +186,7 @@ export function liveSubBlocksForParent(blocks: LiveBlock[], parentId: string): S
   for (const b of blocks) {
     if (b.parentToolUseId !== parentId) continue;
     if (b.kind === 'tool')
-      out.push({ kind: 'tool', key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, running: !b.done });
+      out.push({ kind: 'tool', key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, structuredPatch: b.structuredPatch, running: !b.done });
     else out.push({ kind: b.kind, key: b.key, text: b.text, running: !b.done });
   }
   return out;

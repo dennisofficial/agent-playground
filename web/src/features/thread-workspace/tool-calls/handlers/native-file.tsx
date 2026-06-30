@@ -29,6 +29,10 @@ function FileBody({ tool }: { tool: ToolItem }) {
     return content ? <WriteFileView content={content} lang={lang} /> : <TerminalBlock body="(no content)" />;
   }
 
+  // Prefer the structured patch carried on the result (real file line numbers); fall back to the input
+  // snippet (numbered from 1) while the result is still streaming or absent.
+  if (tool.structuredPatch?.length) return <DiffView hunks={tool.structuredPatch} lang={lang} />;
+
   const edits = Array.isArray(inp.edits)
     ? (inp.edits as unknown[])
     : [{ old_string: inp.old_string, new_string: inp.new_string }];

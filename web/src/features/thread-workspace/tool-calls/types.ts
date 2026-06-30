@@ -8,6 +8,13 @@ import type { ComponentType } from 'react';
  * supplies a custom expanded body. Unknown tools fall through to the generic handler.
  */
 
+/**
+ * One hunk of an Edit/MultiEdit structured patch (mirrors the backend `tool_use_result.structuredPatch`):
+ * REAL 1-based file offsets + sign-prefixed lines (`' '` context / `'+'` add / `'-'` del). Lets the diff
+ * gutter show true file line numbers instead of restarting at 1.
+ */
+export type DiffHunk = { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] };
+
 /** One tool call, as captured by the brain's turn streamer (`meta: { name, input, result, isError }`). */
 export interface ToolItem {
   key: string;
@@ -16,6 +23,8 @@ export interface ToolItem {
   result?: unknown;
   isError?: boolean;
   running?: boolean;
+  /** Edit/MultiEdit only: structured patch carrying real file line offsets for the diff body. */
+  structuredPatch?: DiffHunk[];
 }
 
 export type IconKind = 'bash' | 'read' | 'edit' | 'write' | 'grep' | 'mcp' | 'todo' | 'web' | 'task' | 'plan';

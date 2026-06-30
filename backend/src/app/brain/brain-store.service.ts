@@ -282,17 +282,6 @@ export class BrainStoreService {
     );
   }
 
-  /** The newest UNANSWERED question card — the target for the typed-reply fallback (composer answer). */
-  async latestUnansweredQuestionCard(
-    threadId: string,
-  ): Promise<MessageEntity | null> {
-    const cards = await this.questionCards(threadId);
-    return (
-      cards.find((m) => (m.card as Record<string, unknown>).answer == null) ??
-      null
-    );
-  }
-
   // ── human-input gate (durable ask_question lifecycle: asked → answered → delivered → loggedDecision) ──
 
   /**

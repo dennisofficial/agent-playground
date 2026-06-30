@@ -15,6 +15,19 @@ import type { SessionEngine, SessionMode } from '../domain';
  */
 export type EngineAuth = { secret: string };
 
+/**
+ * One hunk of an Edit/MultiEdit's structured patch (the SDK `tool_use_result.structuredPatch` shape):
+ * REAL 1-based file offsets + sign-prefixed lines (`' '` context / `'+'` add / `'-'` del). Carried on
+ * `tool_result` so the web diff gutter shows true file line numbers instead of restarting at 1.
+ */
+export interface StructuredPatchHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
 /** A normalized progress event, emitted by both engines regardless of native event shape. */
 export type EngineEvent =
   | { kind: 'text'; text: string; parentToolUseId?: string }
@@ -56,6 +69,8 @@ export type EngineEvent =
       result?: unknown;
       isError?: boolean;
       parentToolUseId?: string;
+      /** Edit/MultiEdit only: the SDK's structured patch (real file offsets) for an accurate diff gutter. */
+      structuredPatch?: StructuredPatchHunk[];
     };
 
 /** Vendor-neutral token-usage counts (all optional — engines populate what their SDK reports). */

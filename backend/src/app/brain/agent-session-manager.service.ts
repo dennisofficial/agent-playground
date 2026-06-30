@@ -871,14 +871,12 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
    *  `handleChatTurn` queue above — never invoked concurrently for the same thread. */
   private async runChatTurnInner(stimulus: ChatStimulus): Promise<void> {
-    // TYPED-ANSWER LINKAGE — operator-authored turns ONLY: if the operator answered an outstanding
-    // `ask_question` card in PROSE (composer) rather than clicking it, stamp that card answered so
-    // `create_decision` can auto-attach the Q&A. SYNTHETIC turns must NOT run this — a seed answer-delivery
-    // turn's card is already stamped by the endpoint (no-op anyway), and a harness plan-review delivery
-    // turn's body is the Codex findings, which must never be stamped onto a pending unanswered question.
-    if (isOperatorAuthored(stimulus)) {
-      await this.linkTypedQuestionAnswer(stimulus);
-    }
+    // A composer message NEVER answers an open `ask_question` card — answers come ONLY through the
+    // question-card component (`/answer-question`, which stamps the card directly + includes its own
+    // free-text "Other…" field). Anything typed in the composer while a card is showing — or queued
+    // before the card was even asked — is just a normal operator message, delivered as this turn. (The
+    // old prose-linkage that opportunistically stamped the latest unanswered card was the bug where a
+    // queued chat message got consumed as the answer to a later question.)
 
     // Human-input gate delivery: if this thread's gate points at a now-ANSWERED, not-yet-DELIVERED question
     // (the answer was stamped by the endpoint, the prose path above, or persisted before a crash), THIS turn
@@ -1960,25 +1958,6 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     const generatedDir = join(this.lifecycle.contextDirHost(threadId, orgId), 'generated');
     await mkdir(generatedDir, { recursive: true });
     await writeFile(join(generatedDir, 'decision-record.md'), renderDecisionRecordMd(decisions), 'utf8');
-  }
-
-  /**
-   * Typed-reply fallback for formal questions: if the operator answered an outstanding `ask_question`
-   * card in PROSE (the composer) rather than clicking it, stamp that card's durable answered state with
-   * the message text so `create_decision` can still auto-attach the Q&A. No-op when there is no pending
-   * question or it was already answered (e.g. via the `/answer-question` endpoint, which pre-stamps).
-   */
-  private async linkTypedQuestionAnswer(stimulus: ChatStimulus): Promise<void> {
-    try {
-      const pending = await this.store.latestUnansweredQuestionCard(stimulus.threadId);
-      if (!pending?.ts) return;
-      await this.store.updateCardMessage(stimulus.threadId, pending.ts, {
-        answer: stimulus.body,
-        answeredAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      this.logger.debug(`linkTypedQuestionAnswer failed for thread=${stimulus.threadId}: ${err}`);
-    }
   }
 
   // ── Approval flow ──────────────────────────────────────────────────────────────────────────────

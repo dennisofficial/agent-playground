@@ -369,7 +369,7 @@ function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: bo
   };
   for (const b of blocks) {
     if (b.kind === 'tool') {
-      pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, running: b.running });
+      pending.push({ key: b.key, name: b.name, input: b.input, result: b.result, isError: b.isError, structuredPatch: b.structuredPatch as ToolItem['structuredPatch'], running: b.running });
       continue;
     }
     flush();

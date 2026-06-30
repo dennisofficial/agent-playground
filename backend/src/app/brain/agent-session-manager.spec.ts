@@ -863,13 +863,15 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     ensureProvisioned?: ReturnType<typeof vi.fn>;
     run?: ReturnType<typeof vi.fn>;
     drainAndAdvance?: ReturnType<typeof vi.fn>;
+    pendingCard?: unknown;
   }) {
     const store = {
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
-      latestUnansweredQuestionCard: vi.fn().mockResolvedValue(null),
+      latestUnansweredQuestionCard: vi.fn().mockResolvedValue(opts.pendingCard ?? null),
+      updateCardMessage: vi.fn().mockResolvedValue(undefined),
       loadJob: vi.fn().mockResolvedValue({ kind: null }),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),
@@ -1168,6 +1170,31 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     expect(dockerRunner.run).not.toHaveBeenCalled();
     expect(awareness.drainAndAdvance as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it('a composer message NEVER answers an open question card — even one shown BEFORE the message arrived', async () => {
+    // Answers come only through the question-card component (`/answer-question`). A message typed in the
+    // composer while a card is showing (card `created_at` BEFORE the operator's `receivedAt`) is a normal
+    // operator turn, not the answer — the card stays open for the operator to answer via the component.
+    const { manager, store } = makeManager({
+      pendingCard: { ts: 'q-shown-first', created_at: new Date('2026-06-23T00:00:00Z') },
+    });
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(store.updateCardMessage).not.toHaveBeenCalled();
+  });
+
+  it('a composer message queued BEFORE the question was asked is not consumed as its answer (the original bug)', async () => {
+    // The reported bug: a chat message queued while a turn ran got stamped as the answer to an
+    // `ask_question` card that same turn went on to open (card `created_at` AFTER `receivedAt`).
+    const { manager, store } = makeManager({
+      pendingCard: { ts: 'q-asked-later', created_at: new Date('2026-06-24T00:05:00Z') },
+    });
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(store.updateCardMessage).not.toHaveBeenCalled();
   });
 });
 
