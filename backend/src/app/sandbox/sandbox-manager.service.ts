@@ -14,7 +14,7 @@ import {
   CONTAINER_GIT_COMMON,
   CONTAINER_PNPM_STORE,
   CONTAINER_WORKTREE,
-} from './docker-engine-runner';
+} from './container-paths';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
 import { SandboxImageBuilder } from './sandbox-image.builder';

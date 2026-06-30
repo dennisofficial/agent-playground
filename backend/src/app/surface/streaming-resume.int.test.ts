@@ -12,7 +12,7 @@ import type { RunEngineArgs, EngineRunResult } from '../engine/engine.types';
 import { GithubPrService, LocalGitService } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { SANDBOX_PROVIDER } from '../sandbox';
-import { DockerEngineRunner } from '../sandbox/docker-engine-runner';
+import { RedisEngineRunner } from '../sandbox/redis-engine-runner';
 import { AgentChatSurface } from '../agent-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { WebSurfaceController } from './web-surface.controller';
@@ -85,7 +85,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       .useValue(new FakeClassifierLlm())
       .overrideProvider(ENGINE_RUNNER)
       .useValue(new FakeEngineRunner())
-      .overrideProvider(DockerEngineRunner) // the brain injects this class directly
+      .overrideProvider(RedisEngineRunner) // the brain injects ENGINE_RUNNER (RedisEngineRunner) directly
       .useValue(runner)
       .overrideProvider(SANDBOX_PROVIDER)
       .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {}, teardownByIdentity: async () => {} })

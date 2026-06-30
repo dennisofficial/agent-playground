@@ -499,18 +499,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     if (this.bootSweepsDone) return;
     this.bootSweepsDone = true;
 
-    // 1) Capture the threads whose conversational turn was streaming when the process died (e.g. a deploy
-    //    mid-chat) — their `turn_active` is still set. Read BEFORE the reset below clears it; these are the
-    //    threads whose engine may still be finishing (orphaned) in the container, to be watched to completion.
-    let interrupted: string[] = [];
-    try {
-      interrupted = await this.store.threadsWithActiveTurn();
-    } catch (err) {
-      this.logger.warn(`mid-flight turn capture failed: ${err}`);
-    }
-
-    // 2) Clear any `turn_active` flag left set by a crash mid-turn — no conversational turn survives a
-    //    process restart, so a still-true flag is stale and would suppress the thread's "needs you" dot.
+    // 1) Clear any `turn_active` flag left set by a crash mid-turn — re-attach (below) re-sets it for any
+    //    turn it resumes, so a leftover-true flag on a non-resumable thread is stale and would suppress its
+    //    "needs you" dot.
     try {
       const reset = await this.store.resetAllTurnActive();
       if (reset > 0) this.logger.log(`Leader: cleared stale turn_active on ${reset} thread(s)`);
@@ -518,30 +509,13 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       this.logger.warn(`turn_active reconciliation failed: ${err}`);
     }
 
-    // 3) RECOVER interrupted brain turns. The mechanism is transport-specific:
-    //    - redis: RE-ATTACH to the in-flight turn's durable Redis streams (the engine kept running,
-    //      detached) — resume tailing + tool-bridge and persist on completion. Live, lossless. See ADR 0001.
-    //    - pipe: back-fill from the host-durable SDK session JSONL (the engine's `docker exec` keeps running
-    //      orphaned; read its transcript once it ends).
-    if (process.env['ENGINE_TRANSPORT'] === 'redis') {
-      try {
-        await this.reattachInFlightTurns();
-      } catch (err) {
-        this.logger.warn(`redis turn re-attach failed: ${err}`);
-      }
-    } else {
-      // JSONL recovery — completed-but-unpersisted turns (immediate), then watch still-generating ones.
-      try {
-        const n = await this.turnRecovery.recoverInterruptedTurns();
-        if (n > 0) this.logger.log(`Leader: recovered ${n} interrupted brain turn(s) from the session transcript`);
-      } catch (err) {
-        this.logger.warn(`turn recovery failed: ${err}`);
-      }
-      if (interrupted.length > 0) {
-        void this.turnRecovery
-          .finishAndRecover(interrupted)
-          .catch((err) => this.logger.warn(`mid-flight turn watch failed: ${err}`));
-      }
+    // 2) RE-ATTACH interrupted brain turns. Redis is the only transport: the engine kept running detached
+    //    and is still writing to its durable streams, so a fresh backend resumes tailing + the tool bridge
+    //    and persists on completion — live, lossless restart-survival. See ADR 0001.
+    try {
+      await this.reattachInFlightTurns();
+    } catch (err) {
+      this.logger.warn(`redis turn re-attach failed: ${err}`);
     }
 
     // 2) Re-deliver any question the operator ANSWERED (durably stamped) but whose delivery turn a host

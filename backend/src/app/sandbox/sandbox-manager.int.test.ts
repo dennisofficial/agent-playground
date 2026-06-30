@@ -7,7 +7,7 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FeatureSandbox } from '../git';
 import { bundleEngine } from './bundle-engine';
-import { CONTAINER_CONTEXT, CONTAINER_WORKTREE } from './docker-engine-runner';
+import { CONTAINER_CONTEXT, CONTAINER_WORKTREE } from './container-paths';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';

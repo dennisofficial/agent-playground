@@ -150,34 +150,21 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
 
 describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
   /**
-   * The live contract test for the R1 tool bridge — including the cross-thread scope denial — lives
-   * in `sandbox/tool-bridge.spec.ts`.  It uses a real subprocess (no LLM, no Docker, no Postgres)
-   * to prove:
-   *   1. A tool_request scoped to the OWNING thread → dispatched, host returns correlated response.
-   *   2. A tool_request scoped to a DIFFERENT thread → host denies with a `tool_error` scope violation.
-   *   3. Unknown tool name → `tool_error` (not a crash).
-   *   4. Multiple concurrent tool_requests → correctly correlated by id.
-   *
-   * This test merely asserts that spec file is present and contains the scope-denial test.
+   * The tool bridge enforces per-thread scope in the shared `dispatchToolRequest` (engine/tool-bridge-host.ts),
+   * called by `RedisEngineRunner.consumeTools` — a tool_request whose args name a DIFFERENT thread is denied
+   * with a `tool_error` scope violation. (The former pipe `ToolBridgeHost` + its subprocess spec were removed
+   * at the Redis cutover, ADR 0001; the dispatch + its scope guard remain.)
    */
-  const BRIDGE_SPEC = join(SRC, 'sandbox', 'tool-bridge.spec.ts');
-
-  it('sandbox/tool-bridge.spec.ts exists', () => {
-    expect(existsSync(BRIDGE_SPEC)).toBe(true);
-  });
-
-  it('sandbox/tool-bridge.spec.ts contains the cross-thread scope-violation assertion', () => {
-    const src = readFileSync(BRIDGE_SPEC, 'utf8');
+  it('dispatchToolRequest source enforces per-thread scope before dispatching any tool', () => {
+    const src = readFileSync(join(SRC, 'engine', 'tool-bridge-host.ts'), 'utf8');
+    // The guard: if args includes a threadId field it must match the owning thread.
     expect(src).toContain('Thread scope violation');
-    expect(src).toContain('scoped to a DIFFERENT thread');
+    expect(src).toContain("args['threadId'] !== bridge.threadId");
   });
 
-  it('ToolBridgeHost source enforces per-thread scope before dispatching any tool', () => {
-    const hostSrc = readFileSync(join(SRC, 'engine', 'tool-bridge-host.ts'), 'utf8');
-    // The guard: if args includes a threadId field it must match the owning thread. Enforced in the
-    // shared `dispatchToolRequest` (used by the pipe ToolBridgeHost AND the RedisEngineRunner tools loop).
-    expect(hostSrc).toContain('Thread scope violation');
-    expect(hostSrc).toContain("args['threadId'] !== bridge.threadId");
+  it('RedisEngineRunner dispatches host tools through dispatchToolRequest (scope-enforced path)', () => {
+    const src = readFileSync(join(SRC, 'sandbox', 'redis-engine-runner.ts'), 'utf8');
+    expect(src).toContain('dispatchToolRequest');
   });
 });
 

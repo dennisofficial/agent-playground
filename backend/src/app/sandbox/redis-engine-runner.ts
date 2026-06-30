@@ -16,7 +16,7 @@ import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
   CONTAINER_WORKTREE,
-} from './docker-engine-runner';
+} from './container-paths';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
 import { TurnRegistry } from './turn-registry.service';
 import { turnKeys, TOOLS_GROUP } from './redis-turn-keys';

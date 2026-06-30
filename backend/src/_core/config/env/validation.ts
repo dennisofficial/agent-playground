@@ -316,12 +316,9 @@ export interface IEnvConfig {
   MAX_CONCURRENT_SANDBOXES?: number;
   SANDBOX_IDLE_TTL_MS?: number;
   SANDBOX_REAP_INTERVAL_MS?: number;
-  //  - ENGINE_TRANSPORT: how an in-container turn talks to the host. 'pipe' (default) = today's `docker
-  //    exec` stdin/stdout NDJSON (dies with the backend). 'redis' = durable Redis Streams (the turn
-  //    survives a backend restart; the backend re-attaches to the stream). See ADR 0001.
-  //  - SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (reachable over the internal
-  //    atlas-bus net, e.g. redis://redis:6379). Falls back to REDIS_URL. Only used when ENGINE_TRANSPORT=redis.
-  ENGINE_TRANSPORT?: 'pipe' | 'redis';
+  //  - SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses to read its spec + stream events
+  //    (reachable from the sandbox, e.g. redis://host.docker.internal:6380 in dev, redis://redis:6379 in
+  //    prod over the internal bus). Falls back to REDIS_URL. Redis is the only engine transport (ADR 0001).
   SANDBOX_REDIS_URL?: string;
   //  - TURN_STALE_MS: how long an `active_turns` heartbeat may go quiet before the leader watchdog
   //    finalizes the turn 'failed' (engine container died). Default 90000.
@@ -484,7 +481,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   MAX_CONCURRENT_SANDBOXES: Joi.number().integer().min(1).optional(),
   SANDBOX_IDLE_TTL_MS: Joi.number().integer().min(0).optional(),
   SANDBOX_REAP_INTERVAL_MS: Joi.number().integer().min(1000).optional(),
-  ENGINE_TRANSPORT: Joi.string().valid('pipe', 'redis').optional().default('pipe'),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   TURN_STALE_MS: Joi.number().integer().min(1000).optional(),
   // Atlas v2 clustering / rolling-update

@@ -6,7 +6,7 @@ import type { DecisionApprovalService } from './decision-approval.service';
 import type { DriverStoreService } from '../driver/driver-store.service';
 import type { MemoryStore } from '../memory';
 import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
-import type { DockerEngineRunner } from '../sandbox/docker-engine-runner';
+import type { EngineRunnerPort } from '../engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
 import { DecisionLedgerService } from './decision-ledger.service';
 import type { RepoDecisionManifestService } from './repo-decision-manifest.service';
@@ -106,7 +106,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     contextDirHost: vi.fn(),
   } as unknown as ThreadLifecycleService;
 
-  const mockDockerRunner = {} as unknown as DockerEngineRunner;
+  const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
   // Fast-path deps: classify (default → proceed), ship, repo resolve.
   const mockClassifier = {
@@ -878,7 +878,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       findOne: vi.fn().mockResolvedValue({ thread_id: THREAD_ID, org_id: TEAM_ID, session_id: null }),
       save: vi.fn().mockResolvedValue(undefined),
     } as unknown as Repository<ThreadSandboxEntity>;
-    const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as DockerEngineRunner;
+    const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as EngineRunnerPort;
     const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
     // end-to-end through the brain (push/end + the durable blocks) exactly as in production.
@@ -1183,7 +1183,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       {} as unknown as ThreadLifecycleService,
-      {} as unknown as DockerEngineRunner,
+      {} as unknown as EngineRunnerPort,
       { listRunning: async () => [] } as never, // turnRegistry
       {} as unknown as PlanReviewService,
       {} as unknown as JobDispatcher,
