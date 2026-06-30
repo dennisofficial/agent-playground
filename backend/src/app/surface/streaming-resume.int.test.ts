@@ -18,7 +18,6 @@ import { LiveTurnStore } from './live-turn-store';
 import { WebSurfaceController } from './web-surface.controller';
 import {
   FakeClassifierLlm,
-  FakeEngineRunner,
   FakeGithubPrService,
   FakeLocalGitService,
   FakePlannerLlm,
@@ -83,9 +82,12 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       .useValue(new FakePlannerLlm())
       .overrideProvider(CLASSIFIER_LLM)
       .useValue(new FakeClassifierLlm())
+      // The brain injects ENGINE_RUNNER (= `useExisting: RedisEngineRunner`), so the streaming fake must be
+      // bound to ENGINE_RUNNER directly — overriding RedisEngineRunner alone is bypassed by any ENGINE_RUNNER
+      // override and the brain would otherwise get the wrong runner.
       .overrideProvider(ENGINE_RUNNER)
-      .useValue(new FakeEngineRunner())
-      .overrideProvider(RedisEngineRunner) // the brain injects ENGINE_RUNNER (RedisEngineRunner) directly
+      .useValue(runner)
+      .overrideProvider(RedisEngineRunner)
       .useValue(runner)
       .overrideProvider(SANDBOX_PROVIDER)
       .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {}, teardownByIdentity: async () => {} })

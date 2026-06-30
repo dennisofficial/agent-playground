@@ -80,6 +80,12 @@ class FakeGitService {
   async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, featureBranch: string): Promise<FeatureSandbox> {
     return { ...sandbox, branch: featureBranch };
   }
+  // Provision-path no-ops (no real git/cache/submodules/index in the fake).
+  async ensureSubmodules(): Promise<void> {}
+  async ensureBuildJunkExcluded(): Promise<void> {}
+  async isIgnored(): Promise<boolean> {
+    return true;
+  }
   async removeSandbox(): Promise<void> {}
 }
 
