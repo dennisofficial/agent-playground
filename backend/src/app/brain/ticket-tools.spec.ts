@@ -30,6 +30,7 @@ function makeManager(tickets: Partial<TicketService>) {
     {} as never, // approvals
     {} as never, // lifecycle
     {} as never, // dockerRunner
+    { listRunning: async () => [] } as never, // turnRegistry
     {} as never, // planReview
     {} as never, // dispatcher
     {} as never, // surface

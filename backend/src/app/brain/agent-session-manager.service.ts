@@ -26,7 +26,7 @@ import {
   wrapSystemNotification,
 } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { StimulusEntity, ThreadSandboxEntity } from '../persistence/entities';
+import { ActiveTurnEntity, StimulusEntity, ThreadSandboxEntity } from '../persistence/entities';
 import { ProvisioningNotReadyError, ThreadLifecycleService } from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService, LEDGER_COMMIT_MESSAGE } from '../driver/build-ship.service';
@@ -57,6 +57,7 @@ import {
   type PromotedManifestInput,
 } from './repo-decision-manifest.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
+import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { ENGINE_RUNNER, isUnresumableSessionMessage, resolveContextLimit, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
 import type { EngineRunnerPort, ToolImpl, RunEngineArgs } from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
@@ -116,6 +117,8 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     // The engine runner is resolved through the ENGINE_RUNNER token (not the concrete DockerEngineRunner)
     // so the ENGINE_TRANSPORT=pipe|redis factory governs the brain's conversational turns too. See ADR 0001.
     @Inject(ENGINE_RUNNER) private readonly engineRunner: EngineRunnerPort,
+    // The durable registry of in-flight Redis-transport turns — drives boot re-attach after a restart.
+    private readonly turnRegistry: TurnRegistry,
     private readonly planReview: PlanReviewService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
@@ -515,26 +518,30 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       this.logger.warn(`turn_active reconciliation failed: ${err}`);
     }
 
-    // 3) Recover any brain turn that COMPLETED inside the sandbox container but whose transcript a crash
-    //    dropped before `finish()` persisted it (the durable blocks are written only at turn END). Reads the
-    //    host-durable SDK session JSONL and back-fills the missing blocks. AWAITED and run BEFORE any turn is
-    //    dispatched below (question re-delivery) — so a recovered turn can't interleave with a new one
-    //    resuming the same session. Idempotent + fail-soft.
-    try {
-      const n = await this.turnRecovery.recoverInterruptedTurns();
-      if (n > 0) this.logger.log(`Leader: recovered ${n} interrupted brain turn(s) from the session transcript`);
-    } catch (err) {
-      this.logger.warn(`turn recovery failed: ${err}`);
-    }
-
-    // 3.5) For turns that were STILL GENERATING at restart (the deploy case), the immediate pass above sees
-    //    no `end_turn` yet. The engine's `docker exec` keeps running orphaned in the container, so watch those
-    //    threads in the BACKGROUND until each finishes, then back-fill it. Self-terminating (not a poll loop);
-    //    fire-and-forget so it never blocks the rest of boot.
-    if (interrupted.length > 0) {
-      void this.turnRecovery
-        .finishAndRecover(interrupted)
-        .catch((err) => this.logger.warn(`mid-flight turn watch failed: ${err}`));
+    // 3) RECOVER interrupted brain turns. The mechanism is transport-specific:
+    //    - redis: RE-ATTACH to the in-flight turn's durable Redis streams (the engine kept running,
+    //      detached) — resume tailing + tool-bridge and persist on completion. Live, lossless. See ADR 0001.
+    //    - pipe: back-fill from the host-durable SDK session JSONL (the engine's `docker exec` keeps running
+    //      orphaned; read its transcript once it ends).
+    if (process.env['ENGINE_TRANSPORT'] === 'redis') {
+      try {
+        await this.reattachInFlightTurns();
+      } catch (err) {
+        this.logger.warn(`redis turn re-attach failed: ${err}`);
+      }
+    } else {
+      // JSONL recovery — completed-but-unpersisted turns (immediate), then watch still-generating ones.
+      try {
+        const n = await this.turnRecovery.recoverInterruptedTurns();
+        if (n > 0) this.logger.log(`Leader: recovered ${n} interrupted brain turn(s) from the session transcript`);
+      } catch (err) {
+        this.logger.warn(`turn recovery failed: ${err}`);
+      }
+      if (interrupted.length > 0) {
+        void this.turnRecovery
+          .finishAndRecover(interrupted)
+          .catch((err) => this.logger.warn(`mid-flight turn watch failed: ${err}`));
+      }
     }
 
     // 2) Re-deliver any question the operator ANSWERED (durably stamped) but whose delivery turn a host
@@ -708,6 +715,94 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
   }
 
   /**
+   * BOOT RE-ATTACH (redis transport): for every brain turn still in-flight (`active_turns` running), the
+   * engine kept running detached and is still writing to its Redis streams. Reconstruct the turn's harness
+   * (live frames + durable blocks) + tool closure from the registry row, then RE-ATTACH the engine runner
+   * to resume tailing + serving the tool bridge and persist on completion. Lossless restart-survival —
+   * the durable Redis log is replayed from the start to rebuild the transcript. Fire-and-forget per turn.
+   */
+  private async reattachInFlightTurns(): Promise<void> {
+    if (!this.engineRunner.reattach) {
+      this.logger.warn('redis re-attach: the bound ENGINE_RUNNER has no reattach() — skipping');
+      return;
+    }
+    let rows: ActiveTurnEntity[];
+    try {
+      rows = await this.turnRegistry.listRunning();
+    } catch (err) {
+      this.logger.warn(`redis re-attach: listRunning failed: ${err}`);
+      return;
+    }
+    const brain = rows.filter((r) => r.kind === 'brain');
+    if (brain.length === 0) return;
+    this.logger.log(`Leader: re-attaching ${brain.length} in-flight brain turn(s) over Redis`);
+    for (const row of brain) {
+      void this.reattachOne(row).catch((err) =>
+        this.logger.warn(`re-attach turn ${row.turn_id} failed: ${err}`),
+      );
+    }
+  }
+
+  /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */
+  private async reattachOne(row: ActiveTurnEntity): Promise<void> {
+    const ctx = (row.ctx ?? {}) as {
+      repoId?: string;
+      author?: { id: string; displayName: string };
+      body?: string;
+    };
+    if (!row.container_id || !ctx.repoId || !ctx.author || ctx.body === undefined) {
+      this.logger.warn(`re-attach turn ${row.turn_id}: insufficient registry ctx — finalizing failed`);
+      await this.turnRegistry.finalize(row.turn_id, 'failed').catch(() => undefined);
+      return;
+    }
+    // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/threadId/author/body).
+    const stimulus: ChatStimulus = {
+      id: row.turn_id,
+      kind: 'chat',
+      trust: 'trusted',
+      orgId: row.org_id,
+      repoId: ctx.repoId,
+      threadId: row.thread_id,
+      body: ctx.body,
+      author: ctx.author,
+      replyRoute: { surfaceId: 'web', threadRef: row.thread_id },
+      receivedAt: new Date(),
+    };
+    const tools = this.buildTools(stimulus);
+    const streamer = this.turnHarness.create({ threadId: row.thread_id, channel: row.channel });
+    const sandboxRow = await this.sandboxRows.findOne({
+      where: { thread_id: row.thread_id, org_id: row.org_id },
+    });
+    await this.store.setTurnActive(row.thread_id, true).catch(() => undefined);
+    try {
+      const result = await this.engineRunner.reattach!(row.turn_id, row.container_id, {
+        onEvent: (e) => streamer.onEvent(e),
+        toolBridge: { threadId: row.thread_id, tools },
+      });
+      if (result.sessionId && sandboxRow) {
+        sandboxRow.session_id = result.sessionId;
+        await this.sandboxRows.save(sandboxRow).catch(() => undefined);
+      }
+      await streamer.finish(
+        result.result,
+        result.usage
+          ? {
+              usage: result.usage,
+              contextTokens: result.usage.contextTokens ?? null,
+              contextLimit: resolveContextLimit(result.usage.contextModel ?? result.usage.model),
+            }
+          : undefined,
+      );
+      this.logger.log(`re-attached turn ${row.turn_id} completed + persisted`);
+    } catch (err) {
+      this.logger.warn(`re-attached turn ${row.turn_id} ended in error: ${err}`);
+      await streamer.finish();
+    } finally {
+      await this.store.setTurnActive(row.thread_id, false).catch(() => undefined);
+    }
+  }
+
+  /**
    * One chat turn — marks the thread "actively working" for its WHOLE duration (including the ~30s first
    * provisioning), so the sidebar "needs you" dot clears while we work and returns the moment control
    * comes back to the operator (every early return below still hits the `finally`). Best-effort flag
@@ -853,7 +948,8 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         channel,
         lane: 'main',
         kind: 'brain',
-        ctx: { repoId: stimulus.repoId, sandboxKey },
+        // Enough to rebuild the ChatStimulus + buildTools closure on a boot re-attach (see reattachInFlightTurns).
+        ctx: { repoId: stimulus.repoId, sandboxKey, author: stimulus.author, body: stimulus.body },
       },
       onEvent: (e) => {
         // EAGER session-id persist: the engine emits `{kind:'session'}` at turn START (before any work), so

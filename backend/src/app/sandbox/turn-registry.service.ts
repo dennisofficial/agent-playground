@@ -6,9 +6,9 @@ import { ActiveTurnEntity, ToolExecutionEntity } from '../persistence/entities';
 
 /** The context a fresh host needs to rebuild a turn's harness (+ brain `buildTools` closure) on re-attach. */
 export interface TurnContext {
-  orgId: string;
-  repoId: string;
-  threadId: string;
+  orgId?: string;
+  repoId?: string;
+  threadId?: string;
   /** Free-form per-kind params (author, prompt body, route, session id, timeouts, …). */
   [k: string]: unknown;
 }

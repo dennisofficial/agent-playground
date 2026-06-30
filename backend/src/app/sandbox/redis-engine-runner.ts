@@ -31,6 +31,13 @@ type EventFrame =
 /** How long the host waits with NO new event/heartbeat before declaring the engine dead (safety net). */
 const TAIL_IDLE_TIMEOUT_MS = 120_000;
 
+/** The subset of a turn the attach loop needs — shared by a fresh `run` and a boot `reattach`. */
+export interface AttachArgs {
+  onEvent?: (e: EngineEvent) => void;
+  toolBridge?: ToolBridgeOptions;
+  signal?: AbortSignal;
+}
+
 /**
  * The `redis` binding of `ENGINE_RUNNER` (`ENGINE_TRANSPORT=redis`) — runs a turn inside a sandbox via a
  * DETACHED `docker exec` whose engine talks to the host over **Redis Streams** instead of the exec pipe.
@@ -77,24 +84,56 @@ export class RedisEngineRunner implements EngineRunnerPort {
           lane: args.turnMeta.lane,
           kind: args.turnMeta.kind,
           containerId: target.containerId,
-          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, repoId: args.turnMeta.channel, threadId: args.turnMeta.threadId },
+          // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
+          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, threadId: args.turnMeta.threadId },
         })
         .catch((err) => this.logger.warn(`turn ${turnId}: registry.register failed (continuing): ${err}`));
     }
 
-    // 3) Kick the engine detached — it reads the spec from Redis and writes events back to Redis.
-    return this.activity.track(target.containerId, async () => {
+    // 3) Kick the engine detached, then attach (tail events + serve the tool bridge).
+    return this.runAttached(turnId, keys, args, target.containerId, target);
+  }
+
+  /**
+   * RE-ATTACH to an in-flight turn after a backend restart: the engine kept running (detached) and is
+   * still writing to its Redis streams. Resume tailing `events` (from the start, replaying the durable
+   * log to rebuild the transcript) + serving the tool bridge — WITHOUT re-kicking the engine. Used by the
+   * brain's boot reconcile. See ADR 0001.
+   */
+  async reattach(
+    turnId: string,
+    containerId: string,
+    args: AttachArgs,
+  ): Promise<EngineRunResult> {
+    this.logger.log(`re-attaching to in-flight turn ${turnId} (container ${containerId})`);
+    return this.runAttached(turnId, turnKeys(turnId), args, containerId, undefined);
+  }
+
+  /**
+   * The shared attach loop: (optionally kick the engine, for a fresh run) then tail events + serve the
+   * tool bridge concurrently until the turn ends, and finalize the registry. Used by both `run` (with a
+   * kick) and `reattach` (no kick — the engine is already running).
+   */
+  private async runAttached(
+    turnId: string,
+    keys: ReturnType<typeof turnKeys>,
+    args: AttachArgs,
+    containerId: string,
+    kickTarget: NonNullable<RunEngineArgs['target']> | undefined,
+  ): Promise<EngineRunResult> {
+    return this.activity.track(containerId, async () => {
       const done = { value: false };
       try {
         // Tool-bridge turns: create the host consumer group up front so no tool_request is missed.
         if (args.toolBridge) await this.redis.ensureGroup(keys.tools, TOOLS_GROUP);
-        await this.containers.execDetached(target.containerId, ['atlas-engine-turn'], {
-          ...(target.user ? { user: target.user } : {}),
-          env: this.execEnv(turnId),
-          cwd: CONTAINER_WORKTREE,
-        });
-        // The tools loop (bidirectional bridge) runs CONCURRENTLY with the events tail; it stops when the
-        // tail flips `done`. The tail produces the result; the tools loop never throws (errors → tool_error).
+        if (kickTarget) {
+          await this.containers.execDetached(kickTarget.containerId, ['atlas-engine-turn'], {
+            ...(kickTarget.user ? { user: kickTarget.user } : {}),
+            env: this.execEnv(turnId),
+            cwd: CONTAINER_WORKTREE,
+          });
+        }
+        // The tools loop runs CONCURRENTLY with the events tail; it stops when the tail flips `done`.
         const toolsLoop = args.toolBridge
           ? this.consumeTools(turnId, keys, args.toolBridge, done)
           : Promise.resolve();
@@ -155,7 +194,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
   private async tailEvents(
     turnId: string,
     keys: ReturnType<typeof turnKeys>,
-    args: RunEngineArgs,
+    args: AttachArgs,
     done: { value: boolean },
   ): Promise<EngineRunResult> {
     let lastId = '0-0';

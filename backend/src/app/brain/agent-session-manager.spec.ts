@@ -272,6 +272,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockApprovals,
       mockLifecycle,
       mockDockerRunner,
+      { listRunning: async () => [] } as never, // turnRegistry
       mockPlanReview,
       mockDispatcher,
       mockSurface,
@@ -899,6 +900,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as DecisionApprovalService,
       lifecycle,
       dockerRunner,
+      { listRunning: async () => [] } as never, // turnRegistry
       {} as unknown as PlanReviewService,
       {} as unknown as JobDispatcher,
       surface,
@@ -1182,6 +1184,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       {} as unknown as DecisionApprovalService,
       {} as unknown as ThreadLifecycleService,
       {} as unknown as DockerEngineRunner,
+      { listRunning: async () => [] } as never, // turnRegistry
       {} as unknown as PlanReviewService,
       {} as unknown as JobDispatcher,
       { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
@@ -1282,10 +1285,10 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     };
     const inert = {} as never;
     const manager = new AgentSessionManager(
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, // store … surface (9)
-      inert, // sandboxRows (10)
-      stimulusRows as never, // stimulusRows (11)
-      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 12 … 22
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // store … surface + turnRegistry (10)
+      inert, // sandboxRows (11)
+      stimulusRows as never, // stimulusRows (12)
+      inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, inert, // 13 … 23
     );
     return { manager, stimulusRows };
   }

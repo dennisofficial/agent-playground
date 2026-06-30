@@ -327,6 +327,20 @@ export interface EngineRunResult {
  */
 export interface EngineRunnerPort {
   run(args: RunEngineArgs): Promise<EngineRunResult>;
+  /**
+   * RE-ATTACH to an in-flight turn after a backend restart — resume tailing its durable Redis streams +
+   * serving its tool bridge WITHOUT re-kicking the engine (the detached engine kept running). Only the
+   * Redis runner implements it (the pipe runner has no restart-survivable turns); optional on the port.
+   */
+  reattach?(
+    turnId: string,
+    containerId: string,
+    args: {
+      onEvent?: (e: EngineEvent) => void;
+      toolBridge?: ToolBridgeOptions;
+      signal?: AbortSignal;
+    },
+  ): Promise<EngineRunResult>;
 }
 
 /** DI token for {@link EngineRunnerPort}. */
