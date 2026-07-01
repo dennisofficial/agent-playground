@@ -22,16 +22,31 @@ function entrySourceDir(): string {
 }
 
 /**
+ * The BACKEND package root — the nearest ancestor of THIS file that holds a `package.json`. Resolved from
+ * `__dirname` (where the code physically lives), so it's independent of BOTH `cwd`/`WORKDIR` (dev runs
+ * from `backend/`, prod's WORKDIR is `/srv/atlas/app`) AND of how deeply nest nests the compiled file
+ * (`src/app/sandbox` vs `dist/app/sandbox`). `src`/`dist` carry no `package.json`, so the walk stops at
+ * `backend/` in both. Falls back to `__dirname` if none is found (shouldn't happen).
+ */
+function backendRoot(): string {
+  let dir = __dirname;
+  while (!existsSync(join(dir, 'package.json'))) {
+    const parent = dirname(dir);
+    if (parent === dir) return __dirname; // hit the filesystem root without finding one
+    dir = parent;
+  }
+  return dir;
+}
+
+/**
  * The docker BUILD CONTEXT dir — a FIXED, checked-in `backend/sandbox/` that is IDENTICAL at build time
  * and runtime, so it doesn't matter whether the process runs from `src` (dev) or `dist` (prod): no
  * nest-cli asset copy, no dist/src divergence. It holds the static context (Dockerfile + `*.sh`, all
  * committed) plus `engine-entrypoint.mjs` (written here at boot by {@link bundleEngine}; gitignored).
- *
- * Both `src/app/sandbox` and `dist/app/sandbox` sit exactly THREE levels under `backend/`, so the same
- * relative hop from `__dirname` lands on `backend/sandbox` in either. Overridable via `SANDBOX_CONTEXT_DIR`.
+ * Anchored to the backend package root (see {@link backendRoot}). Overridable via `SANDBOX_CONTEXT_DIR`.
  */
 export function sandboxContextDir(): string {
-  return process.env.SANDBOX_CONTEXT_DIR ?? join(__dirname, '..', '..', '..', 'sandbox');
+  return process.env.SANDBOX_CONTEXT_DIR ?? join(backendRoot(), 'sandbox');
 }
 
 /**

@@ -25,6 +25,7 @@ import {
 } from './subagents';
 import { useLiveTurn, type LiveTurn } from '@/lib/api/thread-stream';
 import { durablePhaseBlocks, indexPhaseBlocks, livePhaseBlocks, phaseLane } from './phases';
+import { DetailTopBar } from './detail-top-bar';
 import { pipelineJob, type JobMessage, type JobRef } from '@/lib/api/thread-api';
 import {
   APPROVE_ACTION_ID,
@@ -34,7 +35,6 @@ import {
   type WebApprovalCard,
 } from '@/lib/api/types';
 
-type PhaseTab = 'transcript' | 'diff' | 'logs';
 
 /**
  * Step mode — the work column when a navigator node is selected. The plan / decision docs and the build
@@ -172,14 +172,7 @@ export function PhaseView({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-5">
-        <div className="flex min-w-0 flex-col justify-center">
-          <span className="truncate font-disp text-[13.5px] font-semibold leading-tight text-text">{title}</span>
-          {subtitle ? (
-            <span className="truncate font-mono text-[10px] leading-tight text-faint">{subtitle}</span>
-          ) : null}
-        </div>
-      </div>
+      <DetailTopBar title={title} subtitle={subtitle || undefined} />
       <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
     </div>
   );
@@ -203,7 +196,6 @@ function BuildView({
   /** The batch's ANCHOR step id — its transcript tag + live lane. Unset = the track/whole-build view. */
   anchorStepId?: string;
 }) {
-  const [tab, setTab] = useState<PhaseTab>('transcript');
   const index = indexPhaseBlocks(messages);
   // The live lane for THIS phase. Hooks can't be conditional, so an unset anchor reads a dead lane (→ none).
   const live = useLiveTurn(threadRef.jobId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
@@ -225,49 +217,26 @@ function BuildView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 px-5 pt-3">
-        <div className="flex gap-5 text-[12px] font-semibold">
-          {(['transcript', 'diff', 'logs'] as PhaseTab[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn('-mb-px border-b-2 pb-2.5 capitalize', tab === t ? 'border-accent text-accent' : 'border-transparent text-faint')}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <div className="h-px w-full" style={{ background: 'var(--border)' }} />
-      </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        {tab === 'transcript' ? (
-          <div className="mx-auto max-w-[820px]">
-            {/* The build instruction that kicked off the turn — its "first message", like a subagent's prompt. */}
-            {prompt ? <UserBubble text={prompt} /> : null}
-            {blocks.length === 0 ? (
-              prompt ? null : (
-                <p className="text-[12.5px] text-faint">
-                  {active ? 'Building…' : 'No build activity yet — this step hasn’t run.'}
-                </p>
-              )
-            ) : (
-              <SubagentTranscript blocks={blocks} active={active} />
-            )}
-            {active ? (
-              <div className="mt-3 flex items-center gap-2 text-[11.5px] text-accent">
-                <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
-                <span>Building — the transcript streams live and persists when the step finishes.</span>
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <Placeholder
-            title={tab === 'diff' ? 'Diff' : 'Logs'}
-            body={`The per-step ${tab} stream isn't exposed by the web surface yet. It will render here once the backend adds a step read endpoint.`}
-          />
-        )}
+        <div className="mx-auto max-w-[820px]">
+          {/* The build instruction that kicked off the turn — its "first message", like a subagent's prompt. */}
+          {prompt ? <UserBubble text={prompt} /> : null}
+          {blocks.length === 0 ? (
+            prompt ? null : (
+              <p className="text-[12.5px] text-faint">
+                {active ? 'Building…' : 'No build activity yet — this step hasn’t run.'}
+              </p>
+            )
+          ) : (
+            <SubagentTranscript blocks={blocks} active={active} />
+          )}
+          {active ? (
+            <div className="mt-3 flex items-center gap-2 text-[11.5px] text-accent">
+              <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
+              <span>Building — the transcript streams live and persists when the step finishes.</span>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <InterjectBar threadRef={threadRef} />

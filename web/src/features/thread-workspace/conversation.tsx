@@ -22,6 +22,7 @@ import { SecretCardView } from './secret-card';
 import { SubagentCard, indexDurableSubagents, subagentNode } from './subagents';
 import { BuildStepCard, indexPhaseBlocks } from './phases';
 import { Composer } from './composer';
+import { DetailTopBar } from './detail-top-bar';
 import type { JobMessage, JobRef } from '@/lib/api/thread-api';
 import { useLiveTurn } from '@/lib/api/thread-stream';
 import { useQueuedSends } from '@/lib/api/queued-sends';
@@ -269,58 +270,10 @@ function latestContextMeta(messages: JobMessage[]): { tokens: number; limit: num
 }
 
 /**
- * The conversation top bar — a `CONVERSATION` label plus search / copy-transcript / view-diff / resume
- * shortcuts. The action buttons are static design-parity placeholders for now (no backend wiring). (The
- * context-window ring lives in the composer's bottom-right, Claude-Code style.)
+ * The conversation top bar — the shared {@link DetailTopBar} with a lane-style left title and the standard
+ * action cluster on the right, so it matches every lane/detail header exactly. (The context-window ring
+ * lives in the composer's bottom-right, Claude-Code style.)
  */
 function ConversationTopBar() {
-  return (
-    <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3.5">
-      <span className="min-w-0 flex-1 font-mono text-[9px] tracking-[0.16em] text-faint">MAIN · CONVERSATION</span>
-      <div className="flex items-center gap-0.5">
-        <TopBarButton title="Search this thread">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M21 21l-4.35-4.35" />
-          </svg>
-        </TopBarButton>
-        <TopBarButton title="Copy transcript">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="9" y="9" width="11" height="11" rx="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </svg>
-        </TopBarButton>
-        <button
-          type="button"
-          title="View diff · 4 files"
-          className="flex h-[29px] items-center gap-1.5 rounded-sm px-2.5 text-dim transition hover:bg-surface-2 hover:text-text"
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 3v14" />
-            <path d="M5 10h14" />
-            <path d="M5 21h14" />
-          </svg>
-          <span className="font-mono text-[10px]">4</span>
-        </button>
-        <span className="mx-1 h-4 w-px bg-border" />
-        <TopBarButton title="Resume / step the run">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-            <path d="M6 4l14 8-14 8z" />
-          </svg>
-        </TopBarButton>
-      </div>
-    </div>
-  );
-}
-
-function TopBarButton({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      title={title}
-      className="flex h-[29px] w-[29px] items-center justify-center rounded-sm text-dim transition hover:bg-surface-2 hover:text-text"
-    >
-      {children}
-    </button>
-  );
+  return <DetailTopBar title="Conversation" subtitle="the thread brain" />;
 }
