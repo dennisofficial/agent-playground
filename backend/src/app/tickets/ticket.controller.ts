@@ -231,7 +231,7 @@ function toTicketDto(t: TicketEntity): Record<string, unknown> {
     priority: t.priority,
     kind: t.kind,
     sortOrder: t.sort_order,
-    originThreadId: t.origin_thread_id,
+    originThreadId: t.origin_job_id,
     originDecisionRecordId: t.origin_decision_record_id,
     origin: t.origin,
     createdAt: t.created_at,

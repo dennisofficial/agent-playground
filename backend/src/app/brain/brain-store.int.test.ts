@@ -25,7 +25,7 @@ import { BrainStoreService } from './brain-store.service';
  * `planning` (`reopenPlanning`) and the grill proposes again, re-running `persistPlan` on the SAME job.
  * Sections are gap-numbered from 10 each time, so without clearing the prior draft the second proposal
  * collides on `UNIQUE(job_id, ordinal)`. This proves `persistPlan` is now self-consistent: it deletes
- * the prior tracks and supersedes the prior draft record, so a re-propose succeeds cleanly.
+ * the prior threads and supersedes the prior draft record, so a re-propose succeeds cleanly.
  *
  * Boots the REAL AppModule (agent surface) against live Postgres, mocking only the external boundaries
  * (LLMs/engine/git/PR) — none are exercised here; we drive `BrainStoreService` directly.
@@ -75,7 +75,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
   });
 
   it('a re-propose on the same planning thread clears the prior draft instead of colliding', async () => {
-    // The thread IS the build unit; tracks/decision_records FK → threads.id, and threads.repo_id
+    // The thread IS the build unit; threads/decision_records FK → jobs.id, and jobs.repo_id
     // FK → repos.id — so seed an org + repo, then anchor a real thread.
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
@@ -92,7 +92,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
     const repoId = repoRow.id;
     const [thread]: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title)
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
          VALUES ($1, $2, 'chat', 'rate limiting') RETURNING id`,
       [TEAM_ID, repoId],
     );
@@ -105,7 +105,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
     });
 
-    // First proposal — two tracks at ordinals 10, 20.
+    // First proposal — two threads at ordinals 10, 20.
     const first = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -125,7 +125,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // Human requests changes → back to planning.
     await store.reopenPlanning(threadId);
 
-    // Second proposal on the SAME thread — fewer tracks, re-using ordinal 10. Must NOT throw.
+    // Second proposal on the SAME thread — fewer threads, re-using ordinal 10. Must NOT throw.
     const second = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -169,7 +169,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID],
     );
     const [thread]: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title)
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
          VALUES ($1, $2, 'chat', 'ordering') RETURNING id`,
       [TEAM_ID, repoRow.id],
     );
@@ -234,7 +234,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID],
     );
     const [thread]: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title)
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
          VALUES ($1, $2, 'chat', 'subdomains') RETURNING id`,
       [TEAM_ID, repoRow.id],
     );
@@ -307,14 +307,14 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
     const repoId = repoRow.id;
     const [thread]: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title)
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
          VALUES ($1, $2, 'chat', 'authored') RETURNING id`,
       [TEAM_ID, repoId],
     );
     const threadId = thread.id;
     await store.openJob({ orgId: TEAM_ID, repoId, threadId, title: 'authored', kind: 'feature' });
 
-    // Full-plan-up-front: 2 tracks, the first with 2 authored steps, the second with 1.
+    // Full-plan-up-front: 2 threads, the first with 2 authored steps, the second with 1.
     await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -341,12 +341,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       'add the page at page.tsx:1',
     ]);
     expect(phases1.every((p) => p.status === 'pending' && p.stage === 'build')).toBe(true);
-    // track.plan is set on BOTH tracks (so the pipeline view reports hasPlan).
+    // track.plan is set on BOTH threads (so the pipeline view reports hasPlan).
     const plans1 = await sectionPlans(dataSource, threadId);
     expect(plans1.every((p) => p != null && p.length > 0)).toBe(true);
 
     // Re-propose WITHOUT stepsByThread (e.g. a direct-build-style re-shape): prior step rows are
-    // cascade-cleared with their tracks, and no new step rows are created.
+    // cascade-cleared with their threads, and no new step rows are created.
     await store.reopenPlanning(threadId);
     await store.persistPlan({
       orgId: TEAM_ID,
@@ -380,7 +380,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
     const repoId = repoRow.id;
     const [thread]: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title)
+      `INSERT INTO jobs (org_id, repo_id, origin, title)
          VALUES ($1, $2, 'chat', 'gate') RETURNING id`,
       [TEAM_ID, repoId],
     );
@@ -420,7 +420,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     ).toBe(false);
 
     // reconcile recomputes the counter from the actual unanswered cards (q-2 only) — heals any drift.
-    await dataSource.query(`UPDATE threads SET open_question_count = 99 WHERE id = $1`, [threadId]);
+    await dataSource.query(`UPDATE jobs SET open_question_count = 99 WHERE id = $1`, [threadId]);
     await store.reconcileOpenQuestionCounts();
     expect(await openCount(dataSource, threadId)).toBe(1); // q-2 still unanswered
   }, 30_000);
@@ -428,7 +428,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
 async function openCount(ds: DataSource, threadId: string): Promise<number> {
   const rows: Array<{ open_question_count: number }> = await ds.query(
-    `SELECT open_question_count FROM threads WHERE id = $1`,
+    `SELECT open_question_count FROM jobs WHERE id = $1`,
     [threadId],
   );
   return Number(rows[0]?.open_question_count ?? -1);
@@ -441,7 +441,7 @@ async function insertUserMessage(
   createdAt: Date,
 ): Promise<void> {
   await ds.query(
-    `INSERT INTO messages (thread_id, author, author_id, text, kind, created_at, updated_at)
+    `INSERT INTO messages (job_id, author, author_id, text, kind, created_at, updated_at)
        VALUES ($1, 'Operator', 'op', $2, 'chat', $3, $3)`,
     [threadId, text, createdAt.toISOString()],
   );
@@ -449,7 +449,7 @@ async function insertUserMessage(
 
 async function messageTexts(ds: DataSource, threadId: string): Promise<string[]> {
   const rows: Array<{ text: string }> = await ds.query(
-    `SELECT text FROM messages WHERE thread_id = $1 ORDER BY created_at ASC`,
+    `SELECT text FROM messages WHERE job_id = $1 ORDER BY created_at ASC`,
     [threadId],
   );
   return rows.map((r) => r.text);
@@ -457,7 +457,7 @@ async function messageTexts(ds: DataSource, threadId: string): Promise<string[]>
 
 async function threadTitles(ds: DataSource, threadId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
-    `SELECT brief FROM tracks WHERE thread_id = $1 ORDER BY ordinal ASC`,
+    `SELECT brief FROM threads WHERE job_id = $1 ORDER BY ordinal ASC`,
     [threadId],
   );
   return rows.map((r) => r.brief);
@@ -469,15 +469,15 @@ async function phasesFor(
 ): Promise<Array<{ brief: string; status: string; stage: string; batch_ordinal: number | null }>> {
   return ds.query(
     `SELECT p.brief, p.status, p.stage, p.batch_ordinal
-       FROM steps p JOIN tracks s ON s.id = p.track_id
-      WHERE s.thread_id = $1 ORDER BY s.ordinal ASC, p.ordinal ASC`,
+       FROM steps p JOIN threads s ON s.id = p.thread_id
+      WHERE s.job_id = $1 ORDER BY s.ordinal ASC, p.ordinal ASC`,
     [threadId],
   );
 }
 
 async function sectionPlans(ds: DataSource, threadId: string): Promise<Array<string | null>> {
   const rows: Array<{ plan: string | null }> = await ds.query(
-    `SELECT plan FROM tracks WHERE thread_id = $1 ORDER BY ordinal ASC`,
+    `SELECT plan FROM threads WHERE job_id = $1 ORDER BY ordinal ASC`,
     [threadId],
   );
   return rows.map((r) => r.plan);
@@ -488,7 +488,7 @@ async function loadThreadRow(
   threadId: string,
 ): Promise<{ status: string; origin: string; title: string | null; base_branch: string | null } | null> {
   const rows: Array<{ status: string; origin: string; title: string | null; base_branch: string | null }> =
-    await ds.query(`SELECT status, origin, title, base_branch FROM threads WHERE id = $1`, [threadId]);
+    await ds.query(`SELECT status, origin, title, base_branch FROM jobs WHERE id = $1`, [threadId]);
   return rows[0] ?? null;
 }
 
@@ -502,16 +502,16 @@ async function recordStatus(ds: DataSource, recordId: string): Promise<string | 
 
 async function draftCount(ds: DataSource, threadId: string): Promise<number> {
   const rows: Array<{ n: string }> = await ds.query(
-    `SELECT COUNT(*)::int AS n FROM decision_records WHERE thread_id = $1 AND status = 'draft'`,
+    `SELECT COUNT(*)::int AS n FROM decision_records WHERE job_id = $1 AND status = 'draft'`,
     [threadId],
   );
   return Number(rows[0]?.n ?? 0);
 }
 
-/** Delete every row this test's synthetic tenant owns (FK cascade from threads/org does the rest). */
+/** Delete every row this test's synthetic tenant owns (FK cascade from jobs/org does the rest). */
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
-  await q(`DELETE FROM threads WHERE org_id = $1`);
+  await q(`DELETE FROM jobs WHERE org_id = $1`);
   await q(`DELETE FROM repos WHERE org_id = $1`);
   await q(`DELETE FROM organizations WHERE id = $1`);
 }

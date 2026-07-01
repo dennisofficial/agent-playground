@@ -16,7 +16,7 @@
  *   - member → can READ but every write 403s (OrgOwnerGuard)
  *   - non-member → every route 403s (OrgMembershipGuard)
  *
- * Disconnect is exercised on an EMPTY repo (asserts `threadsDeleted: 0`); the cascade-WITH-threads path is
+ * Disconnect is exercised on an EMPTY repo (asserts `threadsDeleted: 0`); the cascade-WITH-jobs path is
  * covered by `onboarding.service.spec.ts` (avoids coupling this HTTP test to sandbox/worktree teardown).
  */
 
@@ -98,7 +98,7 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
 /** Remove this test's orgs + users (idempotent — survives a prior failed run; fixed ids would PK-collide). */
 async function purge(): Promise<void> {
   for (const org of [ORG1, ORG2]) {
-    await ds.query(`DELETE FROM threads WHERE org_id = $1`, [org]).catch(() => undefined);
+    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [org]).catch(() => undefined);
     await ds.query(`DELETE FROM repos WHERE org_id = $1`, [org]).catch(() => undefined);
     await ds.query(`DELETE FROM organization_members WHERE org_id = $1`, [org]).catch(() => undefined);
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [org]).catch(() => undefined);
@@ -160,10 +160,10 @@ afterAll(async () => {
   await app?.close();
 });
 
-/** Wipe just the repos/threads between tests so each starts from a clean repo list (orgs/users persist). */
+/** Wipe just the repos/jobs between tests so each starts from a clean repo list (orgs/users persist). */
 beforeEach(async () => {
   for (const org of [ORG1, ORG2]) {
-    await ds.query(`DELETE FROM threads WHERE org_id = $1`, [org]);
+    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [org]);
     await ds.query(`DELETE FROM repos WHERE org_id = $1`, [org]);
   }
 });

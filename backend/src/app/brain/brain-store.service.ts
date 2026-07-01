@@ -68,18 +68,18 @@ export class BrainStoreService {
 
   /**
    * Resolve the thread an EVENT stimulus seeded (the intake seam opened it but the in-memory
-   * `EventStimulus` doesn't carry the id). Reads the `stimuli` row's `thread_id`. Null if the
+   * `EventStimulus` doesn't carry the id). Reads the `stimuli` row's `job_id`. Null if the
    * stimulus isn't persisted (shouldn't happen — intake persists before consuming).
    */
   async eventThreadId(stimulusId: string): Promise<string | null> {
     const row = await this.stimuli.findOne({ where: { id: stimulusId } });
-    return row?.thread_id ?? null;
+    return row?.job_id ?? null;
   }
 
   /** Read a thread's message log, oldest-first — the transcript the grill turn reads. */
   async transcript(threadId: string): Promise<TranscriptLine[]> {
     const rows = await this.messages.find({
-      where: { thread_id: threadId },
+      where: { job_id: threadId },
       order: { created_at: 'ASC' },
     });
     return rows.map((m) => ({
@@ -93,7 +93,7 @@ export class BrainStoreService {
   async appendAtlasMessage(threadId: string, text: string): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -116,7 +116,7 @@ export class BrainStoreService {
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'System',
         author_id: 'system',
         author_bot_id: null,
@@ -150,7 +150,7 @@ export class BrainStoreService {
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -170,7 +170,7 @@ export class BrainStoreService {
   async appendSystemEvent(threadId: string, text: string): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -196,12 +196,12 @@ export class BrainStoreService {
   ): Promise<boolean> {
     const ts = `review-${reviewId}`;
     const existing = await this.messages.findOne({
-      where: { thread_id: threadId, ts },
+      where: { job_id: threadId, ts },
     });
     if (existing) return false;
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'Codex',
         author_id: 'codex',
         author_bot_id: null,
@@ -227,7 +227,7 @@ export class BrainStoreService {
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -246,7 +246,7 @@ export class BrainStoreService {
     patch: Record<string, unknown>,
   ): Promise<void> {
     const row = await this.messages.findOne({
-      where: { thread_id: threadId, ts, kind: 'card' },
+      where: { job_id: threadId, ts, kind: 'card' },
     });
     if (!row) return;
     row.card = { ...(row.card ?? {}), ...patch };
@@ -256,7 +256,7 @@ export class BrainStoreService {
   /** Load this thread's card rows, newest-first — small helper for the question-card lookups below. */
   private async questionCards(threadId: string): Promise<MessageEntity[]> {
     const rows = await this.messages.find({
-      where: { thread_id: threadId, kind: 'card' },
+      where: { job_id: threadId, kind: 'card' },
       order: { created_at: 'DESC' },
     });
     return rows.filter(
@@ -309,7 +309,7 @@ export class BrainStoreService {
       if (!thread) return { ok: false };
       await messages.save(
         messages.create({
-          thread_id: threadId,
+          job_id: threadId,
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -349,7 +349,7 @@ export class BrainStoreService {
         .createQueryBuilder()
         .update(MessageEntity)
         .set({ card: () => 'card || :patch::jsonb' })
-        .where('thread_id = :threadId', { threadId })
+        .where('job_id = :threadId', { threadId })
         .andWhere('ts = :questionId', { questionId })
         .andWhere("kind = 'card'")
         .andWhere("card ->> 'type' = 'question_card'")
@@ -378,7 +378,7 @@ export class BrainStoreService {
     questionId: string,
   ): Promise<WebQuestionCard | null> {
     const row = await this.messages.findOne({
-      where: { thread_id: threadId, ts: questionId, kind: 'card' },
+      where: { job_id: threadId, ts: questionId, kind: 'card' },
     });
     const card = row?.card as WebQuestionCard | undefined;
     return card?.type === 'question_card' ? card : null;
@@ -412,12 +412,12 @@ export class BrainStoreService {
   > {
     const raw = await this.messages
       .createQueryBuilder('m')
-      .innerJoin(JobEntity, 't', 't.id = m.thread_id')
+      .innerJoin(JobEntity, 't', 't.id = m.job_id')
       .where("m.kind = 'card'")
       .andWhere("m.card ->> 'type' = 'question_card'")
       .andWhere("m.card ->> 'answer' IS NOT NULL")
       .andWhere("m.card ->> 'deliveredAt' IS NULL")
-      .select('m.thread_id', 'threadId')
+      .select('m.job_id', 'threadId')
       .addSelect('m.ts', 'questionId')
       .addSelect("m.card ->> 'question'", 'question')
       .addSelect("m.card ->> 'answer'", 'answer')
@@ -452,7 +452,7 @@ export class BrainStoreService {
     await this.dataSource.query(
       `UPDATE ${threadsTable} t SET open_question_count = (
          SELECT COUNT(*)::int FROM ${messagesTable} m
-         WHERE m.thread_id = t.id AND m.kind = 'card'
+         WHERE m.job_id = t.id AND m.kind = 'card'
            AND m.card ->> 'type' = 'question_card'
            AND m.card ->> 'answer' IS NULL
        )`,
@@ -482,7 +482,7 @@ export class BrainStoreService {
       if (thread.awaiting_secret_id) {
         const open = await messages.findOne({
           where: {
-            thread_id: threadId,
+            job_id: threadId,
             ts: thread.awaiting_secret_id,
             kind: 'card',
           },
@@ -493,7 +493,7 @@ export class BrainStoreService {
       }
       await messages.save(
         messages.create({
-          thread_id: threadId,
+          job_id: threadId,
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -523,7 +523,7 @@ export class BrainStoreService {
     requestId: string,
   ): Promise<WebSecretInputCard | null> {
     const row = await this.messages.findOne({
-      where: { thread_id: threadId, ts: requestId, kind: 'card' },
+      where: { job_id: threadId, ts: requestId, kind: 'card' },
     });
     const card = row?.card as WebSecretInputCard | undefined;
     return card?.type === 'secret_input_card' ? card : null;
@@ -792,12 +792,12 @@ export class BrainStoreService {
       const tracks = m.getRepository(ThreadEntity);
       const steps = m.getRepository(StepEntity);
 
-      // tracks MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(thread_id, ordinal)
-      // collision); `steps.track_id ON DELETE CASCADE` clears their step rows too. The prior draft
+      // tracks MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(job_id, ordinal)
+      // collision); `steps.thread_id ON DELETE CASCADE` clears their step rows too. The prior draft
       // record is marked `superseded` (audit trail, never an approved one).
-      await tracks.delete({ thread_id: input.threadId });
+      await tracks.delete({ job_id: input.threadId });
       await records.update(
-        { thread_id: input.threadId, status: 'draft' },
+        { job_id: input.threadId, status: 'draft' },
         { status: 'superseded' },
       );
 
@@ -805,11 +805,11 @@ export class BrainStoreService {
         records.create({
           org_id: input.orgId,
           repo_id: input.repoId,
-          thread_id: input.threadId,
+          job_id: input.threadId,
           status: 'draft',
           overview: input.overview,
           decisions: input.decisions,
-          track_titles: input.threadTitles,
+          thread_titles: input.threadTitles,
           approved_by: null,
           approved_at: null,
         }),
@@ -821,7 +821,7 @@ export class BrainStoreService {
         input.threadTitles.map((brief, i) => {
           const authored = input.stepsByThread?.[i];
           return tracks.create({
-            thread_id: input.threadId,
+            job_id: input.threadId,
             org_id: input.orgId,
             ordinal: (i + 1) * ORDINAL_GAP,
             brief,
@@ -843,8 +843,8 @@ export class BrainStoreService {
         const phaseRows = savedSections.flatMap((track, i) =>
           (input.stepsByThread?.[i] ?? []).map((p, j) =>
             steps.create({
-              track_id: track.id,
-              thread_id: input.threadId,
+              thread_id: track.id,
+              job_id: input.threadId,
               org_id: input.orgId,
               ordinal: (j + 1) * ORDINAL_GAP,
               title: p.title,
@@ -896,7 +896,7 @@ export class BrainStoreService {
     return {
       overview: row.overview,
       decisions: row.decisions ?? [],
-      threadTitles: row.track_titles ?? [],
+      threadTitles: row.thread_titles ?? [],
     };
   }
 

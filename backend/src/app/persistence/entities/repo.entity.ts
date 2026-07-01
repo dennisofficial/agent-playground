@@ -62,12 +62,12 @@ export class RepoEntity extends TimestampedEntity {
    * re-connect can re-spawn. Not a real FK (the thread may be deleted out from under it).
    */
   @Column({ type: 'uuid', nullable: true })
-  onboarding_thread_id!: string | null;
+  onboarding_job_id!: string | null;
 
   /**
    * PROOF the repo's worktree provisioning config is live — stamped only when the onboarding thread's
    * `.atlas/worktree.json` PR MERGES (or immediately at `finish_onboarding` when there was nothing to
-   * commit, e.g. secrets-only). NOT a spawn gate (that's {@link onboarding_thread_id}); a closed/unmerged
+   * commit, e.g. secrets-only). NOT a spawn gate (that's {@link onboarding_job_id}); a closed/unmerged
    * config PR must never leave a repo falsely marked onboarded. Null until then.
    */
   @Column({ type: 'timestamptz', nullable: true })

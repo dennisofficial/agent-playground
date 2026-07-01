@@ -121,14 +121,14 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     );
     repoId = repo.id;
     const [thread] = await ds.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title) VALUES ($1, $2, 'chat', 'Stream thread') RETURNING id`,
+      `INSERT INTO jobs (org_id, repo_id, origin, title) VALUES ($1, $2, 'chat', 'Stream thread') RETURNING id`,
       [ORG_ID, repoId],
     );
     threadId = thread.id;
   }, 60_000);
 
   async function purge() {
-    await ds.query(`DELETE FROM threads WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
     await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
   }
@@ -158,7 +158,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     // (1b) NO double-render: the in-flight content is NOT yet in the durable log (it's persisted only at
     // turn end). If it were persisted mid-turn, a reconnecting client would see it twice — once from
     // `/messages` and once from the live snapshot.
-    const midRows = await ds.query(`SELECT count(*)::int AS n FROM messages WHERE thread_id = $1 AND text LIKE '%Hello world%'`, [threadId]);
+    const midRows = await ds.query(`SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND text LIKE '%Hello world%'`, [threadId]);
     expect(midRows[0].n).toBe(0);
 
     // (2) A client that connects NOW (e.g. after a refresh) replays that snapshot the instant it subscribes.
@@ -178,7 +178,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     // (3) DURABLE — the assembled transcript lands in `messages`; the live buffer clears.
     await waitFor(async () => {
       const rows = await ds.query(
-        `SELECT text, kind FROM messages WHERE thread_id = $1 AND author_bot_id IS NOT NULL`,
+        `SELECT text, kind FROM messages WHERE job_id = $1 AND author_bot_id IS NOT NULL`,
         [threadId],
       );
       return rows.some((r: { text: string; kind: string }) => r.kind === 'chat' && r.text === 'Hello world');

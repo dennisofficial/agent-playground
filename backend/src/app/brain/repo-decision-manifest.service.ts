@@ -66,7 +66,7 @@ export class RepoDecisionManifestService {
       const fields = {
         title: e.title,
         tags: e.tags,
-        source_thread: e.sourceThread,
+        source_job: e.sourceThread,
         supersedes: e.supersedes,
         superseded_by: e.supersededBy,
         governs_paths: e.governsPaths,
@@ -123,7 +123,7 @@ export class RepoDecisionManifestService {
       const graph = {
         title: fm.title ?? slug,
         tags: fm.tags,
-        source_thread: fm.sourceThread,
+        source_job: fm.sourceThread,
         supersedes: fm.supersedes,
         superseded_by: fm.supersededBy,
         governs_paths: fm.governsPaths,

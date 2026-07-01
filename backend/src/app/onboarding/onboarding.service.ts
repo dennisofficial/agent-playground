@@ -179,14 +179,14 @@ export class OnboardingService {
    * Spawn the one-off repo-ONBOARDING thread (Atlas-run `claude init`) for a connected repo — but only when
    * (a) the org is RUNNABLE (keys + engine auth + GitHub PAT present, so the brain can actually run), (b)
    * the repo's access is validated, and (c) it hasn't been onboarded already. Idempotency + the
-   * re-spawn guard are the `repos.onboarding_thread_id` marker, set under a conditional UPDATE so two
+   * re-spawn guard are the `repos.onboarding_job_id` marker, set under a conditional UPDATE so two
    * concurrent triggers (connectRepo + tryActivate) can't double-spawn. Best-effort + fire-and-forget by
    * the callers. The brain/store + session manager are resolved LAZILY (the same module-cycle avoidance
    * `disconnectRepo` uses — onboarding → brain would otherwise close an ES module cycle).
    */
   async maybeStartRepoOnboarding(orgId: string, repoId: string): Promise<void> {
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
-    if (!repo || !repo.access_ok || repo.onboarding_thread_id) return; // gone / not validated / already done
+    if (!repo || !repo.access_ok || repo.onboarding_job_id) return; // gone / not validated / already done
     const status = await this.status(orgId);
     if (!(status.steps.llmKey && status.steps.engineAuth && status.steps.githubPat)) {
       return; // org can't run Atlas yet — tryActivate will re-trigger once the credentials land
@@ -205,11 +205,11 @@ export class OnboardingService {
       kind: 'onboarding',
     });
 
-    // Claim the spawn: only the trigger that flips `onboarding_thread_id` from NULL wins; a loser deletes
+    // Claim the spawn: only the trigger that flips `onboarding_job_id` from NULL wins; a loser deletes
     // its orphan thread row and bails (no double onboarding).
     const claim = await this.repos.update(
-      { id: repoId, org_id: orgId, onboarding_thread_id: IsNull() },
-      { onboarding_thread_id: threadId },
+      { id: repoId, org_id: orgId, onboarding_job_id: IsNull() },
+      { onboarding_job_id: threadId },
     );
     if (!claim.affected) {
       await this.threads.delete({ id: threadId, org_id: orgId }).catch(() => undefined);
@@ -223,7 +223,7 @@ export class OnboardingService {
   /**
    * Operator-initiated (RE-)ONBOARD of an already-connected repo — the explicit counterpart to the
    * automatic {@link maybeStartRepoOnboarding}. Unlike the auto path it does NOT bail on the
-   * `onboarding_thread_id` re-spawn guard: it spawns a FRESH onboarding thread and overwrites the marker,
+   * `onboarding_job_id` re-spawn guard: it spawns a FRESH onboarding thread and overwrites the marker,
    * so it works for repos connected before onboarding existed, repos already onboarded (re-derive config
    * after the repo changed), or repos whose prior onboarding thread is gone. Requires the org to be
    * runnable (keys + engine auth + GitHub PAT) and the repo's access validated. Returns the new thread id
@@ -258,7 +258,7 @@ export class OnboardingService {
     });
     // Explicit operator action — overwrite the marker (no first-time guard); the prior onboarding thread,
     // if any, stays as history.
-    await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_thread_id: threadId });
+    await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_job_id: threadId });
     this.logger.log(`re-onboarding thread ${threadId} for ${orgId}/${repo.slug} (operator-initiated)`);
     await sessions.startOnboardingThread(threadId, orgId, repoId);
     return { threadId };
@@ -475,7 +475,7 @@ export class OnboardingService {
   /** Trigger `maybeStartRepoOnboarding` for every access_ok repo of an org that hasn't been onboarded yet. */
   private async spawnOnboardingForPendingRepos(orgId: string): Promise<void> {
     const repos = await this.repos.find({
-      where: { org_id: orgId, access_ok: true, onboarding_thread_id: IsNull() },
+      where: { org_id: orgId, access_ok: true, onboarding_job_id: IsNull() },
       select: { id: true },
     });
     for (const r of repos) {

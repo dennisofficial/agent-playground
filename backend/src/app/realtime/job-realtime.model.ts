@@ -73,7 +73,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
 
 /** The single model the realtime engine serves: the `threads` table, scoped per-org, projected flat. */
 export const THREADS_MODEL: ModelConfig<ThreadRealtimeRow> = {
-  table: 'threads',
+  table: 'jobs',
   primaryKey: 'id',
   mapRow,
   guard: new ThreadOrgGuard(),

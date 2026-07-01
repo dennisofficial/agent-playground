@@ -9,19 +9,19 @@ import { JobEntity } from './job.entity';
  * thread's one feature branch and run sequentially (ORDER BY ordinal). `status` is the explicit,
  * resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
  */
-@Entity({ name: 'tracks' })
-@Index(['thread_id'])
-@Unique(['thread_id', 'ordinal'])
+@Entity({ name: 'threads' })
+@Index(['job_id'])
+@Unique(['job_id', 'ordinal'])
 export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   /** The owning thread (FK → threads.id). */
   @Column({ type: 'uuid' })
-  thread_id!: string;
+  job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */

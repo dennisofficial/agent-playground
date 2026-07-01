@@ -631,6 +631,8 @@ export class EngineCore {
       for await (const event of events) {
       switch (event.type) {
         case 'thread.started':
+          // NB: SDK session field — `thread.started` is the Agent SDK's own event and `thread_id` is its
+          // session id (NOT our domain Job/Thread), so it is out of scope for the domain rename.
           resolvedSession = event.thread_id;
           // Surface the resume handle immediately (turn start) for mid-turn halt recovery.
           if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });

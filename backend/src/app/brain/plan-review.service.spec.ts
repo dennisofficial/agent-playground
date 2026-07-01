@@ -108,8 +108,8 @@ function makeReviewsRepo() {
   let seq = 1;
   const repo = {
     count: vi.fn(
-      async (opts: { where: { thread_id: string } }) =>
-        rows.filter((r) => r.thread_id === opts.where.thread_id).length,
+      async (opts: { where: { job_id: string } }) =>
+        rows.filter((r) => r.job_id === opts.where.job_id).length,
     ),
     create: vi.fn(
       (data: Partial<PlanReviewEntity>) => ({ ...data }) as PlanReviewEntity,
@@ -126,14 +126,14 @@ function makeReviewsRepo() {
     }),
     findOne: vi.fn(
       async (opts: {
-        where: { id?: string; thread_id?: string; status?: string };
+        where: { id?: string; job_id?: string; status?: string };
         order?: { round?: 'ASC' | 'DESC' };
       }) => {
-        const { id, thread_id, status } = opts.where;
+        const { id, job_id, status } = opts.where;
         if (id) return rows.find((r) => r.id === id) ?? null;
         let matches = rows.filter(
           (r) =>
-            (thread_id === undefined || r.thread_id === thread_id) &&
+            (job_id === undefined || r.job_id === job_id) &&
             (status === undefined || r.status === status),
         );
         if (opts.order?.round) {
@@ -237,7 +237,7 @@ describe('PlanReviewService.start', () => {
     expect(started.round).toBe(1);
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('running');
-    expect(rows[0].thread_id).toBe('th-r4-001');
+    expect(rows[0].job_id).toBe('th-r4-001');
     // The prompt is STRUCTURED: it leads with the operator's intent (goal) and embeds the overview +
     // tracks so a boot re-run needs no reconstruction.
     expect(rows[0].prompt).toContain('<intent>');

@@ -142,7 +142,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
   private async candidateThreadIds(): Promise<string[]> {
     const rows = await this.sandboxRows
       .createQueryBuilder('s')
-      .select('s.thread_id', 'threadId')
+      .select('s.job_id', 'threadId')
       .where("s.lifecycle <> 'closed'")
       .getRawMany<{ threadId: string }>();
     return rows.map((r) => r.threadId);
@@ -210,7 +210,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
     if (!needle) return false;
     const count = await this.messages
       .createQueryBuilder('m')
-      .where('m.thread_id = :threadId', { threadId })
+      .where('m.job_id = :threadId', { threadId })
       .andWhere("m.author_id = 'atlas'")
       .andWhere('position(:needle in m.text) > 0', { needle })
       .getCount();
@@ -222,7 +222,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
     const rows: Array<{ u: string | null }> = await this.messages
       .createQueryBuilder('m')
       .select("m.meta ->> 'sdkUuid'", 'u')
-      .where('m.thread_id = :threadId', { threadId })
+      .where('m.job_id = :threadId', { threadId })
       .andWhere("m.meta ->> 'sdkUuid' IS NOT NULL")
       .getRawMany();
     return new Set(rows.map((r) => r.u).filter((u): u is string => typeof u === 'string'));
@@ -232,7 +232,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
   private async appendBlock(threadId: string, block: RecoveredBlock, createdAt: Date): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',

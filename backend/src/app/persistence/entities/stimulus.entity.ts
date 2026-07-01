@@ -6,7 +6,7 @@ import { JobEntity } from './job.entity';
 
 /**
  * The durable record of an intake stimulus — both subtypes in one table, discriminated by `kind`:
- *  - 'chat'  — continues a thread (carries `thread_id` + author + reply route).
+ *  - 'chat'  — continues a thread (carries `job_id` + author + reply route).
  *  - 'event' — opens a new thread; UNTRUSTED; carries `source`, `dedupe_key`, `severity`. The
  *    mechanical pre-harness filter dedups by `dedupe_key` (events only) so the firehose doesn't pay
  *    an Atlas turn per duplicate.
@@ -54,10 +54,10 @@ export class StimulusEntity extends TimestampedEntity {
   // ─── chat-only ──────────────────────────────────────────────────────────
   /** The thread a chat stimulus continues (null for events, which OPEN a thread). */
   @Column({ type: 'uuid', nullable: true })
-  thread_id!: string | null;
+  job_id!: string | null;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE', nullable: true })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity | null;
 
   /** Chat author scope id; null for events. */

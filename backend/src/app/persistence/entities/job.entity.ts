@@ -36,13 +36,13 @@ export interface ThreadPipelineAwareness {
  * feature branch = ONE PR. A thread may stay a plain conversation (`status='open'`) or enter the build
  * lifecycle; when it builds, the `tracks`/`steps` rows hang directly off it (the former `jobs` layer
  * is folded in here). `decision_records` (1:many — the draft→superseded proposal trail) reference it.
- * `messages` partition by `thread_id`. Threads are isolated for context hygiene — cross-thread coherence
+ * `messages` partition by `job_id`. Threads are isolated for context hygiene — cross-thread coherence
  * is shared memory only, never transcript sharing.
  *
  * `status` (build lifecycle) is a SEPARATE axis from `thread_sandboxes.lifecycle` (container/worktree
  * infra). The branch + PR live HERE (single owner); the sandbox is the disposable workspace.
  */
-@Entity({ name: 'threads' })
+@Entity({ name: 'jobs' })
 @Index(['org_id', 'repo_id'])
 export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')

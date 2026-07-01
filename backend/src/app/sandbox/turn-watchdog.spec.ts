@@ -13,8 +13,8 @@ describe('TurnWatchdogService.sweep', () => {
   it('finalizes every stale turn as failed', async () => {
     const registry = {
       findStale: vi.fn(async () => [
-        { turn_id: 't1', thread_id: 'th1' },
-        { turn_id: 't2', thread_id: 'th2' },
+        { turn_id: 't1', job_id: 'th1' },
+        { turn_id: 't2', job_id: 'th2' },
       ] as ActiveTurnEntity[]),
       finalize: vi.fn(async () => undefined),
     } as unknown as TurnRegistry & { findStale: ReturnType<typeof vi.fn>; finalize: ReturnType<typeof vi.fn> };

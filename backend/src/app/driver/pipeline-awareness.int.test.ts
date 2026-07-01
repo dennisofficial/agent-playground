@@ -75,7 +75,7 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
   });
 
   afterAll(async () => {
-    await ds?.query(`DELETE FROM threads WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds?.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
     await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
     await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
     await mod?.close();
@@ -83,7 +83,7 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
 
   async function newThread(): Promise<string> {
     const rows = await ds.query(
-      `INSERT INTO threads (org_id, repo_id, origin, title) VALUES ($1, $2, 'chat', 'awareness') RETURNING id`,
+      `INSERT INTO jobs (org_id, repo_id, origin, title) VALUES ($1, $2, 'chat', 'awareness') RETURNING id`,
       [ORG_ID, repoId],
     );
     return rows[0].id;
@@ -91,7 +91,7 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
 
   it('defaults to an empty buffer for a fresh thread (the migration backfill)', async () => {
     const threadId = await newThread();
-    const rows = await ds.query(`SELECT pipeline_awareness AS a FROM threads WHERE id = $1`, [threadId]);
+    const rows = await ds.query(`SELECT pipeline_awareness AS a FROM jobs WHERE id = $1`, [threadId]);
     expect(rows[0].a).toEqual({ markerQueue: [], conveyedStateSig: null });
   });
 

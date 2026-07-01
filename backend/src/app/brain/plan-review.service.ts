@@ -264,7 +264,7 @@ export class PlanReviewService {
    */
   async start(input: PlanReviewStartInput): Promise<PlanReviewStart> {
     const prior = await this.reviews.count({
-      where: { thread_id: input.threadId },
+      where: { job_id: input.threadId },
     });
     const round = prior + 1;
     if (round > this.maxRounds) {
@@ -276,7 +276,7 @@ export class PlanReviewService {
     const prompt = renderPlanForReview(input);
     const row = await this.reviews.save(
       this.reviews.create({
-        thread_id: input.threadId,
+        job_id: input.threadId,
         org_id: input.orgId,
         decision_record_id: input.decisionRecordId ?? null,
         round,
@@ -309,7 +309,7 @@ export class PlanReviewService {
     // (Re-)attach a live container against the durable worktree (the async/boot path can't assume one is
     // warm). Returns null only if the thread has no sandbox row or is closed → record failed, no findings.
     const ensured = await this.lifecycle
-      .ensureContainer(row.thread_id, row.org_id)
+      .ensureContainer(row.job_id, row.org_id)
       .catch((err) => {
         this.logger.warn(
           `plan-review: ensureContainer failed for review=${reviewId}: ${err}`,
@@ -333,7 +333,7 @@ export class PlanReviewService {
     );
 
     this.logger.log(
-      `plan-review: running Codex review turn for review=${reviewId} thread=${row.thread_id}`,
+      `plan-review: running Codex review turn for review=${reviewId} thread=${row.job_id}`,
     );
 
     // Watchdog: bound the turn so a HUNG engine can never leave the row stuck `running` forever (which
@@ -440,7 +440,7 @@ export class PlanReviewService {
    */
   async runningReview(threadId: string): Promise<{ round: number } | null> {
     const row = await this.reviews.findOne({
-      where: { thread_id: threadId, status: 'running' },
+      where: { job_id: threadId, status: 'running' },
       order: { round: 'DESC' },
     });
     if (!row) return null;

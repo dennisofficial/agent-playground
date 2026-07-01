@@ -11,7 +11,7 @@
  *
  * These are the in-memory shapes (kept separate from the `threads` / `messages` / `tracks` / `steps`
  * rows). Threads are isolated for context hygiene — cross-thread coherence is SHARED MEMORY only, never
- * transcript sharing; one `messages` table is partitioned by `thread_id`.
+ * transcript sharing; one `messages` table is partitioned by `job_id`.
  */
 
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in

@@ -22,7 +22,7 @@ import { JobEntity } from './job.entity';
  * delivery turn was lost — mirroring the `ask_question` gate).
  */
 @Entity({ name: 'plan_reviews' })
-@Index(['thread_id', 'round'])
+@Index(['job_id', 'round'])
 @Index(['status'])
 export class PlanReviewEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -30,10 +30,10 @@ export class PlanReviewEntity extends TimestampedEntity {
 
   /** The thread whose plan is under review (FK → threads.id). */
   @Column({ type: 'uuid' })
-  thread_id!: string;
+  job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
   /** The tenant (denormalized for sandbox resolution + scoping). */

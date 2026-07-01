@@ -64,7 +64,7 @@ export class TurnRegistry {
     await this.turns.save(
       this.turns.create({
         turn_id: input.turnId,
-        thread_id: input.threadId,
+        job_id: input.threadId,
         org_id: input.orgId,
         channel: input.channel,
         lane: input.lane,
@@ -129,7 +129,7 @@ export class TurnRegistry {
   async hasRunningForThread(threadId: string): Promise<boolean> {
     return (
       (await this.turns.count({
-        where: { thread_id: threadId, status: Not('failed') as never },
+        where: { job_id: threadId, status: Not('failed') as never },
       })) > 0
     );
   }

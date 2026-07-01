@@ -67,7 +67,7 @@ export function isTicketKind(v: unknown): v is TicketKind {
 }
 
 /**
- * Immutable provenance snapshot, copied onto the ticket at creation. The live FKs (`origin_thread_id`,
+ * Immutable provenance snapshot, copied onto the ticket at creation. The live FKs (`origin_job_id`,
  * `origin_decision_record_id`) go `SET NULL` if the source thread/decision is deleted, so we ALSO keep
  * this human-readable snapshot so a ticket stays interpretable ("captured from …") regardless.
  */

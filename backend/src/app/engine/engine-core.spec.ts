@@ -136,7 +136,7 @@ function fakeCodexSdk() {
         id: 'thread-1',
         runStreamed: async () => ({
           events: (async function* () {
-            yield { type: 'thread.started', thread_id: 'thread-1' };
+            yield { type: 'thread.started', job_id: 'thread-1' };
             yield { type: 'item.completed', item: { type: 'agent_message', text: 'codex done' } };
             yield { type: 'turn.completed', usage: { input_tokens: 5, output_tokens: 3 } };
           })(),

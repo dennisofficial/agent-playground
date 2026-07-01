@@ -162,7 +162,7 @@ export class DriverStoreService {
   /** The thread's tracks in execution order (ORDER BY ordinal). */
   async tracksForJob(threadId: string): Promise<DriverThread[]> {
     const rows = await this.tracks.find({
-      where: { thread_id: threadId },
+      where: { job_id: threadId },
       order: { ordinal: 'ASC' },
     });
     return rows.map(toThread);
@@ -240,7 +240,7 @@ export class DriverStoreService {
   /** A track's steps in execution order. */
   async stepsForThread(trackId: string): Promise<Step[]> {
     const rows = await this.steps.find({
-      where: { track_id: trackId },
+      where: { thread_id: trackId },
       order: { ordinal: 'ASC' },
     });
     return rows.map(toStep);
@@ -256,8 +256,8 @@ export class DriverStoreService {
     if (existing.length > 0) return existing;
     const rows = planned.map((p, i) =>
       this.steps.create({
-        track_id: track.id,
-        thread_id: track.threadId,
+        thread_id: track.id,
+        job_id: track.threadId,
         org_id: track.orgId,
         ordinal: (i + 1) * ORDINAL_GAP,
         title: p.title,
@@ -310,19 +310,19 @@ export class DriverStoreService {
     });
     if (!thread || thread.status === 'open') return { status: 'no_job' };
     const tracks = await this.tracks.find({
-      where: { thread_id: thread.id },
+      where: { job_id: thread.id },
       order: { ordinal: 'ASC' },
     });
     // All the thread's steps in one query (avoid N+1), grouped by track for the nav folder tree.
     const steps = await this.steps.find({
-      where: { thread_id: thread.id },
+      where: { job_id: thread.id },
       order: { ordinal: 'ASC' },
     });
     const stepsByThread = new Map<string, StepEntity[]>();
     for (const p of steps) {
-      const list = stepsByThread.get(p.track_id) ?? [];
+      const list = stepsByThread.get(p.thread_id) ?? [];
       list.push(p);
-      stepsByThread.set(p.track_id, list);
+      stepsByThread.set(p.thread_id, list);
     }
     return {
       threadId: thread.id,
@@ -373,7 +373,7 @@ export class DriverStoreService {
       status: record.status,
       overview: record.overview,
       decisions: record.decisions,
-      threadTitles: record.track_titles,
+      threadTitles: record.thread_titles,
     };
   }
 
@@ -457,7 +457,7 @@ function toJob(row: JobEntity): Job {
 function toThread(row: ThreadEntity): DriverThread {
   return {
     id: row.id,
-    threadId: row.thread_id,
+    threadId: row.job_id,
     orgId: row.org_id,
     ordinal: row.ordinal,
     brief: row.brief,
@@ -471,8 +471,8 @@ function toThread(row: ThreadEntity): DriverThread {
 function toStep(row: StepEntity): Step {
   return {
     id: row.id,
-    trackId: row.track_id,
-    threadId: row.thread_id,
+    trackId: row.thread_id,
+    threadId: row.job_id,
     ordinal: row.ordinal,
     title: row.title,
     brief: row.brief,
@@ -489,11 +489,11 @@ function toRecord(row: DecisionRecordEntity): DecisionRecord {
     id: row.id,
     orgId: row.org_id,
     repoId: row.repo_id,
-    threadId: row.thread_id,
+    threadId: row.job_id,
     status: row.status as DecisionRecord['status'],
     overview: row.overview,
     decisions: row.decisions as Decision[],
-    threadTitles: row.track_titles,
+    threadTitles: row.thread_titles,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
   };

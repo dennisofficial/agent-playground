@@ -36,7 +36,7 @@ describe('TurnRegistry', () => {
     const saved = repo.save.mock.calls[0][0];
     expect(saved).toMatchObject({
       turn_id: 't1',
-      thread_id: 'th1',
+      job_id: 'th1',
       status: 'running',
       events_last_id: '0-0',
       last_heartbeat_at: null,

@@ -235,16 +235,16 @@ export class E2eHarness {
     const q = (sql: string, params: unknown[]) => this.dataSource.query(sql, params);
     // Threads/messages/stimuli/jobs/tracks/steps/decision-records hang off team/project.
     await q(`DELETE FROM steps WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM tracks WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM threads WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(`DELETE FROM decision_records WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
     await q(
-      `DELETE FROM messages WHERE thread_id IN (
-         SELECT id FROM threads WHERE org_id = $1)`,
+      `DELETE FROM messages WHERE job_id IN (
+         SELECT id FROM jobs WHERE org_id = $1)`,
       [TEAM_ID],
     ).catch(() => undefined);
     await q(`DELETE FROM stimuli WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM thread_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM threads WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM job_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
   }
 
   // ── scenario 1: feature (chat-initiated) ───────────────────────────────────────────────────────
@@ -412,7 +412,7 @@ export class E2eHarness {
       // (the EVENT bubble). This is what the operator + Atlas both see — the harness-message model.
       const threadId = first.json?.threadId as string | undefined;
       const eventMsg = threadId
-        ? await this.repo(MessageEntity).findOne({ where: { thread_id: threadId } })
+        ? await this.repo(MessageEntity).findOne({ where: { job_id: threadId } })
         : null;
       const hasEventMsg =
         !!eventMsg && (eventMsg.meta as { source?: unknown } | null)?.source === 'system_event';
@@ -473,7 +473,7 @@ export class E2eHarness {
       // sees it (the brain delivery wraps it in the untrusted markers). The seeded row holds the clean
       // text and is tagged `system_event`, NOT executed as an instruction.
       const eventMsg = threadId
-        ? await this.repo(MessageEntity).findOne({ where: { thread_id: threadId } })
+        ? await this.repo(MessageEntity).findOne({ where: { job_id: threadId } })
         : null;
       const storedAsData =
         !!eventMsg &&

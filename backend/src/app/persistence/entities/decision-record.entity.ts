@@ -8,14 +8,14 @@ import { UserEntity } from './user.entity';
 
 /**
  * The locked DECISION RECORD — the upfront grill's durable output: the agreed overview, the
- * architecture/system calls (`decisions`), and the high-level track list (`track_titles`),
+ * architecture/system calls (`decisions`), and the high-level track list (`thread_titles`),
  * approved ONCE. It grounds every track's just-in-time plan and the decision-class gate (a track
  * planner parks only on an always-ask class NOT already settled here). 1:many with the thread — a
  * re-propose marks the prior draft `superseded` and writes a new one (the proposal audit trail).
  */
 @Entity({ name: 'decision_records' })
 @Index(['org_id', 'repo_id'])
-@Index(['thread_id'])
+@Index(['job_id'])
 export class DecisionRecordEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -38,10 +38,10 @@ export class DecisionRecordEntity extends TimestampedEntity {
 
   /** The thread this record was produced for (FK → threads.id). */
   @Column({ type: 'uuid' })
-  thread_id!: string;
+  job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
   // 'draft' | 'approved' | 'superseded'
@@ -58,7 +58,7 @@ export class DecisionRecordEntity extends TimestampedEntity {
 
   /** The high-level track briefs approved upfront — drives the thread's track rows. */
   @Column({ type: 'text', array: true, default: () => `'{}'` })
-  track_titles!: string[];
+  thread_titles!: string[];
 
   /** Who approved it (a user id); null until approved. */
   @Column({ type: 'uuid', nullable: true })

@@ -17,8 +17,8 @@ import { JobEntity } from './job.entity';
  *  - `detached`     — worktree + session durable but NO container (reaped/crashed); next turn re-attaches
  *  - `closed`       — terminal: worktree removed + container gone (PR merged / thread closed)
  */
-@Entity({ name: 'thread_sandboxes' })
-@Index(['thread_id'], { unique: true })
+@Entity({ name: 'job_sandboxes' })
+@Index(['job_id'], { unique: true })
 export class JobSandboxEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -33,10 +33,10 @@ export class JobSandboxEntity extends TimestampedEntity {
 
   /** The thread this sandbox serves (FK → threads.id; 1:1). */
   @Column({ type: 'uuid' })
-  thread_id!: string;
+  job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
   /** The repo this sandbox is for (FK → repos.id). */

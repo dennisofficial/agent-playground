@@ -39,7 +39,7 @@ export class MessageBlockSink implements BlockSink {
   ): Promise<void> {
     await this.messages.save(
       this.messages.create({
-        thread_id: threadId,
+        job_id: threadId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',

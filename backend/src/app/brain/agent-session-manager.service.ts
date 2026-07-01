@@ -929,30 +929,30 @@ export class AgentSessionManager
       trust: 'trusted',
       orgId: row.org_id,
       repoId: ctx.repoId,
-      threadId: row.thread_id,
+      threadId: row.job_id,
       body: ctx.body,
       author: ctx.author,
-      replyRoute: { surfaceId: 'web', threadRef: row.thread_id },
+      replyRoute: { surfaceId: 'web', threadRef: row.job_id },
       receivedAt: new Date(),
       ...(ctx.seed ? { seed: true } : {}),
       ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
     };
     const tools = this.buildTools(stimulus);
     const streamer = this.turnHarness.create({
-      threadId: row.thread_id,
+      threadId: row.job_id,
       channel: row.channel,
     });
     const sandboxRow = await this.sandboxRows.findOne({
-      where: { thread_id: row.thread_id, org_id: row.org_id },
+      where: { job_id: row.job_id, org_id: row.org_id },
     });
-    await this.store.setTurnActive(row.thread_id, true).catch(() => undefined);
+    await this.store.setTurnActive(row.job_id, true).catch(() => undefined);
     try {
       const result = await this.engineRunner.reattach!(
         row.turn_id,
         row.container_id,
         {
           onEvent: (e) => streamer.onEvent(e),
-          toolBridge: { threadId: row.thread_id, tools },
+          toolBridge: { threadId: row.job_id, tools },
         },
       );
       if (result.sessionId && sandboxRow) {
@@ -979,7 +979,7 @@ export class AgentSessionManager
       await streamer.finish();
     } finally {
       await this.store
-        .setTurnActive(row.thread_id, false)
+        .setTurnActive(row.job_id, false)
         .catch(() => undefined);
     }
   }
@@ -1103,7 +1103,7 @@ export class AgentSessionManager
 
     // Resolve the current session_id for this thread (resume across turns).
     const sandboxRow = await this.sandboxRows.findOne({
-      where: { thread_id: stimulus.threadId, org_id: stimulus.orgId },
+      where: { job_id: stimulus.threadId, org_id: stimulus.orgId },
     });
     const sessionId = sandboxRow?.session_id ?? undefined;
 
@@ -1221,7 +1221,7 @@ export class AgentSessionManager
           try {
             void Promise.resolve(
               this.sandboxRows.update(
-                { thread_id: stimulus.threadId, org_id: stimulus.orgId },
+                { job_id: stimulus.threadId, org_id: stimulus.orgId },
                 { session_id: sid },
               ),
             ).catch((err) =>
@@ -2812,7 +2812,7 @@ export class AgentSessionManager
     if (!review) return;
     if (review.delivered_at) return; // already delivered
     if (review.status === 'running') return; // not finished — boot reconciliation will re-run it
-    const job = await this.store.loadJob(review.thread_id).catch(() => null);
+    const job = await this.store.loadJob(review.job_id).catch(() => null);
     if (!job) return;
 
     const capReached = review.round >= this.planReview.maxReviewRounds;
@@ -2827,14 +2827,14 @@ export class AgentSessionManager
 
     // (1) The single operator-visible artifact (idempotent on the review id).
     await this.store.appendReviewFindingsMessage(
-      review.thread_id,
+      review.job_id,
       review.id,
       body,
     );
 
     // (2) Deliver to the brain via a synthetic harness turn (skips the operator-only paths).
     const stimulus = harnessDeliveryStimulus({
-      threadId: review.thread_id,
+      threadId: review.job_id,
       orgId: review.org_id,
       repoId: job.repoId,
       body,
@@ -2884,14 +2884,14 @@ export class AgentSessionManager
       where: { kind: 'event', delivered_at: IsNull() },
     });
     return rows
-      .filter((r) => Boolean(r.thread_id))
+      .filter((r) => Boolean(r.job_id))
       .map((r) => ({
         id: r.id,
         orgId: r.org_id,
         repoId: r.repo_id,
         kind: 'event' as const,
         trust: 'untrusted' as const,
-        threadId: r.thread_id as string,
+        threadId: r.job_id as string,
         body: r.body,
         source: r.source ?? 'webhook',
         dedupeKey: r.dedupe_key ?? '',

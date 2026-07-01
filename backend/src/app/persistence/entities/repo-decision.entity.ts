@@ -14,7 +14,7 @@ import { RepoEntity } from './repo.entity';
  * all repos): it reads the MERGED default-branch ledger, upserts a row per file, resolves supersession,
  * and — when a file's hash diverges from this baseline by a NON-Atlas author — sets {@link flagged} and
  * leaves the row alone (never silently overwrites or auto-trusts a human edit). One row per
- * `(org, repo, slug)`; outlives the thread that authored it (so `source_thread` is a plain id, not an FK).
+ * `(org, repo, slug)`; outlives the thread that authored it (so `source_job` is a plain id, not an FK).
  */
 @Entity({ name: 'repo_decisions' })
 @Index(['org_id', 'repo_id'])
@@ -60,7 +60,7 @@ export class RepoDecisionEntity extends TimestampedEntity {
 
   /** The thread that authored this decision (a plain id — the ledger OUTLIVES the thread, so NOT an FK). */
   @Column({ type: 'text', nullable: true })
-  source_thread!: string | null;
+  source_job!: string | null;
 
   /** Slugs this decision replaces (the supersession graph; resolved from frontmatter on reconcile). */
   @Column({ type: 'text', array: true, default: () => `'{}'` })

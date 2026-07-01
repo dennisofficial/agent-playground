@@ -32,14 +32,14 @@ export class PipelineAwarenessStore {
   async appendMarker(threadId: string, marker: PipelineMarker): Promise<void> {
     await this.ds.transaction(async (m) => {
       const rows: Array<{ a: unknown }> = await m.query(
-        `SELECT pipeline_awareness AS a FROM threads WHERE id = $1 FOR UPDATE`,
+        `SELECT pipeline_awareness AS a FROM jobs WHERE id = $1 FOR UPDATE`,
         [threadId],
       );
       if (rows.length === 0) return;
       const a = normalize(rows[0].a);
       if (a.markerQueue.some((x) => x.id === marker.id)) return; // already queued — idempotent
       a.markerQueue.push(marker);
-      await m.query(`UPDATE threads SET pipeline_awareness = $2 WHERE id = $1`, [
+      await m.query(`UPDATE jobs SET pipeline_awareness = $2 WHERE id = $1`, [
         threadId,
         JSON.stringify(a),
       ]);
@@ -59,7 +59,7 @@ export class PipelineAwarenessStore {
   ): Promise<{ markers: PipelineMarker[]; stateChanged: boolean }> {
     return this.ds.transaction(async (m) => {
       const rows: Array<{ a: unknown }> = await m.query(
-        `SELECT pipeline_awareness AS a FROM threads WHERE id = $1 FOR UPDATE`,
+        `SELECT pipeline_awareness AS a FROM jobs WHERE id = $1 FOR UPDATE`,
         [threadId],
       );
       if (rows.length === 0) return { markers: [], stateChanged: false };
@@ -72,7 +72,7 @@ export class PipelineAwarenessStore {
         markerQueue: [],
         conveyedStateSig: stateChanged ? currentSig : a.conveyedStateSig,
       };
-      await m.query(`UPDATE threads SET pipeline_awareness = $2 WHERE id = $1`, [
+      await m.query(`UPDATE jobs SET pipeline_awareness = $2 WHERE id = $1`, [
         threadId,
         JSON.stringify(next),
       ]);

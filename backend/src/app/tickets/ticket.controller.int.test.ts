@@ -73,7 +73,7 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
 
 async function purge(): Promise<void> {
   for (const org of [ORG1, ORG2]) {
-    await ds.query(`DELETE FROM threads WHERE org_id = $1`, [org]).catch(() => undefined);
+    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [org]).catch(() => undefined);
     await ds.query(`DELETE FROM tickets WHERE org_id = $1`, [org]).catch(() => undefined);
     await ds.query(`DELETE FROM repos WHERE org_id = $1`, [org]).catch(() => undefined);
     await ds.query(`DELETE FROM organization_members WHERE org_id = $1`, [org]).catch(() => undefined);
@@ -154,7 +154,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   for (const org of [ORG1, ORG2]) {
-    await ds.query(`DELETE FROM threads WHERE org_id = $1`, [org]);
+    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [org]);
     await ds.query(`DELETE FROM tickets WHERE org_id = $1`, [org]);
     await ds.query(`DELETE FROM ticket_counters WHERE repo_id IN ($1, $2, $3)`, [REPO1, REPO2, REPO3]);
   }
@@ -291,7 +291,7 @@ describe('TicketController HTTP (membership guard + scoping + dependencies, live
     expect(threadId).toBeTruthy();
 
     // The thread row carries the link, and the ticket advanced onto the board.
-    const [thread] = await ds.query(`SELECT ticket_id FROM threads WHERE id = $1`, [threadId]);
+    const [thread] = await ds.query(`SELECT ticket_id FROM jobs WHERE id = $1`, [threadId]);
     expect(thread.ticket_id).toBe(ticketId);
     const detail = await request(server).get(`${ticketsPath(ORG1, REPO1)}/${ticketId}`).set('Cookie', ownerCookie);
     expect(detail.body).toMatchObject({ status: 'in_progress', linkedThreadId: threadId });
@@ -299,7 +299,7 @@ describe('TicketController HTTP (membership guard + scoping + dependencies, live
     // Idempotent: a second promote returns the SAME thread, creates nothing new.
     const again = await request(server).post(`${ticketsPath(ORG1, REPO1)}/${ticketId}/promote`).set('Cookie', ownerCookie);
     expect(again.body).toMatchObject({ threadId, created: false });
-    const count = await ds.query(`SELECT count(*)::int AS n FROM threads WHERE ticket_id = $1`, [ticketId]);
+    const count = await ds.query(`SELECT count(*)::int AS n FROM jobs WHERE ticket_id = $1`, [ticketId]);
     expect(count[0].n).toBe(1);
   });
 
@@ -310,7 +310,7 @@ describe('TicketController HTTP (membership guard + scoping + dependencies, live
     // A second thread pointing at the same ticket must be rejected by uq_threads_ticket_id.
     await expect(
       ds.query(
-        `INSERT INTO threads (org_id, repo_id, origin, ticket_id) VALUES ($1, $2, 'control', $3)`,
+        `INSERT INTO jobs (org_id, repo_id, origin, ticket_id) VALUES ($1, $2, 'control', $3)`,
         [ORG1, REPO1, ticketId],
       ),
     ).rejects.toThrow();

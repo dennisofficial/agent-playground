@@ -25,7 +25,7 @@ import { JobEntity } from './job.entity';
  */
 @Entity({ name: 'active_turns' })
 @Index(['status'])
-@Index(['thread_id'])
+@Index(['job_id'])
 export class ActiveTurnEntity extends TimestampedEntity {
   /** The turn id — also the Redis stream-key namespace (`turn:{turn_id}:*`). */
   @PrimaryColumn({ type: 'uuid' })
@@ -33,10 +33,10 @@ export class ActiveTurnEntity extends TimestampedEntity {
 
   /** The thread this turn belongs to (FK → threads.id). */
   @Column({ type: 'uuid' })
-  thread_id!: string;
+  job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
   /** The tenant (denormalized for sandbox resolution + scoping). */

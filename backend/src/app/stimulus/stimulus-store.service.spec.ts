@@ -46,7 +46,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     });
 
     expect(seeded.thread).toMatchObject({ origin: 'event', org_id: 'T1', repo_id: 'web', surface_thread_ref: null });
-    expect(seeded.message).toMatchObject({ thread_id: seeded.thread.id, text: 'CI failed', author: 'github' });
+    expect(seeded.message).toMatchObject({ job_id: seeded.thread.id, text: 'CI failed', author: 'github' });
     expect(seeded.stimulus).toMatchObject({
       kind: 'event',
       trust: 'untrusted',
@@ -104,7 +104,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     });
 
     expect(threads.repo.save).not.toHaveBeenCalled(); // chat does NOT open a thread
-    expect(messages.rows[0]).toMatchObject({ thread_id: 'thread-9', author: 'Dennis', text: 'hey' });
+    expect(messages.rows[0]).toMatchObject({ job_id: 'thread-9', author: 'Dennis', text: 'hey' });
     expect(chat).toMatchObject({
       kind: 'chat',
       trust: 'trusted',

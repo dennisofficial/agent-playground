@@ -132,10 +132,10 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
 });
 
 /** Delete every row this test's synthetic tenant owns (fixed ids → a re-run would PK-collide).
- *  The FK cascade from `threads` removes messages/tracks/steps/decision_records/stimuli/sandboxes. */
+ *  The FK cascade from `jobs` removes messages/threads/steps/decision_records/stimuli/sandboxes. */
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
-  await q(`DELETE FROM threads WHERE org_id = $1`);
+  await q(`DELETE FROM jobs WHERE org_id = $1`);
   await q(`DELETE FROM repos WHERE org_id = $1`);
   await q(`DELETE FROM organizations WHERE id = $1`);
 }

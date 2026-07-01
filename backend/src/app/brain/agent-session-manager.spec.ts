@@ -248,7 +248,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         kind: 'feature',
         org_id: TEAM_ID,
         repo_id: PROJECT_ID,
-        thread_id: THREAD_ID,
+        job_id: THREAD_ID,
         decision_record_id: FAKE_RECORD_ID,
         created_at: new Date(),
         updated_at: new Date(),
@@ -950,7 +950,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       name: 'web',
     } as unknown as ChatSurface;
     const sandboxRows = {
-      findOne: vi.fn().mockResolvedValue({ thread_id: THREAD_ID, org_id: TEAM_ID, session_id: null }),
+      findOne: vi.fn().mockResolvedValue({ job_id: THREAD_ID, org_id: TEAM_ID, session_id: null }),
       save: vi.fn().mockResolvedValue(undefined),
     } as unknown as Repository<JobSandboxEntity>;
     const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as EngineRunnerPort;

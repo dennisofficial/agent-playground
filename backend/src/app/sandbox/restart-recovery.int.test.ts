@@ -20,7 +20,7 @@ import type { Repository } from 'typeorm';
  * Proves end-to-end that:
  *   (a) A brand-new SandboxManager instance (simulating a process restart) re-adopts the SAME
  *       running container by deriving the same name from team·project·branch.
- *   (b) TurnRunnerService threads the persisted session_id back as `args.sessionId` on the
+ *   (b) TurnRunnerService jobs the persisted session_id back as `args.sessionId` on the
  *       post-restart turn, and directs the exec at the same containerId / execUser.
  *
  * No real LLM — the engine port is a vi.fn() fake. Docker must be reachable.

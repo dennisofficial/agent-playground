@@ -87,7 +87,7 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
         .finalize(turn.turn_id, 'failed')
         .then(() =>
           this.logger.warn(
-            `finalized stale turn ${turn.turn_id} (thread ${turn.thread_id}) — engine heartbeat lost`,
+            `finalized stale turn ${turn.turn_id} (thread ${turn.job_id}) — engine heartbeat lost`,
           ),
         )
         .catch((err) => this.logger.debug(`finalize ${turn.turn_id} failed (ignored): ${err}`));

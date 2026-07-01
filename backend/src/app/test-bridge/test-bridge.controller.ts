@@ -206,7 +206,7 @@ export class TestBridgeController {
     this.assertEnabled();
     // `threadTs` is the real thread id — read its durable message log directly.
     const rows = await this.messages.find({
-      where: { thread_id: threadTs },
+      where: { job_id: threadTs },
       order: { created_at: 'ASC' },
     });
     return rows.map((m) => ({

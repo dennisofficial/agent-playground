@@ -12,27 +12,27 @@ import { JobEntity } from './job.entity';
  * track; gap-numbered.
  */
 @Entity({ name: 'steps' })
-@Index(['track_id'])
 @Index(['thread_id'])
-@Unique(['track_id', 'ordinal'])
+@Index(['job_id'])
+@Unique(['thread_id', 'ordinal'])
 export class StepEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   /** The owning track (FK → tracks.id). */
   @Column({ type: 'uuid' })
-  track_id!: string;
+  thread_id!: string;
 
   @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'track_id' })
+  @JoinColumn({ name: 'thread_id' })
   track?: ThreadEntity;
 
   /** The owning thread (denormalized for thread-scoped boot recovery; FK → threads.id). */
   @Column({ type: 'uuid' })
-  thread_id!: string;
+  job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */

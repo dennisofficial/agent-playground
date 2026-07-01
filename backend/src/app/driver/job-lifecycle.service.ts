@@ -176,7 +176,7 @@ export class JobLifecycleService {
     const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
     if (!thread) return null;
 
-    const existing = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
+    const existing = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
     if (existing) {
       if (existing.lifecycle === 'closed') return null;
       // Complete iff BOTH the worktree path and the thread's feature branch are set. A failed
@@ -214,7 +214,7 @@ export class JobLifecycleService {
    * exists). Read-only (no attach) — used where a live container isn't required (e.g. plan-review).
    */
   async findSandbox(threadId: string, orgId: string): Promise<FeatureSandbox | null> {
-    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
+    const row = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
     if (!row) return null;
     return this.rowToSandbox(row);
   }
@@ -231,7 +231,7 @@ export class JobLifecycleService {
     threadId: string,
     orgId: string,
   ): Promise<{ sandbox: FeatureSandbox; wasReset: boolean } | null> {
-    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
+    const row = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return null;
 
     // Common path: the durable worktree is present → skip the repo resolve (a git fetch) entirely. Only
@@ -278,7 +278,7 @@ export class JobLifecycleService {
    * branch ref (the PR/merge owns it). Best-effort on each side so a half-gone sandbox still closes.
    */
   async closeThread(threadId: string, orgId: string): Promise<void> {
-    const row = await this.sandboxes.findOne({ where: { thread_id: threadId, org_id: orgId } });
+    const row = await this.sandboxes.findOne({ where: { job_id: threadId, org_id: orgId } });
     if (!row || row.lifecycle === 'closed') return;
 
     // Tear down the container by its DETERMINISTIC identity, NOT by `row.container_id`. `reconcileOnBoot`
@@ -330,7 +330,7 @@ export class JobLifecycleService {
     // 2b. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
     //     (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
     await this.projects
-      .update({ org_id: orgId, onboarding_thread_id: threadId }, { onboarding_thread_id: null })
+      .update({ org_id: orgId, onboarding_job_id: threadId }, { onboarding_job_id: null })
       .catch(() => undefined);
 
     // 3. Delete the thread row; the FK ON DELETE CASCADE removes every child row with it.
@@ -350,7 +350,7 @@ export class JobLifecycleService {
     let closed = 0;
     for (const thread of threads) {
       try {
-        const sandbox = await this.sandboxes.findOne({ where: { thread_id: thread.id } });
+        const sandbox = await this.sandboxes.findOne({ where: { job_id: thread.id } });
         if (!sandbox || sandbox.lifecycle === 'closed') continue;
         const project = await this.projects.findOne({ where: { id: thread.repo_id } });
         const parsed = project ? parseGithubRepoUrl(project.git_url) : null;
@@ -420,7 +420,7 @@ export class JobLifecycleService {
       // brief leader overlap of a rolling deploy (defense-in-depth — the single-leader invariant already
       // means no other process is reaping, but this is cheap insurance).
       const active = await this.threads.findOne({
-        where: { id: row.thread_id },
+        where: { id: row.job_id },
         select: { id: true, turn_active: true },
       });
       if (active?.turn_active) continue;
@@ -469,12 +469,12 @@ export class JobLifecycleService {
   /** Tear down a row's container (best-effort) and flip it to `detached`. Worktree untouched. */
   private async detachContainer(row: JobSandboxEntity, reason: 'idle' | 'lru'): Promise<void> {
     await this.sandboxProvider.teardown(await this.rowToSandbox(row)).catch((err) => {
-      this.logger.warn(`detachContainer(${reason}): teardown failed for thread ${row.thread_id}: ${err}`);
+      this.logger.warn(`detachContainer(${reason}): teardown failed for thread ${row.job_id}: ${err}`);
     });
     row.container_id = null;
     row.lifecycle = 'detached';
     await this.sandboxes.save(row);
-    this.logger.log(`detached thread ${row.thread_id} container (${reason})`);
+    this.logger.log(`detached thread ${row.job_id} container (${reason})`);
   }
 
   // ── private helpers ───────────────────────────────────────────────────────────────────────────
@@ -489,7 +489,7 @@ export class JobLifecycleService {
     const row = await this.sandboxes.save(
       this.sandboxes.create({
         org_id: thread.org_id,
-        thread_id: thread.id,
+        job_id: thread.id,
         repo_id: project.id,
         worktree_path: '', // filled in below
         container_id: null,
@@ -587,15 +587,15 @@ export class JobLifecycleService {
    */
   private async ensureWorktree(row: JobSandboxEntity, projectRepo: ProjectRepo): Promise<void> {
     if (row.worktree_path && existsSync(row.worktree_path)) return;
-    const thread = await this.threads.findOne({ where: { id: row.thread_id } });
-    const base = await this.git.createBaseWorktree(projectRepo, row.thread_id);
+    const thread = await this.threads.findOne({ where: { id: row.job_id } });
+    const base = await this.git.createBaseWorktree(projectRepo, row.job_id);
     const sb = thread?.feature_branch
       ? await this.git.switchBranch(base, projectRepo, thread.feature_branch)
       : base;
     // A restored worktree is freshly cut → re-populate its submodules (no-op without a `.gitmodules`).
     await this.git.ensureSubmodules(sb.worktreePath, projectRepo);
     row.worktree_path = sb.worktreePath;
-    this.logger.log(`restored missing worktree for thread ${row.thread_id} at ${sb.worktreePath}`);
+    this.logger.log(`restored missing worktree for thread ${row.job_id} at ${sb.worktreePath}`);
   }
 
   /**
@@ -603,7 +603,7 @@ export class JobLifecycleService {
    * the THREAD (single owner of feature/base branch); the on-disk repo identity is the repo's SLUG.
    */
   private async rowToSandbox(row: JobSandboxEntity): Promise<FeatureSandbox> {
-    const thread = await this.threads.findOne({ where: { id: row.thread_id } });
+    const thread = await this.threads.findOne({ where: { id: row.job_id } });
     const project = await this.projects.findOne({ where: { id: row.repo_id } });
     const branch =
       thread?.feature_branch ?? thread?.base_branch ?? project?.default_branch ?? 'main';

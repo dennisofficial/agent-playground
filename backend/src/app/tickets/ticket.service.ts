@@ -151,7 +151,7 @@ export class TicketService {
           priority: input.priority ?? null,
           kind: input.kind ?? null,
           sort_order: 0,
-          origin_thread_id: input.originThreadId ?? null,
+          origin_job_id: input.originThreadId ?? null,
           origin_decision_record_id: input.originDecisionRecordId ?? null,
           origin,
         }),

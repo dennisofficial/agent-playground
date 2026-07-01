@@ -64,7 +64,7 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
   /** Open a per-operator subscription over ALL their orgs' threads (the cross-org sidebar stream). */
   async openThreadSubscription(principal: RealtimePrincipal): Promise<SubscriptionImpl> {
     if (!this.engine) throw new ServiceUnavailableException('realtime unavailable');
-    return this.engine.openSubscription({ model: 'threads', user: principal });
+    return this.engine.openSubscription({ model: 'jobs', user: principal });
   }
 
   // ── leader-gated lifecycle ──────────────────────────────────────────────────────────────────────

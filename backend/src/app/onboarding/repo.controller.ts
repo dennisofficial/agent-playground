@@ -106,7 +106,7 @@ export class RepoController {
       accessOk: r.access_ok,
       accessCheckedAt: r.access_checked_at ? r.access_checked_at.toISOString() : null,
       threadCount: countByRepo.get(r.id) ?? 0,
-      onboardingThreadId: r.onboarding_thread_id,
+      onboardingThreadId: r.onboarding_job_id,
       onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
     }));
   }

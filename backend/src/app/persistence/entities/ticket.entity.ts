@@ -68,10 +68,10 @@ export class TicketEntity extends TimestampedEntity {
 
   /** The thread this ticket was captured from (FK → threads.id); SET NULL if that thread is deleted. */
   @Column({ type: 'uuid', nullable: true })
-  origin_thread_id!: string | null;
+  origin_job_id!: string | null;
 
   @ManyToOne(() => JobEntity, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'origin_thread_id' })
+  @JoinColumn({ name: 'origin_job_id' })
   originThread?: JobEntity | null;
 
   /** The decision record this ticket diverged from (FK → decision_records.id); SET NULL on delete. */

@@ -33,7 +33,7 @@ function makeRow(overrides: Partial<JobSandboxEntity> = {}): JobSandboxEntity {
   return {
     id: 'sandbox-1',
     org_id: 'T1',
-    thread_id: 'thread-1',
+    job_id: 'thread-1',
     repo_id: 'repo-uuid-1',
     worktree_path: '/repos/proj/.worktrees/thread-1',
     container_id: null,

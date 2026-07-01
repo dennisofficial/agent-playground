@@ -86,7 +86,7 @@ export class StimulusStoreService {
 
     const message = await this.messages.save(
       this.messages.create({
-        thread_id: thread.id,
+        job_id: thread.id,
         author: input.source,
         author_id: input.source,
         author_bot_id: null,
@@ -107,7 +107,7 @@ export class StimulusStoreService {
           kind: 'event',
           trust: 'untrusted',
           body: input.body,
-          thread_id: thread.id,
+          job_id: thread.id,
           author_id: null,
           reply_route: null,
           source: input.source,
@@ -156,7 +156,7 @@ export class StimulusStoreService {
   }): Promise<ChatStimulus> {
     await this.messages.save(
       this.messages.create({
-        thread_id: input.threadId,
+        job_id: input.threadId,
         author: input.author.displayName,
         author_id: input.author.id,
         author_bot_id: null,
@@ -171,7 +171,7 @@ export class StimulusStoreService {
         kind: 'chat',
         trust: 'trusted',
         body: input.body,
-        thread_id: input.threadId,
+        job_id: input.threadId,
         author_id: input.author.id,
         reply_route: input.replyRoute,
         source: null,

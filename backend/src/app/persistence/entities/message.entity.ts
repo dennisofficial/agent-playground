@@ -4,21 +4,21 @@ import { JobEntity } from './job.entity';
 
 /**
  * One message in a thread's append-only log. Many histories = ONE `messages` table partitioned
- * by `thread_id` (the index below). Threads are isolated; coherence across them is shared memory, not
+ * by `job_id` (the index below). Threads are isolated; coherence across them is shared memory, not
  * shared transcript.
  */
 @Entity({ name: 'messages' })
-@Index(['thread_id', 'created_at'])
+@Index(['job_id', 'created_at'])
 export class MessageEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   /** The thread this message belongs to — the partition key (FK → threads). */
   @Column({ type: 'uuid' })
-  thread_id!: string;
+  job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'thread_id' })
+  @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
   /** Display name ("Dennis", "Atlas"). */

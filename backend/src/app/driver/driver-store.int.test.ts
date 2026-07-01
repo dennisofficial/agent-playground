@@ -7,7 +7,7 @@
  * shape (id/ordinal/brief/status), so the brain's `get_pipeline_state` passthrough is unaffected.
  *
  * Integration: real Postgres (atlas_test schema), no fakes (the method only touches repositories).
- * Seeds an org/repo/thread + tracks + steps directly, then asserts the mapped read model.
+ * Seeds an org/repo/thread + threads + steps directly, then asserts the mapped read model.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -43,8 +43,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   let mod: TestingModule;
   let ds: DataSource;
   let store: DriverStoreService;
-  let threads: Repository<JobEntity>;
-  let tracks: Repository<ThreadEntity>;
+  let jobs: Repository<JobEntity>;
+  let threads: Repository<ThreadEntity>;
   let steps: Repository<StepEntity>;
   let repoId: string;
 
@@ -59,8 +59,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
     store = mod.get(DriverStoreService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
-    threads = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
-    tracks = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
+    jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
+    threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
     steps = mod.get(getRepositoryToken(StepEntity, DB_CONNECTION));
 
     await ds.query(
@@ -82,12 +82,12 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE steps, tracks, threads RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE steps, threads, jobs RESTART IDENTITY CASCADE');
   });
 
   it('returns steps + hasPlan per track and the PR + branch on the job', async () => {
-    const thread = await threads.save(
-      threads.create({
+    const thread = await jobs.save(
+      jobs.create({
         org_id: ORG_ID,
         repo_id: repoId,
         origin: 'control',
@@ -100,9 +100,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         pr_number: 43,
       }),
     );
-    const track = await tracks.save(
-      tracks.create({
-        thread_id: thread.id,
+    const track = await threads.save(
+      threads.create({
+        job_id: thread.id,
         org_id: ORG_ID,
         ordinal: 10,
         brief: 'Backend — wire the webhook handler',
@@ -112,8 +112,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     await steps.save([
       steps.create({
-        track_id: track.id,
-        thread_id: thread.id,
+        thread_id: track.id,
+        job_id: thread.id,
         org_id: ORG_ID,
         ordinal: 10,
         title: 'replay',
@@ -122,8 +122,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         status: 'building',
       }),
       steps.create({
-        track_id: track.id,
-        thread_id: thread.id,
+        thread_id: track.id,
+        job_id: thread.id,
         org_id: ORG_ID,
         ordinal: 20,
         title: 'sync',
@@ -167,8 +167,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   it('seeds, transitions, and finalizes per-agent review status (surfaced by getPipelineState)', async () => {
-    const thread = await threads.save(
-      threads.create({
+    const thread = await jobs.save(
+      jobs.create({
         org_id: ORG_ID,
         repo_id: repoId,
         origin: 'control',
@@ -178,9 +178,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const track = await tracks.save(
-      tracks.create({
-        thread_id: thread.id,
+    const track = await threads.save(
+      threads.create({
+        job_id: thread.id,
         org_id: ORG_ID,
         ordinal: 10,
         brief: 'Backend — review status',
@@ -209,8 +209,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   it('still reports `no_job` for a thread that has not entered the build lifecycle', async () => {
-    const thread = await threads.save(
-      threads.create({
+    const thread = await jobs.save(
+      jobs.create({
         org_id: ORG_ID,
         repo_id: repoId,
         origin: 'control',

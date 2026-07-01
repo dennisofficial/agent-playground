@@ -2,8 +2,8 @@
  * deleteOrg cascade GATE — deleting an org must leave ZERO org-scoped rows behind.
  *
  * The schema now carries real FK constraints (the `RestoreReferentialIntegrity` migration): deleting the
- * `organizations` row cascades `ON DELETE CASCADE` down repos/threads/messages/tracks/steps/
- * decision_records/stimuli/thread_sandboxes plus the org-direct org_credentials/org_invites/
+ * `organizations` row cascades `ON DELETE CASCADE` down repos/jobs/messages/threads/steps/
+ * decision_records/stimuli/job_sandboxes plus the org-direct org_credentials/org_invites/
  * organization_members/memory. `deleteOrg` runs the physical per-thread teardown (container + worktree)
  * then deletes the org row; this proves the combination removes every one of those rows — and ONLY this
  * org's (a sibling org and the shared `users` rows survive; only the membership join cascades).
@@ -118,12 +118,12 @@ let otherRepoId: string;
 /** Delete every row both sentinel orgs own (idempotent — survives a prior failed run). */
 async function purge(): Promise<void> {
   for (const org of [ORG_ID, OTHER_ORG_ID]) {
-    const threadIds: Array<{ id: string }> = await ds.query(`SELECT id FROM threads WHERE org_id = $1`, [org]);
+    const threadIds: Array<{ id: string }> = await ds.query(`SELECT id FROM jobs WHERE org_id = $1`, [org]);
     const ids = threadIds.map((t) => t.id);
     if (ids.length) {
-      await ds.query(`DELETE FROM messages WHERE thread_id = ANY($1)`, [ids]);
+      await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [ids]);
     }
-    for (const table of ['steps', 'tracks', 'decision_records', 'stimuli', 'thread_sandboxes', 'threads', 'repos', 'org_credentials', 'org_invites', 'organization_members', 'memory']) {
+    for (const table of ['steps', 'threads', 'decision_records', 'stimuli', 'job_sandboxes', 'jobs', 'repos', 'org_credentials', 'org_invites', 'organization_members', 'memory']) {
       await ds.query(`DELETE FROM ${table} WHERE org_id = $1`, [org]);
     }
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [org]);
@@ -143,14 +143,14 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
 
 /** Seed one row in every child/org-scoped table for `threadId` under (`orgId`, `repoId`). */
 async function seedThreadChildren(orgId: string, repoIdArg: string, threadId: string): Promise<void> {
-  await ds.query(`INSERT INTO messages (thread_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
+  await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [threadId]);
   const [track] = await ds.query(
-    `INSERT INTO tracks (thread_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
+    `INSERT INTO threads (job_id, org_id, ordinal, brief) VALUES ($1, $2, 10, 'b') RETURNING id`,
     [threadId, orgId],
   );
-  await ds.query(`INSERT INTO steps (track_id, thread_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [track.id, threadId, orgId]);
-  await ds.query(`INSERT INTO decision_records (org_id, repo_id, thread_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, threadId]);
-  await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, thread_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, threadId]);
+  await ds.query(`INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [track.id, threadId, orgId]);
+  await ds.query(`INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, threadId]);
+  await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, threadId]);
 }
 
 /** Seed the org-DIRECT rows (no thread): credentials, an invite, a membership, memory, a parked event. */
@@ -159,7 +159,7 @@ async function seedOrgDirect(orgId: string, repoIdArg: string, inviteToken: stri
   await ds.query(`INSERT INTO org_invites (token, org_id, email, role) VALUES ($1, $2, 'x@y.com', 'member')`, [inviteToken, orgId]);
   await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [orgId, SHARED_USER_ID]);
   await ds.query(`INSERT INTO memory (fact, embedding, org_id, scope) VALUES ('f', $1::vector, $2, $3)`, [EMBEDDING, orgId, `team:${orgId}`]);
-  // A stimulus parked on the org/repo BEFORE any thread existed (thread_id NULL) — orphaned unless swept.
+  // A stimulus parked on the org/repo BEFORE any thread existed (job_id NULL) — orphaned unless swept.
   await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'untrusted', 'b', 'github', $3)`, [orgId, repoIdArg, dedupeKey]);
 }
 
@@ -229,7 +229,7 @@ afterEach(async () => {
 
 describe('deleteOrg cascade (live Postgres + fakes)', () => {
   it('removes every org-scoped row across all tables, leaving zero orphans', async () => {
-    // Two real threads (each provisions a thread_sandboxes row + fake worktree).
+    // Two real jobs (each provisions a job_sandboxes row + fake worktree).
     const t1 = await threadLifecycle.createThread({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'A' });
     const t2 = await threadLifecycle.createThread({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'B' });
     await seedThreadChildren(ORG_ID, repoId, t1.threadId);
@@ -237,8 +237,8 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     await seedOrgDirect(ORG_ID, repoId, 'tok-del', 'evt-del');
 
     // Sanity: the rows really exist before the delete.
-    expect(await countWhere('threads', 'org_id', ORG_ID)).toBe(2);
-    expect(await countWhere('thread_sandboxes', 'org_id', ORG_ID)).toBe(2);
+    expect(await countWhere('jobs', 'org_id', ORG_ID)).toBe(2);
+    expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(2);
     expect(await countWhere('stimuli', 'org_id', ORG_ID)).toBe(3); // 2 thread-tied + 1 parked event
 
     await orgService.deleteOrg(ORG_ID);
@@ -249,15 +249,15 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('org_invites', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('org_credentials', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('repos', 'org_id', ORG_ID)).toBe(0);
+    expect(await countWhere('jobs', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('threads', 'org_id', ORG_ID)).toBe(0);
-    expect(await countWhere('tracks', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('steps', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('decision_records', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('stimuli', 'org_id', ORG_ID)).toBe(0);
-    expect(await countWhere('thread_sandboxes', 'org_id', ORG_ID)).toBe(0);
+    expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('memory', 'org_id', ORG_ID)).toBe(0);
-    // messages carry no org_id — assert by the (now-deleted) threads' ids.
-    const msgs = await ds.query(`SELECT COUNT(*)::int AS c FROM messages WHERE thread_id = ANY($1)`, [[t1.threadId, t2.threadId]]);
+    // messages carry no org_id — assert by the (now-deleted) jobs' ids.
+    const msgs = await ds.query(`SELECT COUNT(*)::int AS c FROM messages WHERE job_id = ANY($1)`, [[t1.threadId, t2.threadId]]);
     expect(Number(msgs[0].c)).toBe(0);
 
     // The shared user row SURVIVES — orgs share users; only the membership join is removed.
@@ -275,12 +275,12 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     // The sibling org is fully intact.
     expect(await countWhere('organizations', 'id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('repos', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('jobs', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('threads', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('tracks', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('steps', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('stimuli', 'org_id', OTHER_ORG_ID)).toBe(2);
-    expect(await countWhere('thread_sandboxes', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('job_sandboxes', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_credentials', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_invites', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('organization_members', 'org_id', OTHER_ORG_ID)).toBe(1);

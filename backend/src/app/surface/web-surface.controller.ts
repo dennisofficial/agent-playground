@@ -424,7 +424,7 @@ export class WebSurfaceController {
   ): Promise<unknown[]> {
     await this.requireThread(threadId, org.id);
     const rows = await this.messages.find({
-      where: { thread_id: threadId },
+      where: { job_id: threadId },
       order: { created_at: 'ASC' },
     });
     return rows.map((m) => ({
@@ -626,7 +626,7 @@ export class WebSurfaceController {
     }
     const thread = await this.requireThread(threadId, org.id);
     const card = await this.messages.findOne({
-      where: { thread_id: threadId, ts: body.questionId, kind: 'card' },
+      where: { job_id: threadId, ts: body.questionId, kind: 'card' },
     });
     const payload = card?.card as WebQuestionCard | undefined;
     if (!card || payload?.type !== 'question_card') {
@@ -680,7 +680,7 @@ export class WebSurfaceController {
     }
     const thread = await this.requireThread(threadId, org.id);
     const card = await this.messages.findOne({
-      where: { thread_id: threadId, ts: body.requestId, kind: 'card' },
+      where: { job_id: threadId, ts: body.requestId, kind: 'card' },
     });
     const payload = card?.card as WebSecretInputCard | undefined;
     if (!card || payload?.type !== 'secret_input_card') {

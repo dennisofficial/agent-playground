@@ -19,7 +19,7 @@ function ledgerFile(over: { slug?: string; supersededBy?: string | null } = {}):
     'decided_on: 2026-06-28',
     'authored_by: atlas',
     'confirmed_by_operator: true',
-    'source_thread: "thread-1"',
+    'source_job: "thread-1"',
     'source_decision: "d3"',
     'supersedes: []',
     `superseded_by: ${supersededBy ? `"${supersededBy}"` : 'null'}`,
