@@ -163,7 +163,7 @@ export class FakeLocalGitService {
     };
   }
 
-  /** Per-thread base worktree (what `ThreadLifecycleService.provisionSandbox` cuts at thread create). */
+  /** Per-thread base worktree (what `JobLifecycleService.provisionSandbox` cuts at thread create). */
   async createBaseWorktree(repo: ProjectRepo, threadId: string): Promise<FeatureSandbox> {
     return {
       repoId: repo.repoId,
@@ -250,7 +250,7 @@ export class FakeGithubPrService {
 
 /**
  * A deterministic, OFFLINE thread titler — returns the source text unchanged instead of calling the title
- * model. Int/e2e tests boot the real AppModule, which provides the live `ThreadTitler` (a Haiku call);
+ * model. Int/e2e tests boot the real AppModule, which provides the live `JobTitler` (a Haiku call);
  * override it with this so titling is network-free and titles stay equal to the input the test passed in.
  */
 export class FakeThreadTitler {

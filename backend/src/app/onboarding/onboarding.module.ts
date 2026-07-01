@@ -10,8 +10,8 @@ import {
   OrgWorktreeSecretGrantEntity,
   RepoEntity,
   StimulusEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
@@ -42,10 +42,10 @@ import { WorktreeSecretsController } from './worktree-secrets.controller';
         OrgWorktreeSecretGrantEntity,
         OrganizationEntity,
         RepoEntity,
-        ThreadEntity,
+        JobEntity,
         StimulusEntity,
         DecisionRecordEntity,
-        ThreadSandboxEntity,
+        JobSandboxEntity,
       ],
       DB_CONNECTION,
     ),

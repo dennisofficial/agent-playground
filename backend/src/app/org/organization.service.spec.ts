@@ -83,7 +83,7 @@ function makeSvc(
   const users = {} as unknown as Repository<UserEntity>;
   const env = { get: () => 'http://host' } as never;
 
-  // Records the per-thread deep deletes so the deleteOrg test can assert on them. `ThreadLifecycleService`
+  // Records the per-thread deep deletes so the deleteOrg test can assert on them. `JobLifecycleService`
   // is pulled lazily via `ModuleRef.get(...)` in `deleteOrg`, so the mock ref just hands back this fake.
   const deepDeleted: Array<{ threadId: string; orgId: string }> = [];
   const threadLifecycle = {

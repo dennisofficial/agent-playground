@@ -5,7 +5,7 @@ import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth } from '../engine';
 import type { Decision } from '../domain';
 import type { PlannedStep } from '../driver/planner-llm';
-import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
+import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -244,7 +244,7 @@ export class PlanReviewService {
   constructor(
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     private readonly creds: CredentialResolver,
-    private readonly lifecycle: ThreadLifecycleService,
+    private readonly lifecycle: JobLifecycleService,
     @InjectRepository(PlanReviewEntity, DB_CONNECTION)
     private readonly reviews: Repository<PlanReviewEntity>,
     // Lets the turn catch tell a shutdown-induced abort (leave the row resumable) from a real failure.

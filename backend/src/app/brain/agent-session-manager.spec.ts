@@ -5,7 +5,7 @@ import type { BrainStoreService } from './brain-store.service';
 import type { DecisionApprovalService } from './decision-approval.service';
 import type { DriverStoreService } from '../driver/driver-store.service';
 import type { MemoryStore } from '../memory';
-import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
+import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { EngineRunnerPort } from '../engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
 import { DecisionLedgerService } from './decision-ledger.service';
@@ -26,9 +26,9 @@ const noopTurnHarness = {
   }),
 } as unknown as TurnHarnessFactory;
 import type { Repository } from 'typeorm';
-import type { ThreadSandboxEntity } from '../persistence/entities';
+import type { JobSandboxEntity } from '../persistence/entities';
 import { AgentSessionManager } from './agent-session-manager.service';
-import { ProvisioningNotReadyError } from '../driver/thread-lifecycle.service';
+import { ProvisioningNotReadyError } from '../driver/job-lifecycle.service';
 import { UNRESUMABLE_SESSION_MARKER } from '../engine/engine.types';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
 import type { EventStimulus } from '../domain';
@@ -111,7 +111,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockLifecycle = {
     findSandbox: vi.fn(),
     contextDirHost: vi.fn(),
-  } as unknown as ThreadLifecycleService;
+  } as unknown as JobLifecycleService;
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
@@ -165,7 +165,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     findOne: vi.fn(),
     save: vi.fn(),
     update: vi.fn().mockResolvedValue(undefined),
-  } as unknown as Repository<ThreadSandboxEntity>;
+  } as unknown as Repository<JobSandboxEntity>;
 
 
   const TEAM_ID = 'T-R3GATE';
@@ -944,7 +944,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       ensureContainer: vi
         .fn()
         .mockResolvedValue({ sandbox: { worktreePath: '/wt', containerId: 'c1' }, wasReset: false }),
-    } as unknown as ThreadLifecycleService;
+    } as unknown as JobLifecycleService;
     const surface = {
       post: vi.fn().mockResolvedValue('ts'),
       name: 'web',
@@ -952,7 +952,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const sandboxRows = {
       findOne: vi.fn().mockResolvedValue({ thread_id: THREAD_ID, org_id: TEAM_ID, session_id: null }),
       save: vi.fn().mockResolvedValue(undefined),
-    } as unknown as Repository<ThreadSandboxEntity>;
+    } as unknown as Repository<JobSandboxEntity>;
     const dockerRunner = { run: opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }) } as unknown as EngineRunnerPort;
     const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
     // A REAL harness over the mock liveTurns + a mock durable sink — so the streaming spine is exercised
@@ -1314,13 +1314,13 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
       {} as unknown as DriverStoreService,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
-      {} as unknown as ThreadLifecycleService,
+      {} as unknown as JobLifecycleService,
       {} as unknown as EngineRunnerPort,
       { listRunning: async () => [] } as never, // turnRegistry
       {} as unknown as PlanReviewService,
       {} as unknown as JobDispatcher,
       { post: vi.fn(), name: 'web' } as unknown as ChatSurface,
-      { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<ThreadSandboxEntity>,
+      { findOne: vi.fn(), save: vi.fn() } as unknown as Repository<JobSandboxEntity>,
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
       noopTurnHarness,
       {} as unknown as DecisionClassifier,

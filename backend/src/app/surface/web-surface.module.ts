@@ -4,7 +4,7 @@ import { Subscription } from 'rxjs';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { MessageEntity, RepoEntity, ThreadEntity } from '../persistence/entities';
+import { MessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
   APPROVE_ACTION_ID,
@@ -13,7 +13,7 @@ import {
 } from './approval-blocks';
 import { parseWebApprovalMeta } from './web-approval-card';
 import { WebSurfaceController } from './web-surface.controller';
-import { ThreadTitleService } from './thread-title.service';
+import { JobTitleService } from './job-title.service';
 import type { ApprovalVerdict } from '../brain/decision-approval.service';
 
 /**
@@ -36,11 +36,11 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
  * Zero v1 imports.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([ThreadEntity, MessageEntity, RepoEntity], DB_CONNECTION)],
+  imports: [TypeOrmModule.forFeature([JobEntity, MessageEntity, RepoEntity], DB_CONNECTION)],
   providers: [
     WebSurface,
-    // `ThreadTitleService` injects `THREAD_TITLE_CHAIN`, now provided by the `@Global` `TitlingModule`.
-    ThreadTitleService,
+    // `JobTitleService` injects `JOB_TITLE_CHAIN`, now provided by the `@Global` `TitlingModule`.
+    JobTitleService,
   ],
   controllers: [WebSurfaceController],
   exports: [WebSurface],

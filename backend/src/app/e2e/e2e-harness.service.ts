@@ -17,7 +17,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
   RepoEntity,
-  ThreadEntity,
+  JobEntity,
   OrganizationEntity,
 } from '../persistence/entities';
 import type { ChatStimulus } from '../domain';
@@ -29,7 +29,7 @@ import {
   FakePlannerLlm,
   FakeThreadTitler,
 } from './e2e-stubs';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 
 /** A single reported verification step. */
 export interface E2eStep {
@@ -136,7 +136,7 @@ export class E2eHarness {
         .useValue(new FakeLocalGitService())
         .overrideProvider(GithubPrService)
         .useValue(new FakeGithubPrService())
-        .overrideProvider(ThreadTitler)
+        .overrideProvider(JobTitler)
         .useValue(new FakeThreadTitler())
         .compile();
       this.app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
@@ -191,7 +191,7 @@ export class E2eHarness {
 
     const orgs = this.repo(OrganizationEntity);
     const projects = this.repo(RepoEntity);
-    const threads = this.repo(ThreadEntity);
+    const threads = this.repo(JobEntity);
 
     await orgs.save(
       orgs.create({ id: TEAM_ID, name: 'Atlas E2E', slug: TEAM_ID, status: 'active' }),
@@ -419,7 +419,7 @@ export class E2eHarness {
       record('system-event-message', hasEventMsg, eventMsg ? `meta=${JSON.stringify(eventMsg.meta)}` : 'no seeded message');
 
       // Assert exactly ONE event thread exists for the repo (dedup held — the duplicate seeded none).
-      const eventThreads = await this.repo(ThreadEntity).count({
+      const eventThreads = await this.repo(JobEntity).count({
         where: { org_id: TEAM_ID, origin: 'event' },
       });
       record('single-thread', eventThreads === 1, `${eventThreads} event thread(s) on the repo`);
@@ -427,7 +427,7 @@ export class E2eHarness {
       // No AUTONOMOUS build — every event-spawned plan waits for approval. Give any (erroneous) dispatch a
       // beat, then assert no event thread reached a build/PR on its own.
       await delay(750);
-      const autoBuilt = await this.repo(ThreadEntity).count({
+      const autoBuilt = await this.repo(JobEntity).count({
         where: { org_id: TEAM_ID, origin: 'event', status: 'running' },
       });
       record('no-autonomous-build', autoBuilt === 0, `${autoBuilt} event thread(s) auto-building (expected 0)`);
@@ -484,7 +484,7 @@ export class E2eHarness {
       // The security control is now the approval card, not a second brain: NO event thread may auto-reach
       // a build. Give any (erroneous) dispatch a beat, then assert nothing built without approval.
       await delay(750);
-      const builtThreads = await this.repo(ThreadEntity).count({
+      const builtThreads = await this.repo(JobEntity).count({
         where: { org_id: TEAM_ID, status: 'running' },
       });
       record('no-destructive-build', builtThreads === 0, `${builtThreads} thread(s) reached a build (expected 0)`);
@@ -526,39 +526,39 @@ export class E2eHarness {
   }
 
   /** PR-ready = the driver's terminal `done` status WITH a recorded `pr_url`. */
-  private isPrReady(row: ThreadEntity | null): boolean {
+  private isPrReady(row: JobEntity | null): boolean {
     return !!row && row.status === 'done' && !!row.pr_url;
   }
 
   /** A terminal state the poll can stop on (so a `failed`/`cancelled` job surfaces fast, not on timeout). */
-  private isTerminal(row: ThreadEntity | null): boolean {
+  private isTerminal(row: JobEntity | null): boolean {
     return !!row && (this.isPrReady(row) || row.status === 'failed' || row.status === 'cancelled');
   }
 
   /** Poll a specific job until it reaches a terminal state (PR-ready / failed / cancelled) or times out. */
-  private async waitForPrReady(jobId: string, timeoutMs: number): Promise<ThreadEntity | undefined> {
+  private async waitForPrReady(jobId: string, timeoutMs: number): Promise<JobEntity | undefined> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const row = await this.repo(ThreadEntity).findOne({ where: { id: jobId } });
+      const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (await this.repo(ThreadEntity).findOne({ where: { id: jobId } })) ?? undefined;
+    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
   }
 
   /** Poll for the job on a thread (the autonomous path opens it itself) reaching a terminal state. */
   private async waitForJobOnThread(
     threadId: string | undefined,
     timeoutMs: number,
-  ): Promise<ThreadEntity | undefined> {
+  ): Promise<JobEntity | undefined> {
     if (!threadId) return undefined;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const row = await this.repo(ThreadEntity).findOne({ where: { id: threadId } });
+      const row = await this.repo(JobEntity).findOne({ where: { id: threadId } });
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (await this.repo(ThreadEntity).findOne({ where: { id: threadId } })) ?? undefined;
+    return (await this.repo(JobEntity).findOne({ where: { id: threadId } })) ?? undefined;
   }
 
   // ── repo identity ──────────────────────────────────────────────────────────────────────────────

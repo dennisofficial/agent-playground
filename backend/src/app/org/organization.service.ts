@@ -7,7 +7,7 @@ import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   OrgInviteEntity,
-  ThreadEntity,
+  JobEntity,
   UserEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
@@ -80,9 +80,9 @@ export class OrganizationService {
     private readonly users: Repository<UserEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
-    // `ThreadLifecycleService` is resolved LAZILY in `deleteOrg` via this ref + a dynamic `import()`.
+    // `JobLifecycleService` is resolved LAZILY in `deleteOrg` via this ref + a dynamic `import()`.
     // A STATIC import of the driver service would close an ES module cycle
-    // (organization.service → driver/thread-lifecycle → onboarding barrel → onboarding controllers →
+    // (organization.service → driver/job-lifecycle → onboarding barrel → onboarding controllers →
     // org-membership.guard → organization.service), which leaves `OrganizationService` undefined at boot.
     // `ModuleRef` is core (no module dependency) and the dynamic import is evaluated after boot.
     private readonly moduleRef: ModuleRef,
@@ -124,7 +124,7 @@ export class OrganizationService {
   }
 
   /**
-   * Delete an org and EVERYTHING under it. Two layers, matching `ThreadLifecycleService.deleteThreadDeep`:
+   * Delete an org and EVERYTHING under it. Two layers, matching `JobLifecycleService.deleteThreadDeep`:
    *
    *   1. PHYSICAL teardown per thread — `deleteThreadDeep` reclaims each thread's container + git worktree
    *      (side effects no DB cascade can do) and deletes the thread row, which cascades that thread's
@@ -142,11 +142,11 @@ export class OrganizationService {
    */
   async deleteOrg(orgId: string): Promise<void> {
     const threads = await this.dataSource
-      .getRepository(ThreadEntity)
+      .getRepository(JobEntity)
       .find({ where: { org_id: orgId }, select: { id: true } });
 
-    const { ThreadLifecycleService } = await import('../driver/thread-lifecycle.service.js');
-    const threadLifecycle = this.moduleRef.get(ThreadLifecycleService, { strict: false });
+    const { JobLifecycleService } = await import('../driver/job-lifecycle.service.js');
+    const threadLifecycle = this.moduleRef.get(JobLifecycleService, { strict: false });
     for (const { id } of threads) {
       await threadLifecycle.deleteThreadDeep(id, orgId);
     }

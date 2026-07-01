@@ -12,7 +12,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   RepoEntity,
-  ThreadEntity,
+  JobEntity,
   TicketCounterEntity,
   TicketDependencyEntity,
   TicketEntity,
@@ -39,7 +39,7 @@ import { TicketService } from './ticket.service';
         TicketEntity,
         TicketDependencyEntity,
         TicketCounterEntity,
-        ThreadEntity,
+        JobEntity,
         DecisionRecordEntity,
         RepoEntity,
       ],

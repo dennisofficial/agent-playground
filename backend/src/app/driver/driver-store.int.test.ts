@@ -16,7 +16,7 @@ import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, StepEntity, TrackEntity, ThreadEntity } from '../persistence/entities';
+import { ENTITIES, StepEntity, TrackEntity, JobEntity } from '../persistence/entities';
 import { DriverStoreService } from './driver-store.service';
 
 const ORG_ID = '21111111-1111-4111-8111-111111111111';
@@ -43,7 +43,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   let mod: TestingModule;
   let ds: DataSource;
   let store: DriverStoreService;
-  let threads: Repository<ThreadEntity>;
+  let threads: Repository<JobEntity>;
   let tracks: Repository<TrackEntity>;
   let steps: Repository<StepEntity>;
   let repoId: string;
@@ -59,7 +59,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
     store = mod.get(DriverStoreService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
-    threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
+    threads = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     tracks = mod.get(getRepositoryToken(TrackEntity, DB_CONNECTION));
     steps = mod.get(getRepositoryToken(StepEntity, DB_CONNECTION));
 

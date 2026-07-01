@@ -11,7 +11,7 @@ import {
   StimulusStoreService,
 } from './stimulus-store.service';
 import { SurfaceOrchestration } from './surface-orchestration.service';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
 export type IntakeOutcome =
@@ -45,7 +45,7 @@ export class StimulusIntake {
     private readonly store: StimulusStoreService,
     private readonly orchestration: SurfaceOrchestration,
     @Inject(BRAIN_SINK) private readonly sink: BrainSink,
-    private readonly titler: ThreadTitler,
+    private readonly titler: JobTitler,
   ) {}
 
   /**

@@ -2,7 +2,7 @@
 // identity/scope types). Populated during the harness-migration pass.
 export * from './admin';
 export * from './branching';
-export * from './thread-status';
+export * from './job-status';
 
 export type IMetricsEventType =
   | 'plan_submitted'

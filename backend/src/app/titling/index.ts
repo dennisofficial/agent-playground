@@ -1,9 +1,9 @@
 export { TitlingModule } from './titling.module';
-export { ThreadTitler } from './thread-titler.service';
+export { JobTitler } from './job-titler.service';
 export {
-  THREAD_TITLE_CHAIN,
-  ThreadTitleChain,
+  JOB_TITLE_CHAIN,
+  JobTitleChain,
   sanitizeTitle,
   firstLineTitle,
-  type ThreadTitleChainFactory,
-} from './thread-title.chain';
+  type JobTitleChainFactory,
+} from './job-title.chain';

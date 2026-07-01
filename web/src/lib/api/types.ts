@@ -7,7 +7,7 @@
  * The live message + request shapes are owned by `thread-api.ts` (the org → repo → thread client).
  */
 
-import type { ThreadStatus as WireThreadStatus } from '@workspace/shared';
+import type { JobStatus as WireThreadStatus } from '@workspace/shared';
 
 // ── Backend enums ──────────────────────────────────────────────────────────────────────────────
 /**

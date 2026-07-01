@@ -2,7 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, U
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { TrackEntity } from './track.entity';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 
 /**
  * One STEP of a track's plan — runs as a FRESH session on the feature branch (fresh context per step
@@ -31,9 +31,9 @@ export class StepEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   thread_id!: string;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'thread_id' })
-  thread?: ThreadEntity;
+  thread?: JobEntity;
 
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
   @Column({ type: 'uuid' })

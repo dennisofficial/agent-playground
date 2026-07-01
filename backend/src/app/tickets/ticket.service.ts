@@ -18,9 +18,9 @@ import {
   TicketCounterEntity,
   TicketDependencyEntity,
   TicketEntity,
-  ThreadEntity,
+  JobEntity,
 } from '../persistence/entities';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 import { TicketEventBus } from './ticket-event-bus';
 
 const MAX_TITLE = 200;
@@ -101,8 +101,8 @@ export class TicketService {
     private readonly tickets: Repository<TicketEntity>,
     @InjectRepository(TicketDependencyEntity, DB_CONNECTION)
     private readonly deps: Repository<TicketDependencyEntity>,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly decisions: Repository<DecisionRecordEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
@@ -110,7 +110,7 @@ export class TicketService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly events: TicketEventBus,
-    private readonly titler: ThreadTitler,
+    private readonly titler: JobTitler,
   ) {}
 
   /** Create a ticket: allocate its per-repo number, snapshot provenance, attach any dependency edges. */
@@ -467,7 +467,7 @@ export class TicketService {
     // tickets in a thread-driven lane with NO row in `threads` pointing at them (LEFT JOIN … IS NULL).
     const stranded = await this.tickets
       .createQueryBuilder('t')
-      .leftJoin(ThreadEntity, 'th', 'th.ticket_id = t.id')
+      .leftJoin(JobEntity, 'th', 'th.ticket_id = t.id')
       .where('t.status IN (:...statuses)', { statuses: ['in_progress', 'in_review'] })
       .andWhere('th.id IS NULL')
       .getMany();

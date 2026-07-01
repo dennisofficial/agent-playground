@@ -9,13 +9,13 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
   StimulusEntity,
-  ThreadEntity,
+  JobEntity,
 } from '../persistence/entities';
 
 /** A persisted event stimulus + the thread it seeded. */
 export interface SeededEvent {
   stimulus: EventStimulus;
-  thread: ThreadEntity;
+  thread: JobEntity;
   message: MessageEntity;
 }
 
@@ -51,8 +51,8 @@ export class StimulusStoreService {
   private readonly logger = new Logger(StimulusStoreService.name);
 
   constructor(
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)

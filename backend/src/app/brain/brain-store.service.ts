@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
-import type { Decision, Job, ThreadKind, ThreadStatus } from '../domain';
+import type { Decision, Job, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type { WebQuestionCard, WebSecretInputCard } from '../surface';
 import { renderPlan } from '../driver/render-plan';
@@ -13,9 +13,9 @@ import {
   StepEntity,
   TrackEntity,
   StimulusEntity,
-  ThreadEntity,
+  JobEntity,
 } from '../persistence/entities';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 import type { TranscriptLine } from './brain.types';
 
 /** Where a thread lives on the surface — the channel coordinate + the thread root ts to reply into. */
@@ -49,8 +49,8 @@ const ORDINAL_GAP = 10;
 @Injectable()
 export class BrainStoreService {
   constructor(
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
@@ -63,7 +63,7 @@ export class BrainStoreService {
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
-    private readonly titler: ThreadTitler,
+    private readonly titler: JobTitler,
   ) {}
 
   /**
@@ -303,7 +303,7 @@ export class BrainStoreService {
     input: { ts: string; text?: string; card: Record<string, unknown> },
   ): Promise<{ ok: boolean }> {
     return this.dataSource.transaction(async (m) => {
-      const threads = m.getRepository(ThreadEntity);
+      const threads = m.getRepository(JobEntity);
       const messages = m.getRepository(MessageEntity);
       const thread = await threads.findOne({ where: { id: threadId } });
       if (!thread) return { ok: false };
@@ -361,7 +361,7 @@ export class BrainStoreService {
       if (firstAnswer) {
         await m
           .createQueryBuilder()
-          .update(ThreadEntity)
+          .update(JobEntity)
           .set({
             open_question_count: () => 'GREATEST(0, open_question_count - 1)',
           })
@@ -412,7 +412,7 @@ export class BrainStoreService {
   > {
     const raw = await this.messages
       .createQueryBuilder('m')
-      .innerJoin(ThreadEntity, 't', 't.id = m.thread_id')
+      .innerJoin(JobEntity, 't', 't.id = m.thread_id')
       .where("m.kind = 'card'")
       .andWhere("m.card ->> 'type' = 'question_card'")
       .andWhere("m.card ->> 'answer' IS NOT NULL")
@@ -475,7 +475,7 @@ export class BrainStoreService {
     input: { requestId: string; card: WebSecretInputCard },
   ): Promise<{ ok: boolean; alreadyOpen?: boolean }> {
     return this.dataSource.transaction(async (m) => {
-      const threads = m.getRepository(ThreadEntity);
+      const threads = m.getRepository(JobEntity);
       const messages = m.getRepository(MessageEntity);
       const thread = await threads.findOne({ where: { id: threadId } });
       if (!thread) return { ok: false };
@@ -730,7 +730,7 @@ export class BrainStoreService {
     repoId: string;
     threadId: string;
     title: string;
-    kind: ThreadKind;
+    kind: JobKind;
   }): Promise<string> {
     await this.threads.update(
       { id: input.threadId },
@@ -750,7 +750,7 @@ export class BrainStoreService {
     repoId: string;
     threadId: string;
     title: string;
-    kind: ThreadKind;
+    kind: JobKind;
     overview: string;
     decisions: Decision[];
     trackTitles: string[];
@@ -774,7 +774,7 @@ export class BrainStoreService {
      * operator is asked), while direct-build keeps the default `'awaiting_approval'` (its lightweight card
      * is posted immediately). `finalize_plan` is what later flips a reviewed plan to `awaiting_approval`.
      */
-    status?: ThreadStatus;
+    status?: JobStatus;
   }): Promise<PersistedPlan> {
     // Route the incoming title (the plan `goal` / build summary) through the shared titler so the
     // thread's sidebar label is a short, scannable title — NOT the raw full-sentence goal. Done before
@@ -787,7 +787,7 @@ export class BrainStoreService {
     // (request_changes → reopenPlanning → propose again) reuses the SAME thread, so prior DRAFT
     // tracks/record are cleared first; idempotent on the first proposal.
     const decisionRecordId = await this.dataSource.transaction(async (m) => {
-      const threads = m.getRepository(ThreadEntity);
+      const threads = m.getRepository(JobEntity);
       const records = m.getRepository(DecisionRecordEntity);
       const tracks = m.getRepository(TrackEntity);
       const steps = m.getRepository(StepEntity);
@@ -981,7 +981,7 @@ export class BrainStoreService {
     baseBranch: string | null;
     ticketId?: string | null;
     /** Born-with kind — e.g. `'onboarding'` for an Atlas-run repo init thread. Default null. */
-    kind?: ThreadKind | null;
+    kind?: JobKind | null;
   }): Promise<string> {
     // Route a provided title through the shared titler so the new thread is born with a short, scannable
     // sidebar label (fail-soft). A null title (no seed text) stays null. An onboarding thread keeps its
@@ -1006,8 +1006,8 @@ export class BrainStoreService {
   }
 }
 
-/** Map a `ThreadEntity` row to the in-memory `Thread` shape. */
-function toThread(row: ThreadEntity): Job {
+/** Map a `JobEntity` row to the in-memory `Thread` shape. */
+function toThread(row: JobEntity): Job {
   return {
     id: row.id,
     orgId: row.org_id,
@@ -1016,7 +1016,7 @@ function toThread(row: ThreadEntity): Job {
     surfaceThreadRef: row.surface_thread_ref,
     title: row.title,
     baseBranch: row.base_branch,
-    kind: row.kind as ThreadKind | null,
+    kind: row.kind as JobKind | null,
     status: row.status as Job['status'],
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,

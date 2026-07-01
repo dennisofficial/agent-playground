@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { EventSeverity } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ThreadEntity } from '../persistence/entities';
+import { JobEntity } from '../persistence/entities';
 import { CHAT_SURFACE, type ChatSurface } from '../surface';
 
 /** Inputs to announce a freshly-seeded notification thread in the channel timeline. */
@@ -37,8 +37,8 @@ export class SurfaceOrchestration {
 
   constructor(
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
   ) {}
 
   /**

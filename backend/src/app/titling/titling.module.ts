@@ -2,14 +2,14 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { Global, Module } from '@nestjs/common';
 import { CredentialResolver } from '../onboarding';
 import {
-  THREAD_TITLE_CHAIN,
-  ThreadTitleChain,
-  type ThreadTitleChainFactory,
-} from './thread-title.chain';
-import { ThreadTitler } from './thread-titler.service';
+  JOB_TITLE_CHAIN,
+  JobTitleChain,
+  type JobTitleChainFactory,
+} from './job-title.chain';
+import { JobTitler } from './job-titler.service';
 
 /**
- * TITLING — the shared thread-titling capability, `@Global` so any domain module can inject `ThreadTitler`
+ * TITLING — the shared thread-titling capability, `@Global` so any domain module can inject `JobTitler`
  * without an import edge. Owns the per-org title-model chain factory (moved here from `WebSurfaceModule`):
  * resolve the tenant's Anthropic key (env fallback via `CredentialResolver`) and cache ONE declarative
  * chain per key; key-less → `undefined` (the titler degrades to its deterministic fallback).
@@ -17,21 +17,21 @@ import { ThreadTitler } from './thread-titler.service';
 @Global()
 @Module({
   providers: [
-    ThreadTitler,
+    JobTitler,
     {
-      provide: THREAD_TITLE_CHAIN,
+      provide: JOB_TITLE_CHAIN,
       inject: [CredentialResolver],
-      useFactory: (creds: CredentialResolver): ThreadTitleChainFactory => {
-        const cache = new Map<string, ReturnType<typeof ThreadTitleChain.build>>();
+      useFactory: (creds: CredentialResolver): JobTitleChainFactory => {
+        const cache = new Map<string, ReturnType<typeof JobTitleChain.build>>();
         return async (orgId) => {
           const key = await creds.anthropicKey(orgId);
           if (!key) return undefined;
           let chain = cache.get(key);
           if (!chain) {
-            chain = ThreadTitleChain.build(
+            chain = JobTitleChain.build(
               new ChatAnthropic({
                 apiKey: key,
-                model: ThreadTitleChain.MODEL,
+                model: JobTitleChain.MODEL,
                 maxTokens: 32,
                 temperature: 0.3,
               }),
@@ -43,6 +43,6 @@ import { ThreadTitler } from './thread-titler.service';
       },
     },
   ],
-  exports: [THREAD_TITLE_CHAIN, ThreadTitler],
+  exports: [JOB_TITLE_CHAIN, JobTitler],
 })
 export class TitlingModule {}

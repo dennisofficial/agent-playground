@@ -2,13 +2,13 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ThreadEntity } from '../persistence/entities';
+import { JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
-  THREAD_TITLE_CHAIN,
-  type ThreadTitleChainFactory,
+  JOB_TITLE_CHAIN,
+  type JobTitleChainFactory,
   sanitizeTitle,
-} from '../titling/thread-title.chain';
+} from '../titling/job-title.chain';
 
 /**
  * Generates a concise title for a thread from its first message and applies it live. Runs fire-and-forget
@@ -18,14 +18,14 @@ import {
  * placeholder; it never throws into the caller.
  */
 @Injectable()
-export class ThreadTitleService {
-  private readonly logger = new Logger(ThreadTitleService.name);
+export class JobTitleService {
+  private readonly logger = new Logger(JobTitleService.name);
 
   constructor(
-    @Inject(THREAD_TITLE_CHAIN) private readonly chainFor: ThreadTitleChainFactory,
+    @Inject(JOB_TITLE_CHAIN) private readonly chainFor: JobTitleChainFactory,
     private readonly surface: WebSurface,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
   ) {}
 
   /** Generate a title from a message, or `undefined` when no Anthropic key resolves / the model errors. */

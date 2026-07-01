@@ -17,7 +17,7 @@ import type {
   EventSeverity,
   EventStimulus,
   Job,
-  ThreadKind,
+  JobKind,
 } from '../domain';
 import { MemoryStore } from '../memory';
 import { wrapUntrusted } from '../stimulus';
@@ -36,12 +36,12 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
   StimulusEntity,
-  ThreadSandboxEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import {
   ProvisioningNotReadyError,
-  ThreadLifecycleService,
-} from '../driver/thread-lifecycle.service';
+  JobLifecycleService,
+} from '../driver/job-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import {
   BuildShipService,
@@ -159,7 +159,7 @@ export class AgentSessionManager
     private readonly driverStore: DriverStoreService,
     private readonly memory: MemoryStore,
     private readonly approvals: DecisionApprovalService,
-    private readonly lifecycle: ThreadLifecycleService,
+    private readonly lifecycle: JobLifecycleService,
     // The engine runner is resolved through the ENGINE_RUNNER token (not the concrete DockerEngineRunner)
     // so the ENGINE_TRANSPORT=pipe|redis factory governs the brain's conversational turns too. See ADR 0001.
     @Inject(ENGINE_RUNNER) private readonly engineRunner: EngineRunnerPort,
@@ -168,8 +168,8 @@ export class AgentSessionManager
     private readonly planReview: PlanReviewService,
     @Inject(JOB_DISPATCHER) private readonly dispatcher: JobDispatcher,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
-    @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
-    private readonly sandboxRows: Repository<ThreadSandboxEntity>,
+    @InjectRepository(JobSandboxEntity, DB_CONNECTION)
+    private readonly sandboxRows: Repository<JobSandboxEntity>,
     // Event stimuli — the at-least-once boot sweep re-delivers any seeded-but-undelivered event.
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimulusRows: Repository<StimulusEntity>,
@@ -3028,7 +3028,7 @@ export class AgentSessionManager
   private async ensureJob(
     stimulus: ChatStimulus,
     title: string,
-    kind: ThreadKind,
+    kind: JobKind,
   ): Promise<string> {
     const existing = await this.store.openJobOnThread(stimulus.threadId);
     if (existing) return existing;

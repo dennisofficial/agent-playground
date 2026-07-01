@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { AgentChatSurface } from '../agent-surface';
-import type { ThreadEntity } from '../persistence/entities';
+import type { JobEntity } from '../persistence/entities';
 import { SurfaceOrchestration } from './surface-orchestration.service';
 
-function threadsRepo(thread: Partial<ThreadEntity> | null) {
+function threadsRepo(thread: Partial<JobEntity> | null) {
   return {
-    findOne: async () => (thread ? (thread as ThreadEntity) : null),
+    findOne: async () => (thread ? (thread as JobEntity) : null),
   } as never;
 }
 

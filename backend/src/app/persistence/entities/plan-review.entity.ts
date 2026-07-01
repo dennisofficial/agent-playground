@@ -7,7 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 
 /**
  * One ROUND of the async Codex plan pre-review (see `brain/plan-review.service.ts`).
@@ -32,9 +32,9 @@ export class PlanReviewEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   thread_id!: string;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'thread_id' })
-  thread?: ThreadEntity;
+  thread?: JobEntity;
 
   /** The tenant (denormalized for sandbox resolution + scoping). */
   @Column({ type: 'uuid' })

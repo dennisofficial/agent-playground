@@ -42,13 +42,13 @@ import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { BrainStoreService } from '../brain/brain-store.service';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
-import { ThreadTitleService } from './thread-title.service';
+import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
-import { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
+import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
@@ -58,7 +58,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
   RepoEntity,
-  ThreadEntity,
+  JobEntity,
   UserEntity,
 } from '../persistence/entities';
 import { deriveNeedsYou } from '../domain/job';
@@ -246,15 +246,15 @@ export class WebSurfaceController {
     private readonly surface: WebSurface,
     private readonly liveTurns: LiveTurnStore,
     private readonly driverStore: DriverStoreService,
-    private readonly threadLifecycle: ThreadLifecycleService,
+    private readonly threadLifecycle: JobLifecycleService,
     private readonly orgService: OrganizationService,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
-    private readonly threadTitle: ThreadTitleService,
+    private readonly threadTitle: JobTitleService,
     private readonly ticketEvents: TicketEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
@@ -839,7 +839,7 @@ export class WebSurfaceController {
   private async requireThread(
     threadId: string,
     orgId: string,
-  ): Promise<ThreadEntity> {
+  ): Promise<JobEntity> {
     const thread = await this.threads.findOne({
       where: { id: threadId, org_id: orgId },
     });

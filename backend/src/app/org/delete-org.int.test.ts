@@ -12,7 +12,7 @@
  * table is added without an FK), the orphan assertions below fail.
  *
  * Integration: real Postgres (the dedicated `*_test` DB), an in-memory fake git (no actual clone) and a
- * fake docker-ish sandbox provider (no Docker). The real `ThreadLifecycleService` runs `deleteThreadDeep`
+ * fake docker-ish sandbox provider (no Docker). The real `JobLifecycleService` runs `deleteThreadDeep`
  * per thread; `OrganizationService` resolves it via `ModuleRef` exactly as in production.
  */
 
@@ -37,12 +37,12 @@ import {
   RepoEntity,
   TrackEntity,
   StimulusEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
   UserEntity,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
-import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, ThreadLifecycleService, WorktreeProvisioner } from '../driver';
+import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, WorktreeProvisioner } from '../driver';
 import { TicketService } from '../tickets';
 import { OrganizationService } from './organization.service';
 
@@ -63,7 +63,7 @@ function dbOpts() {
   };
 }
 
-// ── Fakes (mirror thread-lifecycle.int.test.ts — no filesystem, no Docker) ──────────────────────────
+// ── Fakes (mirror job-lifecycle.int.test.ts — no filesystem, no Docker) ──────────────────────────
 
 class FakeGitService {
   async ensureRepo(input: { repoId: string; gitUrl: string; defaultBranch?: string }): Promise<ProjectRepo> {
@@ -110,7 +110,7 @@ const EMBEDDING = `[${new Array(1536).fill(0).join(',')}]`; // memory.embedding 
 
 let mod: TestingModule;
 let orgService: OrganizationService;
-let threadLifecycle: ThreadLifecycleService;
+let threadLifecycle: JobLifecycleService;
 let ds: DataSource;
 let repoId: string;
 let otherRepoId: string;
@@ -176,8 +176,8 @@ beforeEach(async () => {
           OrganizationMemberEntity,
           OrgInviteEntity,
           UserEntity,
-          ThreadEntity,
-          ThreadSandboxEntity,
+          JobEntity,
+          JobSandboxEntity,
           RepoEntity,
           MessageEntity,
           TrackEntity,
@@ -207,13 +207,13 @@ beforeEach(async () => {
       { provide: DRIVER_REPO, useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used'); } } as DriverRepoResolver },
       { provide: WorktreeProvisioner, useValue: { provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({ sandbox, hydrationSig: 'sig' }) } },
       { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
-      ThreadLifecycleService,
+      JobLifecycleService,
       OrganizationService,
     ],
   }).compile();
 
   orgService = mod.get(OrganizationService);
-  threadLifecycle = mod.get(ThreadLifecycleService);
+  threadLifecycle = mod.get(JobLifecycleService);
   ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
   await purge();

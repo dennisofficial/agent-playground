@@ -40,13 +40,13 @@ import {
   RepoEntity,
   TrackEntity,
   StimulusEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TicketService } from '../tickets';
-import { DRIVER_REPO, type DriverRepoResolver, ThreadLifecycleService, WorktreeProvisioner, type ResolvedRepo } from '.';
-import { ProvisioningNotReadyError } from './thread-lifecycle.service';
+import { DRIVER_REPO, type DriverRepoResolver, JobLifecycleService, WorktreeProvisioner, type ResolvedRepo } from '.';
+import { ProvisioningNotReadyError } from './job-lifecycle.service';
 
 import { ENTITIES } from '../persistence/entities';
 
@@ -144,10 +144,10 @@ class FakeSandboxProvider {
 // ── Module bootstrap ──────────────────────────────────────────────────────────────────────────────
 
 let mod: TestingModule;
-let threadLifecycle: ThreadLifecycleService;
+let threadLifecycle: JobLifecycleService;
 let ticketStub: { revertForDeletedThread: ReturnType<typeof vi.fn> };
-let sandboxes: Repository<ThreadSandboxEntity>;
-let threads: Repository<ThreadEntity>;
+let sandboxes: Repository<JobSandboxEntity>;
+let threads: Repository<JobEntity>;
 let ds: DataSource;
 let fakeGit: FakeGitService;
 let provider: FakeSandboxProvider;
@@ -165,8 +165,8 @@ beforeEach(async () => {
         [
           OrganizationEntity,
           RepoEntity,
-          ThreadEntity,
-          ThreadSandboxEntity,
+          JobEntity,
+          JobSandboxEntity,
           OrgCredentialsEntity,
           MessageEntity,
           TrackEntity,
@@ -218,14 +218,14 @@ beforeEach(async () => {
         },
       },
       { provide: TicketService, useValue: { revertForDeletedThread: vi.fn().mockResolvedValue(undefined) } },
-      ThreadLifecycleService,
+      JobLifecycleService,
     ],
   }).compile();
 
-  threadLifecycle = mod.get(ThreadLifecycleService);
+  threadLifecycle = mod.get(JobLifecycleService);
   ticketStub = mod.get(TicketService) as unknown as typeof ticketStub;
-  sandboxes = mod.get(getRepositoryToken(ThreadSandboxEntity, DB_CONNECTION));
-  threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
+  sandboxes = mod.get(getRepositoryToken(JobSandboxEntity, DB_CONNECTION));
+  threads = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
   ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
   await ds.query(`
@@ -271,7 +271,7 @@ async function createBareThread(): Promise<string> {
 
 // ── GATE tests ───────────────────────────────────────────────────────────────────────────────────
 
-describe('R2 gate — ThreadLifecycleService (live Postgres + fakes)', () => {
+describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
   it('createThread persists an attached sandbox with the feature branch cut at create', async () => {
     const result = await create('Add dark mode');
 

@@ -73,7 +73,7 @@ export const DATASET: EvalCase<PlanTrackInput, PlannedStep[]>[] = [
       brief:
         'Persist pipeline-awareness markers per thread and expose a drain-and-flush read that the next operator turn consumes.',
       handoffIn:
-        'The threads table and ThreadEntity already exist and the per-thread brain turn pipeline is in place. There is no awareness storage yet.',
+        'The threads table and JobEntity already exist and the per-thread brain turn pipeline is in place. There is no awareness storage yet.',
     },
   },
 ];

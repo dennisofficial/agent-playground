@@ -1,4 +1,4 @@
-import type { PipelineMarker } from '../persistence/entities/thread.entity';
+import type { PipelineMarker } from '../persistence/entities/job.entity';
 
 export type { PipelineMarker };
 

@@ -9,7 +9,7 @@ import { Injectable } from '@nestjs/common';
  *
  * Ref-counted: a container may legitimately have more than one concurrent exec (defensive), so it is
  * only "idle" once every entered exec has left. Best-effort by design — if a reap and a turn-start
- * still interleave, `ThreadLifecycleService.ensureContainer` re-attaches (with the reset notice) as the
+ * still interleave, `JobLifecycleService.ensureContainer` re-attaches (with the reset notice) as the
  * safety net. Process-local (one host composes the harness), so a plain Map is sufficient.
  */
 @Injectable()

@@ -9,15 +9,15 @@ import {
 } from './stimulus-store.service';
 import { StimulusIntake } from './stimulus-intake.service';
 import type { SurfaceOrchestration } from './surface-orchestration.service';
-import type { ThreadTitler } from '../titling';
+import type { JobTitler } from '../titling';
 
 function fakeFilter(verdict: FilterVerdict): EventFilterService {
   return { admit: () => verdict } as unknown as EventFilterService;
 }
 
 /** A passthrough titler — returns the source text unchanged so seeding behaviour is deterministic. */
-function fakeTitler(): ThreadTitler {
-  return { titleFor: async (text: string) => text } as unknown as ThreadTitler;
+function fakeTitler(): JobTitler {
+  return { titleFor: async (text: string) => text } as unknown as JobTitler;
 }
 
 /** A no-op announcer (the announce-in-timeline seam) — records calls so the test can assert it ran. */

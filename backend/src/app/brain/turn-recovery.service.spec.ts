@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { MessageEntity, ThreadSandboxEntity } from '../persistence/entities';
+import type { MessageEntity, JobSandboxEntity } from '../persistence/entities';
 import type { SandboxProvider } from '../sandbox/sandbox-provider.port';
 import { TurnRecoveryService } from './turn-recovery.service';
 
@@ -73,7 +73,7 @@ function makeSandboxRows(threadIds: string[]) {
       qb.getRawMany = async () => threadIds.map((threadId) => ({ threadId }));
       return qb;
     },
-  } as unknown as Repository<ThreadSandboxEntity>;
+  } as unknown as Repository<JobSandboxEntity>;
 }
 
 function makeProvider(projectsDir: string | null): SandboxProvider {

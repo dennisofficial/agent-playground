@@ -11,8 +11,8 @@ import {
   OrgCredentialsEntity,
   RepoEntity,
   StimulusEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
@@ -92,20 +92,20 @@ export class OnboardingService {
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(OrgCredentialsEntity, DB_CONNECTION)
     private readonly orgCreds: Repository<OrgCredentialsEntity>,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly decisionRecords: Repository<DecisionRecordEntity>,
-    @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
-    private readonly sandboxes: Repository<ThreadSandboxEntity>,
+    @InjectRepository(JobSandboxEntity, DB_CONNECTION)
+    private readonly sandboxes: Repository<JobSandboxEntity>,
     private readonly creds: CredentialResolver,
     private readonly store: TenantCredentialStore,
     private readonly pr: GithubPrService,
-    // `ThreadLifecycleService` is resolved LAZILY in `disconnectRepo` via this ref + a dynamic
+    // `JobLifecycleService` is resolved LAZILY in `disconnectRepo` via this ref + a dynamic
     // `import()`. A STATIC import of the driver service would close an ES module cycle
-    // (onboarding.service → driver/thread-lifecycle → onboarding barrel → onboarding.service). `ModuleRef`
+    // (onboarding.service → driver/job-lifecycle → onboarding barrel → onboarding.service). `ModuleRef`
     // is core (no module dependency) and the dynamic import is evaluated after boot — same pattern as
     // `OrganizationService.deleteOrg`.
     private readonly moduleRef: ModuleRef,
@@ -356,8 +356,8 @@ export class OnboardingService {
     // Resolve the driver service lazily (see the constructor note on the module cycle). `strict: false`
     // searches the whole app; the `.js` extension is required for a relative dynamic `import()` under
     // `moduleResolution: nodenext`.
-    const { ThreadLifecycleService } = await import('../driver/thread-lifecycle.service.js');
-    const lifecycle = this.moduleRef.get(ThreadLifecycleService, { strict: false });
+    const { JobLifecycleService } = await import('../driver/job-lifecycle.service.js');
+    const lifecycle = this.moduleRef.get(JobLifecycleService, { strict: false });
     let threadsDeleted = 0;
     for (;;) {
       const batch = await this.threads.find({

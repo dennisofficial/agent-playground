@@ -7,7 +7,7 @@ import {
 } from './plan-review.service';
 import type { PlanReviewStartInput } from './plan-review.service';
 import type { EngineRunnerPort, EngineRunResult, RunEngineArgs } from '../engine/engine.types';
-import type { ThreadLifecycleService } from '../driver/thread-lifecycle.service';
+import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
 import type { PlanReviewEntity } from '../persistence/entities';
@@ -99,7 +99,7 @@ function fakeLifecycle(
     ensureContainer: vi.fn(async () =>
       sandbox ? { sandbox, wasReset: false } : null,
     ),
-  } as unknown as ThreadLifecycleService;
+  } as unknown as JobLifecycleService;
 }
 
 /** A tiny in-memory `plan_reviews` repository fake (only the methods the service uses). */

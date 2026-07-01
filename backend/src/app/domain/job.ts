@@ -16,9 +16,9 @@
 
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
-// and re-exported as the domain's `ThreadStatus` so the brain/driver keep importing it from `../domain`.
-import type { ThreadStatus } from '@workspace/shared';
-export type { ThreadStatus };
+// and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
+import type { JobStatus } from '@workspace/shared';
+export type { JobStatus };
 
 /** Why a thread exists — a human-started chat, a notification-seeded thread, or an operator control action. */
 export type ThreadOrigin = 'chat' | 'event' | 'control';
@@ -61,7 +61,7 @@ export function deriveNeedsYou(
  * discovers env/secrets/setup + authors `.atlas/worktree.json`). An onboarding thread never builds/PRs via
  * the driver — its tools are gated and it has its own mission prompt.
  */
-export type ThreadKind = 'feature' | 'bugfix' | 'onboarding';
+export type JobKind = 'feature' | 'bugfix' | 'onboarding';
 
 /** A conversation + (optionally) the build it drives. One intent, one branch, one PR. */
 export interface Job {
@@ -80,8 +80,8 @@ export interface Job {
   /** The base branch the build cuts from (operator-picked; null → repo default). */
   baseBranch: string | null;
   /** Build intent; null until the thread enters the build lifecycle. */
-  kind: ThreadKind | null;
-  status: ThreadStatus;
+  kind: JobKind | null;
+  status: JobStatus;
   /** The locked decision record's id (null until the upfront grill produces one). */
   decisionRecordId: string | null;
   /** The feature branch all tracks stack on (null until the branch is cut). */

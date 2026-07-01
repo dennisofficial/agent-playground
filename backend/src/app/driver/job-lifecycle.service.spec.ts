@@ -1,5 +1,5 @@
 /**
- * Unit tests for `ThreadLifecycleService.rowToSandbox` (accessed via a cast to bypass `private`).
+ * Unit tests for `JobLifecycleService.rowToSandbox` (accessed via a cast to bypass `private`).
  *
  * Verifies: `execUser` is recomputed from the host process uid:gid when the persisted row has a
  * `container_id` (docker mode) and absent otherwise; and that the branch is sourced from the THREAD
@@ -15,21 +15,21 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type {
   RepoEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import type { GithubPrService, LocalGitService } from '../git';
 import type { CredentialResolver } from '../onboarding';
 import type { DriverRepoResolver } from './repo-resolver';
 import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
-import { ThreadLifecycleService } from './thread-lifecycle.service';
+import { JobLifecycleService } from './job-lifecycle.service';
 import type { TicketService } from '../tickets';
 import type { WorktreeProvisioner } from './worktree-provisioner.service';
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────────
 
-/** Build a bare-minimum ThreadSandboxEntity row (infra-only — no branch/PR; those live on the thread). */
-function makeRow(overrides: Partial<ThreadSandboxEntity> = {}): ThreadSandboxEntity {
+/** Build a bare-minimum JobSandboxEntity row (infra-only — no branch/PR; those live on the thread). */
+function makeRow(overrides: Partial<JobSandboxEntity> = {}): JobSandboxEntity {
   return {
     id: 'sandbox-1',
     org_id: 'T1',
@@ -43,24 +43,24 @@ function makeRow(overrides: Partial<ThreadSandboxEntity> = {}): ThreadSandboxEnt
     created_at: new Date(),
     updated_at: new Date(),
     ...overrides,
-  } as ThreadSandboxEntity;
+  } as JobSandboxEntity;
 }
 
 /**
- * Construct a ThreadLifecycleService whose `threads`/`projects` repos return the given thread + repo, so
+ * Construct a JobLifecycleService whose `threads`/`projects` repos return the given thread + repo, so
  * `rowToSandbox` can resolve the branch (from the thread) and the on-disk slug (from the repo).
  */
 function makeService(
-  thread: Partial<ThreadEntity> = {},
+  thread: Partial<JobEntity> = {},
   repo: Partial<RepoEntity> = {},
-): ThreadLifecycleService {
+): JobLifecycleService {
   const threadRow = { id: 'thread-1', feature_branch: null, base_branch: 'main', ...thread };
   const repoRow = { id: 'repo-uuid-1', slug: 'proj', default_branch: 'main', ...repo };
-  const threads = { findOne: vi.fn().mockResolvedValue(threadRow) } as unknown as Repository<ThreadEntity>;
+  const threads = { findOne: vi.fn().mockResolvedValue(threadRow) } as unknown as Repository<JobEntity>;
   const projects = { findOne: vi.fn().mockResolvedValue(repoRow) } as unknown as Repository<RepoEntity>;
-  const sandboxes = { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<ThreadSandboxEntity>;
+  const sandboxes = { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<JobSandboxEntity>;
 
-  return new ThreadLifecycleService(
+  return new JobLifecycleService(
     threads,
     sandboxes,
     projects,
@@ -78,17 +78,17 @@ function makeService(
 }
 
 // Cast to access the private (now-async) rowToSandbox method from tests.
-function rowToSandbox(svc: ThreadLifecycleService, row: ThreadSandboxEntity) {
+function rowToSandbox(svc: JobLifecycleService, row: JobSandboxEntity) {
   return (
     svc as unknown as {
-      rowToSandbox(r: ThreadSandboxEntity): Promise<import('../git').FeatureSandbox>;
+      rowToSandbox(r: JobSandboxEntity): Promise<import('../git').FeatureSandbox>;
     }
   ).rowToSandbox(row);
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
 
-describe('ThreadLifecycleService.rowToSandbox', () => {
+describe('JobLifecycleService.rowToSandbox', () => {
   it('populates execUser with the host uid:gid for a row WITH a container_id (docker mode)', async () => {
     const svc = makeService();
     const row = makeRow({ container_id: 'abc123def456' });

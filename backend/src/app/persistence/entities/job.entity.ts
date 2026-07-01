@@ -44,7 +44,7 @@ export interface ThreadPipelineAwareness {
  */
 @Entity({ name: 'threads' })
 @Index(['org_id', 'repo_id'])
-export class ThreadEntity extends TimestampedEntity {
+export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 

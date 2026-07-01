@@ -10,7 +10,7 @@ import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
 import type { ChatStimulus } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ThreadEntity } from '../persistence/entities';
+import { JobEntity } from '../persistence/entities';
 import {
   CHAT_SURFACE,
   type ChatSurface,
@@ -41,8 +41,8 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
   constructor(
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly intake: StimulusIntake,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -106,7 +106,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
    * caller addresses an existing thread (the web operator path always does). Otherwise open a fresh
    * chat-origin thread on the repo (`msg.channel` = repo_id).
    */
-  private async resolveThread(msg: InboundChatMessage): Promise<ThreadEntity | null> {
+  private async resolveThread(msg: InboundChatMessage): Promise<JobEntity | null> {
     if (msg.threadTs) {
       const existing = await this.threads.findOne({ where: { id: msg.threadTs } });
       if (existing) return existing;

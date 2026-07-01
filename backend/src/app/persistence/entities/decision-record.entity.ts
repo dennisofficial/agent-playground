@@ -3,7 +3,7 @@ import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 import { UserEntity } from './user.entity';
 
 /**
@@ -40,9 +40,9 @@ export class DecisionRecordEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   thread_id!: string;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'thread_id' })
-  thread?: ThreadEntity;
+  thread?: JobEntity;
 
   // 'draft' | 'approved' | 'superseded'
   @Column({ type: 'text', default: 'draft' })

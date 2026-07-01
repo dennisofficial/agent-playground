@@ -1,35 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Subject } from 'rxjs';
 import type { Repository } from 'typeorm';
-import type { ThreadEntity } from '../persistence/entities';
+import type { JobEntity } from '../persistence/entities';
 import type { ChatSurface, InboundChatMessage } from '../surface';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import type { StimulusIntake } from './stimulus-intake.service';
 import type { ChatStimulus } from '../domain';
 
-function fakeThreads(initial: ThreadEntity[]): {
-  repo: Repository<ThreadEntity>;
-  rows: ThreadEntity[];
+function fakeThreads(initial: JobEntity[]): {
+  repo: Repository<JobEntity>;
+  rows: JobEntity[];
 } {
   const rows = [...initial];
   let seq = initial.length;
   const repo = {
     findOne: async (opts: { where: { id: string } }) =>
       rows.find((t) => t.id === opts.where.id) ?? null,
-    create: (data: Partial<ThreadEntity>) => ({ ...data }) as ThreadEntity,
-    save: async (t: ThreadEntity) => {
-      const saved = { ...t, id: t.id ?? `thread-${++seq}` } as ThreadEntity;
+    create: (data: Partial<JobEntity>) => ({ ...data }) as JobEntity,
+    save: async (t: JobEntity) => {
+      const saved = { ...t, id: t.id ?? `thread-${++seq}` } as JobEntity;
       rows.push(saved);
       return saved;
     },
-  } as unknown as Repository<ThreadEntity>;
+  } as unknown as Repository<JobEntity>;
   return { repo, rows };
 }
 
-function makeBridge(threads: ThreadEntity[]): {
+function makeBridge(threads: JobEntity[]): {
   bridge: ChatStimulusBridge;
   intaken: ChatStimulus[];
-  threadRows: ThreadEntity[];
+  threadRows: JobEntity[];
 } {
   const intaken: ChatStimulus[] = [];
   const intake = {
@@ -86,7 +86,7 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
       origin: 'control',
       surface_thread_ref: null,
       title: null,
-    } as ThreadEntity;
+    } as JobEntity;
     const { bridge, intaken, threadRows } = makeBridge([existing]);
 
     await bridge.onInbound(msg({ threadTs: 'thread-7', text: "I'm on it" }));

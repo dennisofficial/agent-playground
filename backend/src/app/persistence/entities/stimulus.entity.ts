@@ -2,7 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 
 /**
  * The durable record of an intake stimulus — both subtypes in one table, discriminated by `kind`:
@@ -56,9 +56,9 @@ export class StimulusEntity extends TimestampedEntity {
   @Column({ type: 'uuid', nullable: true })
   thread_id!: string | null;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE', nullable: true })
+  @ManyToOne(() => JobEntity, { onDelete: 'CASCADE', nullable: true })
   @JoinColumn({ name: 'thread_id' })
-  thread?: ThreadEntity | null;
+  thread?: JobEntity | null;
 
   /** Chat author scope id; null for events. */
   @Column({ type: 'text', nullable: true })

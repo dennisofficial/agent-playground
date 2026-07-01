@@ -44,7 +44,7 @@ export interface FeatureSandbox {
   /**
    * TRANSIENT (set by `SandboxProvider.attach`, never persisted): true when an already-RUNNING container
    * was reused warm; false when the container was created fresh or restarted from stopped (cold — any
-   * background processes from prior turns are gone). `ThreadLifecycleService.ensureContainer` uses this
+   * background processes from prior turns are gone). `JobLifecycleService.ensureContainer` uses this
    * to decide whether a resumed turn needs the "sandbox was reset" notice.
    */
   warm?: boolean;

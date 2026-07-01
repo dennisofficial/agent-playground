@@ -249,7 +249,7 @@ export class SandboxManager implements SandboxProvider {
   /**
    * Reclaim a thread's container by its DETERMINISTIC NAME — the terminal-cleanup counterpart to
    * {@link attach}, which resolves the SAME name (`atlas-sbx-thread-<id>`) regardless of
-   * whether a `container_id` is currently known. This matters because `ThreadLifecycleService.reconcileOnBoot`
+   * whether a `container_id` is currently known. This matters because `JobLifecycleService.reconcileOnBoot`
    * nulls a row's `container_id` on every restart while the real container keeps running; a close/delete
    * that happened before the thread's next turn would skip the id-gated {@link teardown} and LEAK the
    * container (and its `-net`/`-dind`) forever. If the container is already gone, its network/volume are

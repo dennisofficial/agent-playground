@@ -4,7 +4,7 @@ import type { TicketOrigin } from '../../domain/ticket';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 
 /**
  * A TICKET — a unit of captured intent on a repo's board/backlog (see `domain/ticket.ts`). Lightweight
@@ -70,9 +70,9 @@ export class TicketEntity extends TimestampedEntity {
   @Column({ type: 'uuid', nullable: true })
   origin_thread_id!: string | null;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'SET NULL', nullable: true })
+  @ManyToOne(() => JobEntity, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'origin_thread_id' })
-  originThread?: ThreadEntity | null;
+  originThread?: JobEntity | null;
 
   /** The decision record this ticket diverged from (FK → decision_records.id); SET NULL on delete. */
   @Column({ type: 'uuid', nullable: true })

@@ -8,7 +8,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import type { TicketStatus } from '../domain/ticket';
-import type { TicketEntity, ThreadEntity } from '../persistence/entities';
+import type { TicketEntity, JobEntity } from '../persistence/entities';
 import type { TicketEventBus } from './ticket-event-bus';
 import { TicketService } from './ticket.service';
 
@@ -24,7 +24,7 @@ function makeService(opts: {
   const threadRow =
     opts.ticketId === undefined
       ? null
-      : ({ id: THREAD, org_id: ORG, ticket_id: opts.ticketId } as ThreadEntity);
+      : ({ id: THREAD, org_id: ORG, ticket_id: opts.ticketId } as JobEntity);
   const ticketRow =
     opts.ticket === null || opts.ticket === undefined
       ? null
@@ -33,7 +33,7 @@ function makeService(opts: {
   const save = vi.fn(async (t: TicketEntity) => t);
   const publish = vi.fn();
 
-  const threads = { findOne: vi.fn().mockResolvedValue(threadRow) } as unknown as Repository<ThreadEntity>;
+  const threads = { findOne: vi.fn().mockResolvedValue(threadRow) } as unknown as Repository<JobEntity>;
   const tickets = { findOne: vi.fn().mockResolvedValue(ticketRow), save } as unknown as Repository<TicketEntity>;
   const events = { publish } as unknown as TicketEventBus;
 
@@ -45,7 +45,7 @@ function makeService(opts: {
     {} as never, // repos repo (unused)
     {} as never, // dataSource (unused)
     events,
-    {} as never, // ThreadTitler (unused)
+    {} as never, // JobTitler (unused)
   );
   return { svc, save, publish };
 }

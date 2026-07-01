@@ -31,7 +31,7 @@ export interface ProvisionAndAttachResult {
 }
 
 /**
- * THE single seam that turns a cut worktree into an attached, hydrated sandbox. `ThreadLifecycleService`
+ * THE single seam that turns a cut worktree into an attached, hydrated sandbox. `JobLifecycleService`
  * routes thread sandboxes through here instead of calling `SANDBOX_PROVIDER.attach` directly, so worktree
  * hydration + cache mounts are applied uniformly and can never be forgotten. (The acceptance gate attaches
  * directly — it has no org/grants and can't hydrate a tenant secret, so it deliberately skips this seam.)

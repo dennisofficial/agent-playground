@@ -4,7 +4,7 @@ import type { Repository } from 'typeorm';
 import type {
   MessageEntity,
   StimulusEntity,
-  ThreadEntity,
+  JobEntity,
 } from '../persistence/entities';
 import {
   DuplicateStimulusError,
@@ -30,7 +30,7 @@ function fakeRepo<T extends { id?: string }>(prefix: string) {
 
 describe('StimulusStoreService — notification-seeds-a-thread', () => {
   it('seedEventThread opens a thread (origin event), persists message + event stimulus', async () => {
-    const threads = fakeRepo<ThreadEntity>('thread');
+    const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<MessageEntity>('msg');
     const stimuli = fakeRepo<StimulusEntity>('stim');
     const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo);
@@ -60,7 +60,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
   });
 
   it('rolls back the thread + message and throws DuplicateStimulusError on a unique violation', async () => {
-    const threads = fakeRepo<ThreadEntity>('thread');
+    const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<MessageEntity>('msg');
     const stimuli = fakeRepo<StimulusEntity>('stim');
     // The stimulus insert hits the partial-unique index.
@@ -89,7 +89,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
   });
 
   it('recordChatStimulus persists a chat message + chat stimulus (no thread, no dedupe)', async () => {
-    const threads = fakeRepo<ThreadEntity>('thread');
+    const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<MessageEntity>('msg');
     const stimuli = fakeRepo<StimulusEntity>('stim');
     const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo);

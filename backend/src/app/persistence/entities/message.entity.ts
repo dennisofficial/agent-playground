@@ -1,6 +1,6 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 
 /**
  * One message in a thread's append-only log. Many histories = ONE `messages` table partitioned
@@ -17,9 +17,9 @@ export class MessageEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   thread_id!: string;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'thread_id' })
-  thread?: ThreadEntity;
+  thread?: JobEntity;
 
   /** Display name ("Dennis", "Atlas"). */
   @Column({ type: 'text' })

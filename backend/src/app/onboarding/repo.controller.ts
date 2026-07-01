@@ -17,7 +17,7 @@ import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { RepoEntity, ThreadEntity } from '../persistence/entities';
+import { RepoEntity, JobEntity } from '../persistence/entities';
 import { OnboardingService, type ConnectedRepo } from './onboarding.service';
 
 class ConnectRepoDto {
@@ -62,8 +62,8 @@ export class RepoController {
     private readonly onboarding: OnboardingService,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
   ) {}
 
   @Post()

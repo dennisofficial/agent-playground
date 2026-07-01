@@ -11,7 +11,7 @@ import pg from 'pg';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
 import { pgConnectionString, resolveSsl } from '../persistence/database.module';
-import { THREADS_MODEL, type RealtimePrincipal } from './thread-realtime.model';
+import { THREADS_MODEL, type RealtimePrincipal } from './job-realtime.model';
 
 const PUBLICATION_NAME = 'pg_realtime_pub';
 

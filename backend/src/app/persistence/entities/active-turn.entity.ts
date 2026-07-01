@@ -7,7 +7,7 @@ import {
   PrimaryColumn,
 } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 
 /**
  * The durable registry of IN-FLIGHT engine turns running over the Redis-Streams transport
@@ -35,9 +35,9 @@ export class ActiveTurnEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   thread_id!: string;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'thread_id' })
-  thread?: ThreadEntity;
+  thread?: JobEntity;
 
   /** The tenant (denormalized for sandbox resolution + scoping). */
   @Column({ type: 'uuid' })

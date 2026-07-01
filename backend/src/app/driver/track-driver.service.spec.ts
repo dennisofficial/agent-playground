@@ -501,7 +501,7 @@ function assemble(
       githubToken: async () => undefined,
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
-    // ThreadLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
+    // JobLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
     // (the brain provisions every thread before any build runs). Its branch is the source of truth.
     {
       ensureContainer: async () => ({
@@ -516,7 +516,7 @@ function assemble(
       }),
       findSandbox: async () => null,
       recordPr: async () => undefined,
-    } as unknown as import('./thread-lifecycle.service').ThreadLifecycleService,
+    } as unknown as import('./job-lifecycle.service').JobLifecycleService,
     // BuildShipService: the real terminal "ship" over the same git/pr/autofix/store fakes, so the
     // PR-tail assertions (pushed/opened/setPrReady) hold exactly as before the extraction.
     new BuildShipService(autofix.autofix, git, pr, store),

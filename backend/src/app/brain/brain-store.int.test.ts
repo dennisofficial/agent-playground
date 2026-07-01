@@ -17,7 +17,7 @@ import {
   FakePlannerLlm,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 import { BrainStoreService } from './brain-store.service';
 
 /**
@@ -54,7 +54,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       .useValue(new FakeLocalGitService())
       .overrideProvider(GithubPrService)
       .useValue(new FakeGithubPrService())
-      .overrideProvider(ThreadTitler)
+      .overrideProvider(JobTitler)
       .useValue(new FakeThreadTitler())
       .compile();
 

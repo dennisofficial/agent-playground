@@ -39,7 +39,7 @@ import {
   type DriverRepoResolver,
   type ResolvedRepo,
 } from './repo-resolver';
-import { ThreadLifecycleService } from './thread-lifecycle.service';
+import { JobLifecycleService } from './job-lifecycle.service';
 
 /**
  * W4 — the SECTION/PHASE DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -83,7 +83,7 @@ export class TrackDriver implements JobDispatcher {
     private readonly env: EnvService,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly creds: CredentialResolver,
-    private readonly threadLifecycle: ThreadLifecycleService,
+    private readonly threadLifecycle: JobLifecycleService,
     private readonly ship: BuildShipService,
     private readonly awareness: PipelineAwarenessStore,
     // Lets the terminal-error catch tell a shutdown-induced abort (leave the job resumable) apart from a

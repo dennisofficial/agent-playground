@@ -2,7 +2,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 
 /**
  * The per-thread sandbox — one row per thread (the disposable INFRA for the thread's build). The
@@ -19,7 +19,7 @@ import { ThreadEntity } from './thread.entity';
  */
 @Entity({ name: 'thread_sandboxes' })
 @Index(['thread_id'], { unique: true })
-export class ThreadSandboxEntity extends TimestampedEntity {
+export class JobSandboxEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -35,9 +35,9 @@ export class ThreadSandboxEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   thread_id!: string;
 
-  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'thread_id' })
-  thread?: ThreadEntity;
+  thread?: JobEntity;
 
   /** The repo this sandbox is for (FK → repos.id). */
   @Column({ type: 'uuid' })

@@ -21,8 +21,8 @@ import {
   RepoEntity,
   TrackEntity,
   StimulusEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
@@ -33,7 +33,7 @@ import { DriverStoreService } from './driver-store.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { TrackDriver } from './track-driver.service';
-import { ThreadLifecycleService } from './thread-lifecycle.service';
+import { JobLifecycleService } from './job-lifecycle.service';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -68,9 +68,9 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
         TrackEntity,
         StepEntity,
         DecisionRecordEntity,
-        ThreadEntity,
+        JobEntity,
         RepoEntity,
-        ThreadSandboxEntity,
+        JobSandboxEntity,
         MessageEntity,
         StimulusEntity,
       ],
@@ -89,7 +89,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
         new AnthropicPlannerLlm((orgId) => creds.anthropicKey(orgId)),
     },
     TrackDriver,
-    ThreadLifecycleService,
+    JobLifecycleService,
     WorktreeHydrator,
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
@@ -98,7 +98,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
   exports: [
     TrackDriver,
     JOB_DISPATCHER,
-    ThreadLifecycleService,
+    JobLifecycleService,
     WorktreeProvisioner,
     DriverStoreService,
     PipelineAwarenessStore,
@@ -116,7 +116,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   constructor(
     private readonly driver: TrackDriver,
     private readonly env: EnvService,
-    private readonly lifecycle: ThreadLifecycleService,
+    private readonly lifecycle: JobLifecycleService,
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
   ) {}

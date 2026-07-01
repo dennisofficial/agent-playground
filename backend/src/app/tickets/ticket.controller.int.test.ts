@@ -31,7 +31,7 @@ import {
   FakePlannerLlm,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 
 const fakeCreds = {
@@ -114,7 +114,7 @@ beforeAll(async () => {
     .useValue({})
     .overrideProvider(CredentialResolver)
     .useValue(fakeCreds)
-    .overrideProvider(ThreadTitler)
+    .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
     .compile();
 

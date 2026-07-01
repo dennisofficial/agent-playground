@@ -22,7 +22,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
   RepoEntity,
-  ThreadEntity,
+  JobEntity,
   OrganizationEntity,
 } from '../persistence/entities';
 import type {
@@ -70,8 +70,8 @@ export class TestBridgeController {
     private readonly orgs: Repository<OrganizationEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
   ) {}

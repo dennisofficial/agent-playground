@@ -8,7 +8,7 @@ export * from './organization.entity';
 export * from './organization-member.entity';
 export * from './org-invite.entity';
 export * from './repo.entity';
-export * from './thread.entity';
+export * from './job.entity';
 export * from './message.entity';
 export * from './plan-review.entity';
 export * from './active-turn.entity';
@@ -22,7 +22,7 @@ export * from './memory.entity';
 export * from './org-credentials.entity';
 export * from './org-worktree-secret.entity';
 export * from './org-worktree-secret-grant.entity';
-export * from './thread-sandbox.entity';
+export * from './job-sandbox.entity';
 export * from './user.entity';
 export * from './ticket.entity';
 export * from './ticket-dependency.entity';
@@ -32,7 +32,7 @@ import { OrganizationEntity } from './organization.entity';
 import { OrganizationMemberEntity } from './organization-member.entity';
 import { OrgInviteEntity } from './org-invite.entity';
 import { RepoEntity } from './repo.entity';
-import { ThreadEntity } from './thread.entity';
+import { JobEntity } from './job.entity';
 import { MessageEntity } from './message.entity';
 import { PlanReviewEntity } from './plan-review.entity';
 import { ActiveTurnEntity } from './active-turn.entity';
@@ -46,7 +46,7 @@ import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
 import { OrgWorktreeSecretEntity } from './org-worktree-secret.entity';
 import { OrgWorktreeSecretGrantEntity } from './org-worktree-secret-grant.entity';
-import { ThreadSandboxEntity } from './thread-sandbox.entity';
+import { JobSandboxEntity } from './job-sandbox.entity';
 import { UserEntity } from './user.entity';
 import { TicketEntity } from './ticket.entity';
 import { TicketDependencyEntity } from './ticket-dependency.entity';
@@ -58,7 +58,7 @@ export const ENTITIES = [
   OrganizationMemberEntity,
   OrgInviteEntity,
   RepoEntity,
-  ThreadEntity,
+  JobEntity,
   MessageEntity,
   PlanReviewEntity,
   ActiveTurnEntity,
@@ -72,7 +72,7 @@ export const ENTITIES = [
   OrgCredentialsEntity,
   OrgWorktreeSecretEntity,
   OrgWorktreeSecretGrantEntity,
-  ThreadSandboxEntity,
+  JobSandboxEntity,
   UserEntity,
   TicketEntity,
   TicketDependencyEntity,

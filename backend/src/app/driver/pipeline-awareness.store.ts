@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import type { PipelineMarker, ThreadPipelineAwareness } from '../persistence/entities/thread.entity';
+import type { PipelineMarker, ThreadPipelineAwareness } from '../persistence/entities/job.entity';
 
 /**
  * PASSIVE pipeline-milestone awareness — the DURABLE half. Owns the `threads.pipeline_awareness` jsonb

@@ -17,7 +17,7 @@ import {
   FakePlannerLlm,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 import { TestBridgeController } from './test-bridge.controller';
 
 /**
@@ -58,7 +58,7 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
       .useValue(new FakeLocalGitService())
       .overrideProvider(GithubPrService)
       .useValue(new FakeGithubPrService())
-      .overrideProvider(ThreadTitler)
+      .overrideProvider(JobTitler)
       .useValue(new FakeThreadTitler())
       .compile();
 

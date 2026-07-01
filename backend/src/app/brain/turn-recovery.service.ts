@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { MessageEntity, ThreadSandboxEntity } from '../persistence/entities';
+import { MessageEntity, JobSandboxEntity } from '../persistence/entities';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox/sandbox-provider.port';
 import { parseSessionTranscriptTail, type RecoveredBlock, type TranscriptTail } from './session-transcript';
 
@@ -52,8 +52,8 @@ export class TurnRecoveryService implements OnModuleDestroy {
   constructor(
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
-    @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
-    private readonly sandboxRows: Repository<ThreadSandboxEntity>,
+    @InjectRepository(JobSandboxEntity, DB_CONNECTION)
+    private readonly sandboxRows: Repository<JobSandboxEntity>,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
   ) {}
 

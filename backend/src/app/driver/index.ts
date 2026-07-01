@@ -6,7 +6,7 @@
 export * from './driver.module';
 export * from './track-driver.service';
 export * from './driver-store.service';
-export * from './thread-lifecycle.service';
+export * from './job-lifecycle.service';
 export { WorktreeProvisioner } from './worktree-provisioner.service';
 export { WorktreeHydrator } from './worktree-hydrator.service';
 export {

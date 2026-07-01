@@ -19,7 +19,7 @@ import {
   FakePlannerLlm,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { ThreadTitler } from '../titling';
+import { JobTitler } from '../titling';
 import { webSecretInputCard } from '../surface';
 import { BrainStoreService } from './brain-store.service';
 
@@ -63,7 +63,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       .useValue(new FakeLocalGitService())
       .overrideProvider(GithubPrService)
       .useValue(new FakeGithubPrService())
-      .overrideProvider(ThreadTitler)
+      .overrideProvider(JobTitler)
       .useValue(new FakeThreadTitler())
       .compile();
     app = moduleRef.createNestApplication<NestExpressApplication>();

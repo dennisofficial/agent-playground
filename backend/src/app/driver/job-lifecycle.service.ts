@@ -8,7 +8,7 @@ import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { RepoEntity, ThreadEntity, ThreadSandboxEntity } from '../persistence/entities';
+import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
 import { hostExecUser, SANDBOX_PROVIDER, SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { TicketService } from '../tickets';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
@@ -69,17 +69,17 @@ export class ProvisioningNotReadyError extends Error {
  *   4. `closeThread` / `pollPrClosures` — terminal cleanup (PR merged or operator close).
  */
 @Injectable()
-export class ThreadLifecycleService {
-  private readonly logger = new Logger(ThreadLifecycleService.name);
+export class JobLifecycleService {
+  private readonly logger = new Logger(JobLifecycleService.name);
 
   /** In-flight lazy provisions, keyed `orgId:threadId` — serializes concurrent first turns (single-process). */
-  private readonly provisioning = new Map<string, Promise<ThreadSandboxEntity | null>>();
+  private readonly provisioning = new Map<string, Promise<JobSandboxEntity | null>>();
 
   constructor(
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(ThreadSandboxEntity, DB_CONNECTION)
-    private readonly sandboxes: Repository<ThreadSandboxEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
+    @InjectRepository(JobSandboxEntity, DB_CONNECTION)
+    private readonly sandboxes: Repository<JobSandboxEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly projects: Repository<RepoEntity>,
     private readonly git: LocalGitService,
@@ -159,7 +159,7 @@ export class ThreadLifecycleService {
    * Throws `ProvisioningNotReadyError` if the repo isn't connected/validated (`access_ok`) — fail fast,
    * no clone. Concurrent first turns for the same thread share ONE provision (no double row).
    */
-  async ensureProvisioned(threadId: string, orgId: string): Promise<ThreadSandboxEntity | null> {
+  async ensureProvisioned(threadId: string, orgId: string): Promise<JobSandboxEntity | null> {
     const key = `${orgId}:${threadId}`;
     const inflight = this.provisioning.get(key);
     if (inflight) return inflight;
@@ -172,7 +172,7 @@ export class ThreadLifecycleService {
   private async doEnsureProvisioned(
     threadId: string,
     orgId: string,
-  ): Promise<ThreadSandboxEntity | null> {
+  ): Promise<JobSandboxEntity | null> {
     const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
     if (!thread) return null;
 
@@ -467,7 +467,7 @@ export class ThreadLifecycleService {
   }
 
   /** Tear down a row's container (best-effort) and flip it to `detached`. Worktree untouched. */
-  private async detachContainer(row: ThreadSandboxEntity, reason: 'idle' | 'lru'): Promise<void> {
+  private async detachContainer(row: JobSandboxEntity, reason: 'idle' | 'lru'): Promise<void> {
     await this.sandboxProvider.teardown(await this.rowToSandbox(row)).catch((err) => {
       this.logger.warn(`detachContainer(${reason}): teardown failed for thread ${row.thread_id}: ${err}`);
     });
@@ -480,10 +480,10 @@ export class ThreadLifecycleService {
   // ── private helpers ───────────────────────────────────────────────────────────────────────────
 
   private async provisionSandbox(
-    thread: ThreadEntity,
+    thread: JobEntity,
     project: RepoEntity,
     baseBranch: string,
-  ): Promise<ThreadSandboxEntity> {
+  ): Promise<JobSandboxEntity> {
     // Persist the row in `provisioning` state first (crash-safe: if we fail after this we can detect
     // the orphaned row on recovery).
     const row = await this.sandboxes.save(
@@ -568,7 +568,7 @@ export class ThreadLifecycleService {
   }
 
   /** Resolve the `ProjectRepo` (clone path + token) for a sandbox row — keyed by the repo's SLUG. */
-  private async repoForRow(row: ThreadSandboxEntity): Promise<ProjectRepo> {
+  private async repoForRow(row: JobSandboxEntity): Promise<ProjectRepo> {
     const project = await this.projects.findOne({ where: { id: row.repo_id } });
     if (!project) throw new Error(`No repos row for id=${row.repo_id} (org=${row.org_id})`);
     const token = await this.creds.githubToken(row.org_id);
@@ -585,7 +585,7 @@ export class ThreadLifecycleService {
    * THREAD) if it has gone (crash / host down / pruned). `createBaseWorktree` lands at the same per-thread
    * path and is idempotent; the feature branch ref lives in the durable shared `.git`.
    */
-  private async ensureWorktree(row: ThreadSandboxEntity, projectRepo: ProjectRepo): Promise<void> {
+  private async ensureWorktree(row: JobSandboxEntity, projectRepo: ProjectRepo): Promise<void> {
     if (row.worktree_path && existsSync(row.worktree_path)) return;
     const thread = await this.threads.findOne({ where: { id: row.thread_id } });
     const base = await this.git.createBaseWorktree(projectRepo, row.thread_id);
@@ -599,10 +599,10 @@ export class ThreadLifecycleService {
   }
 
   /**
-   * Convert a persisted `ThreadSandboxEntity` row to an in-memory `FeatureSandbox`. The branch comes from
+   * Convert a persisted `JobSandboxEntity` row to an in-memory `FeatureSandbox`. The branch comes from
    * the THREAD (single owner of feature/base branch); the on-disk repo identity is the repo's SLUG.
    */
-  private async rowToSandbox(row: ThreadSandboxEntity): Promise<FeatureSandbox> {
+  private async rowToSandbox(row: JobSandboxEntity): Promise<FeatureSandbox> {
     const thread = await this.threads.findOne({ where: { id: row.thread_id } });
     const project = await this.projects.findOne({ where: { id: row.repo_id } });
     const branch =

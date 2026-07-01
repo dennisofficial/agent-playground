@@ -1,10 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
-  THREAD_TITLE_CHAIN,
-  type ThreadTitleChainFactory,
+  JOB_TITLE_CHAIN,
+  type JobTitleChainFactory,
   firstLineTitle,
   sanitizeTitle,
-} from './thread-title.chain';
+} from './job-title.chain';
 
 /**
  * The single, shared way to turn ANY source text (a thread's first message, a plan goal, a build summary,
@@ -18,9 +18,9 @@ import {
  * directly with no null-handling.
  */
 @Injectable()
-export class ThreadTitler {
+export class JobTitler {
   constructor(
-    @Inject(THREAD_TITLE_CHAIN) private readonly chainFor: ThreadTitleChainFactory,
+    @Inject(JOB_TITLE_CHAIN) private readonly chainFor: JobTitleChainFactory,
   ) {}
 
   /** Short display title for a thread from any source text. Never throws; never returns empty. */

@@ -13,8 +13,8 @@ import {
   RepoEntity,
   TrackEntity,
   StimulusEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import { BRAIN_SINK, type BrainSink } from '../stimulus';
 import { AgentSessionManager } from './agent-session-manager.service';
@@ -42,7 +42,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
  *  - OUTPUT: `JOB_DISPATCHER` — bound by W4's @Global `DriverModule` (`useExisting: TrackDriver`).
  *
  * Imports `DecisionGateModule` (classifier + park-and-ask), `MemoryModule` (recall), `DriverModule`
- * (ThreadLifecycleService + DriverStoreService for the brain tools). `CHAT_SURFACE` comes from the
+ * (JobLifecycleService + DriverStoreService for the brain tools). `CHAT_SURFACE` comes from the
  * @Global `SurfaceModule`. `DockerEngineRunner` comes from the @Global `SandboxModule`.
  * Composed into the app by `FeaturesModule`. Zero v1 imports.
  *
@@ -56,7 +56,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
     MemoryModule,
     TypeOrmModule.forFeature(
       [
-        ThreadEntity,
+        JobEntity,
         MessageEntity,
         PlanReviewEntity,
         DecisionRecordEntity,
@@ -65,7 +65,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
         StepEntity,
         StimulusEntity,
         RepoEntity,
-        ThreadSandboxEntity,
+        JobSandboxEntity,
       ],
       DB_CONNECTION,
     ),

@@ -9,14 +9,14 @@ import type {
   Thread,
   TrackStatus,
   Job,
-  ThreadStatus,
+  JobStatus,
 } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   StepEntity,
   TrackEntity,
-  ThreadEntity,
+  JobEntity,
 } from '../persistence/entities';
 import type { ReviewAgentState } from '../persistence/entities';
 import { reviewAgentsForTrack } from '../autofix/autofix-lenses';
@@ -55,8 +55,8 @@ export interface JobRoute {
 @Injectable()
 export class DriverStoreService {
   constructor(
-    @InjectRepository(ThreadEntity, DB_CONNECTION)
-    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly threads: Repository<JobEntity>,
     @InjectRepository(TrackEntity, DB_CONNECTION)
     private readonly tracks: Repository<TrackEntity>,
     @InjectRepository(StepEntity, DB_CONNECTION)
@@ -80,7 +80,7 @@ export class DriverStoreService {
     return rows.map(toThread);
   }
 
-  async setJobStatus(threadId: string, status: ThreadStatus): Promise<void> {
+  async setJobStatus(threadId: string, status: JobStatus): Promise<void> {
     await this.threads.update({ id: threadId }, { status });
   }
 
@@ -117,7 +117,7 @@ export class DriverStoreService {
   async claimLedgerPromotion(threadId: string): Promise<boolean> {
     const res = await this.threads
       .createQueryBuilder()
-      .update(ThreadEntity)
+      .update(JobEntity)
       .set({ ledger_promotion_status: 'running' })
       .where('id = :id', { id: threadId })
       .andWhere(
@@ -434,7 +434,7 @@ function mapBatchedSteps(list: StepEntity[]): Array<{
 
 // ── row ⇄ domain mappers ─────────────────────────────────────────────────────────────────────────
 
-function toThread(row: ThreadEntity): Job {
+function toThread(row: JobEntity): Job {
   return {
     id: row.id,
     orgId: row.org_id,
@@ -444,7 +444,7 @@ function toThread(row: ThreadEntity): Job {
     title: row.title,
     baseBranch: row.base_branch,
     kind: row.kind as Job['kind'],
-    status: row.status as ThreadStatus,
+    status: row.status as JobStatus,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     prUrl: row.pr_url,

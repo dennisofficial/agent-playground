@@ -1,13 +1,13 @@
 import { RunnableLambda } from '@langchain/core/runnables';
 import { describe, expect, it, vi } from 'vitest';
-import { ThreadTitleService } from './thread-title.service';
+import { JobTitleService } from './job-title.service';
 import {
   sanitizeTitle,
-  type ThreadTitleChainFactory,
-} from '../titling/thread-title.chain';
+  type JobTitleChainFactory,
+} from '../titling/job-title.chain';
 
 /**
- * Unit tests for the thread-title service. The LLM is faked behind the `THREAD_TITLE_CHAIN` factory (a
+ * Unit tests for the job-title service. The LLM is faked behind the `JOB_TITLE_CHAIN` factory (a
  * `RunnableLambda`), so no network — we pin the compare-and-set persist + the live-frame emission rules.
  */
 
@@ -15,7 +15,7 @@ import {
 function fakeFactory(
   title: string | null,
   opts: { throws?: boolean } = {},
-): ThreadTitleChainFactory {
+): JobTitleChainFactory {
   return async () => {
     if (title === null && !opts.throws) return undefined;
     return RunnableLambda.from<{ message: string }, string>(async () => {
@@ -25,16 +25,16 @@ function fakeFactory(
   };
 }
 
-function makeService(factory: ThreadTitleChainFactory, updateResult: { affected: number }) {
+function makeService(factory: JobTitleChainFactory, updateResult: { affected: number }) {
   const emitThreadMeta = vi.fn();
   const update = vi.fn(async (_where: unknown, _patch: { title: string }) => updateResult);
   const surface = { emitThreadMeta } as never;
   const threads = { update } as never;
-  const service = new ThreadTitleService(factory, surface, threads);
+  const service = new JobTitleService(factory, surface, threads);
   return { service, emitThreadMeta, update };
 }
 
-describe('ThreadTitleService.generateAndApply', () => {
+describe('JobTitleService.generateAndApply', () => {
   it('persists the sanitized title and emits a live frame when a row changed', async () => {
     const { service, emitThreadMeta, update } = makeService(fakeFactory('  "Repo Architecture"  '), {
       affected: 1,

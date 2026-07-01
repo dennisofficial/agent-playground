@@ -8,8 +8,8 @@ import type {
   OrgCredentialsEntity,
   RepoEntity,
   StimulusEntity,
-  ThreadEntity,
-  ThreadSandboxEntity,
+  JobEntity,
+  JobSandboxEntity,
 } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { OnboardingService } from './onboarding.service';
@@ -184,7 +184,7 @@ function assemble(
   const decisionRecords = makeTable<{ repo_id: string; org_id: string }>();
   const sandboxes = makeTable<{ repo_id: string; org_id: string }>();
 
-  // `disconnectRepo` resolves `ThreadLifecycleService` lazily via `moduleRef.get(...)`. The fake records
+  // `disconnectRepo` resolves `JobLifecycleService` lazily via `moduleRef.get(...)`. The fake records
   // each deep-delete AND removes the thread row (mirroring the real teardown) so the drain loop converges.
   const deepDeleted: Array<{ threadId: string; orgId: string }> = [];
   const threadLifecycle = {
@@ -199,10 +199,10 @@ function assemble(
     orgs.repo,
     repos.repo,
     orgCreds.repo,
-    threads.repo as unknown as Repository<ThreadEntity>,
+    threads.repo as unknown as Repository<JobEntity>,
     stimuli.repo as unknown as Repository<StimulusEntity>,
     decisionRecords.repo as unknown as Repository<DecisionRecordEntity>,
-    sandboxes.repo as unknown as Repository<ThreadSandboxEntity>,
+    sandboxes.repo as unknown as Repository<JobSandboxEntity>,
     fakeCreds(opts.creds),
     fakeStore(opts.presence),
     fakePr(opts.repoInfo ?? null),

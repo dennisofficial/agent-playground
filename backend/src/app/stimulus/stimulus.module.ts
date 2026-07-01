@@ -5,7 +5,7 @@ import {
   MessageEntity,
   RepoEntity,
   StimulusEntity,
-  ThreadEntity,
+  JobEntity,
 } from '../persistence/entities';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import { EventFilterService } from './event-filter.service';
@@ -36,7 +36,7 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [RepoEntity, ThreadEntity, MessageEntity, StimulusEntity],
+      [RepoEntity, JobEntity, MessageEntity, StimulusEntity],
       DB_CONNECTION,
     ),
   ],
