@@ -1,0 +1,45 @@
+{
+  "pkg": "web",
+  "globalName": "AtlasDS",
+  "shape": "package",
+  "projectId": "dda2eee5-bb8f-4b54-aca6-ea89e04a920f",
+  "srcDir": "src/components/ui",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": ".design-sync-build/styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "BrandLockup": { "cardMode": "column" },
+    "Card": { "cardMode": "column" }
+  },
+  "docsMap": {
+    "Button": "../.design-sync/groups/actions.md",
+    "Card": "../.design-sync/groups/surfaces.md",
+    "Spinner": "../.design-sync/groups/feedback.md",
+    "StatusDot": "../.design-sync/groups/status.md",
+    "Dot": "../.design-sync/groups/status.md",
+    "KindBadge": "../.design-sync/groups/status.md",
+    "StatusPie": "../.design-sync/groups/status.md",
+    "StatusPill": "../.design-sync/groups/status.md",
+    "Field": "../.design-sync/groups/forms.md",
+    "PasswordField": "../.design-sync/groups/forms.md",
+    "StrengthMeter": "../.design-sync/groups/forms.md",
+    "BrandLockup": "../.design-sync/groups/brand.md",
+    "GoogleG": "../.design-sync/groups/brand.md"
+  },
+  "buildCmd": "node .design-sync/prebuild.mjs",
+  "componentSrcMap": {
+    "Button": "src/components/ui/button.tsx",
+    "Card": "src/components/ui/card.tsx",
+    "Spinner": "src/components/ui/spinner.tsx",
+    "BrandLockup": "src/components/ui/brand.tsx",
+    "GoogleG": "src/components/ui/brand.tsx",
+    "StatusDot": "src/components/ui/badges.tsx",
+    "Dot": "src/components/ui/badges.tsx",
+    "KindBadge": "src/components/ui/badges.tsx",
+    "StatusPie": "src/components/ui/badges.tsx",
+    "StatusPill": "src/components/ui/badges.tsx",
+    "Field": "src/components/ui/field.tsx",
+    "PasswordField": "src/components/ui/field.tsx",
+    "StrengthMeter": "src/components/ui/field.tsx"
+  }
+}
