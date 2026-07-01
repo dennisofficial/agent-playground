@@ -79,6 +79,7 @@ export function TranscriptView({
   jobRef,
   messages,
   lane = MAIN_LANE,
+  phaseIds,
   composer = false,
   isLoading = false,
   live = false,
@@ -90,6 +91,8 @@ export function TranscriptView({
   messages: JobMessage[];
   /** Which lane's transcript this renders — `'main'` | `codex-review:<jobId>` | `phase:<stepId>`. */
   lane?: string;
+  /** For a build THREAD lane: the phase anchor ids to aggregate (the `lane` still picks the live turn). */
+  phaseIds?: Set<string>;
   /** Show the composer + queued-send treatment (the Main lane only). Other lanes are read-only. */
   composer?: boolean;
   isLoading?: boolean;
@@ -130,8 +133,8 @@ export function TranscriptView({
   // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
-    () => buildLogItems(log, jobRef, { lane, onOpenPlan, onSelectNode }),
-    [log, jobRef, lane, onOpenPlan, onSelectNode],
+    () => buildLogItems(log, jobRef, { lane, phaseIds, onOpenPlan, onSelectNode }),
+    [log, jobRef, lane, phaseIds, onOpenPlan, onSelectNode],
   );
 
   // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
@@ -228,6 +231,9 @@ function buildLogItems(
   opts: {
     /** Which lane to build items for — scopes membership + peeling. */
     lane?: string;
+    /** For a build THREAD lane (an aggregate of several phases): the anchor step ids to include. When set it
+     *  supersedes the single `phase:<id>` derived from `lane` (the lane still picks the live turn). */
+    phaseIds?: Set<string>;
     onOpenPlan?: () => void;
     onSelectNode?: (node: string) => void;
   } = {},
@@ -247,6 +253,9 @@ function buildLogItems(
   const isMain = lane === MAIN_LANE;
   const isCodexLane = lane.startsWith('codex-review:');
   const phaseAnchor = lane.startsWith('phase:') ? lane.slice('phase:'.length) : null;
+  // A build lane renders one phase (a step) or several (a thread aggregate). `phaseIds` wins when given.
+  const phaseSet: Set<string> | null =
+    opts.phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -323,12 +332,25 @@ function buildLogItems(
     } else if (isCodexLane) {
       // The Codex review lane shows ONLY its own review stream (the summary cards live in Main).
       if (!codex.childKeys.has(message.ts)) continue;
-    } else if (phaseAnchor) {
-      // A build phase lane shows this phase's blocks; a subagent spawned within it peels to its own sub-page.
+    } else if (phaseSet) {
+      // A build lane shows its phase(s)' blocks; a subagent spawned within it peels to its own sub-page.
       if (sub.childKeys.has(message.ts)) continue;
-      const inThisPhase =
-        phase.childKeys.has(message.ts) && message.meta?.phaseId === phaseAnchor;
-      if (!inThisPhase) continue;
+      const pid = typeof message.meta?.phaseId === 'string' ? message.meta.phaseId : '';
+      // The synthetic build_anchor row → the phase's INPUT bubble (the instruction the engine received),
+      // rendered exactly like an operator prompt so every lane opens with "what was asked".
+      if (phase.anchorKeys.has(message.ts)) {
+        if (!phaseSet.has(pid)) continue;
+        const anchor = phase.anchorByPhase.get(pid);
+        if (anchor?.prompt) {
+          flush();
+          nodes.push({
+            key: message.ts,
+            node: <UserBubble key={message.ts} text={anchor.prompt} time={message.postedAt} />,
+          });
+        }
+        continue;
+      }
+      if (!(phase.childKeys.has(message.ts) && phaseSet.has(pid))) continue;
       if (sub.anchorKeys.has(message.ts)) {
         pushSubagentCard(message);
         continue;

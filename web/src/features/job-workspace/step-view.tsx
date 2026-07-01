@@ -1,11 +1,10 @@
 'use client';
 
-import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { ArrowRight, FileText, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
-import { useContextFile, useSay } from '@/lib/api/job-queries';
+import { useContextFile } from '@/lib/api/job-queries';
 import { threadTitle } from '@/lib/thread-title';
 import { VerdictButtons } from './approval-card';
 import { Markdown } from './markdown';
@@ -24,7 +23,7 @@ import {
   type SubBlock,
 } from './subagents';
 import { useLiveTurn, type LiveTurn } from '@/lib/api/job-stream';
-import { durablePhaseBlocks, indexPhaseBlocks, livePhaseBlocks, phaseLane } from './phases';
+import { phaseLane } from './phases';
 import { codexReviewLane } from './codex-review';
 import { TranscriptView } from './conversation';
 import { DetailTopBar } from './detail-top-bar';
@@ -175,89 +174,55 @@ export function PhaseView({
   } else if (step) {
     title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ''}`;
     subtitle = 'Claude · execute';
-    // A batch runs as ONE turn whose transcript is tagged with the ANCHOR step id — remap so a non-anchor
-    // step in the batch resolves the same transcript (and live lane) instead of rendering empty.
-    body = <BuildView jobRef={jobRef} messages={messages} anchorStepId={step.anchorStepId} />;
+    // A batch runs as ONE turn whose transcript is tagged with the ANCHOR step id — the phase lane. The
+    // SAME renderer as Main; the build instruction shows as the opening input bubble.
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={phaseLane(step.anchorStepId)}
+        onSelectNode={onSelectNode}
+        emptyText="No build activity yet — this step hasn’t run."
+      />
+    );
   } else if (thread) {
     title = `§ ${threadTitle(thread.brief)}`;
     subtitle = 'Claude · execute';
-    body = <BuildView jobRef={jobRef} messages={messages} />;
+    // A thread aggregates its steps' phases; subscribe to the building step's live lane, aggregate the rest.
+    const phaseIds = new Set(thread.steps.map((s) => s.anchorStepId));
+    const building = thread.steps.find((s) => s.status === 'building' || s.status === 'reviewing');
+    const activeAnchor =
+      building?.anchorStepId ?? thread.steps[thread.steps.length - 1]?.anchorStepId ?? thread.id;
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={phaseLane(activeAnchor)}
+        phaseIds={phaseIds}
+        onSelectNode={onSelectNode}
+        emptyText="No build activity yet — this thread hasn’t run."
+      />
+    );
   } else {
     title = 'Build';
     subtitle = 'Claude · execute';
-    body = <BuildView jobRef={jobRef} messages={messages} />;
+    const phaseIds = new Set((job?.threads ?? []).flatMap((t) => t.steps.map((s) => s.anchorStepId)));
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane="__none__"
+        phaseIds={phaseIds}
+        onSelectNode={onSelectNode}
+        emptyText="No build activity yet."
+      />
+    );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <DetailTopBar title={title} subtitle={subtitle || undefined} />
       <div className="min-h-0 flex-1 overflow-hidden">{body}</div>
-    </div>
-  );
-}
-
-// ── Build step (transcript / diff / logs) ───────────────────────────────────────────────────────
-/**
- * The build step's work pane. The TRANSCRIPT tab renders the SAME full transcript a subagent run does
- * (thinking + prose via the canonical Markdown + tool calls) via {@link SubagentTranscript} — the phase
- * rides the shared spine, so its durable blocks (tagged `meta.phaseId`) and its live `phase:<id>` lane
- * feed the identical renderer. During the build the live lane is the sole source; the durable rows take
- * over after the turn ends.
- */
-function BuildView({
-  jobRef,
-  messages,
-  anchorStepId,
-}: {
-  jobRef: JobRef;
-  messages: JobMessage[];
-  /** The batch's ANCHOR step id — its transcript tag + live lane. Unset = the thread/whole-build view. */
-  anchorStepId?: string;
-}) {
-  const index = indexPhaseBlocks(messages);
-  // The live lane for THIS phase. Hooks can't be conditional, so an unset anchor reads a dead lane (→ none).
-  const live = useLiveTurn(jobRef.jobId, anchorStepId ? phaseLane(anchorStepId) : '__none__');
-  const active = Boolean(live?.active);
-
-  // The build instruction the engine received — the turn's "first message". Persisted on the `build_anchor`
-  // row at batch start, so it's available throughout the build (mirrors a subagent run's Task prompt).
-  const prompt = anchorStepId ? index.anchorByPhase.get(anchorStepId)?.prompt : undefined;
-
-  let blocks: SubBlock[];
-  if (anchorStepId) {
-    const durable = durablePhaseBlocks(index, anchorStepId);
-    // Prefer durable (post-turn); fall back to the live lane while building (mirrors SubagentView).
-    blocks = durable.length ? durable : live ? livePhaseBlocks(live.blocks) : [];
-  } else {
-    // Thread / whole-build view: every phase's durable transcript, in message order (no single live lane).
-    blocks = durableSubBlocks(messages.filter((m) => m.meta?.phaseId != null && m.kind !== 'build_anchor'));
-  }
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <div className="mx-auto max-w-[820px]">
-          {/* The build instruction that kicked off the turn — its "first message", like a subagent's prompt. */}
-          {prompt ? <UserBubble text={prompt} /> : null}
-          {blocks.length === 0 ? (
-            prompt ? null : (
-              <p className="text-[12.5px] text-faint">
-                {active ? 'Building…' : 'No build activity yet — this step hasn’t run.'}
-              </p>
-            )
-          ) : (
-            <SubagentTranscript blocks={blocks} active={active} />
-          )}
-          {active ? (
-            <div className="mt-3 flex items-center gap-2 text-[11.5px] text-accent">
-              <span className="pulse-dot h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
-              <span>Building — the transcript streams live and persists when the step finishes.</span>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <InterjectBar jobRef={jobRef} />
     </div>
   );
 }
@@ -387,75 +352,6 @@ function SubagentTranscript({ blocks, active }: { blocks: SubBlock[]; active: bo
       {items.map((it) => (
         <div key={it.key}>{it.node}</div>
       ))}
-    </div>
-  );
-}
-
-/** Talks to the build session (via the thread). Pause / Revert are UI-only (no backend op route). */
-function InterjectBar({ jobRef }: { jobRef: JobRef }) {
-  const say = useSay(jobRef);
-  const [text, setText] = useState('');
-  const [queued, setQueued] = useState<string[]>([]);
-
-  function send() {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    say.mutate(trimmed);
-    setQueued((q) => [...q, trimmed]);
-    setText('');
-  }
-
-  return (
-    <div
-      className="shrink-0 border-t border-border px-5 py-3"
-      style={{ background: 'color-mix(in srgb, var(--panel) 40%, transparent)' }}
-    >
-      {queued.length > 0 ? (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {queued.map((q, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[10px] text-accent"
-              style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent-line)' }}
-            >
-              ⏳ {q.length > 40 ? `${q.slice(0, 39)}…` : q} <span className="text-faint">· folds next turn</span>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      <div className="mb-2 flex items-center gap-2">
-        <button type="button" disabled className="rounded-md border border-border-2 px-3 py-1.5 text-[11px] text-dim opacity-60" title="Needs a backend pause route">
-          ⏸ Pause
-        </button>
-        <button type="button" disabled className="rounded-md border border-border-2 px-3 py-1.5 text-[11px] text-dim opacity-60" title="Needs a backend revert route">
-          ↩ Revert step
-        </button>
-      </div>
-      <div
-        className="flex items-center gap-2.5 rounded-lg border px-3 py-2"
-        style={{ borderColor: 'var(--accent-line)', background: 'var(--surface-2)', boxShadow: '0 0 0 4px var(--accent-soft)' }}
-      >
-        <span className="font-mono text-[13px] text-accent">›</span>
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') send();
-          }}
-          placeholder="Interject this step — folded in at the next turn boundary, no restart…"
-          className="flex-1 bg-transparent text-[12.5px] text-text outline-none placeholder:text-faint"
-        />
-        <button
-          type="button"
-          onClick={send}
-          disabled={!text.trim() || say.isPending}
-          className="rounded-md px-3 py-1.5 text-[11px] font-medium text-white disabled:opacity-45"
-          style={{ background: 'linear-gradient(145deg, var(--accent), var(--accent-2))' }}
-        >
-          Interject
-        </button>
-      </div>
-      <p className="mt-1.5 text-center font-mono text-[9px] text-faint">interjecting one coding session — not the job&apos;s brain</p>
     </div>
   );
 }

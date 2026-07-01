@@ -9,7 +9,7 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, PlanReviewEntity } from '../persistence/entities';
+import { JobEntity, MessageEntity, PlanReviewEntity } from '../persistence/entities';
 import { TurnHarnessFactory } from '../surface';
 
 /** The transcript lane a job's Codex review dialogue streams on (peeled out of Main by the web). */
@@ -282,6 +282,8 @@ export class PlanReviewService {
     private readonly reviews: Repository<PlanReviewEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
+    @InjectRepository(MessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<MessageEntity>,
     // The shared transcript spine: the review turn streams its full reasoning + tool reads onto the job's
     // `codex-review:<jobId>` lane (durable + live SSE), so the operator can open the whole exchange.
     private readonly turnHarness: TurnHarnessFactory,
@@ -324,6 +326,13 @@ export class PlanReviewService {
         completed_at: null,
         delivered_at: null,
       }),
+    );
+    // Atlas's side of the dialogue: a request bubble opens the round on the review lane.
+    await this.appendReviewInput(
+      input.jobId,
+      round === 1
+        ? '🔍 Requested a Codex review of this plan.'
+        : '🔁 Requested a re-review of the revised plan.',
     );
     this.logger.log(
       `plan-review: opened round ${round} (review=${row.id}) for thread=${input.jobId}`,
@@ -562,6 +571,28 @@ export class PlanReviewService {
   }
 
   /**
+   * Persist an INPUT message on the job's Codex review lane — ATLAS's side of the dialogue (the review
+   * request, or a `respond_to_review` rebuttal). Authored `'user'` so it renders as the human/input bubble:
+   * from Codex's point of view Atlas IS the user, mirroring the operator↔Atlas shape of the main
+   * conversation. `meta.codexReviewId` peels it onto the review lane (hidden from Main). Best-effort.
+   */
+  private async appendReviewInput(jobId: string, text: string): Promise<void> {
+    await this.messages
+      .save(
+        this.messages.create({
+          job_id: jobId,
+          author: 'user',
+          author_id: 'atlas',
+          author_bot_id: null,
+          text,
+          kind: 'chat',
+          meta: { codexReviewId: jobId },
+        }),
+      )
+      .catch((err) => this.logger.debug(`appendReviewInput failed: ${err}`));
+  }
+
+  /**
    * Open a REPLY round for `respond_to_review`: Atlas pushes back on the last round's findings WITHOUT
    * re-submitting a whole plan. Persists a `running` row carrying the reply prompt (the rebuttal); the
    * subsequent `runReview` RESUMES the job's Codex thread (see {@link latestSessionId}) so Codex adjudicates
@@ -598,6 +629,8 @@ export class PlanReviewService {
         codex_session_id: null,
       }),
     );
+    // Atlas's rebuttal is its message TO Codex — render it as the input/human bubble on the review lane.
+    await this.appendReviewInput(input.jobId, input.rebuttal.trim());
     this.logger.log(
       `plan-review: opened REPLY round ${round} (review=${row.id}) for thread=${input.jobId}`,
     );

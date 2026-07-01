@@ -10,7 +10,7 @@ import type { EngineRunnerPort, EngineRunResult, RunEngineArgs } from '../engine
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
-import type { JobEntity, PlanReviewEntity } from '../persistence/entities';
+import type { JobEntity, MessageEntity, PlanReviewEntity } from '../persistence/entities';
 import type { TurnHarnessFactory } from '../surface';
 
 /** Creds stub: no per-org secret → the engine uses its env fallback (these tests stub the engine). */
@@ -107,6 +107,12 @@ function fakeLifecycle(
 const fakeJobs = {
   findOne: vi.fn(async () => ({ id: 'th-r4-001', repo_id: 'repo-r4' })),
 } as unknown as Repository<JobEntity>;
+
+/** Messages-repo stub: the review lane's input bubbles (request / rebuttal) are appended through here. */
+const fakeMessages = {
+  create: (data: Partial<MessageEntity>) => ({ ...data }),
+  save: vi.fn(async (row: unknown) => row),
+} as unknown as Repository<MessageEntity>;
 
 /** Turn-harness stub: the review lane streaming is a no-op in unit tests (its own spec covers it). */
 const fakeHarness = {
@@ -252,6 +258,7 @@ describe('PlanReviewService.start', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -283,6 +290,7 @@ describe('PlanReviewService.start', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -310,6 +318,7 @@ describe('PlanReviewService.start', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -334,6 +343,7 @@ describe('PlanReviewService.runningReview', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -398,6 +408,7 @@ describe('PlanReviewService.runReview', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -425,6 +436,7 @@ describe('PlanReviewService.runReview', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -445,6 +457,7 @@ describe('PlanReviewService.runReview', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -472,6 +485,7 @@ describe('PlanReviewService.runReview', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       drainingElection,
     );
@@ -497,6 +511,7 @@ describe('PlanReviewService.runReview', () => {
         fakeLifecycle(FAKE_SANDBOX),
         repo,
         fakeJobs,
+        fakeMessages,
         fakeHarness,
         fakeElection,
       );
@@ -524,6 +539,7 @@ describe('PlanReviewService.runReview', () => {
       fakeLifecycle(null),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -548,6 +564,7 @@ describe('PlanReviewService.runReview', () => {
       fakeLifecycle({ ...FAKE_SANDBOX, containerId: 'container-abc123' }),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -573,6 +590,7 @@ describe('PlanReviewService — delivery + boot reconciliation', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -591,6 +609,7 @@ describe('PlanReviewService — delivery + boot reconciliation', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
@@ -691,6 +710,7 @@ describe('PlanReviewService — session reuse + reply rounds', () => {
       fakeLifecycle(FAKE_SANDBOX),
       repo,
       fakeJobs,
+      fakeMessages,
       fakeHarness,
       fakeElection,
     );
