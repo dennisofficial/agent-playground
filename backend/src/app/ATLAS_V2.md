@@ -1,15 +1,51 @@
 # Atlas v2 — detail & build history (NOT the canonical model)
 
-> **⚠️ The canonical model now lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md) — read that first.** This
-> file is kept for **deeper detail and build history** (Docker sandbox internals §8, durability §9, the
-> R0–R6 redesign §10). Beware: parts of it **predate the org→repo→thread rebuild** and are stale —
-> notably §2 *Tenancy* (Slack `team_id` / channels), the §2 *"two adapters, one brain"* framing, and the
-> §3 module map / §4 table names (`atlas_teams`, `channels`, `jobs`, `triage.service.ts`,
-> `conversational-brain.service.ts` no longer exist; `jobs` collapsed into `threads`). Cross-check any
-> claim here against `ARCHITECTURE.md` + `../../../CLAUDE.md` before trusting it.
+> **⚠️ The canonical model lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md) + [`../../../CLAUDE.md`](../../../CLAUDE.md) — read those first.**
+> This file is a **dated build-history record**, kept for detail the canonical docs don't carry: the Docker
+> sandbox internals (§8), durability & session recovery (§9), and the R0–R6 web/SDK-as-brain redesign (§10).
+> It is **deliberately not rewritten to current vocabulary or model** — doing so would falsify a historical
+> snapshot. Read it as "how it was built," and translate as you go using the two guides below. When a claim
+> here conflicts with `ARCHITECTURE.md`, `ARCHITECTURE.md` wins.
 >
-> Written 2026-06-20 after the overnight W0–W9 build. Full design history:
+> Written 2026-06-20 after the overnight W0–W9 build (§10 added later, R0–R6). Full design history:
 > `/Users/dennis/.claude/plans/this-ai-orchestrator-is-greedy-parnas.md`.
+
+## ⚠️ Reader's guide — vocabulary & model drift since this was written
+
+Two big reshapes happened AFTER most of this document: the **org → repo → job rebuild** (removed Slack
+tenancy + the 1:1 `channels` model) and the **domain rename** (container `Thread`→**Job**, lane
+`Track`→**Thread**, leaf stays **Step**). So the nouns in the body below are historical. Translate:
+
+| Term used in the body | What it means today |
+|---|---|
+| `thread` (conversation container / build unit) **or** the v1 `job` work-unit | **Job** (`jobs` table) — the container: one branch + sandbox + PR + message log |
+| `channel` (1:1 per project) | **removed** — the Job is the conversation container now |
+| `section` → later `track` | **Thread** (`threads` table) — a build lane within a job |
+| `phase` → later `step` | **Step** (`steps` table) — a leaf within a thread |
+| `atlas_teams` / `Tenant` / Slack `team_id` | **Organization** (`organizations`, `org_id` scopes every table) |
+| `atlas_projects` | **Repo** (`repos`) |
+| `SectionDriver` (`section-driver.service.ts`) | **`ThreadDriver`** (`driver/thread-driver.service.ts`), now ORCHESTRATE mode by default |
+
+**Since-deleted / superseded (present-tense in the body, gone now) — do NOT trust these as current:**
+
+- **Slack, entirely** — the adapter, multi-workspace OAuth/install store, `atlas_slack_installations`, the
+  in-Slack onboarding edge. The web app is the sole surface (§10.6 records the removal). Any `SLACK_*` env,
+  `#ai-crew-local-testing`, "post to the Slack thread," `thread_ts` as a domain id — historical.
+- **The single central brain + `Stimulus` router** — `TriageService`, `ConversationalBrainService`,
+  `ScopingInvestigatorService`, `StimulusRouter`, `EventTriageService`, `brain-llm.ts`, the `Stimulus`
+  union, `STIMULUS_CONSUMER`/`JOB_DISPATCHER` tokens. There is no central "Atlas" persona: each **job** runs
+  its own continuous Claude Code session (the *job brain*), and events are delivered to it as harness
+  messages (`deliverEvent` → `BRAIN_SINK`). See `ARCHITECTURE.md` §1/§4/§7.
+- **The old tables** — `atlas_teams`, `atlas_projects`, `channels`, the separate `jobs`/`sections`/`phases`
+  trio. Today: `organizations`, `repos`, `jobs`, `threads`, `steps` (+ `job_sandboxes`).
+- **Two-level planning "section list then per-section JIT phase plan"** — Atlas now authors the whole plan
+  up front at the **thread** level and the `ThreadDriver` orchestrator decomposes into steps at runtime
+  (one Opus orchestrator session per thread → writer subagents + a live task list). §2/§10.1's planning
+  prose is superseded.
+
+Everything else — the sandbox/DinD internals (§8), durability & 401-resume (§9), host-git policy, the
+workspace-isolation invariant (§10.2) — remains broadly accurate at the mechanism level; only the nouns and
+the intake/planning shape changed.
 
 ## 1. Why this exists
 
