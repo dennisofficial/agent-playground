@@ -10,20 +10,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **`web/` — the Next.js operator console.** Talks to the backend DIRECTLY (no proxy) at `NEXT_PUBLIC_HTTP_URL` (`:4002`) with credentialed CORS: `/auth/*` + `/web/*`. (NOTE: as of the org/repo/thread rebuild the web app still calls some removed endpoints — it needs rewiring to the `/web/orgs/:orgId/...` API; see `atlas-org-repo-thread-rebuild` memory.)
 - `shared/` (`@workspace/shared` — base TypeORM entities like `TimestampedEntity` under `./schemas`), `packages/*`, `docs/`, `prompts/`, `skills/`, `assets/`.
 
-**Canonical architecture doc:** `backend/src/app/ARCHITECTURE.md` — the thread/session model (the thread brain vs phase workers, event intake, known divergences). **Read it first** when resuming Atlas work. `backend/src/app/ATLAS_V2.md` is kept for deeper detail + build history but **predates the org→repo→thread rebuild** (stale in parts — it now points at `ARCHITECTURE.md`).
+**Canonical architecture doc:** `backend/src/app/ARCHITECTURE.md` — the job/session model (the job brain vs phase workers, event intake, known divergences). **Read it first** when resuming Atlas work. NOTE: ARCHITECTURE.md + ATLAS_V2.md still use the OLD vocabulary in prose (container "thread"→ now **Job**; lane "track"/"section"→ now **Thread**; "phase"→ **step**) — the code/DB/wire were renamed (branch history), the design-doc prose has NOT been fully rewritten yet. `ATLAS_V2.md` also predates the org→repo→job rebuild (stale in parts).
 
 **Submodule prerequisite:** `packages/jwt-auth` (`@workspace/auth`), `packages/nestjs-ai-essentials` (`@workspace/langfuse`), and `packages/nestjs-core-essentials` (`@workspace/nestjs-core` — `@CreateModule`, `BaseEnvService`) are git submodules — run `pnpm run setup` from repo root (submodule init + install + package builds), otherwise TS2307 "Cannot find module '@workspace/…'" at test/typecheck time.
 
-## The product model — Organization → Users → Repos → Threads
+## The product model — Organization → Users → Repos → Jobs (each with many Threads)
 
 > **Deployment model: private, not SaaS.** Atlas is a personal/private tool for Dennis and a small circle of close friends — it is **not** sold or hosted as a commercial multi-tenant SaaS. The org/membership model below provides *private multi-workspace isolation between trusted friends*, not a hardened boundary for untrusted paying customers. Read "tenant" throughout as *private workspace*. Selling was ruled out because the only economical model (each user on their own Claude subscription) isn't allowed in a sold product, and API keys are too expensive to resell — see the `saas-credential-compliance` memory.
 
 - An **Organization** (`organizations`) is the tenant; the `org_id` dimension scopes every `app` table.
 - **Users** (`users`, email/password via `@workspace/auth`) join orgs through **`organization_members`** (owner/admin/member). Registration is OPEN and immediately usable (no approval gate).
 - A **Repo** (`repos`, composite PK `(org_id, repo_id-slug)`) is a connected GitHub repo — the conversation container (the old 1:1 `channels` is gone).
-- A **Thread** (`threads`, real uuid id) is a conversation/work unit on a repo; `messages` is its durable log.
-- **Onboarding:** create org → set per-org credentials (Anthropic key + engine auth + GitHub PAT, validated) → connect a repo (GitHub access validated → `access_ok`) → org flips to `active` → threads can be created.
-- **Web API:** `/auth/*` (login/register/session-with-orgs) + `/web/orgs/:orgId/...` gated by the global `AuthGuard` (cookie) AND `OrgMembershipGuard` (`@CurrentOrg`). Thread CRUD lives under `/web/orgs/:orgId/repos/:repoId/threads…` (create/list/say/SSE events/messages/approve/pipeline/DELETE).
+- A **Job** (`jobs`, real uuid id) is a conversation/work unit on a repo (owns the branch + sandbox + PR + one `messages` log). A Job has many **Threads** (`threads`) — its build lanes (a Main planning lane + one per build track). NOTE: the DB table for the container is `jobs`; the lane table is `threads` (formerly `tracks`).
+- **Onboarding:** create org → set per-org credentials (Anthropic key + engine auth + GitHub PAT, validated) → connect a repo (GitHub access validated → `access_ok`) → org flips to `active` → jobs can be created.
+- **Web API:** `/auth/*` (login/register/session-with-orgs) + `/web/orgs/:orgId/...` gated by the global `AuthGuard` (cookie) AND `OrgMembershipGuard` (`@CurrentOrg`). Job CRUD lives under `/web/orgs/:orgId/repos/:repoId/jobs…` (create/list/say/SSE events/messages/approve/pipeline/DELETE).
 
 ## Atlas modules (`backend/src/app/`)
 
@@ -35,13 +35,13 @@ Composed by `app/app.module.ts` (inside `AppModule`). One Nest module per domain
 | `auth/` | Email/password `/auth/*` (`@workspace/auth`, argon2, httpOnly JWT cookies). Global `AuthGuard`. |
 | `org/` | `Organization` + membership; `OrgMembershipGuard` + `@CurrentOrg` (cross-tenant isolation); `OrgController`. `@Global`. |
 | `onboarding/` | Per-org encrypted credentials (`OrgCredentialsEntity`, AES-256-GCM via `secret-cipher`), `CredentialResolver` (env-fallback), `connectRepo` + validated checklist + `tryActivate`; credentials/repo/onboarding controllers. `@Global`. |
-| `surface/` | The web `CHAT_SURFACE` (`WebSurface`, SSE+REST) + `WebSurfaceController` (the org/repo/thread API). `agent-surface/` is the in-process test surface. `SURFACE=agent` swaps it. |
-| `stimulus/` | Intake seam: the chat bridge (`CHAT_SURFACE.inbound$` → `ChatStimulus`, resolves the thread by real id) + event firehose guards (dedup/rate-limit, repo routing, untrusted fence, seed-thread). The `Stimulus` union + router are slated for rework — see `ARCHITECTURE.md` §7. |
-| `ingress/` | HTTP edge for notifications: `POST /ingress/github` + `/ingress/webhook` (`NotificationSource` adapters → seed a thread). |
-| `brain/` | The per-thread in-sandbox Claude Code session (`AgentSessionManager`) = the **thread brain** = the **main Claude Code session running in the thread's sandbox** (what the operator talks to; its system prompt opens with *"You are Atlas"*): intent/grill → locked decision record → plan → steer; the approval gate (`DecisionApprovalService`); the untrusted-event triage lane (`EventTriageService`, slated for rework). No central "Atlas" persona — the thread's own session is the only conversational agent it has. See `ARCHITECTURE.md` §1, §4. |
-| `driver/` | The deterministic, resumable section/phase build driver (legible loop, NOT an implicit FSM) + `ThreadLifecycleService` (durable worktree/branch/session + disposable container; `createThread`/`closeThread`). |
+| `surface/` | The web `CHAT_SURFACE` (`WebSurface`, SSE+REST) + `WebSurfaceController` (the org/repo/job API). `agent-surface/` is the in-process test surface. `SURFACE=agent` swaps it. |
+| `stimulus/` | Intake seam: the chat bridge (`CHAT_SURFACE.inbound$` → `ChatStimulus`, resolves the job by real id) + event firehose guards (dedup/rate-limit, repo routing, untrusted fence, seed-job). The `Stimulus` union + router are slated for rework — see `ARCHITECTURE.md` §7. |
+| `ingress/` | HTTP edge for notifications: `POST /ingress/github` + `/ingress/webhook` (`NotificationSource` adapters → seed a job). |
+| `brain/` | The per-job in-sandbox Claude Code session (`AgentSessionManager`) = the **job brain** = the **main Claude Code session running in the job's sandbox** (what the operator talks to; its system prompt opens with *"You are Atlas"*): intent/grill → locked decision record → plan → steer; the approval gate (`DecisionApprovalService`); the untrusted-event triage lane (`EventTriageService`, slated for rework). No central "Atlas" persona — the job's own session is the only conversational agent it has. See `ARCHITECTURE.md` §1, §4. |
+| `driver/` | The deterministic, resumable thread/step build driver (legible loop, NOT an implicit FSM) + `JobLifecycleService` (durable worktree/branch/session + disposable container; `createJob`/`closeJob`). |
 | `decision-gate/` | Always-ask decision classification + park-and-ask (doubles as a security control for untrusted events). |
-| `sandbox/` | Engine turns run `local` (git worktree) or `docker` (per-thread container) behind `SANDBOX_PROVIDER`/`ENGINE_RUNNER` (`SANDBOX_MODE`). |
+| `sandbox/` | Engine turns run `local` (git worktree) or `docker` (per-job container) behind `SANDBOX_PROVIDER`/`ENGINE_RUNNER` (`SANDBOX_MODE`). |
 | `engine/` · `runner/` · `git/` | Claude/Codex invocation (plan/review/execute, isolated agent home), the turn runner, host-side git/PR. |
 | `memory/` | Postgres pgvector semantic memory. |
 | `autofix/` | The post-build auto-fix stage. |

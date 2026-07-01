@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { classifyMessage } from './classify';
 import { JumpToLatestButton, useTailFollow } from './tail-follow';
 import {
@@ -73,15 +74,45 @@ export function Conversation({
   // the last request's occupancy + the model's window). Refreshes each turn end via the durable refetch.
   const contextMeta = useMemo(() => latestContextMeta(messages), [messages]);
 
-  const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow([
-    messages.length,
-    live,
-    liveBlockCount,
-    liveStreamSig,
-    turnActive,
-    queued.length,
-    composerHeight,
-  ]);
+  // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
+  // cards, bubbles). This array is what gets WINDOWED: on a long thread only the on-screen rows are
+  // actually rendered, so switching into this lane no longer re-parses every markdown bubble at once.
+  const items = useMemo(
+    () => buildLogItems(log, jobRef, onOpenPlan, onSelectNode),
+    [log, jobRef, onOpenPlan, onSelectNode],
+  );
+
+  // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
+  // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
+  // (which itself depends on the scrollRef useTailFollow returns — the ref breaks that render-order cycle).
+  const pinRef = useRef<() => void>(() => {});
+  const { scrollRef, endRef, showJump, jumpToLatest, onScroll } = useTailFollow(
+    [messages.length, live, liveBlockCount, liveStreamSig, turnActive, queued.length, composerHeight],
+    () => pinRef.current(),
+  );
+
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 72,
+    overscan: 8,
+    getItemKey: (index) => items[index].key,
+  });
+
+  pinRef.current = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Land near the last durable row using the virtualizer (accounts for estimated off-screen heights)…
+    if (items.length > 0) virtualizer.scrollToIndex(items.length - 1, { align: 'end' });
+    // …then, once layout settles, pin to the true bottom so the trailing live turn / queued sends / composer
+    // spacer are included (they render in normal flow AFTER the windowed list, so `scrollHeight` is exact).
+    requestAnimationFrame(() => {
+      const e = scrollRef.current;
+      if (e) e.scrollTop = e.scrollHeight;
+    });
+  };
+
+  const virtualItems = virtualizer.getVirtualItems();
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -96,7 +127,22 @@ export function Conversation({
               No messages yet — say something to Atlas below.
             </p>
           ) : (
-            renderLog(log, jobRef, onOpenPlan, onSelectNode)
+            // Windowed durable log: a single spacer sized to the full transcript, with only the on-screen
+            // rows rendered and absolutely positioned. `measureElement` re-measures async height changes
+            // (mermaid diagrams, code highlighting) so rows never overlap once they finish rendering.
+            <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+              {virtualItems.map((vi) => (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute left-0 top-0 w-full"
+                  style={{ transform: `translateY(${vi.start}px)`, paddingBottom: 9 }}
+                >
+                  {items[vi.index].node}
+                </div>
+              ))}
+            </div>
           )}
           {liveTurn && liveBlockCount > 0 ? <LiveTurnView turn={liveTurn} onSelectNode={onSelectNode} /> : null}
           {live || turnActive ? <LiveIndicator /> : null}
@@ -116,18 +162,25 @@ export function Conversation({
   );
 }
 
+/** One windowable top-level row of the durable transcript — a stable key plus its rendered node. */
+interface LogItem {
+  key: string;
+  node: React.ReactNode;
+}
+
 /**
- * Render the durable transcript, collapsing runs of consecutive tool messages into `ToolGroup`s
- * (file-edits split into their own "N files changed" group via {@link segmentToolRun}) while every
- * other kind renders as its own typed block.
+ * Fold the durable transcript into one {@link LogItem} per top-level row, collapsing runs of consecutive
+ * tool messages into `ToolGroup`s (file-edits split into their own "N files changed" group via
+ * {@link segmentToolRun}) while every other kind becomes its own typed block. The returned array is what
+ * the conversation virtualizes — each entry is one measured, independently-windowed row.
  */
-function renderLog(
+function buildLogItems(
   log: JobMessage[],
   jobRef: JobRef,
   onOpenPlan?: () => void,
   onSelectNode?: (node: string) => void,
-): React.ReactNode {
-  const nodes: React.ReactNode[] = [];
+): LogItem[] {
+  const nodes: LogItem[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
 
   // Subagent activity is peeled out: its child blocks are hidden from the main log, and the spawning Task
@@ -140,7 +193,8 @@ function renderLog(
   const flush = () => {
     if (pending.length === 0) return;
     for (const seg of segmentToolRun(pending.map((p) => p.tool))) {
-      nodes.push(<ToolGroup key={`tg-${seg[0].key}`} tools={seg} />);
+      const key = `tg-${seg[0].key}`;
+      nodes.push({ key, node: <ToolGroup key={key} tools={seg} /> });
     }
     pending = [];
   };
@@ -156,15 +210,18 @@ function renderLog(
       const phaseId = typeof message.meta?.phaseId === 'string' ? message.meta.phaseId : '';
       const anchor = phase.anchorByPhase.get(phaseId);
       if (anchor)
-        nodes.push(
-          <BuildStepCard
-            key={message.ts}
-            jobId={jobRef.jobId}
-            anchor={anchor}
-            durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
-            onOpen={() => onSelectNode?.(phaseId)}
-          />,
-        );
+        nodes.push({
+          key: message.ts,
+          node: (
+            <BuildStepCard
+              key={message.ts}
+              jobId={jobRef.jobId}
+              anchor={anchor}
+              durableToolCount={(phase.blocksByPhase.get(phaseId) ?? []).filter((m) => m.kind === 'tool').length}
+              onOpen={() => onSelectNode?.(phaseId)}
+            />
+          ),
+        });
       continue;
     }
     // The Task block that spawned a subagent — render its card (flush any open tool run first).
@@ -172,13 +229,16 @@ function renderLog(
       flush();
       const summary = sub.summaryById.get(String(message.meta?.id));
       if (summary)
-        nodes.push(
-          <SubagentCard
-            key={message.ts}
-            summary={summary}
-            onOpen={() => onSelectNode?.(subagentNode(summary.parentId))}
-          />,
-        );
+        nodes.push({
+          key: message.ts,
+          node: (
+            <SubagentCard
+              key={message.ts}
+              summary={summary}
+              onOpen={() => onSelectNode?.(subagentNode(summary.parentId))}
+            />
+          ),
+        });
       continue;
     }
 
@@ -187,7 +247,7 @@ function renderLog(
     // plain Claude bubble). Flush any open tool run first so the divider lands after the turn's tools.
     if (message.kind === 'turn_meta') {
       flush();
-      nodes.push(<TurnMetaDivider key={message.ts} message={message} />);
+      nodes.push({ key: message.ts, node: <TurnMetaDivider key={message.ts} message={message} /> });
       continue;
     }
 
@@ -209,40 +269,41 @@ function renderLog(
     }
     flush();
 
+    const push = (node: React.ReactNode) => nodes.push({ key: message.ts, node });
     switch (c.kind) {
       case 'user':
-        nodes.push(<UserBubble key={message.ts} text={message.text} time={message.postedAt} />);
+        push(<UserBubble key={message.ts} text={message.text} time={message.postedAt} />);
         break;
       case 'thinking':
-        nodes.push(<ThinkingBlock key={message.ts} text={message.text} time={message.postedAt} />);
+        push(<ThinkingBlock key={message.ts} text={message.text} time={message.postedAt} />);
         break;
       case 'approval':
-        nodes.push(<ApprovalCardView key={message.ts} card={c.card} jobRef={jobRef} onOpenPlan={onOpenPlan} />);
+        push(<ApprovalCardView key={message.ts} card={c.card} jobRef={jobRef} onOpenPlan={onOpenPlan} />);
         break;
       case 'verdict':
-        nodes.push(<VerdictCardView key={message.ts} card={c.card} />);
+        push(<VerdictCardView key={message.ts} card={c.card} />);
         break;
       case 'question':
-        nodes.push(<QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        push(<QuestionCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
       case 'secret':
-        nodes.push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
+        push(<SecretCardView key={message.ts} card={c.card} jobRef={jobRef} />);
         break;
       case 'event':
-        nodes.push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
+        push(<SystemEventPill key={message.ts} message={message} tone={c.tone} />);
         break;
       case 'system_shared':
-        nodes.push(<HarnessBubble key={message.ts} message={message} />);
+        push(<HarnessBubble key={message.ts} message={message} />);
         break;
       case 'system_event':
-        nodes.push(<EventBubble key={message.ts} message={message} />);
+        push(<EventBubble key={message.ts} message={message} />);
         break;
       case 'system_operator':
-        nodes.push(<SystemOperatorNotice key={message.ts} message={message} />);
+        push(<SystemOperatorNotice key={message.ts} message={message} />);
         break;
       case 'claude':
       default:
-        nodes.push(<ClaudeBubble key={message.ts} message={message} />);
+        push(<ClaudeBubble key={message.ts} message={message} />);
         break;
     }
   }
