@@ -114,7 +114,10 @@ export interface TreeProps {
   messages: ThreadMessage[];
   /** The open thread id — to subscribe to the active track's live `phase:<anchor>` lane. */
   threadId: string;
-  selectedNode: string | null;
+  /** The LEFT pane's open lane (`?lane=`) — a track/step session opens here (orange highlight). */
+  laneNode: string | null;
+  /** The RIGHT pane's open detail node (`?node=`) — a subagent run / review lens opens here (blue). */
+  detailNode: string | null;
   onSelectNode: (node: string) => void;
   /** Resolve a folder's expanded state — explicit user override, else the status-derived default. */
   isExpanded: (folderId: string, fallback: boolean) => boolean;
@@ -130,7 +133,7 @@ export interface TreeProps {
  * session self-verifies; the old review phase is folded in). The active session auto-expands; finished
  * ones fold shut. Steps + tracks are real (`/pipeline`); the runs are derived from the transcript.
  */
-export function PipelineTree({ job, status, messages, threadId, selectedNode, onSelectNode, isExpanded, toggle }: TreeProps) {
+export function PipelineTree({ job, status, messages, threadId, laneNode, detailNode, onSelectNode, isExpanded, toggle }: TreeProps) {
   const tracks = job.tracks;
   const activeIdx = tracks.findIndex((s) => isActiveTrack(s.status));
   // Failed: tracks/steps aren't persisted as `failed` (only the thread flips), so derive the halt
@@ -196,7 +199,8 @@ export function PipelineTree({ job, status, messages, threadId, selectedNode, on
             tasks={tasks}
             sessionAnchor={sessionAnchor}
             sessionToolCount={toolCount}
-            selectedNode={selectedNode}
+            laneNode={laneNode}
+            detailNode={detailNode}
             onSelectNode={onSelectNode}
             isExpanded={isExpanded}
             toggle={toggle}
@@ -219,7 +223,8 @@ function TrackSession({
   tasks,
   sessionAnchor,
   sessionToolCount,
-  selectedNode,
+  laneNode,
+  detailNode,
   onSelectNode,
   isExpanded,
   toggle,
@@ -238,7 +243,8 @@ function TrackSession({
   /** The batch anchor step id = the session transcript node (null until the track has steps). */
   sessionAnchor: string | null;
   sessionToolCount: number;
-  selectedNode: string | null;
+  laneNode: string | null;
+  detailNode: string | null;
   onSelectNode: (node: string) => void;
   isExpanded: TreeProps['isExpanded'];
   toggle: TreeProps['toggle'];
@@ -335,7 +341,7 @@ function TrackSession({
                   <TaskRow
                     key={t.id}
                     task={t}
-                    selected={Boolean(sessionAnchor) && selectedNode === sessionAnchor}
+                    selected={Boolean(sessionAnchor) && laneNode === sessionAnchor}
                     onClick={openSession}
                   />
                 ))}
@@ -383,7 +389,7 @@ function TrackSession({
                       run={run}
                       state={state}
                       live={isLiveTrack && state === 'active'}
-                      selected={selectedNode === subagentNode(run.parentId)}
+                      selected={detailNode === subagentNode(run.parentId)}
                       onClick={() => onSelectNode(subagentNode(run.parentId))}
                     />
                   );
@@ -397,7 +403,7 @@ function TrackSession({
                 notReached={notReached}
                 open={reviewOpen}
                 onToggle={() => toggle(reviewId, reviewOpen)}
-                selectedNode={selectedNode}
+                detailNode={detailNode}
                 onSelectNode={onSelectNode}
               />
             </>
@@ -462,7 +468,7 @@ function TaskRow({
       disabled={!onClick}
       className={cn(
         'flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left enabled:hover:bg-surface-2',
-        selected && 'bg-[var(--accent-soft)]',
+        selected && 'nav-selected',
         dropped && 'opacity-60',
       )}
     >
@@ -538,9 +544,12 @@ function RunRow({
         onClick={onClick}
         className={cn(
           'ml-11 mb-0.5 mr-2 flex flex-col rounded-sm border px-2.5 py-1.5 text-left transition',
-          selected ? 'bg-[var(--accent-soft)]' : 'bg-surface hover:bg-surface-2',
+          selected ? 'bg-[var(--blue-soft)]' : 'bg-surface hover:bg-surface-2',
         )}
-        style={{ borderColor: 'var(--accent-line)', background: selected ? undefined : 'var(--accent-soft)' }}
+        style={{
+          borderColor: selected ? 'var(--blue)' : 'var(--accent-line)',
+          background: selected ? undefined : 'var(--accent-soft)',
+        }}
       >
         <div className="flex items-center gap-2">
           <RunDiamond state="active" glow />
@@ -563,7 +572,7 @@ function RunRow({
     <button
       type="button"
       onClick={onClick}
-      className={cn('flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left hover:bg-surface-2', selected && 'bg-[var(--accent-soft)]')}
+      className={cn('flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left hover:bg-surface-2', selected && 'nav-selected-blue')}
     >
       <RunDiamond state={state} />
       <span className={cn('truncate font-mono text-[10px]', state === 'failed' ? 'font-semibold text-red' : 'text-dim')}>
@@ -614,7 +623,7 @@ function ReviewFolder({
   notReached,
   open,
   onToggle,
-  selectedNode,
+  detailNode,
   onSelectNode,
 }: {
   trackId: string;
@@ -623,7 +632,7 @@ function ReviewFolder({
   notReached: boolean;
   open: boolean;
   onToggle: () => void;
-  selectedNode: string | null;
+  detailNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
   if (agents.length === 0) return null;
@@ -665,7 +674,7 @@ function ReviewFolder({
           <ReviewAgentRow
             key={a.id}
             agent={a}
-            selected={selectedNode === `rev:${trackId}:${a.id}`}
+            selected={detailNode === `rev:${trackId}:${a.id}`}
             onClick={() => onSelectNode(`rev:${trackId}:${a.id}`)}
           />
         ))}
@@ -680,7 +689,7 @@ function ReviewAgentRow({ agent, selected, onClick }: { agent: ReviewAgent; sele
     <button
       type="button"
       onClick={onClick}
-      className={cn('flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left hover:bg-surface-2', selected && 'bg-[var(--accent-soft)]')}
+      className={cn('flex items-center gap-2 rounded-sm py-[3px] pl-11 pr-2 text-left hover:bg-surface-2', selected && 'nav-selected-blue')}
     >
       <Dot color={meta.color} pulse={agent.status === 'running'} size={6} />
       <span className={cn('flex-1 truncate font-mono text-[10px]', agent.status === 'failed' ? 'text-red' : 'text-dim')}>

@@ -103,7 +103,7 @@ export const PLANNER_LLM = Symbol('PLANNER_LLM');
  * context as a single `{input}` template variable (so arbitrary content can't break templating).
  */
 export namespace PlannerChains {
-  export const MODEL = 'claude-sonnet-4-5-20250929';
+  export const MODEL = 'claude-sonnet-5';
 
   const STEPS_SCHEMA = z.object({
     steps: z.array(z.object({ title: z.string(), brief: z.string() })),
@@ -289,7 +289,10 @@ export class AnthropicPlannerLlm implements PlannerLlm {
         apiKey: key,
         model: PlannerChains.MODEL,
         maxTokens: 4096,
-        temperature: 0,
+        // Sonnet 5 rejects a non-default temperature (400) and runs adaptive thinking by
+        // default when unset. The planner is a fast, throwaway structured decomposition —
+        // keep it deterministic-cheap: no thinking, temperature left at the API default.
+        thinking: { type: 'disabled' },
       });
       this.models.set(key, m);
     }

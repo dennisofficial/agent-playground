@@ -11,6 +11,7 @@ import { engineBundlePath } from './bundle-engine';
 import {
   CONTAINER_AGENT_HOME,
   CONTAINER_CONTEXT,
+  CONTAINER_FNM_STORE,
   CONTAINER_GIT_COMMON,
   CONTAINER_PNPM_STORE,
   CONTAINER_WORKTREE,
@@ -43,12 +44,16 @@ function realpathSafe(p: string): string {
  * recreate. (rev 2 = added the live engine-bundle mount. rev 3 = worktree mounted at /workspace + git common
  * dir at /repo.git, was same-path host paths. rev 4 = added the durable per-thread /context shared mount.
  * rev 6 = added per-repo worktree cache mounts from `.atlas/worktree.json`, folded into the fingerprint.
- * rev 7 = added the system-wide shared pnpm store bind at /workspace/.pnpm-store.)
+ * rev 7 = added the system-wide shared pnpm store bind at /workspace/.pnpm-store.
+ * rev 8 = fnm/python base image + per-repo Node: a repo's .nvmrc/.node-version is resolved at runtime and
+ *   downloaded-on-demand into a SHARED cross-thread fnm store bound at /atlas-fnm (no versions baked). NB:
+ *   this recreates containers but does NOT rebuild the image — set SANDBOX_REBUILD once so the new
+ *   Dockerfile is built, else containers recreate onto the OLD image.)
  *
  * NOTE: the per-repo mount SET is ALSO hashed into the `atlas.cfg` fingerprint below, so a changed
  * manifest mount list recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 7;
+const CONFIG_REV = 8;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -184,6 +189,15 @@ export class SandboxManager implements SandboxProvider {
     this.ensureHostOwnedDir(pnpmStore);
     this.ensureHostOwnedDir(join(sandbox.worktreePath, '.pnpm-store'));
     binds.push(`${pnpmStore}:${CONTAINER_PNPM_STORE}`);
+
+    // SHARED cross-thread fnm version store (FNM_DIR in the image) — ONE host dir for every org/repo/thread
+    // (not keyed), bound at /atlas-fnm. A Node version a repo pins via .nvmrc/.node-version is downloaded
+    // ONCE globally (shell-init.sh runs `fnm use --install-if-missing`; sandboxes have outbound egress) and
+    // reused by every later thread, like the pnpm store above. Host dir pre-created + chowned to the host
+    // uid so docker doesn't make it root-owned (turns exec as the host uid).
+    const fnmStore = join(this.agentHomeRootHost(), 'fnm-store');
+    this.ensureHostOwnedDir(fnmStore);
+    binds.push(`${fnmStore}:${CONTAINER_FNM_STORE}`);
 
     this.logger.log(`creating sandbox ${name} (image ${image}, net ${network})`);
     const id = await this.engine.createContainer({

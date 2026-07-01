@@ -364,7 +364,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(plans2).toEqual([null]); // one track, no plan (no authored steps this time)
   }, 30_000);
 
-  it('the human-input gate: openQuestion is atomic + one-at-a-time, and answered→delivered drives boot recovery', async () => {
+  it('the human-input gate: openQuestion stacks (counter), markQuestionAnswered is atomic/idempotent, answered→delivered drives boot recovery', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
@@ -391,51 +391,47 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       card: { type: 'question_card', threadId, questionId: id, question: q, options: [] },
     });
 
-    // open q-1 → card row + gate pointer commit together (atomic).
+    // open q-1 → card row + counter bump commit together (atomic).
     expect(await store.openQuestion(threadId, mkCard('q-1', 'Editable or fixed?'))).toEqual({ ok: true });
-    expect(await awaitingId(dataSource, threadId)).toBe('q-1');
+    expect(await openCount(dataSource, threadId)).toBe(1);
     expect((await store.getQuestionCard(threadId, 'q-1'))?.question).toBe('Editable or fixed?');
 
-    // a second question while q-1 is UNANSWERED is refused (one open question at a time); pointer holds.
-    expect(await store.openQuestion(threadId, mkCard('q-2', 'Which region?'))).toEqual({
-      ok: false,
-      alreadyOpen: true,
-    });
-    expect(await awaitingId(dataSource, threadId)).toBe('q-1');
-    expect(await store.getQuestionCard(threadId, 'q-2')).toBeNull(); // never persisted
+    // STACKING: a second question while q-1 is unanswered is allowed — counter goes to 2, both persist.
+    expect(await store.openQuestion(threadId, mkCard('q-2', 'Which region?'))).toEqual({ ok: true });
+    expect(await openCount(dataSource, threadId)).toBe(2);
+    expect((await store.getQuestionCard(threadId, 'q-2'))?.question).toBe('Which region?');
 
-    // operator answers q-1 → it becomes an answered-but-undelivered question the boot sweep recovers.
-    await store.updateCardMessage(threadId, 'q-1', { answer: 'Editable', answeredAt: '2026-06-27T00:00:00Z' });
-    expect(await store.findUndeliveredAnsweredQuestions()).toContainEqual({
-      threadId,
-      orgId: TEAM_ID,
-      repoId,
-      questionId: 'q-1',
-      question: 'Editable or fixed?',
-      answer: 'Editable',
-    });
+    // answer q-1 (out of order is fine) → first answer wins + decrements; a second answer is idempotent.
+    expect(await store.markQuestionAnswered(threadId, 'q-1', 'Editable')).toEqual({ firstAnswer: true });
+    expect(await store.markQuestionAnswered(threadId, 'q-1', 'Editable-again')).toEqual({ firstAnswer: false });
+    expect(await openCount(dataSource, threadId)).toBe(1); // only the winning answer decremented
+    expect((await store.getQuestionCard(threadId, 'q-1'))?.answer).toBe('Editable'); // not overwritten
 
-    // a delivery turn stamps delivered; the pointer clear is compare-and-clear (a stale id no-ops).
+    // q-1 is now answered-but-undelivered → the boot sweep recovers it (scans card rows, not a pointer).
+    expect(await store.findUndeliveredAnsweredQuestions()).toContainEqual(
+      expect.objectContaining({ threadId, orgId: TEAM_ID, repoId, questionId: 'q-1', answer: 'Editable' }),
+    );
+
+    // a delivery turn stamps q-1 delivered → no longer a recovery candidate; q-2 (unanswered) is not one either.
     await store.markQuestionDelivered(threadId, 'q-1');
-    await store.clearAwaitingQuestion(threadId, 'not-q-1');
-    expect(await awaitingId(dataSource, threadId)).toBe('q-1'); // wrong id → unchanged
-    await store.clearAwaitingQuestion(threadId, 'q-1');
-    expect(await awaitingId(dataSource, threadId)).toBeNull();
-
-    // once delivered (deliveredAt set + pointer cleared) it's no longer a recovery candidate.
     expect((await store.getQuestionCard(threadId, 'q-1'))?.deliveredAt).toBeTruthy();
     expect(
       (await store.findUndeliveredAnsweredQuestions()).some((q) => q.threadId === threadId),
     ).toBe(false);
+
+    // reconcile recomputes the counter from the actual unanswered cards (q-2 only) — heals any drift.
+    await dataSource.query(`UPDATE threads SET open_question_count = 99 WHERE id = $1`, [threadId]);
+    await store.reconcileOpenQuestionCounts();
+    expect(await openCount(dataSource, threadId)).toBe(1); // q-2 still unanswered
   }, 30_000);
 });
 
-async function awaitingId(ds: DataSource, threadId: string): Promise<string | null> {
-  const rows: Array<{ awaiting_question_id: string | null }> = await ds.query(
-    `SELECT awaiting_question_id FROM threads WHERE id = $1`,
+async function openCount(ds: DataSource, threadId: string): Promise<number> {
+  const rows: Array<{ open_question_count: number }> = await ds.query(
+    `SELECT open_question_count FROM threads WHERE id = $1`,
     [threadId],
   );
-  return rows[0]?.awaiting_question_id ?? null;
+  return Number(rows[0]?.open_question_count ?? -1);
 }
 
 async function insertUserMessage(

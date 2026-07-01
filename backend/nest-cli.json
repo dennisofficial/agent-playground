@@ -20,7 +20,8 @@
         "//": "Copy the sandbox image's STATIC build context to dist so the API can (re)build the image from the runtime contextDir (dist) — e.g. a fresh prod deploy with no image yet. The engine bundle (engine-entrypoint.mjs) is intentionally NOT an asset: the API rebundles it on boot.",
         "assets": [
           { "include": "app/sandbox/image/Dockerfile", "watchAssets": true },
-          { "include": "app/sandbox/image/sandbox-init.sh", "watchAssets": true }
+          { "include": "app/sandbox/image/sandbox-init.sh", "watchAssets": true },
+          { "include": "app/sandbox/image/shell-init.sh", "watchAssets": true }
         ]
       }
     }

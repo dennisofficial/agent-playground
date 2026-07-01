@@ -18,7 +18,16 @@ import {
 } from '@nestjs/common';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
-import { Observable, catchError, defer, filter, from, map, merge, switchMap } from 'rxjs';
+import {
+  Observable,
+  catchError,
+  defer,
+  filter,
+  from,
+  map,
+  merge,
+  switchMap,
+} from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -30,6 +39,7 @@ import {
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
 import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
+import { BrainStoreService } from '../brain/brain-store.service';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadTitleService } from './thread-title.service';
@@ -45,12 +55,25 @@ import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { OrganizationService } from '../org/organization.service';
 import { WorktreeSecretStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { MessageEntity, RepoEntity, ThreadEntity, UserEntity } from '../persistence/entities';
-import { deriveNeedsYou } from '../domain/thread';
-import { RealtimeService, realtimeDisabledStream, subscriptionToObservable } from '../realtime';
+import {
+  MessageEntity,
+  RepoEntity,
+  ThreadEntity,
+  UserEntity,
+} from '../persistence/entities';
+import { deriveNeedsYou } from '../domain/job';
+import {
+  RealtimeService,
+  realtimeDisabledStream,
+  subscriptionToObservable,
+} from '../realtime';
 import { TicketEventBus } from '../tickets';
 
-const VALID_ACTION_IDS = new Set([APPROVE_ACTION_ID, REQUEST_CHANGES_ACTION_ID, DENY_ACTION_ID]);
+const VALID_ACTION_IDS = new Set([
+  APPROVE_ACTION_ID,
+  REQUEST_CHANGES_ACTION_ID,
+  DENY_ACTION_ID,
+]);
 const OPERATOR = { authorId: 'U-OPERATOR', authorName: 'Operator' };
 
 /** One file in a `/context` bucket (specs or artifacts). */
@@ -119,7 +142,9 @@ function resolveContextFilePath(root: string, relPath: string): string {
   }
   const bucket = relative(root, abs).split(sep)[0];
   if (bucket !== 'specs' && bucket !== 'generated' && bucket !== 'artifacts') {
-    throw new BadRequestException('path must be inside specs/, generated/, or artifacts/');
+    throw new BadRequestException(
+      'path must be inside specs/, generated/, or artifacts/',
+    );
   }
   return abs;
 }
@@ -195,7 +220,10 @@ export type WebMessageSource =
 
 /** Map a row's stored `meta.source` to the web renderer's audience-explicit source. Only the `system_*`
  *  kinds are stamped on the row; ordinary operator/atlas messages carry no `source` and derive from isAtlas. */
-export function mapMessageSource(stored: unknown, isAtlas: boolean): WebMessageSource {
+export function mapMessageSource(
+  stored: unknown,
+  isAtlas: boolean,
+): WebMessageSource {
   if (stored === 'system_operator') return 'system_operator';
   if (stored === 'system_shared') return 'system_shared';
   if (stored === 'system_event') return 'system_event';
@@ -234,6 +262,9 @@ export class WebSurfaceController {
     // Repo onboarding: the ONLY place a `request_secret` plaintext value lands — straight to the
     // encrypted store + a grant, never the transcript (owner-gated; see `provideSecret`).
     private readonly secrets: WorktreeSecretStore,
+    // The brain's store — used here for the atomic `markQuestionAnswered` gate (resolved ambiently from
+    // the @Global BrainModule, same as the approval services this module already depends on).
+    private readonly store: BrainStoreService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -256,7 +287,10 @@ export class WebSurfaceController {
     if (orgs.length === 0) return [];
     const orgIds = orgs.map((o) => o.id);
     const [threads, repos] = await Promise.all([
-      this.threads.find({ where: { org_id: In(orgIds) }, order: { created_at: 'DESC' } }),
+      this.threads.find({
+        where: { org_id: In(orgIds) },
+        order: { created_at: 'DESC' },
+      }),
       this.repos.find({ where: { org_id: In(orgIds) } }),
     ]);
     const orgById = new Map(orgs.map((o) => [o.id, o]));
@@ -269,10 +303,17 @@ export class WebSurfaceController {
         origin: t.origin,
         status: t.status,
         turnActive: t.turn_active,
-        needsYou: deriveNeedsYou(t.status, t.turn_active, t.awaiting_question_id != null),
+        needsYou: deriveNeedsYou(
+          t.status,
+          t.turn_active,
+          t.open_question_count > 0,
+        ),
         createdAt: t.created_at,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
-        repo: { id: t.repo_id, name: repoName.get(`${t.org_id}:${t.repo_id}`) ?? t.repo_id },
+        repo: {
+          id: t.repo_id,
+          name: repoName.get(`${t.org_id}:${t.repo_id}`) ?? t.repo_id,
+        },
       };
     });
   }
@@ -322,7 +363,11 @@ export class WebSurfaceController {
       origin: t.origin,
       status: t.status,
       turnActive: t.turn_active,
-      needsYou: deriveNeedsYou(t.status, t.turn_active, t.awaiting_question_id != null),
+      needsYou: deriveNeedsYou(
+        t.status,
+        t.turn_active,
+        t.open_question_count > 0,
+      ),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
     }));
@@ -363,7 +408,9 @@ export class WebSurfaceController {
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle
       .generateAndApply(thread.id, org.id, repo.id, text, placeholder)
-      .catch((err) => this.logger.warn(`title gen dispatch failed for ${thread.id}: ${err}`));
+      .catch((err) =>
+        this.logger.warn(`title gen dispatch failed for ${thread.id}: ${err}`),
+      );
     this.logger.log(`web created thread ${thread.id} on ${org.id}/${repo.id}`);
     return { threadId: thread.id };
   }
@@ -394,7 +441,10 @@ export class WebSurfaceController {
       //   'system_event'    — an automated notification that opened this thread (Atlas got a harness
       //                       delivery). Rendered as the "Event" panel; `meta.eventSource`/`severity` head it.
       //   'atlas' | 'operator' — ordinary turns (inferred from author when no explicit source).
-      source: mapMessageSource((m.meta as { source?: unknown } | null)?.source, m.author_bot_id != null),
+      source: mapMessageSource(
+        (m.meta as { source?: unknown } | null)?.source,
+        m.author_bot_id != null,
+      ),
       text: m.text,
       kind: m.kind,
       ...(m.card ? { card: m.card } : {}),
@@ -417,7 +467,9 @@ export class WebSurfaceController {
     // standby), so reject new turns with 503 — the client retries and lands on the freshly-promoted
     // leader within a poll interval. (isLeader() is false while draining or a follower.)
     if (!this.election.isLeader()) {
-      throw new ServiceUnavailableException('Atlas is handing off — retry momentarily.');
+      throw new ServiceUnavailableException(
+        'Atlas is handing off — retry momentarily.',
+      );
     }
     const thread = await this.requireThread(threadId, org.id);
     const ts = this.surface.receiveFromClient(thread.repo_id, body.text, {
@@ -451,7 +503,9 @@ export class WebSurfaceController {
     );
     // Replayed once per connection (deferred → read at subscribe time): the current state of every
     // in-flight turn, so a (re)connecting client resumes mid-stream.
-    const snapshot$ = defer(() => from(this.liveTurns.snapshotsForRepo(repoId))).pipe(
+    const snapshot$ = defer(() =>
+      from(this.liveTurns.snapshotsForRepo(repoId)),
+    ).pipe(
       map(
         (s): MessageEvent => ({
           data: {
@@ -468,7 +522,13 @@ export class WebSurfaceController {
       filter((f) => f.channel === repoId),
       map(
         (f): MessageEvent => ({
-          data: { type: 'stream', threadId: f.threadId, lane: f.lane, seq: f.seq, event: f.event },
+          data: {
+            type: 'stream',
+            threadId: f.threadId,
+            lane: f.lane,
+            seq: f.seq,
+            event: f.event,
+          },
         }),
       ),
     );
@@ -511,7 +571,10 @@ export class WebSurfaceController {
       throw new BadRequestException(`Unknown actionId: ${actionId}`);
     }
     const meta = parseWebApprovalMeta(value);
-    if (!meta) throw new BadRequestException('value is not a valid ApprovalActionMeta JSON');
+    if (!meta)
+      throw new BadRequestException(
+        'value is not a valid ApprovalActionMeta JSON',
+      );
     // The verdict's target thread (meta.jobId is the thread id) must belong to the caller's org.
     await this.requireThread(meta.jobId, org.id);
     // Stamp the AUTHENTICATED operator (a real user uuid, FK-valid for `decision_records.approved_by`) as
@@ -543,12 +606,12 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:threadId/answer-question` — answer a brain `ask_question` card. GATED on the thread's
-   * durable human-input gate: only the question the thread is currently awaiting can be answered (a stale
-   * or already-delivered card no-ops, so it never mints a second delivery turn). On the first valid answer
-   * it stamps the durable answered state onto the card row (renders answered on reload) and injects the
-   * answer as a normal operator reply, which fires the next brain turn — its success tail stamps the card
-   * delivered + clears the gate, and `create_decision` auto-attaches the Q&A.
+   * `POST …/threads/:threadId/answer-question` — answer a brain `ask_question` card. GATED on the CARD's
+   * OWN state (there is no single-slot thread pointer; many cards can be open at once): an already-delivered
+   * card is stale, an already-answered card is an idempotent no-op (e.g. a double click). The first valid
+   * answer is stamped atomically by `markQuestionAnswered` (a conditional update — concurrent double-answers
+   * can't both win); only the winner seeds the delivery turn (carrying this card's `questionId`), whose
+   * success tail stamps the card `deliveredAt`, and `create_decision` attaches the Q&A.
    */
   @Post('orgs/:orgId/repos/:repoId/threads/:threadId/answer-question')
   @UseGuards(OrgMembershipGuard)
@@ -569,28 +632,27 @@ export class WebSurfaceController {
     if (!card || payload?.type !== 'question_card') {
       throw new BadRequestException('no such question on this thread');
     }
-    // Gate against stale / already-delivered cards: only the thread's currently-open gate question is
-    // answerable. A mismatch or an already-delivered card is a no-op (idempotent — e.g. a double click).
-    if (thread.awaiting_question_id !== body.questionId || payload.deliveredAt) {
-      return { ok: false, ts: '' };
-    }
-    // Already answered (a delivery turn is in flight / queued): keep the recorded answer, don't fire a
-    // second turn.
-    if (payload.answer != null) {
-      return { ok: true, ts: '' };
-    }
-    // First valid answer: stamp the durable answered state (renders on the card), then deliver it to the
-    // brain as a SYSTEM SEED — a `<system_notification>` framed turn that is NOT persisted as a chat
-    // bubble (the answer lives on the card, not as a duplicate operator message). Fires the delivery turn,
-    // which stamps `deliveredAt` + clears the gate on success.
-    card.card = { ...(card.card ?? {}), answer, answeredAt: new Date().toISOString() };
-    await this.messages.save(card);
+    // Stale (already delivered) → no-op. Already answered (delivery in flight) → idempotent ok. These are
+    // cheap fast-paths off the snapshot; `markQuestionAnswered` below is the authoritative conditional gate.
+    if (payload.deliveredAt) return { ok: false, ts: '' };
+    if (payload.answer != null) return { ok: true, ts: '' };
+    // Atomic first-answer: only the txn that flips the still-unanswered card "wins" (decrements the
+    // open-question counter); a concurrent loser returns ok without firing a second delivery turn.
+    const { firstAnswer } = await this.store.markQuestionAnswered(
+      threadId,
+      body.questionId,
+      answer,
+    );
+    if (!firstAnswer) return { ok: true, ts: '' };
+    // Deliver the answer to the brain as a SYSTEM SEED — a `<system_notification>` framed turn that is NOT
+    // persisted as a chat bubble (the answer lives on the card). The seed carries `deliveredQuestionId` so
+    // its delivery turn stamps exactly THIS card `deliveredAt` on success (at-least-once recovery on boot).
     const question = (payload.question ?? '').trim();
     const ts = this.surface.seedSystemNotification(
       thread.repo_id,
       threadId,
       `The operator answered your question ${JSON.stringify(question)}: ${answer}`,
-      { orgId: org.id },
+      { orgId: org.id, deliveredQuestionId: body.questionId },
     );
     return { ok: true, ts };
   }
@@ -612,7 +674,9 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; ts: string }> {
     const value = body?.value;
     if (!body?.requestId || value == null || value === '') {
-      throw new BadRequestException('requestId and a non-empty value are required');
+      throw new BadRequestException(
+        'requestId and a non-empty value are required',
+      );
     }
     const thread = await this.requireThread(threadId, org.id);
     const card = await this.messages.findOne({
@@ -633,7 +697,12 @@ export class WebSurfaceController {
     // Write the value to the ENCRYPTED store + create the owner grant (name → repo → path). This is the
     // value's only resting place; everything downstream is masked.
     await this.secrets.write(org.id, payload.name, value);
-    await this.secrets.grant(org.id, thread.repo_id, payload.name, payload.path);
+    await this.secrets.grant(
+      org.id,
+      thread.repo_id,
+      payload.name,
+      payload.path,
+    );
     // Stamp the card PROVIDED (no value), then deliver a MASKED confirmation. The gate clears only on the
     // delivery turn's success tail, so a crash before it re-delivers on boot (at-least-once).
     card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
@@ -669,7 +738,11 @@ export class WebSurfaceController {
   async context(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('threadId') threadId: string,
-  ): Promise<{ specs: ContextFile[]; generated: ContextFile[]; artifacts: ContextFile[] }> {
+  ): Promise<{
+    specs: ContextFile[];
+    generated: ContextFile[];
+    artifacts: ContextFile[];
+  }> {
     await this.requireThread(threadId, org.id);
     const root = this.threadLifecycle.contextDirHost(threadId, org.id);
     return {
@@ -708,7 +781,10 @@ export class WebSurfaceController {
       );
     }
     const ext = extname(abs).toLowerCase();
-    const { mime, binary } = MIME_BY_EXT[ext] ?? { mime: 'text/plain', binary: false };
+    const { mime, binary } = MIME_BY_EXT[ext] ?? {
+      mime: 'text/plain',
+      binary: false,
+    };
     const buf = readFileSync(abs);
     return {
       name: basename(abs),
@@ -732,7 +808,10 @@ export class WebSurfaceController {
     const title = body?.title?.trim().slice(0, 200);
     if (!title) throw new BadRequestException('title is required');
     // Scope the update to the caller's org (defense in depth beyond the membership guard).
-    const result = await this.threads.update({ id: threadId, org_id: org.id }, { title });
+    const result = await this.threads.update(
+      { id: threadId, org_id: org.id },
+      { title },
+    );
     if (!result.affected) throw new NotFoundException('thread not found');
     this.logger.log(`web renamed thread ${threadId} (org ${org.id})`);
     return { ok: true, title };
@@ -757,15 +836,25 @@ export class WebSurfaceController {
   // ── scoping helpers (cross-tenant isolation: resolve scoped-to-org or 404) ──────────────────────
 
   /** Resolve a thread scoped to the org, or 404 — the guard for every thread-keyed op. */
-  private async requireThread(threadId: string, orgId: string): Promise<ThreadEntity> {
-    const thread = await this.threads.findOne({ where: { id: threadId, org_id: orgId } });
+  private async requireThread(
+    threadId: string,
+    orgId: string,
+  ): Promise<ThreadEntity> {
+    const thread = await this.threads.findOne({
+      where: { id: threadId, org_id: orgId },
+    });
     if (!thread) throw new NotFoundException('thread not found');
     return thread;
   }
 
   /** Resolve a repo (by uuid id) scoped to the org, or 404 — so creation never crosses tenants. */
-  private async requireRepo(repoId: string, orgId: string): Promise<RepoEntity> {
-    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+  private async requireRepo(
+    repoId: string,
+    orgId: string,
+  ): Promise<RepoEntity> {
+    const repo = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
     if (!repo) throw new NotFoundException('repo not found');
     return repo;
   }

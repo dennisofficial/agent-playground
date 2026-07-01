@@ -1,5 +1,9 @@
-import { type ModelConfig, RealtimeRuleGuard, type Row } from '@workspace/pg-realtime';
-import { deriveNeedsYou } from '../domain/thread';
+import {
+  type ModelConfig,
+  RealtimeRuleGuard,
+  type Row,
+} from '@workspace/pg-realtime';
+import { deriveNeedsYou } from '../domain/job';
 
 /**
  * The authenticated principal handed to the realtime guard — resolved by the SSE endpoint from the
@@ -33,8 +37,13 @@ export interface ThreadRealtimeRow extends Row {
 }
 
 /** Row-level scope: a user may stream only threads belonging to an org they are a member of. */
-class ThreadOrgGuard extends RealtimeRuleGuard<RealtimePrincipal, ThreadRealtimeRow> {
-  canRead(user: RealtimePrincipal | null): { orgId: { $in: string[] } } | false {
+class ThreadOrgGuard extends RealtimeRuleGuard<
+  RealtimePrincipal,
+  ThreadRealtimeRow
+> {
+  canRead(
+    user: RealtimePrincipal | null,
+  ): { orgId: { $in: string[] } } | false {
     if (!user || user.orgIds.length === 0) return false;
     return { orgId: { $in: user.orgIds } };
   }
@@ -43,9 +52,10 @@ class ThreadOrgGuard extends RealtimeRuleGuard<RealtimePrincipal, ThreadRealtime
 function mapRow(raw: Row): ThreadRealtimeRow {
   const status = String(raw.status);
   const turnActive = raw.turn_active === true;
-  // The durable human-input gate (see `deriveNeedsYou`). `SELECT *` snapshots and the WAL new-row image
-  // both carry this small (never-TOASTed) column, so it is always present here.
-  const awaitingQuestion = raw.awaiting_question_id != null;
+  // The durable human-input gate (see `deriveNeedsYou`): how many `ask_question` cards await the operator.
+  // `SELECT *` snapshots and the WAL new-row image both carry this small (never-TOASTed) column, so it is
+  // always present here; opening/answering a question updates the thread row → fires a realtime delta.
+  const awaitingQuestion = Number(raw.open_question_count ?? 0) > 0;
   const createdAt = raw.created_at;
   return {
     threadId: String(raw.id),
@@ -54,7 +64,8 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     status,
     turnActive,
     needsYou: deriveNeedsYou(status, turnActive, awaitingQuestion),
-    createdAt: createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
+    createdAt:
+      createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
     orgId: String(raw.org_id),
     repoId: String(raw.repo_id),
   };

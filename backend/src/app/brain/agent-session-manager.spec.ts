@@ -543,24 +543,25 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(card.options[0].id).toBeTruthy();
   });
 
-  it('(e2) ask_question is refused while a question is already open (one-at-a-time gate)', async () => {
-    (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-      ok: false,
-      alreadyOpen: true,
-    });
+  it('(e2) ask_question allows stacking — a second open question is NOT refused', async () => {
+    // openQuestion no longer refuses while one is open; the brain may have several cards open at once.
+    (mockStore.openQuestion as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['ask_question']({ question: 'Another one?', options: [] });
-    expect(result).toMatchObject({ ok: false });
-    expect((result as { reason: string }).reason).toContain('already awaiting');
+    expect(result).toMatchObject({ ok: true });
+    expect((result as { questionId: string }).questionId).toBeTruthy();
   });
 
-  it('(f) create_decision attaches the gate-pointed answered question and returns the resolved decision + id', async () => {
-    // create_decision sources the Q&A authoritatively from the human-input gate pointer, not a scan.
-    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-123');
-    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
-      type: 'question_card',
-      question: 'Editable or fixed after checkout?',
-      answer: 'Editable in the Network tab',
+  it('(f) create_decision attaches the most-recently-answered question and returns the resolved decision + id', async () => {
+    // With no explicit questionId / delivery seedQuestionId, create_decision falls back to the newest
+    // answered, not-yet-logged card (ordered by answeredAt) — its `ts` is the card it stamps consumed.
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ts: 'q-123',
+      card: {
+        type: 'question_card',
+        question: 'Editable or fixed after checkout?',
+        answer: 'Editable in the Network tab',
+      },
     });
     const resolved = {
       id: 'd1',
@@ -595,11 +596,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(f1a) create_decision marks confirmedByOperator true ONLY with an attached answer', async () => {
-    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-1');
-    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
-      type: 'question_card',
-      question: 'A or B?',
-      answer: 'A',
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ts: 'q-1',
+      card: { type: 'question_card', question: 'A or B?', answer: 'A' },
     });
     (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
       decision: { id: 'd1' },
@@ -612,7 +611,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(f1b) create_decision coerces confirmedByOperator to false when no answer is attached', async () => {
-    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
       decision: { id: 'd1' },
       all: [{ id: 'd1', confirmedByOperator: false }],
@@ -630,11 +629,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   it('(f1c) create_decision defaults confirmedByOperator to false (authored) when the arg is omitted', async () => {
-    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-1');
-    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
-      type: 'question_card',
-      question: 'A or B?',
-      answer: 'A',
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ts: 'q-1',
+      card: { type: 'question_card', question: 'A or B?', answer: 'A' },
     });
     (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
       decision: { id: 'd1' },
@@ -654,15 +651,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
 
     // Promote with an answer attached → true.
-    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue('q-1');
-    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({ answer: 'A' });
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ts: 'q-1',
+      card: { type: 'question_card', question: 'A or B?', answer: 'A' },
+    });
     await tools['update_decision']({ id: 'd1', confirmedByOperator: true });
     expect((mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2]).toMatchObject({
       confirmedByOperator: true,
     });
 
     // Promote with NO answer → coerced false.
-    (mockStore.awaitingQuestionId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     await tools['update_decision']({ id: 'd1', confirmedByOperator: true });
     expect((mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2]).toMatchObject({
       confirmedByOperator: false,
@@ -672,6 +671,58 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     await tools['update_decision']({ id: 'd1', confirmedByOperator: false });
     expect((mockStore.updateDecision as ReturnType<typeof vi.fn>).mock.calls.at(-1)![2]).toMatchObject({
       confirmedByOperator: false,
+    });
+  });
+
+  it('(f1e) create_decision attaches the EXPLICIT questionId card, not the newest-answered fallback', async () => {
+    // With several questions answered, an explicit questionId pins exactly which one the decision settles.
+    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_t: string, id: string) =>
+        id === 'q-explicit'
+          ? { type: 'question_card', question: 'Which DB?', answer: 'Postgres' }
+          : null,
+    );
+    (mockStore.latestAnsweredQuestionCard as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ts: 'q-other',
+      card: { type: 'question_card', question: 'Other?', answer: 'wrong-one' },
+    });
+    (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1' },
+      all: [{ id: 'd1' }],
+    });
+    const tools = manager.buildTools(fakeStimulus);
+    await tools['create_decision']({
+      decisionClass: 'data_model',
+      ruling: 'use postgres',
+      questionId: 'q-explicit',
+    });
+    const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(input).toMatchObject({ question: 'Which DB?', answer: 'Postgres' });
+    // The explicit card (not the fallback) is the one flagged consumed.
+    expect(mockStore.updateCardMessage).toHaveBeenCalledWith(THREAD_ID, 'q-explicit', {
+      loggedDecision: true,
+    });
+  });
+
+  it('(f1f) create_decision on a DELIVERY turn attaches the seedQuestionId card', async () => {
+    // The answer-delivery turn carries seedQuestionId; create_decision attaches that exact card.
+    (mockStore.getQuestionCard as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_t: string, id: string) =>
+        id === 'q-delivered'
+          ? { type: 'question_card', question: 'Routing?', answer: 'dynamic' }
+          : null,
+    );
+    (mockStore.createDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
+      decision: { id: 'd1' },
+      all: [{ id: 'd1' }],
+    });
+    const deliveryStimulus: ChatStimulus = { ...fakeStimulus, seed: true, seedQuestionId: 'q-delivered' };
+    const tools = manager.buildTools(deliveryStimulus);
+    await tools['create_decision']({ decisionClass: 'data_model', ruling: 'dynamic routing' });
+    const input = (mockStore.createDecision as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(input).toMatchObject({ question: 'Routing?', answer: 'dynamic' });
+    expect(mockStore.updateCardMessage).toHaveBeenCalledWith(THREAD_ID, 'q-delivered', {
+      loggedDecision: true,
     });
   });
 
@@ -1193,6 +1244,29 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     await manager.handleChatTurn(stimulus);
 
     expect(store.updateCardMessage).not.toHaveBeenCalled();
+  });
+
+  it('a DELIVERY turn (seedQuestionId set) stamps exactly that card delivered on success', async () => {
+    // The answer-delivery seed carries seedQuestionId; the success tail marks THAT card delivered (so the
+    // boot sweep won't re-deliver it). An answered, not-yet-delivered card is the delivery target.
+    const { manager, store } = makeManager({
+      pendingCard: { type: 'question_card', answer: 'dynamic', deliveredAt: null },
+    });
+    const deliveryStimulus: ChatStimulus = { ...stimulus, seed: true, seedQuestionId: 'q-deliver' };
+
+    await manager.handleChatTurn(deliveryStimulus);
+
+    expect(store.markQuestionDelivered).toHaveBeenCalledWith(THREAD_ID, 'q-deliver');
+  });
+
+  it('a normal operator turn (no seedQuestionId) never marks a card delivered', async () => {
+    const { manager, store } = makeManager({
+      pendingCard: { type: 'question_card', answer: 'dynamic', deliveredAt: null },
+    });
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(store.markQuestionDelivered).not.toHaveBeenCalled();
   });
 });
 

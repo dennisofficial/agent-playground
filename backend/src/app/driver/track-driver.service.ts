@@ -10,10 +10,16 @@ import {
   type DecisionClassification,
 } from '../decision-gate';
 import { AutoFixStage, reviewAgentsForTrack } from '../autofix';
-import type { DecisionRecord, Step, Thread } from '../domain';
+import type { DecisionRecord, Step, Job } from '../domain';
 import { EngineAuthError } from '../engine';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
-import { CHAT_SURFACE, type ChatSurface, BLOCK_SINK, type BlockSink, TurnHarnessFactory } from '../surface';
+import {
+  CHAT_SURFACE,
+  type ChatSurface,
+  BLOCK_SINK,
+  type BlockSink,
+  TurnHarnessFactory,
+} from '../surface';
 import { CredentialResolver } from '../onboarding';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
@@ -26,11 +32,7 @@ import {
   type DriverTrack,
   type JobRoute,
 } from './driver-store.service';
-import {
-  PLANNER_LLM,
-  type PlannedStep,
-  type PlannerLlm,
-} from './planner-llm';
+import { PLANNER_LLM, type PlannedStep, type PlannerLlm } from './planner-llm';
 import { renderPlan } from './render-plan';
 import {
   DRIVER_REPO,
@@ -53,7 +55,11 @@ import { ThreadLifecycleService } from './thread-lifecycle.service';
  */
 /** The narrow brain surface the driver needs at ship — resolved lazily to avoid the module cycle. */
 interface LedgerPromoter {
-  promoteDurableDecisionsAtShip(threadId: string, orgId: string, repoId: string): Promise<void>;
+  promoteDurableDecisionsAtShip(
+    threadId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void>;
 }
 
 @Injectable()
@@ -97,10 +103,16 @@ export class TrackDriver implements JobDispatcher {
    * operator turn). Best-effort + idempotent (deduped by `id`): the driver fires the same stage boundary
    * repeatedly across a resume, so the buffer keeps one. A failed append never breaks the build.
    */
-  private async recordMilestone(threadId: string, id: string, text: string): Promise<void> {
+  private async recordMilestone(
+    threadId: string,
+    id: string,
+    text: string,
+  ): Promise<void> {
     await this.awareness
       .appendMarker(threadId, { id, text, at: new Date().toISOString() })
-      .catch((err) => this.logger.debug(`milestone append failed (continuing): ${err}`));
+      .catch((err) =>
+        this.logger.debug(`milestone append failed (continuing): ${err}`),
+      );
   }
 
   /** Sanity ceiling on a job's tracks — a malformed plan can't drive an unbounded build. */
@@ -154,7 +166,7 @@ export class TrackDriver implements JobDispatcher {
    * off the deterministic drive ASYNC — return promptly so the brain doesn't block on the whole build.
    * Errors inside the drive are caught + recorded (the job flips to `failed`), never surfaced here.
    */
-  async dispatch(job: Thread): Promise<void> {
+  async dispatch(job: Job): Promise<void> {
     this.logger.log(
       `dispatch thread=${job.id} kind=${job.kind} title="${job.title}"`,
     );
@@ -228,7 +240,9 @@ export class TrackDriver implements JobDispatcher {
       return;
     }
     if (job.status !== 'failed' && job.status !== 'paused') {
-      this.logger.warn(`retry job=${jobId}: not retryable (status=${job.status}) — ignoring`);
+      this.logger.warn(
+        `retry job=${jobId}: not retryable (status=${job.status}) — ignoring`,
+      );
       return;
     }
     this.logger.log(`retry job=${jobId} — re-driving from ${job.status}`);
@@ -394,7 +408,7 @@ export class TrackDriver implements JobDispatcher {
    *   g. summarize the handoff for the next track.
    */
   private async runTrack(
-    job: Thread,
+    job: Job,
     record: DecisionRecord | null,
     route: JobRoute,
     repo: ResolvedRepo,
@@ -419,7 +433,8 @@ export class TrackDriver implements JobDispatcher {
 
     // b. REVIEW → revise once (only when freshly planned this run; a resumed lock skips it).
     //    (The locked step ROWS are the source of truth; review only reshapes a fresh plan's prose.)
-    if (planned) await this.reviewPlan(record, track, handoffIn, planned, job.orgId);
+    if (planned)
+      await this.reviewPlan(record, track, handoffIn, planned, job.orgId);
 
     // The plan view the gate + visibility read — derived from the locked step rows (resume-safe).
     const planView = steps.map(asPlannedStep);
@@ -448,13 +463,7 @@ export class TrackDriver implements JobDispatcher {
       .headSha(sandbox.worktreePath)
       .catch(() => undefined);
     await this.store.setTrackStatus(track.id, 'executing');
-    const reports = await this.executeSteps(
-      job,
-      route,
-      sandbox,
-      track,
-      record,
-    );
+    const reports = await this.executeSteps(job, route, sandbox, track, record);
 
     // f. AUTO-FIX — fan-out review → fix over this track's diff.
     await this.store.setTrackStatus(track.id, 'auto_fixing');
@@ -462,7 +471,10 @@ export class TrackDriver implements JobDispatcher {
     // transitions each as it runs, and the `finally` resolves any left pending/running (empty diff / throw).
     // `reviewAgentsForTrack` selects by track type; the domain `DriverTrack` doesn't carry it, and the
     // selection is a fixed set today, so call it argless (it ignores the arg).
-    const reviewAgents = reviewAgentsForTrack().map((a) => ({ ...a, status: 'pending' as const }));
+    const reviewAgents = reviewAgentsForTrack().map((a) => ({
+      ...a,
+      status: 'pending' as const,
+    }));
     await this.store.seedReviewAgents(track.id, reviewAgents);
     let lensesRun: string[] = [];
     try {
@@ -484,7 +496,11 @@ export class TrackDriver implements JobDispatcher {
           onLensStatus: (lensId, status, findings) => {
             void this.store
               .setReviewAgentStatus(track.id, lensId, status, findings)
-              .catch((err) => this.logger.warn(`review-agent status write failed (ignored): ${err}`));
+              .catch((err) =>
+                this.logger.warn(
+                  `review-agent status write failed (ignored): ${err}`,
+                ),
+              );
           },
         },
       );
@@ -496,7 +512,9 @@ export class TrackDriver implements JobDispatcher {
       // pending/running agent once the track leaves auto_fixing.
       await this.store
         .finalizeReviewAgents(track.id, lensesRun)
-        .catch((err) => this.logger.warn(`review-agent finalize failed (ignored): ${err}`));
+        .catch((err) =>
+          this.logger.warn(`review-agent finalize failed (ignored): ${err}`),
+        );
     }
     // Passive milestone: auto-fix is a transient stage (track status is overwritten to `done` next), so
     // the net-state snapshot can't reconstruct that it ran — record it explicitly for the brain.
@@ -507,7 +525,12 @@ export class TrackDriver implements JobDispatcher {
     );
 
     // g. HANDOFF — summarize what this track produced for the next.
-    const handoffOut = await this.summarizeHandoff(track, steps, reports, job.orgId);
+    const handoffOut = await this.summarizeHandoff(
+      track,
+      steps,
+      reports,
+      job.orgId,
+    );
     await this.store.setTrackHandoffOut(track.id, handoffOut);
     await this.store.setTrackStatus(track.id, 'done');
     this.logger.log(`track ${track.ordinal} done`);
@@ -516,10 +539,7 @@ export class TrackDriver implements JobDispatcher {
       `track:${track.id}:done`,
       `Track "${track.brief}" finished building.`,
     );
-    await this.post(
-      route,
-      `:white_check_mark: Track done — *${track.brief}*`,
-    );
+    await this.post(route, `:white_check_mark: Track done — *${track.brief}*`);
     return handoffOut;
   }
 
@@ -530,7 +550,7 @@ export class TrackDriver implements JobDispatcher {
    * (returns `planned: undefined` to signal "no re-review needed").
    */
   private async planTrack(
-    job: Thread,
+    job: Job,
     record: DecisionRecord | null,
     sandbox: FeatureSandbox,
     track: DriverTrack,
@@ -611,11 +631,7 @@ export class TrackDriver implements JobDispatcher {
       })
       .catch(() => undefined);
     if (revised)
-      await this.store.setTrackPlan(
-        track.id,
-        renderPlan(revised),
-        handoffIn,
-      );
+      await this.store.setTrackPlan(track.id, renderPlan(revised), handoffIn);
   }
 
   /**
@@ -625,7 +641,7 @@ export class TrackDriver implements JobDispatcher {
    * non-ask classifications for the visibility post.
    */
   private async gateSection(
-    job: Thread,
+    job: Job,
     route: JobRoute,
     record: DecisionRecord | null,
     track: DriverTrack,
@@ -752,7 +768,7 @@ export class TrackDriver implements JobDispatcher {
    * mark every step in it done. Returns one report per batch.
    */
   private async executeSteps(
-    job: Thread,
+    job: Job,
     route: JobRoute,
     sandbox: FeatureSandbox,
     track: DriverTrack,
@@ -783,7 +799,9 @@ export class TrackDriver implements JobDispatcher {
               .catch(() => undefined),
           );
       const assignments: Array<[string, number]> = [];
-      groups.forEach((g, bi) => g.forEach((idx) => assignments.push([steps[idx].id, bi + 1])));
+      groups.forEach((g, bi) =>
+        g.forEach((idx) => assignments.push([steps[idx].id, bi + 1])),
+      );
       await this.store.setBatchOrdinals(assignments);
       this.logger.log(
         `track ${track.ordinal}: ${steps.length} step(s) packed into ${groups.length} batch(es)` +
@@ -812,11 +830,16 @@ export class TrackDriver implements JobDispatcher {
       // committed before a crash interrupted the done-status writes — re-running would redo work against
       // an already-committed tree. Mark the steps done and skip the session instead.
       if (batch[0].commitSha) {
-        this.logger.log(`batch [${batch.map((p) => p.ordinal).join(',')}] already committed — fast-forward`);
-        for (const p of batch) await this.store.setStepState(p.id, 'done', 'done');
+        this.logger.log(
+          `batch [${batch.map((p) => p.ordinal).join(',')}] already committed — fast-forward`,
+        );
+        for (const p of batch)
+          await this.store.setStepState(p.id, 'done', 'done');
         continue;
       }
-      reports.push(await this.runBatch(job, route, sandbox, track, record, batch));
+      reports.push(
+        await this.runBatch(job, route, sandbox, track, record, batch),
+      );
     }
     return reports;
   }
@@ -826,9 +849,14 @@ export class TrackDriver implements JobDispatcher {
    * group at `maxStepsPerBatch`. An invalid/absent partition falls back to one-step-per-group (the
    * safe default — identical to the pre-batching behavior). The result always covers [0, n) in order.
    */
-  private groupSteps(steps: Step[], llmGroups: number[][] | undefined): number[][] {
+  private groupSteps(
+    steps: Step[],
+    llmGroups: number[][] | undefined,
+  ): number[][] {
     const n = steps.length;
-    const base = isConsecutivePartition(llmGroups, n) ? llmGroups! : steps.map((_, i) => [i]);
+    const base = isConsecutivePartition(llmGroups, n)
+      ? llmGroups!
+      : steps.map((_, i) => [i]);
     const cap = this.maxStepsPerBatch;
     const out: number[][] = [];
     for (const g of base) {
@@ -844,7 +872,7 @@ export class TrackDriver implements JobDispatcher {
    * optional verify command gates the commit so broken output never advances the cursor (issues #3, #4).
    */
   private async runBatch(
-    job: Thread,
+    job: Job,
     route: JobRoute,
     sandbox: FeatureSandbox,
     track: DriverTrack,
@@ -854,12 +882,13 @@ export class TrackDriver implements JobDispatcher {
     const anchor = steps[0];
     const label =
       steps.length === 1
-        ? anchor.title ?? anchor.brief ?? `step ${anchor.ordinal}`
+        ? (anchor.title ?? anchor.brief ?? `step ${anchor.ordinal}`)
         : `${steps.length} steps (${steps.map((p) => p.title ?? `#${p.ordinal}`).join(', ')})`;
     this.logger.log(
       `track ${track.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — building`,
     );
-    for (const p of steps) await this.store.setStepState(p.id, 'build', 'building');
+    for (const p of steps)
+      await this.store.setStepState(p.id, 'build', 'building');
     await this.post(route, `:gear: ${track.brief} — building: ${label}`);
 
     // The build turn rides the shared transcript spine on its own `phase:<anchorStepId>` lane, tagging every
@@ -887,12 +916,19 @@ export class TrackDriver implements JobDispatcher {
           prompt: task,
         },
       })
-      .catch((err) => this.logger.warn(`build_anchor append failed for thread=${job.id}: ${err}`));
+      .catch((err) =>
+        this.logger.warn(
+          `build_anchor append failed for thread=${job.id}: ${err}`,
+        ),
+      );
     const harness = this.turnHarness.create({
       threadId: job.id,
       channel,
       lane,
-      metaTag: { phaseId: anchor.id, ...(batchOrdinal != null ? { batchOrdinal } : {}) },
+      metaTag: {
+        phaseId: anchor.id,
+        ...(batchOrdinal != null ? { batchOrdinal } : {}),
+      },
     });
 
     // Circuit breaker (#3): bound the engine turn. On breach it both signals the SDK to abort AND hard-
@@ -965,13 +1001,15 @@ export class TrackDriver implements JobDispatcher {
    * done, and post "PR ready" in-thread. Sections stacked on one branch ⇒ one PR.
    */
   private async finishWithPr(
-    job: Thread,
+    job: Job,
     record: DecisionRecord | null,
     route: JobRoute,
     repo: ResolvedRepo,
     sandbox: FeatureSandbox,
   ): Promise<void> {
-    this.logger.log(`job=${job.id} all tracks done — promoting decisions + shipping`);
+    this.logger.log(
+      `job=${job.id} all tracks done — promoting decisions + shipping`,
+    );
     // Promote durable decisions into `.atlas/decisions/` BEFORE shipping, so they ride the build commit.
     // Resumable + idempotent: a re-entered `finishWithPr` (driver resume) just re-promotes/overwrites.
     const promoted = await this.promoteLedger(job);
@@ -995,22 +1033,27 @@ export class TrackDriver implements JobDispatcher {
    * decisions into the worktree's `.atlas/decisions/`. Best-effort: a failure marks the spine `failed`
    * (boot backstop retries) and returns false so the PR ships regardless.
    */
-  private async promoteLedger(job: Thread): Promise<boolean> {
+  private async promoteLedger(job: Job): Promise<boolean> {
     try {
       await this.store.claimLedgerPromotion(job.id);
       const brain = await this.brain();
       await brain.promoteDurableDecisionsAtShip(job.id, job.orgId, job.repoId);
       return true;
     } catch (err) {
-      this.logger.warn(`ledger promotion turn failed for ${job.id} (shipping anyway): ${err}`);
-      await this.store.setLedgerPromotionStatus(job.id, 'failed').catch(() => undefined);
+      this.logger.warn(
+        `ledger promotion turn failed for ${job.id} (shipping anyway): ${err}`,
+      );
+      await this.store
+        .setLedgerPromotionStatus(job.id, 'failed')
+        .catch(() => undefined);
       return false;
     }
   }
 
   /** Lazily resolve the brain — a dynamic import keeps the brain⇄driver dependency out of module load. */
   private async brain(): Promise<LedgerPromoter> {
-    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
+    const { AgentSessionManager } =
+      await import('../brain/agent-session-manager.service.js');
     return this.moduleRef.get(AgentSessionManager, { strict: false });
   }
 
@@ -1031,13 +1074,19 @@ export class TrackDriver implements JobDispatcher {
    * before any build runs, so `ensureContainer` always finds the row by the time the driver gets here —
    * a null is a real bug (a build dispatched against an unprovisioned/closed thread), so we throw.
    */
-  private async ensureSandbox(job: Thread): Promise<FeatureSandbox> {
-    const ensured = await this.threadLifecycle.ensureContainer(job.id, job.orgId);
+  private async ensureSandbox(job: Job): Promise<FeatureSandbox> {
+    const ensured = await this.threadLifecycle.ensureContainer(
+      job.id,
+      job.orgId,
+    );
     if (!ensured) {
-      throw new Error(`job=${job.id}: thread has no sandbox (unprovisioned or closed) — cannot build`);
+      throw new Error(
+        `job=${job.id}: thread has no sandbox (unprovisioned or closed) — cannot build`,
+      );
     }
     const branch = ensured.sandbox.branch; // the thread's feature branch is the source of truth
-    if (job.featureBranch !== branch) await this.store.setFeatureBranch(job.id, branch);
+    if (job.featureBranch !== branch)
+      await this.store.setFeatureBranch(job.id, branch);
     this.logger.log(
       `job=${job.id} using thread sandbox on ${branch}${ensured.wasReset ? ' (cold re-attach)' : ''}`,
     );
@@ -1053,7 +1102,12 @@ export class TrackDriver implements JobDispatcher {
   ): Promise<string> {
     const planned = steps.map(asPlannedStep);
     const llm = await this.planner
-      .handoff({ brief: track.brief, steps: planned, reports, ...(orgId ? { orgId } : {}) })
+      .handoff({
+        brief: track.brief,
+        steps: planned,
+        reports,
+        ...(orgId ? { orgId } : {}),
+      })
       .catch(() => undefined);
     if (llm) return llm;
     const built = steps.map((p) => p.title ?? p.brief).join('; ');
@@ -1093,7 +1147,7 @@ const TRACK_PLAN_SYSTEM =
 // (not raw logs); the rest only read and report. None of them edit files — only the worker does.
 const WORKER_SUBAGENTS_NOTE =
   ' To stay focused and keep your context clean, you can delegate to read-only subagents via the Task ' +
-  'tool: `explore` (trace how the code works, incl. this repo\'s own docs), `docs` (look up EXTERNAL ' +
+  "tool: `explore` (trace how the code works, incl. this repo's own docs), `docs` (look up EXTERNAL " +
   'library/framework/API documentation), `review` ' +
   '(a second pass on your diff for bugs + convention drift before you finish), `debug` (root-cause a ' +
   'failure to its fix site), and `test` (run the repo verification and get back a diagnosis instead of ' +
@@ -1116,7 +1170,7 @@ const STEP_EXECUTE_SYSTEM =
 const BATCH_EXECUTE_SYSTEM =
   'You are Atlas executing several ORDERED steps of an approved plan in a feature worktree, in ONE ' +
   'session. Implement each step IN ORDER, exactly to its brief, respecting the locked decisions; finish ' +
-  'one step before starting the next and do not exceed the steps\' scope. ' +
+  "one step before starting the next and do not exceed the steps' scope. " +
   'If you make ANY change not explicitly called for by these briefs, or you depart from a locked decision ' +
   '(e.g. adding a file/dependency/config nobody asked for), you MUST flag it: put each such change on its ' +
   "own line in your final report starting with 'DEVIATION:' and a one-line why. Off-spec work is never silent. " +
@@ -1193,7 +1247,7 @@ function renderPlanTask(input: {
     `\nLocked decisions (respect these):\n${decisions}`,
     `\nPlan THIS track:\n${input.brief}${handoff}`,
     '\nYour grounding is the READ-ONLY directory `/context/specs/` (a folder, not a file): read its' +
-      ' `plan.md` index, this track\'s `sections/NN-*.md` file, and `data-model.md` before planning steps.',
+      " `plan.md` index, this track's `sections/NN-*.md` file, and `data-model.md` before planning steps.",
     '\nProduce an ordered list of steps. Do not write files.',
   ].join('\n');
 }
@@ -1212,7 +1266,9 @@ function renderBatchTask(
         .join('\n')
     : '(none)';
   const blocks = steps
-    .map((p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`)
+    .map(
+      (p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`,
+    )
     .join('\n\n');
   const intro = orchestrate
     ? `Implement this track. The ${steps.length} step(s) below are your plan + suggested decomposition` +
@@ -1234,8 +1290,12 @@ function renderBatchTask(
 
 /** True iff `groups` flattens to exactly [0,1,…,n-1] in order with no empty group — i.e. a valid
  *  consecutive, covering, non-overlapping partition of n ordered steps (the batcher's contract). */
-function isConsecutivePartition(groups: number[][] | undefined, n: number): boolean {
-  if (!groups || !groups.length || groups.some((g) => g.length === 0)) return false;
+function isConsecutivePartition(
+  groups: number[][] | undefined,
+  n: number,
+): boolean {
+  if (!groups || !groups.length || groups.some((g) => g.length === 0))
+    return false;
   const flat = groups.flat();
   if (flat.length !== n) return false;
   for (let i = 0; i < n; i++) if (flat[i] !== i) return false;
@@ -1284,4 +1344,3 @@ function shortReason(err: unknown): string {
   const firstLine = msg.split('\n')[0]?.trim() || 'unknown error';
   return firstLine.length > 300 ? `${firstLine.slice(0, 297)}...` : firstLine;
 }
-

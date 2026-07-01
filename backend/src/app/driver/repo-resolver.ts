@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { Thread } from '../domain';
+import type { Job } from '../domain';
 import { LocalGitService, parseGithubRepoUrl, type ProjectRepo } from '../git';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -26,7 +26,7 @@ export interface ResolvedRepo {
 
 /** The narrow surface the driver consumes — resolve a thread's repo into a ready-to-use clone. */
 export interface DriverRepoResolver {
-  resolve(thread: Thread): Promise<ResolvedRepo>;
+  resolve(thread: Job): Promise<ResolvedRepo>;
 }
 
 /**
@@ -44,16 +44,20 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
     private readonly projects: Repository<RepoEntity>,
   ) {}
 
-  async resolve(thread: Thread): Promise<ResolvedRepo> {
+  async resolve(thread: Job): Promise<ResolvedRepo> {
     const project = await this.projects.findOne({
       where: { id: thread.repoId },
     });
     if (!project) {
-      throw new Error(`No repos row for id=${thread.repoId} (org=${thread.orgId})`);
+      throw new Error(
+        `No repos row for id=${thread.repoId} (org=${thread.orgId})`,
+      );
     }
     const parsed = parseGithubRepoUrl(project.git_url);
     if (!parsed) {
-      throw new Error(`Repo ${project.slug} git_url is not an HTTPS GitHub URL: ${project.git_url}`);
+      throw new Error(
+        `Repo ${project.slug} git_url is not an HTTPS GitHub URL: ${project.git_url}`,
+      );
     }
     const token = await this.creds.githubToken(thread.orgId);
     // The repo's SLUG is the on-disk clone/worktree identity (human-readable), NOT the uuid id.

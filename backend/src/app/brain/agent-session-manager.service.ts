@@ -12,7 +12,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
-import type { ChatStimulus, EventSeverity, EventStimulus, Thread, ThreadKind } from '../domain';
+import type {
+  ChatStimulus,
+  EventSeverity,
+  EventStimulus,
+  Job,
+  ThreadKind,
+} from '../domain';
 import { MemoryStore } from '../memory';
 import { wrapUntrusted } from '../stimulus';
 import {
@@ -27,10 +33,20 @@ import {
   wrapSystemNotification,
 } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ActiveTurnEntity, StimulusEntity, ThreadSandboxEntity } from '../persistence/entities';
-import { ProvisioningNotReadyError, ThreadLifecycleService } from '../driver/thread-lifecycle.service';
+import {
+  ActiveTurnEntity,
+  StimulusEntity,
+  ThreadSandboxEntity,
+} from '../persistence/entities';
+import {
+  ProvisioningNotReadyError,
+  ThreadLifecycleService,
+} from '../driver/thread-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
-import { BuildShipService, LEDGER_COMMIT_MESSAGE } from '../driver/build-ship.service';
+import {
+  BuildShipService,
+  LEDGER_COMMIT_MESSAGE,
+} from '../driver/build-ship.service';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -41,10 +57,21 @@ import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../driver/planner-llm';
 import { DecisionClassifier } from '../decision-gate';
 import { CredentialResolver, WorktreeSecretStore } from '../onboarding';
-import { loadWorktreeManifest, type MountMode } from '../driver/worktree-manifest';
+import {
+  loadWorktreeManifest,
+  type MountMode,
+} from '../driver/worktree-manifest';
 import { TicketService } from '../tickets';
-import type { TicketKind, TicketPriority, TicketStatus } from '../domain/ticket';
-import { isTicketKind, isTicketPriority, isTicketStatus } from '../domain/ticket';
+import type {
+  TicketKind,
+  TicketPriority,
+  TicketStatus,
+} from '../domain/ticket';
+import {
+  isTicketKind,
+  isTicketPriority,
+  isTicketStatus,
+} from '../domain/ticket';
 import type { Decision } from '../domain';
 import { nextDecisionId, DECISION_CLASS_IDS } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
@@ -60,13 +87,28 @@ import {
 } from './repo-decision-manifest.service';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { ENGINE_RUNNER, isUnresumableSessionMessage, resolveContextLimit, SANDBOX_RESET_NOTICE } from '../engine/engine.types';
-import type { EngineRunnerPort, ToolImpl, RunEngineArgs } from '../engine/engine.types';
+import {
+  ENGINE_RUNNER,
+  isUnresumableSessionMessage,
+  resolveContextLimit,
+  SANDBOX_RESET_NOTICE,
+} from '../engine/engine.types';
+import type {
+  EngineRunnerPort,
+  ToolImpl,
+  RunEngineArgs,
+} from '../engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
-import type { ApprovalResolution, ApprovalVerdict } from './decision-approval.service';
+import type {
+  ApprovalResolution,
+  ApprovalVerdict,
+} from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
-import { PlanReviewService, renderFindingsDelivery } from './plan-review.service';
+import {
+  PlanReviewService,
+  renderFindingsDelivery,
+} from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 
 /**
@@ -86,7 +128,9 @@ import { TurnRecoveryService } from './turn-recovery.service';
  *   - session_id is persisted on the `thread_sandboxes` row so it survives host restarts.
  */
 @Injectable()
-export class AgentSessionManager implements OnApplicationBootstrap, OnApplicationShutdown {
+export class AgentSessionManager
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(AgentSessionManager.name);
 
   /** Leader-only boot-sweep subscription (turn_active reset + answered-Q / plan-review re-delivery). */
@@ -165,8 +209,8 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '(e.g. submit_plan) is NOT a registered tool and will fail with "No such tool available". The prose',
     `below abbreviates these to short names for readability, but you must call the mcp__${BRIDGE_SERVER_NAME}__`,
     'form. The 20 tools:',
-    `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator ONE formal question (renders as a card; see GRILLING)`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (auto-attaches the last answered question; set confirmedByOperator when the operator chose it, see GRILLING); returns its stable id`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__ask_question         — ask the operator one focused question (renders as a card; you may have several open at once; see GRILLING)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__create_decision      — lock an always-ask decision (attaches the answered question — pass questionId to name which one, else the one just answered; set confirmedByOperator when the operator chose it, see GRILLING); returns its stable id`,
     `  - mcp__${BRIDGE_SERVER_NAME}__update_decision      — revise a locked decision BY ID (ruling/title/class)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__delete_decision      — drop a locked decision BY ID`,
     `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
@@ -197,7 +241,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'starts scoping immediately and independently. Only do this when the operator asked for a follow-up or',
     'the split is clearly warranted — one tightly-scoped follow-up per call, not a backlog.',
     '',
-    'TICKETS — the repo\'s internal board/backlog. This is the durable place for work that is OUT OF SCOPE',
+    "TICKETS — the repo's internal board/backlog. This is the durable place for work that is OUT OF SCOPE",
     'for the current thread but worth remembering — the operator should never have to hold it in their head.',
     'When they say things like "do A now, push B for later" / "add that to the backlog" / "remember to do X',
     'after this", call create_ticket. Args: { title, body?, priority?, kind?, status?, dependsOn? } —',
@@ -226,10 +270,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'of flooding your context with raw file dumps. State the breadth you want in the prompt — "quick",',
     '"medium", or "very thorough". Use it to stay oriented on large repos without burning tokens.',
     'OTHER SUBAGENTS (same Task tool, all Sonnet + advisory — they report, they do NOT edit files):',
-    '  • `docs` — look up EXTERNAL library/framework/API documentation (this repo\'s own docs are `explore`);',
+    "  • `docs` — look up EXTERNAL library/framework/API documentation (this repo's own docs are `explore`);",
     '  • `review` — a second pass on a diff + intent for bugs, removed behavior, and convention drift;',
     '  • `debug` — trace a failure (error/stack/failing test) to its root cause and fix site;',
-    '  • `test` — run the repo\'s verification and get back a diagnosis instead of raw logs.',
+    "  • `test` — run the repo's verification and get back a diagnosis instead of raw logs.",
     'Reach for `review` and `test` especially when you implement a direct build yourself (FAST PATH).',
     'WEB ACCESS: you have WebSearch and WebFetch — use them to check current library docs, latest versions, and',
     'recent changes rather than relying on memory; the codebase is authoritative for THIS repo, the web for the',
@@ -262,7 +306,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'redirect. If a question can be answered by reading the repo, read the repo instead of asking. Four',
     'moves run THROUGHOUT the conversation, not just at decision points:',
     '  • SHARPEN TERMINOLOGY — when the operator uses a vague or overloaded term, propose the precise',
-    '    canonical word and pin it down ("you said \'account\' — do you mean the User or the Org? those are',
+    "    canonical word and pin it down (\"you said 'account' — do you mean the User or the Org? those are",
     '    different things"). When a term conflicts with the language already used in the repo or its docs,',
     '    call it out immediately rather than quietly adopting the new sense.',
     '  • STRESS-TEST WITH SCENARIOS — when domain relationships are in play, invent concrete edge-case',
@@ -281,7 +325,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '',
     'RECOMMEND ≠ DECIDE — the failure to avoid: proposing a default is NOT the operator deciding. For every',
     'always-ask class the work touches you must do ONE of two things — never neither, never silently fold it',
-    'into another decision\'s ruling: (a) ASK it via `ask_question`, lock the answer, and mark the decision',
+    "into another decision's ruling: (a) ASK it via `ask_question`, lock the answer, and mark the decision",
     '`confirmedByOperator: true`; or (b) when the default is low-risk and you are confident, lock it as a',
     'decision you AUTHORED (`confirmedByOperator: false`, the default) so it still surfaces at the gate for',
     'the operator to veto. A SCOPE REDUCTION — cutting functionality, e.g. "read-only, defer the writes" — is',
@@ -297,16 +341,16 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '  • ONE focused question per call; give 2–4 concrete `options` (the operator can also answer freely if',
     `    allowOther is true, the default). Set \`decisionClass\` when the question settles an always-ask class —`,
     `    it is EXACTLY one of (underscores, not hyphens): ${DECISION_CLASS_IDS.join(' | ')}.`,
-    '  • After calling it, STOP and wait — do not ask anything else that turn. Posting the card ENDS your',
-    '    turn; the operator’s answer arrives on your NEXT turn as a `<system_notification>` line carrying',
-    '    their choice. One question per turn.',
+    '  • Keep each call to ONE question, but you MAY post several cards when you have distinct things to',
+    '    settle — they can be answered IN ANY ORDER. After asking, STOP and wait: posting a card ENDS your',
+    '    turn; each answer arrives on a LATER turn as a `<system_notification>` line carrying their choice.',
     'LOCK EACH DECISION AS IT SETTLES: the moment an answer settles an always-ask decision, call',
     `\`create_decision({ decisionClass, ruling, confirmedByOperator?, title? })\` — decisionClass is EXACTLY`,
     `one of (underscores, not hyphens): ${DECISION_CLASS_IDS.join(' | ')}. Set \`confirmedByOperator: true\``,
-    'ONLY when the operator\'s attached answer directly settles THIS ruling (asked and chosen); omit it (false)',
+    "ONLY when the operator's attached answer directly settles THIS ruling (asked and chosen); omit it (false)",
     'for a default you authored. The host coerces it to false unless an operator answer is on record, and',
     'echoes a running `confirmed`/`authored` tally back to you. It AUTO-ATTACHES the question you just asked',
-    'and the operator\'s answer — do NOT restate them. Lock it BEFORE asking your next question. The call RETURNS the',
+    "and the operator's answer — do NOT restate them. Lock it BEFORE asking your next question. The call RETURNS the",
     'fully-resolved decision — its stable `id` plus the attached Q&A — so you now hold the exact stored record',
     'in context. To change a ruling later call `update_decision({ id, ruling? / title? / decisionClass? })`; to',
     'drop one call `delete_decision({ id })`. NEVER re-create to revise (that just adds a duplicate). This is',
@@ -320,13 +364,13 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '  • `/context/specs/` — HAND-AUTHORED by you, live as you work (NOT in one burst at the end), as CONTEXT',
     '    for the operator + the build engines. (The build orchestrates off the structured plan you submit; these',
     '    files are the HANDOFF a fresh, context-less engine reads to build AND review — capture the WHY and the',
-    '    domain knowledge you extracted by grilling, especially in each section\'s `## Context`, not just the WHAT.)',
+    "    domain knowledge you extracted by grilling, especially in each section's `## Context`, not just the WHAT.)",
     '    MULTI-FILE — follow PLAN.MD STRUCTURE below:',
     '      – `plan.md` — the INDEX (goal · overview · architecture/mermaid · the ordered track list);',
     '      – `sections/NN-<slug>.md` — ONE file per track (its goal, context, steps, validation);',
     '      – `data-model.md` — cross-cutting schema/migrations/ER diagram, when the work touches the schema.',
     '    The operator watches these fill in; revise as decisions change things.',
-    '    CADENCE — write a track\'s `sections/NN.md` (and grow the `plan.md` index) the MOMENT its shape settles',
+    "    CADENCE — write a track's `sections/NN.md` (and grow the `plan.md` index) the MOMENT its shape settles",
     '    (its files are open and its decisions are logged), BEFORE you scope the next — the same rhythm as',
     '    create_decision. By the time the last decision locks the spec files are near-complete. A STEP you have',
     '    fully investigated but not yet written as an execute-ready `#### N.M` block is unfinished work. The',
@@ -342,11 +386,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'architecture calls that OUTLIVE one feature ("money-out requires SUPER_ADMIN", "credits via Stripe',
     'balance, no internal ledger"). It is committed in the repo, so every thread inherits it.',
     '  • WHILE GRILLING: read `/workspace/.atlas/decisions/` FIRST (and its `index.md`). Any decision file',
-    '    present there is ALREADY SETTLED — it is on this thread\'s base branch. Do NOT relitigate it; build',
+    "    present there is ALREADY SETTLED — it is on this thread's base branch. Do NOT relitigate it; build",
     '    on it. If your new work genuinely CONTRADICTS one, say so to the operator and supersede it',
     '    explicitly at promotion (do not silently diverge).',
     '  • AT SHIP (after approval, when the build is committing): call `promote_decisions` to write the',
-    '    DURABLE subset of THIS thread\'s decisions into the ledger. This is SELECTIVE and DISTILLED — see',
+    "    DURABLE subset of THIS thread's decisions into the ledger. This is SELECTIVE and DISTILLED — see",
     '    `promote_decisions` below. It is separate from `/context/generated/decision-record.md`, which keeps',
     '    the full per-feature record; the ledger holds only the distilled durable invariant.',
     '',
@@ -359,7 +403,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'complete (per CADENCE above).',
     '',
     'PLAN DEPTH (applies to each PHASE brief): a step must be buildable to the keystroke by a fresh engine',
-    'turn that will NOT ask you anything — aim at the altitude of a senior engineer\'s implementation diff, NOT',
+    "turn that will NOT ask you anything — aim at the altitude of a senior engineer's implementation diff, NOT",
     'a design summary. Each step brief covers:',
     '  • touch points — every file the step changes, each anchored to an EXACT `path:line` you copied from a',
     '    Read/Grep (never an estimate or "~line N"), with the symbol that lives at that line;',
@@ -384,7 +428,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '        # Track N — <title>',
     '        ## Goal                    (the demo-able slice, 1–2 lines)',
     '        ## Context                 (what exists today + EXACT path:line anchors + which decisions shaped it)',
-    '        ## Flow                    (PREFERRED — a mermaid sequence/flowchart of THIS track\'s behavior; see DIAGRAMS)',
+    "        ## Flow                    (PREFERRED — a mermaid sequence/flowchart of THIS track's behavior; see DIAGRAMS)",
     '        ## Steps',
     '        #### N.M — <step title>    (the body is the step brief — PLAN DEPTH above)',
     '        ## Validation              (the demo-able outcome that closes the track)',
@@ -393,7 +437,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '  file is the same work as readable narrative + diagrams (need not be byte-identical). State hard step',
     '  ORDERING inline ("N.2 needs N.1\'s migration"); do NOT author concurrency/grouping — how steps pack into',
     '  sessions is decided downstream. Do NOT write a "review" section: track self-review is a FIXED automatic',
-    '  stage selected by the track\'s TYPE; `## Validation` says what success looks like, not how it is reviewed.',
+    "  stage selected by the track's TYPE; `## Validation` says what success looks like, not how it is reviewed.",
     '',
     'DIAGRAMS — LEAN ON THEM. A plan the operator can SEE beats one they have to decode. Mermaid code fences',
     'render inline in the spec files and in the approval card, so a good diagram is the FASTEST way for the',
@@ -403,7 +447,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '  • `sequenceDiagram` — interactions over time across components or services (who calls whom, in what order);',
     '  • `erDiagram` — entities + relations whenever the schema changes (goes in data-model.md);',
     '  • `stateDiagram-v2` — a lifecycle or status machine (a thread/job/order moving through its states).',
-    'Put the system-level picture in plan.md `## Architecture`; put a track\'s own behavior in its section file',
+    "Put the system-level picture in plan.md `## Architecture`; put a track's own behavior in its section file",
     '`## Flow`. Keep each diagram FOCUSED — the 5–12 nodes that matter, not every edge — and GROUND it in the',
     'real components you found while grilling (label nodes with the actual files/services/tables, never',
     'placeholders). A diagram is CONTEXT that illustrates the plan; it never replaces the execute-ready steps or',
@@ -422,7 +466,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     'then call submit_plan with:',
     '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
     '  - overview: intent + stack + constraints',
-    '  - tracks: the ordered tracks, each `{ title, type, steps: [{ title, brief }] }`. `type` = the track\'s',
+    "  - tracks: the ordered tracks, each `{ title, type, steps: [{ title, brief }] }`. `type` = the track's",
     '    scope — backend | frontend | docs | testing | analytics | infra (or another short label if none fit);',
     '    it SELECTS the review agents. `brief` = the execute-ready step instruction (PLAN DEPTH). ≥1 step/track.',
     '  (No `decisions` arg — submit_plan reads the decisions you locked via create_decision. Pass `decisions`',
@@ -458,7 +502,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     '    primitive or shared mechanism, is a data-model / source-of-truth call, is a one-way door, or sets a',
     '    scope boundary another effort depends on. Do NOT promote feature shape, this-build scope, or pure',
     '    implementation mechanics — those stay in the per-feature decision record. Most threads promote 0–3.',
-    '  • DISTILL, don\'t copy: the ledger entry is the durable INVARIANT in your own words (Context/Decision/',
+    "  • DISTILL, don't copy: the ledger entry is the durable INVARIANT in your own words (Context/Decision/",
     '    Consequences/Alternatives), not a paste of the decision-record entry. `slug` = a stable kebab topic',
     '    id (the filename). `sourceDecision` = the `dN` id it distills. `confirmedByOperator` = true only if',
     '    the operator actually chose it. `governsPaths` = globs the decision constrains. To replace an',
@@ -539,7 +583,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * instance is already leader.
    */
   onApplicationBootstrap(): void {
-    this.leaderBootSub = this.election.onPromote(() => this.runLeaderBootSweeps());
+    this.leaderBootSub = this.election.onPromote(() =>
+      this.runLeaderBootSweeps(),
+    );
   }
 
   onApplicationShutdown(): void {
@@ -558,7 +604,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     //    "needs you" dot.
     try {
       const reset = await this.store.resetAllTurnActive();
-      if (reset > 0) this.logger.log(`Leader: cleared stale turn_active on ${reset} thread(s)`);
+      if (reset > 0)
+        this.logger.log(
+          `Leader: cleared stale turn_active on ${reset} thread(s)`,
+        );
     } catch (err) {
       this.logger.warn(`turn_active reconciliation failed: ${err}`);
     }
@@ -578,14 +627,21 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     try {
       const pending = await this.store.findUndeliveredAnsweredQuestions();
       if (pending.length > 0) {
-        this.logger.log(`Leader: re-delivering ${pending.length} answered-but-undelivered question(s)`);
+        this.logger.log(
+          `Leader: re-delivering ${pending.length} answered-but-undelivered question(s)`,
+        );
         for (const q of pending) {
           const stimulus = bootDeliveryStimulus(q);
           void this.handleChatTurn(stimulus).catch((err) =>
-            this.logger.warn(`boot re-delivery failed for thread=${q.threadId}: ${err}`),
+            this.logger.warn(
+              `boot re-delivery failed for thread=${q.threadId}: ${err}`,
+            ),
           );
         }
       }
+      // Heal the denormalized open-question counter from the actual unanswered cards, so a crash mid-
+      // open/answer can't leave the needs-you signal wedged the way the old single slot could.
+      await this.store.reconcileOpenQuestionCounts();
     } catch (err) {
       this.logger.warn(`question-delivery reconciliation failed: ${err}`);
     }
@@ -596,7 +652,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     try {
       const pendingSecrets = await this.store.findUndeliveredProvidedSecrets();
       if (pendingSecrets.length > 0) {
-        this.logger.log(`Leader: re-delivering ${pendingSecrets.length} provided-but-undelivered secret(s)`);
+        this.logger.log(
+          `Leader: re-delivering ${pendingSecrets.length} provided-but-undelivered secret(s)`,
+        );
         for (const s of pendingSecrets) {
           const stimulus = harnessDeliveryStimulus({
             threadId: s.threadId,
@@ -605,7 +663,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
             body: maskedSecretNotice(s.name, s.path),
           });
           void this.handleChatTurn(stimulus).catch((err) =>
-            this.logger.warn(`boot secret re-delivery failed for thread=${s.threadId}: ${err}`),
+            this.logger.warn(
+              `boot secret re-delivery failed for thread=${s.threadId}: ${err}`,
+            ),
           );
         }
       }
@@ -626,12 +686,16 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       }
       for (const r of incomplete) {
         void this.runAndDeliverReview(r.id).catch((err) =>
-          this.logger.warn(`boot plan-review re-run failed for review=${r.id}: ${err}`),
+          this.logger.warn(
+            `boot plan-review re-run failed for review=${r.id}: ${err}`,
+          ),
         );
       }
       for (const r of undelivered) {
         void this.deliverReviewFindings(r.id).catch((err) =>
-          this.logger.warn(`boot plan-review re-delivery failed for review=${r.id}: ${err}`),
+          this.logger.warn(
+            `boot plan-review re-delivery failed for review=${r.id}: ${err}`,
+          ),
         );
       }
     } catch (err) {
@@ -646,10 +710,14 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     try {
       const undeliveredEvents = await this.findUndeliveredEvents();
       if (undeliveredEvents.length > 0) {
-        this.logger.log(`Leader: re-delivering ${undeliveredEvents.length} seeded-but-undelivered event(s)`);
+        this.logger.log(
+          `Leader: re-delivering ${undeliveredEvents.length} seeded-but-undelivered event(s)`,
+        );
         for (const ev of undeliveredEvents) {
           void this.deliverEvent(ev).catch((err) =>
-            this.logger.warn(`boot event re-delivery failed for stimulus=${ev.id}: ${err}`),
+            this.logger.warn(
+              `boot event re-delivery failed for stimulus=${ev.id}: ${err}`,
+            ),
           );
         }
       }
@@ -664,11 +732,15 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     try {
       const awaiting = await this.store.threadsAwaitingLedgerPromotion();
       if (awaiting.length > 0) {
-        this.logger.log(`Boot: reconciling ledger promotion for ${awaiting.length} shipped thread(s)`);
+        this.logger.log(
+          `Boot: reconciling ledger promotion for ${awaiting.length} shipped thread(s)`,
+        );
       }
       for (const thread of awaiting) {
         void this.reconcileLedgerPromotion(thread).catch((err) =>
-          this.logger.warn(`boot ledger reconcile failed for thread=${thread.id}: ${err}`),
+          this.logger.warn(
+            `boot ledger reconcile failed for thread=${thread.id}: ${err}`,
+          ),
         );
       }
     } catch (err) {
@@ -682,7 +754,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       for (const { orgId, repoId } of repos) {
         void this.manifest
           .reconcileFromBaseCheckout(orgId, repoId)
-          .catch((err) => this.logger.warn(`boot manifest reconcile failed for repo=${repoId}: ${err}`));
+          .catch((err) =>
+            this.logger.warn(
+              `boot manifest reconcile failed for repo=${repoId}: ${err}`,
+            ),
+          );
       }
     } catch (err) {
       this.logger.warn(`Boot manifest reconciliation failed: ${err}`);
@@ -695,8 +771,17 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * `promote_decisions`. The brain reconstructs them from `/context/generated/decision-record.md` (so it
    * is cold-resume safe) and writes the files into the worktree; the CALLER commits them. Idempotent.
    */
-  async promoteDurableDecisionsAtShip(threadId: string, orgId: string, repoId: string): Promise<void> {
-    const stimulus = harnessDeliveryStimulus({ threadId, orgId, repoId, body: LEDGER_PROMOTION_PROMPT });
+  async promoteDurableDecisionsAtShip(
+    threadId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
+    const stimulus = harnessDeliveryStimulus({
+      threadId,
+      orgId,
+      repoId,
+      body: LEDGER_PROMOTION_PROMPT,
+    });
     await this.handleChatTurn(stimulus);
   }
 
@@ -705,16 +790,26 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * ledger onto the EXISTING PR branch (ship is idempotent — it finds the open PR). Skips silently when the
    * worktree is gone (the PR already merged + the thread closed), since there's nothing left to write.
    */
-  private async reconcileLedgerPromotion(thread: Thread): Promise<void> {
+  private async reconcileLedgerPromotion(thread: Job): Promise<void> {
     const sandbox = await this.lifecycle.findSandbox(thread.id, thread.orgId);
     if (!sandbox) return; // worktree torn down (merged/closed) — nothing to promote
-    await this.promoteDurableDecisionsAtShip(thread.id, thread.orgId, thread.repoId);
+    await this.promoteDurableDecisionsAtShip(
+      thread.id,
+      thread.orgId,
+      thread.repoId,
+    );
     const repo = await this.repos.resolve(thread);
     const rec = (await this.driverStore
       .getDecisionRecord(thread.id)
       .catch(() => null)) as { overview: string; decisions: Decision[] } | null;
     // No `notify` — a silent recovery commit must not re-post "PR ready".
-    await this.ship.ship({ job: thread, record: rec, repo, sandbox, commitMessage: LEDGER_COMMIT_MESSAGE });
+    await this.ship.ship({
+      job: thread,
+      record: rec,
+      repo,
+      sandbox,
+      commitMessage: LEDGER_COMMIT_MESSAGE,
+    });
     await this.store.markLedgerPromoted(thread.id);
   }
 
@@ -734,7 +829,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     const key = `${stimulus.orgId}:${stimulus.threadId}`;
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     // Chain after any in-flight turn (swallow its error so a failed turn doesn't break the queue).
-    const next = prev.catch(() => undefined).then(() => this.runChatTurn(stimulus));
+    const next = prev
+      .catch(() => undefined)
+      .then(() => this.runChatTurn(stimulus));
     // Track this as the tail; clear the map entry once it settles IF nothing newer queued behind it.
     this.turnQueues.set(
       key,
@@ -752,9 +849,13 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * current `turnQueues` snapshot is the complete in-flight set.
    */
   async drainInFlight(graceMs: number): Promise<boolean> {
-    const tails = [...this.turnQueues.values()].map((p) => p.catch(() => undefined));
+    const tails = [...this.turnQueues.values()].map((p) =>
+      p.catch(() => undefined),
+    );
     if (tails.length === 0) return true;
-    this.logger.log(`Drain: awaiting ${tails.length} in-flight turn(s) (grace ${graceMs}ms)`);
+    this.logger.log(
+      `Drain: awaiting ${tails.length} in-flight turn(s) (grace ${graceMs}ms)`,
+    );
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), graceMs);
@@ -774,7 +875,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    */
   private async reattachInFlightTurns(): Promise<void> {
     if (!this.engineRunner.reattach) {
-      this.logger.warn('redis re-attach: the bound ENGINE_RUNNER has no reattach() — skipping');
+      this.logger.warn(
+        'redis re-attach: the bound ENGINE_RUNNER has no reattach() — skipping',
+      );
       return;
     }
     let rows: ActiveTurnEntity[];
@@ -786,7 +889,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     }
     const brain = rows.filter((r) => r.kind === 'brain');
     if (brain.length === 0) return;
-    this.logger.log(`Leader: re-attaching ${brain.length} in-flight brain turn(s) over Redis`);
+    this.logger.log(
+      `Leader: re-attaching ${brain.length} in-flight brain turn(s) over Redis`,
+    );
     for (const row of brain) {
       void this.reattachOne(row).catch((err) =>
         this.logger.warn(`re-attach turn ${row.turn_id} failed: ${err}`),
@@ -800,10 +905,21 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       repoId?: string;
       author?: { id: string; displayName: string };
       body?: string;
+      seed?: boolean;
+      seedQuestionId?: string;
     };
-    if (!row.container_id || !ctx.repoId || !ctx.author || ctx.body === undefined) {
-      this.logger.warn(`re-attach turn ${row.turn_id}: insufficient registry ctx — finalizing failed`);
-      await this.turnRegistry.finalize(row.turn_id, 'failed').catch(() => undefined);
+    if (
+      !row.container_id ||
+      !ctx.repoId ||
+      !ctx.author ||
+      ctx.body === undefined
+    ) {
+      this.logger.warn(
+        `re-attach turn ${row.turn_id}: insufficient registry ctx — finalizing failed`,
+      );
+      await this.turnRegistry
+        .finalize(row.turn_id, 'failed')
+        .catch(() => undefined);
       return;
     }
     // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/threadId/author/body).
@@ -818,18 +934,27 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       author: ctx.author,
       replyRoute: { surfaceId: 'web', threadRef: row.thread_id },
       receivedAt: new Date(),
+      ...(ctx.seed ? { seed: true } : {}),
+      ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
     };
     const tools = this.buildTools(stimulus);
-    const streamer = this.turnHarness.create({ threadId: row.thread_id, channel: row.channel });
+    const streamer = this.turnHarness.create({
+      threadId: row.thread_id,
+      channel: row.channel,
+    });
     const sandboxRow = await this.sandboxRows.findOne({
       where: { thread_id: row.thread_id, org_id: row.org_id },
     });
     await this.store.setTurnActive(row.thread_id, true).catch(() => undefined);
     try {
-      const result = await this.engineRunner.reattach!(row.turn_id, row.container_id, {
-        onEvent: (e) => streamer.onEvent(e),
-        toolBridge: { threadId: row.thread_id, tools },
-      });
+      const result = await this.engineRunner.reattach!(
+        row.turn_id,
+        row.container_id,
+        {
+          onEvent: (e) => streamer.onEvent(e),
+          toolBridge: { threadId: row.thread_id, tools },
+        },
+      );
       if (result.sessionId && sandboxRow) {
         sandboxRow.session_id = result.sessionId;
         await this.sandboxRows.save(sandboxRow).catch(() => undefined);
@@ -840,16 +965,22 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           ? {
               usage: result.usage,
               contextTokens: result.usage.contextTokens ?? null,
-              contextLimit: resolveContextLimit(result.usage.contextModel ?? result.usage.model),
+              contextLimit: resolveContextLimit(
+                result.usage.contextModel ?? result.usage.model,
+              ),
             }
           : undefined,
       );
       this.logger.log(`re-attached turn ${row.turn_id} completed + persisted`);
     } catch (err) {
-      this.logger.warn(`re-attached turn ${row.turn_id} ended in error: ${err}`);
+      this.logger.warn(
+        `re-attached turn ${row.turn_id} ended in error: ${err}`,
+      );
       await streamer.finish();
     } finally {
-      await this.store.setTurnActive(row.thread_id, false).catch(() => undefined);
+      await this.store
+        .setTurnActive(row.thread_id, false)
+        .catch(() => undefined);
     }
   }
 
@@ -860,11 +991,15 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * writes never block the turn. Delegates the actual turn to `runChatTurnInner`.
    */
   private async runChatTurn(stimulus: ChatStimulus): Promise<void> {
-    await this.store.setTurnActive(stimulus.threadId, true).catch(() => undefined);
+    await this.store
+      .setTurnActive(stimulus.threadId, true)
+      .catch(() => undefined);
     try {
       await this.runChatTurnInner(stimulus);
     } finally {
-      await this.store.setTurnActive(stimulus.threadId, false).catch(() => undefined);
+      await this.store
+        .setTurnActive(stimulus.threadId, false)
+        .catch(() => undefined);
     }
   }
 
@@ -878,17 +1013,20 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     // old prose-linkage that opportunistically stamped the latest unanswered card was the bug where a
     // queued chat message got consumed as the answer to a later question.)
 
-    // Human-input gate delivery: if this thread's gate points at a now-ANSWERED, not-yet-DELIVERED question
-    // (the answer was stamped by the endpoint, the prose path above, or persisted before a crash), THIS turn
-    // is its delivery turn — INCLUDING a SEED-authored answer-delivery turn (the `/answer-question` endpoint
-    // delivers via `seedSystemNotification`), so this capture is UNCONDITIONAL. We stamp `deliveredAt` + clear
-    // the pointer ONLY on the successful tail below — never on an early return / error — so a failed turn
-    // re-delivers (at-least-once). Correctness keys off the durable gate, not which path triggered the turn.
+    // Human-input gate delivery: a turn carrying a `seedQuestionId` IS the delivery turn for that exact
+    // `ask_question` card — the `/answer-question` endpoint (and the boot sweep) seed the answer via
+    // `seedSystemNotification` with `deliveredQuestionId`, which rides onto the stimulus. We stamp THAT card
+    // `deliveredAt` ONLY on the successful tail below — never on an early return / error — so a failed turn
+    // re-delivers (at-least-once). Tying the stamp to the answer-carrying seed (rather than scanning a shared
+    // pointer) means an unrelated operator turn can never prematurely mark a card delivered.
     let deliveredQuestionId: string | null = null;
-    const awaitingId = await this.store.awaitingQuestionId(stimulus.threadId);
-    if (awaitingId) {
-      const card = await this.store.getQuestionCard(stimulus.threadId, awaitingId);
-      if (card?.answer != null && card.deliveredAt == null) deliveredQuestionId = awaitingId;
+    if (stimulus.seedQuestionId) {
+      const card = await this.store.getQuestionCard(
+        stimulus.threadId,
+        stimulus.seedQuestionId,
+      );
+      if (card?.answer != null && card.deliveredAt == null)
+        deliveredQuestionId = stimulus.seedQuestionId;
     }
 
     // Secret-gate delivery (same at-least-once shape): if the gate points at a PROVIDED, not-yet-DELIVERED
@@ -897,28 +1035,46 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     let deliveredSecretId: string | null = null;
     const awaitingSecret = await this.store.awaitingSecretId(stimulus.threadId);
     if (awaitingSecret) {
-      const card = await this.store.getSecretCard(stimulus.threadId, awaitingSecret);
-      if (card?.provided_at != null && card.delivered_at == null) deliveredSecretId = awaitingSecret;
+      const card = await this.store.getSecretCard(
+        stimulus.threadId,
+        awaitingSecret,
+      );
+      if (card?.provided_at != null && card.delivered_at == null)
+        deliveredSecretId = awaitingSecret;
     }
 
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
     // we're setting up so the first turn isn't a silent ~30s wait while we clone + start a container.
-    const alreadyProvisioned = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
+    const alreadyProvisioned = await this.lifecycle.findSandbox(
+      stimulus.threadId,
+      stimulus.orgId,
+    );
     if (!alreadyProvisioned) {
-      await this.say(stimulus, 'Setting up an isolated workspace for this thread — one moment…');
+      await this.say(
+        stimulus,
+        'Setting up an isolated workspace for this thread — one moment…',
+      );
     }
     try {
-      const provisioned = await this.lifecycle.ensureProvisioned(stimulus.threadId, stimulus.orgId);
+      const provisioned = await this.lifecycle.ensureProvisioned(
+        stimulus.threadId,
+        stimulus.orgId,
+      );
       if (!provisioned) {
-        await this.say(stimulus, 'This thread is closed — start a new one to keep working.');
+        await this.say(
+          stimulus,
+          'This thread is closed — start a new one to keep working.',
+        );
         return;
       }
     } catch (err) {
       if (err instanceof ProvisioningNotReadyError) {
         await this.say(stimulus, err.message);
       } else {
-        this.logger.error(`provisioning failed for thread=${stimulus.threadId}: ${err}`);
+        this.logger.error(
+          `provisioning failed for thread=${stimulus.threadId}: ${err}`,
+        );
         await this.say(
           stimulus,
           `I couldn't set up a workspace for this thread. (${String(err).slice(0, 200)})`,
@@ -929,12 +1085,18 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
     // (Re-)attach a live container against the thread's durable worktree. Returns null only if the
     // thread has no sandbox row (just provisioned above, so unexpected) or is closed.
-    const ensured = await this.lifecycle.ensureContainer(stimulus.threadId, stimulus.orgId);
+    const ensured = await this.lifecycle.ensureContainer(
+      stimulus.threadId,
+      stimulus.orgId,
+    );
     if (!ensured) {
       this.logger.warn(
         `No sandbox for thread=${stimulus.threadId} team=${stimulus.orgId} — cannot run in-sandbox turn`,
       );
-      await this.say(stimulus, 'Please create a thread via the web app to start a scoping session.');
+      await this.say(
+        stimulus,
+        'Please create a thread via the web app to start a scoping session.',
+      );
       return;
     }
     const sandbox = ensured.sandbox;
@@ -947,7 +1109,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
     // Cold re-attach while resuming a session → the session remembers in-container state that's gone.
     // Prepend the reset notice so it re-establishes its runtime instead of trusting stale beliefs.
-    let task = ensured.wasReset && sessionId ? `${SANDBOX_RESET_NOTICE}\n\n${stimulus.body}` : stimulus.body;
+    let task =
+      ensured.wasReset && sessionId
+        ? `${SANDBOX_RESET_NOTICE}\n\n${stimulus.body}`
+        : stimulus.body;
 
     // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
     // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
@@ -956,13 +1121,18 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpThread must not consume the
     // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
     if (isOperatorAuthored(stimulus)) {
-      const awarenessPrefix = await this.buildAwarenessPrefix(stimulus.threadId, stimulus.orgId);
+      const awarenessPrefix = await this.buildAwarenessPrefix(
+        stimulus.threadId,
+        stimulus.orgId,
+      );
       if (awarenessPrefix) task = `${awarenessPrefix}\n\n${task}`;
     }
 
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
     // toolset (the gating is enforced here, not just in prose — omitted tool names aren't registered).
-    const isOnboarding = (await this.store.loadJob(stimulus.threadId).catch(() => null))?.kind === 'onboarding';
+    const isOnboarding =
+      (await this.store.loadJob(stimulus.threadId).catch(() => null))?.kind ===
+      'onboarding';
 
     // Build the host-side tool dispatch table, scoped to this thread.
     const tools = this.buildTools(stimulus, isOnboarding);
@@ -979,7 +1149,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     });
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation.
-    const streamer = this.turnHarness.create({ threadId: stimulus.threadId, channel });
+    const streamer = this.turnHarness.create({
+      threadId: stimulus.threadId,
+      channel,
+    });
 
     const sandboxKey = `brain-${stimulus.orgId}-${stimulus.repoId}-${stimulus.threadId}`;
     // Per-org Claude subscription secret (deployed); undefined locally → the in-container engine falls
@@ -999,7 +1172,12 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       ...(sessionId ? { sessionId } : {}),
       ...(sandbox.containerId
-        ? { target: { containerId: sandbox.containerId, worktreeHost: sandbox.worktreePath } }
+        ? {
+            target: {
+              containerId: sandbox.containerId,
+              worktreeHost: sandbox.worktreePath,
+            },
+          }
         : {}),
       toolBridge: {
         threadId: stimulus.threadId,
@@ -1014,22 +1192,47 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         lane: 'main',
         kind: 'brain',
         // Enough to rebuild the ChatStimulus + buildTools closure on a boot re-attach (see reattachInFlightTurns).
-        ctx: { repoId: stimulus.repoId, sandboxKey, author: stimulus.author, body: stimulus.body },
+        // `seed`/`seedQuestionId` are persisted so a re-attached DELIVERY turn can still stamp its card
+        // `deliveredAt` on success — otherwise the boot sweep would re-seed that card on every restart forever.
+        ctx: {
+          repoId: stimulus.repoId,
+          sandboxKey,
+          author: stimulus.author,
+          body: stimulus.body,
+          ...(stimulus.seed ? { seed: true } : {}),
+          ...(stimulus.seedQuestionId
+            ? { seedQuestionId: stimulus.seedQuestionId }
+            : {}),
+        },
       },
       onEvent: (e) => {
         // EAGER session-id persist: the engine emits `{kind:'session'}` at turn START (before any work), so
         // a turn interrupted on its FIRST exchange — which never reaches the post-run persist below — still
         // leaves a resolvable session id on the row (helps resume AND crash recovery locate the transcript).
         // Fully defensive: a persistence hiccup here must NEVER break the live event stream.
-        if (e.kind === 'session' && e.sessionId && sandboxRow && sandboxRow.session_id !== e.sessionId) {
+        if (
+          e.kind === 'session' &&
+          e.sessionId &&
+          sandboxRow &&
+          sandboxRow.session_id !== e.sessionId
+        ) {
           const sid = e.sessionId;
           sandboxRow.session_id = sid;
           try {
             void Promise.resolve(
-              this.sandboxRows.update({ thread_id: stimulus.threadId, org_id: stimulus.orgId }, { session_id: sid }),
-            ).catch((err) => this.logger.warn(`eager session_id persist failed for thread=${stimulus.threadId}: ${err}`));
+              this.sandboxRows.update(
+                { thread_id: stimulus.threadId, org_id: stimulus.orgId },
+                { session_id: sid },
+              ),
+            ).catch((err) =>
+              this.logger.warn(
+                `eager session_id persist failed for thread=${stimulus.threadId}: ${err}`,
+              ),
+            );
           } catch (err) {
-            this.logger.warn(`eager session_id persist threw for thread=${stimulus.threadId}: ${err}`);
+            this.logger.warn(
+              `eager session_id persist threw for thread=${stimulus.threadId}: ${err}`,
+            );
           }
         }
         streamer.onEvent(e);
@@ -1040,7 +1243,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     try {
       result = await runner.run(runArgs);
     } catch (err) {
-      this.logger.error(`in-sandbox turn failed for thread=${stimulus.threadId}: ${err}`);
+      this.logger.error(
+        `in-sandbox turn failed for thread=${stimulus.threadId}: ${err}`,
+      );
       await streamer.finish();
       // An unresumable session is terminal for this thread — retrying re-hits the same missing transcript.
       // This is an error FOR THE OPERATOR, not Atlas: surface it as a system→operator notice (its own box,
@@ -1051,7 +1256,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           "This thread can't continue — its engine session state is gone (this happens after an engine update or if the session home was cleared). Retrying won't help. Please start a new thread to pick this back up.",
         );
       } else {
-        await this.say(stimulus, `I ran into an error — please try again. (${String(err).slice(0, 200)})`);
+        await this.say(
+          stimulus,
+          `I ran into an error — please try again. (${String(err).slice(0, 200)})`,
+        );
       }
       return;
     }
@@ -1075,22 +1283,22 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
             // didn't surface per-call usage — better a blank ring than a wrong ~94%.
             contextTokens: result.usage.contextTokens ?? null,
             // Resolve the window from the MAIN agent's model, not a helper picked up by billing usage.
-            contextLimit: resolveContextLimit(result.usage.contextModel ?? result.usage.model),
+            contextLimit: resolveContextLimit(
+              result.usage.contextModel ?? result.usage.model,
+            ),
           }
         : undefined,
     );
 
-    // SUCCESS TAIL ONLY: the brain consumed the answer this turn, so close the human-input gate — stamp
-    // `deliveredAt` (so the boot sweep won't re-deliver it) and clear the pointer (compare-and-clear, so a
-    // question opened DURING this turn isn't clobbered). Reached only on the happy path; every early return
-    // / error above leaves the question undelivered for the next turn or the boot sweep. Best-effort.
+    // SUCCESS TAIL ONLY: the brain consumed this seed's answer this turn, so stamp the card `deliveredAt`
+    // (the boot sweep won't re-deliver it). Reached only on the happy path; every early return / error above
+    // leaves the card undelivered for a re-seed by the boot sweep (at-least-once). Best-effort.
     if (deliveredQuestionId) {
       await this.store
         .markQuestionDelivered(stimulus.threadId, deliveredQuestionId)
-        .catch((err) => this.logger.warn(`markQuestionDelivered failed: ${err}`));
-      await this.store
-        .clearAwaitingQuestion(stimulus.threadId, deliveredQuestionId)
-        .catch((err) => this.logger.warn(`clearAwaitingQuestion failed: ${err}`));
+        .catch((err) =>
+          this.logger.warn(`markQuestionDelivered failed: ${err}`),
+        );
     }
 
     // SUCCESS TAIL — same for the secure-secret gate: the masked confirmation reached the brain this turn.
@@ -1112,7 +1320,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * build-free toolset (explore + ask + the secure config tools) and NONE of the plan/build/PR tools —
    * the omission is enforced (the in-container SDK only registers names present in the returned map).
    */
-  buildTools(stimulus: ChatStimulus, onboarding = false): Record<string, ToolImpl> {
+  buildTools(
+    stimulus: ChatStimulus,
+    onboarding = false,
+  ): Record<string, ToolImpl> {
     // CREATE a decision (the `create_decision` tool). Auto-attaches
     // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
     // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
@@ -1133,28 +1344,42 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       }
       if (!ruling) return { ok: false, reason: 'ruling is required' };
 
-      const answeredId = await this.store.awaitingQuestionId(stimulus.threadId);
-      const answeredCard = answeredId
-        ? (await this.store.getQuestionCard(stimulus.threadId, answeredId)) ?? undefined
-        : undefined;
+      // Attach the answered question: an explicit `questionId` (the brain named which question this
+      // decision settles — important when several are open) wins, else the card THIS turn delivered, else
+      // the most-recently-answered unlogged card. No single-slot pointer.
+      const explicitQuestionId =
+        typeof args['questionId'] === 'string'
+          ? (args['questionId'] as string).trim() || undefined
+          : undefined;
+      const answered = await this.resolveAnsweredCard(stimulus, explicitQuestionId);
+      const answeredId = answered?.id;
+      const answeredCard = answered?.card;
       const hasAnswer = answeredCard?.answer != null;
       // PROVENANCE: `confirmedByOperator` is true ONLY if the brain asserts it AND an operator answer is
       // actually attached (same `hasAnswer` the Q&A auto-attach uses — never a second pointer read, so the
       // two can't disagree). Default false: an unasked default lands as Atlas-authored, surfacing at the gate.
-      const confirmedByOperator = args['confirmedByOperator'] === true && hasAnswer;
+      const confirmedByOperator =
+        args['confirmedByOperator'] === true && hasAnswer;
       const title =
         String(args['title'] ?? '').trim() ||
         deriveDecisionTitle(hasAnswer ? answeredCard!.question : ruling);
-      const { decision, all } = await this.store.createDecision(stimulus.threadId, {
-        decisionClass,
-        title,
-        ruling,
-        confirmedByOperator,
-        ...(hasAnswer && answeredCard!.question ? { question: answeredCard!.question } : {}),
-        ...(hasAnswer ? { answer: answeredCard!.answer } : {}),
-      });
+      const { decision, all } = await this.store.createDecision(
+        stimulus.threadId,
+        {
+          decisionClass,
+          title,
+          ruling,
+          confirmedByOperator,
+          ...(hasAnswer && answeredCard!.question
+            ? { question: answeredCard!.question }
+            : {}),
+          ...(hasAnswer ? { answer: answeredCard!.answer } : {}),
+        },
+      );
       if (answeredId && hasAnswer) {
-        await this.store.updateCardMessage(stimulus.threadId, answeredId, { loggedDecision: true });
+        await this.store.updateCardMessage(stimulus.threadId, answeredId, {
+          loggedDecision: true,
+        });
       }
       await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
       // Echo the running provenance balance so the brain sees how much it has actually CONFIRMED vs authored.
@@ -1163,17 +1388,25 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         ok: true,
         decision,
         total: all.length,
-        provenance: { confirmed: confirmedCount, authored: all.length - confirmedCount },
+        provenance: {
+          confirmed: confirmedCount,
+          authored: all.length - confirmedCount,
+        },
       };
     };
 
     const tools: Record<string, ToolImpl> = {
       get_pipeline_state: async (_args) => {
-        return this.driverStore.getPipelineState(stimulus.threadId, stimulus.orgId);
+        return this.driverStore.getPipelineState(
+          stimulus.threadId,
+          stimulus.orgId,
+        );
       },
 
       get_decision_record: async (_args) => {
-        const record = await this.driverStore.getDecisionRecord(stimulus.threadId);
+        const record = await this.driverStore.getDecisionRecord(
+          stimulus.threadId,
+        );
         if (record) return record;
         // No proposal yet — surface the working set logged so far so the brain can see what it has locked.
         const pending = await this.store.pendingDecisions(stimulus.threadId);
@@ -1228,30 +1461,26 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           options,
           allowOther: args['allowOther'] !== false,
         });
-        // Open the durable human-input gate ATOMICALLY: persist the card row + point the thread's
-        // `awaiting_question_id` at it in one transaction (the surface `post` path does NOT persist
-        // `messages.card`; the card renders on the turn-end refetch). Refused if a question is already
-        // open, so the brain can't stack questions. The brain STOPS after asking and waits — the asking
-        // turn ends cleanly (async gate), the answer arrives on a later (delivery) turn.
+        // Open a question card ATOMICALLY: persist the card row + bump the thread's open-question counter in
+        // one transaction (the surface `post` path does NOT persist `messages.card`; the card renders on the
+        // turn-end refetch). Multiple questions MAY be open at once — each is answered independently via its
+        // own card; the asking turn ends cleanly (async gate) and each answer arrives on a later delivery turn.
         const opened = await this.store.openQuestion(stimulus.threadId, {
           ts: questionId,
           text: question,
           card: card as unknown as Record<string, unknown>,
         });
         if (!opened.ok) {
-          return {
-            ok: false,
-            reason: opened.alreadyOpen
-              ? 'A question is already awaiting the operator’s answer — wait for it before asking another.'
-              : 'Could not open the question (thread not found).',
-          };
+          return { ok: false, reason: 'Could not open the question (thread not found).' };
         }
         return {
           ok: true,
           questionId,
           message:
-            'Question posted to the operator as a card. Stop and wait for their answer — do not ask ' +
-            'anything else this turn. When their answer settles an always-ask decision, call create_decision.',
+            'Question posted to the operator as a card. Keep this tool call focused on ONE question, but you ' +
+            'MAY post more than one card when you have several distinct things to settle — they can be answered ' +
+            'in any order. Each answer arrives on a later turn; when one settles an always-ask decision, call ' +
+            'create_decision (pass `questionId` to attach that exact question).',
         };
       },
 
@@ -1264,19 +1493,29 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         if (!id) return { ok: false, reason: 'id is required' };
         // Validate decisionClass when present — an unrecognized class would persist but then be silently
         // dropped by the record renderer's class grouping. ruling/title are free text.
-        const patch: Partial<Pick<Decision, 'ruling' | 'title' | 'decisionClass' | 'confirmedByOperator'>> =
-          {};
+        const patch: Partial<
+          Pick<
+            Decision,
+            'ruling' | 'title' | 'decisionClass' | 'confirmedByOperator'
+          >
+        > = {};
         if (args['confirmedByOperator'] !== undefined) {
           // Promoting a default to operator-confirmed requires evidence: an operator answer must be attached
           // NOW (same rule as create_decision). A bare `true` with no answer on record coerces to false, so
           // confirmation is never asserted without a Q&A linkage. Demotion to false is always allowed.
           const wantsConfirm = args['confirmedByOperator'] === true;
           if (wantsConfirm) {
-            const answeredId = await this.store.awaitingQuestionId(stimulus.threadId);
-            const answeredCard = answeredId
-              ? await this.store.getQuestionCard(stimulus.threadId, answeredId)
-              : null;
-            patch.confirmedByOperator = answeredCard?.answer != null;
+            // Justify confirmation by a real attached answer (explicit `questionId` wins, else the card this
+            // turn delivered, else newest-answered). Attachment of the Q&A itself stays in `create_decision`.
+            const explicitQuestionId =
+              typeof args['questionId'] === 'string'
+                ? (args['questionId'] as string).trim() || undefined
+                : undefined;
+            const answered = await this.resolveAnsweredCard(
+              stimulus,
+              explicitQuestionId,
+            );
+            patch.confirmedByOperator = answered?.card.answer != null;
           } else {
             patch.confirmedByOperator = false;
           }
@@ -1304,13 +1543,29 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           patch.title = title;
         }
 
-        const result = await this.store.updateDecision(stimulus.threadId, id, patch);
+        const result = await this.store.updateDecision(
+          stimulus.threadId,
+          id,
+          patch,
+        );
         if (!result) {
           const pending = await this.store.pendingDecisions(stimulus.threadId);
-          return { ok: false, reason: `no decision with id "${id}"`, knownIds: pending.map((d) => d.id) };
+          return {
+            ok: false,
+            reason: `no decision with id "${id}"`,
+            knownIds: pending.map((d) => d.id),
+          };
         }
-        await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, result.all);
-        return { ok: true, decision: result.decision, total: result.all.length };
+        await this.writeDecisionRecordMd(
+          stimulus.threadId,
+          stimulus.orgId,
+          result.all,
+        );
+        return {
+          ok: true,
+          decision: result.decision,
+          total: result.all.length,
+        };
       },
 
       delete_decision: async (args) => {
@@ -1318,11 +1573,22 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         if (envelope) return envelope;
         const id = String(args['id'] ?? '').trim();
         if (!id) return { ok: false, reason: 'id is required' };
-        const { removed, all } = await this.store.deleteDecision(stimulus.threadId, id);
+        const { removed, all } = await this.store.deleteDecision(
+          stimulus.threadId,
+          id,
+        );
         if (!removed) {
-          return { ok: false, reason: `no decision with id "${id}"`, knownIds: all.map((d) => d.id) };
+          return {
+            ok: false,
+            reason: `no decision with id "${id}"`,
+            knownIds: all.map((d) => d.id),
+          };
         }
-        await this.writeDecisionRecordMd(stimulus.threadId, stimulus.orgId, all);
+        await this.writeDecisionRecordMd(
+          stimulus.threadId,
+          stimulus.orgId,
+          all,
+        );
         return { ok: true, removed: id, remainingIds: all.map((d) => d.id) };
       },
 
@@ -1346,12 +1612,16 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         const stepsByTrack = tracks.map((s) => s.steps);
 
         if (!overview || !goal || tracks.length === 0) {
-          return { ok: false, reason: 'overview, goal, and at least one track are required' };
+          return {
+            ok: false,
+            reason: 'overview, goal, and at least one track are required',
+          };
         }
         if (tracks.some((s) => s.steps.length === 0)) {
           return {
             ok: false,
-            reason: 'each track must have at least one step (each step needs a title and a brief)',
+            reason:
+              'each track must have at least one step (each step needs a title and a brief)',
           };
         }
 
@@ -1376,7 +1646,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         });
 
         // persistPlan retitled the thread to a short label (`job.title`). Repaint the open UI now.
-        this.surface.emitThreadMeta?.(stimulus.repoId, stimulus.threadId, job.title ?? goal);
+        this.surface.emitThreadMeta?.(
+          stimulus.repoId,
+          stimulus.threadId,
+          job.title ?? goal,
+        );
 
         // ── R4: async Codex plan review ────────────────────────────────────────────────────────
         // Open a review round (renders + persists the durable `plan_reviews` row); the Codex turn runs
@@ -1385,7 +1659,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         // Give the reviewer the operator's INTENT — the goal + the originating ticket (when the thread was
         // promoted from one) — so it judges whether the plan ACHIEVES what was asked, not just internal
         // consistency. Ticket fetch is best-effort.
-        const reviewTicket = await this.resolveReviewTicket(stimulus.orgId, stimulus.repoId, job.id);
+        const reviewTicket = await this.resolveReviewTicket(
+          stimulus.orgId,
+          stimulus.repoId,
+          job.id,
+        );
         const started = await this.planReview.start({
           threadId: job.id,
           orgId: stimulus.orgId,
@@ -1416,7 +1694,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
             job.id,
             "🔍 Codex is reviewing the plan — this can take a few minutes. I'll relay the findings when it's done.",
           )
-          .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
+          .catch((err) =>
+            this.logger.debug(`appendSystemEvent failed: ${err}`),
+          );
 
         // Fire-and-forget: run the review then deliver its findings (serialized by the turn queue).
         void this.runAndDeliverReview(started.reviewId);
@@ -1437,12 +1717,20 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         // The ONLY tool that posts the approval card — the operator is the final gate before the build.
         // Valid only after submit_plan persisted a plan (`plan_review`); Atlas calls it once it has
         // addressed (applied or pushed back on) the Codex review findings.
-        const job = await this.store.loadJob(stimulus.threadId).catch(() => null);
+        const job = await this.store
+          .loadJob(stimulus.threadId)
+          .catch(() => null);
         if (!job || !job.decisionRecordId) {
-          return { ok: false, reason: 'No plan to finalize — call submit_plan first.' };
+          return {
+            ok: false,
+            reason: 'No plan to finalize — call submit_plan first.',
+          };
         }
         if (job.status === 'awaiting_approval') {
-          return { ok: false, reason: 'This plan is already awaiting the operator’s approval.' };
+          return {
+            ok: false,
+            reason: 'This plan is already awaiting the operator’s approval.',
+          };
         }
         if (job.status !== 'plan_review') {
           return {
@@ -1464,7 +1752,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           };
         }
         const rec = await this.store.loadDecisionRecord(job.decisionRecordId);
-        if (!rec) return { ok: false, reason: 'No decision record found for this plan.' };
+        if (!rec)
+          return {
+            ok: false,
+            reason: 'No decision record found for this plan.',
+          };
 
         // Flip to the operator gate, then post the card + await the verdict in the background.
         await this.store.markAwaitingApproval(job.id);
@@ -1491,7 +1783,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         // GATED tool — only dispatches an already-approved (status=running) job.
         const jobId = await this.store.openJobOnThread(stimulus.threadId);
         if (!jobId) {
-          return { ok: false, reason: 'No open job on this thread — call submit_plan first' };
+          return {
+            ok: false,
+            reason: 'No open job on this thread — call submit_plan first',
+          };
         }
         const job = await this.store.loadJob(jobId);
         if (job.status !== 'running') {
@@ -1509,7 +1804,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         // gated by a lightweight approval; on approval an autonomous implementation turn runs.
         const summary = String(args['summary'] ?? '').trim();
         if (!summary) {
-          return { ok: false, reason: 'summary is required (what you will change, directly)' };
+          return {
+            ok: false,
+            reason: 'summary is required (what you will change, directly)',
+          };
         }
         const changeOutline = Array.isArray(args['changeOutline'])
           ? args['changeOutline'].map((c) => String(c).trim()).filter(Boolean)
@@ -1523,7 +1821,12 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         // SAFETY GATE: "small" must NOT mean skipping an always-ask decision. Classify the change against
         // the locked decisions; an UNCOVERED always-ask class → refuse the fast path.
         const classification = await this.classifier.classify(
-          { description: summary, ...(changeOutline.length ? { context: changeOutline.join('\n') } : {}) },
+          {
+            description: summary,
+            ...(changeOutline.length
+              ? { context: changeOutline.join('\n') }
+              : {}),
+          },
           { decisions },
           stimulus.orgId,
         );
@@ -1577,7 +1880,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         // GATED — callable only inside the autonomous implementation turn of an APPROVED direct build
         // (status 'running'). Commits whatever was written, then runs the shared terminal ship.
         const jobId = await this.store.openJobOnThread(stimulus.threadId);
-        if (!jobId) return { ok: false, reason: 'No open job on this thread — nothing to finalize' };
+        if (!jobId)
+          return {
+            ok: false,
+            reason: 'No open job on this thread — nothing to finalize',
+          };
         const job = await this.store.loadJob(jobId);
         if (job.status !== 'running') {
           return {
@@ -1585,12 +1892,22 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
             reason: `Job ${jobId} is '${job.status}' — only an approved (running) build can be finalized`,
           };
         }
-        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
-        if (!sandbox) return { ok: false, reason: 'No sandbox for this thread — cannot finalize' };
+        const sandbox = await this.lifecycle.findSandbox(
+          stimulus.threadId,
+          stimulus.orgId,
+        );
+        if (!sandbox)
+          return {
+            ok: false,
+            reason: 'No sandbox for this thread — cannot finalize',
+          };
 
         const rec = (await this.driverStore
           .getDecisionRecord(stimulus.threadId)
-          .catch(() => null)) as { overview: string; decisions: Decision[] } | null;
+          .catch(() => null)) as {
+          overview: string;
+          decisions: Decision[];
+        } | null;
         const repo = await this.repos.resolve(job);
 
         const result = await this.ship.ship({
@@ -1604,14 +1921,29 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
         // The build (incl. any `.atlas/decisions/` the brain promoted before finalizing) is now committed —
         // mark the ledger promotion complete so the boot backstop won't re-run it.
-        await this.store.markLedgerPromoted(jobId).catch((err) =>
-          this.logger.debug(`markLedgerPromoted failed for ${jobId} (boot backstop will retry): ${err}`),
-        );
+        await this.store
+          .markLedgerPromoted(jobId)
+          .catch((err) =>
+            this.logger.debug(
+              `markLedgerPromoted failed for ${jobId} (boot backstop will retry): ${err}`,
+            ),
+          );
 
         if (!result) {
-          return { ok: true, jobId, message: 'Committed, but no GitHub token is configured — PR not opened.' };
+          return {
+            ok: true,
+            jobId,
+            message:
+              'Committed, but no GitHub token is configured — PR not opened.',
+          };
         }
-        return { ok: true, jobId, prUrl: result.url, prNumber: result.number, message: `PR opened: ${result.url}` };
+        return {
+          ok: true,
+          jobId,
+          prUrl: result.url,
+          prNumber: result.number,
+          message: `PR opened: ${result.url}`,
+        };
       },
 
       promote_decisions: async (args) => {
@@ -1619,22 +1951,40 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         // `.atlas/decisions/` ledger (the host writes the files into the worktree; the next ship commit
         // sweeps them). The brain decides WHAT is durable + authors the prose; the host only writes +
         // validates + keeps the supersession graph consistent. Idempotent on stable slugs.
-        const rawList = Array.isArray(args['decisions']) ? args['decisions'] : [];
+        const rawList = Array.isArray(args['decisions'])
+          ? args['decisions']
+          : [];
         if (rawList.length === 0) {
           // Not an error: a thread may have no durable, cross-cutting calls worth promoting.
-          return { ok: true, written: [], message: 'No durable decisions to promote — nothing written.' };
+          return {
+            ok: true,
+            written: [],
+            message: 'No durable decisions to promote — nothing written.',
+          };
         }
-        const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
-        if (!sandbox) return { ok: false, reason: 'No sandbox for this thread — cannot write the ledger' };
+        const sandbox = await this.lifecycle.findSandbox(
+          stimulus.threadId,
+          stimulus.orgId,
+        );
+        if (!sandbox)
+          return {
+            ok: false,
+            reason: 'No sandbox for this thread — cannot write the ledger',
+          };
 
         let entries: LedgerEntryInput[];
         try {
-          entries = rawList.map((r) => normalizeLedgerEntry(r, stimulus.threadId));
+          entries = rawList.map((r) =>
+            normalizeLedgerEntry(r, stimulus.threadId),
+          );
         } catch (err) {
           return { ok: false, reason: errText(err) };
         }
         try {
-          const result = await this.ledger.promote(sandbox.worktreePath, entries);
+          const result = await this.ledger.promote(
+            sandbox.worktreePath,
+            entries,
+          );
           // Phase 2: record the promotion-time baseline in the manifest (proposed rows) so the merge hook
           // can flip them to accepted + detect later human edits. Best-effort — the files are the truth.
           const manifestRows: PromotedManifestInput[] = entries.map((e) => ({
@@ -1649,27 +1999,39 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           }));
           await this.manifest
             .recordPromoted(stimulus.orgId, stimulus.repoId, manifestRows)
-            .catch((err) => this.logger.warn(`manifest recordPromoted failed (continuing): ${err}`));
+            .catch((err) =>
+              this.logger.warn(
+                `manifest recordPromoted failed (continuing): ${err}`,
+              ),
+            );
           return {
             ok: true,
             written: result.written,
             superseded: result.superseded,
             message:
               `Promoted ${result.written.length} decision(s) to .atlas/decisions/` +
-              (result.superseded.length ? ` (superseded ${result.superseded.join(', ')})` : '') +
+              (result.superseded.length
+                ? ` (superseded ${result.superseded.join(', ')})`
+                : '') +
               '. They will be committed with the build.',
           };
         } catch (err) {
-          if (err instanceof LedgerValidationError) return { ok: false, reason: err.message };
+          if (err instanceof LedgerValidationError)
+            return { ok: false, reason: err.message };
           return { ok: false, reason: errText(err) };
         }
       },
 
       create_thread: async (args) => {
         const firstMessage = String(args['firstMessage'] ?? '').trim();
-        const title = String(args['title'] ?? '').trim() || jobTitle(firstMessage);
+        const title =
+          String(args['title'] ?? '').trim() || jobTitle(firstMessage);
         if (!firstMessage) {
-          return { ok: false, reason: 'firstMessage is required (the new thread\'s opening intent)' };
+          return {
+            ok: false,
+            reason:
+              "firstMessage is required (the new thread's opening intent)",
+          };
         }
 
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
@@ -1684,10 +2046,19 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
         // Kick the new thread's brain with its opening intent. Fire-and-forget — the parent's turn doesn't
         // block on the child's provisioning (~30s); the intent is recorded so it's visible if the start fails.
-        void this.startFollowUpThread(newThreadId, stimulus.orgId, stimulus.repoId, firstMessage).catch((err) =>
-          this.logger.warn(`create_thread: start of ${newThreadId} failed: ${err}`),
+        void this.startFollowUpThread(
+          newThreadId,
+          stimulus.orgId,
+          stimulus.repoId,
+          firstMessage,
+        ).catch((err) =>
+          this.logger.warn(
+            `create_thread: start of ${newThreadId} failed: ${err}`,
+          ),
         );
-        this.logger.log(`thread ${stimulus.threadId} created + started follow-up ${newThreadId}`);
+        this.logger.log(
+          `thread ${stimulus.threadId} created + started follow-up ${newThreadId}`,
+        );
         return {
           ok: true,
           threadId: newThreadId,
@@ -1701,15 +2072,32 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       create_ticket: async (args) => {
         const title = String(args['title'] ?? '').trim();
         if (!title) return { ok: false, reason: 'title is required' };
-        const status = optEnum(args['status'], isTicketStatus) as TicketStatus | undefined;
-        if (args['status'] != null && !status) return { ok: false, reason: `invalid status: ${String(args['status'])}` };
-        const priority = optEnum(args['priority'], isTicketPriority) as TicketPriority | undefined;
-        if (args['priority'] != null && !priority) return { ok: false, reason: `invalid priority: ${String(args['priority'])}` };
-        const kind = optEnum(args['kind'], isTicketKind) as TicketKind | undefined;
-        if (args['kind'] != null && !kind) return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
+        const status = optEnum(args['status'], isTicketStatus) as
+          | TicketStatus
+          | undefined;
+        if (args['status'] != null && !status)
+          return {
+            ok: false,
+            reason: `invalid status: ${String(args['status'])}`,
+          };
+        const priority = optEnum(args['priority'], isTicketPriority) as
+          | TicketPriority
+          | undefined;
+        if (args['priority'] != null && !priority)
+          return {
+            ok: false,
+            reason: `invalid priority: ${String(args['priority'])}`,
+          };
+        const kind = optEnum(args['kind'], isTicketKind) as
+          | TicketKind
+          | undefined;
+        if (args['kind'] != null && !kind)
+          return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
 
         // Stamp provenance from THIS thread + its locked decision (if any) — closure-derived, not args.
-        const job = await this.store.loadJob(stimulus.threadId).catch(() => null);
+        const job = await this.store
+          .loadJob(stimulus.threadId)
+          .catch(() => null);
         try {
           const ticket = await this.tickets.create({
             orgId: stimulus.orgId,
@@ -1723,20 +2111,42 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
             originDecisionRecordId: job?.decisionRecordId ?? null,
             dependsOn: strArray(args['dependsOn']),
           });
-          return { ok: true, ticketId: ticket.id, number: ticket.number, message: `Captured ticket #${ticket.number}: ${title}` };
+          return {
+            ok: true,
+            ticketId: ticket.id,
+            number: ticket.number,
+            message: `Captured ticket #${ticket.number}: ${title}`,
+          };
         } catch (err) {
           return { ok: false, reason: errText(err) };
         }
       },
 
       list_tickets: async (args) => {
-        const status = optEnum(args['status'], isTicketStatus) as TicketStatus | undefined;
-        if (args['status'] != null && !status) return { ok: false, reason: `invalid status: ${String(args['status'])}` };
+        const status = optEnum(args['status'], isTicketStatus) as
+          | TicketStatus
+          | undefined;
+        if (args['status'] != null && !status)
+          return {
+            ok: false,
+            reason: `invalid status: ${String(args['status'])}`,
+          };
         try {
-          const rows = await this.tickets.list({ orgId: stimulus.orgId, repoId: stimulus.repoId, status });
+          const rows = await this.tickets.list({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            status,
+          });
           return {
             ok: true,
-            tickets: rows.map((t) => ({ id: t.id, number: t.number, title: t.title, status: t.status, priority: t.priority, kind: t.kind })),
+            tickets: rows.map((t) => ({
+              id: t.id,
+              number: t.number,
+              title: t.title,
+              status: t.status,
+              priority: t.priority,
+              kind: t.kind,
+            })),
           };
         } catch (err) {
           return { ok: false, reason: errText(err) };
@@ -1746,18 +2156,45 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       update_ticket: async (args) => {
         const ticketId = String(args['ticketId'] ?? '').trim();
         if (!ticketId) return { ok: false, reason: 'ticketId is required' };
-        const status = optEnum(args['status'], isTicketStatus) as TicketStatus | undefined;
-        if (args['status'] != null && !status) return { ok: false, reason: `invalid status: ${String(args['status'])}` };
-        const priority = optEnum(args['priority'], isTicketPriority) as TicketPriority | undefined;
-        if (args['priority'] != null && !priority) return { ok: false, reason: `invalid priority: ${String(args['priority'])}` };
-        const kind = optEnum(args['kind'], isTicketKind) as TicketKind | undefined;
-        if (args['kind'] != null && !kind) return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
+        const status = optEnum(args['status'], isTicketStatus) as
+          | TicketStatus
+          | undefined;
+        if (args['status'] != null && !status)
+          return {
+            ok: false,
+            reason: `invalid status: ${String(args['status'])}`,
+          };
+        const priority = optEnum(args['priority'], isTicketPriority) as
+          | TicketPriority
+          | undefined;
+        if (args['priority'] != null && !priority)
+          return {
+            ok: false,
+            reason: `invalid priority: ${String(args['priority'])}`,
+          };
+        const kind = optEnum(args['kind'], isTicketKind) as
+          | TicketKind
+          | undefined;
+        if (args['kind'] != null && !kind)
+          return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
         try {
           const t = await this.tickets.update(
             { orgId: stimulus.orgId, repoId: stimulus.repoId, ticketId },
-            { title: optStr(args['title']) ?? undefined, body: 'body' in args ? optStr(args['body']) : undefined, status, priority, kind },
+            {
+              title: optStr(args['title']) ?? undefined,
+              body: 'body' in args ? optStr(args['body']) : undefined,
+              status,
+              priority,
+              kind,
+            },
           );
-          return { ok: true, ticketId: t.id, number: t.number, status: t.status, message: `Updated ticket #${t.number}` };
+          return {
+            ok: true,
+            ticketId: t.id,
+            number: t.number,
+            status: t.status,
+            message: `Updated ticket #${t.number}`,
+          };
         } catch (err) {
           return { ok: false, reason: errText(err) };
         }
@@ -1765,11 +2202,25 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
       link_ticket_dependency: async (args) => {
         const ticketId = String(args['ticketId'] ?? '').trim();
-        const dependsOnTicketId = String(args['dependsOnTicketId'] ?? '').trim();
-        if (!ticketId || !dependsOnTicketId) return { ok: false, reason: 'ticketId and dependsOnTicketId are required' };
+        const dependsOnTicketId = String(
+          args['dependsOnTicketId'] ?? '',
+        ).trim();
+        if (!ticketId || !dependsOnTicketId)
+          return {
+            ok: false,
+            reason: 'ticketId and dependsOnTicketId are required',
+          };
         try {
-          await this.tickets.addDependency({ orgId: stimulus.orgId, repoId: stimulus.repoId, ticketId, dependsOnTicketId });
-          return { ok: true, message: 'Recorded advisory dependency (blocked-by).' };
+          await this.tickets.addDependency({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            ticketId,
+            dependsOnTicketId,
+          });
+          return {
+            ok: true,
+            message: 'Recorded advisory dependency (blocked-by).',
+          };
         } catch (err) {
           return { ok: false, reason: errText(err) };
         }
@@ -1779,11 +2230,22 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         const ticketId = String(args['ticketId'] ?? '').trim();
         if (!ticketId) return { ok: false, reason: 'ticketId is required' };
         try {
-          const result = await this.tickets.promote({ orgId: stimulus.orgId, repoId: stimulus.repoId, ticketId });
+          const result = await this.tickets.promote({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            ticketId,
+          });
           if (result.created && result.seedText) {
             // Kick the new thread's brain in-process (same as create_thread). Fire-and-forget.
-            void this.startFollowUpThread(result.threadId, stimulus.orgId, stimulus.repoId, result.seedText).catch((err) =>
-              this.logger.warn(`promote_ticket: start of ${result.threadId} failed: ${err}`),
+            void this.startFollowUpThread(
+              result.threadId,
+              stimulus.orgId,
+              stimulus.repoId,
+              result.seedText,
+            ).catch((err) =>
+              this.logger.warn(
+                `promote_ticket: start of ${result.threadId} failed: ${err}`,
+              ),
             );
           }
           return {
@@ -1827,15 +2289,36 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       const path = String(args['path'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-        return { ok: false, reason: 'name must be an env-var-style identifier (e.g. DATABASE_URL)' };
+        return {
+          ok: false,
+          reason:
+            'name must be an env-var-style identifier (e.g. DATABASE_URL)',
+        };
       }
       if (!path || path.startsWith('/') || path.split('/').includes('..')) {
-        return { ok: false, reason: 'path must be a worktree-relative file path (e.g. .env), no leading / or ..' };
+        return {
+          ok: false,
+          reason:
+            'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
+        };
       }
-      if (!description) return { ok: false, reason: 'description is required (why the secret is needed)' };
+      if (!description)
+        return {
+          ok: false,
+          reason: 'description is required (why the secret is needed)',
+        };
       const requestId = `s-${randomUUID()}`;
-      const card = webSecretInputCard({ threadId: stimulus.threadId, requestId, name, path, description });
-      const opened = await this.store.openSecretRequest(stimulus.threadId, { requestId, card });
+      const card = webSecretInputCard({
+        threadId: stimulus.threadId,
+        requestId,
+        name,
+        path,
+        description,
+      });
+      const opened = await this.store.openSecretRequest(stimulus.threadId, {
+        requestId,
+        card,
+      });
       if (!opened.ok) {
         return {
           ok: false,
@@ -1862,19 +2345,32 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
   private buildWriteWorktreeConfigTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
       if (args['secrets'] !== undefined) {
-        return { ok: false, reason: 'secrets do not go in .atlas/worktree.json — use request_secret instead' };
+        return {
+          ok: false,
+          reason:
+            'secrets do not go in .atlas/worktree.json — use request_secret instead',
+        };
       }
       const mounts = this.normalizeMounts(args['mounts']);
       const seed = this.normalizeSeed(args['seed']);
-      const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
-      if (!sandbox) return { ok: false, reason: 'no sandbox for this thread yet' };
+      const sandbox = await this.lifecycle.findSandbox(
+        stimulus.threadId,
+        stimulus.orgId,
+      );
+      if (!sandbox)
+        return { ok: false, reason: 'no sandbox for this thread yet' };
       const dir = join(sandbox.worktreePath, '.atlas');
       await mkdir(dir, { recursive: true });
       const body = JSON.stringify({ mounts, seed }, null, 2) + '\n';
       await writeFile(join(dir, 'worktree.json'), body, 'utf8');
       // Re-parse through the loader to surface any limit/shape warnings to the brain.
       const { warnings } = loadWorktreeManifest(sandbox.worktreePath);
-      return { ok: true, mounts: mounts.length, seed: seed.length, ...(warnings.length ? { warnings } : {}) };
+      return {
+        ok: true,
+        mounts: mounts.length,
+        seed: seed.length,
+        ...(warnings.length ? { warnings } : {}),
+      };
     };
   }
 
@@ -1887,17 +2383,29 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
   private buildFinishOnboardingTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
       const summary = String(args['summary'] ?? '').trim();
-      const sandbox = await this.lifecycle.findSandbox(stimulus.threadId, stimulus.orgId);
-      if (!sandbox) return { ok: false, reason: 'no sandbox for this thread yet' };
+      const sandbox = await this.lifecycle.findSandbox(
+        stimulus.threadId,
+        stimulus.orgId,
+      );
+      if (!sandbox)
+        return { ok: false, reason: 'no sandbox for this thread yet' };
       const { manifest } = loadWorktreeManifest(sandbox.worktreePath);
       const hasConfig = manifest.mounts.length > 0 || manifest.seed.length > 0;
 
-      if (summary) await this.store.appendSystemEvent(stimulus.threadId, `🎉 Onboarding complete — ${summary}`);
+      if (summary)
+        await this.store.appendSystemEvent(
+          stimulus.threadId,
+          `🎉 Onboarding complete — ${summary}`,
+        );
 
       if (!hasConfig) {
         // Nothing to commit → the repo is provisioned purely by backend grants; mark it onboarded now.
         await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
-        return { ok: true, prOpened: false, message: 'Onboarding complete. Repo marked ready.' };
+        return {
+          ok: true,
+          prOpened: false,
+          message: 'Onboarding complete. Repo marked ready.',
+        };
       }
 
       // Commit `.atlas/worktree.json` and open a PR for the operator to merge (reuses the shared ship path:
@@ -1914,8 +2422,19 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
           notify: (m) => this.store.appendSystemEvent(stimulus.threadId, m),
         });
         return result
-          ? { ok: true, prOpened: true, prUrl: result.url, message: 'Opened a PR with the worktree config. Merge it to activate the config for future threads.' }
-          : { ok: true, prOpened: false, message: 'Wrote the config but no GitHub token is set — connect one to open the PR.' };
+          ? {
+              ok: true,
+              prOpened: true,
+              prUrl: result.url,
+              message:
+                'Opened a PR with the worktree config. Merge it to activate the config for future threads.',
+            }
+          : {
+              ok: true,
+              prOpened: false,
+              message:
+                'Wrote the config but no GitHub token is set — connect one to open the PR.',
+            };
       } catch (err) {
         return { ok: false, reason: errText(err) };
       }
@@ -1929,8 +2448,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     for (const e of raw) {
       const o = e as Record<string, unknown>;
       const path = String(o?.['path'] ?? '').trim();
-      if (!path || path.startsWith('/') || path.split('/').includes('..')) continue;
-      const mode: MountMode = o?.['mode'] === 'shared-ro' ? 'shared-ro' : 'per-thread';
+      if (!path || path.startsWith('/') || path.split('/').includes('..'))
+        continue;
+      const mode: MountMode =
+        o?.['mode'] === 'shared-ro' ? 'shared-ro' : 'per-thread';
       out.push({ path, mode });
     }
     return out;
@@ -1950,14 +2471,45 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * read-only mount). Called on every decision mutation, so the file stays incremental + in lockstep with
    * the structured `pending_decisions` — coding agents read it for grounding but never author it.
    */
+  /**
+   * Resolve which ANSWERED `ask_question` card a decision should attach, with multiple questions possibly
+   * open: an explicit `questionId` (the brain named one) wins, else the card THIS turn delivered
+   * (`stimulus.seedQuestionId`), else the most-recently-answered not-yet-logged card. Returns the card +
+   * its id, or null when none is answered. There is no single-slot pointer to read.
+   */
+  private async resolveAnsweredCard(
+    stimulus: ChatStimulus,
+    explicitQuestionId?: string,
+  ): Promise<{ id: string; card: WebQuestionCard } | null> {
+    const byId = async (id?: string) => {
+      if (!id) return null;
+      const card = await this.store.getQuestionCard(stimulus.threadId, id);
+      return card?.answer != null ? { id, card } : null;
+    };
+    const explicit = await byId(explicitQuestionId);
+    if (explicit) return explicit;
+    const seeded = await byId(stimulus.seedQuestionId);
+    if (seeded) return seeded;
+    const row = await this.store.latestAnsweredQuestionCard(stimulus.threadId);
+    const card = row?.card as WebQuestionCard | undefined;
+    return row?.ts && card?.answer != null ? { id: row.ts, card } : null;
+  }
+
   private async writeDecisionRecordMd(
     threadId: string,
     orgId: string,
     decisions: Decision[],
   ): Promise<void> {
-    const generatedDir = join(this.lifecycle.contextDirHost(threadId, orgId), 'generated');
+    const generatedDir = join(
+      this.lifecycle.contextDirHost(threadId, orgId),
+      'generated',
+    );
     await mkdir(generatedDir, { recursive: true });
-    await writeFile(join(generatedDir, 'decision-record.md'), renderDecisionRecordMd(decisions), 'utf8');
+    await writeFile(
+      join(generatedDir, 'decision-record.md'),
+      renderDecisionRecordMd(decisions),
+      'utf8',
+    );
   }
 
   // ── Approval flow ──────────────────────────────────────────────────────────────────────────────
@@ -1968,7 +2520,7 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    */
   async requestApprovalAndAct(
     stimulus: ChatStimulus,
-    job: Thread,
+    job: Job,
     decisionRecordId: string,
     card: DecisionApprovalCard,
   ): Promise<void> {
@@ -1989,7 +2541,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     // to `goal` in persistPlan (full path) / jobTitle(summary) (direct); publish a live `thread_meta`
     // frame so the open UI repaints the title in place. Emitted on the CARD path only (never on the
     // pre-review draft return), AFTER the durable write, so live and durable never diverge. Best-effort.
-    this.surface.emitThreadMeta?.(stimulus.repoId, stimulus.threadId, card.title);
+    this.surface.emitThreadMeta?.(
+      stimulus.repoId,
+      stimulus.threadId,
+      card.title,
+    );
 
     let resolution;
     try {
@@ -1999,7 +2555,13 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       return;
     }
 
-    await this.actOnApprovalVerdict(stimulus, job, decisionRecordId, card.kind === 'direct', resolution);
+    await this.actOnApprovalVerdict(
+      stimulus,
+      job,
+      decisionRecordId,
+      card.kind === 'direct',
+      resolution,
+    );
   }
 
   /**
@@ -2010,13 +2572,17 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    */
   private async actOnApprovalVerdict(
     stimulus: ChatStimulus,
-    job: Thread,
+    job: Job,
     decisionRecordId: string,
     isDirect: boolean,
     resolution: ApprovalResolution,
   ): Promise<void> {
     if (resolution.verdict === 'approve') {
-      const running = await this.store.approve(job.id, decisionRecordId, resolution.ruledBy);
+      const running = await this.store.approve(
+        job.id,
+        decisionRecordId,
+        resolution.ruledBy,
+      );
       if (isDirect) {
         // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
         await this.store.appendAtlasMessage(
@@ -2033,7 +2599,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
         void this.runDirectBuild(stimulus, running);
       } else {
         await this.dispatcher.dispatch(running);
-        await this.store.appendAtlasMessage(stimulus.threadId, 'Plan approved — dispatching the build.');
+        await this.store.appendAtlasMessage(
+          stimulus.threadId,
+          'Plan approved — dispatching the build.',
+        );
         // Passive milestones — recorded AFTER the durable `approve` + `dispatch`.
         await this.recordMilestone(
           stimulus.threadId,
@@ -2083,7 +2652,8 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     note?: string,
   ): Promise<boolean> {
     const job = await this.store.loadJob(jobId).catch(() => null);
-    if (!job || job.status !== 'awaiting_approval' || !job.decisionRecordId) return false;
+    if (!job || job.status !== 'awaiting_approval' || !job.decisionRecordId)
+      return false;
     const rec = await this.store.loadDecisionRecord(job.decisionRecordId);
     if (!rec) return false;
     const stimulus = harnessDeliveryStimulus({
@@ -2093,13 +2663,21 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       body: '',
     });
     const isDirect = (rec.trackTitles?.length ?? 0) === 0;
-    this.logger.log(`durable approval fallback for job ${jobId}: "${verdict}" by ${ruledBy} (direct=${isDirect})`);
-    await this.actOnApprovalVerdict(stimulus, job, job.decisionRecordId, isDirect, {
-      jobId,
-      verdict,
-      ruledBy,
-      ...(note ? { note } : {}),
-    });
+    this.logger.log(
+      `durable approval fallback for job ${jobId}: "${verdict}" by ${ruledBy} (direct=${isDirect})`,
+    );
+    await this.actOnApprovalVerdict(
+      stimulus,
+      job,
+      job.decisionRecordId,
+      isDirect,
+      {
+        jobId,
+        verdict,
+        ruledBy,
+        ...(note ? { note } : {}),
+      },
+    );
     return true;
   }
 
@@ -2113,7 +2691,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * streams to the thread and the session keeps full context. Fire-and-forget — errors are surfaced by
    * the turn itself.
    */
-  private async runDirectBuild(stimulus: ChatStimulus, job: Thread): Promise<void> {
+  private async runDirectBuild(
+    stimulus: ChatStimulus,
+    job: Job,
+  ): Promise<void> {
     const instruction =
       'The direct-build plan was APPROVED. Implement the change now, directly, in the repo ' +
       '(`/workspace`) — follow the spec/notes you wrote under `/context`. When the change is complete ' +
@@ -2129,8 +2710,13 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     try {
       await this.handleChatTurn(synthetic);
     } catch (err) {
-      this.logger.error(`direct build implementation turn failed for thread=${job.id}: ${err}`);
-      await this.say(stimulus, `The direct build hit an error — ${String(err).slice(0, 200)}`);
+      this.logger.error(
+        `direct build implementation turn failed for thread=${job.id}: ${err}`,
+      );
+      await this.say(
+        stimulus,
+        `The direct build hit an error — ${String(err).slice(0, 200)}`,
+      );
     }
   }
 
@@ -2147,7 +2733,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     repoId: string,
     firstMessage: string,
   ): Promise<void> {
-    await this.store.appendAtlasMessage(threadId, `🔗 Follow-up started from a prior thread:\n\n${firstMessage}`);
+    await this.store.appendAtlasMessage(
+      threadId,
+      `🔗 Follow-up started from a prior thread:\n\n${firstMessage}`,
+    );
     const stimulus: ChatStimulus = {
       id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
       orgId,
@@ -2170,7 +2759,11 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * tool list live in `ONBOARDING_SYSTEM_PROMPT`; the seed body is just the opening nudge. The sandbox is
    * lazily provisioned on this first turn.
    */
-  async startOnboardingThread(threadId: string, orgId: string, repoId: string): Promise<void> {
+  async startOnboardingThread(
+    threadId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
     const body =
       'Begin onboarding this repository. Investigate how it builds and runs, register any required ' +
       'secrets via request_secret, record non-secret config with write_worktree_config, then call ' +
@@ -2205,7 +2798,9 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       this.logger.warn(`plan-review run failed for review=${reviewId}: ${err}`);
     }
     await this.deliverReviewFindings(reviewId).catch((err) =>
-      this.logger.warn(`plan-review delivery failed for review=${reviewId}: ${err}`),
+      this.logger.warn(
+        `plan-review delivery failed for review=${reviewId}: ${err}`,
+      ),
     );
   }
 
@@ -2227,10 +2822,20 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
 
     const capReached = review.round >= this.planReview.maxReviewRounds;
     const status = review.status === 'failed' ? 'failed' : 'complete';
-    const body = renderFindingsDelivery(review.findings ?? '', review.round, capReached, status, review.error);
+    const body = renderFindingsDelivery(
+      review.findings ?? '',
+      review.round,
+      capReached,
+      status,
+      review.error,
+    );
 
     // (1) The single operator-visible artifact (idempotent on the review id).
-    await this.store.appendReviewFindingsMessage(review.thread_id, review.id, body);
+    await this.store.appendReviewFindingsMessage(
+      review.thread_id,
+      review.id,
+      body,
+    );
 
     // (2) Deliver to the brain via a synthetic harness turn (skips the operator-only paths).
     const stimulus = harnessDeliveryStimulus({
@@ -2267,7 +2872,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     await this.handleChatTurn(delivery);
 
     // Reached only when the delivery turn completed — stamp delivered (at-least-once across restarts).
-    await this.stimulusRows.update({ id: stimulus.id }, { delivered_at: new Date() });
+    await this.stimulusRows.update(
+      { id: stimulus.id },
+      { delivered_at: new Date() },
+    );
   }
 
   /**
@@ -2311,9 +2919,15 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       const ticketId = await this.store.threadTicketId(threadId);
       if (!ticketId) return null;
       const { ticket } = await this.tickets.get({ orgId, repoId, ticketId });
-      return { number: ticket.number, title: ticket.title, ...(ticket.body ? { body: ticket.body } : {}) };
+      return {
+        number: ticket.number,
+        title: ticket.title,
+        ...(ticket.body ? { body: ticket.body } : {}),
+      };
     } catch (err) {
-      this.logger.debug(`resolveReviewTicket failed (continuing without ticket): ${err}`);
+      this.logger.debug(
+        `resolveReviewTicket failed (continuing without ticket): ${err}`,
+      );
       return null;
     }
   }
@@ -2327,11 +2941,17 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * lost. Best-effort: any failure returns null so the turn proceeds — `get_pipeline_state` remains the
    * authoritative pull.
    */
-  private async buildAwarenessPrefix(threadId: string, orgId: string): Promise<string | null> {
+  private async buildAwarenessPrefix(
+    threadId: string,
+    orgId: string,
+  ): Promise<string | null> {
     try {
       const state = await this.driverStore.getPipelineState(threadId, orgId);
       const sig = pipelineStateSignature(state);
-      const { markers, stateChanged } = await this.awareness.drainAndAdvance(threadId, sig);
+      const { markers, stateChanged } = await this.awareness.drainAndAdvance(
+        threadId,
+        sig,
+      );
       if (markers.length === 0 && !stateChanged) return null;
       const prefix = renderAwarenessPrefix(
         markers,
@@ -2339,16 +2959,24 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
       );
       return prefix || null;
     } catch (err) {
-      this.logger.debug(`pipeline-awareness prefix failed (continuing): ${err}`);
+      this.logger.debug(
+        `pipeline-awareness prefix failed (continuing): ${err}`,
+      );
       return null;
     }
   }
 
   /** Buffer a passive pipeline milestone for the brain (no turn runs). Best-effort + idempotent by `id`. */
-  private async recordMilestone(threadId: string, id: string, text: string): Promise<void> {
+  private async recordMilestone(
+    threadId: string,
+    id: string,
+    text: string,
+  ): Promise<void> {
     await this.awareness
       .appendMarker(threadId, { id, text, at: new Date().toISOString() })
-      .catch((err) => this.logger.debug(`milestone append failed (continuing): ${err}`));
+      .catch((err) =>
+        this.logger.debug(`milestone append failed (continuing): ${err}`),
+      );
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────
@@ -2363,7 +2991,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
     const channel = route.channel ?? stimulus.replyRoute.threadRef;
     const threadTs = route.threadTs ?? stimulus.replyRoute.threadRef;
     try {
-      await this.surface.post(channel, text, { threadTs, orgId: stimulus.orgId });
+      await this.surface.post(channel, text, {
+        threadTs,
+        orgId: stimulus.orgId,
+      });
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
@@ -2375,7 +3006,10 @@ export class AgentSessionManager implements OnApplicationBootstrap, OnApplicatio
    * and never seeded into the brain (e.g. an unresumable-thread error). Mirrors {@link say} (live SSE post
    * + durable row) but stamps `meta.source='system_operator'` so the web renders its own system-notice box.
    */
-  private async saySystemOperator(stimulus: ChatStimulus, text: string): Promise<void> {
+  private async saySystemOperator(
+    stimulus: ChatStimulus,
+    text: string,
+  ): Promise<void> {
     const route = await this.store.route({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
@@ -2440,7 +3074,10 @@ const LEDGER_PROMOTION_PROMPT = [
  *  system seed. Both background kinds must skip the passive-awareness drain so a real operator turn still
  *  gets the buffered milestones. */
 function isOperatorAuthored(stimulus: ChatStimulus): boolean {
-  return stimulus.author.id !== ATLAS_AUTHOR_ID && stimulus.author.id !== SYSTEM_SEED_AUTHOR.id;
+  return (
+    stimulus.author.id !== ATLAS_AUTHOR_ID &&
+    stimulus.author.id !== SYSTEM_SEED_AUTHOR.id
+  );
 }
 
 /**
@@ -2546,6 +3183,7 @@ function bootDeliveryStimulus(q: {
   threadId: string;
   orgId: string;
   repoId: string;
+  questionId: string;
   question: string;
   answer: string;
 }): ChatStimulus {
@@ -2561,6 +3199,8 @@ function bootDeliveryStimulus(q: {
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
     replyRoute: { surfaceId: 'web', threadRef: q.threadId },
     seed: true,
+    // Tie the re-delivery to its exact card so the delivery turn stamps THAT card `deliveredAt` on success.
+    seedQuestionId: q.questionId,
   };
 }
 
@@ -2569,13 +3209,20 @@ function normalizeDecisions(raw: unknown): Decision[] {
   const arr = Array.isArray(raw) ? raw : [];
   const candidates = arr.filter(
     (d): d is Record<string, unknown> =>
-      typeof d === 'object' && d !== null && 'decisionClass' in d && 'title' in d && 'ruling' in d,
+      typeof d === 'object' &&
+      d !== null &&
+      'decisionClass' in d &&
+      'title' in d &&
+      'ruling' in d,
   );
   // Preserve id/question/answer (this override path otherwise regresses the "fully resolved decision"
   // contract); assign a fresh stable id to any entry missing one, unique across the produced set.
   const out: Decision[] = [];
   for (const d of candidates) {
-    const id = typeof d['id'] === 'string' && d['id'] ? (d['id'] as string) : nextDecisionId(out);
+    const id =
+      typeof d['id'] === 'string' && d['id']
+        ? (d['id'] as string)
+        : nextDecisionId(out);
     out.push({
       id,
       decisionClass: d['decisionClass'] as Decision['decisionClass'],
@@ -2584,7 +3231,9 @@ function normalizeDecisions(raw: unknown): Decision[] {
       ...(typeof d['question'] === 'string' ? { question: d['question'] } : {}),
       ...(typeof d['answer'] === 'string' ? { answer: d['answer'] } : {}),
       // Carry provenance through the override path; absent → undefined (renders as Atlas-authored).
-      ...(d['confirmedByOperator'] === true ? { confirmedByOperator: true } : {}),
+      ...(d['confirmedByOperator'] === true
+        ? { confirmedByOperator: true }
+        : {}),
     });
   }
   return out;
@@ -2596,35 +3245,52 @@ function normalizeDecisions(raw: unknown): Decision[] {
  * natural guess just works; the same normalization applies to `supersedes` so back-links resolve. Throws
  * on a missing required field (surfaced as a tool error). `sourceThread` defaults to the current thread.
  */
-function normalizeLedgerEntry(raw: unknown, threadId: string): LedgerEntryInput {
-  if (typeof raw !== 'object' || raw === null) throw new Error('each promoted decision must be an object');
+function normalizeLedgerEntry(
+  raw: unknown,
+  threadId: string,
+): LedgerEntryInput {
+  if (typeof raw !== 'object' || raw === null)
+    throw new Error('each promoted decision must be an object');
   const r = raw as Record<string, unknown>;
   const slug = ledgerSlug(String(r['slug'] ?? ''));
   const title = String(r['title'] ?? '').trim();
   const context = String(r['context'] ?? '').trim();
   const decision = String(r['decision'] ?? '').trim();
   if (!slug || !title || !context || !decision) {
-    throw new Error('each promoted decision needs slug, title, context, and decision');
+    throw new Error(
+      'each promoted decision needs slug, title, context, and decision',
+    );
   }
   const authored = String(r['authoredBy'] ?? '').trim();
-  const supersedes = (strArray(r['supersedes']) ?? []).map(ledgerSlug).filter(Boolean);
+  const supersedes = (strArray(r['supersedes']) ?? [])
+    .map(ledgerSlug)
+    .filter(Boolean);
   return {
     slug,
     title,
     context,
     decision,
-    ...(optStr(r['consequences']) ? { consequences: String(r['consequences']) } : {}),
-    ...(optStr(r['alternatives']) ? { alternatives: String(r['alternatives']) } : {}),
+    ...(optStr(r['consequences'])
+      ? { consequences: String(r['consequences']) }
+      : {}),
+    ...(optStr(r['alternatives'])
+      ? { alternatives: String(r['alternatives']) }
+      : {}),
     ...(strArray(r['tags']) ? { tags: strArray(r['tags']) } : {}),
-    authoredBy: authored === 'operator' || authored === 'human-edit' ? authored : 'atlas',
+    authoredBy:
+      authored === 'operator' || authored === 'human-edit' ? authored : 'atlas',
     confirmedByOperator: r['confirmedByOperator'] === true,
     sourceThread:
       typeof r['sourceThread'] === 'string' && r['sourceThread'].trim()
         ? String(r['sourceThread']).trim()
         : threadId,
-    ...(optStr(r['sourceDecision']) ? { sourceDecision: String(r['sourceDecision']).trim() } : {}),
+    ...(optStr(r['sourceDecision'])
+      ? { sourceDecision: String(r['sourceDecision']).trim() }
+      : {}),
     ...(supersedes.length ? { supersedes } : {}),
-    ...(strArray(r['governsPaths']) ? { governsPaths: strArray(r['governsPaths']) } : {}),
+    ...(strArray(r['governsPaths'])
+      ? { governsPaths: strArray(r['governsPaths']) }
+      : {}),
   };
 }
 
@@ -2639,14 +3305,20 @@ function ledgerSlug(v: string): string {
 
 /** A short job title from a summary line. */
 function jobTitle(summary: string): string {
-  const firstLine = summary.split('\n').map((l) => l.trim()).find(Boolean) ?? summary;
+  const firstLine =
+    summary
+      .split('\n')
+      .map((l) => l.trim())
+      .find(Boolean) ?? summary;
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }
 
 // ── Question / decision tool arg coercion ──────────────────────────────────────────────────────────
 
 // Derived from the SSOT (DECISION_CLASS_META → DECISION_CLASS_IDS) — do NOT re-list the classes here.
-const DECISION_CLASSES: ReadonlySet<string> = new Set<string>(DECISION_CLASS_IDS);
+const DECISION_CLASSES: ReadonlySet<string> = new Set<string>(
+  DECISION_CLASS_IDS,
+);
 
 /**
  * Coerce a raw `decisionClass` arg into a valid {@link DecisionClass}, or undefined. Tolerant: the SDK
@@ -2656,7 +3328,10 @@ const DECISION_CLASSES: ReadonlySet<string> = new Set<string>(DECISION_CLASS_IDS
  */
 function asDecisionClass(v: unknown): DecisionClass | undefined {
   if (typeof v !== 'string') return undefined;
-  const norm = v.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const norm = v
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
   return DECISION_CLASSES.has(norm) ? (norm as DecisionClass) : undefined;
 }
 
@@ -2666,7 +3341,9 @@ function asDecisionClass(v: unknown): DecisionClass | undefined {
  * field-specific error ("decisionClass must be one of…") MISLEADS it into fixing the wrong thing.
  * Detect the empty-args case up front and return a hint that points at the real cause: the envelope.
  */
-function missingArgsEnvelope(args: Record<string, unknown>): { ok: false; reason: string } | null {
+function missingArgsEnvelope(
+  args: Record<string, unknown>,
+): { ok: false; reason: string } | null {
   if (args && Object.keys(args).length > 0) return null;
   return {
     ok: false,
@@ -2680,7 +3357,9 @@ function missingArgsEnvelope(args: Record<string, unknown>): { ok: false; reason
  * Normalize the `ask_question` `options` arg into `{ id?, label, description? }[]`. Accepts plain strings
  * ("Yes") or objects ({ label, description }); drops empties. The card builder fills missing ids.
  */
-function normalizeQuestionOptions(raw: unknown): { id?: string; label: string; description?: string }[] {
+function normalizeQuestionOptions(
+  raw: unknown,
+): { id?: string; label: string; description?: string }[] {
   const arr = Array.isArray(raw) ? raw : [];
   const out: { id?: string; label: string; description?: string }[] = [];
   for (const o of arr) {
@@ -2692,7 +3371,11 @@ function normalizeQuestionOptions(raw: unknown): { id?: string; label: string; d
       if (!label) continue;
       const id = optStr((o as { id?: unknown }).id);
       const description = optStr((o as { description?: unknown }).description);
-      out.push({ label, ...(id ? { id } : {}), ...(description ? { description } : {}) });
+      out.push({
+        label,
+        ...(id ? { id } : {}),
+        ...(description ? { description } : {}),
+      });
     }
   }
   return out;
@@ -2700,9 +3383,15 @@ function normalizeQuestionOptions(raw: unknown): { id?: string; label: string; d
 
 /** Derive a short decision title from the question (or ruling) when the brain doesn't supply one. */
 function deriveDecisionTitle(source: string): string {
-  const firstLine = source.split('\n').map((l) => l.trim()).find(Boolean) ?? source;
+  const firstLine =
+    source
+      .split('\n')
+      .map((l) => l.trim())
+      .find(Boolean) ?? source;
   const cleaned = firstLine.replace(/[?:.]+$/, '').trim();
-  return cleaned.length > 72 ? `${cleaned.slice(0, 69)}...` : cleaned || 'Decision';
+  return cleaned.length > 72
+    ? `${cleaned.slice(0, 69)}...`
+    : cleaned || 'Decision';
 }
 
 // ── Ticket-tool arg coercion (args are Record<string, unknown> from the bridge) ────────────────────
@@ -2721,7 +3410,9 @@ function optEnum<T>(v: unknown, guard: (x: unknown) => x is T): T | undefined {
 /** Coerce an arg into an array of non-empty strings (the bridge may pass a single string or an array). */
 function strArray(v: unknown): string[] | undefined {
   if (Array.isArray(v)) {
-    const out = v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim());
+    const out = v
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .map((x) => x.trim());
     return out.length > 0 ? out : undefined;
   }
   const single = optStr(v);
@@ -2730,7 +3421,8 @@ function strArray(v: unknown): string[] | undefined {
 
 /** A safe, short error message for a tool's `{ ok:false, reason }` (surfaces validation/404 cleanly). */
 function errText(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message).slice(0, 200);
+  if (err && typeof err === 'object' && 'message' in err)
+    return String((err as { message: unknown }).message).slice(0, 200);
   return String(err).slice(0, 200);
 }
 
@@ -2740,17 +3432,27 @@ function errText(err: unknown): string {
  * execute instructions for that step (what the build worker runs). Phases missing a title OR a brief
  * are dropped; a track with an empty/whitespace title is dropped. The caller enforces ≥1 step/track.
  */
-function normalizeTracks(raw: unknown): { title: string; type: string; steps: PlannedStep[] }[] {
+function normalizeTracks(
+  raw: unknown,
+): { title: string; type: string; steps: PlannedStep[] }[] {
   const arr = Array.isArray(raw) ? raw : [];
   const out: { title: string; type: string; steps: PlannedStep[] }[] = [];
   for (const s of arr) {
     if (!s || typeof s !== 'object') continue;
-    const o = s as { title?: unknown; brief?: unknown; type?: unknown; steps?: unknown };
+    const o = s as {
+      title?: unknown;
+      brief?: unknown;
+      type?: unknown;
+      steps?: unknown;
+    };
     const title = String(o.title ?? o.brief ?? '').trim();
     if (!title) continue;
     // Scope type selects the review agents (TRACK_TYPES), but allow-other — a non-enum value is stored
     // verbatim (lowercased); default 'general' when absent (the prompt asks the brain to set one).
-    const type = String(o.type ?? '').trim().toLowerCase() || 'general';
+    const type =
+      String(o.type ?? '')
+        .trim()
+        .toLowerCase() || 'general';
     const stepsRaw = Array.isArray(o.steps) ? o.steps : [];
     const steps: PlannedStep[] = [];
     for (const p of stepsRaw) {

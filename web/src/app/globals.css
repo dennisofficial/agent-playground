@@ -28,6 +28,7 @@
   --green: #4a8567;
   --green-soft: rgba(74, 133, 103, 0.1);
   --blue: #5d75a2;
+  --blue-soft: rgba(93, 117, 162, 0.1);
   --red: #b65b51;
   --red-soft: rgba(182, 91, 81, 0.08);
   --red-line: rgba(182, 91, 81, 0.26);
@@ -280,6 +281,23 @@ body {
 }
 .cursor-blink {
   animation: atlas-blink 1s step-end infinite;
+}
+/* Selected navigator row — a full-width band with a solid left bar, per "Atlas Workspace HiFi". The inset
+   box-shadow draws the bar without taking layout space (so content doesn't shift); `border-radius:0`
+   overrides the row's `rounded-sm` so the band + bar run flush edge-to-edge. Relies on the navigator body
+   having NO horizontal padding — rows carry their own.
+   Two tones, one per pane: `.nav-selected` (accent/orange) marks the THREADS lane open in the LEFT pane;
+   `.nav-selected-blue` marks the OUTPUTS/PORTS node open in the RIGHT (detail) pane. Both can be lit at
+   once — the design shows Main + a spec selected together. */
+.nav-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  border-radius: 0;
+}
+.nav-selected-blue {
+  background: var(--blue-soft);
+  box-shadow: inset 3px 0 0 var(--blue);
+  border-radius: 0;
 }
 /* Status pie — a rotating arc for "AI is working" (running / plan_review). transform-box:fill-box
    pins the rotation to the arc's own center so it spins in place inside the SVG. */

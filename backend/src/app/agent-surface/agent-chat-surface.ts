@@ -118,7 +118,12 @@ export class AgentChatSurface implements ChatSurface {
   }
 
   /** Seed the thread's brain with a SYSTEM NOTIFICATION (see `ChatSurface.seedSystemNotification`). */
-  seedSystemNotification(channel: string, threadId: string, body: string, opts: { orgId?: string } = {}): string {
+  seedSystemNotification(
+    channel: string,
+    threadId: string,
+    body: string,
+    opts: { orgId?: string; deliveredQuestionId?: string } = {},
+  ): string {
     const ts = this.mintTs();
     this.inboundSubject.next({
       id: ts,
@@ -130,6 +135,7 @@ export class AgentChatSurface implements ChatSurface {
       threadTs: threadId,
       ts: new Date(),
       seed: true,
+      ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
     });
     return ts;
   }

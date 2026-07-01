@@ -33,6 +33,8 @@ export interface WebInboundOptions {
   orgId?: string;
   /** System seed — deliver to the brain but don't persist as a chat bubble (see `InboundChatMessage.seed`). */
   seed?: boolean;
+  /** Delivery seed — the `ask_question` card id whose answer this seed delivers (see `InboundChatMessage.seedQuestionId`). */
+  seedQuestionId?: string;
 }
 
 const DEFAULT_TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000001'; // sentinel org uuid (web default tenant)
@@ -150,6 +152,7 @@ export class WebSurface implements ChatSurface {
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
       ...(opts.seed ? { seed: true } : {}),
+      ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ts: new Date(),
     };
     this.logger.debug(
@@ -168,7 +171,7 @@ export class WebSurface implements ChatSurface {
     channel: string,
     threadId: string,
     body: string,
-    opts: { orgId?: string } = {},
+    opts: { orgId?: string; deliveredQuestionId?: string } = {},
   ): string {
     return this.receiveFromClient(channel, wrapSystemNotification(body), {
       threadTs: threadId,
@@ -176,6 +179,7 @@ export class WebSurface implements ChatSurface {
       authorId: SYSTEM_SEED_AUTHOR.id,
       authorName: SYSTEM_SEED_AUTHOR.name,
       ...(opts.orgId ? { orgId: opts.orgId } : {}),
+      ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
     });
   }
 

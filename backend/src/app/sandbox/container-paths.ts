@@ -28,6 +28,15 @@ export const CONTAINER_GIT_COMMON = '/repo.git';
 export const CONTAINER_PNPM_STORE = `${CONTAINER_WORKTREE}/.pnpm-store`;
 
 /**
+ * The in-sandbox path of the SHARED fnm version store (= `FNM_DIR`, set in the sandbox Dockerfile). ONE
+ * host dir is bound here for every org/repo/thread (not keyed), so a Node version a repo pins via
+ * `.nvmrc`/`.node-version` is downloaded ONCE globally (`fnm use --install-if-missing`) and reused by
+ * every later thread — mirroring the shared pnpm store. (Sandboxes have outbound egress; only inbound
+ * port exposure is unavailable.) A repo with no version file just runs the image's base Node 22.
+ */
+export const CONTAINER_FNM_STORE = '/atlas-fnm';
+
+/**
  * The thread's durable SHARED CONTEXT folder INSIDE the sandbox — a per-thread scratch/working space
  * that lives OUTSIDE the git worktree (so plan/spec artifacts never pollute the repo diff). Every
  * in-sandbox session for the thread (the brain AND the plan/step/review/auto-fix turns) reads & writes

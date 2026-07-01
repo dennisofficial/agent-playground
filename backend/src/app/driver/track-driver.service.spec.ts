@@ -4,7 +4,11 @@ import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
 import { TrackDriver } from './track-driver.service';
 import { BuildShipService } from './build-ship.service';
-import type { DriverStoreService, DriverTrack, JobRoute } from './driver-store.service';
+import type {
+  DriverStoreService,
+  DriverTrack,
+  JobRoute,
+} from './driver-store.service';
 import type { PlannerLlm, PlannedStep } from './planner-llm';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
 import type {
@@ -15,7 +19,12 @@ import type {
   PlanVisibilityService,
 } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
-import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
+import type {
+  GithubPrService,
+  LocalGitService,
+  FeatureSandbox,
+  ProjectRepo,
+} from '../git';
 import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore } from '../surface';
 import { TurnHarnessFactory } from '../surface';
@@ -26,9 +35,9 @@ import type {
   DecisionRecord,
   Step,
   StepStatus,
-  Track,
-  TrackStatus,
   Thread,
+  TrackStatus,
+  Job,
 } from '../domain';
 
 /**
@@ -44,18 +53,23 @@ import type {
 // ── an in-memory DriverStore the tests can introspect + survive a "restart" ──────────────────────
 
 interface StoreState {
-  job: Thread;
+  job: Job;
   record: DecisionRecord | null;
   tracks: DriverTrack[];
   steps: Step[];
   route: JobRoute;
 }
 
-function makeStore(state: StoreState): { store: DriverStoreService; state: StoreState } {
+function makeStore(state: StoreState): {
+  store: DriverStoreService;
+  state: StoreState;
+} {
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
-    runningJobs: vi.fn(async () => (state.job.status === 'running' ? [{ ...state.job }] : [])),
-    setJobStatus: vi.fn(async (_id: string, status: Thread['status']) => {
+    runningJobs: vi.fn(async () =>
+      state.job.status === 'running' ? [{ ...state.job }] : [],
+    ),
+    setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
     }),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
@@ -75,13 +89,15 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
       const s = state.tracks.find((x) => x.id === id);
       if (s) s.status = status;
     }),
-    setTrackPlan: vi.fn(async (id: string, plan: string, handoffIn: string | null) => {
-      const s = state.tracks.find((x) => x.id === id);
-      if (s) {
-        s.plan = plan;
-        s.handoffIn = handoffIn;
-      }
-    }),
+    setTrackPlan: vi.fn(
+      async (id: string, plan: string, handoffIn: string | null) => {
+        const s = state.tracks.find((x) => x.id === id);
+        if (s) {
+          s.plan = plan;
+          s.handoffIn = handoffIn;
+        }
+      },
+    ),
     setTrackHandoffOut: vi.fn(async (id: string, handoffOut: string) => {
       const s = state.tracks.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
@@ -112,13 +128,15 @@ function makeStore(state: StoreState): { store: DriverStoreService; state: Store
       state.steps.push(...rows);
       return rows.map((p) => ({ ...p }));
     }),
-    setStepState: vi.fn(async (id: string, stage: string, status: StepStatus) => {
-      const p = state.steps.find((x) => x.id === id);
-      if (p) {
-        p.stage = stage;
-        p.status = status;
-      }
-    }),
+    setStepState: vi.fn(
+      async (id: string, stage: string, status: StepStatus) => {
+        const p = state.steps.find((x) => x.id === id);
+        if (p) {
+          p.stage = stage;
+          p.status = status;
+        }
+      },
+    ),
     setBatchOrdinals: vi.fn(async (assignments: Array<[string, number]>) => {
       for (const [id, batchOrdinal] of assignments) {
         const p = state.steps.find((x) => x.id === id);
@@ -154,7 +172,11 @@ function makeRepoResolver(): DriverRepoResolver {
   return { resolve: vi.fn(async () => RESOLVED) };
 }
 
-function makeGit(): { git: LocalGitService; pushed: string[]; commits: string[] } {
+function makeGit(): {
+  git: LocalGitService;
+  pushed: string[];
+  commits: string[];
+} {
   const commits: string[] = [];
   const pushed: string[] = [];
   let sha = 0;
@@ -185,31 +207,47 @@ function makePr(): { pr: GithubPrService; opened: Array<{ head: string }> } {
   const pr = {
     openPullRequest: vi.fn(async (_token: string, args: { head: string }) => {
       opened.push({ head: args.head });
-      return { url: 'https://github.com/acme/widget/pull/1', number: 1, existing: false };
+      return {
+        url: 'https://github.com/acme/widget/pull/1',
+        number: 1,
+        existing: false,
+      };
     }),
   } as unknown as GithubPrService;
   return { pr, opened };
 }
 
-function makeTurn(): { turn: TurnRunnerService; calls: Array<{ mode: string; stepId?: string | null }> } {
+function makeTurn(): {
+  turn: TurnRunnerService;
+  calls: Array<{ mode: string; stepId?: string | null }>;
+} {
   const calls: Array<{ mode: string; stepId?: string | null }> = [];
   const turn = {
-    runTurn: vi.fn(async (input: { mode: string; stepId?: string | null; jobId: string }) => {
-      calls.push({ mode: input.mode, stepId: input.stepId });
-      return {
-        report: input.mode === 'plan' ? 'I will build it in steps.' : `did step ${input.stepId}`,
-        ...(input.mode === 'plan' ? { planText: 'PLAN: do the thing' } : {}),
-        session: {
-          id: 'sess',
-          jobId: input.jobId,
-          stepId: input.stepId ?? null,
-          engine: 'claude' as const,
-          mode: input.mode as 'plan' | 'execute' | 'review',
-          branch: 'b',
-          worktreePath: '/wt/b',
-        },
-      };
-    }),
+    runTurn: vi.fn(
+      async (input: {
+        mode: string;
+        stepId?: string | null;
+        jobId: string;
+      }) => {
+        calls.push({ mode: input.mode, stepId: input.stepId });
+        return {
+          report:
+            input.mode === 'plan'
+              ? 'I will build it in steps.'
+              : `did step ${input.stepId}`,
+          ...(input.mode === 'plan' ? { planText: 'PLAN: do the thing' } : {}),
+          session: {
+            id: 'sess',
+            jobId: input.jobId,
+            stepId: input.stepId ?? null,
+            engine: 'claude' as const,
+            mode: input.mode as 'plan' | 'execute' | 'review',
+            branch: 'b',
+            worktreePath: '/wt/b',
+          },
+        };
+      },
+    ),
   } as unknown as TurnRunnerService;
   return { turn, calls };
 }
@@ -223,16 +261,24 @@ function makePlanner(): PlannerLlm {
     ]),
     reviewPlan: vi.fn(async () => undefined), // no revision
     extractDecisions: vi.fn(async () => []), // no notable decision by default
-    handoff: vi.fn(async (input: { brief: string }) => `handoff from ${input.brief}`),
+    handoff: vi.fn(
+      async (input: { brief: string }) => `handoff from ${input.brief}`,
+    ),
     // Default: no grouping → the driver's guardrail falls back to one batch per step (preserves the
     // pre-batching behavior these tests assert). Batching-specific tests override this mock.
     batchSteps: vi.fn(async () => undefined),
   };
 }
 
-function makeClassifier(verdict: 'covered' | 'proceed' | 'ask' = 'proceed'): DecisionClassifier {
+function makeClassifier(
+  verdict: 'covered' | 'proceed' | 'ask' = 'proceed',
+): DecisionClassifier {
   return {
-    classify: vi.fn(async () => ({ verdict, reason: 'r', via: 'rule' as const })),
+    classify: vi.fn(async () => ({
+      verdict,
+      reason: 'r',
+      via: 'rule' as const,
+    })),
   } as unknown as DecisionClassifier;
 }
 
@@ -245,7 +291,14 @@ function makePark(answer?: Promise<ParkResolution>): {
       id: 'park1',
       questionTs: 'q1',
       threadTs: 't1',
-      answer: answer ?? Promise.resolve({ parkId: 'park1', text: 'yes go ahead', authorId: 'U1', ts: 'a1' }),
+      answer:
+        answer ??
+        Promise.resolve({
+          parkId: 'park1',
+          text: 'yes go ahead',
+          authorId: 'U1',
+          ts: 'a1',
+        }),
       resolved: false,
     }),
   );
@@ -259,7 +312,10 @@ interface VisibilityHandle {
 }
 function makeVisibility(): VisibilityHandle {
   const postSectionPlan = vi.fn(async () => 'vis-ts');
-  return { visibility: { postSectionPlan } as unknown as PlanVisibilityService, postSectionPlan };
+  return {
+    visibility: { postSectionPlan } as unknown as PlanVisibilityService,
+    postSectionPlan,
+  };
 }
 
 interface AutofixHandle {
@@ -278,7 +334,15 @@ function makeAutofix(): AutofixHandle {
 }
 
 function cleanSummary(mode: 'track' | 'pull_request') {
-  return { mode, lensesRun: [], findings: [], fixesAttempted: false, fixReport: '', commits: [], clean: true };
+  return {
+    mode,
+    lensesRun: [],
+    findings: [],
+    fixesAttempted: false,
+    fixReport: '',
+    commits: [],
+    clean: true,
+  };
 }
 
 function makeSurface(): { surface: ChatSurface; posts: string[] } {
@@ -295,7 +359,7 @@ function makeSurface(): { surface: ChatSurface; posts: string[] } {
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────────────
 
-function makeJob(overrides: Partial<Thread> = {}): Thread {
+function makeJob(overrides: Partial<Job> = {}): Job {
   return {
     id: 'job-abcdef12',
     orgId: 'T1',
@@ -332,13 +396,15 @@ function makeRecord(): DecisionRecord {
 }
 
 function makeSections(): DriverTrack[] {
-  return [
-    track('sec-be', 10, 'Backend'),
-    track('sec-fe', 20, 'Frontend'),
-  ];
+  return [track('sec-be', 10, 'Backend'), track('sec-fe', 20, 'Frontend')];
 }
 
-function track(id: string, ordinal: number, brief: string, status: TrackStatus = 'pending'): DriverTrack {
+function track(
+  id: string,
+  ordinal: number,
+  brief: string,
+  status: TrackStatus = 'pending',
+): DriverTrack {
   return {
     id,
     threadId: 'job-abcdef12',
@@ -376,15 +442,33 @@ function assemble(
   const autofix = makeAutofix();
   const { surface, posts } = makeSurface();
   // A no-op env by default: every guard reads its code default. opts.env supplies overrides per test.
-  const env = { get: vi.fn((k: string) => opts.env?.[k]) } as unknown as EnvService;
+  const env = {
+    get: vi.fn((k: string) => opts.env?.[k]),
+  } as unknown as EnvService;
   // The shared transcript spine over a fake live store + a capturing durable sink — so build turns persist
   // their transcript (and the `build_anchor`) through the same path production uses, and tests can assert it.
   const liveTurns = { push: vi.fn(), end: vi.fn() } as unknown as LiveTurnStore;
-  const sunk: Array<{ threadId: string; block: { kind: string; text?: string; meta?: Record<string, unknown> | null } }> = [];
+  const sunk: Array<{
+    threadId: string;
+    block: {
+      kind: string;
+      text?: string;
+      meta?: Record<string, unknown> | null;
+    };
+  }> = [];
   const blockSink = {
-    appendBlock: vi.fn(async (threadId: string, block: { kind: string; text?: string; meta?: Record<string, unknown> | null }) => {
-      sunk.push({ threadId, block });
-    }),
+    appendBlock: vi.fn(
+      async (
+        threadId: string,
+        block: {
+          kind: string;
+          text?: string;
+          meta?: Record<string, unknown> | null;
+        },
+      ) => {
+        sunk.push({ threadId, block });
+      },
+    ),
   } as unknown as BlockSink;
   const turnHarness = new TurnHarnessFactory(liveTurns, blockSink);
   // LeaderElectionService stub: `draining` is flippable so the shutdown-guard test can simulate SIGTERM.
@@ -437,16 +521,45 @@ function assemble(
     // PR-tail assertions (pushed/opened/setPrReady) hold exactly as before the extraction.
     new BuildShipService(autofix.autofix, git, pr, store),
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
-    { appendMarker: async () => undefined, drainAndAdvance: async () => ({ markers: [], stateChanged: false }) } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
+    {
+      appendMarker: async () => undefined,
+      drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
+    } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
     // LeaderElectionService: reads the flippable `electionState.draining` so the shutdown-guard test can
     // assert that a drain-induced abort leaves the job `running` instead of `failed`.
-    { isDraining: () => electionState.draining } as unknown as LeaderElectionService,
+    {
+      isDraining: () => electionState.draining,
+    } as unknown as LeaderElectionService,
     turnHarness,
     blockSink,
     // ModuleRef: the lazy brain lookup → a stub promoter (the ledger turn is exercised in the brain specs).
-    { get: () => ({ promoteDurableDecisionsAtShip: async () => undefined }) } as unknown as ModuleRef,
+    {
+      get: () => ({ promoteDurableDecisionsAtShip: async () => undefined }),
+    } as unknown as ModuleRef,
   );
-  return { driver, store, state, git, pr, turn, planner, classifier, ask, visibility, autofix, surface, pushed, commits, opened, calls, posts, liveTurns, blockSink, sunk, electionState };
+  return {
+    driver,
+    store,
+    state,
+    git,
+    pr,
+    turn,
+    planner,
+    classifier,
+    ask,
+    visibility,
+    autofix,
+    surface,
+    pushed,
+    commits,
+    opened,
+    calls,
+    posts,
+    liveTurns,
+    blockSink,
+    sunk,
+    electionState,
+  };
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
@@ -491,20 +604,41 @@ describe('TrackDriver — the legible track/step pipeline', () => {
   it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per batch', async () => {
     const seen: Array<{ mode: string; richStream?: boolean }> = [];
     const turn = {
-      runTurn: vi.fn(async (input: { mode: string; jobId: string; stepId?: string | null; richStream?: boolean; onEvent?: (e: { kind: string; [k: string]: unknown }) => void }) => {
-        seen.push({ mode: input.mode, richStream: input.richStream });
-        if (input.mode === 'execute') {
-          input.onEvent?.({ kind: 'thinking', text: 'planning the edit' });
-          input.onEvent?.({ kind: 'text', text: 'editing the file' });
-          input.onEvent?.({ kind: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } });
-          input.onEvent?.({ kind: 'tool_result', id: 't1', result: 'ok' });
-        }
-        return {
-          report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
-          ...(input.mode === 'plan' ? { planText: 'PLAN' } : {}),
-          session: { id: 'sess', jobId: input.jobId, stepId: input.stepId ?? null, engine: 'claude' as const, mode: input.mode as 'plan' | 'execute' | 'review', branch: 'b', worktreePath: '/wt/b' },
-        };
-      }),
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          jobId: string;
+          stepId?: string | null;
+          richStream?: boolean;
+          onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
+        }) => {
+          seen.push({ mode: input.mode, richStream: input.richStream });
+          if (input.mode === 'execute') {
+            input.onEvent?.({ kind: 'thinking', text: 'planning the edit' });
+            input.onEvent?.({ kind: 'text', text: 'editing the file' });
+            input.onEvent?.({
+              kind: 'tool_use',
+              id: 't1',
+              name: 'Edit',
+              input: { file_path: 'a.ts' },
+            });
+            input.onEvent?.({ kind: 'tool_result', id: 't1', result: 'ok' });
+          }
+          return {
+            report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
+            ...(input.mode === 'plan' ? { planText: 'PLAN' } : {}),
+            session: {
+              id: 'sess',
+              jobId: input.jobId,
+              stepId: input.stepId ?? null,
+              engine: 'claude' as const,
+              mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b',
+              worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
     } as unknown as TurnRunnerService;
 
     const state: StoreState = {
@@ -526,18 +660,35 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     // A synthetic `build_anchor` row per batch, each tagged with its phaseId.
     const anchors = h.sunk.filter((s) => s.block.kind === 'build_anchor');
     expect(anchors.length).toBeGreaterThan(0);
-    expect(anchors.every((a) => typeof a.block.meta?.phaseId === 'string')).toBe(true);
+    expect(
+      anchors.every((a) => typeof a.block.meta?.phaseId === 'string'),
+    ).toBe(true);
 
     // The transcript blocks landed via the durable sink — all tagged with meta.phaseId (peeled into the step).
-    const transcript = h.sunk.filter((s) => ['chat', 'thinking', 'tool'].includes(s.block.kind));
+    const transcript = h.sunk.filter((s) =>
+      ['chat', 'thinking', 'tool'].includes(s.block.kind),
+    );
     expect(transcript.length).toBeGreaterThan(0);
-    expect(transcript.every((t) => typeof t.block.meta?.phaseId === 'string')).toBe(true);
+    expect(
+      transcript.every((t) => typeof t.block.meta?.phaseId === 'string'),
+    ).toBe(true);
     expect(transcript.some((t) => t.block.kind === 'thinking')).toBe(true);
-    expect(transcript.some((t) => t.block.kind === 'tool' && (t.block.meta as { name?: string }).name === 'Edit')).toBe(true);
+    expect(
+      transcript.some(
+        (t) =>
+          t.block.kind === 'tool' &&
+          (t.block.meta as { name?: string }).name === 'Edit',
+      ),
+    ).toBe(true);
 
     // The live phase lane was used (push called with a `phase:` lane arg).
     const pushCalls = (h.liveTurns.push as ReturnType<typeof vi.fn>).mock.calls;
-    expect(pushCalls.some((c) => typeof c[3] === 'string' && (c[3] as string).startsWith('phase:'))).toBe(true);
+    expect(
+      pushCalls.some(
+        (c) =>
+          typeof c[3] === 'string' && (c[3] as string).startsWith('phase:'),
+      ),
+    ).toBe(true);
 
     // The old `build_event` relay is gone — no build_event posts to the surface.
     expect(h.posts.every((p) => !p.includes('[tool]'))).toBe(true);
@@ -572,7 +723,10 @@ describe('TrackDriver — the legible track/step pipeline', () => {
   it('packs authored steps into batches: 5 steps → 2 sessions, one commit per batch, NO JIT plan turn', async () => {
     const state = authoredState(5);
     const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } }); // legacy LLM-batcher path
-    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2], [3, 4]]);
+    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
+      [0, 1, 2],
+      [3, 4],
+    ]);
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
@@ -594,7 +748,9 @@ describe('TrackDriver — the legible track/step pipeline', () => {
   it('guardrail: an INVALID partition falls back to one batch per step', async () => {
     const state = authoredState(3);
     const h = assemble(state, { env: { ORCHESTRATE_TRACKS: 'off' } }); // legacy LLM-batcher path
-    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 2]]); // not covering [0,1,2]
+    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
+      [0, 2],
+    ]); // not covering [0,1,2]
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
@@ -605,8 +761,12 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
   it('guardrail: caps a too-large group at MAX_PHASES_PER_BATCH', async () => {
     const state = authoredState(5);
-    const h = assemble(state, { env: { MAX_PHASES_PER_BATCH: '2', ORCHESTRATE_TRACKS: 'off' } });
-    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([[0, 1, 2, 3, 4]]);
+    const h = assemble(state, {
+      env: { MAX_PHASES_PER_BATCH: '2', ORCHESTRATE_TRACKS: 'off' },
+    });
+    (h.planner.batchSteps as ReturnType<typeof vi.fn>).mockResolvedValue([
+      [0, 1, 2, 3, 4],
+    ]);
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
@@ -646,7 +806,9 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     // never cuts a per-feature worktree of its own.
     expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
     expect(h.git.createFeatureSandbox).not.toHaveBeenCalled();
-    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(1);
+    expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(
+      1,
+    );
     expect(state.steps.every((p) => p.status === 'done')).toBe(true);
   });
 
@@ -678,7 +840,12 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(false);
 
     // The human replies → the track unparks and runs to completion.
-    resolveAnswer({ parkId: 'park1', text: 'yes, use a users table', authorId: 'U1', ts: 'a1' });
+    resolveAnswer({
+      parkId: 'park1',
+      text: 'yes, use a users table',
+      authorId: 'U1',
+      ts: 'a1',
+    });
     await flushUntil(() => state.job.status === 'done');
 
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(true);
@@ -701,14 +868,15 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
     const steps = state.steps.filter((p) => p.trackId === 'sec-be');
     expect(steps).toHaveLength(2);
-    expect(steps.every((p) => p.status === 'done' && p.stage === 'done')).toBe(true);
+    expect(steps.every((p) => p.status === 'done' && p.stage === 'done')).toBe(
+      true,
+    );
     // setStepState was driven to 'building' then 'done' for each step (explicit, resumable cursor).
-    expect((h.store.setStepState as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[2])).toEqual([
-      'building',
-      'done',
-      'building',
-      'done',
-    ]);
+    expect(
+      (h.store.setStepState as ReturnType<typeof vi.fn>).mock.calls.map(
+        (c) => c[2],
+      ),
+    ).toEqual(['building', 'done', 'building', 'done']);
   });
 
   it('resume() fast-forwards completed tracks/steps after a simulated restart (no re-execution)', async () => {
@@ -721,8 +889,32 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       record: makeRecord(),
       tracks: [doneBackend, track('sec-fe', 20, 'Frontend')],
       steps: [
-        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1, commitSha: null },
-        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 2, commitSha: null },
+        {
+          id: 'sec-be-ph0',
+          trackId: 'sec-be',
+          threadId: 'job-abcdef12',
+          ordinal: 10,
+          title: 'A',
+          brief: 'do A',
+          stage: 'done',
+          status: 'done',
+          sessionId: 's',
+          batchOrdinal: 1,
+          commitSha: null,
+        },
+        {
+          id: 'sec-be-ph1',
+          trackId: 'sec-be',
+          threadId: 'job-abcdef12',
+          ordinal: 20,
+          title: 'B',
+          brief: 'do B',
+          stage: 'done',
+          status: 'done',
+          sessionId: 's',
+          batchOrdinal: 2,
+          commitSha: null,
+        },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -751,8 +943,32 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       record: makeRecord(),
       tracks: [track('sec-be', 10, 'Backend', 'executing')],
       steps: [
-        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'build', status: 'building', sessionId: 's', batchOrdinal: 1, commitSha: 'abc123' },
-        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'build', status: 'building', sessionId: 's', batchOrdinal: 1, commitSha: null },
+        {
+          id: 'sec-be-ph0',
+          trackId: 'sec-be',
+          threadId: 'job-abcdef12',
+          ordinal: 10,
+          title: 'A',
+          brief: 'do A',
+          stage: 'build',
+          status: 'building',
+          sessionId: 's',
+          batchOrdinal: 1,
+          commitSha: 'abc123',
+        },
+        {
+          id: 'sec-be-ph1',
+          trackId: 'sec-be',
+          threadId: 'job-abcdef12',
+          ordinal: 20,
+          title: 'B',
+          brief: 'do B',
+          stage: 'build',
+          status: 'building',
+          sessionId: 's',
+          batchOrdinal: 1,
+          commitSha: null,
+        },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -775,8 +991,32 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       record: makeRecord(),
       tracks: [track('sec-be', 10, 'Backend', 'executing')],
       steps: [
-        { id: 'sec-be-ph0', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 10, title: 'A', brief: 'do A', stage: 'done', status: 'done', sessionId: 's', batchOrdinal: 1, commitSha: null },
-        { id: 'sec-be-ph1', trackId: 'sec-be', threadId: 'job-abcdef12', ordinal: 20, title: 'B', brief: 'do B', stage: 'build', status: 'building', sessionId: 's2', batchOrdinal: 2, commitSha: null },
+        {
+          id: 'sec-be-ph0',
+          trackId: 'sec-be',
+          threadId: 'job-abcdef12',
+          ordinal: 10,
+          title: 'A',
+          brief: 'do A',
+          stage: 'done',
+          status: 'done',
+          sessionId: 's',
+          batchOrdinal: 1,
+          commitSha: null,
+        },
+        {
+          id: 'sec-be-ph1',
+          trackId: 'sec-be',
+          threadId: 'job-abcdef12',
+          ordinal: 20,
+          title: 'B',
+          brief: 'do B',
+          stage: 'build',
+          status: 'building',
+          sessionId: 's2',
+          batchOrdinal: 2,
+          commitSha: null,
+        },
       ],
       route: { channel: 'C1', threadTs: 't1' },
     };
@@ -787,7 +1027,9 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
     // The already-locked steps skip planning; only the unfinished step (B) re-runs.
     expect(h.calls.filter((c) => c.mode === 'plan')).toHaveLength(0); // steps already locked
-    const execPhaseIds = h.calls.filter((c) => c.mode === 'execute').map((c) => c.stepId);
+    const execPhaseIds = h.calls
+      .filter((c) => c.mode === 'execute')
+      .map((c) => c.stepId);
     expect(execPhaseIds).toEqual(['sec-be-ph1']); // only the interrupted step
     expect(state.steps.find((p) => p.id === 'sec-be-ph1')?.status).toBe('done');
     expect(state.job.status).toBe('done');
@@ -827,8 +1069,14 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     await flushUntil(() => state.job.status === 'done');
 
     expect(h.posts.some((p) => p.includes('Starting the build'))).toBe(true);
-    expect(h.posts.some((p) => p.includes('Planning track') && p.includes('Backend'))).toBe(true);
-    expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(true);
+    expect(
+      h.posts.some(
+        (p) => p.includes('Planning track') && p.includes('Backend'),
+      ),
+    ).toBe(true);
+    expect(h.posts.some((p) => p.toLowerCase().includes('building'))).toBe(
+      true,
+    );
     expect(h.posts.some((p) => p.includes('PR ready'))).toBe(true);
   });
 
@@ -842,16 +1090,24 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     };
     const h = assemble(state);
     // Plan turn succeeds; the execute turn explodes → must propagate to a failure relay.
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string }) => {
-      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
-      throw new Error('engine exploded mid-step');
-    });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: { mode: string }) => {
+        if (input.mode === 'plan')
+          return { report: 'plan', planText: 'PLAN', session: {} };
+        throw new Error('engine exploded mid-step');
+      },
+    );
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'failed');
 
     expect(state.job.status).toBe('failed');
-    expect(h.posts.some((p) => p.includes('Build failed') && p.includes('engine exploded mid-step'))).toBe(true);
+    expect(
+      h.posts.some(
+        (p) =>
+          p.includes('Build failed') && p.includes('engine exploded mid-step'),
+      ),
+    ).toBe(true);
     expect(h.opened).toHaveLength(0); // no PR opened on a failed build
   });
 
@@ -868,21 +1124,28 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     // generic abort. Without the guard this would flip the job `failed` and boot-resume would never
     // re-drive it (`runningJobs()` only re-drives `status:'running'`).
     h.electionState.draining = true;
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string }) => {
-      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
-      throw new Error('aborted: backend draining');
-    });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: { mode: string }) => {
+        if (input.mode === 'plan')
+          return { report: 'plan', planText: 'PLAN', session: {} };
+        throw new Error('aborted: backend draining');
+      },
+    );
 
     await h.driver.dispatch(state.job);
     // Wait until the execute turn has been attempted (so the drive catch has run), then drain a few ticks.
     await flushUntil(() =>
-      (h.turn.runTurn as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[0].mode !== 'plan'),
+      (h.turn.runTurn as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => c[0].mode !== 'plan',
+      ),
     );
     await flushUntil(() => false, 20);
 
     expect(state.job.status).toBe('running'); // LEFT running — boot-resume continues it
     expect(
-      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[1] === 'failed'),
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c) => c[1] === 'failed',
+      ),
     ).toBe(false); // never stamped failed
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no failure relay on shutdown
   });
@@ -900,7 +1163,8 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     // stuck in a non-yielding subprocess). The HARD race-timeout must still bound the driver.
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
       async (input: { mode: string }) => {
-        if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
+        if (input.mode === 'plan')
+          return { report: 'plan', planText: 'PLAN', session: {} };
         return new Promise(() => {}); // never settles, never honors abort
       },
     );
@@ -909,7 +1173,11 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     await flushUntil(() => state.job.status === 'failed');
 
     expect(state.job.status).toBe('failed');
-    expect(h.posts.some((p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'))).toBe(true);
+    expect(
+      h.posts.some(
+        (p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'),
+      ),
+    ).toBe(true);
   });
 
   it('relays off-spec DEVIATION lines a step flags in its report (issue #7)', async () => {
@@ -921,18 +1189,34 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string; stepId?: string | null }) => {
-      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
-      return {
-        report: 'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
-        session: { id: 's', jobId: 'j', stepId: input.stepId ?? null, engine: 'claude', mode: 'execute', branch: 'b', worktreePath: '/wt/b' },
-      };
-    });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: { mode: string; stepId?: string | null }) => {
+        if (input.mode === 'plan')
+          return { report: 'plan', planText: 'PLAN', session: {} };
+        return {
+          report:
+            'Implemented the endpoint.\nDEVIATION: added a README nobody asked for.',
+          session: {
+            id: 's',
+            jobId: 'j',
+            stepId: input.stepId ?? null,
+            engine: 'claude',
+            mode: 'execute',
+            branch: 'b',
+            worktreePath: '/wt/b',
+          },
+        };
+      },
+    );
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    expect(h.posts.some((p) => p.includes('Off-spec') && p.includes('README nobody asked for'))).toBe(true);
+    expect(
+      h.posts.some(
+        (p) => p.includes('Off-spec') && p.includes('README nobody asked for'),
+      ),
+    ).toBe(true);
     expect(state.job.status).toBe('done'); // a deviation is surfaced, not a failure
   });
 
@@ -959,7 +1243,11 @@ describe('TrackDriver — the legible track/step pipeline', () => {
 
     expect(h.ask).toHaveBeenCalledTimes(1); // it did park
     expect(state.job.status).toBe('failed'); // but did NOT hang — timed out
-    expect(h.posts.some((p) => p.includes('Build failed') && /waiting for your input/i.test(p))).toBe(true);
+    expect(
+      h.posts.some(
+        (p) => p.includes('Build failed') && /waiting for your input/i.test(p),
+      ),
+    ).toBe(true);
     expect(h.calls.some((c) => c.mode === 'execute')).toBe(false); // never got past the gate
     expect(h.opened).toHaveLength(0);
   });
@@ -973,16 +1261,21 @@ describe('TrackDriver — the legible track/step pipeline', () => {
       route: { channel: 'C1', threadTs: 't1' },
     };
     const h = assemble(state);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(async (input: { mode: string }) => {
-      if (input.mode === 'plan') return { report: 'plan', planText: 'PLAN', session: {} };
-      throw new EngineAuthError('401 invalid api key', 'sess-401');
-    });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (input: { mode: string }) => {
+        if (input.mode === 'plan')
+          return { report: 'plan', planText: 'PLAN', session: {} };
+        throw new EngineAuthError('401 invalid api key', 'sess-401');
+      },
+    );
 
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'paused');
 
     expect(state.job.status).toBe('paused'); // paused, NOT failed
-    expect(h.posts.some((p) => /paused/i.test(p) && /credential|auth/i.test(p))).toBe(true);
+    expect(
+      h.posts.some((p) => /paused/i.test(p) && /credential|auth/i.test(p)),
+    ).toBe(true);
     expect(h.opened).toHaveLength(0);
   });
 
@@ -1069,24 +1362,30 @@ describe('TrackDriver — 401 auth recovery', () => {
   function flakyAuthTurn(): TurnRunnerService {
     let executes = 0;
     return {
-      runTurn: vi.fn(async (input: { mode: string; stepId?: string | null; jobId: string }) => {
-        if (input.mode === 'execute' && ++executes === 1) {
-          throw new EngineAuthError('401 Invalid API key', 'sess-401');
-        }
-        return {
-          report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
-          ...(input.mode === 'plan' ? { planText: 'P' } : {}),
-          session: {
-            id: 'sess-401',
-            jobId: input.jobId,
-            stepId: input.stepId ?? null,
-            engine: 'claude' as const,
-            mode: input.mode as 'plan' | 'execute' | 'review',
-            branch: 'b',
-            worktreePath: '/wt/b',
-          },
-        };
-      }),
+      runTurn: vi.fn(
+        async (input: {
+          mode: string;
+          stepId?: string | null;
+          jobId: string;
+        }) => {
+          if (input.mode === 'execute' && ++executes === 1) {
+            throw new EngineAuthError('401 Invalid API key', 'sess-401');
+          }
+          return {
+            report: input.mode === 'plan' ? 'plan' : `did ${input.stepId}`,
+            ...(input.mode === 'plan' ? { planText: 'P' } : {}),
+            session: {
+              id: 'sess-401',
+              jobId: input.jobId,
+              stepId: input.stepId ?? null,
+              engine: 'claude' as const,
+              mode: input.mode as 'plan' | 'execute' | 'review',
+              branch: 'b',
+              worktreePath: '/wt/b',
+            },
+          };
+        },
+      ),
     } as unknown as TurnRunnerService;
   }
 

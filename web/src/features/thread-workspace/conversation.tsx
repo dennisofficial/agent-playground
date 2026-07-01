@@ -276,7 +276,7 @@ function latestContextMeta(messages: ThreadMessage[]): { tokens: number; limit: 
 function ConversationTopBar() {
   return (
     <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3.5">
-      <span className="min-w-0 flex-1 font-mono text-[9px] tracking-[0.16em] text-faint">CONVERSATION</span>
+      <span className="min-w-0 flex-1 font-mono text-[9px] tracking-[0.16em] text-faint">MAIN · CONVERSATION</span>
       <div className="flex items-center gap-0.5">
         <TopBarButton title="Search this thread">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

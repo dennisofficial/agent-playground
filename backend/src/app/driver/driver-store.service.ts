@@ -6,9 +6,9 @@ import type {
   DecisionRecord,
   Step,
   StepStatus,
-  Track,
-  TrackStatus,
   Thread,
+  TrackStatus,
+  Job,
   ThreadStatus,
 } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -30,7 +30,7 @@ const ORDINAL_GAP = 10;
  * rows need (steps carry `org_id`). The driver never reaches a repository, so the store carries the one
  * extra field rather than the driver re-querying the thread for it.
  */
-export type DriverTrack = Track & { orgId: string };
+export type DriverTrack = Thread & { orgId: string };
 
 /** Where to post a thread's chatter — the repo coordinate + the real thread id. */
 export interface JobRoute {
@@ -68,14 +68,14 @@ export class DriverStoreService {
   // ── thread (the build unit) ────────────────────────────────────────────────────────────────────
 
   /** Load one thread as the domain shape. */
-  async loadJob(threadId: string): Promise<Thread> {
+  async loadJob(threadId: string): Promise<Job> {
     return toThread(
       await this.threads.findOneOrFail({ where: { id: threadId } }),
     );
   }
 
   /** Every thread currently in `running` — the boot-reconciliation worklist. */
-  async runningJobs(): Promise<Thread[]> {
+  async runningJobs(): Promise<Job[]> {
     const rows = await this.threads.find({ where: { status: 'running' } });
     return rows.map(toThread);
   }
@@ -128,8 +128,14 @@ export class DriverStoreService {
   }
 
   /** Set the promotion lifecycle status (e.g. `failed` on a caught promotion error, retried later). */
-  async setLedgerPromotionStatus(threadId: string, status: string): Promise<void> {
-    await this.threads.update({ id: threadId }, { ledger_promotion_status: status });
+  async setLedgerPromotionStatus(
+    threadId: string,
+    status: string,
+  ): Promise<void> {
+    await this.threads.update(
+      { id: threadId },
+      { ledger_promotion_status: status },
+    );
   }
 
   /** Mark the ledger promotion COMPLETE — stamped ONLY after the promotion turn AND the commit succeed. */
@@ -162,10 +168,7 @@ export class DriverStoreService {
     return rows.map(toTrack);
   }
 
-  async setTrackStatus(
-    trackId: string,
-    status: TrackStatus,
-  ): Promise<void> {
+  async setTrackStatus(trackId: string, status: TrackStatus): Promise<void> {
     await this.tracks.update({ id: trackId }, { status });
   }
 
@@ -175,17 +178,11 @@ export class DriverStoreService {
     plan: string,
     handoffIn: string | null,
   ): Promise<void> {
-    await this.tracks.update(
-      { id: trackId },
-      { plan, handoff_in: handoffIn },
-    );
+    await this.tracks.update({ id: trackId }, { plan, handoff_in: handoffIn });
   }
 
   /** Record the track's handoff note for the next track (set when the track is done). */
-  async setTrackHandoffOut(
-    trackId: string,
-    handoffOut: string,
-  ): Promise<void> {
+  async setTrackHandoffOut(trackId: string, handoffOut: string): Promise<void> {
     await this.tracks.update({ id: trackId }, { handoff_out: handoffOut });
   }
 
@@ -193,7 +190,10 @@ export class DriverStoreService {
 
   /** Seed the track's review agents at `pending` from the selected lens set — call before the auto-fix
    *  pass so the navigator can show the agents queued, then transitioned as each lens runs. */
-  async seedReviewAgents(trackId: string, agents: ReviewAgentState[]): Promise<void> {
+  async seedReviewAgents(
+    trackId: string,
+    agents: ReviewAgentState[],
+  ): Promise<void> {
     await this.tracks.update({ id: trackId }, { review_agents: agents });
   }
 
@@ -208,20 +208,28 @@ export class DriverStoreService {
     const track = await this.tracks.findOne({ where: { id: trackId } });
     if (!track) return;
     const agents = (track.review_agents ?? []).map((a) =>
-      a.id === lensId ? { ...a, status, ...(findings != null ? { findings } : {}) } : a,
+      a.id === lensId
+        ? { ...a, status, ...(findings != null ? { findings } : {}) }
+        : a,
     );
     await this.tracks.update({ id: trackId }, { review_agents: agents });
   }
 
   /** Resolve any review agent still `pending`/`running` once the pass is over — `passed` if its lens ran,
    *  else `skipped` (e.g. the pass threw before reaching it, or the diff was empty). Idempotent. */
-  async finalizeReviewAgents(trackId: string, lensesRun: string[]): Promise<void> {
+  async finalizeReviewAgents(
+    trackId: string,
+    lensesRun: string[],
+  ): Promise<void> {
     const track = await this.tracks.findOne({ where: { id: trackId } });
     if (!track) return;
     const ran = new Set(lensesRun);
     const agents = (track.review_agents ?? []).map((a) =>
       a.status === 'pending' || a.status === 'running'
-        ? { ...a, status: ran.has(a.id) ? ('passed' as const) : ('skipped' as const) }
+        ? {
+            ...a,
+            status: ran.has(a.id) ? ('passed' as const) : ('skipped' as const),
+          }
         : a,
     );
     await this.tracks.update({ id: trackId }, { review_agents: agents });
@@ -243,10 +251,7 @@ export class DriverStoreService {
    * `pending`/step `build`). Idempotent across a resume — if rows already exist (the plan locked before
    * the restart) the existing rows are returned untouched, so steps never double-create.
    */
-  async lockSteps(
-    track: DriverTrack,
-    planned: PlannedStep[],
-  ): Promise<Step[]> {
+  async lockSteps(track: DriverTrack, planned: PlannedStep[]): Promise<Step[]> {
     const existing = await this.stepsForTrack(track.id);
     if (existing.length > 0) return existing;
     const rows = planned.map((p, i) =>
@@ -343,7 +348,10 @@ export class DriverStoreService {
         reviewAgents:
           Array.isArray(s.review_agents) && s.review_agents.length > 0
             ? s.review_agents
-            : reviewAgentsForTrack(s).map((a) => ({ ...a, status: 'pending' as const })),
+            : reviewAgentsForTrack(s).map((a) => ({
+                ...a,
+                status: 'pending' as const,
+              })),
         steps: mapBatchedSteps(stepsByTrack.get(s.id) ?? []),
       })),
     };
@@ -372,7 +380,7 @@ export class DriverStoreService {
   // ── routing ──────────────────────────────────────────────────────────────────────────────────
 
   /** Resolve where to post a thread's chatter: the repo coordinate + the real thread id. */
-  async route(thread: Thread): Promise<JobRoute> {
+  async route(thread: Job): Promise<JobRoute> {
     return { channel: thread.repoId, threadTs: thread.id, orgId: thread.orgId };
   }
 }
@@ -399,7 +407,8 @@ function mapBatchedSteps(list: StepEntity[]): Array<{
   const idsByBatch = new Map<number, string[]>();
   for (const p of list) {
     if (p.batch_ordinal == null) continue;
-    if (!anchorByBatch.has(p.batch_ordinal)) anchorByBatch.set(p.batch_ordinal, p.id);
+    if (!anchorByBatch.has(p.batch_ordinal))
+      anchorByBatch.set(p.batch_ordinal, p.id);
     const arr = idsByBatch.get(p.batch_ordinal) ?? [];
     arr.push(p.id);
     idsByBatch.set(p.batch_ordinal, arr);
@@ -412,23 +421,29 @@ function mapBatchedSteps(list: StepEntity[]): Array<{
     stage: p.stage,
     status: p.status,
     batchOrdinal: p.batch_ordinal ?? null,
-    anchorStepId: p.batch_ordinal != null ? (anchorByBatch.get(p.batch_ordinal) ?? p.id) : p.id,
-    batchStepIds: p.batch_ordinal != null ? (idsByBatch.get(p.batch_ordinal) ?? [p.id]) : [p.id],
+    anchorStepId:
+      p.batch_ordinal != null
+        ? (anchorByBatch.get(p.batch_ordinal) ?? p.id)
+        : p.id,
+    batchStepIds:
+      p.batch_ordinal != null
+        ? (idsByBatch.get(p.batch_ordinal) ?? [p.id])
+        : [p.id],
   }));
 }
 
 // ── row ⇄ domain mappers ─────────────────────────────────────────────────────────────────────────
 
-function toThread(row: ThreadEntity): Thread {
+function toThread(row: ThreadEntity): Job {
   return {
     id: row.id,
     orgId: row.org_id,
     repoId: row.repo_id,
-    origin: row.origin as Thread['origin'],
+    origin: row.origin as Job['origin'],
     surfaceThreadRef: row.surface_thread_ref,
     title: row.title,
     baseBranch: row.base_branch,
-    kind: row.kind as Thread['kind'],
+    kind: row.kind as Job['kind'],
     status: row.status as ThreadStatus,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,

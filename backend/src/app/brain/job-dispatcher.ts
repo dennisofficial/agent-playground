@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import type { Thread } from '../domain';
+import type { Job } from '../domain';
 
 /**
  * The DISPATCH SEAM — the brain's "hands" edge, the exact mirror of the `BRAIN_SINK` port on the
@@ -30,7 +30,7 @@ export interface JobDispatcher {
    * Take ownership of a persisted, ready-to-run `Thread` (status `running`, tracks persisted). Kick
    * off the deterministic track/step drive; do not block the brain on the whole build.
    */
-  dispatch(thread: Thread): Promise<void>;
+  dispatch(thread: Job): Promise<void>;
   /**
    * Re-drive a HALTED build (status `failed` or `paused`) from the operator's Retry button. Flips the
    * job back to `running` and re-enters the SAME resumable drive — fast-forwarding done tracks/steps and
@@ -49,7 +49,7 @@ export interface JobDispatcher {
 export class LoggingJobDispatcher implements JobDispatcher {
   private readonly logger = new Logger('JobDispatcher');
 
-  async dispatch(thread: Thread): Promise<void> {
+  async dispatch(thread: Job): Promise<void> {
     this.logger.log(
       `[no-op dispatch] THREAD ${thread.id} kind=${thread.kind} title="${thread.title}" ` +
         `repo=${thread.repoId} ` +
@@ -58,6 +58,8 @@ export class LoggingJobDispatcher implements JobDispatcher {
   }
 
   async retry(jobId: string): Promise<void> {
-    this.logger.log(`[no-op retry] THREAD ${jobId} — W4 TrackDriver will re-drive this`);
+    this.logger.log(
+      `[no-op retry] THREAD ${jobId} — W4 TrackDriver will re-drive this`,
+    );
   }
 }

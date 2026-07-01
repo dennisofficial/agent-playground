@@ -32,10 +32,10 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
  * `turnActive` is a separate axis from `status` because
  * `status` alone can't tell "grilling, mid-turn" from "grilling, waiting on an answer" (both `planning`).
  *
- * `awaitingQuestion` is the third axis: a thread blocked on the durable human-input gate (a non-null
- * `awaiting_question_id` — the brain asked via `ask_question` and the answering turn has ended cleanly)
- * is DEFINITIONALLY waiting on the operator, so it overrides every other axis (the asking turn may have
- * briefly left `turn_active` set; the gate still wins).
+ * `awaitingQuestion` is the third axis: a thread with one or more open `ask_question` cards
+ * (`open_question_count > 0` — the brain asked and the answering turn has ended cleanly) is DEFINITIONALLY
+ * waiting on the operator, so it overrides every other axis (the asking turn may have briefly left
+ * `turn_active` set; the gate still wins).
  *
  * Derived — never stored — so there is exactly one rule, consumed by both the thread-list REST shape and
  * the realtime row mapper (they must never diverge).
@@ -64,7 +64,7 @@ export function deriveNeedsYou(
 export type ThreadKind = 'feature' | 'bugfix' | 'onboarding';
 
 /** A conversation + (optionally) the build it drives. One intent, one branch, one PR. */
-export interface Thread {
+export interface Job {
   /** Stable thread id (`threads.id`). */
   id: string;
   /** The tenant (org id). */
@@ -123,7 +123,7 @@ export type TrackStatus =
   | 'failed';
 
 /** One track of a thread's build — a coherent slice (e.g. backend) that becomes a phased plan. */
-export interface Track {
+export interface Thread {
   /** Stable track id (`tracks.id`). */
   id: string;
   /** The owning thread. */

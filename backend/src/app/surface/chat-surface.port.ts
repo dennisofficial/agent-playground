@@ -41,6 +41,13 @@ export interface InboundChatMessage {
    * but does NOT persist it as a `messages` row, so it never renders as an operator chat bubble.
    */
   seed?: boolean;
+  /**
+   * DELIVERY SEED: when this seed delivers an operator's answer to a specific `ask_question` card, the
+   * card's id (`questionId`). The delivery turn stamps THIS card `deliveredAt` on success — tying the
+   * delivered-stamp to the exact seed that carried the answer (so unrelated turns can't prematurely
+   * stamp it, and crash recovery re-seeds precisely). Undefined for non-answer seeds.
+   */
+  seedQuestionId?: string;
 }
 
 /** Options for an outbound post. */
@@ -128,6 +135,6 @@ export interface ChatSurface {
     channel: string,
     threadId: string,
     body: string,
-    opts?: { orgId?: string },
+    opts?: { orgId?: string; deliveredQuestionId?: string },
   ): string;
 }

@@ -7,6 +7,6 @@
  */
 export * from './stimulus';
 export * from './notification-source';
-export * from './thread';
+export * from './job';
 export * from './decision-record';
 export * from './session-ref';

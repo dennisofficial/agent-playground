@@ -113,20 +113,21 @@ export class ThreadEntity extends TimestampedEntity {
   turn_active!: boolean;
 
   /**
-   * The durable HUMAN-INPUT GATE: the `questionId` (a question card's `ts`) this thread is currently
-   * awaiting an operator answer for, or null. Set atomically with the card row by `ask_question`
-   * (`BrainStoreService.openQuestion`); cleared once a delivery turn has handed the answer to the brain.
-   * Authoritative "this thread is blocked on a question" state — survives sandbox AND host restarts, so
-   * the boot reconciliation sweep can re-deliver an answered-but-undelivered question. The asking turn
-   * ends cleanly (async, not a blocking tool-result), so nothing is held in memory across the wait.
+   * The durable HUMAN-INPUT GATE: how many `ask_question` cards on this thread are still awaiting an
+   * operator answer. Each card carries its OWN lifecycle (`answer`/`answeredAt`/`deliveredAt`) — there is
+   * NO single-slot pointer, so the brain may have several questions open at once, answerable in any order.
+   * This denormalized counter is the cheap "needs you" signal (REST list + WAL realtime): bumped by
+   * `openQuestion`, decremented by `markQuestionAnswered`, and recomputed from the cards on boot
+   * (`reconcileOpenQuestionCounts`) so it can never wedge. Answered-but-undelivered recovery keys off the
+   * card rows, not this counter.
    */
-  @Column({ type: 'text', nullable: true })
-  awaiting_question_id!: string | null;
+  @Column({ type: 'int', default: 0 })
+  open_question_count!: number;
 
   /**
    * The durable SECURE-SECRET gate — the `requestId` of a `request_secret` card this thread is awaiting an
-   * operator value for, or null. Parallel to {@link awaiting_question_id} but kept SEPARATE so the two
-   * human-input lanes don't collide and so secret delivery keeps its own crash-safe lifecycle. Set
+   * operator value for, or null. Kept SEPARATE so the two human-input lanes don't collide and so secret
+   * delivery keeps its own crash-safe lifecycle (still single-slot — at most one secret request at a time). Set
    * atomically with the secret card by `request_secret` (`BrainStoreService.openSecretRequest`). The value
    * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorktreeSecretStore`
    * via the `provide-secret` endpoint, which stamps the card `provided_at`; this gate is cleared only once

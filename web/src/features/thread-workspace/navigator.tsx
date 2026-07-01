@@ -3,20 +3,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
-  ArrowRight,
   ArrowUpRight,
   FileText,
   GitBranch,
   GitPullRequest,
+  Globe,
   Image as ImageIcon,
   Lock,
   MoreHorizontal,
   Pause,
   Pencil,
   RotateCw,
+  Server,
   Trash2,
 } from 'lucide-react';
-import { KindBadge, StatusPie } from '@/components/ui/badges';
+import { Dot, KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { formatBytes } from '@/lib/format';
 import { trackTitle } from '@/lib/track-title';
@@ -24,7 +25,7 @@ import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { useRetryThread } from '@/lib/api/thread-queries';
 import { Caret, Divider, PipelineTree, haltTrackIdx } from './pipeline-tree';
-import { NavigatorApprovalCallout } from './spec-approval';
+import { NavigatorApproveButton } from './spec-approval';
 import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
 
@@ -37,13 +38,18 @@ export interface ThreadMeta {
   orgColor: string;
   repoName: string;
   tracker?: string;
-  footer: string;
 }
 
 /**
- * The 288px thread navigator — ONE constant skeleton kept for the thread's whole lifecycle: a header
- * over Conversation → CONTEXT → PIPELINE → ARTIFACTS. The skeleton never restructures; only the signals
- * inside change (dot color, dimming, the selected row, per-region notes). See the thread-sidebar handoff.
+ * The 288px JOB navigator (design "Atlas Workspace HiFi") — ONE constant skeleton for the job's whole
+ * lifecycle: a STICKY header (kind · status · title · org/repo · branch · PR · changes) over three scrolling
+ * regions — THREADS (the Main planning lane + each build lane), OUTPUTS (specs / artifacts / generated), and
+ * PORTS (the sandbox's live dev servers). The header stays pinned; only the regions scroll. The skeleton
+ * never restructures; only the signals inside change (dot color, dimming, the selected row, per-region notes).
+ *
+ * "Job" is the operator-facing name for what the API still calls a thread; a job's lanes ("Threads") are the
+ * Main conversation + the build tracks. PORTS is a design-stage mock (no backend port-exposure yet) — kept
+ * behind {@link PORTS_MOCK} so it is trivial to wire to real sandbox ports later.
  */
 export function Navigator({
   meta,
@@ -51,7 +57,8 @@ export function Navigator({
   messages,
   context,
   contextLoading,
-  selectedNode,
+  laneNode,
+  detailNode,
   threadRef,
   approveValue,
   onConversation,
@@ -62,19 +69,22 @@ export function Navigator({
 }: {
   meta: ThreadMeta;
   pipeline: PipelineState | undefined;
-  /** The thread's durable transcript — the pipeline tree derives each track-session's writer-subagent runs
+  /** The job's durable transcript — the pipeline tree derives each lane-session's writer-subagent runs
    *  from it (the `/pipeline` read model doesn't carry them; see `track-subagents.ts`). */
   messages: ThreadMessage[];
-  /** The thread's `/context` files (specs + artifacts) — feeds the SPECS + ARTIFACTS panels. */
+  /** The job's `/context` files (specs + generated + artifacts) — feeds the OUTPUTS region. */
   context: ThreadContext | undefined;
   contextLoading?: boolean;
-  selectedNode: string | null;
-  /** The open thread — for the in-place "Approve plan" callout. */
+  /** The LEFT pane's open THREADS lane (`?lane=`; `null` = Main) — highlighted ORANGE. */
+  laneNode: string | null;
+  /** The RIGHT pane's open detail node (`?node=`; OUTPUT / port / doc) — highlighted BLUE. */
+  detailNode: string | null;
+  /** The open job — for the in-place "Approve plan" callout. */
   threadRef: ThreadRef;
-  /** The approval card's verbatim approve `value`, when the thread is awaiting approval (else ''). Drives
+  /** The approval card's verbatim approve `value`, when the job is awaiting approval (else ''). Drives
    *  the navigator approval callout. */
   approveValue: string;
-  /** Clears the detail-pane selection (used by the state banners' recovery actions). */
+  /** Clears the detail-pane selection (the Main lane / the state banners' recovery actions). */
   onConversation: () => void;
   onSelectNode: (node: string) => void;
   onRename?: (title: string) => void;
@@ -83,10 +93,19 @@ export function Navigator({
 }) {
   const job = pipelineJob(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
+  const hasPr = Boolean(job?.prUrl);
+  // We can't read a real +/− line stat (no diff endpoint), but a job that hasn't built anything yet
+  // (planning / awaiting / triaging) plainly has no changes — show a muted "—" on the Changes row then.
+  const noChanges =
+    !hasPr &&
+    meta.status !== 'done' &&
+    meta.status !== 'running' &&
+    meta.status !== 'paused' &&
+    meta.status !== 'failed';
   const [editing, setEditing] = useState(false);
 
   // Per-folder expand/collapse — explicit user overrides over the status-derived defaults. Keyed by
-  // folder id (sec:<id>, sec:<id>.plan, sec:<id>.runs); stale keys from a previous thread never match.
+  // folder id (sec:<id>, sec:<id>.tasks, …); stale keys from a previous job never match.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const isExpanded = (id: string, fallback: boolean) => (id in collapsed ? !collapsed[id] : fallback);
   const toggle = (id: string, currentlyExpanded: boolean) =>
@@ -99,9 +118,9 @@ export function Navigator({
       className="flex w-72 shrink-0 flex-col overflow-hidden border-r border-border"
       style={{ background: 'color-mix(in srgb, var(--panel) 35%, transparent)' }}
     >
-      {/* ── header ──────────────────────────────────────────────────────────────────────────── */}
-      <div className="border-b border-border px-4 py-3.5">
-        <div className="mb-2 flex items-center gap-2">
+      {/* ── STICKY header (compact) ─────────────────────────────────────────────────────────── */}
+      <div className="flex-none border-b border-border px-4 pb-2.5 pt-3">
+        <div className="mb-1.5 flex items-center gap-2">
           <KindBadge kind={meta.kind} />
           <span
             className="flex items-center gap-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em]"
@@ -133,192 +152,182 @@ export function Navigator({
               }
             }}
             onBlur={() => setEditing(false)}
-            className="w-full rounded border border-border-2 bg-surface px-1.5 py-0.5 font-disp text-[16px] font-semibold text-text outline-none focus:border-accent"
-            aria-label="Thread title"
+            className="w-full rounded border border-border-2 bg-surface px-1.5 py-0.5 font-disp text-[15px] font-semibold text-text outline-none focus:border-accent"
+            aria-label="Job title"
           />
         ) : (
-          <div className="font-disp text-[16px] font-semibold leading-tight tracking-[-0.01em] text-text">
+          <div className="font-disp text-[15px] font-semibold leading-tight tracking-[-0.01em] text-text">
             {meta.title}
           </div>
         )}
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-1.5 flex items-center gap-2">
           <span className="h-[7px] w-[7px] shrink-0 rounded-sm" style={{ background: meta.orgColor }} />
           <span className="font-mono text-[9.5px] text-dim">{meta.orgName}</span>
           <span className="text-[9px] text-border-2">/</span>
           <span className="font-mono text-[9.5px] font-semibold">{meta.repoName}</span>
         </div>
-        {branch || meta.tracker ? (
-          <div className="mt-1.5 flex items-center gap-2 font-mono text-[9.5px] text-faint">
-            {branch ? (
-              <span className="flex items-center gap-1 truncate">
-                <GitBranch size={10} className="shrink-0" />
-                {branch}
+        {branch ? (
+          <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1">
+            <GitBranch size={10} className="shrink-0 text-faint" />
+            <span className="flex-1 truncate font-mono text-[9.5px] text-dim">{branch}</span>
+            {meta.tracker ? <span className="shrink-0 font-mono text-[9px] text-blue">{meta.tracker} ↗</span> : null}
+          </div>
+        ) : meta.tracker ? (
+          <div className="mt-1.5 font-mono text-[9.5px] text-blue">{meta.tracker} ↗</div>
+        ) : null}
+        {/* PR — links out once opened, muted resting state until then. */}
+        <div className="mt-1 flex items-center gap-1.5 px-1">
+          {hasPr ? (
+            <a
+              href={job!.prUrl!}
+              target="_blank"
+              rel="noreferrer"
+              className="flex flex-1 items-center gap-1.5 rounded py-0.5 hover:bg-surface-2"
+            >
+              <GitPullRequest size={11} className="shrink-0 text-green" />
+              <span className="flex-1 font-mono text-[9.5px] font-semibold text-green">
+                {job!.prNumber != null ? `PR #${job!.prNumber}` : 'pull request'} · open
               </span>
-            ) : null}
-            {meta.tracker ? (
-              <>
-                <span className="text-border-2">·</span>
-                <span className="text-blue">{meta.tracker} ↗</span>
-              </>
-            ) : null}
+              <ArrowUpRight size={11} className="text-faint" />
+            </a>
+          ) : (
+            <div className="flex flex-1 items-center gap-1.5 py-0.5">
+              <GitPullRequest size={11} className="shrink-0 text-faint" />
+              <span className="flex-1 font-mono text-[9.5px] text-faint">No PR yet</span>
+            </div>
+          )}
+        </div>
+        {/* Changes — always available; opens the accumulated diff in the detail pane. */}
+        <button
+          type="button"
+          onClick={() => onSelectNode('diff')}
+          className={cn(
+            '-mx-4 mt-1 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2',
+            detailNode === 'diff' && 'nav-selected-blue',
+          )}
+        >
+          <span className="w-3.5 shrink-0 text-center font-mono text-[13px] font-bold text-blue">±</span>
+          <span className="flex-1 text-[11px] font-semibold text-dim">Changes</span>
+          {noChanges ? <span className="font-mono text-[9px] text-faint">—</span> : null}
+        </button>
+        {/* Approve — pinned as the last header item while the plan is awaiting approval. */}
+        {st === 'awaiting_approval' && approveValue ? (
+          <div className="mt-2">
+            <NavigatorApproveButton threadRef={threadRef} value={approveValue} />
           </div>
         ) : null}
       </div>
 
-      {/* ── scroll body — the constant skeleton ─────────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 py-3">
-        {st === 'awaiting_approval' && approveValue ? (
-          <NavigatorApprovalCallout threadRef={threadRef} value={approveValue} />
-        ) : (
-          <StateBanner status={st} job={job} threadRef={threadRef} onConversation={onConversation} />
-        )}
+      {/* ── scroll body — the constant skeleton (THREADS · OUTPUTS · PORTS). No horizontal padding: rows
+             carry their own px, so each is a full-width band (design "Atlas Workspace HiFi") and the
+             selected `.nav-selected` band + left accent bar can run flush to the rail edge. ─────────── */}
+      <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
+        <StateBanner status={st} job={job} threadRef={threadRef} onConversation={onConversation} />
 
-        <SpecsRegion
-          status={st}
-          specs={context?.specs}
-          loading={contextLoading}
-          selectedNode={selectedNode}
-          onSelectNode={onSelectNode}
+        {/* THREADS — the Main planning lane + each build lane. Selecting one opens it in the LEFT pane
+            (orange highlight). */}
+        <RegionHeader dot="var(--accent)" label="THREADS" />
+        <MainLaneRow
+          active={laneNode === null}
+          running={st === 'running' || st === 'planning'}
+          onClick={onConversation}
         />
-
-        <GeneratedRegion
-          generated={context?.generated}
-          loading={contextLoading}
-          selectedNode={selectedNode}
-          onSelectNode={onSelectNode}
-        />
-
-        <PipelineRegion
+        <ThreadsTracks
           status={st}
           job={job}
           messages={messages}
           threadId={threadRef.threadId}
-          selectedNode={selectedNode}
+          laneNode={laneNode}
+          detailNode={detailNode}
           onSelectNode={onSelectNode}
           isExpanded={isExpanded}
           toggle={toggle}
         />
 
-        <ArtifactsRegion
+        {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
+        <OutputsRegion
           status={st}
-          job={job}
-          artifacts={context?.artifacts}
+          context={context}
           loading={contextLoading}
-          selectedNode={selectedNode}
+          detailNode={detailNode}
           onSelectNode={onSelectNode}
         />
-      </div>
 
-      <div className="border-t border-border px-3.5 py-2.5 text-[10px] leading-relaxed text-faint">
-        {meta.footer}
+        {/* PORTS — the sandbox's live dev servers (design-stage mock). Open in the RIGHT pane (blue). */}
+        <PortsRegion detailNode={detailNode} onSelectNode={onSelectNode} />
       </div>
     </div>
   );
 }
 
-// ── SPECS (the plan files: plan.md, decision-record.md, diagrams) ──────────────────────────────────
+// ── region header (THREADS / OUTPUTS / PORTS — a colored dot + mono label) ──────────────────────────
 
-function SpecsRegion({
-  status,
-  specs,
-  loading,
-  selectedNode,
-  onSelectNode,
+function RegionHeader({
+  dot,
+  label,
+  note,
+  trailing,
+  rule,
 }: {
-  status: ThreadStatus;
-  specs: ContextFile[] | undefined;
-  loading?: boolean;
-  selectedNode: string | null;
-  onSelectNode: (node: string) => void;
+  dot: string;
+  label: string;
+  note?: string;
+  trailing?: ReactNode;
+  /** Full-bleed top border walling this region off from the one above (like the sticky header's border).
+   *  The first region (THREADS) omits it — the sticky header's own border already separates it. */
+  rule?: boolean;
 }) {
-  const files = specs ?? [];
+  // The `dot · label` row. Regions are separated by a full-width rule at the top of each header (matching
+  // the sticky header's bottom border); the trailing slot rides the label row (e.g. PORTS' "3 live").
   return (
     <>
-      <Divider label="SPECS" count={files.length > 0 ? files.length : undefined} />
-      {/* An untrusted-seeded thread keeps its provenance note above the (usually empty) spec list. */}
-      {status === 'triaging' ? (
-        <div
-          className="mx-1.5 mb-1 rounded-md border border-l-2 px-3 py-2.5"
-          style={{ borderColor: 'var(--border)', borderLeftColor: 'var(--slate)', background: 'var(--surface-2)' }}
-        >
-          <div className="mb-1.5 flex items-center gap-2">
-            <GitPullRequest size={11} className="text-dim" />
-            <span className="flex-1 font-mono text-[10px] font-semibold">github · workflow_run</span>
-            <span
-              className="rounded border px-1.5 py-px font-mono text-[8px] font-semibold"
-              style={{ color: 'var(--slate)', background: 'var(--slate-soft)', borderColor: 'var(--slate-line)' }}
-            >
-              UNTRUSTED
-            </span>
-          </div>
-          <p className="text-[10.5px] leading-snug text-dim">An untrusted notification seeded this thread.</p>
-        </div>
-      ) : null}
-      {files.length > 0 ? (
-        files.map((f) => (
-          <FileRow
-            key={f.name}
-            icon={fileIcon(f.name)}
-            name={f.name}
-            active={selectedNode === `spec:${f.name}`}
-            onClick={() => onSelectNode(`spec:${f.name}`)}
-            note={{ text: formatBytes(f.size) }}
-          />
-        ))
-      ) : loading ? (
-        <LoadingRow label="Loading specs…" />
-      ) : (
-        <EmptyRow text="No spec files yet — plan.md & diagrams appear here as the agent drafts them." />
-      )}
+      <div
+        className={cn(
+          'flex items-center gap-2 px-2 pb-1.5 pt-3',
+          rule && 'mt-1.5 border-t border-border pt-3.5',
+        )}
+      >
+        <span className="h-[5px] w-[5px] shrink-0 rounded-full" style={{ background: dot }} />
+        <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.15em] text-dim">{label}</span>
+        {note ? <span className="font-mono text-[8px] text-faint">{note}</span> : null}
+        <span className="flex-1" />
+        {trailing ?? null}
+      </div>
     </>
   );
 }
 
-// ── GENERATED (system-owned, read-only: decision-record.md) ──────────────────────────────────────────
+// ── THREADS: the Main lane + the build-lane tree ───────────────────────────────────────────────────
 
-function GeneratedRegion({
-  generated,
-  loading,
-  selectedNode,
-  onSelectNode,
-}: {
-  generated: ContextFile[] | undefined;
-  loading?: boolean;
-  selectedNode: string | null;
-  onSelectNode: (node: string) => void;
-}) {
-  const files = generated ?? [];
-  // Only show the region once there's something generated — keeps the empty navigator quiet.
-  if (files.length === 0 && !loading) return null;
+/** The Main planning lane — the job's brain conversation. Selecting it clears the detail pane so the
+ *  conversation is the focus; active when nothing else is selected. */
+function MainLaneRow({ active, running, onClick }: { active: boolean; running: boolean; onClick: () => void }) {
   return (
-    <>
-      <Divider label="GENERATED" count={files.length > 0 ? files.length : undefined} />
-      {files.length > 0 ? (
-        files.map((f) => (
-          <FileRow
-            key={f.name}
-            icon={<Lock size={12} className="shrink-0" style={{ color: 'var(--slate)' }} />}
-            name={f.name}
-            active={selectedNode === `gen:${f.name}`}
-            onClick={() => onSelectNode(`gen:${f.name}`)}
-            note={{ text: formatBytes(f.size) }}
-          />
-        ))
-      ) : (
-        <LoadingRow label="Loading…" />
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2',
+        active && 'nav-selected',
       )}
-    </>
+    >
+      <Dot color="var(--green)" pulse={running} size={9} />
+      <span className="flex-1 truncate text-[12px] font-semibold text-text">Main</span>
+      <span className="font-mono text-[8px] text-faint">planning</span>
+    </button>
   );
 }
 
-// ── PIPELINE (the work tree) ───────────────────────────────────────────────────────────────────────
-
-function PipelineRegion({
+/** The build lanes under THREADS — the live tree (running/paused/done/failed), the triage lane, or the
+ *  proposed draft lanes (planning / awaiting approval). Mirrors the prior PIPELINE region, sans its own
+ *  divider (the THREADS RegionHeader owns it). */
+function ThreadsTracks({
   status,
   job,
   messages,
   threadId,
-  selectedNode,
+  laneNode,
+  detailNode,
   onSelectNode,
   isExpanded,
   toggle,
@@ -327,7 +336,8 @@ function PipelineRegion({
   job: PipelineJob | null;
   messages: ThreadMessage[];
   threadId: string;
-  selectedNode: string | null;
+  laneNode: string | null;
+  detailNode: string | null;
   onSelectNode: (node: string) => void;
   isExpanded: (id: string, fallback: boolean) => boolean;
   toggle: (id: string, currentlyExpanded: boolean) => void;
@@ -336,7 +346,6 @@ function PipelineRegion({
   if (status === 'triaging') {
     return (
       <>
-        <Divider label="PIPELINE" count="triage only" />
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--green)' }} />
           <span className="flex-1 text-[11.5px] text-dim">Verified &amp; classified</span>
@@ -351,54 +360,36 @@ function PipelineRegion({
 
   // The live build tree (running / paused / done / failed) — real tracks + steps.
   if ((status === 'running' || status === 'paused' || status === 'done' || status === 'failed') && job) {
-    const total = job.tracks.length;
-    const activeIdx = job.tracks.findIndex(
-      (s) => s.status !== 'done' && s.status !== 'pending' && s.status !== 'failed',
-    );
-    const activeNo = activeIdx === -1 ? total : activeIdx + 1;
-    const count =
-      status === 'done' ? (
-        <span className="text-green">{total} / {total}</span>
-      ) : status === 'failed' ? (
-        <span className="text-red">stopped</span>
-      ) : (
-        `§${Math.min(activeNo, total || 1)} / ${total}`
-      );
     return (
-      <>
-        <Divider label="PIPELINE" count={count} />
-        <PipelineTree
-          job={job}
-          status={status}
-          messages={messages}
-          threadId={threadId}
-          selectedNode={selectedNode}
-          onSelectNode={onSelectNode}
-          isExpanded={isExpanded}
-          toggle={toggle}
-        />
-      </>
+      <PipelineTree
+        job={job}
+        status={status}
+        messages={messages}
+        threadId={threadId}
+        laneNode={laneNode}
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+        isExpanded={isExpanded}
+        toggle={toggle}
+      />
     );
   }
 
-  // Planning / awaiting — draft tracks (locked in on approval). The plan is now authored in full up
-  // front, so a proposed track already carries its steps — show them (expandable) so the operator can
-  // review the whole shape before approving, not just the track titles. Older step-less drafts (and
-  // the planning state, before any tracks exist) degrade to a plain title row.
+  // Planning / awaiting — draft lanes (locked in on approval). The plan is authored in full up front, so a
+  // proposed lane already carries its steps — show them (expandable) so the operator can review the whole
+  // shape before approving. Older step-less drafts (and planning, before any lanes exist) degrade to a row.
   const drafts = job?.tracks ?? [];
   const proposed = status === 'awaiting_approval';
   return (
     <>
-      <Divider label="PIPELINE" count={proposed ? `proposed · ${drafts.length}` : 'forming'} />
       {drafts.length === 0 ? (
         <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
-          No tracks yet — the plan you approve in the conversation is what creates them.
+          No build lanes yet — the plan you approve in the conversation is what creates them.
         </p>
       ) : (
         drafts.map((s, i) => {
           const steps = s.steps ?? [];
           const folderId = `draft:${s.id}`;
-          // Default to expanded while proposed so the full plan is visible at a glance.
           const expanded = steps.length > 0 && isExpanded(folderId, proposed);
           return (
             <div key={s.id} className="select-none">
@@ -442,91 +433,220 @@ function PipelineRegion({
           );
         })
       )}
-      <p className="px-2 pb-1 pt-2 text-[10.5px] italic leading-relaxed text-faint">
-        Drafted in the conversation — these lock in when you approve the plan.
-      </p>
     </>
   );
 }
 
-// ── ARTIFACTS (outputs) ────────────────────────────────────────────────────────────────────────────
+// ── OUTPUTS: specs / artifacts / generated, merged into one region ─────────────────────────────────
 
-function ArtifactsRegion({
+function OutputsRegion({
   status,
-  job,
-  artifacts,
+  context,
   loading,
-  selectedNode,
+  detailNode,
   onSelectNode,
 }: {
   status: ThreadStatus;
-  job: PipelineJob | null;
-  artifacts: ContextFile[] | undefined;
+  context: ThreadContext | undefined;
   loading?: boolean;
-  selectedNode: string | null;
+  detailNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const hasPr = Boolean(job?.prUrl);
-  // The diff + PR are derived from the pipeline / thread row (NOT the files endpoint).
-  const populated = status === 'done' || hasPr;
-  const files = artifacts ?? [];
+  const specs = context?.specs ?? [];
+  const generated = context?.generated ?? [];
+  const artifacts = context?.artifacts ?? [];
+  const triaging = status === 'triaging';
 
   return (
     <>
-      <Divider label="ARTIFACTS" count={files.length > 0 ? files.length : undefined} />
-      {populated ? (
-        <>
-          <FileRow
-            icon={<span className="text-[12px] leading-none">±</span>}
-            name="diff"
-            dim
-            active={selectedNode === 'diff'}
-            onClick={() => onSelectNode('diff')}
-          />
-          {hasPr ? (
-            <a
-              href={job!.prUrl!}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-2.5 rounded-sm px-2 py-1.5 hover:bg-surface-2"
-            >
-              <GitPullRequest size={12} className="text-green" />
-              <span className="flex-1 truncate font-mono text-[11px] text-green">
-                {job!.prNumber != null ? `PR #${job!.prNumber}` : 'pull request'} · open
+      <RegionHeader dot="var(--blue)" label="OUTPUTS" rule />
+
+      {/* SPECS — the plan files (plan.md, diagrams). An untrusted-seeded job keeps its provenance note. */}
+      <OutputGroup
+        label="SPECS"
+        files={specs}
+        prefix="spec"
+        loading={loading}
+        emptyText="No specs yet — plan.md & diagrams land here as Atlas drafts them."
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      >
+        {triaging ? (
+          <div
+            className="mx-1.5 mb-1 rounded-md border border-l-2 px-3 py-2.5"
+            style={{ borderColor: 'var(--border)', borderLeftColor: 'var(--slate)', background: 'var(--surface-2)' }}
+          >
+            <div className="mb-1.5 flex items-center gap-2">
+              <GitPullRequest size={11} className="text-dim" />
+              <span className="flex-1 font-mono text-[10px] font-semibold">github · workflow_run</span>
+              <span
+                className="rounded border px-1.5 py-px font-mono text-[8px] font-semibold"
+                style={{ color: 'var(--slate)', background: 'var(--slate-soft)', borderColor: 'var(--slate-line)' }}
+              >
+                UNTRUSTED
               </span>
-              <ArrowUpRight size={12} className="text-faint" />
-            </a>
-          ) : null}
-        </>
-      ) : null}
-      {/* Real output files dropped into /context/artifacts (preview HTML, screenshots, …). */}
-      {files.map((f) => (
-        <FileRow
-          key={f.name}
-          icon={fileIcon(f.name)}
-          name={f.name}
-          active={selectedNode === `artifact:${f.name}`}
-          onClick={() => onSelectNode(`artifact:${f.name}`)}
-          note={{ text: formatBytes(f.size) }}
-        />
-      ))}
-      {!populated && files.length === 0 ? (
-        loading ? (
-          <LoadingRow label="Loading artifacts…" />
-        ) : (
-          <div className="flex flex-col items-center gap-1.5 px-2 py-3 text-center">
-            <span className="text-[15px] opacity-40">🗂</span>
-            <span className="text-[10px] leading-relaxed text-faint">
-              Nothing shared yet — the agent drops screenshots &amp; files here as it works.
-            </span>
+            </div>
+            <p className="text-[10.5px] leading-snug text-dim">An untrusted notification seeded this job.</p>
           </div>
-        )
-      ) : null}
+        ) : null}
+      </OutputGroup>
+
+      {/* ARTIFACTS — real output files (preview HTML, screenshots). Diff + PR live in the header. */}
+      <OutputGroup
+        label="ARTIFACTS"
+        files={artifacts}
+        prefix="artifact"
+        loading={loading}
+        emptyText="Nothing shared yet — screenshots & output files land here as Atlas works."
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      />
+
+      {/* GENERATED — system-owned, read-only (decision-record.md). */}
+      <OutputGroup
+        label="GENERATED"
+        files={generated}
+        prefix="gen"
+        generated
+        loading={loading}
+        emptyText="Nothing generated yet — system-owned files like decision-record.md."
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      />
     </>
   );
 }
 
-// ── state banners (failed / paused) ──────────────────────────────────────────────────────────────
+/** One OUTPUTS sub-group (SPECS / ARTIFACTS / GENERATED) — its header is ALWAYS shown; the body is the
+ *  files, a loading row, or a muted empty-state line. `children` renders above the files (the SPECS
+ *  triaging provenance note). */
+function OutputGroup({
+  label,
+  files,
+  prefix,
+  generated,
+  loading,
+  emptyText,
+  detailNode,
+  onSelectNode,
+  children,
+}: {
+  label: string;
+  files: ContextFile[];
+  prefix: 'spec' | 'artifact' | 'gen';
+  generated?: boolean;
+  loading?: boolean;
+  emptyText: string;
+  detailNode: string | null;
+  onSelectNode: (node: string) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <>
+      <Divider label={label} count={files.length > 0 ? files.length : undefined} />
+      {children}
+      {files.length > 0 ? (
+        files.map((f) => (
+          <FileRow
+            key={f.name}
+            icon={generated ? <Lock size={12} className="shrink-0" style={{ color: 'var(--slate)' }} /> : fileIcon(f.name)}
+            name={f.name}
+            active={detailNode === `${prefix}:${f.name}`}
+            onClick={() => onSelectNode(`${prefix}:${f.name}`)}
+            note={{ text: formatBytes(f.size) }}
+          />
+        ))
+      ) : loading ? (
+        <LoadingRow label="Loading…" />
+      ) : children ? null : (
+        <p className="px-2 pb-1 pt-1 text-[10.5px] italic leading-relaxed text-faint">{emptyText}</p>
+      )}
+    </>
+  );
+}
+
+// ── PORTS: the sandbox's live dev servers (design-stage mock) ──────────────────────────────────────
+
+/** Whether to render the PORTS region. Mock-only for now — there is no backend port-exposure yet (the
+ *  Docker port-mapping plumbing exists but is unused). Flip the data source here when it lands. */
+const PORTS_MOCK = true;
+
+interface PortVM {
+  id: string;
+  /** `W` web app · `S` server. */
+  tag: 'W' | 'S';
+  name: string;
+  meta: string;
+}
+
+const MOCK_PORTS: PortVM[] = [
+  { id: 'billing', tag: 'W', name: 'Billing UI', meta: ':3000 · web app' },
+  { id: 'admin', tag: 'W', name: 'Admin', meta: ':3002 · web app' },
+  { id: 'api', tag: 'S', name: 'API server', meta: ':8080 · server' },
+];
+
+function PortsRegion({
+  detailNode,
+  onSelectNode,
+}: {
+  detailNode: string | null;
+  onSelectNode: (node: string) => void;
+}) {
+  if (!PORTS_MOCK) return null;
+  const ports = MOCK_PORTS;
+  return (
+    <>
+      <RegionHeader
+        dot="var(--blue)"
+        label="PORTS"
+        rule
+        note="· sandbox"
+        trailing={
+          <span className="flex items-center gap-1 font-mono text-[8px] font-semibold text-green">
+            <span className="pulse-dot h-[5px] w-[5px] rounded-full" style={{ background: 'var(--green)' }} />
+            {ports.length} live
+          </span>
+        }
+      />
+      {ports.map((p) => {
+        const node = `port:${p.id}`;
+        const active = detailNode === node;
+        const web = p.tag === 'W';
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onSelectNode(node)}
+            className={cn(
+              'flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition hover:bg-surface-2',
+              active && 'nav-selected-blue',
+            )}
+          >
+            <span
+              className="grid h-[19px] w-[19px] shrink-0 place-items-center rounded-[5px]"
+              style={{
+                color: web ? 'var(--blue)' : 'var(--green)',
+                background: web ? 'color-mix(in srgb, var(--blue) 13%, transparent)' : 'var(--green-soft)',
+              }}
+            >
+              {web ? <Globe size={11} /> : <Server size={11} />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[11px] font-semibold text-text">{p.name}</span>
+              <span className="block truncate font-mono text-[8px] text-faint">{p.meta}</span>
+            </span>
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ background: 'var(--green)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--green) 16%, transparent)' }}
+            />
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+// ── state banners (failed / paused / awaiting) ─────────────────────────────────────────────────────
 
 function StateBanner({
   status,
@@ -594,32 +714,6 @@ function StateBanner({
             onClick={onRetry}
             disabled={retry.isPending}
           />
-        </div>
-      </div>
-    );
-  }
-  if (status === 'awaiting_approval') {
-    return (
-      <div
-        className="mx-1.5 my-1 flex items-start gap-2 rounded-md border border-l-2 px-3 py-2.5"
-        style={{ borderColor: 'var(--border)', borderLeftColor: 'var(--slate)', background: 'var(--surface-2)' }}
-      >
-        <Lock size={12} className="mt-px shrink-0" style={{ color: 'var(--slate)' }} />
-        <div>
-          <div className="text-[11px] font-semibold" style={{ color: 'var(--slate)' }}>
-            Approval card is in the conversation
-          </div>
-          <p className="mt-0.5 text-[10.5px] leading-snug text-dim">
-            That card is the gate — approving locks in the plan below.
-          </p>
-          <button
-            type="button"
-            onClick={onConversation}
-            className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold"
-            style={{ color: 'var(--accent)' }}
-          >
-            Open conversation <ArrowRight size={11} />
-          </button>
         </div>
       </div>
     );
@@ -696,7 +790,7 @@ function FileRow({
       type="button"
       onClick={onClick}
       className={`flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-left hover:bg-surface-2 ${
-        active ? 'bg-[var(--accent-soft)]' : ''
+        active ? 'nav-selected-blue' : ''
       }`}
     >
       {body}
@@ -722,12 +816,7 @@ function LoadingRow({ label }: { label: string }) {
   );
 }
 
-/** A region's empty-state note (no files yet). */
-function EmptyRow({ text }: { text: string }) {
-  return <p className="px-2 pb-1 pt-1 text-[10.5px] italic leading-relaxed text-faint">{text}</p>;
-}
-
-/** Kebab → "Rename thread" + a two-click "Delete thread" (real `PATCH` / `DELETE …/threads/:id`). */
+/** Kebab → "Rename job" + a two-click "Delete job" (real `PATCH` / `DELETE …/threads/:id`). */
 function ThreadMenu({
   onStartRename,
   onDelete,
@@ -756,7 +845,7 @@ function ThreadMenu({
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="rounded p-1 text-faint transition hover:bg-surface-2 hover:text-text"
-        aria-label="Thread actions"
+        aria-label="Job actions"
       >
         <MoreHorizontal size={15} />
       </button>
@@ -776,7 +865,7 @@ function ThreadMenu({
               className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-text transition hover:bg-surface-2"
             >
               <Pencil size={13} className="text-dim" />
-              Rename thread
+              Rename job
             </button>
           ) : null}
           {onDelete ? (
@@ -795,7 +884,7 @@ function ThreadMenu({
               className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-red transition hover:bg-[color-mix(in_srgb,var(--red)_8%,transparent)] disabled:opacity-50"
             >
               <Trash2 size={13} />
-              {deleting ? 'Deleting…' : confirm ? 'Click again to confirm' : 'Delete thread'}
+              {deleting ? 'Deleting…' : confirm ? 'Click again to confirm' : 'Delete job'}
             </button>
           ) : null}
         </div>

@@ -18,17 +18,6 @@ import { PhaseView, EmptyPane } from './step-view';
 import { PersistentApprovalBar } from './spec-approval';
 import { useSelectedNode } from './use-selected-node';
 
-const FOOTERS: Record<ThreadStatus, string> = {
-  running: 'One branch · each step a fresh session · one PR · the harness resumes on any halt.',
-  planning: 'Pure conversation — the plan you approve here is what creates the tracks.',
-  plan_review: 'Codex is reviewing the submitted plan — findings will appear in the conversation.',
-  awaiting_approval: 'Approve the plan whenever you’re ready — here, the detail pane, or the conversation. Nothing’s blocked while it waits.',
-  paused: 'Your paused session — reply to resume. The resume handle is yours.',
-  done: 'One PR per feature · opened early as a draft, filled in live as tracks landed.',
-  triaging: 'Autonomous lane — the agent parked one decision for you to answer.',
-  failed: 'The run failed — read the conversation for the halt, then steer or retry.',
-};
-
 /**
  * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
  * Step). Resolves its own data from the org → repo → thread API. The shell's "needs you" dots come from
@@ -52,9 +41,10 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   const sayMutate = useSay(ref).mutate;
   const markdownActions = useMemo(() => ({ sendToThread: (text: string) => sayMutate(text) }), [sayMutate]);
 
-  // The selected node lives in `?node=` (single source of truth). A thread switch navigates to a fresh
-  // clean `threadHref()` URL with no query, so the selection naturally resets — no reset effect needed.
-  const { selectedNode, selectNode, openConversation } = useSelectedNode();
+  // Two independent selections: `laneNode` (?lane=) drives the LEFT pane (a THREADS lane — Main or a build
+  // track/step); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT / port / subagent / doc). A thread
+  // switch navigates to a fresh clean URL with no query, so both reset — no reset effect needed.
+  const { laneNode, detailNode, selectNode, openConversation, closeDetail } = useSelectedNode();
 
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
   // library remember the layout even though the detail panel is only conditionally mounted.
@@ -111,7 +101,6 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     orgName: inboxThread?.org.name ?? 'Organization',
     orgColor: orgSwatch(),
     repoName: inboxThread?.repo.name ?? repoId,
-    footer: FOOTERS[status],
   };
 
   const onConversation = openConversation;
@@ -134,7 +123,8 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
         messages={messages}
         context={context}
         contextLoading={contextLoading}
-        selectedNode={selectedNode}
+        laneNode={laneNode}
+        detailNode={detailNode}
         threadRef={ref}
         approveValue={awaitingApproval ? approveValue : ''}
         onConversation={onConversation}
@@ -155,15 +145,31 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
         onLayoutChanged={onLayoutChanged}
         className="min-w-0 flex-1 bg-surface"
       >
+        {/* LEFT pane — the Main brain conversation by default; a selected THREADS lane (build track/step)
+            replaces it with that lane's transcript. */}
         <Panel id="conversation" minSize="28%" className="flex min-w-0 flex-col">
-          <Conversation
-            threadRef={ref}
-            messages={messages}
-            isLoading={messagesLoading}
-            live={status === 'running' || status === 'plan_review'}
-            onOpenPlan={onOpenPlan}
-            onSelectNode={(node) => selectNode(node, { push: true })}
-          />
+          {laneNode ? (
+            <PhaseView
+              threadRef={ref}
+              pipeline={pipeline}
+              pipelineLoading={pipelineLoading}
+              pipelineError={pipelineError}
+              messages={messages}
+              approvalCard={approvalCard}
+              selectedNode={laneNode}
+              onConversation={openConversation}
+              onSelectNode={(node) => selectNode(node, { push: true })}
+            />
+          ) : (
+            <Conversation
+              threadRef={ref}
+              messages={messages}
+              isLoading={messagesLoading}
+              live={status === 'running' || status === 'plan_review'}
+              onOpenPlan={onOpenPlan}
+              onSelectNode={(node) => selectNode(node, { push: true })}
+            />
+          )}
         </Panel>
         {/* A 1px divider line, NOT a 6px reserved strip — so both panes (and the detail-pane footers like
             the approval bar) sit flush against it. The resizable hit target is widened by the library's
@@ -178,7 +184,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
           {/* The detail pane content fills the column; the persistent approval bar (when awaiting) pins to
               its base as a `flex:none` footer — present no matter what the pane is showing. */}
           <div className="flex min-h-0 flex-1 flex-col">
-            {selectedNode ? (
+            {detailNode ? (
               <PhaseView
                 threadRef={ref}
                 pipeline={pipeline}
@@ -186,8 +192,8 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
                 pipelineError={pipelineError}
                 messages={messages}
                 approvalCard={approvalCard}
-                selectedNode={selectedNode}
-                onConversation={onConversation}
+                selectedNode={detailNode}
+                onConversation={closeDetail}
                 onSelectNode={(node) => selectNode(node, { push: true })}
               />
             ) : (

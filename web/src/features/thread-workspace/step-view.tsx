@@ -118,6 +118,11 @@ export function PhaseView({
     title = 'Diff';
     subtitle = 'the accumulated change across all tracks';
     body = <DiffView />;
+  } else if (selectedNode.startsWith('port:')) {
+    const portMeta = PORT_META[selectedNode.slice('port:'.length)];
+    title = portMeta?.name ?? 'Port';
+    subtitle = portMeta?.sub ?? 'sandbox port';
+    body = <PortView id={selectedNode.slice('port:'.length)} />;
   } else if (selectedNode.startsWith('subagent:')) {
     const parentId = selectedNode.slice('subagent:'.length);
     const summary =
@@ -598,6 +603,182 @@ function ReviewView({ lens }: { lens: string }) {
   );
 }
 
+// ── Sandbox ports (design-stage MOCK — no backend port-exposure yet) ───────────────────────────────
+/**
+ * The PORTS detail views are a faithful design-stage MOCK: the backend has Docker port-mapping plumbing
+ * but no port discovery/proxy/request-log yet, so these render representative placeholder data behind a
+ * clear "design preview" footnote. When the sandbox exposes real ports, swap the mock bodies for live data.
+ */
+interface PortMeta {
+  kind: 'web' | 'server';
+  name: string;
+  sub: string;
+  url?: string;
+  app?: 'billing' | 'admin';
+}
+
+const PORT_META: Record<string, PortMeta> = {
+  billing: { kind: 'web', name: 'Billing UI', sub: 'Web · :3000', url: 'localhost:3000/billing', app: 'billing' },
+  admin: { kind: 'web', name: 'Admin', sub: 'Web · :3002', url: 'localhost:3002/admin', app: 'admin' },
+  api: { kind: 'server', name: 'API server', sub: 'Server · :8080' },
+};
+
+function PortView({ id }: { id: string }) {
+  const meta = PORT_META[id];
+  if (!meta) return <Placeholder title="Port" body="Unknown sandbox port." />;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-hidden p-4">
+        {meta.kind === 'server' ? <ServerPortView /> : <WebPortView url={meta.url ?? ''} app={meta.app ?? 'billing'} />}
+      </div>
+      <PortMockFootnote />
+    </div>
+  );
+}
+
+function PortMockFootnote() {
+  return (
+    <div className="shrink-0 border-t border-border px-5 py-2 text-center font-mono text-[9px] text-faint">
+      design preview · live sandbox ports are not exposed by the backend yet
+    </div>
+  );
+}
+
+/** A framed browser preview of a dev-server web app (mock body). */
+function WebPortView({ url, app }: { url: string; app: 'billing' | 'admin' }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border-2 bg-panel" style={{ boxShadow: 'var(--shadow-card)' }}>
+      <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border px-3" style={{ background: 'var(--surface-2)' }}>
+        <span className="h-[7px] w-[7px] rounded-full" style={{ background: 'var(--red)' }} />
+        <span className="h-[7px] w-[7px] rounded-full" style={{ background: 'var(--accent)' }} />
+        <span className="h-[7px] w-[7px] rounded-full" style={{ background: 'var(--green)' }} />
+        <span className="ml-2 flex-1 truncate rounded-md bg-panel px-3 py-1 font-mono text-[9px] text-dim">{url}</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-panel">
+        {app === 'billing' ? <MockBillingApp /> : <MockAdminApp />}
+      </div>
+    </div>
+  );
+}
+
+function MockBillingApp() {
+  const invoices = [
+    { date: 'Jul 1, 2025', amount: '$49.00', state: 'PAID' as const },
+    { date: 'Jun 1, 2025', amount: '$49.00', state: 'PAID' as const },
+    { date: 'May 1, 2025', amount: '$49.00', state: 'FAILED' as const },
+  ];
+  return (
+    <div className="px-8 py-7">
+      <div className="text-[19px] font-bold text-text">Billing</div>
+      <div className="mt-0.5 text-[12px] text-dim">Manage your subscription and invoices</div>
+      <div className="mt-5 flex items-center justify-between rounded-xl border border-border px-4 py-4" style={{ background: 'var(--surface-2)' }}>
+        <div>
+          <div className="text-[14px] font-semibold text-text">Pro plan</div>
+          <div className="text-[11px] text-dim">Renews Aug 1 · billed monthly</div>
+        </div>
+        <div className="text-[18px] font-bold text-text">
+          $49<span className="text-[11px] font-medium text-dim">/mo</span>
+        </div>
+      </div>
+      <div className="mb-2 mt-6 font-mono text-[10px] tracking-[0.08em] text-faint">RECENT INVOICES</div>
+      <div className="overflow-hidden rounded-xl border border-border">
+        {invoices.map((inv, i) => (
+          <div
+            key={inv.date}
+            className={cn('flex items-center px-4 py-3 text-[12px]', i > 0 && 'border-t border-border')}
+          >
+            <span className="flex-1 text-dim">{inv.date}</span>
+            <span className="mr-4 font-semibold text-text">{inv.amount}</span>
+            <span
+              className="rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold"
+              style={
+                inv.state === 'PAID'
+                  ? { color: 'var(--green)', background: 'var(--green-soft)' }
+                  : { color: 'var(--red)', background: 'var(--red-soft)' }
+              }
+            >
+              {inv.state}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MockAdminApp() {
+  const stats = [
+    { label: 'MRR', value: '$24.8k', tone: 'text' as const },
+    { label: 'ACTIVE', value: '506', tone: 'text' as const },
+    { label: 'FAILED 24H', value: '7', tone: 'red' as const },
+  ];
+  const events = [
+    { name: 'invoice.paid', code: '200' },
+    { name: 'customer.subscription.updated', code: '200' },
+    { name: 'invoice.payment_failed', code: '200' },
+  ];
+  return (
+    <div className="px-7 py-6">
+      <div className="mb-5 text-[17px] font-bold text-text">Admin · Billing ops</div>
+      <div className="mb-6 flex gap-3">
+        {stats.map((s) => (
+          <div key={s.label} className="flex-1 rounded-xl border border-border px-4 py-3" style={{ background: 'var(--surface-2)' }}>
+            <div className="font-mono text-[9px] text-faint">{s.label}</div>
+            <div className={cn('mt-1 text-[19px] font-bold', s.tone === 'red' ? 'text-red' : 'text-text')}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mb-2 font-mono text-[10px] tracking-[0.08em] text-faint">RECENT WEBHOOK EVENTS</div>
+      <div className="overflow-hidden rounded-xl border border-border">
+        {events.map((e, i) => (
+          <div key={e.name} className={cn('flex items-center px-4 py-2.5 text-[11px]', i > 0 && 'border-t border-border')}>
+            <span className="flex-1 font-mono text-[10px] text-blue">{e.name}</span>
+            <span className="font-mono text-[9px] text-green">{e.code}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A live-styled request log for a server dev port (mock rows). */
+function ServerPortView() {
+  const log = [
+    { time: '09:42:01', method: 'POST', path: '/webhook', status: '200', ms: '34ms' },
+    { time: '09:41:58', method: 'POST', path: '/webhook', status: '200', ms: '12ms' },
+    { time: '09:41:55', method: 'GET', path: '/health', status: '200', ms: '2ms' },
+    { time: '09:41:50', method: 'POST', path: '/webhook', status: '400', ms: '8ms' },
+    { time: '09:41:47', method: 'POST', path: '/webhook', status: '200', ms: '29ms' },
+    { time: '09:41:42', method: 'GET', path: '/billing/invoices', status: '200', ms: '41ms' },
+    { time: '09:41:39', method: 'POST', path: '/webhook', status: '200', ms: '18ms' },
+  ];
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border-2 bg-panel">
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-4 py-3">
+        <span className="flex items-center gap-1.5 text-[11px] font-semibold text-green">
+          <span className="h-2 w-2 rounded-full" style={{ background: 'var(--green)', boxShadow: '0 0 0 3px var(--green-soft)' }} />
+          Running
+        </span>
+        <span className="font-mono text-[9.5px] text-dim">:8080 · node · uptime 2h 14m</span>
+        <span className="flex-1" />
+        <span className="font-mono text-[9px] text-faint">142 req/min</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto py-3">
+        <div className="px-5 pb-2 font-mono text-[8px] tracking-[0.1em] text-faint">REQUEST LOG · LIVE</div>
+        {log.map((r, i) => (
+          <div key={i} className="flex items-center gap-3 whitespace-pre px-5 py-1 font-mono text-[10.5px]">
+            <span className="text-faint">{r.time}</span>
+            <span className="w-9" style={{ color: r.method === 'POST' ? 'var(--blue)' : 'var(--green)' }}>{r.method}</span>
+            <span className="flex-1 truncate text-dim">{r.path}</span>
+            <span style={{ color: r.status === '200' ? 'var(--green)' : 'var(--red)' }}>{r.status}</span>
+            <span className="w-12 text-right text-faint">{r.ms}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Context file viewer (specs / artifacts) ───────────────────────────────────────────────────────
 /** Render one real `/context` file: markdown → prose, images → inline, anything else → mono text. */
 function FileView({
@@ -708,6 +889,8 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   if (node.startsWith('spec:') || node.startsWith('gen:') || node.startsWith('artifact:')) return 'found';
   // Subagent runs aren't job nodes — they self-handle a missing run inside SubagentView. Always resolvable.
   if (node.startsWith('subagent:')) return 'found';
+  // Sandbox ports are a design-stage mock (no backend port-exposure yet) — always resolvable.
+  if (node.startsWith('port:')) return 'found';
 
   if (loading) return 'loading';
   if (error || !job) return 'not_found';

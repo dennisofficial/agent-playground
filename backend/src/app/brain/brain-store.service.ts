@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, Repository } from 'typeorm';
-import type { Decision, Thread, ThreadKind, ThreadStatus } from '../domain';
+import type { Decision, Job, ThreadKind, ThreadStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type { WebQuestionCard, WebSecretInputCard } from '../surface';
 import { renderPlan } from '../driver/render-plan';
@@ -28,7 +28,7 @@ export interface ThreadRoute {
 
 /** The persisted output of a locked plan: the thread (build unit) + its decision record id. */
 export interface PersistedPlan {
-  thread: Thread;
+  thread: Job;
   decisionRecordId: string;
 }
 
@@ -266,53 +266,47 @@ export class BrainStoreService {
   }
 
   /**
-   * The newest ANSWERED question card not yet consumed by a `create_decision` — what `create_decision`
-   * auto-attaches (its `question` + `answer`) so the brain need not restate them. Durable (DB-backed),
-   * so it survives a host restart between the answer and the lock.
+   * The most-recently-ANSWERED question card not yet consumed by a `create_decision` — the fallback
+   * `create_decision` auto-attaches (its `question` + `answer`) when no explicit `questionId`/delivery
+   * `seedQuestionId` names one. Durable (DB-backed), survives a host restart between answer and lock.
+   * Ordered by the card's own `answeredAt` (NOT `created_at`) so that with multiple open questions an
+   * out-of-order answer attaches the card the operator just answered, not the oldest-created one.
    */
   async latestAnsweredQuestionCard(
     threadId: string,
   ): Promise<MessageEntity | null> {
     const cards = await this.questionCards(threadId);
-    return (
-      cards.find((m) => {
-        const c = m.card as Record<string, unknown>;
-        return c.answer != null && c.loggedDecision !== true;
-      }) ?? null
-    );
+    const answered = cards.filter((m) => {
+      const c = m.card as Record<string, unknown>;
+      return c.answer != null && c.loggedDecision !== true;
+    });
+    answered.sort((a, b) => {
+      const aAt = String((a.card as Record<string, unknown>).answeredAt ?? '');
+      const bAt = String((b.card as Record<string, unknown>).answeredAt ?? '');
+      return bAt.localeCompare(aAt); // newest answeredAt first (ISO strings sort lexically)
+    });
+    return answered[0] ?? null;
   }
 
   // ── human-input gate (durable ask_question lifecycle: asked → answered → delivered → loggedDecision) ──
+  // Each question card carries its OWN lifecycle state (`answer`/`answeredAt`/`deliveredAt`); there is NO
+  // single-slot thread pointer. The brain may have MANY questions open at once, answerable in any order.
+  // `threads.open_question_count` is a denormalized "how many cards await the operator" counter (cheap
+  // needs-you signal + WAL realtime), maintained transactionally on open/answer and healed on boot.
 
   /**
-   * Open a human-input gate ATOMICALLY: in ONE transaction, persist the question card row AND point the
-   * thread's `awaiting_question_id` at it. A crash between the two writes can't leave a visible question
-   * with no authoritative pointer (which the answer endpoint + boot sweep key off). Refuses (`alreadyOpen`)
-   * if the thread already has an UNANSWERED question open, so the brain can't stack questions; an
-   * answered-but-not-yet-delivered prior question is allowed to be superseded (its card stays answered and
-   * is still stamped delivered by the in-flight turn, while the new pointer wins).
+   * Open a question card: in ONE transaction persist the card row AND bump `open_question_count`. No
+   * single-slot refusal — stacking is allowed. Returns `{ ok:false }` only if the thread doesn't exist.
    */
   async openQuestion(
     threadId: string,
     input: { ts: string; text?: string; card: Record<string, unknown> },
-  ): Promise<{ ok: boolean; alreadyOpen?: boolean }> {
+  ): Promise<{ ok: boolean }> {
     return this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(ThreadEntity);
       const messages = m.getRepository(MessageEntity);
       const thread = await threads.findOne({ where: { id: threadId } });
       if (!thread) return { ok: false };
-      if (thread.awaiting_question_id) {
-        const open = await messages.findOne({
-          where: {
-            thread_id: threadId,
-            ts: thread.awaiting_question_id,
-            kind: 'card',
-          },
-        });
-        const card = open?.card as WebQuestionCard | undefined;
-        if (card && card.answer == null)
-          return { ok: false, alreadyOpen: true };
-      }
       await messages.save(
         messages.create({
           thread_id: threadId,
@@ -325,18 +319,57 @@ export class BrainStoreService {
           card: input.card,
         }),
       );
-      await threads.update(
-        { id: threadId },
-        { awaiting_question_id: input.ts },
-      );
+      await threads
+        .createQueryBuilder()
+        .update()
+        .set({ open_question_count: () => 'open_question_count + 1' })
+        .where('id = :threadId', { threadId })
+        .execute();
       return { ok: true };
     });
   }
 
-  /** The questionId this thread is awaiting an operator answer for (the gate pointer), or null. */
-  async awaitingQuestionId(threadId: string): Promise<string | null> {
-    const row = await this.threads.findOne({ where: { id: threadId } });
-    return row?.awaiting_question_id ?? null;
+  /**
+   * Stamp a question card ANSWERED, ATOMICALLY and IDEMPOTENTLY: a conditional update that only fires
+   * `WHERE the card is still unanswered`, so two concurrent answer requests can't both "win". Only the
+   * winner decrements `open_question_count`. Returns `{ firstAnswer:true }` for the winner (the caller
+   * then seeds the delivery turn) and `{ firstAnswer:false }` for a stale/duplicate/already-answered call.
+   */
+  async markQuestionAnswered(
+    threadId: string,
+    questionId: string,
+    answer: string,
+  ): Promise<{ firstAnswer: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const patch = JSON.stringify({
+        answer,
+        answeredAt: new Date().toISOString(),
+      });
+      const res = await m
+        .createQueryBuilder()
+        .update(MessageEntity)
+        .set({ card: () => 'card || :patch::jsonb' })
+        .where('thread_id = :threadId', { threadId })
+        .andWhere('ts = :questionId', { questionId })
+        .andWhere("kind = 'card'")
+        .andWhere("card ->> 'type' = 'question_card'")
+        .andWhere("card ->> 'answer' IS NULL")
+        .andWhere("card ->> 'deliveredAt' IS NULL")
+        .setParameter('patch', patch)
+        .execute();
+      const firstAnswer = (res.affected ?? 0) === 1;
+      if (firstAnswer) {
+        await m
+          .createQueryBuilder()
+          .update(ThreadEntity)
+          .set({
+            open_question_count: () => 'GREATEST(0, open_question_count - 1)',
+          })
+          .where('id = :threadId', { threadId })
+          .execute();
+      }
+      return { firstAnswer };
+    });
   }
 
   /** Fetch one thread's question-card payload by id (the card's `ts`); null if absent / not a question. */
@@ -361,21 +394,11 @@ export class BrainStoreService {
     });
   }
 
-  /** Clear the gate pointer iff it still equals `questionId` (compare-and-clear; ignores a superseded gate). */
-  async clearAwaitingQuestion(
-    threadId: string,
-    questionId: string,
-  ): Promise<void> {
-    await this.threads.update(
-      { id: threadId, awaiting_question_id: questionId },
-      { awaiting_question_id: null },
-    );
-  }
-
   /**
-   * Boot reconciliation: threads whose gate points at an ANSWERED-but-UNDELIVERED question — the crash
-   * window where the operator answered (durably stamped) but the host died before a turn handed it to the
-   * brain. The startup sweep re-delivers each so the answer is never silently dropped (at-least-once).
+   * Boot reconciliation: every question card that is ANSWERED-but-UNDELIVERED — the crash window where the
+   * operator answered (durably stamped) but the host died before a turn handed it to the brain. Scans the
+   * CARD rows (not a thread pointer), so multiple per thread are returned, ORDERED BY each card's own
+   * `answeredAt` (oldest first) so the boot sweep re-delivers them in the order they were answered.
    */
   async findUndeliveredAnsweredQuestions(): Promise<
     {
@@ -387,31 +410,53 @@ export class BrainStoreService {
       answer: string;
     }[]
   > {
-    const rows = await this.threads.find({
-      where: { awaiting_question_id: Not(IsNull()) },
-    });
-    const out: {
-      threadId: string;
-      orgId: string;
-      repoId: string;
-      questionId: string;
-      question: string;
-      answer: string;
-    }[] = [];
-    for (const t of rows) {
-      const card = await this.getQuestionCard(t.id, t.awaiting_question_id!);
-      if (card?.answer != null && card.deliveredAt == null) {
-        out.push({
-          threadId: t.id,
-          orgId: t.org_id,
-          repoId: t.repo_id,
-          questionId: t.awaiting_question_id!,
-          question: card.question,
-          answer: card.answer,
-        });
-      }
-    }
-    return out;
+    const raw = await this.messages
+      .createQueryBuilder('m')
+      .innerJoin(ThreadEntity, 't', 't.id = m.thread_id')
+      .where("m.kind = 'card'")
+      .andWhere("m.card ->> 'type' = 'question_card'")
+      .andWhere("m.card ->> 'answer' IS NOT NULL")
+      .andWhere("m.card ->> 'deliveredAt' IS NULL")
+      .select('m.thread_id', 'threadId')
+      .addSelect('m.ts', 'questionId')
+      .addSelect("m.card ->> 'question'", 'question')
+      .addSelect("m.card ->> 'answer'", 'answer')
+      .addSelect('t.org_id', 'orgId')
+      .addSelect('t.repo_id', 'repoId')
+      .orderBy("m.card ->> 'answeredAt'", 'ASC')
+      .getRawMany<{
+        threadId: string;
+        orgId: string;
+        repoId: string;
+        questionId: string;
+        question: string | null;
+        answer: string | null;
+      }>();
+    return raw.map((r) => ({
+      threadId: r.threadId,
+      orgId: r.orgId,
+      repoId: r.repoId,
+      questionId: r.questionId,
+      question: r.question ?? '',
+      answer: r.answer ?? '',
+    }));
+  }
+
+  /**
+   * Boot heal: recompute every thread's `open_question_count` from its actual unanswered question cards,
+   * so the denormalized counter can never wedge the needs-you signal the way the old single slot could.
+   */
+  async reconcileOpenQuestionCounts(): Promise<void> {
+    const messagesTable = this.messages.metadata.tablePath;
+    const threadsTable = this.threads.metadata.tablePath;
+    await this.dataSource.query(
+      `UPDATE ${threadsTable} t SET open_question_count = (
+         SELECT COUNT(*)::int FROM ${messagesTable} m
+         WHERE m.thread_id = t.id AND m.kind = 'card'
+           AND m.card ->> 'type' = 'question_card'
+           AND m.card ->> 'answer' IS NULL
+       )`,
+    );
   }
 
   // ── secure secret-request gate (request_secret lifecycle: requested → provided → delivered) ──────────
@@ -436,10 +481,15 @@ export class BrainStoreService {
       if (!thread) return { ok: false };
       if (thread.awaiting_secret_id) {
         const open = await messages.findOne({
-          where: { thread_id: threadId, ts: thread.awaiting_secret_id, kind: 'card' },
+          where: {
+            thread_id: threadId,
+            ts: thread.awaiting_secret_id,
+            kind: 'card',
+          },
         });
         const card = open?.card as WebSecretInputCard | undefined;
-        if (card && card.provided_at == null) return { ok: false, alreadyOpen: true };
+        if (card && card.provided_at == null)
+          return { ok: false, alreadyOpen: true };
       }
       await messages.save(
         messages.create({
@@ -453,7 +503,10 @@ export class BrainStoreService {
           card: input.card as unknown as Record<string, unknown>,
         }),
       );
-      await threads.update({ id: threadId }, { awaiting_secret_id: input.requestId });
+      await threads.update(
+        { id: threadId },
+        { awaiting_secret_id: input.requestId },
+      );
       return { ok: true };
     });
   }
@@ -465,7 +518,10 @@ export class BrainStoreService {
   }
 
   /** Fetch one thread's secret-input card by id (the card's `ts`); null if absent / not a secret card. */
-  async getSecretCard(threadId: string, requestId: string): Promise<WebSecretInputCard | null> {
+  async getSecretCard(
+    threadId: string,
+    requestId: string,
+  ): Promise<WebSecretInputCard | null> {
     const row = await this.messages.findOne({
       where: { thread_id: threadId, ts: requestId, kind: 'card' },
     });
@@ -475,16 +531,26 @@ export class BrainStoreService {
 
   /** Stamp a secret card PROVIDED (the operator submitted the value → encrypted store). No value stored. */
   async markSecretProvided(threadId: string, requestId: string): Promise<void> {
-    await this.updateCardMessage(threadId, requestId, { provided_at: new Date().toISOString() });
+    await this.updateCardMessage(threadId, requestId, {
+      provided_at: new Date().toISOString(),
+    });
   }
 
   /** Stamp a secret card DELIVERED (the masked confirmation reached the brain in a turn that ran). */
-  async markSecretDelivered(threadId: string, requestId: string): Promise<void> {
-    await this.updateCardMessage(threadId, requestId, { delivered_at: new Date().toISOString() });
+  async markSecretDelivered(
+    threadId: string,
+    requestId: string,
+  ): Promise<void> {
+    await this.updateCardMessage(threadId, requestId, {
+      delivered_at: new Date().toISOString(),
+    });
   }
 
   /** Clear the secret gate iff it still equals `requestId` (compare-and-clear; ignores a superseded gate). */
-  async clearAwaitingSecret(threadId: string, requestId: string): Promise<void> {
+  async clearAwaitingSecret(
+    threadId: string,
+    requestId: string,
+  ): Promise<void> {
     await this.threads.update(
       { id: threadId, awaiting_secret_id: requestId },
       { awaiting_secret_id: null },
@@ -498,10 +564,26 @@ export class BrainStoreService {
    * The VALUE is not returned (it's not stored on the card) — only the name/path for the masked notice.
    */
   async findUndeliveredProvidedSecrets(): Promise<
-    { threadId: string; orgId: string; repoId: string; requestId: string; name: string; path: string }[]
+    {
+      threadId: string;
+      orgId: string;
+      repoId: string;
+      requestId: string;
+      name: string;
+      path: string;
+    }[]
   > {
-    const rows = await this.threads.find({ where: { awaiting_secret_id: Not(IsNull()) } });
-    const out: { threadId: string; orgId: string; repoId: string; requestId: string; name: string; path: string }[] = [];
+    const rows = await this.threads.find({
+      where: { awaiting_secret_id: Not(IsNull()) },
+    });
+    const out: {
+      threadId: string;
+      orgId: string;
+      repoId: string;
+      requestId: string;
+      name: string;
+      path: string;
+    }[] = [];
     for (const t of rows) {
       const card = await this.getSecretCard(t.id, t.awaiting_secret_id!);
       if (card?.provided_at != null && card.delivered_at == null) {
@@ -552,7 +634,12 @@ export class BrainStoreService {
   async updateDecision(
     threadId: string,
     id: string,
-    patch: Partial<Pick<Decision, 'ruling' | 'title' | 'decisionClass' | 'confirmedByOperator'>>,
+    patch: Partial<
+      Pick<
+        Decision,
+        'ruling' | 'title' | 'decisionClass' | 'confirmedByOperator'
+      >
+    >,
   ): Promise<{ decision: Decision; all: Decision[] } | null> {
     const row = await this.threads.findOneOrFail({ where: { id: threadId } });
     const current = row.pending_decisions ?? [];
@@ -596,7 +683,10 @@ export class BrainStoreService {
    * completion). Returns thread ids.
    */
   async threadsWithActiveTurn(): Promise<string[]> {
-    const rows = await this.threads.find({ where: { turn_active: true }, select: { id: true } });
+    const rows = await this.threads.find({
+      where: { turn_active: true },
+      select: { id: true },
+    });
     return rows.map((r) => r.id);
   }
 
@@ -796,9 +886,7 @@ export class BrainStoreService {
   }
 
   /** Load a draft/approved decision record (overview + decisions + track titles) for the approval card. */
-  async loadDecisionRecord(
-    decisionRecordId: string,
-  ): Promise<{
+  async loadDecisionRecord(decisionRecordId: string): Promise<{
     overview: string;
     decisions: Decision[];
     trackTitles: string[];
@@ -817,7 +905,7 @@ export class BrainStoreService {
     threadId: string,
     decisionRecordId: string,
     approvedBy: string,
-  ): Promise<Thread> {
+  ): Promise<Job> {
     const now = new Date();
     await this.records.update(
       { id: decisionRecordId },
@@ -844,7 +932,7 @@ export class BrainStoreService {
   }
 
   /** Load a thread row as the domain `Thread` shape. */
-  async loadJob(threadId: string): Promise<Thread> {
+  async loadJob(threadId: string): Promise<Job> {
     const row = await this.threads.findOneOrFail({ where: { id: threadId } });
     return toThread(row);
   }
@@ -865,9 +953,12 @@ export class BrainStoreService {
    * promotion. The startup sweep re-promotes each (idempotent) while its worktree is still live; once the
    * PR merges + the worktree is torn down, there's nothing to write and the sweep skips it.
    */
-  async threadsAwaitingLedgerPromotion(): Promise<Thread[]> {
+  async threadsAwaitingLedgerPromotion(): Promise<Job[]> {
     const rows = await this.threads.find({
-      where: { pr_url: Not(IsNull()), ledger_promotion_status: Not('complete') },
+      where: {
+        pr_url: Not(IsNull()),
+        ledger_promotion_status: Not('complete'),
+      },
     });
     // `Not('complete')` excludes NULLs in SQL, so add the never-started rows explicitly.
     const nullRows = await this.threads.find({
@@ -916,17 +1007,17 @@ export class BrainStoreService {
 }
 
 /** Map a `ThreadEntity` row to the in-memory `Thread` shape. */
-function toThread(row: ThreadEntity): Thread {
+function toThread(row: ThreadEntity): Job {
   return {
     id: row.id,
     orgId: row.org_id,
     repoId: row.repo_id,
-    origin: row.origin as Thread['origin'],
+    origin: row.origin as Job['origin'],
     surfaceThreadRef: row.surface_thread_ref,
     title: row.title,
     baseBranch: row.base_branch,
     kind: row.kind as ThreadKind | null,
-    status: row.status as Thread['status'],
+    status: row.status as Job['status'],
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     prUrl: row.pr_url,

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AutoFixStage } from '../autofix';
-import type { DecisionRecord, Thread } from '../domain';
+import type { DecisionRecord, Job } from '../domain';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { DriverStoreService } from './driver-store.service';
 import type { ResolvedRepo } from './repo-resolver';
@@ -10,7 +10,8 @@ import type { ResolvedRepo } from './repo-resolver';
  * (passed as `ShipInput.commitMessage` on the full path + boot recovery; the direct path uses its own).
  * Shared so the driver and the brain don't drift on the string.
  */
-export const LEDGER_COMMIT_MESSAGE = 'Atlas: record durable decisions in .atlas/decisions';
+export const LEDGER_COMMIT_MESSAGE =
+  'Atlas: record durable decisions in .atlas/decisions';
 
 /** The opened (or pre-existing) pull request. */
 export interface ShipResult {
@@ -23,7 +24,7 @@ export interface ShipResult {
 export type ShipRecord = Pick<DecisionRecord, 'overview' | 'decisions'>;
 
 export interface ShipInput {
-  job: Thread;
+  job: Job;
   record: ShipRecord | null;
   repo: ResolvedRepo;
   sandbox: FeatureSandbox;
@@ -71,7 +72,10 @@ export class BuildShipService {
     };
 
     if (input.commitMessage) {
-      const sha = await this.git.commitAll(sandbox.worktreePath, input.commitMessage);
+      const sha = await this.git.commitAll(
+        sandbox.worktreePath,
+        input.commitMessage,
+      );
       this.logger.log(
         `job=${job.id} ship — committed ${sha ? sha.slice(0, 8) : '(nothing to commit)'}`,
       );
@@ -92,13 +96,17 @@ export class BuildShipService {
             }
           : {}),
       })
-      .catch((err) => this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`));
+      .catch((err) =>
+        this.logger.warn(`PR-tail auto-fix failed (continuing): ${err}`),
+      );
 
     if (!repo.token) {
       this.logger.warn(
         `job=${job.id}: no GitHub token — cannot push / open PR. Leaving as running.`,
       );
-      await notify(':warning: Build complete but no GitHub token is configured — PR not opened.');
+      await notify(
+        ':warning: Build complete but no GitHub token is configured — PR not opened.',
+      );
       return null;
     }
 
@@ -124,7 +132,7 @@ export class BuildShipService {
 }
 
 /** The PR body — feature title, decision-record overview, and the locked decisions. */
-function shipPrBody(job: Thread, record: ShipRecord | null): string {
+function shipPrBody(job: Job, record: ShipRecord | null): string {
   const lines = [`Automated by Atlas v2 for **${job.title}**.`, ''];
   if (record?.overview) lines.push(record.overview, '');
   if (record?.decisions.length) {

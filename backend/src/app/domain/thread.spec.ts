@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveNeedsYou } from './thread';
+import { deriveNeedsYou } from './job';
 
 /**
  * `deriveNeedsYou` is the single server-owned definition of the sidebar "alert dot": a thread needs the
@@ -7,7 +7,14 @@ import { deriveNeedsYou } from './thread';
  */
 describe('deriveNeedsYou', () => {
   it('is false while a conversational turn is streaming, regardless of status', () => {
-    for (const status of ['open', 'planning', 'awaiting_approval', 'running', 'paused', 'failed']) {
+    for (const status of [
+      'open',
+      'planning',
+      'awaiting_approval',
+      'running',
+      'paused',
+      'failed',
+    ]) {
       expect(deriveNeedsYou(status, true, false)).toBe(false);
     }
   });
@@ -37,8 +44,8 @@ describe('deriveNeedsYou', () => {
   });
 
   it('the question gate overrides every other axis (turn streaming / running / terminal)', () => {
-    // A non-null `awaiting_question_id` is definitionally "needs you" — it wins over a stray live turn,
-    // a running build, and even a terminal status.
+    // An open question (`open_question_count > 0`) is definitionally "needs you" — it wins over a stray
+    // live turn, a running build, and even a terminal status.
     expect(deriveNeedsYou('planning', true, true)).toBe(true);
     expect(deriveNeedsYou('running', false, true)).toBe(true);
     expect(deriveNeedsYou('done', false, true)).toBe(true);

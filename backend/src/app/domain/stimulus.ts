@@ -54,6 +54,13 @@ export interface ChatStimulus extends BaseStimulus {
    * `messages` row — so it never renders as an operator chat bubble.
    */
   seed?: boolean;
+  /**
+   * DELIVERY SEED: the `questionId` of the `ask_question` card whose operator answer THIS seed delivers.
+   * The delivery turn stamps that card `deliveredAt` on its success tail (at-least-once bookkeeping tied
+   * to the exact answer-carrying seed), and the decision tools resolve it as the answered card to attach.
+   * In-memory only — never persisted. Undefined for non-answer turns.
+   */
+  seedQuestionId?: string;
 }
 
 /**

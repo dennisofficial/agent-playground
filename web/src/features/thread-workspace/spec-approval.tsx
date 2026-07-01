@@ -65,6 +65,26 @@ export function NavigatorApprovalCallout({ threadRef, value }: { threadRef: Thre
   );
 }
 
+// ── Navigator header approve button (just the button) ──────────────────────────────────────────────
+/** The bare full-width green Approve button — pinned as the LAST item in the navigator's sticky header
+ *  (no card/title). Same idempotent verdict as the other surfaces. */
+export function NavigatorApproveButton({ threadRef, value }: { threadRef: ThreadRef; value: string }) {
+  const { submit, pending, approved, error } = useApprovePlan(threadRef, value);
+  return (
+    <>
+      <ApproveButton
+        onClick={submit}
+        pending={pending}
+        approved={approved}
+        className="w-full justify-center text-[11px]"
+        style={{ borderRadius: '7px', padding: '7px 0' }}
+        iconSize={12}
+      />
+      {error ? <p className="mt-1 text-[10px] text-red">Couldn’t approve — try again.</p> : null}
+    </>
+  );
+}
+
 // ── Component 2 — Persistent Approval Bar ──────────────────────────────────────────────────────────
 /**
  * The persistent bar — `flex:none` footer pinned to the bottom of the detail pane, so the plan can be
