@@ -39,7 +39,7 @@ import type { CredentialResolver, WorktreeSecretStore } from '../onboarding';
 
 /**
  * R3 GATE TESTS — two assertions:
- *   (a) A chat turn's `submit_plan` tool call persists a detailed decision record + tracks
+ *   (a) A chat turn's `submit_plan` tool call persists a detailed decision record + threads
  *       (offline-deterministic, fake bridge — drives `buildTools()` directly, no real engine).
  *   (b) An EVENT is delivered to the SAME thread brain as a harness message (`deliverEvent`) — there is
  *       no second triage brain; the seed turn carries the framed + UNTRUSTED-fenced body, then stamps
@@ -313,7 +313,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  it('(a) submit_plan: persists overview + decisions + structured tracks-with-steps + goal as title', async () => {
+  it('(a) submit_plan: persists overview + decisions + structured threads-with-steps + goal as title', async () => {
     const tools = manager.buildTools(fakeStimulus);
 
     const goal = 'Add rate limiting to the public API';
@@ -331,7 +331,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       },
     ];
     // Each track carries its authored steps (title + keystroke-level brief).
-    const tracks = [
+    const threads = [
       {
         title: 'RateLimiter guard',
         steps: [
@@ -345,7 +345,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       },
     ];
 
-    const result = await tools['submit_plan']({ goal, overview, decisions, tracks });
+    const result = await tools['submit_plan']({ goal, overview, decisions, threads });
 
     // 1. persistPlan gets the track titles AND the per-track authored steps + title=goal, and persists
     //    as `plan_review` (NOT awaiting_approval — submit_plan requests a review, it does not post a card).
@@ -399,7 +399,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     const result = await tools['finalize_plan']({});
 
-    // Flips to the operator gate, then posts the approval card async with the persisted title + tracks.
+    // Flips to the operator gate, then posts the approval card async with the persisted title + threads.
     expect(mockStore.markAwaitingApproval).toHaveBeenCalledWith(FAKE_JOB_ID);
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     await new Promise((r) => setTimeout(r, 0));
@@ -448,18 +448,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       overview: 'some overview',
-      tracks: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
+      threads: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: step-free tracks persist (steps optional → driver JIT-plans)', async () => {
+  it('(a) submit_plan: step-free threads persist (steps optional → driver JIT-plans)', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       goal: 'g',
       overview: 'some overview',
-      tracks: [{ title: 'S', type: 'backend' }],
+      threads: [{ title: 'S', type: 'backend' }],
     });
     expect(result).toMatchObject({ ok: true });
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
@@ -474,19 +474,19 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       goal: 'g',
-      tracks: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
+      threads: [{ title: 'S', steps: [{ title: 'p', brief: 'b' }] }],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
   });
 
-  it('(a) submit_plan: returns error if tracks are missing', async () => {
+  it('(a) submit_plan: returns error if threads are missing', async () => {
     const tools = manager.buildTools(fakeStimulus);
     const result = await tools['submit_plan']({
       goal: 'g',
       overview: 'some overview',
       decisions: [],
-      tracks: [],
+      threads: [],
     });
     expect(result).toMatchObject({ ok: false });
     expect(mockStore.persistPlan).not.toHaveBeenCalled();
@@ -500,7 +500,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
 
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-    // Minimal record: no tracks.
+    // Minimal record: no threads.
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(persistArgs.threadTitles).toEqual([]);
     expect(persistArgs.overview).toContain('off-by-one');
@@ -838,7 +838,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       fakeStimulus,
       runningJob as never,
       FAKE_RECORD_ID,
-      { jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, title: 'rate limiting', summary: 'x', decisions: [], tracks: [] } as never,
+      { jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, title: 'rate limiting', summary: 'x', decisions: [], threads: [] } as never,
     );
 
     // The build was dispatched (the durable action) — and the milestones were buffered AFTER it, not pushed.

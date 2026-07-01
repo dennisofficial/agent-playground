@@ -1607,8 +1607,7 @@ export class AgentSessionManager
         // its own live task list (SDK task tools) — so steps are NOT authored up front. `normalizeThreads`
         // still accepts a `steps` array if a caller supplies one (back-compat: those lock + skip JIT), but
         // it's optional; absent, the driver JIT-plans each thread. Rich prose companion in `/context/specs/`.
-        // Arg is `threads`; `tracks` accepted as a deprecated alias during the rename.
-        const threads = normalizeThreads(args['threads'] ?? args['tracks']);
+        const threads = normalizeThreads(args['threads']);
         const threadTitles = threads.map((s) => s.title);
         const threadTypes = threads.map((s) => s.type);
         const hasSteps = threads.some((s) => s.steps.length > 0);
