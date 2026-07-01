@@ -30,7 +30,7 @@ dist
 backend/slack-manifests/.app-credentials.json
 # CocoIndex Code (ccc)
 /.cocoindex_code/
-.playwright-cli/.ds-sync/
+.playwright-cli
 ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/

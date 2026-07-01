@@ -12,6 +12,12 @@
       <excludeFolder url="file://$MODULE_DIR$/.cocoindex_code" />
       <excludeFolder url="file://$MODULE_DIR$/.playwright-cli" />
       <excludeFolder url="file://$MODULE_DIR$/web/.playwright-cli" />
+      <excludeFolder url="file://$MODULE_DIR$/.atlas-state" />
+      <excludeFolder url="file://$MODULE_DIR$/.design-sync/.cache" />
+      <excludeFolder url="file://$MODULE_DIR$/.ds-sync" />
+      <excludeFolder url="file://$MODULE_DIR$/ds-bundle" />
+      <excludeFolder url="file://$MODULE_DIR$/packages/nestjs-ai-essentials/ai-testing/dist" />
+      <excludeFolder url="file://$MODULE_DIR$/web/.design-sync-build" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
