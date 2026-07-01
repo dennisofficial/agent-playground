@@ -69,7 +69,7 @@ export function ApprovalCardView({
       >
         <span className="font-mono text-[10.5px] text-dim">
           {confirmedCount} confirmed · {authoredCount} Atlas-authored · {card.threads.length}{' '}
-          {card.kind === 'direct' ? 'change' : 'track'}
+          {card.kind === 'direct' ? 'change' : 'thread'}
           {card.threads.length === 1 ? '' : 's'}
         </span>
         <div className="flex-1" />

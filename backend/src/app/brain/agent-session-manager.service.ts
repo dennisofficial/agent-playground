@@ -217,7 +217,7 @@ export class AgentSessionManager
     `  - mcp__${BRIDGE_SERVER_NAME}__get_decision_record  — read back the locked decisions (RECOVERY ONLY — see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — submit the full multi-track plan for an async Codex review (FULL PATH; see below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__submit_plan          — submit the full multi-thread plan for an async Codex review (FULL PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_plan        — send the Codex-reviewed plan to the operator for approval (FULL PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__start_direct_build   — propose a small change you will implement yourself (FAST PATH; see below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
@@ -290,7 +290,7 @@ export class AgentSessionManager
     'CALIBRATE THE INTERVIEW TO THE WORK (this is why both paths exist): depth scales with scope, risk, and',
     'reversibility — by how many always-ask classes the work genuinely touches, not a fixed script. A',
     'localized bug fix with an obvious cause: confirm the diagnosis, often ZERO formal questions, take the',
-    'FAST PATH. A schema-touching, multi-track feature: the full branch-walking interview, and lock nothing',
+    'FAST PATH. A schema-touching, multi-thread feature: the full branch-walking interview, and lock nothing',
     'unasked that is a one-way door. Do not interrogate a typo; do not one-shot a migration. Match the',
     'ceremony to the change in front of you.',
     '',
@@ -396,7 +396,7 @@ export class AgentSessionManager
     '',
     'TWO PATHS — choose based on size/risk:',
     '',
-    'FULL PATH — submit_plan (multi-track build run by the deterministic driver). Use for anything beyond',
+    'FULL PATH — submit_plan (multi-thread build run by the deterministic driver). Use for anything beyond',
     'a small, localized change. You author the ENTIRE plan up front — every track AND its section-file',
     '`## Approach` at plan depth — during the conversation. `submit_plan` carries only the track list; when a',
     'track runs, its orchestrator session reads that approach and decomposes it into a live task list, so the',
@@ -467,7 +467,7 @@ export class AgentSessionManager
     'then call submit_plan with:',
     '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
     '  - overview: intent + stack + constraints',
-    "  - tracks: the ordered tracks, each `{ title, type }`. `type` = the track's scope — backend | frontend |",
+    "  - threads: the ordered build threads (lanes), each `{ title, type }`. `type` = the thread's scope — backend | frontend |",
     '    docs | testing | analytics | infra (or another short label if none fit); it SELECTS the review agents.',
     '    Do NOT enumerate steps — a track carries no step list. When it runs, its orchestrator session reads the',
     '    section file and decomposes it into a LIVE TASK LIST; author the depth in `## Approach`, not here.',
@@ -1603,20 +1603,21 @@ export class AgentSessionManager
           args['decisions'] != null
             ? normalizeDecisions(args['decisions'])
             : await this.store.pendingDecisions(stimulus.jobId);
-        // Atlas plans at the TRACK level; the running track's orchestrator decomposes into its own live
-        // task list (SDK task tools) — so steps are NOT authored up front. `normalizeThreads` still accepts
-        // a `steps` array if a caller supplies one (back-compat: those lock + skip JIT), but it's optional;
-        // absent, the driver JIT-plans each track. The rich prose companion lives in `/context/specs/`.
-        const tracks = normalizeThreads(args['tracks']);
-        const threadTitles = tracks.map((s) => s.title);
-        const threadTypes = tracks.map((s) => s.type);
-        const hasSteps = tracks.some((s) => s.steps.length > 0);
-        const stepsByThread = hasSteps ? tracks.map((s) => s.steps) : undefined;
+        // Atlas plans at the THREAD (build-lane) level; each running thread's orchestrator decomposes into
+        // its own live task list (SDK task tools) — so steps are NOT authored up front. `normalizeThreads`
+        // still accepts a `steps` array if a caller supplies one (back-compat: those lock + skip JIT), but
+        // it's optional; absent, the driver JIT-plans each thread. Rich prose companion in `/context/specs/`.
+        // Arg is `threads`; `tracks` accepted as a deprecated alias during the rename.
+        const threads = normalizeThreads(args['threads'] ?? args['tracks']);
+        const threadTitles = threads.map((s) => s.title);
+        const threadTypes = threads.map((s) => s.type);
+        const hasSteps = threads.some((s) => s.steps.length > 0);
+        const stepsByThread = hasSteps ? threads.map((s) => s.steps) : undefined;
 
-        if (!overview || !goal || tracks.length === 0) {
+        if (!overview || !goal || threads.length === 0) {
           return {
             ok: false,
-            reason: 'overview, goal, and at least one track are required',
+            reason: 'overview, goal, and at least one thread are required',
           };
         }
 
