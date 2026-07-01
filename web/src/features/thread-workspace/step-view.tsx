@@ -6,7 +6,7 @@ import { ArrowRight, FileText, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useContextFile, useSay } from '@/lib/api/thread-queries';
-import { trackTitle } from '@/lib/track-title';
+import { threadTitle } from '@/lib/thread-title';
 import { VerdictButtons } from './approval-card';
 import { Markdown } from './markdown';
 import { MessageTime, StreamTextBubble, ThinkingBlock, UserBubble } from './bubbles';
@@ -143,13 +143,13 @@ export function PhaseView({
   } else if (selectedNode.startsWith('secplan:')) {
     const id = selectedNode.slice('secplan:'.length);
     const sec = job?.tracks.find((s) => s.id === id) ?? null;
-    title = sec ? trackTitle(sec.brief) : 'Track plan';
+    title = sec ? threadTitle(sec.brief) : 'Track plan';
     subtitle = 'track plan';
     body = <SectionPlanDoc />;
   } else if (selectedNode.startsWith('rev:')) {
     const [, trackId, lensId = 'review'] = selectedNode.split(':');
-    const revTrack = job?.tracks.find((s) => s.id === trackId) ?? null;
-    const agent = revTrack?.reviewAgents?.find((a) => a.id === lensId) ?? null;
+    const revThread = job?.tracks.find((s) => s.id === trackId) ?? null;
+    const agent = revThread?.reviewAgents?.find((a) => a.id === lensId) ?? null;
     const lensLabel = agent?.label ?? lensId;
     title = lensLabel;
     subtitle = agent ? `review agent · ${agent.status}` : 'review agent · over the track diff';
@@ -161,7 +161,7 @@ export function PhaseView({
     // step in the batch resolves the same transcript (and live lane) instead of rendering empty.
     body = <BuildView threadRef={threadRef} messages={messages} anchorStepId={step.anchorStepId} />;
   } else if (track) {
-    title = `§ ${trackTitle(track.brief)}`;
+    title = `§ ${threadTitle(track.brief)}`;
     subtitle = 'Claude · execute';
     body = <BuildView threadRef={threadRef} messages={messages} />;
   } else {
@@ -520,7 +520,7 @@ function PlanDoc({
         {sectionList.map((s, i) => (
           <div key={i} className="flex items-baseline gap-3 border-t py-2" style={{ borderColor: 'var(--hair)' }}>
             <span className="w-4 font-mono text-[11px] text-faint">{i + 1}</span>
-            <span className="text-[13.5px] font-medium text-text">{trackTitle(s)}</span>
+            <span className="text-[13.5px] font-medium text-text">{threadTitle(s)}</span>
           </div>
         ))}
 
@@ -900,8 +900,8 @@ function resolveNode(node: string, job: PipelineJob | null, loading: boolean, er
   // agent. With the agent list now dynamic, a stale agent id must not render a plausible-but-wrong page.
   if (node.startsWith('rev:')) {
     const [, trackId, lensId] = node.split(':');
-    const revTrack = trackId ? job.tracks.find((s) => s.id === trackId) : undefined;
-    return revTrack && lensId && (revTrack.reviewAgents ?? []).some((a) => a.id === lensId)
+    const revThread = trackId ? job.tracks.find((s) => s.id === trackId) : undefined;
+    return revThread && lensId && (revThread.reviewAgents ?? []).some((a) => a.id === lensId)
       ? 'found'
       : 'not_found';
   }

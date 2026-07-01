@@ -1,6 +1,6 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import { defineModule, llmJudge, scorer } from '@workspace/ai-testing';
-import { PlannerChains, type PlanTrackInput, type PlannedStep } from './planner-llm';
+import { PlannerChains, type PlanThreadInput, type PlannedStep } from './planner-llm';
 import { DATASET } from './planner-llm.ai.data';
 
 /**
@@ -27,7 +27,7 @@ function anthropicKey(): string {
 }
 
 // Structural invariants the PLAN_SYSTEM prompt guarantees — must hold for EVERY case.
-const wellFormed = scorer<PlanTrackInput, PlannedStep[]>({
+const wellFormed = scorer<PlanThreadInput, PlannedStep[]>({
   key: 'well-formed',
   threshold: 1,
   run: ({ output: steps }) => {
@@ -52,7 +52,7 @@ const wellFormed = scorer<PlanTrackInput, PlannedStep[]>({
 
 // Delete-guard invariant — only for the 'delete-track' case: an early step must PROVE the
 // target unused before any step removes it.
-const deleteProvesUnused = scorer<PlanTrackInput, PlannedStep[]>({
+const deleteProvesUnused = scorer<PlanThreadInput, PlannedStep[]>({
   key: 'delete-proves-unused',
   threshold: 1,
   run: ({ output: steps, label }) => {
@@ -80,7 +80,7 @@ const deleteProvesUnused = scorer<PlanTrackInput, PlannedStep[]>({
 
 // Groundedness — is the plan a defensible decomposition of the brief that respects the locked
 // decisions? Judged by a cheap Anthropic model (reuses ANTHROPIC_API_KEY, single-provider run).
-const groundedness = llmJudge<PlanTrackInput, PlannedStep[]>({
+const groundedness = llmJudge<PlanThreadInput, PlannedStep[]>({
   key: 'groundedness',
   threshold: 0.8,
   judge: new ChatAnthropic({ apiKey: anthropicKey(), model: 'claude-haiku-4-5-20251001', maxTokens: 1024 }),
@@ -107,11 +107,11 @@ brief, invents scope not implied by the brief, or omits verification. Allow reas
 step granularity — do not penalize a plan for having one more or one fewer step than you would choose.`,
 });
 
-export default defineModule<PlanTrackInput, PlannedStep[]>({
+export default defineModule<PlanThreadInput, PlannedStep[]>({
   name: 'planner · track planner (Opus 4.8)',
   dataset: () => DATASET,
   runnable: () =>
-    PlannerChains.planTrack(
+    PlannerChains.planThread(
       new ChatAnthropic({
         apiKey: anthropicKey(),
         model: PlannerChains.MODEL,

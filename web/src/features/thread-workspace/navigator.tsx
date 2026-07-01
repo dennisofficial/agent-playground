@@ -23,15 +23,15 @@ import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { useRetryThread } from '@/lib/api/thread-queries';
-import { Divider, PipelineTree, haltTrackIdx } from './pipeline-tree';
+import { Divider, PipelineTree, haltThreadIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
-import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
+import type { ContextFile, PipelineJob, PipelineState, ThreadContext, JobKind, JobStatus } from '@/lib/api/types';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
 
 export interface ThreadMeta {
   title: string;
-  kind: ThreadKind;
-  status: ThreadStatus;
+  kind: JobKind;
+  status: JobStatus;
   orgName: string;
   /** Org swatch fill — neutral grey now (handoff). */
   orgColor: string;
@@ -69,7 +69,7 @@ export function Navigator({
   meta: ThreadMeta;
   pipeline: PipelineState | undefined;
   /** The job's durable transcript — the pipeline tree derives each lane-session's writer-subagent runs
-   *  from it (the `/pipeline` read model doesn't carry them; see `track-subagents.ts`). */
+   *  from it (the `/pipeline` read model doesn't carry them; see `thread-subagents.ts`). */
   messages: ThreadMessage[];
   /** The job's `/context` files (specs + generated + artifacts) — feeds the OUTPUTS region. */
   context: ThreadContext | undefined;
@@ -281,7 +281,7 @@ function ThreadsTracks({
   laneNode,
   onSelectNode,
 }: {
-  status: ThreadStatus;
+  status: JobStatus;
   job: PipelineJob | null;
   messages: ThreadMessage[];
   threadId: string;
@@ -334,7 +334,7 @@ function OutputsRegion({
   detailNode,
   onSelectNode,
 }: {
-  status: ThreadStatus;
+  status: JobStatus;
   context: ThreadContext | undefined;
   loading?: boolean;
   detailNode: string | null;
@@ -542,7 +542,7 @@ function StateBanner({
   threadRef,
   onConversation,
 }: {
-  status: ThreadStatus;
+  status: JobStatus;
   job: PipelineJob | null;
   threadRef: ThreadRef;
   onConversation: () => void;
@@ -610,7 +610,7 @@ function StateBanner({
 }
 
 function haltSectionNo(job: PipelineJob): number | null {
-  const idx = haltTrackIdx(job.tracks);
+  const idx = haltThreadIdx(job.tracks);
   return idx === -1 ? null : idx + 1;
 }
 

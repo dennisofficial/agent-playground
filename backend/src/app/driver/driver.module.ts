@@ -19,7 +19,7 @@ import {
   MessageEntity,
   StepEntity,
   RepoEntity,
-  TrackEntity,
+  ThreadEntity,
   StimulusEntity,
   JobEntity,
   JobSandboxEntity,
@@ -32,7 +32,7 @@ import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
-import { TrackDriver } from './track-driver.service';
+import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -40,7 +40,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
  * turns an approved `Job` into ONE PR:
- *   - `TrackDriver` — the legible top-to-bottom driver (plan → review → gate → execute steps →
+ *   - `ThreadDriver` — the legible top-to-bottom driver (plan → review → gate → execute steps →
  *     auto-fix → handoff → one PR), bound as the REAL `JOB_DISPATCHER`.
  *   - `DriverStoreService` — the track/step row reads/writes (explicit, resumable `status`/`step`).
  *   - `GitDriverRepoResolver` (behind `DRIVER_REPO`) — a job's project → a ready-to-use repo.
@@ -50,12 +50,12 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
  * THE DISPATCH SEAM OVERRIDE: `BrainModule` no longer binds the `JOB_DISPATCHER` no-op (it kept
  * `LoggingJobDispatcher` only as an exported fallback) — exactly the precedent W3 set with the
  * `BRAIN_SINK` binding over W2's no-op. This @Global module provides + exports the REAL binding
- * (`useExisting: TrackDriver`), so the brain's `@Inject(JOB_DISPATCHER)` resolves to the driver with
+ * (`useExisting: ThreadDriver`), so the brain's `@Inject(JOB_DISPATCHER)` resolves to the driver with
  * ZERO changes anywhere else.
  *
  * Consumes W5 (`DecisionGateModule`: classifier + park-and-ask + visibility), W7 (`AutoFixModule`), and
  * W1 (`RunnerModule`: turn-runner + engine + git). `CHAT_SURFACE` comes from the @Global `SurfaceModule`.
- * On boot it reconciles in-flight jobs (`TrackDriver.resume`). Zero v1 imports.
+ * On boot it reconciles in-flight jobs (`ThreadDriver.resume`). Zero v1 imports.
  */
 @Global()
 @Module({
@@ -65,7 +65,7 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
     AutoFixModule,
     TypeOrmModule.forFeature(
       [
-        TrackEntity,
+        ThreadEntity,
         StepEntity,
         DecisionRecordEntity,
         JobEntity,
@@ -88,15 +88,15 @@ import { WorktreeProvisioner } from './worktree-provisioner.service';
       useFactory: (creds: CredentialResolver) =>
         new AnthropicPlannerLlm((orgId) => creds.anthropicKey(orgId)),
     },
-    TrackDriver,
+    ThreadDriver,
     JobLifecycleService,
     WorktreeHydrator,
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
-    { provide: JOB_DISPATCHER, useExisting: TrackDriver },
+    { provide: JOB_DISPATCHER, useExisting: ThreadDriver },
   ],
   exports: [
-    TrackDriver,
+    ThreadDriver,
     JOB_DISPATCHER,
     JobLifecycleService,
     WorktreeProvisioner,
@@ -114,7 +114,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
 
   constructor(
-    private readonly driver: TrackDriver,
+    private readonly driver: ThreadDriver,
     private readonly env: EnvService,
     private readonly lifecycle: JobLifecycleService,
     private readonly election: LeaderElectionService,

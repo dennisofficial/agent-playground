@@ -1,7 +1,7 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
-import { TrackEntity } from './track.entity';
+import { ThreadEntity } from './thread.entity';
 import { JobEntity } from './job.entity';
 
 /**
@@ -23,9 +23,9 @@ export class StepEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   track_id!: string;
 
-  @ManyToOne(() => TrackEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'track_id' })
-  track?: TrackEntity;
+  track?: ThreadEntity;
 
   /** The owning thread (denormalized for thread-scoped boot recovery; FK → threads.id). */
   @Column({ type: 'uuid' })

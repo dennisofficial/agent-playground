@@ -1,6 +1,6 @@
 import { cn } from '@/lib/cn';
 import { KIND_META, STATUS_META } from '@/lib/api/status';
-import type { ThreadKind, ThreadStatus } from '@/lib/api/types';
+import type { JobKind, JobStatus } from '@/lib/api/types';
 
 /** A status dot — colored by status, optionally pulsing (running/triaging) with a soft glow. */
 export function StatusDot({
@@ -8,7 +8,7 @@ export function StatusDot({
   size = 8,
   className,
 }: {
-  status: ThreadStatus;
+  status: JobStatus;
   size?: number;
   className?: string;
 }) {
@@ -49,7 +49,7 @@ export function Dot({
 }
 
 /** FEAT / FIX / EVENT mono badge — NEUTRAL grey + hairline border (handoff: no per-kind color). */
-export function KindBadge({ kind, className }: { kind: ThreadKind; className?: string }) {
+export function KindBadge({ kind, className }: { kind: JobKind; className?: string }) {
   const meta = KIND_META[kind];
   return (
     <span
@@ -80,7 +80,7 @@ export function KindBadge({ kind, className }: { kind: ThreadKind; className?: s
  * spinner. `status` undefined → a neutral hollow ring (the cross-org inbox carries no status for
  * most rows yet — see `inbox.ts`).
  */
-const STATUS_SHAPE: Record<ThreadStatus, 'forming' | 'reviewing' | 'working' | 'waiting' | 'paused' | 'failed' | 'done'> = {
+const STATUS_SHAPE: Record<JobStatus, 'forming' | 'reviewing' | 'working' | 'waiting' | 'paused' | 'failed' | 'done'> = {
   planning: 'forming',
   triaging: 'forming',
   plan_review: 'reviewing',
@@ -91,7 +91,7 @@ const STATUS_SHAPE: Record<ThreadStatus, 'forming' | 'reviewing' | 'working' | '
   done: 'done',
 };
 
-export function StatusPie({ status, size = 14 }: { status?: ThreadStatus; size?: number }) {
+export function StatusPie({ status, size = 14 }: { status?: JobStatus; size?: number }) {
   const shape = status ? STATUS_SHAPE[status] : null;
   const color = status ? STATUS_META[status].color : 'var(--border-2)';
   const r = 7.5;
@@ -201,7 +201,7 @@ export function StatusPie({ status, size = 14 }: { status?: ThreadStatus; size?:
 }
 
 /** Status pill: a dot + label, tinted by status. */
-export function StatusPill({ status, className }: { status: ThreadStatus; className?: string }) {
+export function StatusPill({ status, className }: { status: JobStatus; className?: string }) {
   const meta = STATUS_META[status];
   return (
     <span

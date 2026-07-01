@@ -65,7 +65,7 @@ export interface AutoFixSummary {
 
 /**
  * Tunable knobs for one auto-fix run. Every field is OPTIONAL — the stage applies conservative
- * defaults (see DEFAULT_AUTOFIX_OPTIONS), so the driver can call `autofixTrack(ctx)` with no opts.
+ * defaults (see DEFAULT_AUTOFIX_OPTIONS), so the driver can call `autofixThread(ctx)` with no opts.
  * The orchestrator can also surface these as env later; W7 keeps them as options to avoid editing
  * `validation.ts`.
  */

@@ -12,7 +12,7 @@ import { JobEntity } from './job.entity';
 @Entity({ name: 'tracks' })
 @Index(['thread_id'])
 @Unique(['thread_id', 'ordinal'])
-export class TrackEntity extends TimestampedEntity {
+export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -42,7 +42,7 @@ export class TrackEntity extends TimestampedEntity {
 
   /**
    * The scope TYPE of this track (backend/frontend/docs/testing/analytics/infra/…) — selects the
-   * review agents that check it. A fixed vocabulary (TRACK_TYPES) with an allow-other escape hatch;
+   * review agents that check it. A fixed vocabulary (THREAD_TYPES) with an allow-other escape hatch;
    * defaults to 'general' for arg-less callers (bugfix/direct build).
    */
   @Column({ type: 'text', default: 'general' })

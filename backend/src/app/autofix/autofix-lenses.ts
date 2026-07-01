@@ -64,7 +64,7 @@ export interface ReviewAgentInfo {
  * intentionally unused now. This is the SELECTED RUN LIST, not a public catalog — the lens definitions,
  * focuses, and any future gating metadata stay private to the backend.
  */
-export function reviewAgentsForTrack(_track?: { type?: string }): ReviewAgentInfo[] {
+export function reviewAgentsForThread(_track?: { type?: string }): ReviewAgentInfo[] {
   return DEFAULT_LENSES.map((l) => ({ id: l.id, label: l.label }));
 }
 

@@ -34,7 +34,7 @@ export interface PlannedStep {
 }
 
 /** The inputs to ONE track-plan turn. */
-export interface PlanTrackInput {
+export interface PlanThreadInput {
   /** The feature's agreed overview (the decision record's `overview`). */
   overview: string;
   /** The locked architecture/system calls — steps must respect these, not re-litigate them. */
@@ -61,17 +61,17 @@ export interface PlannerLlm {
    * prior handoff. Returns `undefined` when no LLM is available — the driver then runs the track as a
    * single step whose brief IS the track brief (a degraded-but-correct fallback).
    */
-  planTrack(input: PlanTrackInput): Promise<PlannedStep[] | undefined>;
+  planThread(input: PlanThreadInput): Promise<PlannedStep[] | undefined>;
   /**
    * One Codex/engine-style review pass over a draft plan → a single revised plan, OR `undefined` when
    * the plan needs no change / no LLM is available (the driver keeps the original). Clean single loop.
    */
-  reviewPlan(input: PlanTrackInput & { draft: PlannedStep[] }): Promise<PlannedStep[] | undefined>;
+  reviewPlan(input: PlanThreadInput & { draft: PlannedStep[] }): Promise<PlannedStep[] | undefined>;
   /**
    * Mine the track's plan for the NOTABLE decisions it makes (the always-ask-shaped calls), so the
    * gate can classify them against the record. Empty/`undefined` → the track has no flagged decision.
    */
-  extractDecisions(input: PlanTrackInput & { steps: PlannedStep[] }): Promise<PlannedDecision[] | undefined>;
+  extractDecisions(input: PlanThreadInput & { steps: PlannedStep[] }): Promise<PlannedDecision[] | undefined>;
   /**
    * Summarize what a finished track produced (its handoff note for the next track's plan). Returns
    * `undefined` when no LLM is available — the driver falls back to a terse rule-based summary.
@@ -189,15 +189,15 @@ export namespace PlannerChains {
       RunnableLambda.from((o: z.infer<typeof STEPS_SCHEMA>) => o.steps),
     ]);
 
-  export const planTrack = (llm: BaseChatModel): Runnable<PlanTrackInput, PlannedStep[]> =>
-    phasesChain<PlanTrackInput>(llm, PLAN_SYSTEM, (i) => renderPlanContext(i)).withConfig({
+  export const planThread = (llm: BaseChatModel): Runnable<PlanThreadInput, PlannedStep[]> =>
+    phasesChain<PlanThreadInput>(llm, PLAN_SYSTEM, (i) => renderPlanContext(i)).withConfig({
       runName: 'Plan Track',
     });
 
   export const reviewPlan = (
     llm: BaseChatModel,
-  ): Runnable<PlanTrackInput & { draft: PlannedStep[] }, PlannedStep[]> =>
-    phasesChain<PlanTrackInput & { draft: PlannedStep[] }>(llm, REVIEW_SYSTEM, (i) => {
+  ): Runnable<PlanThreadInput & { draft: PlannedStep[] }, PlannedStep[]> =>
+    phasesChain<PlanThreadInput & { draft: PlannedStep[] }>(llm, REVIEW_SYSTEM, (i) => {
       const draft = i.draft.map((p, n) => `${n + 1}. ${p.title}: ${p.brief}`).join('\n');
       return `${renderPlanContext(i)}\n\n${fence('draft_plan', draft)}`;
     }).withConfig({ runName: 'Review Plan' });
@@ -298,11 +298,11 @@ export class AnthropicPlannerLlm implements PlannerLlm {
     return m;
   }
 
-  async planTrack(input: PlanTrackInput): Promise<PlannedStep[] | undefined> {
+  async planThread(input: PlanThreadInput): Promise<PlannedStep[] | undefined> {
     const llm = await this.model(input.orgId);
     if (!llm) return undefined;
     try {
-      const steps = await PlannerChains.planTrack(llm).invoke(input);
+      const steps = await PlannerChains.planThread(llm).invoke(input);
       return steps.length ? steps : undefined;
     } catch {
       return undefined;
@@ -310,7 +310,7 @@ export class AnthropicPlannerLlm implements PlannerLlm {
   }
 
   async reviewPlan(
-    input: PlanTrackInput & { draft: PlannedStep[] },
+    input: PlanThreadInput & { draft: PlannedStep[] },
   ): Promise<PlannedStep[] | undefined> {
     const llm = await this.model(input.orgId);
     if (!llm) return undefined;
@@ -323,7 +323,7 @@ export class AnthropicPlannerLlm implements PlannerLlm {
   }
 
   async extractDecisions(
-    input: PlanTrackInput & { steps: PlannedStep[] },
+    input: PlanThreadInput & { steps: PlannedStep[] },
   ): Promise<PlannedDecision[] | undefined> {
     const llm = await this.model(input.orgId);
     if (!llm) return undefined;
@@ -380,7 +380,7 @@ export class AnthropicPlannerLlm implements PlannerLlm {
  * input is XML-fenced (see {@link fence}) so the model has a clean boundary around our data — the
  * system prompts refer to these tags by name (`<feature_overview>`, `<locked_decisions>`, etc.).
  */
-export function renderPlanContext(input: PlanTrackInput): string {
+export function renderPlanContext(input: PlanThreadInput): string {
   const decisions = input.decisions.length
     ? input.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
     : '(none)';

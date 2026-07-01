@@ -354,11 +354,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(persistArgs.overview).toBe(overview);
     expect(persistArgs.decisions).toHaveLength(2);
     expect(persistArgs.title).toBe(goal);
-    expect(persistArgs.trackTitles).toEqual(['RateLimiter guard', 'Integration tests']);
-    expect(persistArgs.stepsByTrack).toHaveLength(2);
-    expect(persistArgs.stepsByTrack[0]).toHaveLength(2);
-    expect(persistArgs.stepsByTrack[0][0]).toMatchObject({ title: 'Add the guard' });
-    expect(persistArgs.stepsByTrack[1]).toHaveLength(1);
+    expect(persistArgs.threadTitles).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(persistArgs.stepsByThread).toHaveLength(2);
+    expect(persistArgs.stepsByThread[0]).toHaveLength(2);
+    expect(persistArgs.stepsByThread[0][0]).toMatchObject({ title: 'Add the guard' });
+    expect(persistArgs.stepsByThread[1]).toHaveLength(1);
     expect(persistArgs.orgId).toBe(TEAM_ID);
     expect(persistArgs.repoId).toBe(PROJECT_ID);
     expect(persistArgs.status).toBe('plan_review');
@@ -368,7 +368,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockPlanReview.start).toHaveBeenCalledOnce();
     const reviewArgs = (mockPlanReview.start as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(reviewArgs.threadId).toBe(FAKE_JOB_ID);
-    expect(reviewArgs.trackTitles).toEqual(['RateLimiter guard', 'Integration tests']);
+    expect(reviewArgs.threadTitles).toEqual(['RateLimiter guard', 'Integration tests']);
 
     // 3. submit_plan does NOT post the approval card (that is finalize_plan's job). It repaints the
     //    title and drops a "reviewing" system-event pill.
@@ -394,7 +394,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
       overview: 'Add token-bucket rate limiting.',
       decisions: [{ decisionClass: 'infrastructure', title: 'Backend', ruling: 'Redis bucket' }],
-      trackTitles: ['RateLimiter guard', 'Integration tests'],
+      threadTitles: ['RateLimiter guard', 'Integration tests'],
     });
 
     const result = await tools['finalize_plan']({});
@@ -464,10 +464,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: true });
     expect(mockStore.persistPlan).toHaveBeenCalledOnce();
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(persistArgs.trackTitles).toEqual(['S']);
-    expect(persistArgs.trackTypes).toEqual(['backend']);
-    // No authored steps → `stepsByTrack` omitted so persistPlan leaves the driver to JIT-plan the track.
-    expect(persistArgs.stepsByTrack).toBeUndefined();
+    expect(persistArgs.threadTitles).toEqual(['S']);
+    expect(persistArgs.threadTypes).toEqual(['backend']);
+    // No authored steps → `stepsByThread` omitted so persistPlan leaves the driver to JIT-plan the track.
+    expect(persistArgs.stepsByThread).toBeUndefined();
   });
 
   it('(a) submit_plan: returns error if overview is missing', async () => {
@@ -502,7 +502,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
     // Minimal record: no tracks.
     const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(persistArgs.trackTitles).toEqual([]);
+    expect(persistArgs.threadTitles).toEqual([]);
     expect(persistArgs.overview).toContain('off-by-one');
 
     // The card is the lightweight 'direct' variant carrying the change outline.
@@ -865,7 +865,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>).mockResolvedValue({
       overview: 'x',
       decisions: [],
-      trackTitles: ['Backend'], // non-empty ⇒ full plan ⇒ dispatch (not direct)
+      threadTitles: ['Backend'], // non-empty ⇒ full plan ⇒ dispatch (not direct)
     });
     (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(runningJob);
     (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });

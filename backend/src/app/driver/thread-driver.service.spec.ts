@@ -2,11 +2,11 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import type { ModuleRef } from '@nestjs/core';
 import { EngineAuthError } from '../engine';
-import { TrackDriver } from './track-driver.service';
+import { ThreadDriver } from './thread-driver.service';
 import { BuildShipService } from './build-ship.service';
 import type {
   DriverStoreService,
-  DriverTrack,
+  DriverThread,
   JobRoute,
 } from './driver-store.service';
 import type { PlannerLlm, PlannedStep } from './planner-llm';
@@ -36,7 +36,7 @@ import type {
   Step,
   StepStatus,
   Thread,
-  TrackStatus,
+  ThreadStatus,
   Job,
 } from '../domain';
 
@@ -55,7 +55,7 @@ import type {
 interface StoreState {
   job: Job;
   record: DecisionRecord | null;
-  tracks: DriverTrack[];
+  tracks: DriverThread[];
   steps: Step[];
   route: JobRoute;
 }
@@ -85,11 +85,11 @@ function makeStore(state: StoreState): {
     markLedgerPromoted: vi.fn(async () => undefined),
     decisionRecord: vi.fn(async () => state.record),
     tracksForJob: vi.fn(async () => state.tracks.map((s) => ({ ...s }))),
-    setTrackStatus: vi.fn(async (id: string, status: TrackStatus) => {
+    setThreadStatus: vi.fn(async (id: string, status: ThreadStatus) => {
       const s = state.tracks.find((x) => x.id === id);
       if (s) s.status = status;
     }),
-    setTrackPlan: vi.fn(
+    setThreadPlan: vi.fn(
       async (id: string, plan: string, handoffIn: string | null) => {
         const s = state.tracks.find((x) => x.id === id);
         if (s) {
@@ -98,7 +98,7 @@ function makeStore(state: StoreState): {
         }
       },
     ),
-    setTrackHandoffOut: vi.fn(async (id: string, handoffOut: string) => {
+    setThreadHandoffOut: vi.fn(async (id: string, handoffOut: string) => {
       const s = state.tracks.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
     }),
@@ -106,10 +106,10 @@ function makeStore(state: StoreState): {
     seedReviewAgents: vi.fn(async () => undefined),
     setReviewAgentStatus: vi.fn(async () => undefined),
     finalizeReviewAgents: vi.fn(async () => undefined),
-    stepsForTrack: vi.fn(async (trackId: string) =>
+    stepsForThread: vi.fn(async (trackId: string) =>
       state.steps.filter((p) => p.trackId === trackId).map((p) => ({ ...p })),
     ),
-    lockSteps: vi.fn(async (track: DriverTrack, planned: PlannedStep[]) => {
+    lockSteps: vi.fn(async (track: DriverThread, planned: PlannedStep[]) => {
       const existing = state.steps.filter((p) => p.trackId === track.id);
       if (existing.length) return existing.map((p) => ({ ...p }));
       const rows: Step[] = planned.map((p, i) => ({
@@ -255,7 +255,7 @@ function makeTurn(): {
 /** A planner that emits a fixed 2-step plan per track. */
 function makePlanner(): PlannerLlm {
   return {
-    planTrack: vi.fn(async (input: { brief: string }) => [
+    planThread: vi.fn(async (input: { brief: string }) => [
       { title: `${input.brief} — step A`, brief: 'do A' },
       { title: `${input.brief} — step B`, brief: 'do B' },
     ]),
@@ -320,15 +320,15 @@ function makeVisibility(): VisibilityHandle {
 
 interface AutofixHandle {
   autofix: AutoFixStage;
-  autofixTrack: ReturnType<typeof vi.fn>;
+  autofixThread: ReturnType<typeof vi.fn>;
   autofixPullRequest: ReturnType<typeof vi.fn>;
 }
 function makeAutofix(): AutofixHandle {
-  const autofixTrack = vi.fn(async () => cleanSummary('track'));
+  const autofixThread = vi.fn(async () => cleanSummary('track'));
   const autofixPullRequest = vi.fn(async () => cleanSummary('pull_request'));
   return {
-    autofix: { autofixTrack, autofixPullRequest } as unknown as AutoFixStage,
-    autofixTrack,
+    autofix: { autofixThread, autofixPullRequest } as unknown as AutoFixStage,
+    autofixThread,
     autofixPullRequest,
   };
 }
@@ -389,13 +389,13 @@ function makeRecord(): DecisionRecord {
     status: 'approved',
     overview: 'Build the widget feature.',
     decisions: [],
-    trackTitles: ['Backend', 'Frontend'],
+    threadTitles: ['Backend', 'Frontend'],
     approvedBy: 'U1',
     approvedAt: new Date(),
   };
 }
 
-function makeSections(): DriverTrack[] {
+function makeSections(): DriverThread[] {
   return [track('sec-be', 10, 'Backend'), track('sec-fe', 20, 'Frontend')];
 }
 
@@ -403,8 +403,8 @@ function track(
   id: string,
   ordinal: number,
   brief: string,
-  status: TrackStatus = 'pending',
-): DriverTrack {
+  status: ThreadStatus = 'pending',
+): DriverThread {
   return {
     id,
     threadId: 'job-abcdef12',
@@ -473,7 +473,7 @@ function assemble(
   const turnHarness = new TurnHarnessFactory(liveTurns, blockSink);
   // LeaderElectionService stub: `draining` is flippable so the shutdown-guard test can simulate SIGTERM.
   const electionState = { draining: false };
-  const driver = new TrackDriver(
+  const driver = new ThreadDriver(
     store,
     repos,
     git,
@@ -564,7 +564,7 @@ function assemble(
 
 // ── tests ────────────────────────────────────────────────────────────────────────────────────────
 
-describe('TrackDriver — the legible track/step pipeline', () => {
+describe('ThreadDriver — the legible track/step pipeline', () => {
   it('walks a 2-track / multi-step job to ONE PR (plan → execute steps → autofix → handoff → next → PR-tail)', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -586,7 +586,7 @@ describe('TrackDriver — the legible track/step pipeline', () => {
     expect(execTurns).toHaveLength(2); // 2 tracks × 1 orchestrator session
 
     // Per-track auto-fix ran once per track; PR-tail ran exactly once.
-    expect(h.autofix.autofixTrack).toHaveBeenCalledTimes(2);
+    expect(h.autofix.autofixThread).toHaveBeenCalledTimes(2);
     expect(h.autofix.autofixPullRequest).toHaveBeenCalledTimes(1);
 
     // Both tracks are done with a handoff; the SECOND track received the first's handoff.
@@ -1357,7 +1357,7 @@ async function flushUntil(pred: () => boolean, cap = 300): Promise<void> {
 
 // ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
 
-describe('TrackDriver — 401 auth recovery', () => {
+describe('ThreadDriver — 401 auth recovery', () => {
   /** A turn that throws EngineAuthError on the FIRST execute (a mid-build 401), then succeeds. */
   function flakyAuthTurn(): TurnRunnerService {
     let executes = 0;

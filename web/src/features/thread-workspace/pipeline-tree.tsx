@@ -3,13 +3,13 @@
 import { useMemo, type MouseEvent, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { Dot } from '@/components/ui/badges';
-import { trackColor } from '@/lib/api/status';
-import { trackTitle } from '@/lib/track-title';
+import { threadColor } from '@/lib/api/status';
+import { threadTitle } from '@/lib/thread-title';
 import { useLiveTurn } from '@/lib/api/thread-stream';
 import { phaseLane } from './phases';
-import { durableTaskListByPhase, liveTaskListForPhase, type TaskItem } from './track-todos';
+import { durableTaskListByPhase, liveTaskListForPhase, type TaskItem } from './thread-todos';
 import type { ThreadMessage } from '@/lib/api/thread-api';
-import type { PipelineJob, PipelineTrack, TrackStatus, ThreadStatus } from '@/lib/api/types';
+import type { PipelineJob, PipelineThread, JobStatus, ThreadStatus } from '@/lib/api/types';
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
 
@@ -42,16 +42,16 @@ export function Divider({ label, count }: { label: string; count?: ReactNode }) 
 
 // ── status helpers ───────────────────────────────────────────────────────────────────────────────
 
-const ACTIVE_TRACK: TrackStatus[] = ['planning', 'reviewing', 'awaiting_approval', 'executing', 'auto_fixing'];
-const isActiveTrack = (s: TrackStatus) => ACTIVE_TRACK.includes(s);
+const ACTIVE_THREAD: ThreadStatus[] = ['planning', 'reviewing', 'awaiting_approval', 'executing', 'auto_fixing'];
+const isActiveThread = (s: ThreadStatus) => ACTIVE_THREAD.includes(s);
 
 /** A track that has begun (or finished) building — so it owns a real task list worth showing. */
-const STARTED_TRACK: TrackStatus[] = ['executing', 'auto_fixing', 'reviewing', 'done'];
-const isStartedTrack = (s: TrackStatus) => STARTED_TRACK.includes(s);
+const STARTED_THREAD: ThreadStatus[] = ['executing', 'auto_fixing', 'reviewing', 'done'];
+const isStartedThread = (s: ThreadStatus) => STARTED_THREAD.includes(s);
 
 /** The halt track for a failed thread: the furthest in-flight (non-done, non-pending) track, else the
  *  last non-done one. Exported so the navigator's halt banner derives the same index. */
-export function haltTrackIdx(tracks: { status: TrackStatus }[]): number {
+export function haltThreadIdx(tracks: { status: ThreadStatus }[]): number {
   for (let i = tracks.length - 1; i >= 0; i -= 1) {
     const st = tracks[i].status;
     if (st !== 'done' && st !== 'pending') return i;
@@ -64,7 +64,7 @@ export function haltTrackIdx(tracks: { status: TrackStatus }[]): number {
 
 /** The unique anchor step ids of a track's steps, in order. In the orchestrate model a track collapses to
  *  ONE batch → one anchor (= one session); a legacy multi-batch track yields several. */
-function trackAnchorIds(track: PipelineTrack): string[] {
+function threadAnchorIds(track: PipelineThread): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const p of track.steps) {
@@ -77,17 +77,17 @@ function trackAnchorIds(track: PipelineTrack): string[] {
 }
 
 /** The live phase lane to subscribe to for an in-flight track — the building step's anchor, else its first. */
-function liveAnchorOf(track: PipelineTrack): string | null {
+function liveAnchorOf(track: PipelineThread): string | null {
   const building = track.steps.find((p) => p.status === 'building' || p.status === 'reviewing');
   if (building) return building.anchorStepId;
-  return trackAnchorIds(track)[0] ?? null;
+  return threadAnchorIds(track)[0] ?? null;
 }
 
 // ── the THREADS tree — a flat thread list; the open/running thread expands to its live task list ─────
 
 export interface TreeProps {
   job: PipelineJob;
-  status: ThreadStatus;
+  status: JobStatus;
   /** The thread transcript — the source for each thread-session's task list (folded from its task-tool calls). */
   messages: ThreadMessage[];
   /** The open thread id — to subscribe to the active thread's live `phase:<anchor>` lane. */
@@ -106,18 +106,18 @@ export interface TreeProps {
  */
 export function PipelineTree({ job, status, messages, threadId, laneNode, onSelectNode }: TreeProps) {
   const tracks = job.tracks;
-  const activeIdx = tracks.findIndex((s) => isActiveTrack(s.status));
+  const activeIdx = tracks.findIndex((s) => isActiveThread(s.status));
   // Failed: tracks aren't persisted as `failed` (only the thread flips), so derive the halt point — the
   // in-flight track (furthest non-`done`/non-`pending`) is where the run stopped; later ones never ran.
-  const haltIdx = status === 'failed' ? haltTrackIdx(tracks) : -1;
+  const haltIdx = status === 'failed' ? haltThreadIdx(tracks) : -1;
 
   // Every thread-session's task list, folded once from the transcript's task-tool calls.
   const tasksByPhase = useMemo(() => durableTaskListByPhase(messages), [messages]);
 
   // Only ONE thread executes at a time — a single live subscription (the active thread's phase lane) carries
   // its live task list. Hooks can't be conditional, so an inactive tree reads a dead lane.
-  const activeTrack = activeIdx === -1 ? null : tracks[activeIdx];
-  const activeAnchor = activeTrack ? liveAnchorOf(activeTrack) : null;
+  const activeThread = activeIdx === -1 ? null : tracks[activeIdx];
+  const activeAnchor = activeThread ? liveAnchorOf(activeThread) : null;
   const live = useLiveTurn(threadId, activeAnchor ? phaseLane(activeAnchor) : '__none__');
   const liveTasks = useMemo(
     () => (activeAnchor && live ? liveTaskListForPhase(live.blocks) : []),
@@ -128,7 +128,7 @@ export function PipelineTree({ job, status, messages, threadId, laneNode, onSele
     <>
       {tracks.map((s, i) => {
         const isActive = i === activeIdx;
-        const anchors = trackAnchorIds(s);
+        const anchors = threadAnchorIds(s);
         const durableTasks = anchors.flatMap((a) => tasksByPhase.get(a) ?? []);
         // Live wins for the active thread (the mid-turn list before durable rows persist at turn end).
         const tasks = isActive && liveTasks.length > 0 ? liveTasks : durableTasks;
@@ -164,9 +164,9 @@ function ThreadRow({
   selected,
   onSelect,
 }: {
-  track: PipelineTrack;
+  track: PipelineThread;
   index: number;
-  threadStatus: ThreadStatus;
+  threadStatus: JobStatus;
   isActive: boolean;
   isHalt: boolean;
   notReached: boolean;
@@ -176,7 +176,7 @@ function ThreadRow({
 }) {
   // Pre-approval every thread is a draft (dashed dot, no task list — the plan shows only the threads).
   const drafted = threadStatus === 'planning' || threadStatus === 'awaiting_approval';
-  const started = !drafted && isStartedTrack(s.status);
+  const started = !drafted && isStartedThread(s.status);
   const live = tasks.filter((t) => t.status !== 'dropped');
   const done = live.filter((t) => t.status === 'completed').length;
   const dim = notReached || (!started && !drafted && !isActive);
@@ -203,7 +203,7 @@ function ThreadRow({
             selected ? 'text-text' : dim ? 'text-faint' : 'text-dim',
           )}
         >
-          §{index + 1} {trackTitle(s.brief)}
+          §{index + 1} {threadTitle(s.brief)}
         </span>
         {tag ? (
           <span className="shrink-0 font-mono text-[7px] font-bold uppercase tracking-[0.07em] text-faint">{tag}</span>
@@ -224,7 +224,7 @@ function ThreadDot({
   isHalt,
   notReached,
 }: {
-  track: PipelineTrack;
+  track: PipelineThread;
   drafted: boolean;
   isHalt: boolean;
   notReached: boolean;
@@ -239,7 +239,7 @@ function ThreadDot({
       />
     );
   if (notReached) return <Dot color="var(--border-2)" size={9} />;
-  const { color, pulse } = trackColor(s.status);
+  const { color, pulse } = threadColor(s.status);
   return <Dot color={color} pulse={pulse} size={9} />;
 }
 

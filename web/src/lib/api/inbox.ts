@@ -4,8 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { env } from '@/lib/env';
 import { fetchWithRefresh } from './refresh';
 import { qk } from './query-keys';
-import { toThreadStatus } from './status';
-import type { JobStatus, ThreadKind, ThreadStatus } from './types';
+import { toJobStatus } from './status';
+import type { WireJobStatus, JobStatus, JobKind } from './types';
 
 /**
  * The unified cross-org inbox — every thread across ALL the operator's orgs (`GET /web/threads`), the
@@ -33,9 +33,9 @@ export interface RawInboxThread {
 export interface InboxThread {
   id: string;
   title: string;
-  kind: ThreadKind;
+  kind: JobKind;
   /** UI status (mapped from the backend status) — drives the status pie. */
-  status: ThreadStatus;
+  status: JobStatus;
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
   createdAt: string;
@@ -44,14 +44,14 @@ export interface InboxThread {
 }
 
 /** Coarse kind from the thread origin. Only `event` is distinguishable; `chat`/`control` read as `feat`. */
-function kindFromOrigin(origin: string): ThreadKind {
+function kindFromOrigin(origin: string): JobKind {
   return origin === 'event' ? 'event' : 'feat';
 }
 
-/** Backend status (incl. `open`, which `toThreadStatus` doesn't cover) → UI status for the pie. */
-export function uiStatus(backend: string, origin: string): ThreadStatus {
+/** Backend status (incl. `open`, which `toJobStatus` doesn't cover) → UI status for the pie. */
+export function uiStatus(backend: string, origin: string): JobStatus {
   if (backend === 'open') return origin === 'event' ? 'triaging' : 'planning';
-  return toThreadStatus(backend as JobStatus);
+  return toJobStatus(backend as WireJobStatus);
 }
 
 export function normalize(r: RawInboxThread): InboxThread {

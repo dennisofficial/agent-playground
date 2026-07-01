@@ -108,7 +108,7 @@ export interface DecisionRecord {
   /** The locked architecture/system calls. */
   decisions: Decision[];
   /** The high-level track list (briefs) approved upfront — drives the thread's `Track` rows. */
-  trackTitles: string[];
+  threadTitles: string[];
   /** Who approved it (Dennis's id); null until approved. */
   approvedBy: string | null;
   approvedAt: Date | null;

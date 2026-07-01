@@ -8,7 +8,7 @@ import type { LiveBlock } from '@/lib/api/thread-stream';
  * list by FOLDING those tool calls — a latest-snapshot would lose dropped items, but folding keeps a
  * `status:'deleted'` task visible as a struck-through "dropped" row (per the design).
  *
- * The join is the same one `track-subagents.ts` uses: the turn harness stamps every execute-turn block with
+ * The join is the same one `thread-subagents.ts` uses: the turn harness stamps every execute-turn block with
  * `meta.phaseId` (the batch anchor step id), so a task call "belongs to" the track-session whose phaseId
  * tags it. Calls carrying `meta.parentToolUseId` are a writer subagent's, not the orchestrator's, and are
  * excluded — only the session's own task list shows.

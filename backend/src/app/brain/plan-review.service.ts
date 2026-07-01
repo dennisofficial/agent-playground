@@ -56,13 +56,13 @@ export type PlanReviewStartInput = {
   /** The locked decisions from the plan. */
   decisions: Decision[];
   /** The high-level track briefs (titles) from the plan. */
-  trackTitles: string[];
+  threadTitles: string[];
   /**
-   * The steps Atlas authored under each track, aligned by track index (`stepsByTrack[i]` = steps for
-   * `trackTitles[i]`). Present on the full-plan path so the reviewer grades the EXECUTION detail, not
+   * The steps Atlas authored under each track, aligned by track index (`stepsByThread[i]` = steps for
+   * `threadTitles[i]`). Present on the full-plan path so the reviewer grades the EXECUTION detail, not
    * just titles. Absent on step-less paths (the reviewer then sees titles only).
    */
-  stepsByTrack?: PlannedStep[][];
+  stepsByThread?: PlannedStep[][];
 };
 
 /** Outcome of `start`: a fresh review round, or the round cap was hit (no review run). */
@@ -142,10 +142,10 @@ function renderPlanForReview(input: PlanReviewStartInput): string {
         .join('\n')
     : '  (none)';
 
-  const tracks = input.trackTitles.length
-    ? input.trackTitles
+  const tracks = input.threadTitles.length
+    ? input.threadTitles
         .map((b, i) => {
-          const steps = input.stepsByTrack?.[i] ?? [];
+          const steps = input.stepsByThread?.[i] ?? [];
           if (!steps.length) return `  ${i + 1}. ${b}`;
           const body = steps
             .map(
@@ -158,7 +158,7 @@ function renderPlanForReview(input: PlanReviewStartInput): string {
         .join('\n')
     : '  (none)';
 
-  const hasPhases = (input.stepsByTrack ?? []).some((p) => p.length);
+  const hasPhases = (input.stepsByThread ?? []).some((p) => p.length);
 
   // The INTENT block — what the operator is trying to achieve. The reviewer judges the plan against THIS.
   const intent = [

@@ -17,7 +17,7 @@ import {
   parseApprovalMeta,
 } from '../agent-surface';
 import { DecisionApprovalService } from '../brain';
-import { TrackDriver } from '../driver';
+import { ThreadDriver } from '../driver';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
@@ -65,7 +65,7 @@ export class TestBridgeController {
     private readonly env: EnvService,
     private readonly surface: AgentChatSurface,
     private readonly approvals: DecisionApprovalService,
-    private readonly driver: TrackDriver,
+    private readonly driver: ThreadDriver,
     @InjectRepository(OrganizationEntity, DB_CONNECTION)
     private readonly orgs: Repository<OrganizationEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
@@ -170,7 +170,7 @@ export class TestBridgeController {
 
   /**
    * `POST /test/resume` — the PING that continues a job paused on a credential/401 error. Re-drives it
-   * (`TrackDriver.resumePaused`), which resumes the SAME engine session of the unfinished step
+   * (`ThreadDriver.resumePaused`), which resumes the SAME engine session of the unfinished step
    * instead of restarting from scratch. A no-op if the job isn't paused.
    */
   @Post('resume')

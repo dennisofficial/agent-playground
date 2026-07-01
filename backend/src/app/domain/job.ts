@@ -112,7 +112,7 @@ export interface Message {
 }
 
 /** A track's lifecycle — explicit, resumable. The driver `await`s each transition. */
-export type TrackStatus =
+export type ThreadStatus =
   | 'pending' // not started
   | 'planning' // detailed phased plan being generated
   | 'reviewing' // Codex plan-review loop
@@ -138,7 +138,7 @@ export interface Thread {
   handoffIn: string | null;
   /** This track's handoff note for the next track (null until done). */
   handoffOut: string | null;
-  status: TrackStatus;
+  status: ThreadStatus;
 }
 
 /** A step's lifecycle — explicit, resumable; the driver re-enters at the correct step on restart. */

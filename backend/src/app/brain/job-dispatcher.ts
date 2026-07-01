@@ -9,9 +9,9 @@ import type { Job } from '../domain';
  *
  * W3 binds the logging NO-OP below as the default so the whole brain → dispatch path is observable
  * end-to-end before any driver exists. W4 overrides it with `{ provide: JOB_DISPATCHER, useExisting:
- * TrackDriver }` — ZERO changes anywhere else (same pattern W3 used to replace W2's no-op consumer).
+ * ThreadDriver }` — ZERO changes anywhere else (same pattern W3 used to replace W2's no-op consumer).
  *
- * Contract for W4's `TrackDriver`:
+ * Contract for W4's `ThreadDriver`:
  *  - `dispatch(thread)` is called ONCE per approved/clean thread, AFTER the decision record + track
  *    rows are persisted (status `running`). The driver loads the track/step rows off the thread id
  *    and walks them; it does not re-plan the high-level list. `dispatch` should return promptly (kick
@@ -43,7 +43,7 @@ export interface JobDispatcher {
 /**
  * The W3 default dispatcher — a logging NO-OP. It makes the brain → hands hand-off observable (every
  * dispatched thread logs its kind/title/tracks) without running anything. W4 replaces it with the real
- * `TrackDriver`; until then this proves the seam is wired and an approved build reaches the driver's
+ * `ThreadDriver`; until then this proves the seam is wired and an approved build reaches the driver's
  * doorstep.
  */
 export class LoggingJobDispatcher implements JobDispatcher {
@@ -53,13 +53,13 @@ export class LoggingJobDispatcher implements JobDispatcher {
     this.logger.log(
       `[no-op dispatch] THREAD ${thread.id} kind=${thread.kind} title="${thread.title}" ` +
         `repo=${thread.repoId} ` +
-        `decisionRecord=${thread.decisionRecordId ?? '(none)'} — W4 TrackDriver will run this`,
+        `decisionRecord=${thread.decisionRecordId ?? '(none)'} — W4 ThreadDriver will run this`,
     );
   }
 
   async retry(jobId: string): Promise<void> {
     this.logger.log(
-      `[no-op retry] THREAD ${jobId} — W4 TrackDriver will re-drive this`,
+      `[no-op retry] THREAD ${jobId} — W4 ThreadDriver will re-drive this`,
     );
   }
 }

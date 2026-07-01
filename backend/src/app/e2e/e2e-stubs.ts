@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ClassifierLlm } from '../decision-gate/classifier-llm';
 import type {
-  PlanTrackInput,
+  PlanThreadInput,
   PlannedDecision,
   PlannedStep,
   PlannerLlm,
@@ -33,7 +33,7 @@ import type {
  * feature path's gate stays clean and never parks). Handoff is a terse canned line.
  */
 export class FakePlannerLlm implements PlannerLlm {
-  async planTrack(input: PlanTrackInput): Promise<PlannedStep[] | undefined> {
+  async planThread(input: PlanThreadInput): Promise<PlannedStep[] | undefined> {
     return [{ title: input.brief, brief: input.brief }];
   }
 

@@ -36,7 +36,7 @@ const FIX_SYSTEM_PROMPT =
  * W7 — the AUTO-FIX STAGE. A fan-out of N parallel read-only review passes (one per lens) over a
  * track's (or the whole feature's) diff → aggregate + dedupe the findings → ONE execute turn that
  * applies the fixes confined to the worktree → a `LocalGitService` commit. Two entry points share the
- * core: `autofixTrack` (after a track's steps) and `autofixPullRequest` (PR-tail, over the whole
+ * core: `autofixThread` (after a track's steps) and `autofixPullRequest` (PR-tail, over the whole
  * accumulated diff before handing the PR to the human).
  *
  * Design properties:
@@ -73,7 +73,7 @@ export class AutoFixStage {
    * Per-track auto-fix — run after a track's steps complete, over that track's change set.
    * `ctx.diff`/`ctx.gitRange` should scope to the track (e.g. the track's start sha `..HEAD`).
    */
-  async autofixTrack(ctx: AutoFixContext, options: AutoFixOptions = {}): Promise<AutoFixSummary> {
+  async autofixThread(ctx: AutoFixContext, options: AutoFixOptions = {}): Promise<AutoFixSummary> {
     return this.run('track', ctx, options);
   }
 

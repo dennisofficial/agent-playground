@@ -176,7 +176,7 @@ const START_INPUT: PlanReviewStartInput = {
       ruling: 'Use Auth0.',
     },
   ],
-  trackTitles: [
+  threadTitles: [
     'Implement the OAuth2 callback handler.',
     'Add JWT validation middleware.',
   ],

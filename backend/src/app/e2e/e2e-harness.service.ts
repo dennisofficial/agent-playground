@@ -252,7 +252,7 @@ export class E2eHarness {
   /**
    * FEATURE SCENARIO — the R5 end-to-end spine:
    *   submit_plan (direct, offline) → Codex pre-review (skipped: no sandbox) → approval card →
-   *   approve → dispatch → TrackDriver build steps (FakeEngineRunner) → FakeLocalGitService
+   *   approve → dispatch → ThreadDriver build steps (FakeEngineRunner) → FakeLocalGitService
    *   commits → FakeGithubPrService opens PR → job reaches done + pr_url.
    *
    * In OFFLINE mode we call `AgentSessionManager.buildTools(stimulus).submit_plan(args)` directly

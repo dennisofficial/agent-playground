@@ -6,11 +6,11 @@ import { Group, Panel, Separator, useDefaultLayout, useGroupRef } from 'react-re
 import { useAllThreads } from '@/lib/api/inbox';
 import { useThreadMessages, usePipeline, useThreadContext, useDeleteThread, useRenameThread, useSay } from '@/lib/api/thread-queries';
 import { useThreadEvents } from '@/lib/api/thread-events';
-import { toThreadStatus } from '@/lib/api/status';
+import { toJobStatus } from '@/lib/api/status';
 import { orgSwatch } from '@/lib/org-display';
 import { ROUTES } from '@/lib/routes';
 import { pipelineJob, type ThreadRef } from '@/lib/api/thread-api';
-import { APPROVE_ACTION_ID, type ThreadKind, type ThreadStatus, type WebApprovalCard } from '@/lib/api/types';
+import { APPROVE_ACTION_ID, type JobKind, type JobStatus, type WebApprovalCard } from '@/lib/api/types';
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
 import { MarkdownActionsProvider } from './markdown';
@@ -58,9 +58,9 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   const inboxThread = useMemo(() => inbox?.find((t) => t.id === threadId), [inbox, threadId]);
   const job = pipelineJob(pipeline);
 
-  const kind: ThreadKind = inboxThread?.kind ?? 'feat';
-  const status: ThreadStatus = job
-    ? toThreadStatus(job.status)
+  const kind: JobKind = inboxThread?.kind ?? 'feat';
+  const status: JobStatus = job
+    ? toJobStatus(job.status)
     : kind === 'event'
       ? 'triaging'
       : 'planning';

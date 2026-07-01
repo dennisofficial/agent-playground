@@ -7,18 +7,19 @@
  * The live message + request shapes are owned by `thread-api.ts` (the org → repo → thread client).
  */
 
-import type { JobStatus as WireThreadStatus } from '@workspace/shared';
+import type { JobStatus as WireJobStatus } from '@workspace/shared';
 
-// ── Backend enums ──────────────────────────────────────────────────────────────────────────────
+// ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
 /**
- * The backend job/thread wire status — single-sourced in `@workspace/shared` so it can't drift from
- * the backend's `ThreadStatus`. (The web's own UI-presentation status — below — is a separate type.)
+ * The backend job WIRE status — single-sourced in `@workspace/shared` so it can't drift from the
+ * backend's `JobStatus`. (The web's own UI-presentation `JobStatus` — below — is a separate type.)
  */
-export type JobStatus = WireThreadStatus;
+export type { WireJobStatus };
 
-export type JobKind = 'feature' | 'bugfix';
+export type WireJobKind = 'feature' | 'bugfix';
 
-export type TrackStatus =
+/** The lane (Thread) status — one build lane within a Job. */
+export type ThreadStatus =
   | 'pending'
   | 'planning'
   | 'reviewing'
@@ -165,13 +166,13 @@ export interface ReviewAgent {
   findings?: number;
 }
 
-export interface PipelineTrack {
+export interface PipelineThread {
   id: string;
   ordinal: number;
   brief: string;
   /** The track's scope type (backend/frontend/docs/…) — selects the review agents. */
   type: string;
-  status: TrackStatus;
+  status: ThreadStatus;
   /**
    * The review agents selected to run over this track's diff (a fixed set today; backend-selected).
    * The navigator's review folder renders one leaf per agent — never hard-code this list.
@@ -187,8 +188,8 @@ export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
   threadId: string;
   title: string;
-  kind: JobKind;
-  status: JobStatus;
+  kind: WireJobKind;
+  status: WireJobStatus;
   decisionRecordId: string | null;
   /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
   prUrl: string | null;
@@ -196,7 +197,7 @@ export interface PipelineJob {
   /** The feature branch all tracks stack on (header), or null before the sandbox is cut. */
   featureBranch: string | null;
   baseBranch: string | null;
-  tracks: PipelineTrack[];
+  tracks: PipelineThread[];
 }
 
 export type PipelineState = PipelineJob | { status: 'no_job' };
@@ -235,9 +236,9 @@ export interface ContextFileContent {
   content: string;
 }
 
-// ── UI thread model ────────────────────────────────────────────────────────────────────────────
-/** UI status set from handoff §7 (semantic dot colors). */
-export type ThreadStatus =
+// ── UI job model ───────────────────────────────────────────────────────────────────────────────
+/** The Job UI-presentation status set from handoff §7 (semantic dot colors). */
+export type JobStatus =
   | 'running'
   | 'planning'
   | 'plan_review'
@@ -247,5 +248,5 @@ export type ThreadStatus =
   | 'paused'
   | 'failed';
 
-/** UI kind badge — `feat`/`fix` from JobKind; `event` denotes a notification-seeded thread. */
-export type ThreadKind = 'feat' | 'fix' | 'event';
+/** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job. */
+export type JobKind = 'feat' | 'fix' | 'event';

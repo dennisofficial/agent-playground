@@ -7,7 +7,7 @@ import type {
   Step,
   StepStatus,
   Thread,
-  TrackStatus,
+  ThreadStatus,
   Job,
   JobStatus,
 } from '../domain';
@@ -15,11 +15,11 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   StepEntity,
-  TrackEntity,
+  ThreadEntity,
   JobEntity,
 } from '../persistence/entities';
 import type { ReviewAgentState } from '../persistence/entities';
-import { reviewAgentsForTrack } from '../autofix/autofix-lenses';
+import { reviewAgentsForThread } from '../autofix/autofix-lenses';
 import type { PlannedStep } from './planner-llm';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
@@ -30,7 +30,7 @@ const ORDINAL_GAP = 10;
  * rows need (steps carry `org_id`). The driver never reaches a repository, so the store carries the one
  * extra field rather than the driver re-querying the thread for it.
  */
-export type DriverTrack = Thread & { orgId: string };
+export type DriverThread = Thread & { orgId: string };
 
 /** Where to post a thread's chatter — the repo coordinate + the real thread id. */
 export interface JobRoute {
@@ -45,7 +45,7 @@ export interface JobRoute {
  * W4 — the DRIVER's persistence. The single place the track driver reads/writes the track + step
  * rows (and resolves the decision record + thread route) on the 'app' connection. The THREAD is the build
  * unit (the former `jobs` layer is folded into it), so the "job" methods here operate on the thread row.
- * Keeps `TrackDriver` a legible pipeline that speaks DOMAIN shapes (`Track`, `Step`) — this maps
+ * Keeps `ThreadDriver` a legible pipeline that speaks DOMAIN shapes (`Track`, `Step`) — this maps
  * them to/from rows and owns the explicit, resumable `status`/`step` transitions.
  *
  * The brain (W3) already wrote the high-level track BRIEFS (`pending`, no plan). This fills the
@@ -57,8 +57,8 @@ export class DriverStoreService {
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly threads: Repository<JobEntity>,
-    @InjectRepository(TrackEntity, DB_CONNECTION)
-    private readonly tracks: Repository<TrackEntity>,
+    @InjectRepository(ThreadEntity, DB_CONNECTION)
+    private readonly tracks: Repository<ThreadEntity>,
     @InjectRepository(StepEntity, DB_CONNECTION)
     private readonly steps: Repository<StepEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
@@ -69,7 +69,7 @@ export class DriverStoreService {
 
   /** Load one thread as the domain shape. */
   async loadJob(threadId: string): Promise<Job> {
-    return toThread(
+    return toJob(
       await this.threads.findOneOrFail({ where: { id: threadId } }),
     );
   }
@@ -77,7 +77,7 @@ export class DriverStoreService {
   /** Every thread currently in `running` — the boot-reconciliation worklist. */
   async runningJobs(): Promise<Job[]> {
     const rows = await this.threads.find({ where: { status: 'running' } });
-    return rows.map(toThread);
+    return rows.map(toJob);
   }
 
   async setJobStatus(threadId: string, status: JobStatus): Promise<void> {
@@ -160,20 +160,20 @@ export class DriverStoreService {
   // ── tracks ─────────────────────────────────────────────────────────────────────────────────
 
   /** The thread's tracks in execution order (ORDER BY ordinal). */
-  async tracksForJob(threadId: string): Promise<DriverTrack[]> {
+  async tracksForJob(threadId: string): Promise<DriverThread[]> {
     const rows = await this.tracks.find({
       where: { thread_id: threadId },
       order: { ordinal: 'ASC' },
     });
-    return rows.map(toTrack);
+    return rows.map(toThread);
   }
 
-  async setTrackStatus(trackId: string, status: TrackStatus): Promise<void> {
+  async setThreadStatus(trackId: string, status: ThreadStatus): Promise<void> {
     await this.tracks.update({ id: trackId }, { status });
   }
 
   /** Persist the just-in-time plan prose + the prior track's handoff onto the track. */
-  async setTrackPlan(
+  async setThreadPlan(
     trackId: string,
     plan: string,
     handoffIn: string | null,
@@ -182,7 +182,7 @@ export class DriverStoreService {
   }
 
   /** Record the track's handoff note for the next track (set when the track is done). */
-  async setTrackHandoffOut(trackId: string, handoffOut: string): Promise<void> {
+  async setThreadHandoffOut(trackId: string, handoffOut: string): Promise<void> {
     await this.tracks.update({ id: trackId }, { handoff_out: handoffOut });
   }
 
@@ -238,7 +238,7 @@ export class DriverStoreService {
   // ── steps ───────────────────────────────────────────────────────────────────────────────────
 
   /** A track's steps in execution order. */
-  async stepsForTrack(trackId: string): Promise<Step[]> {
+  async stepsForThread(trackId: string): Promise<Step[]> {
     const rows = await this.steps.find({
       where: { track_id: trackId },
       order: { ordinal: 'ASC' },
@@ -251,8 +251,8 @@ export class DriverStoreService {
    * `pending`/step `build`). Idempotent across a resume — if rows already exist (the plan locked before
    * the restart) the existing rows are returned untouched, so steps never double-create.
    */
-  async lockSteps(track: DriverTrack, planned: PlannedStep[]): Promise<Step[]> {
-    const existing = await this.stepsForTrack(track.id);
+  async lockSteps(track: DriverThread, planned: PlannedStep[]): Promise<Step[]> {
+    const existing = await this.stepsForThread(track.id);
     if (existing.length > 0) return existing;
     const rows = planned.map((p, i) =>
       this.steps.create({
@@ -318,11 +318,11 @@ export class DriverStoreService {
       where: { thread_id: thread.id },
       order: { ordinal: 'ASC' },
     });
-    const stepsByTrack = new Map<string, StepEntity[]>();
+    const stepsByThread = new Map<string, StepEntity[]>();
     for (const p of steps) {
-      const list = stepsByTrack.get(p.track_id) ?? [];
+      const list = stepsByThread.get(p.track_id) ?? [];
       list.push(p);
-      stepsByTrack.set(p.track_id, list);
+      stepsByThread.set(p.track_id, list);
     }
     return {
       threadId: thread.id,
@@ -348,11 +348,11 @@ export class DriverStoreService {
         reviewAgents:
           Array.isArray(s.review_agents) && s.review_agents.length > 0
             ? s.review_agents
-            : reviewAgentsForTrack(s).map((a) => ({
+            : reviewAgentsForThread(s).map((a) => ({
                 ...a,
                 status: 'pending' as const,
               })),
-        steps: mapBatchedSteps(stepsByTrack.get(s.id) ?? []),
+        steps: mapBatchedSteps(stepsByThread.get(s.id) ?? []),
       })),
     };
   }
@@ -373,7 +373,7 @@ export class DriverStoreService {
       status: record.status,
       overview: record.overview,
       decisions: record.decisions,
-      trackTitles: record.track_titles,
+      threadTitles: record.track_titles,
     };
   }
 
@@ -434,7 +434,7 @@ function mapBatchedSteps(list: StepEntity[]): Array<{
 
 // ── row ⇄ domain mappers ─────────────────────────────────────────────────────────────────────────
 
-function toThread(row: JobEntity): Job {
+function toJob(row: JobEntity): Job {
   return {
     id: row.id,
     orgId: row.org_id,
@@ -454,7 +454,7 @@ function toThread(row: JobEntity): Job {
   };
 }
 
-function toTrack(row: TrackEntity): DriverTrack {
+function toThread(row: ThreadEntity): DriverThread {
   return {
     id: row.id,
     threadId: row.thread_id,
@@ -464,7 +464,7 @@ function toTrack(row: TrackEntity): DriverTrack {
     plan: row.plan,
     handoffIn: row.handoff_in,
     handoffOut: row.handoff_out,
-    status: row.status as TrackStatus,
+    status: row.status as ThreadStatus,
   };
 }
 
@@ -493,7 +493,7 @@ function toRecord(row: DecisionRecordEntity): DecisionRecord {
     status: row.status as DecisionRecord['status'],
     overview: row.overview,
     decisions: row.decisions as Decision[],
-    trackTitles: row.track_titles,
+    threadTitles: row.track_titles,
     approvedBy: row.approved_by,
     approvedAt: row.approved_at,
   };

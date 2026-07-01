@@ -9,7 +9,7 @@ import {
   JOB_DISPATCHER,
   type JobDispatcher,
 } from './brain';
-import { TrackDriver } from './driver';
+import { ThreadDriver } from './driver';
 import { GithubIngressController, WebhookIngressController } from './ingress';
 import { BRAIN_SINK, StimulusIntake, type BrainSink } from './stimulus';
 import { WebSurface, CHAT_SURFACE, type ChatSurface } from './surface';
@@ -55,10 +55,10 @@ describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
     expect(typeof sink.handleChat).toBe('function');
     expect(typeof sink.deliverEvent).toBe('function');
 
-    // The OUTPUT seam: JOB_DISPATCHER resolves to W4's real TrackDriver (the no-op is OVERRIDDEN —
-    // BrainModule no longer binds it; DriverModule's @Global useExisting: TrackDriver wins). This is
+    // The OUTPUT seam: JOB_DISPATCHER resolves to W4's real ThreadDriver (the no-op is OVERRIDDEN —
+    // BrainModule no longer binds it; DriverModule's @Global useExisting: ThreadDriver wins). This is
     // the exact DI-wiring guard a prior workstream's typecheck-only ship missed.
-    const driver = app.get(TrackDriver);
+    const driver = app.get(ThreadDriver);
     expect(driver).toBeDefined();
     expect(app.get<JobDispatcher>(JOB_DISPATCHER)).toBe(driver);
 
@@ -111,7 +111,7 @@ describe('AppModule boot with SURFACE=agent (the programmatic surface)', () => {
 
     // The brain + dispatcher still resolve — the surface swap doesn't disturb the rest of the graph.
     expect(app.get(AgentSessionManager)).toBeDefined();
-    expect(app.get(TrackDriver)).toBeDefined();
+    expect(app.get(ThreadDriver)).toBeDefined();
 
     await app.close();
   }, 60_000);

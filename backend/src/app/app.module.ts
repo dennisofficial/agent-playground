@@ -6,7 +6,7 @@ import { PersistenceModule } from './persistence/persistence.module';
 
 /**
  * AppModule — the clean-room root for the v2 orchestrator ("Atlas v2"). A LEGIBLE rebuild of the
- * proven semantics (track-driver, JIT planning, one PR) + the reactive notification path, with a
+ * proven semantics (thread-driver, JIT planning, one PR) + the reactive notification path, with a
  * deterministic pipeline you can read top-to-bottom and an LLM brain that only decides whether/what.
  *
  * THE HARD RULE: ZERO import edges into v1 — nothing here (or anywhere under `src/app/`) imports

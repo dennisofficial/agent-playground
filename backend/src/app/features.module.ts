@@ -33,7 +33,7 @@ import { TestBridgeModule } from './test-bridge';
  *  - `BrainModule` (W3) — the brain: the `BRAIN_SINK` binding (chat → its session, event → a harness-message delivery), the
  *    conversational grill, the decision-record approval gate. It injects `JOB_DISPATCHER` (bound by W4).
  *  - `DriverModule` (W4) — the deterministic, resumable track/step driver. Binds the REAL
- *    `JOB_DISPATCHER` (`useExisting: TrackDriver`, @Global), so the brain's dispatch reaches the driver
+ *    `JOB_DISPATCHER` (`useExisting: ThreadDriver`, @Global), so the brain's dispatch reaches the driver
  *    with zero changes; consumes W5 (gate), W7 (auto-fix), and W1 (runner/git). Reconciles in-flight jobs
  *    on boot.
  *

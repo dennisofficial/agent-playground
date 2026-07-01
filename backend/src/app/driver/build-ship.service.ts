@@ -30,7 +30,7 @@ export interface ShipInput {
   sandbox: FeatureSandbox;
   /**
    * When set, stage + commit any uncommitted worktree changes under this message BEFORE shipping. The
-   * track-driver omits it (it commits per-step); the direct-build fast path sets it (the brain wrote
+   * thread-driver omits it (it commits per-step); the direct-build fast path sets it (the brain wrote
    * the change but hasn't committed). A clean tree → no-op.
    */
   commitMessage?: string;
@@ -39,7 +39,7 @@ export interface ShipInput {
 }
 
 /**
- * The shared TERMINAL "ship" sequence — extracted from the track-driver's PR-tail so BOTH the full
+ * The shared TERMINAL "ship" sequence — extracted from the thread-driver's PR-tail so BOTH the full
  * track build and the direct-build fast path finalize identically:
  *
  *   PR-tail auto-fix (whole accumulated diff) → push the branch → open ONE PR (idempotent; a re-run

@@ -11,7 +11,7 @@ import {
   PlanReviewEntity,
   StepEntity,
   RepoEntity,
-  TrackEntity,
+  ThreadEntity,
   StimulusEntity,
   JobEntity,
   JobSandboxEntity,
@@ -39,7 +39,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
  *  - INPUT: `BRAIN_SINK` ⟵ a thin adapter over `AgentSessionManager` (chat → `handleChatTurn`,
  *    event → `deliverEvent`). The old `StimulusRouter` demux + the second event-only brain
  *    (`EventTriageService` / `BRAIN_LLM`) are deleted — there is only one brain per thread (ARCHITECTURE §7).
- *  - OUTPUT: `JOB_DISPATCHER` — bound by W4's @Global `DriverModule` (`useExisting: TrackDriver`).
+ *  - OUTPUT: `JOB_DISPATCHER` — bound by W4's @Global `DriverModule` (`useExisting: ThreadDriver`).
  *
  * Imports `DecisionGateModule` (classifier + park-and-ask), `MemoryModule` (recall), `DriverModule`
  * (JobLifecycleService + DriverStoreService for the brain tools). `CHAT_SURFACE` comes from the
@@ -61,7 +61,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
         PlanReviewEntity,
         DecisionRecordEntity,
         RepoDecisionEntity,
-        TrackEntity,
+        ThreadEntity,
         StepEntity,
         StimulusEntity,
         RepoEntity,
@@ -88,7 +88,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
         deliverEvent: (s) => brain.deliverEvent(s),
       }),
     },
-    // OUTPUT SEAM (`JOB_DISPATCHER`) is bound by W4's @Global DriverModule (useExisting: TrackDriver).
+    // OUTPUT SEAM (`JOB_DISPATCHER`) is bound by W4's @Global DriverModule (useExisting: ThreadDriver).
   ],
   exports: [
     AgentSessionManager,

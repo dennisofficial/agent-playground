@@ -112,7 +112,7 @@ const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 // `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
 // The task tools (TaskCreate/TaskUpdate/TaskList/TaskGet — the SDK 0.3.x successors to the legacy
 // TodoWrite) let the orchestrator maintain a LIVE task list as its visible decomposition; the navigator
-// derives the per-track checklist from these calls (see web `track-todos.ts`). `tools` is an allowlist, so
+// derives the per-track checklist from these calls (see web `thread-todos.ts`). `tools` is an allowlist, so
 // they must be named even though task-mode is default-on. They have no FS/git side effects.
 const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'];
 const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', ...TASK_TOOLS, ...WEB_TOOLS];

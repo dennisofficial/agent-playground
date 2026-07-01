@@ -114,10 +114,10 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v1',
       decisions: [],
-      trackTitles: ['backend middleware', 'frontend banner'],
+      threadTitles: ['backend middleware', 'frontend banner'],
     });
     expect(first.thread.status).toBe('awaiting_approval');
-    expect(await trackTitles(dataSource, threadId)).toEqual([
+    expect(await threadTitles(dataSource, threadId)).toEqual([
       'backend middleware',
       'frontend banner',
     ]);
@@ -134,7 +134,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v2',
       decisions: [],
-      trackTitles: ['backend middleware only'],
+      threadTitles: ['backend middleware only'],
     });
 
     expect(second.thread.status).toBe('awaiting_approval');
@@ -142,7 +142,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(second.thread.title).toBe('rate limiting v2');
 
     // Sections reflect ONLY the new proposal — the stale ones are gone.
-    expect(await trackTitles(dataSource, threadId)).toEqual(['backend middleware only']);
+    expect(await threadTitles(dataSource, threadId)).toEqual(['backend middleware only']);
 
     // The prior draft record is superseded; exactly one draft remains (the new one).
     expect(await recordStatus(dataSource, first.decisionRecordId)).toBe('superseded');
@@ -291,7 +291,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await store.latestAnsweredQuestionCard(threadId)).toBeNull();
   }, 30_000);
 
-  it('persistPlan with stepsByTrack locks step rows + sets track.plan; clears them on re-propose; omitting it creates none', async () => {
+  it('persistPlan with stepsByThread locks step rows + sets track.plan; clears them on re-propose; omitting it creates none', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
@@ -323,8 +323,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview',
       decisions: [],
-      trackTitles: ['backend', 'frontend'],
-      stepsByTrack: [
+      threadTitles: ['backend', 'frontend'],
+      stepsByThread: [
         [
           { title: 'model', brief: 'add the entity at server.entity.ts:1' },
           { title: 'service', brief: 'add the service at server.service.ts:1' },
@@ -345,7 +345,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const plans1 = await sectionPlans(dataSource, threadId);
     expect(plans1.every((p) => p != null && p.length > 0)).toBe(true);
 
-    // Re-propose WITHOUT stepsByTrack (e.g. a direct-build-style re-shape): prior step rows are
+    // Re-propose WITHOUT stepsByThread (e.g. a direct-build-style re-shape): prior step rows are
     // cascade-cleared with their tracks, and no new step rows are created.
     await store.reopenPlanning(threadId);
     await store.persistPlan({
@@ -356,7 +356,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       kind: 'feature',
       overview: 'overview v2',
       decisions: [],
-      trackTitles: ['backend only'],
+      threadTitles: ['backend only'],
     });
 
     expect(await phasesFor(dataSource, threadId)).toHaveLength(0);
@@ -455,7 +455,7 @@ async function messageTexts(ds: DataSource, threadId: string): Promise<string[]>
   return rows.map((r) => r.text);
 }
 
-async function trackTitles(ds: DataSource, threadId: string): Promise<string[]> {
+async function threadTitles(ds: DataSource, threadId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
     `SELECT brief FROM tracks WHERE thread_id = $1 ORDER BY ordinal ASC`,
     [threadId],

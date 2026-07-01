@@ -1,8 +1,8 @@
 import type { EvalCase } from '@workspace/ai-testing';
-import type { PlanTrackInput, PlannedStep } from './planner-llm';
+import type { PlanThreadInput, PlannedStep } from './planner-llm';
 
 /**
- * Dataset for the track planner (`PlannerChains.planTrack`, running on Sonnet 5). Three cases
+ * Dataset for the track planner (`PlannerChains.planThread`, running on Sonnet 5). Three cases
  * exercise the invariants the PLAN_SYSTEM prompt promises:
  *
  *  1. `feature-track`  — a normal build track. Expect 1–4 steps, last = verification.
@@ -14,7 +14,7 @@ import type { PlanTrackInput, PlannedStep } from './planner-llm';
  * `expected` is intentionally omitted — a plan has no single reference output; the evaluators
  * grade structural invariants + groundedness, not string equality.
  */
-export const DATASET: EvalCase<PlanTrackInput, PlannedStep[]>[] = [
+export const DATASET: EvalCase<PlanThreadInput, PlannedStep[]>[] = [
   {
     label: 'feature-track',
     input: {

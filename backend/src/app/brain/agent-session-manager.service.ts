@@ -1604,14 +1604,14 @@ export class AgentSessionManager
             ? normalizeDecisions(args['decisions'])
             : await this.store.pendingDecisions(stimulus.threadId);
         // Atlas plans at the TRACK level; the running track's orchestrator decomposes into its own live
-        // task list (SDK task tools) — so steps are NOT authored up front. `normalizeTracks` still accepts
+        // task list (SDK task tools) — so steps are NOT authored up front. `normalizeThreads` still accepts
         // a `steps` array if a caller supplies one (back-compat: those lock + skip JIT), but it's optional;
         // absent, the driver JIT-plans each track. The rich prose companion lives in `/context/specs/`.
-        const tracks = normalizeTracks(args['tracks']);
-        const trackTitles = tracks.map((s) => s.title);
-        const trackTypes = tracks.map((s) => s.type);
+        const tracks = normalizeThreads(args['tracks']);
+        const threadTitles = tracks.map((s) => s.title);
+        const threadTypes = tracks.map((s) => s.type);
         const hasSteps = tracks.some((s) => s.steps.length > 0);
-        const stepsByTrack = hasSteps ? tracks.map((s) => s.steps) : undefined;
+        const stepsByThread = hasSteps ? tracks.map((s) => s.steps) : undefined;
 
         if (!overview || !goal || tracks.length === 0) {
           return {
@@ -1634,9 +1634,9 @@ export class AgentSessionManager
           kind: 'feature',
           overview,
           decisions,
-          trackTitles,
-          trackTypes,
-          stepsByTrack,
+          threadTitles,
+          threadTypes,
+          stepsByThread,
           status: 'plan_review',
         });
 
@@ -1667,9 +1667,9 @@ export class AgentSessionManager
           ...(reviewTicket ? { ticket: reviewTicket } : {}),
           overview,
           decisions,
-          trackTitles,
+          threadTitles,
           // Codex grades the EXECUTION detail (the authored steps), not just titles.
-          stepsByTrack,
+          stepsByThread,
         });
 
         if ('capped' in started) {
@@ -1761,7 +1761,7 @@ export class AgentSessionManager
           title: job.title ?? '',
           summary: rec.overview,
           decisions: rec.decisions,
-          tracks: rec.trackTitles,
+          tracks: rec.threadTitles,
         });
 
         return {
@@ -1846,7 +1846,7 @@ export class AgentSessionManager
           kind: 'feature',
           overview: summary,
           decisions,
-          trackTitles: [],
+          threadTitles: [],
         });
 
         void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
@@ -2657,7 +2657,7 @@ export class AgentSessionManager
       repoId: job.repoId,
       body: '',
     });
-    const isDirect = (rec.trackTitles?.length ?? 0) === 0;
+    const isDirect = (rec.threadTitles?.length ?? 0) === 0;
     this.logger.log(
       `durable approval fallback for job ${jobId}: "${verdict}" by ${ruledBy} (direct=${isDirect})`,
     );
@@ -3428,7 +3428,7 @@ function errText(err: unknown): string {
  * driver's JIT plan), else `[]`. A track with an empty/whitespace title is dropped; a supplied step missing
  * a title OR a brief is dropped.
  */
-function normalizeTracks(
+function normalizeThreads(
   raw: unknown,
 ): { title: string; type: string; steps: PlannedStep[] }[] {
   const arr = Array.isArray(raw) ? raw : [];
@@ -3443,7 +3443,7 @@ function normalizeTracks(
     };
     const title = String(o.title ?? o.brief ?? '').trim();
     if (!title) continue;
-    // Scope type selects the review agents (TRACK_TYPES), but allow-other — a non-enum value is stored
+    // Scope type selects the review agents (THREAD_TYPES), but allow-other — a non-enum value is stored
     // verbatim (lowercased); default 'general' when absent (the prompt asks the brain to set one).
     const type =
       String(o.type ?? '')

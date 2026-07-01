@@ -5,7 +5,7 @@
  * a raw `{"title":…,"details":…}` blob (older `submit_plan` runs serialized the whole object), so those
  * threads still show their title instead of JSON.
  */
-export function trackTitle(brief: string): string {
+export function threadTitle(brief: string): string {
   const t = (brief ?? '').trim();
   if (t.startsWith('{')) {
     try {

@@ -1,9 +1,9 @@
 import type {
+  WireJobKind,
+  WireJobStatus,
   JobKind,
   JobStatus,
   StepStatus,
-  TrackStatus,
-  ThreadKind,
   ThreadStatus,
 } from './types';
 
@@ -18,7 +18,7 @@ export interface StatusMeta {
   pulse: boolean;
 }
 
-export const STATUS_META: Record<ThreadStatus, StatusMeta> = {
+export const STATUS_META: Record<JobStatus, StatusMeta> = {
   running: { label: 'Running', color: 'var(--accent)', pulse: true },
   planning: { label: 'Planning', color: 'var(--blue)', pulse: false },
   // Codex reviewing the submitted plan — still the pre-approval, you're-in-the-loop phase (NOT the
@@ -38,14 +38,14 @@ export interface KindMeta {
 }
 
 /** Kind badges are NEUTRAL grey (handoff: do not reintroduce per-kind color). */
-export const KIND_META: Record<ThreadKind, KindMeta> = {
+export const KIND_META: Record<JobKind, KindMeta> = {
   feat: { label: 'FEAT', color: 'var(--dim)' },
   fix: { label: 'FIX', color: 'var(--dim)' },
   event: { label: 'EVENT', color: 'var(--dim)' },
 };
 
-/** Backend JobStatus → UI ThreadStatus. (`cancelled` reads as paused-terminal in the UI.) */
-export function toThreadStatus(status: JobStatus): ThreadStatus {
+/** Wire JobStatus → UI JobStatus. (`cancelled` reads as paused-terminal in the UI.) */
+export function toJobStatus(status: WireJobStatus): JobStatus {
   switch (status) {
     case 'running':
       return 'running';
@@ -67,13 +67,13 @@ export function toThreadStatus(status: JobStatus): ThreadStatus {
   }
 }
 
-/** Backend JobKind → UI ThreadKind (event threads are tagged at the stimulus layer, not JobKind). */
-export function toThreadKind(kind: JobKind): ThreadKind {
+/** Wire JobKind → UI JobKind (event jobs are tagged at the stimulus layer, not the wire kind). */
+export function toJobKind(kind: WireJobKind): JobKind {
   return kind === 'bugfix' ? 'fix' : 'feat';
 }
 
 /** Per-track dot color for the navigator pipeline tree. */
-export function trackColor(status: TrackStatus): { color: string; pulse: boolean } {
+export function threadColor(status: ThreadStatus): { color: string; pulse: boolean } {
   switch (status) {
     case 'done':
       return { color: 'var(--green)', pulse: false };

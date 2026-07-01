@@ -1,10 +1,10 @@
 /**
  * W4 — the SECTION/PHASE DRIVER barrel. The deterministic, resumable `async` pipeline (the legible
  * replacement for v1's implicit status-FSM). The app imports `DriverModule`; W9 / tests reach the
- * `TrackDriver` + its seams here. Zero v1 imports.
+ * `ThreadDriver` + its seams here. Zero v1 imports.
  */
 export * from './driver.module';
-export * from './track-driver.service';
+export * from './thread-driver.service';
 export * from './driver-store.service';
 export * from './job-lifecycle.service';
 export { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -43,5 +43,5 @@ export {
   type PlannerLlm,
   type PlannedStep,
   type PlannedDecision,
-  type PlanTrackInput,
+  type PlanThreadInput,
 } from './planner-llm';

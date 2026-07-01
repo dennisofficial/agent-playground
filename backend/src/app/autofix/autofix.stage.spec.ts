@@ -71,7 +71,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     const reviewCalls = calls.filter((c) => c.mode === 'review');
     expect(reviewCalls).toHaveLength(2); // N = number of lenses
@@ -90,7 +90,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git } = mockGit({ hasChanges: true, sha: 'sha-1' });
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     expect(summary.findings).toHaveLength(1);
     expect(summary.findings[0].severity).toBe('high'); // highest wins
@@ -108,7 +108,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git, commitAll } = mockGit({ hasChanges: true, sha: 'commitsha1' });
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     expect(calls.some((c) => c.mode === 'execute')).toBe(true);
     expect(commitAll).toHaveBeenCalledTimes(1);
@@ -145,7 +145,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git, commitAll } = mockGit({});
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES, fixMinSeverity: 'medium' });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES, fixMinSeverity: 'medium' });
 
     expect(calls.some((c) => c.mode === 'execute')).toBe(false);
     expect(commitAll).not.toHaveBeenCalled();
@@ -160,7 +160,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git, commitAll } = mockGit({});
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES, applyFixes: false });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES, applyFixes: false });
 
     expect(calls.some((c) => c.mode === 'execute')).toBe(false);
     expect(commitAll).not.toHaveBeenCalled();
@@ -175,7 +175,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git, commitAll } = mockGit({});
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     expect(summary.clean).toBe(true);
     expect(summary.findings).toEqual([]);
@@ -192,7 +192,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git, commitAll } = mockGit({});
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(
+    const summary = await stage.autofixThread(
       { ...ctx, worktreePath: '/tmp', diff: '', changedFiles: [] },
       { lenses: LENSES },
     );
@@ -211,7 +211,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git, commitAll } = mockGit({ hasChanges: false });
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     expect(summary.fixesAttempted).toBe(true); // the fix turn ran
     expect(commitAll).not.toHaveBeenCalled(); // but nothing changed → no commit
@@ -231,7 +231,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git } = mockGit({ hasChanges: true, sha: 's' });
     const stage = new AutoFixStage(engine, git);
 
-    const summary = await stage.autofixTrack(ctx, { lenses: LENSES });
+    const summary = await stage.autofixThread(ctx, { lenses: LENSES });
 
     expect(summary.findings.map((f) => f.title)).toEqual(['survivor']);
   });
@@ -257,7 +257,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       label: `L${i}`,
       focus: 'f',
     }));
-    await stage.autofixTrack(ctx, { lenses, concurrency: 2 });
+    await stage.autofixThread(ctx, { lenses, concurrency: 2 });
 
     expect(maxInFlight).toBeLessThanOrEqual(2);
   });

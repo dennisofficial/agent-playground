@@ -9,7 +9,7 @@ import { BLOCK_SINK, MessageBlockSink, TurnHarnessFactory } from './turn-harness
  * @Global module for the shared transcript spine — {@link LiveTurnStore} (the resumable/durable live-stream
  * buffer) + {@link TurnHarnessFactory} (converts an engine turn's event stream into live frames + durable
  * blocks). Global so EVERY producer injects the SAME singletons with no module cycle: the brain
- * (`AgentSessionManager`) and the build driver (`TrackDriver`) both build a harness; the web SSE controller
+ * (`AgentSessionManager`) and the build driver (`ThreadDriver`) both build a harness; the web SSE controller
  * replays snapshots. The {@link BLOCK_SINK} is a narrow durable-block writer ({@link MessageBlockSink}) so
  * the driver rides the spine without depending on the whole brain module.
  */

@@ -11,7 +11,7 @@ import {
   DecisionRecordEntity,
   MessageEntity,
   StepEntity,
-  TrackEntity,
+  ThreadEntity,
   StimulusEntity,
   JobEntity,
 } from '../persistence/entities';
@@ -55,8 +55,8 @@ export class BrainStoreService {
     private readonly messages: Repository<MessageEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
-    @InjectRepository(TrackEntity, DB_CONNECTION)
-    private readonly tracks: Repository<TrackEntity>,
+    @InjectRepository(ThreadEntity, DB_CONNECTION)
+    private readonly tracks: Repository<ThreadEntity>,
     @InjectRepository(StepEntity, DB_CONNECTION)
     private readonly steps: Repository<StepEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
@@ -753,21 +753,21 @@ export class BrainStoreService {
     kind: JobKind;
     overview: string;
     decisions: Decision[];
-    trackTitles: string[];
+    threadTitles: string[];
     /**
      * OPTIONAL — the scope type per track (backend/frontend/…), aligned by track index. Selects the
      * review agents. Defaults to `'general'` per track when absent (the autonomous bugfix / direct-build
      * callers pass no types) — matches the DB column default.
      */
-    trackTypes?: string[];
+    threadTypes?: string[];
     /**
      * OPTIONAL — the steps Atlas authored up front for each track, aligned by track index
-     * (`stepsByTrack[i]` = steps for `trackTitles[i]`). When present, the step rows are LOCKED
+     * (`stepsByThread[i]` = steps for `threadTitles[i]`). When present, the step rows are LOCKED
      * here so the driver finds them already present and skips its just-in-time plan turn; `track.plan`
      * is set from them so the pipeline view shows the plan. ABSENT (direct-build / bugfix dispatch) →
      * no step rows created, exactly as before — the driver JIT-plans those tracks.
      */
-    stepsByTrack?: PlannedStep[][];
+    stepsByThread?: PlannedStep[][];
     /**
      * OPTIONAL — the thread status to flip to once the plan is persisted. Decouples plan PERSISTENCE
      * from approval-readiness: the full path now persists with `'plan_review'` (Codex reviews before the
@@ -789,7 +789,7 @@ export class BrainStoreService {
     const decisionRecordId = await this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(JobEntity);
       const records = m.getRepository(DecisionRecordEntity);
-      const tracks = m.getRepository(TrackEntity);
+      const tracks = m.getRepository(ThreadEntity);
       const steps = m.getRepository(StepEntity);
 
       // tracks MUST be deleted (new ones re-use ordinals 10/20/30… → UNIQUE(thread_id, ordinal)
@@ -809,24 +809,24 @@ export class BrainStoreService {
           status: 'draft',
           overview: input.overview,
           decisions: input.decisions,
-          track_titles: input.trackTitles,
+          track_titles: input.threadTitles,
           approved_by: null,
           approved_at: null,
         }),
       );
 
       // Save tracks first (to get ids), setting `plan` from any authored steps so `hasPlan` is true
-      // in the pipeline view (the authored path never hits the driver's `setTrackPlan`).
+      // in the pipeline view (the authored path never hits the driver's `setThreadPlan`).
       const savedSections = await tracks.save(
-        input.trackTitles.map((brief, i) => {
-          const authored = input.stepsByTrack?.[i];
+        input.threadTitles.map((brief, i) => {
+          const authored = input.stepsByThread?.[i];
           return tracks.create({
             thread_id: input.threadId,
             org_id: input.orgId,
             ordinal: (i + 1) * ORDINAL_GAP,
             brief,
             // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
-            type: input.trackTypes?.[i] ?? 'general',
+            type: input.threadTypes?.[i] ?? 'general',
             plan: authored?.length ? renderPlan(authored) : null,
             handoff_in: null,
             handoff_out: null,
@@ -839,9 +839,9 @@ export class BrainStoreService {
       // `DriverStoreService.lockSteps` (ordinal (i+1)*GAP, step 'build', status 'pending') so the
       // driver's resume/fast-forward cursor reads them identically. Order of savedSections matches the
       // input order (single save call), so index alignment holds.
-      if (input.stepsByTrack?.length) {
+      if (input.stepsByThread?.length) {
         const phaseRows = savedSections.flatMap((track, i) =>
-          (input.stepsByTrack?.[i] ?? []).map((p, j) =>
+          (input.stepsByThread?.[i] ?? []).map((p, j) =>
             steps.create({
               track_id: track.id,
               thread_id: input.threadId,
@@ -889,14 +889,14 @@ export class BrainStoreService {
   async loadDecisionRecord(decisionRecordId: string): Promise<{
     overview: string;
     decisions: Decision[];
-    trackTitles: string[];
+    threadTitles: string[];
   } | null> {
     const row = await this.records.findOne({ where: { id: decisionRecordId } });
     if (!row) return null;
     return {
       overview: row.overview,
       decisions: row.decisions ?? [],
-      trackTitles: row.track_titles ?? [],
+      threadTitles: row.track_titles ?? [],
     };
   }
 
