@@ -20,11 +20,10 @@ import {
 import { Dot, KindBadge, StatusPie } from '@/components/ui/badges';
 import { STATUS_META } from '@/lib/api/status';
 import { formatBytes } from '@/lib/format';
-import { trackTitle } from '@/lib/track-title';
 import { cn } from '@/lib/cn';
 import { pipelineJob } from '@/lib/api/thread-api';
 import { useRetryThread } from '@/lib/api/thread-queries';
-import { Caret, Divider, PipelineTree, haltTrackIdx } from './pipeline-tree';
+import { Divider, PipelineTree, haltTrackIdx } from './pipeline-tree';
 import { NavigatorApproveButton } from './spec-approval';
 import type { ContextFile, PipelineJob, PipelineState, ThreadContext, ThreadKind, ThreadStatus } from '@/lib/api/types';
 import type { ThreadMessage, ThreadRef } from '@/lib/api/thread-api';
@@ -103,13 +102,6 @@ export function Navigator({
     meta.status !== 'paused' &&
     meta.status !== 'failed';
   const [editing, setEditing] = useState(false);
-
-  // Per-folder expand/collapse — explicit user overrides over the status-derived defaults. Keyed by
-  // folder id (sec:<id>, sec:<id>.tasks, …); stale keys from a previous job never match.
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const isExpanded = (id: string, fallback: boolean) => (id in collapsed ? !collapsed[id] : fallback);
-  const toggle = (id: string, currentlyExpanded: boolean) =>
-    setCollapsed((m) => ({ ...m, [id]: currentlyExpanded }));
 
   const st = meta.status;
 
@@ -224,9 +216,8 @@ export function Navigator({
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
         <StateBanner status={st} job={job} threadRef={threadRef} onConversation={onConversation} />
 
-        {/* THREADS — the Main planning lane + each build lane. Selecting one opens it in the LEFT pane
-            (orange highlight). */}
-        <RegionHeader dot="var(--accent)" label="THREADS" />
+        {/* THREADS — the Main planning lane + each build lane. No section header (flat list); selecting one
+            opens it in the LEFT pane (orange highlight). */}
         <MainLaneRow
           active={laneNode === null}
           running={st === 'running' || st === 'planning'}
@@ -238,10 +229,7 @@ export function Navigator({
           messages={messages}
           threadId={threadRef.threadId}
           laneNode={laneNode}
-          detailNode={detailNode}
           onSelectNode={onSelectNode}
-          isExpanded={isExpanded}
-          toggle={toggle}
         />
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
@@ -257,43 +245,6 @@ export function Navigator({
         <PortsRegion detailNode={detailNode} onSelectNode={onSelectNode} />
       </div>
     </div>
-  );
-}
-
-// ── region header (THREADS / OUTPUTS / PORTS — a colored dot + mono label) ──────────────────────────
-
-function RegionHeader({
-  dot,
-  label,
-  note,
-  trailing,
-  rule,
-}: {
-  dot: string;
-  label: string;
-  note?: string;
-  trailing?: ReactNode;
-  /** Full-bleed top border walling this region off from the one above (like the sticky header's border).
-   *  The first region (THREADS) omits it — the sticky header's own border already separates it. */
-  rule?: boolean;
-}) {
-  // The `dot · label` row. Regions are separated by a full-width rule at the top of each header (matching
-  // the sticky header's bottom border); the trailing slot rides the label row (e.g. PORTS' "3 live").
-  return (
-    <>
-      <div
-        className={cn(
-          'flex items-center gap-2 px-2 pb-1.5 pt-3',
-          rule && 'mt-1.5 border-t border-border pt-3.5',
-        )}
-      >
-        <span className="h-[5px] w-[5px] shrink-0 rounded-full" style={{ background: dot }} />
-        <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.15em] text-dim">{label}</span>
-        {note ? <span className="font-mono text-[8px] text-faint">{note}</span> : null}
-        <span className="flex-1" />
-        {trailing ?? null}
-      </div>
-    </>
   );
 }
 
@@ -318,29 +269,24 @@ function MainLaneRow({ active, running, onClick }: { active: boolean; running: b
   );
 }
 
-/** The build lanes under THREADS — the live tree (running/paused/done/failed), the triage lane, or the
- *  proposed draft lanes (planning / awaiting approval). Mirrors the prior PIPELINE region, sans its own
- *  divider (the THREADS RegionHeader owns it). */
+/** The build lanes under THREADS — one row per thread. The live/failed/done tree, the triage lane, or (pre-
+ *  approval) the draft threads. Flows directly under the Main lane row (no section header); the first OUTPUTS
+ *  sub-group divider below separates it from the outputs. Each thread's subitems are its live task list (the
+ *  SDK task tools) — see {@link PipelineTree}; submit-plan shows only the threads (no steps). */
 function ThreadsTracks({
   status,
   job,
   messages,
   threadId,
   laneNode,
-  detailNode,
   onSelectNode,
-  isExpanded,
-  toggle,
 }: {
   status: ThreadStatus;
   job: PipelineJob | null;
   messages: ThreadMessage[];
   threadId: string;
   laneNode: string | null;
-  detailNode: string | null;
   onSelectNode: (node: string) => void;
-  isExpanded: (id: string, fallback: boolean) => boolean;
-  toggle: (id: string, currentlyExpanded: boolean) => void;
 }) {
   // Triaging — the autonomous lane: triage findings, not a build tree.
   if (status === 'triaging') {
@@ -358,82 +304,24 @@ function ThreadsTracks({
     );
   }
 
-  // The live build tree (running / paused / done / failed) — real tracks + steps.
-  if ((status === 'running' || status === 'paused' || status === 'done' || status === 'failed') && job) {
+  // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
+  // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hint line.
+  if (!job || job.tracks.length === 0) {
     return (
-      <PipelineTree
-        job={job}
-        status={status}
-        messages={messages}
-        threadId={threadId}
-        laneNode={laneNode}
-        detailNode={detailNode}
-        onSelectNode={onSelectNode}
-        isExpanded={isExpanded}
-        toggle={toggle}
-      />
+      <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
+        No build lanes yet — the plan you approve in the conversation is what creates them.
+      </p>
     );
   }
-
-  // Planning / awaiting — draft lanes (locked in on approval). The plan is authored in full up front, so a
-  // proposed lane already carries its steps — show them (expandable) so the operator can review the whole
-  // shape before approving. Older step-less drafts (and planning, before any lanes exist) degrade to a row.
-  const drafts = job?.tracks ?? [];
-  const proposed = status === 'awaiting_approval';
   return (
-    <>
-      {drafts.length === 0 ? (
-        <p className="px-2 pb-1 pt-1 text-[11px] italic leading-relaxed text-faint">
-          No build lanes yet — the plan you approve in the conversation is what creates them.
-        </p>
-      ) : (
-        drafts.map((s, i) => {
-          const steps = s.steps ?? [];
-          const folderId = `draft:${s.id}`;
-          const expanded = steps.length > 0 && isExpanded(folderId, proposed);
-          return (
-            <div key={s.id} className="select-none">
-              <div
-                className={cn(
-                  'flex items-center gap-[7px] px-2 py-1.5 opacity-60',
-                  steps.length > 0 && 'cursor-pointer hover:opacity-80',
-                )}
-                onClick={steps.length > 0 ? () => toggle(folderId, expanded) : undefined}
-              >
-                <span
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ border: '1.5px dashed var(--border-2)', background: 'transparent' }}
-                />
-                <span className="flex-1 truncate text-[12px] font-semibold text-dim">
-                  §{i + 1} {trackTitle(s.brief)}
-                </span>
-                {s.type && s.type !== 'general' && (
-                  <span className="shrink-0 rounded-sm bg-surface-3 px-1 font-mono text-[8.5px] uppercase tracking-wide text-faint">
-                    {s.type}
-                  </span>
-                )}
-                {steps.length > 0 && (
-                  <span className="shrink-0 font-mono text-[9.5px] text-faint">{steps.length}</span>
-                )}
-                {steps.length > 0 ? <Caret expanded={expanded} /> : null}
-              </div>
-              {expanded &&
-                steps.map((p, pi) => (
-                  <div key={p.id} className="flex items-center gap-2 py-1 pl-[23px] pr-2 opacity-55">
-                    <span
-                      className="h-1.5 w-1.5 shrink-0 rounded-full"
-                      style={{ border: '1px dashed var(--border-2)', background: 'transparent' }}
-                    />
-                    <span className="flex-1 truncate text-[11px] text-dim">
-                      {i + 1}.{pi + 1} {p.title || `Step ${pi + 1}`}
-                    </span>
-                  </div>
-                ))}
-            </div>
-          );
-        })
-      )}
-    </>
+    <PipelineTree
+      job={job}
+      status={status}
+      messages={messages}
+      threadId={threadId}
+      laneNode={laneNode}
+      onSelectNode={onSelectNode}
+    />
   );
 }
 
@@ -459,7 +347,8 @@ function OutputsRegion({
 
   return (
     <>
-      <RegionHeader dot="var(--blue)" label="OUTPUTS" rule />
+      {/* OUTPUTS — no section header (flat list); the SPECS / ARTIFACTS / GENERATED sub-group dividers
+          (and PORTS below) carry the labels. Open in the RIGHT pane (blue highlight). */}
 
       {/* SPECS — the plan files (plan.md, diagrams). An untrusted-seeded job keeps its provenance note. */}
       <OutputGroup
@@ -491,17 +380,6 @@ function OutputsRegion({
         ) : null}
       </OutputGroup>
 
-      {/* ARTIFACTS — real output files (preview HTML, screenshots). Diff + PR live in the header. */}
-      <OutputGroup
-        label="ARTIFACTS"
-        files={artifacts}
-        prefix="artifact"
-        loading={loading}
-        emptyText="Nothing shared yet — screenshots & output files land here as Atlas works."
-        detailNode={detailNode}
-        onSelectNode={onSelectNode}
-      />
-
       {/* GENERATED — system-owned, read-only (decision-record.md). */}
       <OutputGroup
         label="GENERATED"
@@ -510,6 +388,17 @@ function OutputsRegion({
         generated
         loading={loading}
         emptyText="Nothing generated yet — system-owned files like decision-record.md."
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      />
+
+      {/* ARTIFACTS — real output files (preview HTML, screenshots). Diff + PR live in the header. */}
+      <OutputGroup
+        label="ARTIFACTS"
+        files={artifacts}
+        prefix="artifact"
+        loading={loading}
+        emptyText="Nothing shared yet — screenshots & output files land here as Atlas works."
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />
@@ -596,12 +485,11 @@ function PortsRegion({
   const ports = MOCK_PORTS;
   return (
     <>
-      <RegionHeader
-        dot="var(--blue)"
+      {/* PORTS — the sandbox's live dev servers. Same inline-divider style as the OUTPUTS sub-groups; the
+          "N live" green indicator rides the count slot. */}
+      <Divider
         label="PORTS"
-        rule
-        note="· sandbox"
-        trailing={
+        count={
           <span className="flex items-center gap-1 font-mono text-[8px] font-semibold text-green">
             <span className="pulse-dot h-[5px] w-[5px] rounded-full" style={{ background: 'var(--green)' }} />
             {ports.length} live

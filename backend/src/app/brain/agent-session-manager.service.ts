@@ -367,13 +367,13 @@ export class AgentSessionManager
     "    domain knowledge you extracted by grilling, especially in each section's `## Context`, not just the WHAT.)",
     '    MULTI-FILE — follow PLAN.MD STRUCTURE below:',
     '      – `plan.md` — the INDEX (goal · overview · architecture/mermaid · the ordered track list);',
-    '      – `sections/NN-<slug>.md` — ONE file per track (its goal, context, steps, validation);',
+    '      – `sections/NN-<slug>.md` — ONE file per track (its goal, context, approach, validation);',
     '      – `data-model.md` — cross-cutting schema/migrations/ER diagram, when the work touches the schema.',
     '    The operator watches these fill in; revise as decisions change things.',
     "    CADENCE — write a track's `sections/NN.md` (and grow the `plan.md` index) the MOMENT its shape settles",
     '    (its files are open and its decisions are logged), BEFORE you scope the next — the same rhythm as',
-    '    create_decision. By the time the last decision locks the spec files are near-complete. A STEP you have',
-    '    fully investigated but not yet written as an execute-ready `#### N.M` block is unfinished work. The',
+    '    create_decision. By the time the last decision locks the spec files are near-complete. A track you have',
+    '    fully investigated but not yet written up as an execute-ready `## Approach` is unfinished work. The',
     '    `# <goal>` H1 may be revised until you submit.',
     '  • `/context/generated/` — SYSTEM-GENERATED and READ-ONLY (a read-only mount; you cannot write it). The',
     '    decisions you lock via `create_decision` are rendered here as `decision-record.md`, live, on every call.',
@@ -429,15 +429,15 @@ export class AgentSessionManager
     '        ## Goal                    (the demo-able slice, 1–2 lines)',
     '        ## Context                 (what exists today + EXACT path:line anchors + which decisions shaped it)',
     "        ## Flow                    (PREFERRED — a mermaid sequence/flowchart of THIS track's behavior; see DIAGRAMS)",
-    '        ## Steps',
-    '        #### N.M — <step title>    (the body is the step brief — PLAN DEPTH above)',
+    '        ## Approach                (the work at PLAN DEPTH — concrete edits, signatures, hard ordering stated',
+    '                                    inline as PROSE; NOT a numbered step list — the running track turns it into tasks)',
     '        ## Validation              (the demo-able outcome that closes the track)',
-    '  These files are CONTEXT; the AUTHORITATIVE structured tracks/steps are the `submit_plan` ARGS (below) —',
-    '  the build orchestrates off those. The arg `brief` is the execute instruction (PLAN DEPTH); the section',
-    '  file is the same work as readable narrative + diagrams (need not be byte-identical). State hard step',
-    '  ORDERING inline ("N.2 needs N.1\'s migration"); do NOT author concurrency/grouping — how steps pack into',
-    '  sessions is decided downstream. Do NOT write a "review" section: track self-review is a FIXED automatic',
-    "  stage selected by the track's TYPE; `## Validation` says what success looks like, not how it is reviewed.",
+    '  These files ARE the track-level plan the build reads; `submit_plan` carries only the structured track',
+    '  list (title + type). When a track runs, its orchestrator session reads this file and decomposes it into',
+    '  a LIVE TASK LIST — so write `## Approach` at PLAN DEPTH (exact path:line anchors, concrete code/signatures',
+    '  for the hard edits) but do NOT pre-number steps or author concurrency/grouping — that is the running',
+    '  track\'s job. Do NOT write a "review" section: track self-review is a FIXED automatic stage selected by',
+    "  the track's TYPE; `## Validation` says what success looks like, not how it is reviewed.",
     '',
     'DIAGRAMS — LEAN ON THEM. A plan the operator can SEE beats one they have to decode. Mermaid code fences',
     'render inline in the spec files and in the approval card, so a good diagram is the FASTEST way for the',
@@ -454,7 +454,7 @@ export class AgentSessionManager
     'a logged decision. For a trivial localized change (the DIRECT PATH below), skip them.',
     '',
     '`submit_plan` does NOT author the plan and does NOT post the approval card — it REQUESTS AN AUTOMATED',
-    'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your tracks + steps; the',
+    'CODEX REVIEW of the plan you authored. Codex reads `/context/specs/` and grades your tracks + section plans; the',
     'review runs in the background (it can take several minutes). When it finishes I relay its findings to you',
     'as a "Codex review" message. ADDRESS each finding — APPLY it (revise the specs + the structured plan), or',
     'PUSH BACK with reasoning — then either call `submit_plan` AGAIN to re-review the revised plan, or call',
@@ -466,23 +466,22 @@ export class AgentSessionManager
     'then call submit_plan with:',
     '  - goal: the one-line goal of the whole thread (verbatim the plan.md `# <H1>`; becomes the thread title)',
     '  - overview: intent + stack + constraints',
-    "  - tracks: the ordered tracks, each `{ title, type, steps: [{ title, brief }] }`. `type` = the track's",
-    '    scope — backend | frontend | docs | testing | analytics | infra (or another short label if none fit);',
-    '    it SELECTS the review agents. `brief` = the execute-ready step instruction (PLAN DEPTH). ≥1 step/track.',
+    "  - tracks: the ordered tracks, each `{ title, type }`. `type` = the track's scope — backend | frontend |",
+    '    docs | testing | analytics | infra (or another short label if none fit); it SELECTS the review agents.',
+    '    Do NOT enumerate steps — a track carries no step list. When it runs, its orchestrator session reads the',
+    '    section file and decomposes it into a LIVE TASK LIST; author the depth in `## Approach`, not here.',
     '  (No `decisions` arg — submit_plan reads the decisions you locked via create_decision. Pass `decisions`',
     '   ONLY to authoritatively replace the whole set, e.g. after request-changes pruned some.)',
-    'TRACK & STEP GRANULARITY: a TRACK is a SCOPE-TYPED layer that ends in a self-review/auto-fix pass — a',
-    'slice you could demo or review on its own, and its `type` (backend/frontend/docs/testing/analytics/infra)',
-    'selects the reviewers. Prefer FEW, BROAD tracks (≈1–4 for a typical feature); do NOT split one scope into',
-    'several tracks (backend is ONE track, not one per file). A STEP is one focused unit an engineer finishes',
-    'in one sitting — GROUP naturally-related edits (a column + its DTO; a component + its hook) into one step;',
-    'do NOT make a step per file. Prefer ~2–5 steps per track; a tiny track is ONE step.',
+    'TRACK GRANULARITY: a TRACK is a SCOPE-TYPED layer that ends in a self-review/auto-fix pass — a slice you',
+    'could demo or review on its own, and its `type` (backend/frontend/docs/testing/analytics/infra) selects',
+    'the reviewers. Prefer FEW, BROAD tracks (≈1–4 for a typical feature); do NOT split one scope into several',
+    "tracks (backend is ONE track, not one per file). The per-step decomposition is the running track's job.",
     'SELF-CHECK before submit_plan (from context — no get_decision_record needed): every applicable always-ask',
-    'decision locked? does each track have a `type`?',
-    'could a fresh engine turn build EACH STEP from its `#### N.M` brief ALONE — exact `path:line` anchors,',
-    'concrete code/signatures for the hard edits, runnable verification — with ZERO further questions to you?',
-    'is it grounded in files you actually opened (not guessed)? is the `goal` a single clear line? Do NOT add',
-    'an "investigate the codebase" track — tracks are real build work.',
+    'decision locked? does each track have a `type`? could the running orchestrator build EACH TRACK from its',
+    'section file `## Approach` ALONE — exact `path:line` anchors, concrete code/signatures for the hard edits,',
+    'runnable verification — with ZERO further questions to you? is it grounded in files you actually opened',
+    '(not guessed)? is the `goal` a single clear line? Do NOT add an "investigate the codebase" track — tracks',
+    'are real build work.',
     '',
     'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no tracks/steps).',
     'Use only when the change is small and well-understood and touches NO uncovered always-ask decision.',
@@ -1603,25 +1602,20 @@ export class AgentSessionManager
           args['decisions'] != null
             ? normalizeDecisions(args['decisions'])
             : await this.store.pendingDecisions(stimulus.threadId);
-        // Atlas authors the FULL plan up front: each track carries its ordered step list (title +
-        // keystroke-level brief). The steps LOCK here (persistPlan) so the driver skips its JIT plan
-        // turn. The rich prose companion still lives in `/context/specs/plan.md`.
+        // Atlas plans at the TRACK level; the running track's orchestrator decomposes into its own live
+        // task list (SDK task tools) — so steps are NOT authored up front. `normalizeTracks` still accepts
+        // a `steps` array if a caller supplies one (back-compat: those lock + skip JIT), but it's optional;
+        // absent, the driver JIT-plans each track. The rich prose companion lives in `/context/specs/`.
         const tracks = normalizeTracks(args['tracks']);
         const trackTitles = tracks.map((s) => s.title);
         const trackTypes = tracks.map((s) => s.type);
-        const stepsByTrack = tracks.map((s) => s.steps);
+        const hasSteps = tracks.some((s) => s.steps.length > 0);
+        const stepsByTrack = hasSteps ? tracks.map((s) => s.steps) : undefined;
 
         if (!overview || !goal || tracks.length === 0) {
           return {
             ok: false,
             reason: 'overview, goal, and at least one track are required',
-          };
-        }
-        if (tracks.some((s) => s.steps.length === 0)) {
-          return {
-            ok: false,
-            reason:
-              'each track must have at least one step (each step needs a title and a brief)',
           };
         }
 

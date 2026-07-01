@@ -1,14 +1,29 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bundleEngine } from './bundle-engine';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 
+/** The image label that carries the build-context hash — the signal for auto-rebuild-on-change. */
+const CONTEXT_HASH_LABEL = 'atlas.context-hash';
+
 /**
- * Boot-memoized build of the sandbox base image. `ensureImage()` is idempotent: it skips the (slow)
- * build when the tag already exists locally, unless `SANDBOX_REBUILD` is set. The image tag comes
- * from `WORKSPACE_IMAGE` (else a sane default). The build context is the colocated `image/` dir
- * (Dockerfile + sandbox-init.sh + — from D1 — the engine bundle).
+ * The STATIC files whose content defines the baked image; the image is rebuilt iff their combined hash
+ * changes. `engine-entrypoint.mjs` is deliberately EXCLUDED: it's re-bundled on every boot and
+ * bind-mounted live into each sandbox, so folding its churn into the hash would rebuild the image (and,
+ * via the imageId fingerprint, recreate every sandbox container) on every restart for no real change.
+ */
+const CONTEXT_FILES = ['Dockerfile', 'sandbox-init.sh', 'shell-init.sh'] as const;
+
+/**
+ * Build of the sandbox base image. `ensureImage()` is idempotent AND change-aware: it hashes the static
+ * build-context files and bakes that hash into the image as a label, so it rebuilds automatically when
+ * the Dockerfile / shell scripts change and otherwise skips the (slow) build after a fast label read.
+ * `SANDBOX_REBUILD` forces a rebuild past that (to bust Docker's own layer cache). The image tag comes
+ * from `SANDBOX_IMAGE` (else a sane default). The build context is the colocated `image/` dir
+ * (Dockerfile + sandbox-init.sh + shell-init.sh + — from D1 — the engine bundle).
  *
  * On bootstrap it also REBUNDLES the engine entrypoint (`bundleEngine`) so the API itself keeps the
  * engine current — a dev watch-restart or a prod deploy-restart refreshes it with no manual bundle step
@@ -48,21 +63,58 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
     return join(__dirname, 'image');
   }
 
-  /** Ensure the base image exists locally; build it if missing (or if `SANDBOX_REBUILD`). */
+  /** sha256 (12 hex) over the static build-context files — changes IFF the image definition changed, so
+   *  it's the identity `ensureImage` compares against the built image's label to decide on a rebuild. */
+  private contextHash(): string {
+    const dir = this.contextDir();
+    const h = createHash('sha256');
+    for (const f of CONTEXT_FILES) h.update(f).update('\0').update(readFileSync(join(dir, f)));
+    return h.digest('hex').slice(0, 12);
+  }
+
+  /** In-flight build/check, so concurrent attaches at boot dedupe onto one build instead of racing. */
+  private inFlight?: Promise<string>;
+
+  /**
+   * Ensure the base image exists AND matches the current build context. Rebuilds automatically when the
+   * static context (Dockerfile + the shell scripts) changed — the image carries its context hash as a
+   * label, so an unchanged image is a fast label read, no build. `SANDBOX_REBUILD` still forces a rebuild
+   * (to bust Docker's OWN layer cache, e.g. to re-pull a floating pnpm/fnm version).
+   */
   async ensureImage(): Promise<string> {
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.doEnsureImage().finally(() => {
+      this.inFlight = undefined;
+    });
+    return this.inFlight;
+  }
+
+  private async doEnsureImage(): Promise<string> {
     const tag = this.imageTag();
-    const rebuild = !!this.env.get('SANDBOX_REBUILD');
-    if (!rebuild && (await this.engine.imageExists(tag))) {
-      this.logger.log(`sandbox image ${tag} present — skipping build`);
-      return tag;
+    const hash = this.contextHash();
+    const forced = !!this.env.get('SANDBOX_REBUILD');
+    if (!forced) {
+      const labels = await this.engine.imageLabels(tag);
+      if (labels && labels[CONTEXT_HASH_LABEL] === hash) {
+        this.logger.log(`sandbox image ${tag} up to date (context ${hash}) — skipping build`);
+        return tag;
+      }
+      if (labels) {
+        this.logger.log(
+          `sandbox image ${tag} context changed (${labels[CONTEXT_HASH_LABEL] ?? 'unlabelled'} → ${hash}) — rebuilding`,
+        );
+      }
     }
-    this.logger.log(`building sandbox image ${tag} (this is slow on first run)…`);
+    this.logger.log(`building sandbox image ${tag} (context ${hash}; slow on first run)…`);
     await this.engine.buildImage({
       contextDir: this.contextDir(),
       tag,
+      // Baked into the image as CONTEXT_HASH_LABEL (see the Dockerfile's ARG/LABEL) so the next boot can
+      // tell a matching image from a stale one without rebuilding.
+      buildArgs: { ATLAS_CONTEXT_HASH: hash },
       onProgress: (line) => this.logger.debug(line),
     });
-    this.logger.log(`built sandbox image ${tag}`);
+    this.logger.log(`built sandbox image ${tag} (context ${hash})`);
     return tag;
   }
 }

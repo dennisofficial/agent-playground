@@ -14,7 +14,7 @@ import { APPROVE_ACTION_ID, type ThreadKind, type ThreadStatus, type WebApproval
 import { Navigator, type ThreadMeta } from './navigator';
 import { Conversation } from './conversation';
 import { MarkdownActionsProvider } from './markdown';
-import { PhaseView, EmptyPane } from './step-view';
+import { PhaseView, EmptyPane, SubagentPane } from './step-view';
 import { PersistentApprovalBar } from './spec-approval';
 import { useSelectedNode } from './use-selected-node';
 
@@ -44,7 +44,7 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
   // Two independent selections: `laneNode` (?lane=) drives the LEFT pane (a THREADS lane — Main or a build
   // track/step); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT / port / subagent / doc). A thread
   // switch navigates to a fresh clean URL with no query, so both reset — no reset effect needed.
-  const { laneNode, detailNode, selectNode, openConversation, closeDetail } = useSelectedNode();
+  const { laneNode, detailNode, subNode, selectNode, openConversation, closeDetail, closeSub } = useSelectedNode();
 
   // Persist the conversation/detail split ratio across reloads (per-browser). `panelIds` lets the
   // library remember the layout even though the detail panel is only conditionally mounted.
@@ -184,7 +184,17 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
           {/* The detail pane content fills the column; the persistent approval bar (when awaiting) pins to
               its base as a `flex:none` footer — present no matter what the pane is showing. */}
           <div className="flex min-h-0 flex-1 flex-col">
-            {detailNode ? (
+            {subNode ? (
+              // A sub-agent stacked on top of the right pane — a second-level page with a breadcrumb back to
+              // the base detail node (which stays selected in the navigator underneath).
+              <SubagentPane
+                threadRef={ref}
+                messages={messages}
+                parentId={subNode}
+                base={detailNode ? baseCrumbLabel(detailNode) : null}
+                onBack={closeSub}
+              />
+            ) : detailNode ? (
               <PhaseView
                 threadRef={ref}
                 pipeline={pipeline}
@@ -208,4 +218,17 @@ export function ThreadWorkspace({ orgId, repoId, threadId }: ThreadRef) {
     </div>
     </MarkdownActionsProvider>
   );
+}
+
+/** Short label for the base detail node, shown in a stacked sub-agent's breadcrumb (`‹ 02-webhooks.md ▸ …`).
+ *  Detail nodes are files/docs/ports (never bare track ids — those open in the left pane), so no job lookup
+ *  is needed. */
+function baseCrumbLabel(node: string): string {
+  if (node === 'diff') return 'Diff';
+  if (node === 'plan') return 'Plan';
+  if (node === 'decision') return 'Decision record';
+  const file = /^(?:spec|gen|artifact):(.+)$/.exec(node);
+  if (file) return file[1].split('/').pop() ?? file[1];
+  if (node.startsWith('port:')) return node.slice('port:'.length);
+  return node;
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { ArrowRight, PanelRight } from 'lucide-react';
+import { ArrowRight, FileText, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useContextFile, useSay } from '@/lib/api/thread-queries';
@@ -932,6 +932,64 @@ function NodeNotFound({ node, onConversation }: { node: string; onConversation: 
       >
         Clear this pane <ArrowRight size={13} />
       </button>
+    </div>
+  );
+}
+
+/**
+ * A sub-agent (Task run) STACKED on top of the right pane — a second-level page. Opening a sub-agent keeps
+ * the base detail node (`?node=`) selected in the navigator and preserved underneath; this renders the
+ * sub-agent's transcript under a BREADCRUMB back to that base (design "Atlas Workspace HiFi" — the `sub`
+ * header). `‹` / the base crumb / `×` all pop back to the base (`onBack`). `base` is the underlying detail
+ * node's short label (null when the sub was opened over an empty pane).
+ */
+export function SubagentPane({
+  threadRef,
+  messages,
+  parentId,
+  base,
+  onBack,
+}: {
+  threadRef: ThreadRef;
+  messages: ThreadMessage[];
+  parentId: string;
+  base: string | null;
+  onBack: () => void;
+}) {
+  const liveTurn = useLiveTurn(threadRef.threadId);
+  const summary =
+    indexDurableSubagents(messages).summaryById.get(parentId) ??
+    (liveTurn ? indexLiveSubagents(liveTurn.blocks).summaryById.get(parentId) : undefined);
+  const label = summary ? subagentLabel(summary.type) : 'Subagent';
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
+        <button type="button" onClick={onBack} title="Back to base" className="flex items-center text-[17px] leading-none text-blue hover:opacity-80">
+          ‹
+        </button>
+        {base ? (
+          <button type="button" onClick={onBack} className="flex min-w-0 items-center gap-1.5 hover:opacity-80">
+            <FileText size={12} className="shrink-0 text-blue" />
+            <span className="max-w-[150px] truncate font-mono text-[10px] text-dim">{base}</span>
+          </button>
+        ) : null}
+        <span className="text-[11px] font-semibold text-border-2">▸</span>
+        <span
+          className="grid h-[19px] w-[19px] shrink-0 place-items-center rounded-[5px] text-[10px]"
+          style={{ background: 'color-mix(in srgb, var(--blue) 13%, transparent)', color: 'var(--blue)' }}
+        >
+          ◈
+        </span>
+        <span className="truncate font-disp text-[11px] font-semibold text-text">{label}</span>
+        <span className="shrink-0 font-mono text-[9px] text-faint">sub-agent</span>
+        <span className="flex-1" />
+        <button type="button" onClick={onBack} title="Close sub-agent" className="text-[15px] leading-none text-faint hover:text-text">
+          ×
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <SubagentView messages={messages} liveTurn={liveTurn ?? null} parentId={parentId} />
+      </div>
     </div>
   );
 }

@@ -103,7 +103,7 @@ export const PLANNER_LLM = Symbol('PLANNER_LLM');
  * context as a single `{input}` template variable (so arbitrary content can't break templating).
  */
 export namespace PlannerChains {
-  export const MODEL = 'claude-sonnet-5';
+  export const MODEL = 'claude-opus-4-8';
 
   const STEPS_SCHEMA = z.object({
     steps: z.array(z.object({ title: z.string(), brief: z.string() })),
@@ -287,12 +287,11 @@ export class AnthropicPlannerLlm implements PlannerLlm {
     if (!m) {
       m = new ChatAnthropic({
         apiKey: key,
+        // Opus 4.8: rejects a non-default temperature (400) and runs no thinking when the field
+        // is omitted — which is what withStructuredOutput's forced tool calling needs. So no
+        // temperature and no thinking config here.
         model: PlannerChains.MODEL,
         maxTokens: 4096,
-        // Sonnet 5 rejects a non-default temperature (400) and runs adaptive thinking by
-        // default when unset. The planner is a fast, throwaway structured decomposition —
-        // keep it deterministic-cheap: no thinking, temperature left at the API default.
-        thinking: { type: 'disabled' },
       });
       this.models.set(key, m);
     }

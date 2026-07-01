@@ -74,5 +74,11 @@ ENV FNM_DIR=/atlas-fnm
 ENV BASH_ENV=/etc/atlas/shell-init.sh
 COPY shell-init.sh /etc/atlas/shell-init.sh
 
+# Build-context hash (set by SandboxImageBuilder over the static context files), baked as a label so the
+# host can tell a matching image from a stale one and rebuild ONLY when the image definition changed —
+# instead of skipping forever on tag-exists or rebuilding on every boot. Trivial trailing metadata layer.
+ARG ATLAS_CONTEXT_HASH=dev
+LABEL atlas.context-hash=$ATLAS_CONTEXT_HASH
+
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/sandbox-init.sh"]

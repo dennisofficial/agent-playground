@@ -1,0 +1,10 @@
+{
+  // Used by the `@workspace/ai-testing` CLI loader (tsx) — NOT by the app build. Mirrors
+  // tsconfig.json; no `@workspace/shared` stub is needed here (unlike mls-studio) because the
+  // chains under eval import only pure domain types + prompt-fence, never the entity barrel.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

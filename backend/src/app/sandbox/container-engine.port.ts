@@ -156,6 +156,10 @@ export interface ContainerEngine {
    *  the signal a sandbox container is on a STALE image and should be recreated. */
   imageId(tag: string): Promise<string | null>;
 
+  /** The image's labels (`Config.Labels`), or null if the image is absent. Used to read back the baked
+   *  build-context hash so `ensureImage` rebuilds only when the image's static definition changed. */
+  imageLabels(tag: string): Promise<Record<string, string> | null>;
+
   /** Build an image from a context dir. */
   buildImage(spec: BuildImageSpec): Promise<void>;
 
