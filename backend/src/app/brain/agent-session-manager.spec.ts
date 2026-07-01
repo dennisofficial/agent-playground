@@ -1200,7 +1200,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const drainAndAdvance = vi.fn().mockResolvedValue({ markers: [], stateChanged: false });
     const { manager, dockerRunner, awareness } = makeManager({ drainAndAdvance });
 
-    // runDirectBuild / startFollowUpThread stamp author.id = 'atlas' — these must not consume the buffer.
+    // runDirectBuild / startFollowUpJob stamp author.id = 'atlas' — these must not consume the buffer.
     const synthetic: ChatStimulus = { ...stimulus, author: { id: 'atlas', displayName: 'Atlas' } };
     await manager.handleChatTurn(synthetic);
 
@@ -1275,7 +1275,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 });
 
-describe('AgentSessionManager — create_thread tool (independent follow-up)', () => {
+describe('AgentSessionManager — create_job tool (independent follow-up)', () => {
   const ORG = 'org-ct';
   const REPO = 'repo-ct';
   const THREAD = 'th-parent';
@@ -1296,7 +1296,7 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
   function makeManager(storeOverrides: Record<string, unknown> = {}) {
     const store = {
       loadJob: vi.fn().mockResolvedValue({ baseBranch: 'main' }),
-      createFollowUpThread: vi.fn().mockResolvedValue('th-followup'),
+      createFollowUpJob: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       awaitingQuestionId: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),
@@ -1357,17 +1357,17 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
 
   const mock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
-  it('create_thread creates an independent follow-up (inheriting the base branch) and starts it', async () => {
+  it('create_job creates an independent follow-up (inheriting the base branch) and starts it', async () => {
     const { manager, store } = makeManager();
-    const startSpy = vi.spyOn(manager, 'startFollowUpThread').mockResolvedValue(undefined);
+    const startSpy = vi.spyOn(manager, 'startFollowUpJob').mockResolvedValue(undefined);
 
-    const result = await manager.buildTools(stimulus)['create_thread']({
+    const result = await manager.buildTools(stimulus)['create_job']({
       title: 'Side task',
       firstMessage: 'do the side task',
     });
 
     expect(result).toMatchObject({ ok: true, jobId: 'th-followup' });
-    expect(mock(store.createFollowUpThread)).toHaveBeenCalledWith({
+    expect(mock(store.createFollowUpJob)).toHaveBeenCalledWith({
       orgId: ORG,
       repoId: REPO,
       title: 'Side task',
@@ -1376,18 +1376,18 @@ describe('AgentSessionManager — create_thread tool (independent follow-up)', (
     expect(startSpy).toHaveBeenCalledWith('th-followup', ORG, REPO, 'do the side task');
   });
 
-  it('create_thread requires a firstMessage', async () => {
+  it('create_job requires a firstMessage', async () => {
     const { manager, store } = makeManager();
-    const result = await manager.buildTools(stimulus)['create_thread']({ title: 'x', firstMessage: '  ' });
+    const result = await manager.buildTools(stimulus)['create_job']({ title: 'x', firstMessage: '  ' });
     expect(result).toMatchObject({ ok: false });
-    expect(mock(store.createFollowUpThread)).not.toHaveBeenCalled();
+    expect(mock(store.createFollowUpJob)).not.toHaveBeenCalled();
   });
 
-  it('startFollowUpThread records the opening intent, then runs one chat turn', async () => {
+  it('startFollowUpJob records the opening intent, then runs one chat turn', async () => {
     const { manager, store } = makeManager();
     const turn = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
 
-    await manager.startFollowUpThread('th-followup', ORG, REPO, 'kick off the follow-up');
+    await manager.startFollowUpJob('th-followup', ORG, REPO, 'kick off the follow-up');
 
     expect(mock(store.appendAtlasMessage)).toHaveBeenCalledWith(
       'th-followup',

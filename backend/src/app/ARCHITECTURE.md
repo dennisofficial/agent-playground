@@ -1,202 +1,181 @@
-# Atlas — architecture & the thread/session model
+# Atlas — architecture & the job/session model
 
 > **Canonical, read-first.** This is the source of truth for how Atlas is *modelled*. Companions:
-> `../../../CLAUDE.md` (product model + conventions), `ATLAS_V2.md` (deep detail + build history — but
-> its module/table names predate the org→repo→thread rebuild; trust this file for the model),
-> `TUNING_HANDOFF.md` (open tuning items), `../../../web/BACKEND_GAPS.md` (web API gaps).
+> `../../../CLAUDE.md` (product model + conventions), `ATLAS_V2.md` (deep detail + build history — but it
+> predates the org→repo→job rebuild AND uses the old vocabulary; trust THIS file for the model),
+> `../../../web/BACKEND_GAPS.md` (web API gaps).
 >
 > All code paths below are relative to `backend/src/app/`.
 
+**Vocabulary (post-rename — memorize this).** A **Job** is the CONTAINER (the unit of work: request → PR;
+owns the branch, sandbox, PR, and one message log). A **Thread** is a BUILD LANE inside a job (a Main
+planning lane + one per build track). A **Step** is a unit within a thread. DB: `jobs` / `threads` / `steps`
+(+ `job_sandboxes`). The words "track" (→ thread) and "phase" (→ step) from older docs are gone. NOTE:
+"session" below always means a **Claude Code / Agent-SDK session**, never a domain object.
+
 **Status legend:** ✅ Built (matches code today) · 🟡 Partial / diverges from intent · ⛔ Planned (not built).
-Where intent ≠ wiring, both are stated — this doc's job is to describe reality, not the aspiration.
+Where intent ≠ wiring, both are stated — this doc describes reality, not the aspiration.
 
 ---
 
 ## 1. The model in one paragraph
 
-Atlas turns a **request** — a human message *or* an automated event — into a reviewed **PR**. The unit
-of work is a **thread**. A thread is meant to be its own git branch, its own sandbox, and its own
-*continuous* Claude Code session — **the thread brain** — which scopes, grills, locks decisions, proposes
-a plan, and steers. Once a plan is approved, a deterministic **driver** ("the harness takes the wheel")
-walks the plan section-by-section, running each phase as a **separate, fresh, throwaway** Claude session
-you can watch live. **There is no central "Atlas" persona.** "Atlas" *is* the thread brain, and the thread brain *is*
-the **main Claude Code session running inside that thread's sandbox** — when you open a thread and type,
-you are talking directly to that session (its system prompt literally opens with *"You are Atlas"* —
-`brain/agent-session-manager.service.ts:56`). Everything else — the driver, the intake guards, the web
-surface — is host-side plumbing wrapped around that one session; a thread's own brain is the only
-conversational agent it has. An automated event doesn't talk to a central brain either; it **spawns a new
-thread** and (intended) becomes that thread brain's opening message.
+Atlas turns a **request** — a human message *or* an automated event — into a reviewed **PR**. The unit of
+work is a **job**. A job is its own git branch, its own sandbox, and its own *continuous* Claude Code
+session — **the job brain** — which scopes, grills, locks decisions, proposes a plan, and steers. Once the
+plan is approved, a deterministic **driver** ("the harness takes the wheel") walks the plan's **threads**
+(build lanes) in order, and you watch the build stream live. **There is no central "Atlas" persona.** "Atlas"
+*is* the job brain, and the job brain *is* the **main Claude Code session running inside that job's sandbox**
+— when you open a job and type, you talk directly to that session (its system prompt opens with *"You are
+Atlas"* — `brain/agent-session-manager.service.ts:56`). Everything else — the driver, the intake guards, the
+web surface — is host-side plumbing wrapped around that one session. An automated event doesn't talk to a
+central brain either; it **spawns a new job** and becomes that job brain's opening (harness) message.
 
-## 2. Product model — Organization → Repos → Threads  ✅
+## 2. Product model — Organization → Repos → Jobs → Threads  ✅
 
-> **Deployment model: private, not SaaS.** Atlas is a personal/private tool for Dennis and a small
-> circle of close friends — it is **not** sold or hosted as a commercial multi-tenant SaaS. The
-> org/sandbox isolation below exists to keep friends' work separate (and as defence-in-depth), not to
-> serve untrusted paying customers. Read "tenant"/"multi-tenant" throughout these docs as
-> *private multi-workspace*, never *commercial SaaS*. See the `saas-credential-compliance` note for
-> why selling was ruled out (subscription credentials can't back a sold product; API keys too costly to resell).
+> **Deployment model: private, not SaaS.** Atlas is a personal/private tool for Dennis and a small circle of
+> close friends — **not** a commercial multi-tenant SaaS. The org/sandbox isolation below keeps friends'
+> work separate (and is defence-in-depth), not a boundary for untrusted paying customers. Read
+> "tenant"/"multi-tenant" as *private multi-workspace*. See `saas-credential-compliance` for why selling was
+> ruled out (subscription credentials can't back a sold product; API keys too costly to resell).
 
-The tenancy hierarchy (detail in `CLAUDE.md`):
+The hierarchy (detail in `CLAUDE.md`):
 
 - **Organization** (`organizations`) — the tenant; `org_id` scopes every `app` table.
 - **Repo** (`repos`) — a connected GitHub repo; the conversation container (the old 1:1 `channels` is gone).
-- **Thread** (`threads`, real uuid) — a conversation/work unit on a repo; `messages` is its durable log.
+- **Job** (`jobs`, real uuid) — a conversation/work unit on a repo; `messages` is its durable log.
+- **Thread** (`threads`, real uuid) — a BUILD LANE within a job (`thread_id`→`job_id` FK). The Main
+  conversation lane + one thread per build track. **Steps** (`steps`) are the leaves within a thread.
 
-A thread **is the build unit** — the former separate `jobs` layer was collapsed into `threads`
-(`brain/job-dispatcher.ts:7`).
+A **job is the build unit** — the former separate `jobs`-vs-`threads` split was collapsed into one container
+(`brain/job-dispatcher.ts`). The build sub-structure now lives in `threads` (was `tracks`) + `steps`.
 
-## 3. The thread = a branch + a sandbox + a session
+## 3. The job = a branch + a sandbox + a session
 
-**Intended:** every thread owns —
+Every job owns —
 
-- a git **branch** `atlas/thread-<id-slice>` (stored on `threads.feature_branch`),
+- a git **branch** `atlas/*` (stored on `jobs.feature_branch`), cut from a base branch,
 - a durable **worktree** (the engine's `cwd`),
-- a per-thread **Docker sandbox** container,
-- a continuous **brain session** (`thread_sandboxes.session_id`).
+- a per-job **Docker sandbox** container,
+- a continuous **brain session** (`job_sandboxes.session_id`).
 
-The code that realizes all of this is `ThreadLifecycleService.createThread` → `provisionSandbox`
-(`driver/thread-lifecycle.service.ts:80`, `:105`; branch cut at `:331`, recorded on the thread at `:349`).
+The lifecycle is `JobLifecycleService` (`driver/job-lifecycle.service.ts`: `createJob` / `closeJob`,
+`provisionSandbox`, branch cut). 🟡 **Provisioning is lazy, not eager** — the create/seed paths insert bare
+rows, and the job brain **provisions on the job's first turn** (`ensureProvisioned`), so a job gets its
+branch + sandbox + session the moment you talk to it (see §8).
 
-🟡 **Provisioning is now lazy, not eager.** The live create/seed paths still insert bare rows, but the
-thread brain **provisions on the thread's first turn** (`ensureProvisioned`), so a thread gets its branch +
-sandbox + session the moment you talk to it. See **§8**. (An event-seeded thread that reaches the driver
-*without* ever taking a brain turn is the remaining edge — §8.)
-
-## 4. The two session types — the heart of the model
+## 4. The two session kinds — the heart of the model
 
 There are **two completely different kinds of Claude Code session**. Conflating them is the #1 source of
-wrong mental models in this codebase (and in the UI mockups, which label the phase view *"not the thread's
-brain"* for exactly this reason). The **thread brain is the thread's main, continuous Claude Code session** —
-the one the operator talks to (§1). The phase workers are short-lived sub-sessions the *driver* runs to
-build the approved plan; they are not the thing you converse with.
+wrong mental models. The **job brain** is the job's one main, continuous session — the thing you converse
+with. The **build sessions** are what the *driver* runs to build the approved plan; you don't converse with
+them (you observe them, and can interject the current build turn).
 
-| | **Thread brain** | **Phase worker** |
+| | **Job brain** | **Build session (per thread)** |
 |---|---|---|
-| Count | **One** per thread, *continuous* | **One per pipeline phase**, fresh & ephemeral |
-| Session state | Resumes `thread_sandboxes.session_id` **every turn** | `phases.session_id`; resumed **only** on a mid-turn halt |
-| Role | intent → grill → lock decisions → propose plan → **steer** | execute **one phase** of the approved plan |
-| System prompt | **custom plan mode** (NOT the SDK's native `ExitPlanMode`) | standard coding agent |
-| Tools | 7 host-side tools (below) | normal coding tools (Read/Edit/Bash/…) |
-| You talk to it via | the thread **Conversation** (`say`) | the phase **transcript** (*interject* — ⛔ not built) |
-| Code | `brain/agent-session-manager.service.ts:101` (`handleChatTurn`) | `runner/turn-runner.service.ts:66` (`runTurn`) |
+| Count | **One** per job, *continuous* | **One orchestrator session per thread**, fresh & ephemeral |
+| Session state | resumes `job_sandboxes.session_id` **every turn** | `steps.session_id` (batch anchor); resumed **only** on a mid-turn halt |
+| Role | intent → grill → lock decisions → propose plan → **steer** | build **one thread** of the approved plan |
+| System prompt | **custom plan mode** (NOT the SDK's native `ExitPlanMode`) | orchestrator prompt (Opus) that fans out to writer subagents |
+| You talk to it via | the job **Conversation** (`say`) | the build **transcript** (*interject* the current turn) |
+| Code | `brain/agent-session-manager.service.ts` (`handleChatTurn`) | `driver/thread-driver.service.ts` (`runThread`) |
 
-**Thread brain — the 7 host tools** (built in `agent-session-manager.service.ts` `buildTools`):
-`get_pipeline_state`, `get_decision_record`, `recall`, `remember`, `submit_plan`, `dispatch_build`,
-`create_thread`. It can **read** pipeline state but does not itself drive the build; `submit_plan` →
-approval card; `dispatch_build` is gated on operator approval. It is genuinely continuous: each turn resumes
-the same `session_id` (`:114`, persisted at `:162`), so it remembers the grilling, the locked decisions, and
-the plan across turns and even host restarts.
+**Job brain — the host tools** (`agent-session-manager.service.ts` `buildTools`). ~15 tools, grouped:
+- *read/plan:* `get_pipeline_state`, `get_decision_record`, `submit_plan`, `finalize_plan`, `dispatch_build`
+- *decisions/questions:* `create_decision`, `ask_question`, `answer`, `promote_decisions`
+- *memory:* `recall`, `remember`
+- *spin-off / intake:* `create_job` (a NEW independent job on this repo — own base branch, starts scoping),
+  `create_ticket` (a note for LATER, no work starts), `request_secret` (onboarding)
+- *fast path:* `start_direct_build` (a small localized change the brain implements itself, lightweight approval)
 
-**`create_thread`.** ✅ The brain can spin off a **new, independent** thread on the same repo
-(`create_thread({ title, firstMessage })`) when the work splits into a unit of its own. The follow-up
-inherits this thread's base branch and starts scoping immediately on `firstMessage`
-(`brain/agent-session-manager.service.ts` `create_thread` → `startFollowUpThread`). It is intentionally
-*independent* — an earlier "blocked-until-merge" dependency variant was removed as too fragile.
+The brain is genuinely continuous: each turn resumes the same `session_id`, so it remembers the grilling,
+the locked decision record, and the plan across turns and host restarts. `submit_plan` does NOT build — it
+persists the plan (threads) + requests an async Codex review; `finalize_plan` posts the approval card; the
+operator's approval is what dispatches the build.
 
-**Phase workers** — each pipeline phase (plan → review → execute → auto-fix) runs as a *fresh* session so
-context can't rot across phases. They're observable **live** via event streaming to the SSE surface
-(the Transcript / Diff / Logs view). A phase worker is *not* the thread's brain — interjecting into one
-(when built) steers that one coding session, not the thread's intent.
+**`create_job`.** ✅ The brain spins off a **new, independent** job on the same repo (`create_job({ title,
+firstMessage })`) when work splits into its own unit. It inherits the base branch and starts scoping
+immediately (`createFollowUpJob` → `startFollowUpJob`). Intentionally *independent* — an earlier
+"blocked-until-merge" dependency variant was removed as too fragile.
+
+**Build sessions.** After approval, each **thread** runs (default **ORCHESTRATE mode**) as ONE Opus
+orchestrator session that decomposes the thread into a live **task list** (SDK `TaskCreate`/`TaskUpdate`) and
+fans the implementation out to **writer subagents** (`implement` / `implement-fast`). They stream live to the
+SSE surface (the build transcript / the navigator's task list + agents). `ORCHESTRATE_THREADS=off` falls back
+to the legacy programmatic per-step batched path (one fresh session per step batch). A build session is *not*
+the job brain — interjecting one steers that coding turn, not the job's intent.
 
 ## 5. The pipeline / driver — the hands  ✅
 
-After a plan is approved, **`SectionDriver`** takes the wheel: a deterministic, legible, **resumable**
-loop that walks the planner-emitted sections in order. Each section does
-`plan → review → gate → execute phases → auto-fix → handoff`; sections stack on the **one** feature branch;
-**one PR per thread** (`driver/section-driver.service.ts`). It is a plain `await`-each-step loop, **not an
-implicit FSM** — explicit `step`/`status` rows exist *only* so `resume()` can re-enter after a restart.
+After a plan is approved, **`ThreadDriver`** (`driver/thread-driver.service.ts`) takes the wheel: a
+deterministic, legible, **resumable** loop that walks the planned **threads** in order. Each thread runs
+`orchestrate (or plan→execute steps) → review (autofix lenses over the thread diff) → auto-fix → handoff`;
+threads stack on the **one** feature branch; **one PR per job**. It is a plain `await`-each-step loop, **not
+an implicit FSM** — explicit `step`/`status` rows exist *only* so `resume()` can re-enter after a restart
+(`resume()` re-drives `running` jobs; `resumePaused(jobId)` continues a paused one).
 
-The brain and the driver run **concurrently**: you can keep talking to the brain while the driver builds.
-But note the brain currently has **no tool to alter a running build** — its 6 tools are read/plan/dispatch
-only — so live "steering" beyond observation is ⛔ not built (see §6, §8).
+The brain and the driver run **concurrently**: you can keep talking to the job brain while the driver builds.
+The brain has no tool to *alter* a running build (its tools are read/plan/dispatch), so live "steering"
+beyond observing + interjecting the current build turn is 🟡 limited (see §6).
 
 ## 6. Inputs & steering surfaces
 
-How a thread is driven, and what is actually wired:
-
 | Input | Route | Target | Status |
 |---|---|---|---|
-| Operator message | `POST …/threads/:id/say` | thread brain (`handleChatTurn`) | ✅ (provisions the sandbox lazily on first turn — §8) |
-| Plan verdict | `POST …/threads/:id/approve` | approval gate → dispatch on approve | ✅ |
-| Live observability | `GET …/repos/:id/events` (SSE) | outbound stream (chat + cards + phase events) | ✅ |
-| Automated event | `POST /ingress/github`, `/ingress/webhook` | event intake → **spawns a thread** (§7) | ✅ |
-| Resume a paused build | port + driver subscription + `POST /test/resume` | `SectionDriver.resumePaused` | 🟡 web controller endpoint missing |
-| Interject a running phase | — | phase worker | ⛔ not built |
-| Pause / revert phase / auto-advance | — | driver | ⛔ not built |
-| NL steering ("pause", "undo that phase", "simplify the rest") | — | maps to the above | ⛔ not built |
-
-`/web/resume` exists as a surface port (`web-surface.ts` `requestResume`) + a driver subscription
-(`driver/driver.module.ts`) + a test-bridge route, but **no web controller endpoint** invokes it yet.
+| Operator message | `POST …/jobs/:jobId/say` | job brain (`handleChatTurn`) | ✅ (provisions the sandbox lazily on first turn — §8) |
+| Plan verdict | `POST …/jobs/:jobId/approve` | approval gate → dispatch on approve | ✅ |
+| Answer a question card | `POST …/jobs/:jobId/answer-question` | brain (`answer`) | ✅ |
+| Provide a secret | `POST …/jobs/:jobId/provide-secret` | encrypted store + grant (onboarding) | ✅ |
+| Live observability | `GET …/repos/:repoId/events` (SSE) + `GET /web/jobs/realtime` | outbound stream (chat + cards + build events; cross-org "needs you") | ✅ |
+| Automated event | `POST /ingress/github`, `/ingress/webhook` | event intake → **spawns a job** (§7) | ✅ |
+| Retry / resume a halted build | `POST …/jobs/:jobId/retry` | `ThreadDriver.resumePaused` | ✅ |
+| Interject the current build turn | build transcript composer (`say`) | folded in at the next turn boundary | 🟡 in-turn interject only |
+| Pause / revert step / NL steering ("undo that step", "simplify the rest") | — | driver | ⛔ not built |
 
 ## 7. Event intake — the untrusted firehose
 
-An automated event (CI/CD failure, GitHub/PostHog/Sentry webhook) becomes a **thread**. Four **mechanical
-guards** run first — they exist because the firehose is *hostile and noisy*, and have nothing to do with
-threading, so they **stay** regardless of the rework below:
+An automated event (CI failure, GitHub/PostHog/Sentry webhook) becomes a **job**. Four **mechanical guards**
+run first — the firehose is hostile and noisy, and these have nothing to do with the job model, so they stay:
 
 - **dedup + rate-limit**, no LLM — a Stripe re-delivery or a Sentry storm must not each pay a turn
   (`stimulus/event-filter.service.ts`).
 - **repo routing** — a webhook carries no `org_id`, so `owner/repo` → connected repo
   (`stimulus/project-routing.service.ts`).
 - **untrusted fence** — the body is DATA, never instructions (`stimulus/untrusted-content.ts`).
-- **seed a thread** + first message (stamped `meta.source='system_event'` → the operator-visible **EVENT
-  bubble**) + stimulus row, with a DB unique-index dedupe backstop (`stimulus/stimulus-store.service.ts:69`).
+- **seed a job** + first message (stamped `meta.source='system_event'` → the operator-visible **EVENT
+  bubble**) + stimulus row, with a DB unique-index dedupe backstop (`stimulus/stimulus-store.service.ts`).
 
-**The model (delivered):** there is only **one brain per thread — its session**. After the four guards, an
-event is delivered to the seeded thread's brain as a **harness message** — a server-initiated turn
-(`AgentSessionManager.deliverEvent` → `handleChatTurn`, the same seam the Codex plan-review delivery uses).
-The brain reads a trusted framing ("an automated {source} notification opened this thread — no human sent
-it…") wrapped around the `wrapUntrusted`-fenced event body, then triages it **in-session**: it scopes the
-work with the operator and proposes a plan like any other thread. There is **no** `Stimulus` union, no
-`StimulusRouter` demux, and no second event-only brain — those were deleted. The intake downstream is the
-typed `BRAIN_SINK` port (`handleChat` / `deliverEvent`).
+**The model:** there is only **one brain per job — its session**. After the guards, an event is delivered to
+the seeded job's brain as a **harness message** — a server-initiated turn (`AgentSessionManager.deliverEvent`
+→ `handleChatTurn`, the same seam the Codex plan-review delivery uses). The brain reads a trusted framing
+("an automated {source} notification opened this job — no human sent it…") wrapped around the
+`wrapUntrusted`-fenced body, then triages it **in-session**. There is **no** `Stimulus` union, no
+`StimulusRouter`, and no second event-only brain — those were deleted; the intake sink is the typed
+`BRAIN_SINK` port (`handleChat` / `deliverEvent`).
 
-- **Async + at-least-once.** Intake does NOT await the engine turn (the webhook 202 must stay fast); it
-  schedules `deliverEvent` and returns. Durability is `stimuli.delivered_at` (stamped only after the turn)
-  + a leader boot sweep that re-delivers any seeded event still `null` — so a crash between seed and the
-  turn can't lose it (a webhook retry would be dropped by the dedupe index).
-- **Security = the approval card.** Resolved open decision: **every** event-spawned plan goes through the
-  same human approval gate — there is no autonomous self-approve/dispatch lane. Untrusted → the brain
-  proposes → a human approves before the harness builds.
+- **Async + at-least-once.** Intake does NOT await the engine turn (the webhook 202 stays fast); it schedules
+  `deliverEvent` and returns. Durability = `stimuli.delivered_at` (stamped only after the turn) + a leader
+  boot sweep re-delivering any seeded event still `null`.
+- **Security = the approval card.** **Every** event-spawned plan goes through the same human approval gate —
+  no autonomous self-approve/dispatch lane. Untrusted → the brain proposes → a human approves → the harness builds.
 
 ## 8. Known divergences & tech debt
 
-### Provisioning — ✅ closed on the brain path (06-24; live-browser validation pending)
-
-The live creation paths still insert **bare thread rows** with no sandbox/branch —
-web `WebSurfaceController.createThread` (`surface/web-surface.controller.ts:155`) and
-event `StimulusStoreService.seedEventThread` (`stimulus/stimulus-store.service.ts:69`). The fix landed on the
-**first-turn brain path**: `handleChatTurn` now **lazily provisions** the thread's branch + sandbox +
-session via `lifecycle.ensureProvisioned` before the turn runs (posting *"Setting up an isolated workspace…"*
-so the first turn isn't a silent ~30s wait) — `brain/agent-session-manager.service.ts:102-138`. So chatting a
-freshly web-created thread now spins everything up on demand; the brain no longer dead-ends with *"Please
-create a thread via the web app…"* (that line is now only an unexpected-state fallback). Code-complete, full
-suite green; **not yet live-browser validated**.
-
-**Still open:** an **event-seeded** thread that reaches the driver *without* ever taking a brain turn skips
-the lazy provision — `ensureSandbox` then takes the **legacy fallback** and cuts `atlas/${kind}-${id}`
-(e.g. `atlas/feature-1a2b3c4d`), **not** `atlas/thread-<id>` (`driver/section-driver.service.ts:828`).
-
-**Fix (not done here):** route the live create/seed paths through `ThreadLifecycleService`, or provision
-lazily on the thread's first turn.
-
-### Other gaps
-
-- **Branch not surfaced in the API** — `threads.feature_branch` is real, but the thread list/detail DTOs
-  omit it (`web-surface.controller.ts`), so the UI's branch chip has no backing field yet.
-- **Operator steering not built** — interject / pause / revert / auto-advance / NL-steering
-  (also noted in `ATLAS_V2.md` §10.5).
-- **`/web/resume` web endpoint missing** — the plumbing exists; the route doesn't.
-- **Phase transcript / diff / logs** are partly placeholder/derived in the web app
-  (`web/BACKEND_GAPS.md`).
-- **Event-triage second brain** — pending the §7 rework.
+- **Provisioning** — ✅ closed on the brain path: `handleChatTurn` lazily provisions branch + sandbox +
+  session via `lifecycle.ensureProvisioned` before the first turn (posting *"Setting up an isolated
+  workspace…"*). **Still open:** an **event-seeded** job that reaches the driver *without* ever taking a brain
+  turn skips lazy provision — `ensureSandbox` then takes the legacy fallback branch name.
+- **Operator steering** — only in-turn interject + retry/resume are built; pause / revert-step / NL steering
+  are ⛔ not built.
+- **Build transcript diff / logs** — partly placeholder/derived in the web app (`web/BACKEND_GAPS.md`).
+- **Docs** — `ATLAS_V2.md` still uses the OLD vocabulary (thread=container, track/section=lane, phase=step)
+  and predates the redesign; treat it as history, not truth.
 
 ## 9. Durability — how a halt resumes  ✅
 
 The contract: a halt **continues the same engine session**, it doesn't spawn a fresh one. The key fix is
-persisting the `session_id` at turn **start** (the first NDJSON frame), not just at success — so a mid-turn
-crash still leaves a resume handle. Boot `SectionDriver.resume()` re-drives `running` jobs; a per-thread
-sandbox cold re-attach prepends a `SANDBOX_RESET_NOTICE` so the resumed session re-establishes runtime it
-can no longer trust; the thread + branch survive a restart via the shared `.git`. A 401 mid-turn →
-`paused` (durable) → fix creds → ping resume → the same session continues. Full detail in `ATLAS_V2.md` §9.
-(✅ for any thread on the provisioned path — see §8 for the caveat.)
+persisting `session_id` at turn **start** (the first NDJSON frame), not just at success — so a mid-turn crash
+still leaves a resume handle. Boot `ThreadDriver.resume()` re-drives `running` jobs; a per-job sandbox cold
+re-attach prepends a `SANDBOX_RESET_NOTICE` so the resumed session re-establishes runtime it can no longer
+trust; the job + branch survive a restart via the shared `.git`. A 401 mid-turn → `paused` (durable) → fix
+creds → ping (`…/retry`) → the same session continues. (✅ for any job on the provisioned path — see §8.)

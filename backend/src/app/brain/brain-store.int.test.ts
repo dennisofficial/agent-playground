@@ -193,7 +193,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     ]);
   }, 30_000);
 
-  it('createFollowUpThread persists a plain open thread on the repo (the create_thread tool)', async () => {
+  it('createFollowUpJob persists a plain open thread on the repo (the create_job tool)', async () => {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'BrainStore Org', 'brainstore-it-org', 'active')
@@ -209,7 +209,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
     const repoId = repoRow.id;
 
-    const followUpId = await store.createFollowUpThread({
+    const followUpId = await store.createFollowUpJob({
       orgId: TEAM_ID,
       repoId,
       title: 'follow-up',

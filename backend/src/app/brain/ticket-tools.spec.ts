@@ -5,7 +5,7 @@ import type { TicketService } from '../tickets';
 
 /**
  * The brain's ticket tools must derive org/repo/thread from the stimulus CLOSURE, never from tool args
- * (the cross-tenant safety invariant — same as create_thread). These tests build the real tool table and
+ * (the cross-tenant safety invariant — same as create_job). These tests build the real tool table and
  * assert the service is always called with the stimulus scope even when the args try to override it.
  */
 

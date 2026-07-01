@@ -223,7 +223,7 @@ export class AgentSessionManager
     `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
     `  - mcp__${BRIDGE_SERVER_NAME}__promote_decisions    — write durable cross-cutting decisions to the .atlas/decisions ledger (AT SHIP; see DECISION LEDGER)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) dispatch an already-approved full build`,
-    `  - mcp__${BRIDGE_SERVER_NAME}__create_thread        — spin off a NEW thread on this same repo (see CREATE_THREAD below)`,
+    `  - mcp__${BRIDGE_SERVER_NAME}__create_thread        — spin off a NEW job on this same repo (see CREATE_JOB below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__create_ticket        — capture work on this repo's board/backlog for later (see TICKETS below)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__list_tickets         — list this repo's tickets (optionally by status)`,
     `  - mcp__${BRIDGE_SERVER_NAME}__update_ticket        — edit a ticket / move it between board columns`,
@@ -235,7 +235,7 @@ export class AgentSessionManager
     '`create_decision({ args: { decisionClass, ruling } })`. A call that puts the fields at the TOP LEVEL',
     '(no `args` wrapper) arrives EMPTY at the host and fails — always nest them under `args`.',
     '',
-    'CREATE_THREAD — when the work splits into a separate unit of its own AND should start NOW, create a',
+    'CREATE_JOB — when the work splits into a separate unit of its own AND should start NOW, create a',
     'follow-up thread rather than overloading this one. Args: { title, firstMessage }. `firstMessage` is the',
     'opening intent the new thread starts on (write it as you would brief a fresh session); the new thread',
     'starts scoping immediately and independently. Only do this when the operator asked for a follow-up or',
@@ -251,7 +251,7 @@ export class AgentSessionManager
     '    auto-starts anything; it just records the relationship).',
     '  • The ticket is auto-stamped with where it came from (this thread, and the locked decision if any), so',
     '    capture the CONTEXT in body — enough that it is actionable cold, weeks later.',
-    'create_ticket vs create_thread: a TICKET is a note for LATER (no work starts); a THREAD starts work NOW.',
+    'create_ticket vs create_job: a TICKET is a note for LATER (no work starts); a JOB starts work NOW.',
     'Default to a ticket when deferring. Use promote_ticket later to turn a ticket into a working thread.',
     'Use list_tickets to check the backlog before proposing new work; update_ticket to re-prioritize or move.',
     '',
@@ -1118,7 +1118,7 @@ export class AgentSessionManager
     // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
     // un-injected — atomically drain any milestones buffered while the brain was idle + the net-state
     // delta, and PREPEND a clearly-passive summary so the brain knows where the build stands. SYNTHETIC
-    // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpThread must not consume the
+    // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpJob must not consume the
     // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
     if (isOperatorAuthored(stimulus)) {
       const awarenessPrefix = await this.buildAwarenessPrefix(
@@ -2017,7 +2017,7 @@ export class AgentSessionManager
         }
       },
 
-      create_thread: async (args) => {
+      create_job: async (args) => {
         const firstMessage = String(args['firstMessage'] ?? '').trim();
         const title =
           String(args['title'] ?? '').trim() || jobTitle(firstMessage);
@@ -2032,7 +2032,7 @@ export class AgentSessionManager
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
         const current = await this.store.loadJob(stimulus.jobId);
-        const newThreadId = await this.store.createFollowUpThread({
+        const newJobId = await this.store.createFollowUpJob({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
           title,
@@ -2041,22 +2041,22 @@ export class AgentSessionManager
 
         // Kick the new thread's brain with its opening intent. Fire-and-forget — the parent's turn doesn't
         // block on the child's provisioning (~30s); the intent is recorded so it's visible if the start fails.
-        void this.startFollowUpThread(
-          newThreadId,
+        void this.startFollowUpJob(
+          newJobId,
           stimulus.orgId,
           stimulus.repoId,
           firstMessage,
         ).catch((err) =>
           this.logger.warn(
-            `create_thread: start of ${newThreadId} failed: ${err}`,
+            `create_job: start of ${newJobId} failed: ${err}`,
           ),
         );
         this.logger.log(
-          `thread ${stimulus.jobId} created + started follow-up ${newThreadId}`,
+          `thread ${stimulus.jobId} created + started follow-up ${newJobId}`,
         );
         return {
           ok: true,
-          jobId: newThreadId,
+          jobId: newJobId,
           message: `Created follow-up "${title}" and started it.`,
         };
       },
@@ -2231,8 +2231,8 @@ export class AgentSessionManager
             ticketId,
           });
           if (result.created && result.seedText) {
-            // Kick the new thread's brain in-process (same as create_thread). Fire-and-forget.
-            void this.startFollowUpThread(
+            // Kick the new thread's brain in-process (same as create_job). Fire-and-forget.
+            void this.startFollowUpJob(
               result.jobId,
               stimulus.orgId,
               stimulus.repoId,
@@ -2682,7 +2682,7 @@ export class AgentSessionManager
    * Run the AUTONOMOUS implementation turn for an approved direct build. The brain wrote the change's
    * spec to `/context` during the sitting; now (post-approval, no operator present) it implements it
    * ITSELF in the worktree and calls `finalize_build` to ship. Reuses the normal in-sandbox turn path
-   * via a synthetic, Atlas-authored stimulus (the same pattern `startFollowUpThread` uses) so the work
+   * via a synthetic, Atlas-authored stimulus (the same pattern `startFollowUpJob` uses) so the work
    * streams to the thread and the session keeps full context. Fire-and-forget — errors are surfaced by
    * the turn itself.
    */
@@ -2715,14 +2715,14 @@ export class AgentSessionManager
     }
   }
 
-  // ── create_thread: start the follow-up's brain ──────────────────────────────────────────────────
+  // ── create_job: start the follow-up's brain ──────────────────────────────────────────────────
 
   /**
    * Kick a freshly-created follow-up thread's brain with its opening intent. Records the intent into the
    * transcript first (the brain path doesn't persist the inbound message — intake normally does), then runs
    * one chat turn (which lazily provisions the new thread's sandbox).
    */
-  async startFollowUpThread(
+  async startFollowUpJob(
     jobId: string,
     orgId: string,
     repoId: string,
@@ -3043,7 +3043,7 @@ export class AgentSessionManager
 }
 
 /** The synthetic author id Atlas stamps on its own (non-operator) turns — runDirectBuild /
- *  startFollowUpThread. The passive-awareness flush is gated on this so a background turn never drains
+ *  startFollowUpJob. The passive-awareness flush is gated on this so a background turn never drains
  *  the buffer before the operator sees it. */
 const ATLAS_AUTHOR_ID = 'atlas';
 

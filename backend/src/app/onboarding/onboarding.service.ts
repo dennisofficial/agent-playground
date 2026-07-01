@@ -197,7 +197,7 @@ export class OnboardingService {
     const store = this.moduleRef.get(BrainStoreService, { strict: false });
     const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
 
-    const jobId = await store.createFollowUpThread({
+    const jobId = await store.createFollowUpJob({
       orgId,
       repoId,
       title: `Onboarding ${repo.name}`,
@@ -249,7 +249,7 @@ export class OnboardingService {
     const store = this.moduleRef.get(BrainStoreService, { strict: false });
     const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
 
-    const jobId = await store.createFollowUpThread({
+    const jobId = await store.createFollowUpJob({
       orgId,
       repoId,
       title: `Onboarding ${repo.name}`,

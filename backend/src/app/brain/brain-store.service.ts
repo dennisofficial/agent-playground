@@ -967,14 +967,14 @@ export class BrainStoreService {
     return [...rows, ...nullRows].map(toThread);
   }
 
-  // ── create_thread tool ───────────────────────────────────────────────────────────────────────────
+  // ── create_job tool ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Create a follow-up thread (the brain's `create_thread` / `promote_ticket` tools) — a plain `open`
+   * Create a follow-up thread (the brain's `create_job` / `promote_ticket` tools) — a plain `open`
    * thread on the repo that provisions its sandbox lazily on the first turn. Optionally links the ticket
    * it was promoted from (`ticketId`).
    */
-  async createFollowUpThread(input: {
+  async createFollowUpJob(input: {
     orgId: string;
     repoId: string;
     title: string | null;
